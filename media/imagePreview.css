@@ -1,8 +1,3 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
 html, body {
 	width: 100%;
 	height: 100%;
@@ -50,17 +45,20 @@ body img {
 		linear-gradient(45deg, rgb(20, 20, 20) 25%, transparent 25%, transparent 75%, rgb(20, 20, 20) 75%, rgb(20, 20, 20));
 }
 
-.container img.pixelated {
+.container img.pixelated,
+.container canvas.pixelated {
 	image-rendering: pixelated;
 }
 
-.container img.scale-to-fit {
+.container img.scale-to-fit,
+.container canvas.scale-to-fit {
 	max-width: calc(100% - 20px);
 	max-height: calc(100% - 20px);
 	object-fit: contain;
 }
 
-.container img {
+.container img,
+.container canvas {
 	margin: auto;
 }
 

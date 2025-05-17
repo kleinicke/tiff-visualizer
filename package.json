@@ -1,25 +1,18 @@
 {
-  "name": "media-preview",
-  "displayName": "%displayName%",
-  "description": "%description%",
-  "extensionKind": [
-    "ui",
-    "workspace"
-  ],
+  "name": "tiff-visualizer",
+  "displayName": "TIFF Visualizer",
+  "description": "A TIFF for VS Code",
   "version": "1.0.0",
-  "publisher": "vscode",
+  "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
-  "aiKey": "0c6ae279ed8443289764825290e4f9e2-1a736e7c-1324-4338-be46-fc2a58ae4d14-7255",
   "engines": {
-    "vscode": "^1.70.0"
+    "vscode": "^1.80.0"
   },
-  "main": "./out/extension",
-  "browser": "./dist/browser/extension.js",
+  "main": "./out/extension.js",
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
   "capabilities": {
     "virtualWorkspaces": true,
     "untrustedWorkspaces": {
@@ -27,144 +20,110 @@
     }
   },
   "contributes": {
-    "configuration": {
-      "type": "object",
-      "title": "Media Previewer",
-      "properties": {
-        "mediaPreview.video.autoPlay": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "%videoPreviewerAutoPlay%"
-        },
-        "mediaPreview.video.loop": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "%videoPreviewerLoop%"
-        }
-      }
-    },
     "customEditors": [
       {
-        "viewType": "imagePreview.previewEditor",
-        "displayName": "%customEditor.imagePreview.displayName%",
-        "priority": "builtin",
+        "viewType": "tiffVisualizer.previewEditor",
+        "displayName": "TIFF Visualizer",
+        "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{jpg,jpe,jpeg,png,bmp,gif,ico,webp,avif,svg}"
-          }
-        ]
-      },
-      {
-        "viewType": "vscode.audioPreview",
-        "displayName": "%customEditor.audioPreview.displayName%",
-        "priority": "builtin",
-        "selector": [
-          {
-            "filenamePattern": "*.{mp3,wav,ogg,oga}"
-          }
-        ]
-      },
-      {
-        "viewType": "vscode.videoPreview",
-        "displayName": "%customEditor.videoPreview.displayName%",
-        "priority": "builtin",
-        "selector": [
-          {
-            "filenamePattern": "*.{mp4,webm}"
+            "filenamePattern": "*.{tif,tiff}"
           }
         ]
       }
     ],
     "commands": [
       {
-        "command": "imagePreview.zoomIn",
-        "title": "%command.zoomIn%",
-        "category": "Image Preview"
+        "command": "tiffVisualizer.zoomIn",
+        "title": "Zoom In",
+        "category": "TIFF Visualizer"
       },
       {
-        "command": "imagePreview.zoomOut",
-        "title": "%command.zoomOut%",
-        "category": "Image Preview"
+        "command": "tiffVisualizer.zoomOut",
+        "title": "Zoom Out",
+        "category": "TIFF Visualizer"
       },
       {
-        "command": "imagePreview.copyImage",
-        "title": "%command.copyImage%",
-        "category": "Image Preview"
+        "command": "tiffVisualizer.copyImage",
+        "title": "Copy Image",
+        "category": "TIFF Visualizer"
       },
       {
-        "command": "imagePreview.reopenAsPreview",
-        "title": "%command.reopenAsPreview%",
-        "category": "Image Preview",
-        "icon": "$(preview)"
+        "command": "tiffVisualizer.resetZoom",
+        "title": "Reset Zoom",
+        "category": "TIFF Visualizer"
       },
       {
-        "command": "imagePreview.reopenAsText",
-        "title": "%command.reopenAsText%",
-        "category": "Image Preview",
-        "icon": "$(go-to-file)"
+        "command": "tiffVisualizer.setNormalizationRange",
+        "title": "Set Normalization Range",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.exportAsPng",
+        "title": "Export as PNG",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.setGamma",
+        "title": "Set Gamma",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.setBrightness",
+        "title": "Set Brightness",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.selectForCompare",
+        "title": "Select for Compare",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.compareWithSelected",
+        "title": "Compare with Selected",
+        "category": "TIFF Visualizer"
       }
-    ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "imagePreview.zoomIn",
-          "when": "activeCustomEditorId == 'imagePreview.previewEditor'",
-          "group": "1_imagePreview"
-        },
-        {
-          "command": "imagePreview.zoomOut",
-          "when": "activeCustomEditorId == 'imagePreview.previewEditor'",
-          "group": "1_imagePreview"
-        },
-        {
-          "command": "imagePreview.copyImage",
-          "when": "false"
-        },
-        {
-          "command": "imagePreview.reopenAsPreview",
-          "when": "activeEditor == workbench.editors.files.textFileEditor && resourceExtname == '.svg'",
-          "group": "navigation"
-        },
-        {
-          "command": "imagePreview.reopenAsText",
-          "when": "activeCustomEditorId == 'imagePreview.previewEditor' && resourceExtname == '.svg'",
-          "group": "navigation"
-        }
-      ],
-      "webview/context": [
-        {
-          "command": "imagePreview.copyImage",
-          "when": "webviewId == 'imagePreview.previewEditor'"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "imagePreview.reopenAsPreview",
-          "when": "editorFocus && resourceExtname == '.svg'",
-          "group": "navigation"
-        },
-        {
-          "command": "imagePreview.reopenAsText",
-          "when": "activeCustomEditorId == 'imagePreview.previewEditor' && resourceExtname == '.svg'",
-          "group": "navigation"
-        }
-      ]
-    }
+    ]
+  },
+  "menus": {
+    "editor/context": [
+      {
+        "command": "tiffVisualizer.selectForCompare",
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+        "group": "comparison@1"
+      },
+      {
+        "command": "tiffVisualizer.compareWithSelected",
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
+        "group": "comparison@1"
+      },
+      {
+        "command": "tiffVisualizer.exportAsPng",
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+        "group": "export@1"
+      }
+    ]
   },
   "scripts": {
-    "compile": "gulp compile-extension:media-preview",
-    "watch": "npm run build-preview && gulp watch-extension:media-preview",
-    "vscode:prepublish": "npm run build-ext",
-    "build-ext": "node ../../node_modules/gulp/bin/gulp.js --gulpfile ../../build/gulpfile.extensions.js compile-extension:media-preview ./tsconfig.json",
-    "compile-web": "npx webpack-cli --config extension-browser.webpack.config --mode none",
-    "watch-web": "npx webpack-cli --config extension-browser.webpack.config --mode none --watch --info-verbosity verbose"
+    "vscode:prepublish": "npm run compile",
+    "clean": "rimraf out",
+    "compile": "npm run clean && node ./esbuild.js",
+    "watch": "npm run clean && node ./esbuild.js --watch"
   },
   "dependencies": {
-    "@vscode/extension-telemetry": "^0.9.8",
+    "geotiff": "^2.1.3",
+    "tslib": "^2.8.1",
     "vscode-uri": "^3.0.6"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "@types/vscode": "^1.70.0",
+    "esbuild": "^0.25.5",
+    "rimraf": "^6.0.1",
+    "typescript": "^4.9.4"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/microsoft/vscode.git"
+    "url": "https://github.com/kleinicke/tiff-visualizer.git"
   }
 }

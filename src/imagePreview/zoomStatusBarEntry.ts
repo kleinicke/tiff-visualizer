@@ -1,13 +1,8 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry as OwnedStatusBarEntry } from '../ownedStatusBarEntry';
 
 
-const selectZoomLevelCommandId = '_imagePreview.selectZoomLevel';
+const selectZoomLevelCommandId = '_tiffVisualizer.selectZoomLevel';
 
 export type Scale = number | 'fit';
 
@@ -17,7 +12,7 @@ export class ZoomStatusBarEntry extends OwnedStatusBarEntry {
 	public readonly onDidChangeScale = this._onDidChangeScale.event;
 
 	constructor() {
-		super('status.imagePreview.zoom', vscode.l10n.t("Image Zoom"), vscode.StatusBarAlignment.Right, 102 /* to the left of editor size entry (101) */);
+		super('status.tiffVisualizer.zoom', vscode.l10n.t("Image Zoom"), vscode.StatusBarAlignment.Right, 102 /* to the left of editor size entry (101) */);
 
 		this._register(vscode.commands.registerCommand(selectZoomLevelCommandId, async () => {
 			type MyPickItem = vscode.QuickPickItem & { scale: Scale };

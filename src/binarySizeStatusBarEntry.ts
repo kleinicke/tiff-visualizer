@@ -1,8 +1,3 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from './ownedStatusBarEntry';
 
@@ -37,7 +32,7 @@ class BinarySize {
 export class BinarySizeStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
-		super('status.imagePreview.binarySize', vscode.l10n.t("Image Binary Size"), vscode.StatusBarAlignment.Right, 100);
+		super('status.tiffVisualizer.binarySize', vscode.l10n.t("Image Binary Size"), vscode.StatusBarAlignment.Right, 100);
 	}
 
 	public show(owner: unknown, size: number | undefined) {
