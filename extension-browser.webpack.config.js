@@ -7,11 +7,33 @@
 
 'use strict';
 
-const withBrowserDefaults = require('../shared.webpack.config').browser;
+const path = require('path');
 
-module.exports = withBrowserDefaults({
-	context: __dirname,
-	entry: {
-		extension: './src/extension.ts'
+module.exports = {
+	target: 'webworker',
+	entry: './src/extension.ts',
+	output: {
+		filename: 'extension.js',
+		path: path.resolve(__dirname, 'dist/browser'),
+		libraryTarget: 'commonjs'
 	},
-});
+	resolve: {
+		extensions: ['.ts', '.js']
+	},
+	module: {
+		rules: [
+			{
+				test: /\.ts$/,
+				exclude: /node_modules/,
+				use: [
+					{
+						loader: 'ts-loader'
+					}
+				]
+			}
+		]
+	},
+	externals: {
+		vscode: 'commonjs vscode'
+	}
+};
