@@ -77,33 +77,49 @@
 	// Elements
 	const container = document.body;
 	const image = document.createElement('img');
+	let canvas;
+	let imageElement; // This will be either the image or the canvas
 
 	function updateScale(newScale) {
-		if (!image || !hasLoadedImage || !image.parentElement) {
+		if (!imageElement || !hasLoadedImage || !imageElement.parentElement) {
 			return;
 		}
 
+		const isTiff = !!canvas;
+
 		if (newScale === 'fit') {
 			scale = 'fit';
-			image.classList.add('scale-to-fit');
-			image.classList.remove('pixelated');
-			// @ts-ignore Non-standard CSS property
-			image.style.zoom = 'normal';
+			imageElement.classList.add('scale-to-fit');
+			imageElement.classList.remove('pixelated');
+			if (isTiff) {
+				imageElement.style.transform = '';
+				imageElement.style.transformOrigin = '';
+			} else {
+				// @ts-ignore Non-standard CSS property
+				image.style.zoom = 'normal';
+			}
 			vscode.setState(undefined);
 		} else {
 			scale = clamp(newScale, MIN_SCALE, MAX_SCALE);
 			if (scale >= PIXELATION_THRESHOLD) {
-				image.classList.add('pixelated');
+				imageElement.classList.add('pixelated');
 			} else {
-				image.classList.remove('pixelated');
+				imageElement.classList.remove('pixelated');
 			}
 
 			const dx = (window.scrollX + container.clientWidth / 2) / container.scrollWidth;
 			const dy = (window.scrollY + container.clientHeight / 2) / container.scrollHeight;
 
-			image.classList.remove('scale-to-fit');
-			// @ts-ignore Non-standard CSS property
-			image.style.zoom = scale;
+			imageElement.classList.remove('scale-to-fit');
+			
+			if (isTiff) {
+				// Set transform origin to top-left to make scaling behavior consistent
+				imageElement.style.transformOrigin = '0 0';
+				imageElement.style.transform = `scale(${scale})`;
+			} else {
+				// @ts-ignore Non-standard CSS property
+				image.style.zoom = scale;
+			}
 
 			const newScrollX = container.scrollWidth * dx - container.clientWidth / 2;
 			const newScrollY = container.scrollHeight * dy - container.clientHeight / 2;
@@ -138,11 +154,18 @@
 	}
 
 	function firstZoom() {
-		if (!image || !hasLoadedImage) {
+		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
 
-		scale = image.clientWidth / image.naturalWidth;
+		const isTiff = !!canvas;
+		if (isTiff) {
+			const containerWidth = container.clientWidth - 20; // 20 for padding
+			const containerHeight = container.clientHeight - 20;
+			scale = Math.min(containerWidth / canvas.width, containerHeight / canvas.height);
+		} else {
+			scale = image.clientWidth / image.naturalWidth;
+		}
 		updateScale(scale);
 	}
 
@@ -175,7 +198,7 @@
 	}
 
 	window.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
-		if (!image || !hasLoadedImage) {
+		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
 		ctrlPressed = e.ctrlKey;
@@ -188,7 +211,7 @@
 	});
 
 	window.addEventListener('keyup', (/** @type {KeyboardEvent} */ e) => {
-		if (!image || !hasLoadedImage) {
+		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
 
@@ -202,7 +225,7 @@
 	});
 
 	container.addEventListener('mousedown', (/** @type {MouseEvent} */ e) => {
-		if (!image || !hasLoadedImage) {
+		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
 
@@ -217,7 +240,7 @@
 	});
 
 	container.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-		if (!image || !hasLoadedImage) {
+		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
 
@@ -247,7 +270,7 @@
 			e.preventDefault();
 		}
 
-		if (!image || !hasLoadedImage) {
+		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
 
@@ -265,7 +288,7 @@
 	}, { passive: false });
 
 	window.addEventListener('scroll', e => {
-		if (!image || !hasLoadedImage || !image.parentElement || scale === 'fit') {
+		if (!imageElement || !hasLoadedImage || !imageElement.parentElement || scale === 'fit') {
 			return;
 		}
 
@@ -274,6 +297,61 @@
 			vscode.setState({ scale: entry.scale, offsetX: window.scrollX, offsetY: window.scrollY });
 		}
 	}, { passive: true });
+
+	function handleTiff(src) {
+		fetch(src)
+			.then(response => response.arrayBuffer())
+			.then(buffer => {
+				// @ts-ignore
+				const ifds = UTIF.decode(buffer);
+				// @ts-ignore
+				UTIF.decodeImage(buffer, ifds[0]);
+				// @ts-ignore
+				const rgba = UTIF.toRGBA8(ifds[0]);
+
+				canvas = document.createElement('canvas');
+				canvas.width = ifds[0].width;
+				canvas.height = ifds[0].height;
+				canvas.classList.add('scale-to-fit');
+				
+				const ctx = canvas.getContext('2d');
+				if (!ctx) {
+					throw new Error('Could not get canvas context');
+				}
+				const imageData = new ImageData(new Uint8ClampedArray(rgba), canvas.width, canvas.height);
+				ctx.putImageData(imageData, 0, 0);
+
+				hasLoadedImage = true;
+				imageElement = canvas;
+
+				vscode.postMessage({
+					type: 'size',
+					value: `${canvas.width}x${canvas.height}`
+				});
+
+				document.body.classList.remove('loading');
+				document.body.classList.add('ready');
+				document.body.append(canvas);
+
+				updateScale(scale);
+				if (initialState.scale !== 'fit') {
+					window.scrollTo(initialState.offsetX, initialState.offsetY);
+				}
+			})
+			.catch((err) => {
+				if (hasLoadedImage) {
+					return;
+				}
+				console.error(err);
+				hasLoadedImage = true;
+				container.classList.remove('loading');
+				container.classList.add('error');
+				const errorDetails = document.querySelector('.error-details');
+				if (errorDetails) {
+					errorDetails.textContent = err ? err.toString() : 'Unknown error';
+				}
+			});
+	}
 
 	container.classList.add('image');
 
@@ -284,6 +362,7 @@
 			return;
 		}
 		hasLoadedImage = true;
+		imageElement = image;
 
 		vscode.postMessage({
 			type: 'size',
@@ -311,7 +390,15 @@
 		document.body.classList.remove('loading');
 	});
 
-	image.src = settings.src;
+	// Check if this is a TIFF file and handle accordingly
+	const src = settings.src;
+	const resourceUri = settings.resourceUri;
+
+	if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
+		handleTiff(src);
+	} else {
+		image.src = src;
+	}
 
 	document.querySelector('.open-file-link')?.addEventListener('click', (e) => {
 		e.preventDefault();
@@ -366,13 +453,23 @@
 		try {
 			await navigator.clipboard.write([new ClipboardItem({
 				'image/png': new Promise((resolve, reject) => {
-					const canvas = document.createElement('canvas');
-					canvas.width = image.naturalWidth;
-					canvas.height = image.naturalHeight;
-					canvas.getContext('2d').drawImage(image, 0, 0);
-					canvas.toBlob((blob) => {
+					const copyCanvas = document.createElement('canvas');
+					
+					if (canvas) {
+						// For TIFF images, copy from the existing canvas
+						copyCanvas.width = canvas.width;
+						copyCanvas.height = canvas.height;
+						copyCanvas.getContext('2d').drawImage(canvas, 0, 0);
+					} else {
+						// For regular images, create canvas and draw image
+						copyCanvas.width = image.naturalWidth;
+						copyCanvas.height = image.naturalHeight;
+						copyCanvas.getContext('2d').drawImage(image, 0, 0);
+					}
+					
+					copyCanvas.toBlob((blob) => {
 						resolve(blob);
-						canvas.remove();
+						copyCanvas.remove();
 					}, 'image/png');
 				})
 			})]);

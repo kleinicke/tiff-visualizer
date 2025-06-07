@@ -182,6 +182,7 @@ class ImagePreview extends MediaPreview {
 		const version = Date.now().toString();
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this._resource, version),
+			resourceUri: this._resource.toString(),
 		};
 
 		const nonce = getNonce();
@@ -207,8 +208,10 @@ class ImagePreview extends MediaPreview {
 	<div class="loading-indicator"></div>
 	<div class="image-load-error">
 		<p>${vscode.l10n.t("An error occurred while loading the image.")}</p>
+		<p class="error-details"></p>
 		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
 	</div>
+	<script src="${escapeAttribute(this.extensionResource('media', 'UTIF.min.js'))}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
 </body>
 </html>`;
