@@ -42,6 +42,24 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "%videoPreviewerLoop%"
+        },
+        "mediaPreview.tiff.decoder": {
+          "type": "string",
+          "enum": [
+            "geotiff",
+            "utif"
+          ],
+          "default": "utif",
+          "markdownDescription": "The decoder to use for TIFF images."
+        },
+        "mediaPreview.tiff.normalization": {
+          "type": "string",
+          "enum": [
+            "clamp",
+            "minmax"
+          ],
+          "default": "clamp",
+          "markdownDescription": "How to normalize floating-point TIFF images when using the 'geotiff' decoder. 'Clamp' normalizes to the [0, 1] range. 'Min/Max' normalizes to the full range of the image data."
         }
       }
     },

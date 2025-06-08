@@ -196,6 +196,8 @@ class ImagePreview extends MediaPreview {
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this._resource, version),
 			resourceUri: this._resource.toString(),
+			decoder: vscode.workspace.getConfiguration('mediaPreview.tiff').get<string>('decoder') || 'geotiff',
+			normalization: vscode.workspace.getConfiguration('mediaPreview.tiff').get<string>('normalization') || 'clamp',
 		};
 
 		const nonce = getNonce();
@@ -224,6 +226,7 @@ class ImagePreview extends MediaPreview {
 		<p class="error-details"></p>
 		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
 	</div>
+	<script src="${escapeAttribute(this.extensionResource('media', 'geotiff.min.js'))}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(this.extensionResource('media', 'UTIF.min.js'))}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
 </body>

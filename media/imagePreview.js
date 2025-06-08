@@ -354,6 +354,131 @@
 	}, { passive: true });
 
 	function handleTiff(src) {
+		if (settings.decoder === 'geotiff') {
+			handleTiffWithGeoTiff(src);
+		} else {
+			handleTiffWithUtif(src);
+		}
+	}
+
+	async function handleTiffWithGeoTiff(src) {
+		try {
+			const response = await fetch(src);
+			const buffer = await response.arrayBuffer();
+			// @ts-ignore
+			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+			const image = await tiff.getImage();
+			const width = image.getWidth();
+			const height = image.getHeight();
+			const rasters = await image.readRasters();
+			const samplesPerPixel = image.getSamplesPerPixel();
+			const sampleFormat = image.getSampleFormat();
+
+			// Handle floating point data by normalizing it
+			if (sampleFormat === 3) {
+				if (settings.normalization === 'minmax') {
+					let min = Infinity;
+					let max = -Infinity;
+
+					for (let i = 0; i < rasters.length; i++) {
+						for (let j = 0; j < rasters[i].length; j++) {
+							if (!isNaN(rasters[i][j])) {
+								min = Math.min(min, rasters[i][j]);
+								max = Math.max(max, rasters[i][j]);
+							}
+						}
+					}
+
+					const range = max - min;
+					for (let i = 0; i < rasters.length; i++) {
+						for (let j = 0; j < rasters[i].length; j++) {
+							if (range > 0) {
+								rasters[i][j] = (rasters[i][j] - min) / range * 255;
+							} else {
+								rasters[i][j] = 0; // Flat color, show as black
+							}
+						}
+					}
+				} else { // 'clamp' is the default
+					for (let i = 0; i < rasters.length; i++) {
+						for (let j = 0; j < rasters[i].length; j++) {
+							// clamp to [0, 1] then scale to [0, 255]
+							const clampedValue = Math.max(0, Math.min(1, rasters[i][j]));
+							rasters[i][j] = clampedValue * 255;
+						}
+					}
+				}
+			}
+			
+			let imageDataArray;
+			if (samplesPerPixel === 1) {
+				const gray = rasters[0];
+				imageDataArray = new Uint8ClampedArray(width * height * 4);
+				for (let i = 0; i < gray.length; i++) {
+					imageDataArray[i * 4] = gray[i];
+					imageDataArray[i * 4 + 1] = gray[i];
+					imageDataArray[i * 4 + 2] = gray[i];
+					imageDataArray[i * 4 + 3] = 255;
+				}
+			} else if (samplesPerPixel >= 3) {
+				const [r, g, b] = rasters;
+				const a = (samplesPerPixel === 4) ? rasters[3] : null;
+				imageDataArray = new Uint8ClampedArray(width * height * 4);
+				for (let i = 0; i < r.length; i++) {
+					imageDataArray[i * 4] = r[i];
+					imageDataArray[i * 4 + 1] = g[i];
+					imageDataArray[i * 4 + 2] = b[i];
+					imageDataArray[i * 4 + 3] = a ? a[i] : 255;
+				}
+			} else {
+				throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
+			}
+
+			canvas = document.createElement('canvas');
+			canvas.width = width;
+			canvas.height = height;
+			canvas.classList.add('scale-to-fit');
+
+			const ctx = canvas.getContext('2d');
+			if (!ctx) {
+				throw new Error('Could not get canvas context');
+			}
+			const imageData = new ImageData(imageDataArray, width, height);
+			ctx.putImageData(imageData, 0, 0);
+
+			hasLoadedImage = true;
+			imageElement = canvas;
+
+			vscode.postMessage({
+				type: 'size',
+				value: `${width}x${height}`
+			});
+
+			document.body.classList.remove('loading');
+			document.body.classList.add('ready');
+			document.body.append(canvas);
+
+			updateScale(scale);
+			if (initialState.scale !== 'fit') {
+				window.scrollTo(initialState.offsetX, initialState.offsetY);
+			}
+			addMouseListeners(imageElement);
+		} catch (err) {
+			if (hasLoadedImage) {
+				return;
+			}
+			console.error(err);
+			hasLoadedImage = true;
+			container.classList.remove('loading');
+			container.classList.add('error');
+			const errorDetails = document.querySelector('.error-details');
+			if (errorDetails) {
+				errorDetails.textContent = err ? err.toString() : 'Unknown error';
+			}
+		}
+	}
+
+	function handleTiffWithUtif(src) {
 		fetch(src)
 			.then(response => response.arrayBuffer())
 			.then(buffer => {
