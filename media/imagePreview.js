@@ -89,7 +89,7 @@
 
 	function addMouseListeners(element) {
 		element.addEventListener('mouseenter', (/** @type {MouseEvent} */ e) => {
-			if (scale === 'fit' || !imageElement) {
+			if (!imageElement) {
 				return;
 			}
 			const rect = imageElement.getBoundingClientRect();
@@ -106,7 +106,7 @@
 		});
 
 		element.addEventListener('mousemove', (/** @type {MouseEvent} */ e) => {
-			if (scale === 'fit' || !imageElement) {
+			if (!imageElement) {
 				return;
 			}
 			const rect = imageElement.getBoundingClientRect();
