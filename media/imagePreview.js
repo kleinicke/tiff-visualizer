@@ -34,7 +34,7 @@
 	const PIXELATION_THRESHOLD = 3;
 
 	const SCALE_PINCH_FACTOR = 0.075;
-	const MAX_SCALE = 20;
+	const MAX_SCALE = 100;
 	const MIN_SCALE = 0.1;
 
 	const zoomLevels = [
@@ -55,7 +55,11 @@
 		7,
 		10,
 		15,
-		20
+		20,
+		30,
+		50,
+		70,
+		100
 	];
 
 	const settings = getSettings();
