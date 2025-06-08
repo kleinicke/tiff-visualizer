@@ -49,17 +49,18 @@
             "geotiff",
             "utif"
           ],
-          "default": "utif",
+          "default": "geotiff",
           "markdownDescription": "The decoder to use for TIFF images."
         },
-        "mediaPreview.tiff.normalization": {
-          "type": "string",
-          "enum": [
-            "clamp",
-            "minmax"
-          ],
-          "default": "clamp",
-          "markdownDescription": "How to normalize floating-point TIFF images when using the 'geotiff' decoder. 'Clamp' normalizes to the [0, 1] range. 'Min/Max' normalizes to the full range of the image data."
+        "mediaPreview.tiff.normalization.min": {
+          "type": "number",
+          "default": 0.0,
+          "markdownDescription": "The normalization minimum for floating-point TIFFs. Applied when using the 'geotiff' decoder."
+        },
+        "mediaPreview.tiff.normalization.max": {
+          "type": "number",
+          "default": 1.0,
+          "markdownDescription": "The normalization maximum for floating-point TIFFs. Applied when using the 'geotiff' decoder."
         }
       }
     },
@@ -122,6 +123,11 @@
         "title": "%command.reopenAsText%",
         "category": "Image Preview",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "imagePreview.setNormalizationRange",
+        "title": "Image Preview: Set Normalization Range",
+        "category": "Image Preview"
       }
     ],
     "menus": {

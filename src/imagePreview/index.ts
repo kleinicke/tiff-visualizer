@@ -10,7 +10,7 @@ import { escapeAttribute, getNonce } from '../util/dom';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { PixelPositionStatusBarEntry } from './pixelPositionStatusBarEntry';
 import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
-
+import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider {
 
@@ -25,6 +25,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		private readonly binarySizeStatusBarEntry: BinarySizeStatusBarEntry,
 		private readonly zoomStatusBarEntry: ZoomStatusBarEntry,
 		private readonly pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
+		private readonly normalizationStatusBarEntry: NormalizationStatusBarEntry,
 	) { }
 
 	public async openCustomDocument(uri: vscode.Uri) {
@@ -35,7 +36,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
 	): Promise<void> {
-		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry);
+		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry, this.normalizationStatusBarEntry);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
@@ -75,68 +76,127 @@ class ImagePreview extends MediaPreview {
 
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
+	private _isTiff: boolean = false;
+	private _isFloat: boolean = false;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
+
+	private readonly _sizeStatusBarEntry: SizeStatusBarEntry;
+	private readonly _zoomStatusBarEntry: ZoomStatusBarEntry;
+	private readonly _pixelPositionStatusBarEntry: PixelPositionStatusBarEntry;
+	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
 
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
 		resource: vscode.Uri,
 		webviewEditor: vscode.WebviewPanel,
-		private readonly sizeStatusBarEntry: SizeStatusBarEntry,
+		sizeStatusBarEntry: SizeStatusBarEntry,
 		binarySizeStatusBarEntry: BinarySizeStatusBarEntry,
-		private readonly zoomStatusBarEntry: ZoomStatusBarEntry,
-		private readonly pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
+		zoomStatusBarEntry: ZoomStatusBarEntry,
+		pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
+		normalizationStatusBarEntry: NormalizationStatusBarEntry,
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
 
+		this._sizeStatusBarEntry = sizeStatusBarEntry;
+		this._zoomStatusBarEntry = zoomStatusBarEntry;
+		this._pixelPositionStatusBarEntry = pixelPositionStatusBarEntry;
+		this._normalizationStatusBarEntry = normalizationStatusBarEntry;
+
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
 			switch (message.type) {
-				case 'size': {
-					this._imageSize = message.value;
-					this.updateState();
-					break;
-				}
-				case 'zoom': {
-					this._imageZoom = message.value;
-					this.updateState();
-					break;
-				}
+				case 'size':
+					{
+						this._imageSize = message.value;
+						this.updateStatusBar();
+						return;
+					}
+				case 'zoom':
+					{
+						this._imageZoom = message.value;
+						this.updateStatusBar();
+						return;
+					}
+				case 'pixelFocus':
+					{
+						if (this.previewState === PreviewState.Active) {
+							this._sizeStatusBarEntry.hide(this);
+							this._pixelPositionStatusBarEntry.show(this, message.value);
+						}
+						return;
+					}
+				case 'pixelBlur':
+					{
+						if (this.previewState === PreviewState.Active) {
+							this._pixelPositionStatusBarEntry.hide(this);
+							this._sizeStatusBarEntry.show(this, this._imageSize || '');
+						}
+						return;
+					}
+				case 'isFloat':
+					{
+						this._isFloat = message.value;
+						this.updateStatusBar();
+						return;
+					}
+				case 'stats':
+					{
+						if (this._isTiff) {
+							this._normalizationStatusBarEntry.updateImageStats(message.value.min, message.value.max);
+						}
+						return;
+					}
+				case 'ready':
+					{
+						if (this.previewState === PreviewState.Disposed) {
+							return;
+						}
+						this._webviewEditor.webview.postMessage({
+							type: 'update',
+							body: {
+								isTiff: this._isTiff
+							}
+						});
+						return;
+					}
 				case 'reopen-as-text': {
-					reopenAsText(resource, webviewEditor.viewColumn);
+					reopenAsText(resource, this._webviewEditor.viewColumn);
 					break;
 				}
 			}
 		}));
 
-		this._register(zoomStatusBarEntry.onDidChangeScale(e => {
+		this._register(this._zoomStatusBarEntry.onDidChangeScale(e => {
 			if (this.previewState === PreviewState.Active) {
 				this._webviewEditor.webview.postMessage({ type: 'setScale', scale: e.scale });
 			}
 		}));
 
 		this._register(webviewEditor.onDidChangeViewState(() => {
-			this._webviewEditor.webview.postMessage({ type: 'setActive', value: this._webviewEditor.active });
+			this.updateStatusBar();
 		}));
 
 		this._register(webviewEditor.onDidDispose(() => {
 			if (this.previewState === PreviewState.Active) {
-				this.sizeStatusBarEntry.hide(this);
-				this.zoomStatusBarEntry.hide(this);
-				this.pixelPositionStatusBarEntry.hide(this);
+				this._sizeStatusBarEntry.hide(this);
+				this._zoomStatusBarEntry.hide(this);
+				this._pixelPositionStatusBarEntry.hide(this);
+				this._normalizationStatusBarEntry.hide();
 			}
 			this.previewState = PreviewState.Disposed;
 		}));
 
 		this.updateBinarySize();
 		this.render();
-		this.updateState();
+		this.updateStatusBar();
 	}
 
 	public override dispose(): void {
 		super.dispose();
-		this.sizeStatusBarEntry.hide(this);
-		this.zoomStatusBarEntry.hide(this);
-		this.pixelPositionStatusBarEntry.hide(this);
+		this._sizeStatusBarEntry.hide(this);
+		this._zoomStatusBarEntry.hide(this);
+		this._pixelPositionStatusBarEntry.hide(this);
+		this._normalizationStatusBarEntry.hide();
 	}
 
 	public get viewColumn() {
@@ -162,37 +222,30 @@ class ImagePreview extends MediaPreview {
 		}
 	}
 
-	protected override updateState() {
-		super.updateState();
-
-		if (this.previewState === PreviewState.Disposed) {
-			return;
-		}
-
-		if (this._webviewEditor.active) {
-			this.sizeStatusBarEntry.show(this, this._imageSize || '');
-			this.zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
-			this.pixelPositionStatusBarEntry.hide(this);
-		} else {
-			this.sizeStatusBarEntry.hide(this);
-			this.zoomStatusBarEntry.hide(this);
-			this.pixelPositionStatusBarEntry.hide(this);
+	public resetZoom() {
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.webview.postMessage({ type: 'resetZoom' });
 		}
 	}
 
-	protected override async render(): Promise<void> {
-		await super.render();
-		this._webviewEditor.webview.postMessage({ type: 'setActive', value: this._webviewEditor.active });
+	public updatePreview() {
+		this.render();
 	}
 
 	protected override async getWebviewContents(): Promise<string> {
 		const version = Date.now().toString();
 		const settings = {
-			src: await this.getResourcePath(this._webviewEditor, this._resource, version),
-			resourceUri: this._resource.toString(),
+			src: await this.getResourcePath(this._webviewEditor, this.resource, version),
+			resourceUri: this.resource.toString(),
 			decoder: vscode.workspace.getConfiguration('mediaPreview.tiff').get<string>('decoder') || 'geotiff',
-			normalization: vscode.workspace.getConfiguration('mediaPreview.tiff').get<string>('normalization') || 'clamp',
+			normalization: {
+				min: vscode.workspace.getConfiguration('mediaPreview.tiff').get('normalization.min'),
+				max: vscode.workspace.getConfiguration('mediaPreview.tiff').get('normalization.max'),
+			}
 		};
+
+		const isTiff = this.resource.path.toLowerCase().endsWith('.tiff') || this.resource.path.toLowerCase().endsWith('.tif');
+		this._isTiff = isTiff;
 
 		const nonce = getNonce();
 
@@ -221,10 +274,37 @@ class ImagePreview extends MediaPreview {
 		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
 	</div>
 	<script src="${escapeAttribute(this.extensionResource('media', 'geotiff.min.js'))}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(this.extensionResource('media', 'UTIF.min.js'))}" nonce="${nonce}"></script>
+	<script src="${escapeAttribute(this.extensionResource('media', 'UTIF.js'))}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
 </body>
 </html>`;
+	}
+
+	private updateStatusBar() {
+		if (this.previewState !== PreviewState.Active) {
+			return;
+		}
+
+		if (this._webviewEditor.active) {
+			this._sizeStatusBarEntry.show(this, this._imageSize || '');
+			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
+			this._pixelPositionStatusBarEntry.hide(this);
+			if (this._isTiff && this._isFloat) {
+				this._normalizationStatusBarEntry.show();
+			} else {
+				this._normalizationStatusBarEntry.hide();
+			}
+		} else {
+			this._sizeStatusBarEntry.hide(this);
+			this._zoomStatusBarEntry.hide(this);
+			this._pixelPositionStatusBarEntry.hide(this);
+			this._normalizationStatusBarEntry.hide();
+		}
+	}
+
+	protected override async render(): Promise<void> {
+		await super.render();
+		this._webviewEditor.webview.postMessage({ type: 'setActive', value: this._webviewEditor.active });
 	}
 
 	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri, version: string): Promise<string> {
@@ -265,7 +345,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const pixelPositionStatusBarEntry = new PixelPositionStatusBarEntry();
 	disposables.push(pixelPositionStatusBarEntry);
 
-	const previewManager = new ImagePreviewManager(context.extensionUri, sizeStatusBarEntry, binarySizeStatusBarEntry, zoomStatusBarEntry, pixelPositionStatusBarEntry);
+	const normalizationStatusBarEntry = new NormalizationStatusBarEntry();
+	disposables.push(normalizationStatusBarEntry);
+
+	const previewManager = new ImagePreviewManager(context.extensionUri, sizeStatusBarEntry, binarySizeStatusBarEntry, zoomStatusBarEntry, pixelPositionStatusBarEntry, normalizationStatusBarEntry);
 
 	disposables.push(vscode.window.registerCustomEditorProvider(ImagePreviewManager.viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
@@ -283,6 +366,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		previewManager.activePreview?.copyImage();
 	}));
 
+	disposables.push(vscode.commands.registerCommand('imagePreview.resetZoom', () => {
+		previewManager.activePreview?.resetZoom();
+	}));
+
 	disposables.push(vscode.commands.registerCommand('imagePreview.reopenAsText', async () => {
 		return previewManager.activePreview?.reopenAsText();
 	}));
@@ -290,6 +377,44 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	disposables.push(vscode.commands.registerCommand('imagePreview.reopenAsPreview', async () => {
 
 		await vscode.commands.executeCommand('reopenActiveEditorWith', ImagePreviewManager.viewType);
+	}));
+
+	disposables.push(vscode.commands.registerCommand('imagePreview.setNormalizationRange', async () => {
+		const config = vscode.workspace.getConfiguration('mediaPreview.tiff');
+
+		const min = await vscode.window.showInputBox({
+			prompt: 'Enter the minimum normalization value.',
+			value: config.get('normalization.min', 0.0).toString(),
+			validateInput: text => {
+				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+			}
+		});
+
+		if (min === undefined) {
+			return;
+		}
+
+		const max = await vscode.window.showInputBox({
+			prompt: 'Enter the maximum normalization value.',
+			value: config.get('normalization.max', 1.0).toString(),
+			validateInput: text => {
+				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+			}
+		});
+
+		if (max === undefined) {
+			return;
+		}
+
+		if (parseFloat(min) >= parseFloat(max)) {
+			vscode.window.showErrorMessage('Min value must be smaller than max value.');
+			return;
+		}
+
+		await config.update('normalization.min', parseFloat(min), vscode.ConfigurationTarget.Global);
+		await config.update('normalization.max', parseFloat(max), vscode.ConfigurationTarget.Global);
+
+		previewManager.activePreview?.updatePreview();
 	}));
 
 	return vscode.Disposable.from(...disposables);

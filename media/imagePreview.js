@@ -100,7 +100,7 @@
 			const color = getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
 			vscode.postMessage({
-				type: 'size',
+				type: 'pixelFocus',
 				value: `${x}x${y} ${color}`
 			});
 		});
@@ -117,15 +117,14 @@
 			const color = getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
 			vscode.postMessage({
-				type: 'size',
+				type: 'pixelFocus',
 				value: `${x}x${y} ${color}`
 			});
 		});
 
 		element.addEventListener('mouseleave', (/** @type {MouseEvent} */ e) => {
 			vscode.postMessage({
-				type: 'size',
-				value: `${imageElement.width}x${imageElement.height}`
+				type: 'pixelBlur'
 			});
 		});
 	}
@@ -157,7 +156,11 @@
 						values.push(format === 3 ? value.toPrecision(3) : value.toString().padStart(3, '0'));
 					}
 				}
-				color = values.slice(0, 3).join(' ');
+				if (format === 3) {
+					color = values.join(' ');
+				} else {
+					color = values.slice(0, 3).join(' ');
+				}
 			}
 		} else if (imageElement) { // Standard image on a canvas
 			const ctx = imageElement.getContext('2d');
@@ -286,6 +289,10 @@
 		updateScale(zoomLevels[i] || MIN_SCALE);
 	}
 
+	function resetZoom() {
+		updateScale('fit');
+	}
+
 	window.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
 		if (!imageElement || !hasLoadedImage) {
 			return;
@@ -404,6 +411,9 @@
 			const image = await tiff.getImage();
 			const width = image.getWidth();
 			const height = image.getHeight();
+			const sampleFormat = image.getSampleFormat();
+
+			vscode.postMessage({ type: 'isFloat', value: sampleFormat === 3 });
 
 			canvas = document.createElement('canvas');
 			canvas.width = width;
@@ -417,7 +427,9 @@
 			
 			const rasters = await image.readRasters();
 			const samplesPerPixel = image.getSamplesPerPixel();
-			const sampleFormat = image.getSampleFormat();
+
+			let min = Infinity;
+			let max = -Infinity;
 
 			const data = new (sampleFormat === 3 ? Float32Array : Uint8Array)(width * height * samplesPerPixel);
 			if (samplesPerPixel === 1) {
@@ -431,8 +443,14 @@
 			}
 
 			rawTiffData = {
-				data: data,
-				ifd: { t277: samplesPerPixel, t339: sampleFormat }
+				data,
+				ifd: {
+					width,
+					height,
+					t339: sampleFormat,
+					t277: samplesPerPixel,
+					t284: 1, // chunky
+				}
 			};
 
 			// Handle floating point data by normalizing it
@@ -442,36 +460,34 @@
 					displayRasters.push(new Float32Array(raster));
 				}
 
-				if (settings.normalization === 'minmax') {
-					let min = Infinity;
-					let max = -Infinity;
-
-					for (let i = 0; i < displayRasters.length; i++) {
-						for (let j = 0; j < displayRasters[i].length; j++) {
-							if (!isNaN(displayRasters[i][j])) {
-								min = Math.min(min, displayRasters[i][j]);
-								max = Math.max(max, displayRasters[i][j]);
-							}
+				// Use the first 3 channels to determine the image stats
+				for (let i = 0; i < Math.min(rasters.length, 3); i++) {
+					for (let j = 0; j < rasters[i].length; j++) {
+						if (!isNaN(rasters[i][j])) {
+							min = Math.min(min, rasters[i][j]);
+							max = Math.max(max, rasters[i][j]);
 						}
 					}
+				}
+				vscode.postMessage({ type: 'stats', value: { min, max } });
 
-					const range = max - min;
-					for (let i = 0; i < displayRasters.length; i++) {
-						for (let j = 0; j < displayRasters[i].length; j++) {
-							if (range > 0) {
-								displayRasters[i][j] = (displayRasters[i][j] - min) / range * 255;
-							} else {
-								displayRasters[i][j] = 0; // Flat color, show as black
-							}
+				const normMin = settings.normalization.min;
+				const normMax = settings.normalization.max;
+				const range = normMax - normMin;
+
+				for (let i = 0; i < displayRasters.length; i++) {
+					for (let j = 0; j < displayRasters[i].length; j++) {
+						let value = displayRasters[i][j];
+						if (range > 0) {
+							// Normalize to [0, 1] based on custom range
+							value = (value - normMin) / range;
+						} else {
+							// If range is 0, set to 0
+							value = 0;
 						}
-					}
-				} else { // 'clamp' is the default
-					for (let i = 0; i < displayRasters.length; i++) {
-						for (let j = 0; j < displayRasters[i].length; j++) {
-							// clamp to [0, 1] then scale to [0, 255]
-							const clampedValue = Math.max(0, Math.min(1, displayRasters[i][j]));
-							displayRasters[i][j] = clampedValue * 255;
-						}
+						// Clamp to [0, 1] and scale to [0, 255]
+						const clampedValue = Math.max(0, Math.min(1, value));
+						displayRasters[i][j] = clampedValue * 255;
 					}
 				}
 				
@@ -567,6 +583,10 @@
 			.then(buffer => {
 				// @ts-ignore
 				const ifds = UTIF.decode(buffer);
+
+				const sampleFormat = ifds[0].t339; // SampleFormat tag
+				vscode.postMessage({ type: 'isFloat', value: sampleFormat === 3 });
+
 				// @ts-ignore
 				UTIF.decodeImage(buffer, ifds[0]);
 				rawTiffData = { data: ifds[0].data, ifd: ifds[0] };
@@ -717,6 +737,10 @@
 			}
 			case 'zoomOut': {
 				zoomOut();
+				break;
+			}
+			case 'resetZoom': {
+				resetZoom();
 				break;
 			}
 			case 'copyImage': {
