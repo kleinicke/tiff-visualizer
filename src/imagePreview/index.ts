@@ -8,6 +8,7 @@ import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { MediaPreview, PreviewState, reopenAsText } from '../mediaPreview';
 import { escapeAttribute, getNonce } from '../util/dom';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
+import { PixelPositionStatusBarEntry } from './pixelPositionStatusBarEntry';
 import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 
 
@@ -23,6 +24,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		private readonly sizeStatusBarEntry: SizeStatusBarEntry,
 		private readonly binarySizeStatusBarEntry: BinarySizeStatusBarEntry,
 		private readonly zoomStatusBarEntry: ZoomStatusBarEntry,
+		private readonly pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
 	) { }
 
 	public async openCustomDocument(uri: vscode.Uri) {
@@ -33,7 +35,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
 	): Promise<void> {
-		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry);
+		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
@@ -73,6 +75,7 @@ class ImagePreview extends MediaPreview {
 
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
+	private _imagePosition: string | undefined;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -83,6 +86,7 @@ class ImagePreview extends MediaPreview {
 		private readonly sizeStatusBarEntry: SizeStatusBarEntry,
 		binarySizeStatusBarEntry: BinarySizeStatusBarEntry,
 		private readonly zoomStatusBarEntry: ZoomStatusBarEntry,
+		private readonly pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
 
@@ -95,6 +99,11 @@ class ImagePreview extends MediaPreview {
 				}
 				case 'zoom': {
 					this._imageZoom = message.value;
+					this.updateState();
+					break;
+				}
+				case 'position': {
+					this._imagePosition = message.value;
 					this.updateState();
 					break;
 				}
@@ -119,6 +128,7 @@ class ImagePreview extends MediaPreview {
 			if (this.previewState === PreviewState.Active) {
 				this.sizeStatusBarEntry.hide(this);
 				this.zoomStatusBarEntry.hide(this);
+				this.pixelPositionStatusBarEntry.hide(this);
 			}
 			this.previewState = PreviewState.Disposed;
 		}));
@@ -132,6 +142,7 @@ class ImagePreview extends MediaPreview {
 		super.dispose();
 		this.sizeStatusBarEntry.hide(this);
 		this.zoomStatusBarEntry.hide(this);
+		this.pixelPositionStatusBarEntry.hide(this);
 	}
 
 	public get viewColumn() {
@@ -167,9 +178,11 @@ class ImagePreview extends MediaPreview {
 		if (this._webviewEditor.active) {
 			this.sizeStatusBarEntry.show(this, this._imageSize || '');
 			this.zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
+			this.pixelPositionStatusBarEntry.show(this, this._imagePosition || '');
 		} else {
 			this.sizeStatusBarEntry.hide(this);
 			this.zoomStatusBarEntry.hide(this);
+			this.pixelPositionStatusBarEntry.hide(this);
 		}
 	}
 
@@ -252,7 +265,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const zoomStatusBarEntry = new ZoomStatusBarEntry();
 	disposables.push(zoomStatusBarEntry);
 
-	const previewManager = new ImagePreviewManager(context.extensionUri, sizeStatusBarEntry, binarySizeStatusBarEntry, zoomStatusBarEntry);
+	const pixelPositionStatusBarEntry = new PixelPositionStatusBarEntry();
+	disposables.push(pixelPositionStatusBarEntry);
+
+	const previewManager = new ImagePreviewManager(context.extensionUri, sizeStatusBarEntry, binarySizeStatusBarEntry, zoomStatusBarEntry, pixelPositionStatusBarEntry);
 
 	disposables.push(vscode.window.registerCustomEditorProvider(ImagePreviewManager.viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,

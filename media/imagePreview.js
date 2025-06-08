@@ -80,6 +80,57 @@
 	let canvas;
 	let imageElement; // This will be either the image or the canvas
 
+	function addMouseListeners(element) {
+		element.addEventListener('mouseenter', (/** @type {MouseEvent} */ e) => {
+			if (scale === 'fit' || !imageElement) {
+				return;
+			}
+			const rect = imageElement.getBoundingClientRect();
+			let naturalWidth, naturalHeight;
+			if (imageElement.tagName === 'CANVAS') {
+				naturalWidth = imageElement.width;
+				naturalHeight = imageElement.height;
+			} else { // IMG
+				naturalWidth = imageElement.naturalWidth;
+				naturalHeight = imageElement.naturalHeight;
+			}
+			const x = Math.round((e.clientX - rect.left) / rect.width * naturalWidth);
+			const y = Math.round((e.clientY - rect.top) / rect.height * naturalHeight);
+			vscode.postMessage({
+				type: 'position',
+				value: `${x}x${y}`
+			});
+		});
+	
+		element.addEventListener('mousemove', (/** @type {MouseEvent} */ e) => {
+			if (scale === 'fit' || !imageElement) {
+				return;
+			}
+			const rect = imageElement.getBoundingClientRect();
+			let naturalWidth, naturalHeight;
+			if (imageElement.tagName === 'CANVAS') {
+				naturalWidth = imageElement.width;
+				naturalHeight = imageElement.height;
+			} else { // IMG
+				naturalWidth = imageElement.naturalWidth;
+				naturalHeight = imageElement.naturalHeight;
+			}
+			const x = Math.round((e.clientX - rect.left) / rect.width * naturalWidth);
+			const y = Math.round((e.clientY - rect.top) / rect.height * naturalHeight);
+			vscode.postMessage({
+				type: 'position',
+				value: `${x}x${y}`
+			});
+		});
+	
+		element.addEventListener('mouseleave', (/** @type {MouseEvent} */ e) => {
+			vscode.postMessage({
+				type: 'position',
+				value: ''
+			});
+		});
+	}
+
 	function updateScale(newScale) {
 		if (!imageElement || !hasLoadedImage || !imageElement.parentElement) {
 			return;
@@ -337,6 +388,7 @@
 				if (initialState.scale !== 'fit') {
 					window.scrollTo(initialState.offsetX, initialState.offsetY);
 				}
+				addMouseListeners(imageElement);
 			})
 			.catch((err) => {
 				if (hasLoadedImage) {
@@ -378,6 +430,7 @@
 		if (initialState.scale !== 'fit') {
 			window.scrollTo(initialState.offsetX, initialState.offsetY);
 		}
+		addMouseListeners(imageElement);
 	});
 
 	image.addEventListener('error', e => {
@@ -455,20 +508,29 @@
 				'image/png': new Promise((resolve, reject) => {
 					const copyCanvas = document.createElement('canvas');
 					
+					const ctx = copyCanvas.getContext('2d');
+					if (!ctx) {
+						return reject(new Error('Could not get canvas context'));
+					}
+
 					if (canvas) {
 						// For TIFF images, copy from the existing canvas
 						copyCanvas.width = canvas.width;
 						copyCanvas.height = canvas.height;
-						copyCanvas.getContext('2d').drawImage(canvas, 0, 0);
+						ctx.drawImage(canvas, 0, 0);
 					} else {
 						// For regular images, create canvas and draw image
 						copyCanvas.width = image.naturalWidth;
 						copyCanvas.height = image.naturalHeight;
-						copyCanvas.getContext('2d').drawImage(image, 0, 0);
+						ctx.drawImage(image, 0, 0);
 					}
 					
 					copyCanvas.toBlob((blob) => {
-						resolve(blob);
+						if (blob) {
+							resolve(blob);
+						} else {
+							reject(new Error('Could not create blob'));
+						}
 						copyCanvas.remove();
 					}, 'image/png');
 				})
