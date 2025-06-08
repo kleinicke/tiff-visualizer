@@ -75,7 +75,6 @@ class ImagePreview extends MediaPreview {
 
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
-	private _imagePosition: string | undefined;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -99,11 +98,6 @@ class ImagePreview extends MediaPreview {
 				}
 				case 'zoom': {
 					this._imageZoom = message.value;
-					this.updateState();
-					break;
-				}
-				case 'position': {
-					this._imagePosition = message.value;
 					this.updateState();
 					break;
 				}
@@ -178,7 +172,7 @@ class ImagePreview extends MediaPreview {
 		if (this._webviewEditor.active) {
 			this.sizeStatusBarEntry.show(this, this._imageSize || '');
 			this.zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
-			this.pixelPositionStatusBarEntry.show(this, this._imagePosition || '');
+			this.pixelPositionStatusBarEntry.hide(this);
 		} else {
 			this.sizeStatusBarEntry.hide(this);
 			this.zoomStatusBarEntry.hide(this);

@@ -77,12 +77,15 @@
 	let hasLoadedImage = false;
 	let consumeClick = true;
 	let isActive = false;
+	let rawTiffData;
+	let offscreenCanvas;
+	let offscreenCtx;
 
 	// Elements
 	const container = document.body;
 	const image = document.createElement('img');
 	let canvas;
-	let imageElement; // This will be either the image or the canvas
+	let imageElement; // This will always be the canvas
 
 	function addMouseListeners(element) {
 		element.addEventListener('mouseenter', (/** @type {MouseEvent} */ e) => {
@@ -90,49 +93,80 @@
 				return;
 			}
 			const rect = imageElement.getBoundingClientRect();
-			let naturalWidth, naturalHeight;
-			if (imageElement.tagName === 'CANVAS') {
-				naturalWidth = imageElement.width;
-				naturalHeight = imageElement.height;
-			} else { // IMG
-				naturalWidth = imageElement.naturalWidth;
-				naturalHeight = imageElement.naturalHeight;
-			}
+			const naturalWidth = imageElement.width;
+			const naturalHeight = imageElement.height;
 			const x = Math.round((e.clientX - rect.left) / rect.width * naturalWidth);
 			const y = Math.round((e.clientY - rect.top) / rect.height * naturalHeight);
+			const color = getColorAtPixel(x, y, naturalWidth, naturalHeight);
+
 			vscode.postMessage({
-				type: 'position',
-				value: `${x}x${y}`
+				type: 'size',
+				value: `${x}x${y} ${color}`
 			});
 		});
-	
+
 		element.addEventListener('mousemove', (/** @type {MouseEvent} */ e) => {
 			if (scale === 'fit' || !imageElement) {
 				return;
 			}
 			const rect = imageElement.getBoundingClientRect();
-			let naturalWidth, naturalHeight;
-			if (imageElement.tagName === 'CANVAS') {
-				naturalWidth = imageElement.width;
-				naturalHeight = imageElement.height;
-			} else { // IMG
-				naturalWidth = imageElement.naturalWidth;
-				naturalHeight = imageElement.naturalHeight;
-			}
+			const naturalWidth = imageElement.width;
+			const naturalHeight = imageElement.height;
 			const x = Math.round((e.clientX - rect.left) / rect.width * naturalWidth);
 			const y = Math.round((e.clientY - rect.top) / rect.height * naturalHeight);
+			const color = getColorAtPixel(x, y, naturalWidth, naturalHeight);
+
 			vscode.postMessage({
-				type: 'position',
-				value: `${x}x${y}`
+				type: 'size',
+				value: `${x}x${y} ${color}`
 			});
 		});
-	
+
 		element.addEventListener('mouseleave', (/** @type {MouseEvent} */ e) => {
 			vscode.postMessage({
-				type: 'position',
-				value: ''
+				type: 'size',
+				value: `${imageElement.width}x${imageElement.height}`
 			});
 		});
+	}
+
+	function getColorAtPixel(x, y, naturalWidth, naturalHeight) {
+		let color = '';
+		if (rawTiffData) { // This is a TIFF
+			const ifd = rawTiffData.ifd;
+			const data = rawTiffData.data;
+			const pixelIndex = y * naturalWidth + x;
+			const format = ifd.t339; // SampleFormat
+			const samples = ifd.t277;
+			const planarConfig = ifd.t284;
+
+			if (samples === 1) { // Grayscale
+				const value = data[pixelIndex];
+				color = format === 3 ? value.toPrecision(3) : value.toString();
+			} else if (samples >= 3) {
+				const values = [];
+				if (planarConfig === 2) { // Planar data
+					const planeSize = naturalWidth * naturalHeight;
+					for (let i = 0; i < samples; i++) {
+						const value = data[pixelIndex + i * planeSize];
+						values.push(format === 3 ? value.toPrecision(3) : value.toString().padStart(3, '0'));
+					}
+				} else { // Interleaved data
+					for (let i = 0; i < samples; i++) {
+						const value = data[pixelIndex * samples + i];
+						values.push(format === 3 ? value.toPrecision(3) : value.toString().padStart(3, '0'));
+					}
+				}
+				color = values.slice(0, 3).join(' ');
+			}
+		} else if (imageElement) { // Standard image on a canvas
+			const ctx = imageElement.getContext('2d');
+			if (ctx) {
+				const pixel = ctx.getImageData(x, y, 1, 1).data;
+				color = `${pixel[0].toString().padStart(3, '0')} ${pixel[1].toString().padStart(3, '0')} ${pixel[2].toString().padStart(3, '0')}`;
+			}
+		}
+		return color;
 	}
 
 	function updateScale(newScale) {
@@ -370,69 +404,6 @@
 			const image = await tiff.getImage();
 			const width = image.getWidth();
 			const height = image.getHeight();
-			const rasters = await image.readRasters();
-			const samplesPerPixel = image.getSamplesPerPixel();
-			const sampleFormat = image.getSampleFormat();
-
-			// Handle floating point data by normalizing it
-			if (sampleFormat === 3) {
-				if (settings.normalization === 'minmax') {
-					let min = Infinity;
-					let max = -Infinity;
-
-					for (let i = 0; i < rasters.length; i++) {
-						for (let j = 0; j < rasters[i].length; j++) {
-							if (!isNaN(rasters[i][j])) {
-								min = Math.min(min, rasters[i][j]);
-								max = Math.max(max, rasters[i][j]);
-							}
-						}
-					}
-
-					const range = max - min;
-					for (let i = 0; i < rasters.length; i++) {
-						for (let j = 0; j < rasters[i].length; j++) {
-							if (range > 0) {
-								rasters[i][j] = (rasters[i][j] - min) / range * 255;
-							} else {
-								rasters[i][j] = 0; // Flat color, show as black
-							}
-						}
-					}
-				} else { // 'clamp' is the default
-					for (let i = 0; i < rasters.length; i++) {
-						for (let j = 0; j < rasters[i].length; j++) {
-							// clamp to [0, 1] then scale to [0, 255]
-							const clampedValue = Math.max(0, Math.min(1, rasters[i][j]));
-							rasters[i][j] = clampedValue * 255;
-						}
-					}
-				}
-			}
-			
-			let imageDataArray;
-			if (samplesPerPixel === 1) {
-				const gray = rasters[0];
-				imageDataArray = new Uint8ClampedArray(width * height * 4);
-				for (let i = 0; i < gray.length; i++) {
-					imageDataArray[i * 4] = gray[i];
-					imageDataArray[i * 4 + 1] = gray[i];
-					imageDataArray[i * 4 + 2] = gray[i];
-					imageDataArray[i * 4 + 3] = 255;
-				}
-			} else if (samplesPerPixel >= 3) {
-				const [r, g, b] = rasters;
-				const a = (samplesPerPixel === 4) ? rasters[3] : null;
-				imageDataArray = new Uint8ClampedArray(width * height * 4);
-				for (let i = 0; i < r.length; i++) {
-					imageDataArray[i * 4] = r[i];
-					imageDataArray[i * 4 + 1] = g[i];
-					imageDataArray[i * 4 + 2] = b[i];
-					imageDataArray[i * 4 + 3] = a ? a[i] : 255;
-				}
-			} else {
-				throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
-			}
 
 			canvas = document.createElement('canvas');
 			canvas.width = width;
@@ -443,8 +414,120 @@
 			if (!ctx) {
 				throw new Error('Could not get canvas context');
 			}
-			const imageData = new ImageData(imageDataArray, width, height);
-			ctx.putImageData(imageData, 0, 0);
+			
+			const rasters = await image.readRasters();
+			const samplesPerPixel = image.getSamplesPerPixel();
+			const sampleFormat = image.getSampleFormat();
+
+			const data = new (sampleFormat === 3 ? Float32Array : Uint8Array)(width * height * samplesPerPixel);
+			if (samplesPerPixel === 1) {
+				data.set(rasters[0]);
+			} else {
+				for (let i = 0; i < rasters[0].length; i++) {
+					for (let j = 0; j < samplesPerPixel; j++) {
+						data[i * samplesPerPixel + j] = rasters[j][i];
+					}
+				}
+			}
+
+			rawTiffData = {
+				data: data,
+				ifd: { t277: samplesPerPixel, t339: sampleFormat }
+			};
+
+			// Handle floating point data by normalizing it
+			if (sampleFormat === 3) {
+				const displayRasters = [];
+				for (const raster of rasters) {
+					displayRasters.push(new Float32Array(raster));
+				}
+
+				if (settings.normalization === 'minmax') {
+					let min = Infinity;
+					let max = -Infinity;
+
+					for (let i = 0; i < displayRasters.length; i++) {
+						for (let j = 0; j < displayRasters[i].length; j++) {
+							if (!isNaN(displayRasters[i][j])) {
+								min = Math.min(min, displayRasters[i][j]);
+								max = Math.max(max, displayRasters[i][j]);
+							}
+						}
+					}
+
+					const range = max - min;
+					for (let i = 0; i < displayRasters.length; i++) {
+						for (let j = 0; j < displayRasters[i].length; j++) {
+							if (range > 0) {
+								displayRasters[i][j] = (displayRasters[i][j] - min) / range * 255;
+							} else {
+								displayRasters[i][j] = 0; // Flat color, show as black
+							}
+						}
+					}
+				} else { // 'clamp' is the default
+					for (let i = 0; i < displayRasters.length; i++) {
+						for (let j = 0; j < displayRasters[i].length; j++) {
+							// clamp to [0, 1] then scale to [0, 255]
+							const clampedValue = Math.max(0, Math.min(1, displayRasters[i][j]));
+							displayRasters[i][j] = clampedValue * 255;
+						}
+					}
+				}
+				
+				let imageDataArray;
+				if (samplesPerPixel === 1) {
+					const gray = displayRasters[0];
+					imageDataArray = new Uint8ClampedArray(width * height * 4);
+					for (let i = 0; i < gray.length; i++) {
+						imageDataArray[i * 4] = gray[i];
+						imageDataArray[i * 4 + 1] = gray[i];
+						imageDataArray[i * 4 + 2] = gray[i];
+						imageDataArray[i * 4 + 3] = 255;
+					}
+				} else if (samplesPerPixel >= 3) {
+					const [r, g, b] = displayRasters;
+					const a = (samplesPerPixel === 4) ? displayRasters[3] : null;
+					imageDataArray = new Uint8ClampedArray(width * height * 4);
+					for (let i = 0; i < r.length; i++) {
+						imageDataArray[i * 4] = r[i];
+						imageDataArray[i * 4 + 1] = g[i];
+						imageDataArray[i * 4 + 2] = b[i];
+						imageDataArray[i * 4 + 3] = a ? a[i] : 255;
+					}
+				} else {
+					throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
+				}
+				const imageData = new ImageData(imageDataArray, width, height);
+				ctx.putImageData(imageData, 0, 0);
+
+			} else {
+				let imageDataArray;
+				if (samplesPerPixel === 1) {
+					const gray = rasters[0];
+					imageDataArray = new Uint8ClampedArray(width * height * 4);
+					for (let i = 0; i < gray.length; i++) {
+						imageDataArray[i * 4] = gray[i];
+						imageDataArray[i * 4 + 1] = gray[i];
+						imageDataArray[i * 4 + 2] = gray[i];
+						imageDataArray[i * 4 + 3] = 255;
+					}
+				} else if (samplesPerPixel >= 3) {
+					const [r, g, b] = rasters;
+					const a = (samplesPerPixel === 4) ? rasters[3] : null;
+					imageDataArray = new Uint8ClampedArray(width * height * 4);
+					for (let i = 0; i < r.length; i++) {
+						imageDataArray[i * 4] = r[i];
+						imageDataArray[i * 4 + 1] = g[i];
+						imageDataArray[i * 4 + 2] = b[i];
+						imageDataArray[i * 4 + 3] = a ? a[i] : 255;
+					}
+				} else {
+					throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
+				}
+				const imageData = new ImageData(imageDataArray, width, height);
+				ctx.putImageData(imageData, 0, 0);
+			}
 
 			hasLoadedImage = true;
 			imageElement = canvas;
@@ -486,6 +569,7 @@
 				const ifds = UTIF.decode(buffer);
 				// @ts-ignore
 				UTIF.decodeImage(buffer, ifds[0]);
+				rawTiffData = { data: ifds[0].data, ifd: ifds[0] };
 				// @ts-ignore
 				const rgba = UTIF.toRGBA8(ifds[0]);
 
@@ -518,6 +602,14 @@
 					window.scrollTo(initialState.offsetX, initialState.offsetY);
 				}
 				addMouseListeners(imageElement);
+
+				offscreenCanvas = document.createElement('canvas');
+				offscreenCanvas.width = image.naturalWidth;
+				offscreenCanvas.height = image.naturalHeight;
+				offscreenCtx = offscreenCanvas.getContext('2d');
+				if (offscreenCtx) {
+					offscreenCtx.drawImage(image, 0, 0);
+				}
 			})
 			.catch((err) => {
 				if (hasLoadedImage) {
@@ -543,7 +635,22 @@
 			return;
 		}
 		hasLoadedImage = true;
-		imageElement = image;
+
+		// Create a canvas and draw the image to it.
+		// This unifies the rendering path for all images.
+		canvas = document.createElement('canvas');
+		canvas.width = image.naturalWidth;
+		canvas.height = image.naturalHeight;
+		canvas.classList.add('scale-to-fit');
+
+		const ctx = canvas.getContext('2d');
+		if (!ctx) {
+			hasLoadedImage = false;
+			return;
+		}
+		ctx.drawImage(image, 0, 0);
+
+		imageElement = canvas;
 
 		vscode.postMessage({
 			type: 'size',
@@ -552,7 +659,7 @@
 
 		document.body.classList.remove('loading');
 		document.body.classList.add('ready');
-		document.body.append(image);
+		document.body.append(imageElement);
 
 		updateScale(scale);
 
