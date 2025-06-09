@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Disposable } from '../util/dispose';
 
-const NORMALIZATION_RANGE_COMMAND_ID = 'imagePreview.setNormalizationRange';
+const NORMALIZATION_RANGE_COMMAND_ID = 'tiffVisualizer.setNormalizationRange';
 
 export class NormalizationStatusBarEntry extends Disposable {
 	private readonly _entry: vscode.StatusBarItem;
@@ -12,7 +12,7 @@ export class NormalizationStatusBarEntry extends Disposable {
 	constructor() {
 		super();
 		this._entry = this._register(vscode.window.createStatusBarItem(
-			'imagePreview.normalization',
+			'tiffVisualizer.normalization',
 			vscode.StatusBarAlignment.Right,
 			101,
 		));
@@ -21,7 +21,7 @@ export class NormalizationStatusBarEntry extends Disposable {
 	}
 
 	public show() {
-		const config = vscode.workspace.getConfiguration('mediaPreview.tiff');
+		const config = vscode.workspace.getConfiguration('tiffVisualizer.tiff');
 		const normMin = config.get('normalization.min', 0);
 		const normMax = config.get('normalization.max', 1);
 

@@ -14,7 +14,7 @@ import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider {
 
-	public static readonly viewType = 'imagePreview.previewEditor';
+	public static readonly viewType = 'tiffVisualizer.previewEditor';
 
 	private readonly _previews = new Set<ImagePreview>();
 	private _activePreview: ImagePreview | undefined;
@@ -237,10 +237,10 @@ class ImagePreview extends MediaPreview {
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this.resource, version),
 			resourceUri: this.resource.toString(),
-			decoder: vscode.workspace.getConfiguration('mediaPreview.tiff').get<string>('decoder') || 'geotiff',
+			decoder: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get<string>('decoder') || 'geotiff',
 			normalization: {
-				min: vscode.workspace.getConfiguration('mediaPreview.tiff').get('normalization.min'),
-				max: vscode.workspace.getConfiguration('mediaPreview.tiff').get('normalization.max'),
+				min: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get('normalization.min'),
+				max: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get('normalization.max'),
 			}
 		};
 
@@ -354,33 +354,33 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		supportsMultipleEditorsPerDocument: true,
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.zoomIn', () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomIn', () => {
 		previewManager.activePreview?.zoomIn();
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.zoomOut', () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomOut', () => {
 		previewManager.activePreview?.zoomOut();
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.copyImage', () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.copyImage', () => {
 		previewManager.activePreview?.copyImage();
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.resetZoom', () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetZoom', () => {
 		previewManager.activePreview?.resetZoom();
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.reopenAsText', async () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.reopenAsText', async () => {
 		return previewManager.activePreview?.reopenAsText();
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.reopenAsPreview', async () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.reopenAsPreview', async () => {
 
 		await vscode.commands.executeCommand('reopenActiveEditorWith', ImagePreviewManager.viewType);
 	}));
 
-	disposables.push(vscode.commands.registerCommand('imagePreview.setNormalizationRange', async () => {
-		const config = vscode.workspace.getConfiguration('mediaPreview.tiff');
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
+		const config = vscode.workspace.getConfiguration('tiffVisualizer.tiff');
 
 		const min = await vscode.window.showInputBox({
 			prompt: 'Enter the minimum normalization value.',

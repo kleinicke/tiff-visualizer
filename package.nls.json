@@ -1,8 +1,8 @@
 {
-	"displayName": "Media Preview",
-	"description": "Provides VS Code's built-in previews for images, audio, and video",
+	"displayName": "Tiff Visualizer",
+	"description": "Provides Tiff visusalization to VS Code",
 	"customEditor.audioPreview.displayName": "Audio Preview",
-	"customEditor.imagePreview.displayName": "Image Preview",
+	"customEditor.tiffVisualizer.displayName": "Image Preview",
 	"customEditor.videoPreview.displayName": "Video Preview",
 	"videoPreviewerAutoPlay": "Start playing videos on mute automatically.",
 	"videoPreviewerLoop": "Loop videos over again automatically.",
