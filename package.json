@@ -7,14 +7,11 @@
   "icon": "icon.png",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.70.0"
+    "vscode": "^1.80.0"
   },
   "main": "./out/extension.js",
   "categories": [
     "Other"
-  ],
-  "activationEvents": [
-    "onCustomEditor:tiffVisualizer.previewEditor"
   ],
   "capabilities": {
     "virtualWorkspaces": true,
@@ -25,18 +22,8 @@
   "contributes": {
     "configuration": {
       "type": "object",
-      "title": "Media Previewer",
+      "title": "TIFF Visualizer",
       "properties": {
-        "tiffVisualizer.video.autoPlay": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "%videoPreviewerAutoPlay%"
-        },
-        "tiffVisualizer.video.loop": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "%videoPreviewerLoop%"
-        },
         "tiffVisualizer.tiff.decoder": {
           "type": "string",
           "enum": [
@@ -66,26 +53,6 @@
         "selector": [
           {
             "filenamePattern": "*.{jpg,jpe,jpeg,png,bmp,gif,ico,webp,avif,svg,tif,tiff}"
-          }
-        ]
-      },
-      {
-        "viewType": "vscode.audioPreview",
-        "displayName": "%customEditor.audioPreview.displayName%",
-        "priority": "builtin",
-        "selector": [
-          {
-            "filenamePattern": "*.{mp3,wav,ogg,oga}"
-          }
-        ]
-      },
-      {
-        "viewType": "vscode.videoPreview",
-        "displayName": "%customEditor.videoPreview.displayName%",
-        "priority": "builtin",
-        "selector": [
-          {
-            "filenamePattern": "*.{mp4,webm}"
           }
         ]
       }
