@@ -395,11 +395,7 @@
 	}, { passive: true });
 
 	function handleTiff(src) {
-		if (settings.decoder === 'geotiff') {
-			handleTiffWithGeoTiff(src);
-		} else {
-			handleTiffWithUtif(src);
-		}
+		handleTiffWithGeoTiff(src);
 	}
 
 	async function handleTiffWithGeoTiff(src) {
@@ -575,75 +571,6 @@
 				errorDetails.textContent = err ? err.toString() : 'Unknown error';
 			}
 		}
-	}
-
-	function handleTiffWithUtif(src) {
-		fetch(src)
-			.then(response => response.arrayBuffer())
-			.then(buffer => {
-				// @ts-ignore
-				const ifds = UTIF.decode(buffer);
-
-				const sampleFormat = ifds[0].t339; // SampleFormat tag
-				vscode.postMessage({ type: 'isFloat', value: sampleFormat === 3 });
-
-				// @ts-ignore
-				UTIF.decodeImage(buffer, ifds[0]);
-				rawTiffData = { data: ifds[0].data, ifd: ifds[0] };
-				// @ts-ignore
-				const rgba = UTIF.toRGBA8(ifds[0]);
-
-				canvas = document.createElement('canvas');
-				canvas.width = ifds[0].width;
-				canvas.height = ifds[0].height;
-				canvas.classList.add('scale-to-fit');
-				
-				const ctx = canvas.getContext('2d');
-				if (!ctx) {
-					throw new Error('Could not get canvas context');
-				}
-				const imageData = new ImageData(new Uint8ClampedArray(rgba), canvas.width, canvas.height);
-				ctx.putImageData(imageData, 0, 0);
-
-				hasLoadedImage = true;
-				imageElement = canvas;
-
-				vscode.postMessage({
-					type: 'size',
-					value: `${canvas.width}x${canvas.height}`
-				});
-
-				document.body.classList.remove('loading');
-				document.body.classList.add('ready');
-				document.body.append(canvas);
-
-				updateScale(scale);
-				if (initialState.scale !== 'fit') {
-					window.scrollTo(initialState.offsetX, initialState.offsetY);
-				}
-				addMouseListeners(imageElement);
-
-				offscreenCanvas = document.createElement('canvas');
-				offscreenCanvas.width = image.naturalWidth;
-				offscreenCanvas.height = image.naturalHeight;
-				offscreenCtx = offscreenCanvas.getContext('2d');
-				if (offscreenCtx) {
-					offscreenCtx.drawImage(image, 0, 0);
-				}
-			})
-			.catch((err) => {
-				if (hasLoadedImage) {
-					return;
-				}
-				console.error(err);
-				hasLoadedImage = true;
-				container.classList.remove('loading');
-				container.classList.add('error');
-				const errorDetails = document.querySelector('.error-details');
-				if (errorDetails) {
-					errorDetails.textContent = err ? err.toString() : 'Unknown error';
-				}
-			});
 	}
 
 	container.classList.add('image');

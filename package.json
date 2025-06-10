@@ -24,24 +24,15 @@
       "type": "object",
       "title": "TIFF Visualizer",
       "properties": {
-        "tiffVisualizer.tiff.decoder": {
-          "type": "string",
-          "enum": [
-            "geotiff",
-            "utif"
-          ],
-          "default": "geotiff",
-          "markdownDescription": "The decoder to use for TIFF images."
-        },
         "tiffVisualizer.tiff.normalization.min": {
           "type": "number",
           "default": 0.0,
-          "markdownDescription": "The normalization minimum for floating-point TIFFs. Applied when using the 'geotiff' decoder."
+          "markdownDescription": "The normalization minimum for floating-point TIFFs."
         },
         "tiffVisualizer.tiff.normalization.max": {
           "type": "number",
           "default": 1.0,
-          "markdownDescription": "The normalization maximum for floating-point TIFFs. Applied when using the 'geotiff' decoder."
+          "markdownDescription": "The normalization maximum for floating-point TIFFs."
         }
       }
     },

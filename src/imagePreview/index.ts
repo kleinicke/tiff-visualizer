@@ -237,7 +237,6 @@ class ImagePreview extends MediaPreview {
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this.resource, version),
 			resourceUri: this.resource.toString(),
-			decoder: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get<string>('decoder') || 'geotiff',
 			normalization: {
 				min: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get('normalization.min'),
 				max: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get('normalization.max'),
@@ -274,7 +273,6 @@ class ImagePreview extends MediaPreview {
 		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
 	</div>
 	<script src="${escapeAttribute(this.extensionResource('media', 'geotiff.min.js'))}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(this.extensionResource('media', 'UTIF.js'))}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
 </body>
 </html>`;
