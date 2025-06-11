@@ -20,22 +20,6 @@
     }
   },
   "contributes": {
-    "configuration": {
-      "type": "object",
-      "title": "TIFF Visualizer",
-      "properties": {
-        "tiffVisualizer.tiff.normalization.min": {
-          "type": "number",
-          "default": 0.0,
-          "markdownDescription": "The normalization minimum for floating-point TIFFs."
-        },
-        "tiffVisualizer.tiff.normalization.max": {
-          "type": "number",
-          "default": 1.0,
-          "markdownDescription": "The normalization maximum for floating-point TIFFs."
-        }
-      }
-    },
     "customEditors": [
       {
         "viewType": "tiffVisualizer.previewEditor",

@@ -9,6 +9,9 @@ export class NormalizationStatusBarEntry extends Disposable {
 	private _imageRealMin: number | undefined;
 	private _imageRealMax: number | undefined;
 
+	private _normMin: number | undefined;
+	private _normMax: number | undefined;
+
 	constructor() {
 		super();
 		this._entry = this._register(vscode.window.createStatusBarItem(
@@ -21,11 +24,7 @@ export class NormalizationStatusBarEntry extends Disposable {
 	}
 
 	public show() {
-		const config = vscode.workspace.getConfiguration('tiffVisualizer.tiff');
-		const normMin = config.get('normalization.min', 0);
-		const normMax = config.get('normalization.max', 1);
-
-		let text = `Norm: [${normMin.toFixed(2)}, ${normMax.toFixed(2)}]`;
+		let text = `Norm: [${(this._normMin ?? 0).toFixed(2)}, ${(this._normMax ?? 1).toFixed(2)}]`;
 
 		if (this._imageRealMin !== undefined && this._imageRealMax !== undefined) {
 			text = `Image: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}] | ${text}`;
@@ -43,6 +42,10 @@ export class NormalizationStatusBarEntry extends Disposable {
 	public updateImageStats(min: number, max: number) {
 		this._imageRealMin = min;
 		this._imageRealMax = max;
-		this.show();
+	}
+
+	public updateNormalization(min: number, max: number) {
+		this._normMin = min;
+		this._normMax = max;
 	}
 } 

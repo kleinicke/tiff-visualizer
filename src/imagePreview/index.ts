@@ -19,6 +19,9 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 	private readonly _previews = new Set<ImagePreview>();
 	private _activePreview: ImagePreview | undefined;
 
+	private _tempNormalisationMin: number | undefined;
+	private _tempNormalisationMax: number | undefined;
+
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
 		private readonly sizeStatusBarEntry: SizeStatusBarEntry,
@@ -28,6 +31,24 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		private readonly normalizationStatusBarEntry: NormalizationStatusBarEntry,
 	) { }
 
+	public getNormalizationConfig() {
+		return {
+			min: this._tempNormalisationMin ?? 0.0,
+			max: this._tempNormalisationMax ?? 1.0,
+		};
+	}
+
+	public setTempNormalization(min: number, max: number) {
+		this._tempNormalisationMin = min;
+		this._tempNormalisationMax = max;
+	}
+
+	public updateAllPreviews() {
+		for (const preview of this._previews) {
+			preview.updatePreview();
+		}
+	}
+
 	public async openCustomDocument(uri: vscode.Uri) {
 		return { uri, dispose: () => { } };
 	}
@@ -36,7 +57,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
 	): Promise<void> {
-		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry, this.normalizationStatusBarEntry);
+		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry, this.normalizationStatusBarEntry, this);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
@@ -95,6 +116,7 @@ class ImagePreview extends MediaPreview {
 		zoomStatusBarEntry: ZoomStatusBarEntry,
 		pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
 		normalizationStatusBarEntry: NormalizationStatusBarEntry,
+		private readonly _manager: ImagePreviewManager
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
 
@@ -143,6 +165,7 @@ class ImagePreview extends MediaPreview {
 					{
 						if (this._isTiff) {
 							this._normalizationStatusBarEntry.updateImageStats(message.value.min, message.value.max);
+							this.updateStatusBar();
 						}
 						return;
 					}
@@ -232,15 +255,36 @@ class ImagePreview extends MediaPreview {
 		this.render();
 	}
 
+	public updateStatusBar() {
+		if (this.previewState !== PreviewState.Active) {
+			return;
+		}
+
+		if (this._webviewEditor.active) {
+			this._sizeStatusBarEntry.show(this, this._imageSize || '');
+			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
+			this._pixelPositionStatusBarEntry.hide(this);
+			if (this._isTiff && this._isFloat) {
+				const { min, max } = this._manager.getNormalizationConfig();
+				this._normalizationStatusBarEntry.updateNormalization(min, max);
+				this._normalizationStatusBarEntry.show();
+			} else {
+				this._normalizationStatusBarEntry.hide();
+			}
+		} else {
+			this._sizeStatusBarEntry.hide(this);
+			this._zoomStatusBarEntry.hide(this);
+			this._pixelPositionStatusBarEntry.hide(this);
+			this._normalizationStatusBarEntry.hide();
+		}
+	}
+
 	protected override async getWebviewContents(): Promise<string> {
 		const version = Date.now().toString();
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this.resource, version),
 			resourceUri: this.resource.toString(),
-			normalization: {
-				min: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get('normalization.min'),
-				max: vscode.workspace.getConfiguration('tiffVisualizer.tiff').get('normalization.max'),
-			}
+			normalization: this._manager.getNormalizationConfig()
 		};
 
 		const isTiff = this.resource.path.toLowerCase().endsWith('.tiff') || this.resource.path.toLowerCase().endsWith('.tif');
@@ -276,28 +320,6 @@ class ImagePreview extends MediaPreview {
 	<script src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
 </body>
 </html>`;
-	}
-
-	private updateStatusBar() {
-		if (this.previewState !== PreviewState.Active) {
-			return;
-		}
-
-		if (this._webviewEditor.active) {
-			this._sizeStatusBarEntry.show(this, this._imageSize || '');
-			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
-			this._pixelPositionStatusBarEntry.hide(this);
-			if (this._isTiff && this._isFloat) {
-				this._normalizationStatusBarEntry.show();
-			} else {
-				this._normalizationStatusBarEntry.hide();
-			}
-		} else {
-			this._sizeStatusBarEntry.hide(this);
-			this._zoomStatusBarEntry.hide(this);
-			this._pixelPositionStatusBarEntry.hide(this);
-			this._normalizationStatusBarEntry.hide();
-		}
 	}
 
 	protected override async render(): Promise<void> {
@@ -378,11 +400,11 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
-		const config = vscode.workspace.getConfiguration('tiffVisualizer.tiff');
+		const currentConfig = previewManager.getNormalizationConfig();
 
 		const min = await vscode.window.showInputBox({
 			prompt: 'Enter the minimum normalization value.',
-			value: config.get('normalization.min', 0.0).toString(),
+			value: currentConfig.min.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
 			}
@@ -394,7 +416,7 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 		const max = await vscode.window.showInputBox({
 			prompt: 'Enter the maximum normalization value.',
-			value: config.get('normalization.max', 1.0).toString(),
+			value: currentConfig.max.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
 			}
@@ -408,11 +430,16 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 			vscode.window.showErrorMessage('Min value must be smaller than max value.');
 			return;
 		}
+		const newMin = parseFloat(min);
+		const newMax = parseFloat(max);
 
-		await config.update('normalization.min', parseFloat(min), vscode.ConfigurationTarget.Global);
-		await config.update('normalization.max', parseFloat(max), vscode.ConfigurationTarget.Global);
+		previewManager.setTempNormalization(newMin, newMax);
+		previewManager.updateAllPreviews();
 
-		previewManager.activePreview?.updatePreview();
+		const activePreview = previewManager.activePreview;
+		if (activePreview) {
+			activePreview.updateStatusBar();
+		}
 	}));
 
 	return vscode.Disposable.from(...disposables);
