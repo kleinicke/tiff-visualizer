@@ -19,9 +19,10 @@ export class BrightnessStatusBarEntry extends Disposable {
 	}
 
 	public show() {
-		const text = `Brightness: ${(this._brightness ?? 0)}`;
+		const stops = this._brightness ?? 0;
+		const text = `Exposure: ${stops >= 0 ? '+' : ''}${stops.toFixed(1)} EV`;
 		this._entry.text = text;
-		this._entry.tooltip = 'Click to set brightness offset';
+		this._entry.tooltip = 'Click to set exposure compensation in stops';
 		this._entry.show();
 	}
 

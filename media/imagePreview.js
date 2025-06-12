@@ -510,7 +510,7 @@
 		} else {
 			const { in: gammaIn, out: gammaOut } = settings.gamma;
 			const gamma = gammaIn / gammaOut;
-			const { offset: brightnessOffset } = settings.brightness;
+			const { offset: exposureStops } = settings.brightness;
 
 			const samplesPerPixel = image.getSamplesPerPixel();
 			if (samplesPerPixel === 1) {
@@ -520,8 +520,13 @@
 				const maxVal = Math.pow(2, bits) - 1;
 
 				for (let i = 0; i < gray.length; i++) {
-					const gammaCorrected = Math.pow(gray[i] / maxVal, gamma) * maxVal;
-					const finalValue = Math.max(0, Math.min(maxVal, gammaCorrected + brightnessOffset));
+					// Convert to linear space (remove gamma)
+					const linearValue = Math.pow(gray[i] / maxVal, gammaIn);
+					// Apply exposure compensation in linear space
+					const exposedValue = linearValue * Math.pow(2, exposureStops);
+					// Convert back to gamma space
+					const gammaCorrected = Math.pow(exposedValue, 1/gammaOut) * maxVal;
+					const finalValue = Math.max(0, Math.min(maxVal, gammaCorrected));
 					imageDataArray[i * 4] = finalValue;
 					imageDataArray[i * 4 + 1] = finalValue;
 					imageDataArray[i * 4 + 2] = finalValue;
@@ -535,13 +540,20 @@
 				const maxVal = Math.pow(2, bits) - 1;
 				
 				for (let i = 0; i < r.length; i++) {
-					const rCorrected = Math.pow(r[i] / maxVal, gamma) * maxVal;
-					const gCorrected = Math.pow(g[i] / maxVal, gamma) * maxVal;
-					const bCorrected = Math.pow(b[i] / maxVal, gamma) * maxVal;
+					// Convert to linear space (remove gamma)
+					const rLinear = Math.pow(r[i] / maxVal, gammaIn);
+					const gLinear = Math.pow(g[i] / maxVal, gammaIn);
+					const bLinear = Math.pow(b[i] / maxVal, gammaIn);
 
-					const rFinal = Math.max(0, Math.min(maxVal, rCorrected + brightnessOffset));
-					const gFinal = Math.max(0, Math.min(maxVal, gCorrected + brightnessOffset));
-					const bFinal = Math.max(0, Math.min(maxVal, bCorrected + brightnessOffset));
+					// Apply exposure compensation in linear space
+					const rExposed = rLinear * Math.pow(2, exposureStops);
+					const gExposed = gLinear * Math.pow(2, exposureStops);
+					const bExposed = bLinear * Math.pow(2, exposureStops);
+
+					// Convert back to gamma space
+					const rFinal = Math.max(0, Math.min(maxVal, Math.pow(rExposed, 1/gammaOut) * maxVal));
+					const gFinal = Math.max(0, Math.min(maxVal, Math.pow(gExposed, 1/gammaOut) * maxVal));
+					const bFinal = Math.max(0, Math.min(maxVal, Math.pow(bExposed, 1/gammaOut) * maxVal));
 
 					imageDataArray[i * 4] = rFinal;
 					imageDataArray[i * 4 + 1] = gFinal;

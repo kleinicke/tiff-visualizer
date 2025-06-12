@@ -617,10 +617,14 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		const currentConfig = previewManager.getBrightnessConfig();
 
 		const brightness = await vscode.window.showInputBox({
-			prompt: 'Enter the brightness offset.',
+			prompt: 'Enter exposure compensation in stops (e.g., -1.0 for one stop darker, +1.0 for one stop brighter in linear space).',
 			value: currentConfig.offset.toString(),
 			validateInput: text => {
-				return isNaN(parseInt(text, 10)) ? 'Please enter a valid integer.' : null;
+				const value = parseFloat(text);
+				if (isNaN(value)) {
+					return 'Please enter a valid number.';
+				}
+				return null;
 			}
 		});
 
@@ -628,7 +632,7 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 			return;
 		}
 
-		const newBrightness = parseInt(brightness, 10);
+		const newBrightness = parseFloat(brightness);
 
 		previewManager.setTempBrightness(newBrightness);
 		previewManager.updateAllPreviews();
