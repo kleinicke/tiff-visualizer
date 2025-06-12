@@ -27,7 +27,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{jpg,jpe,jpeg,png,bmp,gif,ico,webp,avif,svg,tif,tiff}"
+            "filenamePattern": "*.{tif,tiff}"
           }
         ]
       }
@@ -66,6 +66,11 @@
       {
         "command": "tiffVisualizer.setNormalizationRange",
         "title": "Image Preview: Set Normalization Range",
+        "category": "Image Preview"
+      },
+      {
+        "command": "tiffVisualizer.exportAsPng",
+        "title": "Image Preview: Export as PNG",
         "category": "Image Preview"
       }
     ]

@@ -107,6 +107,9 @@ class ImagePreview extends MediaPreview {
 	private readonly _pixelPositionStatusBarEntry: PixelPositionStatusBarEntry;
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
 
+	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
+	public readonly onDidExport = this._onDidExport.event;
+
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
 		resource: vscode.Uri,
@@ -186,6 +189,10 @@ class ImagePreview extends MediaPreview {
 					reopenAsText(resource, this._webviewEditor.viewColumn);
 					break;
 				}
+				case 'didExportAsPng': {
+					this._onDidExport.fire(message.payload);
+					break;
+				}
 			}
 		}));
 
@@ -248,6 +255,13 @@ class ImagePreview extends MediaPreview {
 	public resetZoom() {
 		if (this.previewState === PreviewState.Active) {
 			this._webviewEditor.webview.postMessage({ type: 'resetZoom' });
+		}
+	}
+
+	public exportAsPng() {
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.reveal();
+			this._webviewEditor.webview.postMessage({ type: 'exportAsPng' });
 		}
 	}
 
@@ -388,6 +402,37 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetZoom', () => {
 		previewManager.activePreview?.resetZoom();
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsPng', async () => {
+		const activePreview = previewManager.activePreview;
+		if (activePreview) {
+			const data = await new Promise<string>(resolve => {
+				const sub = activePreview.onDidExport(e => {
+					sub.dispose();
+					resolve(e);
+				});
+				activePreview.exportAsPng();
+			});
+
+			const resource = activePreview.resource;
+			const defaultUri = resource.with({
+				path: resource.path.replace(/\.[^.]+$/, '.png')
+			});
+
+			const uri = await vscode.window.showSaveDialog({
+				defaultUri,
+				saveLabel: 'Export as PNG'
+			});
+
+			if (!uri) {
+				return;
+			}
+
+			const Dt = data.replace(/^data:image\/png;base64,/, '');
+			const buffer = Buffer.from(Dt, 'base64');
+			await vscode.workspace.fs.writeFile(uri, buffer);
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.reopenAsText', async () => {

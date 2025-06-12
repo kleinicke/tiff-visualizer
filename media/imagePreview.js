@@ -670,6 +670,15 @@
 				resetZoom();
 				break;
 			}
+			case 'exportAsPng': {
+				if (canvas) {
+					vscode.postMessage({
+						type: 'didExportAsPng',
+						payload: canvas.toDataURL('image/png')
+					});
+				}
+				break;
+			}
 			case 'copyImage': {
 				copyImage();
 				break;
