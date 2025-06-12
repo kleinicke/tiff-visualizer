@@ -511,6 +511,7 @@
 				let imageDataArray;
 				const { in: gammaIn, out: gammaOut } = settings.gamma;
 				const gamma = gammaIn / gammaOut;
+				const { offset: brightnessOffset } = settings.brightness;
 
 				if (samplesPerPixel === 1) {
 					const gray = rasters[0];
@@ -519,10 +520,11 @@
 					const maxVal = Math.pow(2, bits) - 1;
 
 					for (let i = 0; i < gray.length; i++) {
-						const corrected = Math.pow(gray[i] / maxVal, gamma) * maxVal;
-						imageDataArray[i * 4] = corrected;
-						imageDataArray[i * 4 + 1] = corrected;
-						imageDataArray[i * 4 + 2] = corrected;
+						const gammaCorrected = Math.pow(gray[i] / maxVal, gamma) * maxVal;
+						const finalValue = Math.max(0, Math.min(maxVal, gammaCorrected + brightnessOffset));
+						imageDataArray[i * 4] = finalValue;
+						imageDataArray[i * 4 + 1] = finalValue;
+						imageDataArray[i * 4 + 2] = finalValue;
 						imageDataArray[i * 4 + 3] = 255;
 					}
 				} else if (samplesPerPixel >= 3) {
@@ -537,9 +539,13 @@
 						const gCorrected = Math.pow(g[i] / maxVal, gamma) * maxVal;
 						const bCorrected = Math.pow(b[i] / maxVal, gamma) * maxVal;
 
-						imageDataArray[i * 4] = rCorrected;
-						imageDataArray[i * 4 + 1] = gCorrected;
-						imageDataArray[i * 4 + 2] = bCorrected;
+						const rFinal = Math.max(0, Math.min(maxVal, rCorrected + brightnessOffset));
+						const gFinal = Math.max(0, Math.min(maxVal, gCorrected + brightnessOffset));
+						const bFinal = Math.max(0, Math.min(maxVal, bCorrected + brightnessOffset));
+
+						imageDataArray[i * 4] = rFinal;
+						imageDataArray[i * 4 + 1] = gFinal;
+						imageDataArray[i * 4 + 2] = bFinal;
 						imageDataArray[i * 4 + 3] = a ? a[i] : 255;
 					}
 				} else {

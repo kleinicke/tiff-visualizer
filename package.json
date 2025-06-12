@@ -77,6 +77,11 @@
         "command": "tiffVisualizer.setGamma",
         "title": "Image Preview: Set Gamma",
         "category": "Image Preview"
+      },
+      {
+        "command": "tiffVisualizer.setBrightness",
+        "title": "Image Preview: Set Brightness",
+        "category": "Image Preview"
       }
     ]
   },
