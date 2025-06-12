@@ -80,6 +80,9 @@
 	let rawTiffData;
 	let offscreenCanvas;
 	let offscreenCtx;
+	let primaryImageData;
+	let peerImageData;
+	let isShowingPeer = false;
 
 	// Elements
 	const container = document.body;
@@ -392,168 +395,186 @@
 		handleTiffWithGeoTiff(src);
 	}
 
+	async function processTiff(src) {
+		const response = await fetch(src);
+		const buffer = await response.arrayBuffer();
+		// @ts-ignore
+		const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+		const image = await tiff.getImage();
+		const sampleFormat = image.getSampleFormat();
+
+		vscode.postMessage({ type: 'isFloat', value: sampleFormat === 3 });
+		
+		const width = image.getWidth();
+		const height = image.getHeight();
+		
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		
+		const rasters = await image.readRasters();
+		const samplesPerPixel = image.getSamplesPerPixel();
+
+		const data = new (sampleFormat === 3 ? Float32Array : Uint8Array)(width * height * samplesPerPixel);
+		if (samplesPerPixel === 1) {
+			data.set(rasters[0]);
+		} else {
+			for (let i = 0; i < rasters[0].length; i++) {
+				for (let j = 0; j < samplesPerPixel; j++) {
+					data[i * samplesPerPixel + j] = rasters[j][i];
+				}
+			}
+		}
+
+		rawTiffData = {
+			data,
+			ifd: {
+				width,
+				height,
+				t339: sampleFormat,
+				t277: samplesPerPixel,
+				t284: 1, // chunky
+			}
+		};
+
+		return await renderTiff(image, rasters);
+	}
+
+	async function renderTiff(image, rasters) {
+		const width = image.getWidth();
+		const height = image.getHeight();
+		const sampleFormat = image.getSampleFormat();
+
+		let min = Infinity;
+		let max = -Infinity;
+
+		let imageDataArray;
+
+		if (sampleFormat === 3) {
+			const displayRasters = [];
+			for (const raster of rasters) {
+				displayRasters.push(new Float32Array(raster));
+			}
+
+			// Use the first 3 channels to determine the image stats
+			for (let i = 0; i < Math.min(rasters.length, 3); i++) {
+				for (let j = 0; j < rasters[i].length; j++) {
+					if (!isNaN(rasters[i][j])) {
+						min = Math.min(min, rasters[i][j]);
+						max = Math.max(max, rasters[i][j]);
+					}
+				}
+			}
+			vscode.postMessage({ type: 'stats', value: { min, max } });
+
+			const normMin = settings.normalization.min;
+			const normMax = settings.normalization.max;
+			const range = normMax - normMin;
+
+			for (let i = 0; i < displayRasters.length; i++) {
+				for (let j = 0; j < displayRasters[i].length; j++) {
+					let value = displayRasters[i][j];
+					if (range > 0) {
+						value = (value - normMin) / range;
+					} else {
+						value = 0;
+					}
+					const clampedValue = Math.max(0, Math.min(1, value));
+					displayRasters[i][j] = clampedValue * 255;
+				}
+			}
+			
+			const samplesPerPixel = image.getSamplesPerPixel();
+			if (samplesPerPixel === 1) {
+				const gray = displayRasters[0];
+				imageDataArray = new Uint8ClampedArray(width * height * 4);
+				for (let i = 0; i < gray.length; i++) {
+					imageDataArray[i * 4] = gray[i];
+					imageDataArray[i * 4 + 1] = gray[i];
+					imageDataArray[i * 4 + 2] = gray[i];
+					imageDataArray[i * 4 + 3] = 255;
+				}
+			} else if (samplesPerPixel >= 3) {
+				const [r, g, b] = displayRasters;
+				const a = (samplesPerPixel === 4) ? displayRasters[3] : null;
+				imageDataArray = new Uint8ClampedArray(width * height * 4);
+				for (let i = 0; i < r.length; i++) {
+					imageDataArray[i * 4] = r[i];
+					imageDataArray[i * 4 + 1] = g[i];
+					imageDataArray[i * 4 + 2] = b[i];
+					imageDataArray[i * 4 + 3] = a ? a[i] : 255;
+				}
+			} else {
+				throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
+			}
+		} else {
+			const { in: gammaIn, out: gammaOut } = settings.gamma;
+			const gamma = gammaIn / gammaOut;
+			const { offset: brightnessOffset } = settings.brightness;
+
+			const samplesPerPixel = image.getSamplesPerPixel();
+			if (samplesPerPixel === 1) {
+				const gray = rasters[0];
+				imageDataArray = new Uint8ClampedArray(width * height * 4);
+				const bits = image.getBitsPerSample();
+				const maxVal = Math.pow(2, bits) - 1;
+
+				for (let i = 0; i < gray.length; i++) {
+					const gammaCorrected = Math.pow(gray[i] / maxVal, gamma) * maxVal;
+					const finalValue = Math.max(0, Math.min(maxVal, gammaCorrected + brightnessOffset));
+					imageDataArray[i * 4] = finalValue;
+					imageDataArray[i * 4 + 1] = finalValue;
+					imageDataArray[i * 4 + 2] = finalValue;
+					imageDataArray[i * 4 + 3] = 255;
+				}
+			} else if (samplesPerPixel >= 3) {
+				const [r, g, b] = rasters;
+				const a = (samplesPerPixel === 4) ? rasters[3] : null;
+				imageDataArray = new Uint8ClampedArray(width * height * 4);
+				const bits = image.getBitsPerSample();
+				const maxVal = Math.pow(2, bits) - 1;
+				
+				for (let i = 0; i < r.length; i++) {
+					const rCorrected = Math.pow(r[i] / maxVal, gamma) * maxVal;
+					const gCorrected = Math.pow(g[i] / maxVal, gamma) * maxVal;
+					const bCorrected = Math.pow(b[i] / maxVal, gamma) * maxVal;
+
+					const rFinal = Math.max(0, Math.min(maxVal, rCorrected + brightnessOffset));
+					const gFinal = Math.max(0, Math.min(maxVal, gCorrected + brightnessOffset));
+					const bFinal = Math.max(0, Math.min(maxVal, bCorrected + brightnessOffset));
+
+					imageDataArray[i * 4] = rFinal;
+					imageDataArray[i * 4 + 1] = gFinal;
+					imageDataArray[i * 4 + 2] = bFinal;
+					imageDataArray[i * 4 + 3] = a ? a[i] : 255;
+				}
+			} else {
+				throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
+			}
+		}
+
+		const imageData = new ImageData(imageDataArray, width, height);
+		return imageData;
+	}
+
 	async function handleTiffWithGeoTiff(src) {
 		try {
-			const response = await fetch(src);
-			const buffer = await response.arrayBuffer();
-			// @ts-ignore
-			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
-			const image = await tiff.getImage();
-			const width = image.getWidth();
-			const height = image.getHeight();
-			const sampleFormat = image.getSampleFormat();
+			primaryImageData = await processTiff(src);
 
-			vscode.postMessage({ type: 'isFloat', value: sampleFormat === 3 });
-
+			const width = primaryImageData.width;
+			const height = primaryImageData.height;
+			
 			canvas = document.createElement('canvas');
 			canvas.width = width;
 			canvas.height = height;
 			canvas.classList.add('scale-to-fit');
-			
+
 			const ctx = canvas.getContext('2d');
 			if (!ctx) {
 				throw new Error('Could not get canvas context');
 			}
-			
-			const rasters = await image.readRasters();
-			const samplesPerPixel = image.getSamplesPerPixel();
 
-			let min = Infinity;
-			let max = -Infinity;
-
-			const data = new (sampleFormat === 3 ? Float32Array : Uint8Array)(width * height * samplesPerPixel);
-			if (samplesPerPixel === 1) {
-				data.set(rasters[0]);
-			} else {
-				for (let i = 0; i < rasters[0].length; i++) {
-					for (let j = 0; j < samplesPerPixel; j++) {
-						data[i * samplesPerPixel + j] = rasters[j][i];
-					}
-				}
-			}
-
-			rawTiffData = {
-				data,
-				ifd: {
-					width,
-					height,
-					t339: sampleFormat,
-					t277: samplesPerPixel,
-					t284: 1, // chunky
-				}
-			};
-
-			// Handle floating point data by normalizing it
-			if (sampleFormat === 3) {
-				const displayRasters = [];
-				for (const raster of rasters) {
-					displayRasters.push(new Float32Array(raster));
-				}
-
-				// Use the first 3 channels to determine the image stats
-				for (let i = 0; i < Math.min(rasters.length, 3); i++) {
-					for (let j = 0; j < rasters[i].length; j++) {
-						if (!isNaN(rasters[i][j])) {
-							min = Math.min(min, rasters[i][j]);
-							max = Math.max(max, rasters[i][j]);
-						}
-					}
-				}
-				vscode.postMessage({ type: 'stats', value: { min, max } });
-
-				const normMin = settings.normalization.min;
-				const normMax = settings.normalization.max;
-				const range = normMax - normMin;
-
-				for (let i = 0; i < displayRasters.length; i++) {
-					for (let j = 0; j < displayRasters[i].length; j++) {
-						let value = displayRasters[i][j];
-						if (range > 0) {
-							// Normalize to [0, 1] based on custom range
-							value = (value - normMin) / range;
-						} else {
-							// If range is 0, set to 0
-							value = 0;
-						}
-						// Clamp to [0, 1] and scale to [0, 255]
-						const clampedValue = Math.max(0, Math.min(1, value));
-						displayRasters[i][j] = clampedValue * 255;
-					}
-				}
-				
-				let imageDataArray;
-				if (samplesPerPixel === 1) {
-					const gray = displayRasters[0];
-					imageDataArray = new Uint8ClampedArray(width * height * 4);
-					for (let i = 0; i < gray.length; i++) {
-						imageDataArray[i * 4] = gray[i];
-						imageDataArray[i * 4 + 1] = gray[i];
-						imageDataArray[i * 4 + 2] = gray[i];
-						imageDataArray[i * 4 + 3] = 255;
-					}
-				} else if (samplesPerPixel >= 3) {
-					const [r, g, b] = displayRasters;
-					const a = (samplesPerPixel === 4) ? displayRasters[3] : null;
-					imageDataArray = new Uint8ClampedArray(width * height * 4);
-					for (let i = 0; i < r.length; i++) {
-						imageDataArray[i * 4] = r[i];
-						imageDataArray[i * 4 + 1] = g[i];
-						imageDataArray[i * 4 + 2] = b[i];
-						imageDataArray[i * 4 + 3] = a ? a[i] : 255;
-					}
-				} else {
-					throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
-				}
-				const imageData = new ImageData(imageDataArray, width, height);
-				ctx.putImageData(imageData, 0, 0);
-
-			} else {
-				let imageDataArray;
-				const { in: gammaIn, out: gammaOut } = settings.gamma;
-				const gamma = gammaIn / gammaOut;
-				const { offset: brightnessOffset } = settings.brightness;
-
-				if (samplesPerPixel === 1) {
-					const gray = rasters[0];
-					imageDataArray = new Uint8ClampedArray(width * height * 4);
-					const bits = image.getBitsPerSample();
-					const maxVal = Math.pow(2, bits) - 1;
-
-					for (let i = 0; i < gray.length; i++) {
-						const gammaCorrected = Math.pow(gray[i] / maxVal, gamma) * maxVal;
-						const finalValue = Math.max(0, Math.min(maxVal, gammaCorrected + brightnessOffset));
-						imageDataArray[i * 4] = finalValue;
-						imageDataArray[i * 4 + 1] = finalValue;
-						imageDataArray[i * 4 + 2] = finalValue;
-						imageDataArray[i * 4 + 3] = 255;
-					}
-				} else if (samplesPerPixel >= 3) {
-					const [r, g, b] = rasters;
-					const a = (samplesPerPixel === 4) ? rasters[3] : null;
-					imageDataArray = new Uint8ClampedArray(width * height * 4);
-					const bits = image.getBitsPerSample();
-					const maxVal = Math.pow(2, bits) - 1;
-					
-					for (let i = 0; i < r.length; i++) {
-						const rCorrected = Math.pow(r[i] / maxVal, gamma) * maxVal;
-						const gCorrected = Math.pow(g[i] / maxVal, gamma) * maxVal;
-						const bCorrected = Math.pow(b[i] / maxVal, gamma) * maxVal;
-
-						const rFinal = Math.max(0, Math.min(maxVal, rCorrected + brightnessOffset));
-						const gFinal = Math.max(0, Math.min(maxVal, gCorrected + brightnessOffset));
-						const bFinal = Math.max(0, Math.min(maxVal, bCorrected + brightnessOffset));
-
-						imageDataArray[i * 4] = rFinal;
-						imageDataArray[i * 4 + 1] = gFinal;
-						imageDataArray[i * 4 + 2] = bFinal;
-						imageDataArray[i * 4 + 3] = a ? a[i] : 255;
-					}
-				} else {
-					throw new Error(`Unsupported number of samples per pixel: ${samplesPerPixel}`);
-				}
-				const imageData = new ImageData(imageDataArray, width, height);
-				ctx.putImageData(imageData, 0, 0);
-			}
+			ctx.putImageData(primaryImageData, 0, 0);
 
 			hasLoadedImage = true;
 			imageElement = canvas;
@@ -693,6 +714,10 @@
 				}
 				break;
 			}
+			case 'start-comparison': {
+				handleStartComparison(e.data.peerUri);
+				break;
+			}
 			case 'copyImage': {
 				copyImage();
 				break;
@@ -749,4 +774,27 @@
 			console.error(e);
 		}
 	}
+
+	async function handleStartComparison(peerUri) {
+		try {
+			vscode.postMessage({ type: 'show-loading' }); // You might want to show a loading indicator
+			peerImageData = await processTiff(peerUri);
+			// Optionally, show a message that comparison is ready
+			vscode.postMessage({ type: 'comparison-ready' });
+		} catch (error) {
+			console.error('Failed to load peer image for comparison:', error);
+			vscode.postMessage({ type: 'show-error', message: 'Failed to load comparison image.' });
+		}
+	}
+
+	document.addEventListener('keydown', (e) => {
+		if (e.key === 'c' && peerImageData) {
+			isShowingPeer = !isShowingPeer;
+			const imageData = isShowingPeer ? peerImageData : primaryImageData;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				ctx.putImageData(imageData, 0, 0);
+			}
+		}
+	});
 }());

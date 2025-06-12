@@ -13,6 +13,7 @@ import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
+import { fromArrayBuffer } from 'geotiff';
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider {
 
@@ -28,6 +29,8 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 	private _tempGammaOut: number | undefined;
 
 	private _tempBrightness: number | undefined;
+
+	private _comparisonBaseUri: vscode.Uri | undefined;
 
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
@@ -72,6 +75,15 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 
 	public setTempBrightness(offset: number) {
 		this._tempBrightness = offset;
+	}
+
+	public setComparisonBase(uri: vscode.Uri | undefined) {
+		this._comparisonBaseUri = uri;
+		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', !!uri);
+	}
+
+	public getComparisonBase(): vscode.Uri | undefined {
+		return this._comparisonBaseUri;
 	}
 
 	public updateAllPreviews() {
@@ -230,6 +242,15 @@ class ImagePreview extends MediaPreview {
 					this._onDidExport.fire(message.payload);
 					break;
 				}
+				case 'get-initial-data': {
+					this._webviewEditor.webview.postMessage({
+						type: 'update',
+						body: {
+							isTiff: this._isTiff
+						}
+					});
+					break;
+				}
 			}
 		}));
 
@@ -303,6 +324,12 @@ class ImagePreview extends MediaPreview {
 		if (this.previewState === PreviewState.Active) {
 			this._webviewEditor.reveal();
 			this._webviewEditor.webview.postMessage({ type: 'exportAsPng' });
+		}
+	}
+
+	public startComparison(peerUri: vscode.Uri) {
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.webview.postMessage({ type: 'start-comparison', peerUri: this._webviewEditor.webview.asWebviewUri(peerUri).toString() });
 		}
 	}
 
@@ -610,6 +637,57 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		if (activePreview) {
 			brightnessStatusBarEntry.updateBrightness(newBrightness);
 			activePreview.updateStatusBar();
+		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.selectForCompare', () => {
+		const activePreview = previewManager.activePreview;
+		if (activePreview) {
+			previewManager.setComparisonBase(activePreview.resource);
+			vscode.window.showInformationMessage(`Selected ${activePreview.resource.fsPath.split('/').pop()} for comparison.`);
+		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.compareWithSelected', async () => {
+		const activePreview = previewManager.activePreview;
+		const baseUri = previewManager.getComparisonBase();
+
+		if (!activePreview || !baseUri) {
+			vscode.window.showErrorMessage('No image selected for comparison.');
+			return;
+		}
+
+		try {
+			const baseFile = await vscode.workspace.fs.readFile(baseUri);
+			const baseTiff = await fromArrayBuffer(baseFile.buffer);
+			const baseImage = await baseTiff.getImage();
+			const baseWidth = baseImage.getWidth();
+			const baseHeight = baseImage.getHeight();
+
+			const peerFile = await vscode.workspace.fs.readFile(activePreview.resource);
+			const peerTiff = await fromArrayBuffer(peerFile.buffer);
+			const peerImage = await peerTiff.getImage();
+			const peerWidth = peerImage.getWidth();
+			const peerHeight = peerImage.getHeight();
+
+			if (baseWidth !== peerWidth || baseHeight !== peerHeight) {
+				vscode.window.showErrorMessage('Images must have the same dimensions to be compared.');
+				previewManager.setComparisonBase(undefined);
+				return;
+			}
+
+			const basePreview = previewManager.getPreviewFor(baseUri);
+			if (basePreview) {
+				basePreview.startComparison(activePreview.resource);
+
+				// Close the peer editor and reset state
+				activePreview.dispose();
+				previewManager.setComparisonBase(undefined);
+			}
+
+		} catch (error) {
+			vscode.window.showErrorMessage('Failed to compare images. Ensure both are valid TIFF files.');
+			previewManager.setComparisonBase(undefined);
 		}
 	}));
 
