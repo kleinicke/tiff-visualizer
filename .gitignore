@@ -3,3 +3,12 @@ out/
 *.tif
 *.vsix
 yarn.lock
+
+# Webpack
+*.webpack.config.js
+
+.DS_Store
+*.log
+*.zip
+*.tar.gz
+*.tgz

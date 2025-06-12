@@ -116,8 +116,9 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "clean": "rimraf out",
+    "compile": "npm run clean && node ./esbuild.js",
+    "watch": "npm run clean && node ./esbuild.js --watch"
   },
   "dependencies": {
     "geotiff": "^2.1.3",
@@ -127,6 +128,8 @@
   "devDependencies": {
     "@types/node": "^16.11.7",
     "@types/vscode": "^1.70.0",
+    "esbuild": "^0.25.5",
+    "rimraf": "^6.0.1",
     "typescript": "^4.9.4"
   },
   "repository": {
