@@ -11,6 +11,7 @@ import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { PixelPositionStatusBarEntry } from './pixelPositionStatusBarEntry';
 import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
+import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider {
 
@@ -22,6 +23,9 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 	private _tempNormalisationMin: number | undefined;
 	private _tempNormalisationMax: number | undefined;
 
+	private _tempGammaIn: number | undefined;
+	private _tempGammaOut: number | undefined;
+
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
 		private readonly sizeStatusBarEntry: SizeStatusBarEntry,
@@ -29,6 +33,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		private readonly zoomStatusBarEntry: ZoomStatusBarEntry,
 		private readonly pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
 		private readonly normalizationStatusBarEntry: NormalizationStatusBarEntry,
+		private readonly gammaStatusBarEntry: GammaStatusBarEntry,
 	) { }
 
 	public getNormalizationConfig() {
@@ -38,9 +43,21 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		};
 	}
 
+	public getGammaConfig() {
+		return {
+			in: this._tempGammaIn ?? 2.2,
+			out: this._tempGammaOut ?? 2.2,
+		};
+	}
+
 	public setTempNormalization(min: number, max: number) {
 		this._tempNormalisationMin = min;
 		this._tempNormalisationMax = max;
+	}
+
+	public setTempGamma(gammaIn: number, gammaOut: number) {
+		this._tempGammaIn = gammaIn;
+		this._tempGammaOut = gammaOut;
 	}
 
 	public updateAllPreviews() {
@@ -57,7 +74,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
 	): Promise<void> {
-		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry, this.normalizationStatusBarEntry, this);
+		const preview = new ImagePreview(this.extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.pixelPositionStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
@@ -106,6 +123,7 @@ class ImagePreview extends MediaPreview {
 	private readonly _zoomStatusBarEntry: ZoomStatusBarEntry;
 	private readonly _pixelPositionStatusBarEntry: PixelPositionStatusBarEntry;
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
+	private readonly _gammaStatusBarEntry: GammaStatusBarEntry;
 
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
 	public readonly onDidExport = this._onDidExport.event;
@@ -119,6 +137,7 @@ class ImagePreview extends MediaPreview {
 		zoomStatusBarEntry: ZoomStatusBarEntry,
 		pixelPositionStatusBarEntry: PixelPositionStatusBarEntry,
 		normalizationStatusBarEntry: NormalizationStatusBarEntry,
+		gammaStatusBarEntry: GammaStatusBarEntry,
 		private readonly _manager: ImagePreviewManager
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
@@ -127,6 +146,7 @@ class ImagePreview extends MediaPreview {
 		this._zoomStatusBarEntry = zoomStatusBarEntry;
 		this._pixelPositionStatusBarEntry = pixelPositionStatusBarEntry;
 		this._normalizationStatusBarEntry = normalizationStatusBarEntry;
+		this._gammaStatusBarEntry = gammaStatusBarEntry;
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
 			switch (message.type) {
@@ -212,6 +232,7 @@ class ImagePreview extends MediaPreview {
 				this._zoomStatusBarEntry.hide(this);
 				this._pixelPositionStatusBarEntry.hide(this);
 				this._normalizationStatusBarEntry.hide();
+				this._gammaStatusBarEntry.hide();
 			}
 			this.previewState = PreviewState.Disposed;
 		}));
@@ -227,6 +248,7 @@ class ImagePreview extends MediaPreview {
 		this._zoomStatusBarEntry.hide(this);
 		this._pixelPositionStatusBarEntry.hide(this);
 		this._normalizationStatusBarEntry.hide();
+		this._gammaStatusBarEntry.hide();
 	}
 
 	public get viewColumn() {
@@ -282,14 +304,20 @@ class ImagePreview extends MediaPreview {
 				const { min, max } = this._manager.getNormalizationConfig();
 				this._normalizationStatusBarEntry.updateNormalization(min, max);
 				this._normalizationStatusBarEntry.show();
+				this._gammaStatusBarEntry.hide();
+			} else if (this._isTiff && !this._isFloat) {
+				this._normalizationStatusBarEntry.hide();
+				this._gammaStatusBarEntry.show();
 			} else {
 				this._normalizationStatusBarEntry.hide();
+				this._gammaStatusBarEntry.hide();
 			}
 		} else {
 			this._sizeStatusBarEntry.hide(this);
 			this._zoomStatusBarEntry.hide(this);
 			this._pixelPositionStatusBarEntry.hide(this);
 			this._normalizationStatusBarEntry.hide();
+			this._gammaStatusBarEntry.hide();
 		}
 	}
 
@@ -298,7 +326,8 @@ class ImagePreview extends MediaPreview {
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this.resource, version),
 			resourceUri: this.resource.toString(),
-			normalization: this._manager.getNormalizationConfig()
+			normalization: this._manager.getNormalizationConfig(),
+			gamma: this._manager.getGammaConfig(),
 		};
 
 		const isTiff = this.resource.path.toLowerCase().endsWith('.tiff') || this.resource.path.toLowerCase().endsWith('.tif');
@@ -382,7 +411,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const normalizationStatusBarEntry = new NormalizationStatusBarEntry();
 	disposables.push(normalizationStatusBarEntry);
 
-	const previewManager = new ImagePreviewManager(context.extensionUri, sizeStatusBarEntry, binarySizeStatusBarEntry, zoomStatusBarEntry, pixelPositionStatusBarEntry, normalizationStatusBarEntry);
+	const gammaStatusBarEntry = new GammaStatusBarEntry();
+	disposables.push(gammaStatusBarEntry);
+
+	const previewManager = new ImagePreviewManager(context.extensionUri, sizeStatusBarEntry, binarySizeStatusBarEntry, zoomStatusBarEntry, pixelPositionStatusBarEntry, normalizationStatusBarEntry, gammaStatusBarEntry);
 
 	disposables.push(vscode.window.registerCustomEditorProvider(ImagePreviewManager.viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
@@ -483,6 +515,46 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 		const activePreview = previewManager.activePreview;
 		if (activePreview) {
+			activePreview.updateStatusBar();
+		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setGamma', async () => {
+		const currentConfig = previewManager.getGammaConfig();
+
+		const gammaIn = await vscode.window.showInputBox({
+			prompt: 'Enter the source gamma value.',
+			value: currentConfig.in.toString(),
+			validateInput: text => {
+				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+			}
+		});
+
+		if (gammaIn === undefined) {
+			return;
+		}
+
+		const gammaOut = await vscode.window.showInputBox({
+			prompt: 'Enter the display gamma value.',
+			value: currentConfig.out.toString(),
+			validateInput: text => {
+				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+			}
+		});
+
+		if (gammaOut === undefined) {
+			return;
+		}
+
+		const newGammaIn = parseFloat(gammaIn);
+		const newGammaOut = parseFloat(gammaOut);
+
+		previewManager.setTempGamma(newGammaIn, newGammaOut);
+		previewManager.updateAllPreviews();
+
+		const activePreview = previewManager.activePreview;
+		if (activePreview) {
+			gammaStatusBarEntry.updateGamma(newGammaIn, newGammaOut);
 			activePreview.updateStatusBar();
 		}
 	}));

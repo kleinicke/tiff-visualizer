@@ -72,6 +72,11 @@
         "command": "tiffVisualizer.exportAsPng",
         "title": "Image Preview: Export as PNG",
         "category": "Image Preview"
+      },
+      {
+        "command": "tiffVisualizer.setGamma",
+        "title": "Image Preview: Set Gamma",
+        "category": "Image Preview"
       }
     ]
   },

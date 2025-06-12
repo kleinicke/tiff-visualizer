@@ -249,15 +249,9 @@
 		if (!imageElement || !hasLoadedImage) {
 			return;
 		}
-
-		const isTiff = !!canvas;
-		if (isTiff) {
-			const containerWidth = container.clientWidth - 20; // 20 for padding
-			const containerHeight = container.clientHeight - 20;
-			scale = Math.min(containerWidth / canvas.width, containerHeight / canvas.height);
-		} else {
-			scale = image.clientWidth / image.naturalWidth;
-		}
+		// For all image types, imageElement is the canvas.
+		// The current scale is the ratio of its displayed size to its intrinsic size.
+		scale = imageElement.clientWidth / imageElement.width;
 		updateScale(scale);
 	}
 
@@ -415,7 +409,7 @@
 			canvas.width = width;
 			canvas.height = height;
 			canvas.classList.add('scale-to-fit');
-
+			
 			const ctx = canvas.getContext('2d');
 			if (!ctx) {
 				throw new Error('Could not get canvas context');
@@ -515,23 +509,37 @@
 
 			} else {
 				let imageDataArray;
+				const { in: gammaIn, out: gammaOut } = settings.gamma;
+				const gamma = gammaIn / gammaOut;
+
 				if (samplesPerPixel === 1) {
 					const gray = rasters[0];
 					imageDataArray = new Uint8ClampedArray(width * height * 4);
+					const bits = image.getBitsPerSample();
+					const maxVal = Math.pow(2, bits) - 1;
+
 					for (let i = 0; i < gray.length; i++) {
-						imageDataArray[i * 4] = gray[i];
-						imageDataArray[i * 4 + 1] = gray[i];
-						imageDataArray[i * 4 + 2] = gray[i];
+						const corrected = Math.pow(gray[i] / maxVal, gamma) * maxVal;
+						imageDataArray[i * 4] = corrected;
+						imageDataArray[i * 4 + 1] = corrected;
+						imageDataArray[i * 4 + 2] = corrected;
 						imageDataArray[i * 4 + 3] = 255;
 					}
 				} else if (samplesPerPixel >= 3) {
 					const [r, g, b] = rasters;
 					const a = (samplesPerPixel === 4) ? rasters[3] : null;
 					imageDataArray = new Uint8ClampedArray(width * height * 4);
+					const bits = image.getBitsPerSample();
+					const maxVal = Math.pow(2, bits) - 1;
+					
 					for (let i = 0; i < r.length; i++) {
-						imageDataArray[i * 4] = r[i];
-						imageDataArray[i * 4 + 1] = g[i];
-						imageDataArray[i * 4 + 2] = b[i];
+						const rCorrected = Math.pow(r[i] / maxVal, gamma) * maxVal;
+						const gCorrected = Math.pow(g[i] / maxVal, gamma) * maxVal;
+						const bCorrected = Math.pow(b[i] / maxVal, gamma) * maxVal;
+
+						imageDataArray[i * 4] = rCorrected;
+						imageDataArray[i * 4 + 1] = gCorrected;
+						imageDataArray[i * 4 + 2] = bCorrected;
 						imageDataArray[i * 4 + 3] = a ? a[i] : 255;
 					}
 				} else {
