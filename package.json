@@ -23,7 +23,7 @@
     "customEditors": [
       {
         "viewType": "tiffVisualizer.previewEditor",
-        "displayName": "Image Preview",
+        "displayName": "TIFF Visualizer",
         "priority": "default",
         "selector": [
           {
@@ -35,63 +35,58 @@
     "commands": [
       {
         "command": "tiffVisualizer.zoomIn",
-        "title": "Image Preview: Zoom In",
-        "category": "Image Preview"
+        "title": "Zoom In",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.zoomOut",
-        "title": "Image Preview: Zoom Out",
-        "category": "Image Preview"
+        "title": "Zoom Out",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.copyImage",
-        "title": "Image Preview: Copy Image",
-        "category": "Image Preview"
+        "title": "Copy Image",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.resetZoom",
-        "title": "Image Preview: Reset Zoom",
-        "category": "Image Preview"
-      },
-      {
-        "command": "tiffVisualizer.reopenAsText",
-        "title": "Image Preview: Reopen As Text",
-        "category": "Image Preview"
-      },
-      {
-        "command": "tiffVisualizer.reopenAsPreview",
-        "title": "Image Preview: Reopen As Preview",
-        "category": "Image Preview"
+        "title": "Reset Zoom",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.setNormalizationRange",
-        "title": "Image Preview: Set Normalization Range",
-        "category": "Image Preview"
+        "title": "Set Normalization Range",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.exportAsPng",
-        "title": "Image Preview: Export as PNG",
-        "category": "Image Preview"
+        "title": "Export as PNG",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.setGamma",
-        "title": "Image Preview: Set Gamma",
-        "category": "Image Preview"
+        "title": "Set Gamma",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.setBrightness",
-        "title": "Image Preview: Set Brightness",
-        "category": "Image Preview"
+        "title": "Set Brightness",
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.selectForCompare",
         "title": "Select for Compare",
-        "category": "Image Preview"
+        "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.compareWithSelected",
         "title": "Compare with Selected",
-        "category": "Image Preview"
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.setRotation",
+        "title": "Set Rotation",
+        "category": "TIFF Visualizer"
       }
     ]
   },

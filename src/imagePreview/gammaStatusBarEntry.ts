@@ -16,7 +16,7 @@ export class GammaStatusBarEntry extends Disposable {
 			vscode.StatusBarAlignment.Right,
 			100,
 		));
-		this._entry.name = 'Image Preview Gamma';
+		this._entry.name = 'Image Gamma';
 		this._entry.command = GAMMA_COMMAND_ID;
 	}
 

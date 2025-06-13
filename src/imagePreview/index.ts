@@ -1,11 +1,6 @@
-/*---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-
 import * as vscode from 'vscode';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
-import { MediaPreview, PreviewState, reopenAsText } from '../mediaPreview';
+import { MediaPreview, PreviewState } from '../mediaPreview';
 import { escapeAttribute, getNonce } from '../util/dom';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
@@ -228,10 +223,6 @@ class ImagePreview extends MediaPreview {
 						});
 						return;
 					}
-				case 'reopen-as-text': {
-					reopenAsText(resource, this._webviewEditor.viewColumn);
-					break;
-				}
 				case 'didExportAsPng': {
 					this._onDidExport.fire(message.payload);
 					break;
@@ -312,7 +303,7 @@ class ImagePreview extends MediaPreview {
 		}
 	}
 
-	public exportAsPng() {
+	public async exportAsPng() {
 		if (this.previewState === PreviewState.Active) {
 			this._webviewEditor.reveal();
 			this._webviewEditor.webview.postMessage({ type: 'exportAsPng' });
@@ -430,10 +421,6 @@ class ImagePreview extends MediaPreview {
 		return this._webviewEditor.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionRoot, ...parts));
 	}
 
-	public async reopenAsText() {
-		await vscode.commands.executeCommand('reopenActiveEditorWith', 'default');
-		this._webviewEditor.dispose();
-	}
 }
 
 
@@ -506,15 +493,6 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 			const buffer = Buffer.from(Dt, 'base64');
 			await vscode.workspace.fs.writeFile(uri, buffer);
 		}
-	}));
-
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.reopenAsText', async () => {
-		return previewManager.activePreview?.reopenAsText();
-	}));
-
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.reopenAsPreview', async () => {
-
-		await vscode.commands.executeCommand('reopenActiveEditorWith', ImagePreviewManager.viewType);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {

@@ -14,7 +14,7 @@ export class BrightnessStatusBarEntry extends Disposable {
 			vscode.StatusBarAlignment.Right,
 			99, // To appear next to gamma
 		));
-		this._entry.name = 'Image Preview Brightness';
+		this._entry.name = 'Image Brightness';
 		this._entry.command = BRIGHTNESS_COMMAND_ID;
 	}
 

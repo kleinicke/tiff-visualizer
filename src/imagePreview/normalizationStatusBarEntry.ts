@@ -19,7 +19,7 @@ export class NormalizationStatusBarEntry extends Disposable {
 			vscode.StatusBarAlignment.Right,
 			101,
 		));
-		this._entry.name = 'Image Preview Normalization';
+		this._entry.name = 'Image Normalization';
 		this._entry.command = NORMALIZATION_RANGE_COMMAND_ID;
 	}
 

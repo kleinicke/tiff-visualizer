@@ -9,5 +9,5 @@
 		"strict": true,
 		"esModuleInterop": true
 	},
-	"exclude": ["node_modules", ".vscode-test", "working_tif_display", "analytic-signal.preview-tiff-1.0.1"]
+	"exclude": ["node_modules", ".vscode-test"]
 }
