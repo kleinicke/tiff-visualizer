@@ -1,38 +1,33 @@
 # TIFF Visualizer for Visual Studio Code
 
-A powerful TIFF viewer for Visual Studio Code, based on the vscode media viewer extension.
-For rendering the tif images the geotiff library is used.
-
-The differences to previous tif extensions are improvements regarding floating point tif images. By default they are normalized to the range 0 to 1, but this can be easily changed by a click on the corresponding box in the status bar when having an image opened.
-
-Also the color value of a certain pixel can be determined by moving the mouse over it.
-
-
-![TIFF Visualizer Demo](https://github.com/user-attachments/assets/53610931-4a61-45a1-bb38-51820b330366)
-
+A TIFF viewer for Visual Studio Code, to display uint and floating-point images while allowing brightness and gamma corrections.
+For floating-point images, this extension allows easier handling by allowing setting the ranges, the image is normalized to.
 
 ## Features
 
-- **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types.
+- **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types. Also supports compressed TIFF images using Deflate or LZW with predictors.
 - **Interactive Pixel Inspection**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.
 - **Dynamic Normalization**: Interactively adjust the normalization range for floating-point images to reveal hidden details.
-- **Seamless Zoom and Pan**: Effortlessly zoom and pan to explore large images.
-- **Intuitive UI**: A clean and user-friendly interface that integrates smoothly with Visual Studio Code.
+- **Gamma and Brightness Correction**: Add or remove gamma correction for an image. To change brightness, the source gamma correction is removed, the brightness change (2**Change) is multiplied in linear space onto the image, and the target gamma correction is applied.
+- **Keep All Settings for Session**: A single VS Code Window keeps the settings applied on one image for all images. 
+- **Export as PNG**: Export the image, with the chosen image visualization as PNG for easy sharing.
 
-## Requirements
+## About
 
-There are no external dependencies or requirements to use this extension.
+The extension is built on the built-in [VS Code Media Preview extension](https://github.com/microsoft/vscode/tree/main/extensions/media-preview). To add TIFF support, the [geotiff library](https://github.com/geotiffjs/geotiff.js/) is used. All coding was performed using Cursor.
 
-## Extension Settings
+## Known Issues and Missing Features
 
-This extension contributes the following settings:
+- Image jumps to top left, when starting to zoom in
+- Adding a Histogram
+- Allow to rotate the image
+- Allow going fast through all images
+- Compare two images on top of each other to spot differences easily
+- Add option to use features of extension on other image formats, but it should be deactivated by default
 
-* `mediaPreview.tiff.normalization.min`: The minimum value for floating-point data normalization (default: `0.0`).
-* `mediaPreview.tiff.normalization.max`: The maximum value for floating-point data normalization (default: `1.0`).
+## Feature Requests and Issues
 
-## Known Issues
-
-There are currently no known issues. Please report any bugs or feature requests on the [GitHub issues page](https://github.com/kleinicke/tiff-visualizer/issues).
+If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/tiff-visualizer/issues). If you know how to fix bugs or how to implement certain features, feel free to contribute.
 
 ## Release Notes
 
