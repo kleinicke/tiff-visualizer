@@ -3,6 +3,8 @@
 A TIFF viewer for Visual Studio Code, to display uint and floating-point images while allowing brightness and gamma corrections.
 For floating-point images, this extension allows easier handling by allowing setting the ranges, the image is normalized to.
 
+![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/tiff-visualizer.gif)
+
 ## Features
 
 - **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types. Also supports compressed TIFF images using Deflate or LZW with predictors.
