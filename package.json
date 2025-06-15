@@ -82,11 +82,6 @@
         "command": "tiffVisualizer.compareWithSelected",
         "title": "Compare with Selected",
         "category": "TIFF Visualizer"
-      },
-      {
-        "command": "tiffVisualizer.setRotation",
-        "title": "Set Rotation",
-        "category": "TIFF Visualizer"
       }
     ]
   },
