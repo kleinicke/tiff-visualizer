@@ -411,8 +411,17 @@
 		
 		const rasters = await image.readRasters();
 		const samplesPerPixel = image.getSamplesPerPixel();
+		const bitsPerSample = image.getBitsPerSample();
 
-		const data = new (sampleFormat === 3 ? Float32Array : Uint8Array)(width * height * samplesPerPixel);
+		// Choose the correct typed array based on sample format and bits per sample
+		let data;
+		if (sampleFormat === 3) {
+			data = new Float32Array(width * height * samplesPerPixel);
+		} else if (bitsPerSample === 16) {
+			data = new Uint16Array(width * height * samplesPerPixel);
+		} else {
+			data = new Uint8Array(width * height * samplesPerPixel);
+		}
 		if (samplesPerPixel === 1) {
 			data.set(rasters[0]);
 		} else {
@@ -431,6 +440,7 @@
 				t339: sampleFormat,
 				t277: samplesPerPixel,
 				t284: 1, // chunky
+				t258: bitsPerSample, // BitsPerSample
 			}
 		};
 
@@ -523,8 +533,8 @@
 					// Apply exposure compensation in linear space
 					const exposedValue = linearValue * Math.pow(2, exposureStops);
 					// Convert back to gamma space
-					const gammaCorrected = Math.pow(exposedValue, 1/gammaOut) * maxVal;
-					const finalValue = Math.max(0, Math.min(maxVal, gammaCorrected));
+					const gammaCorrected = Math.pow(exposedValue, 1/gammaOut) * 255;
+					const finalValue = Math.max(0, Math.min(255, gammaCorrected));
 					imageDataArray[i * 4] = finalValue;
 					imageDataArray[i * 4 + 1] = finalValue;
 					imageDataArray[i * 4 + 2] = finalValue;
@@ -549,9 +559,9 @@
 					const bExposed = bLinear * Math.pow(2, exposureStops);
 
 					// Convert back to gamma space
-					const rFinal = Math.max(0, Math.min(maxVal, Math.pow(rExposed, 1/gammaOut) * maxVal));
-					const gFinal = Math.max(0, Math.min(maxVal, Math.pow(gExposed, 1/gammaOut) * maxVal));
-					const bFinal = Math.max(0, Math.min(maxVal, Math.pow(bExposed, 1/gammaOut) * maxVal));
+					const rFinal = Math.max(0, Math.min(255, Math.pow(rExposed, 1/gammaOut) * 255));
+					const gFinal = Math.max(0, Math.min(255, Math.pow(gExposed, 1/gammaOut) * 255));
+					const bFinal = Math.max(0, Math.min(255, Math.pow(bExposed, 1/gammaOut) * 255));
 
 					imageDataArray[i * 4] = rFinal;
 					imageDataArray[i * 4 + 1] = gFinal;

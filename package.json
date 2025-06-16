@@ -1,8 +1,8 @@
 {
   "name": "tiff-visualizer",
   "displayName": "TIFF Visualizer",
-  "description": "A TIFF for VS Code",
-  "version": "1.0.4",
+  "description": "Analyze float and int TIFF images",
+  "version": "1.0.6",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
@@ -108,7 +108,12 @@
     "vscode:prepublish": "npm run compile",
     "clean": "rimraf out",
     "compile": "npm run clean && node ./esbuild.js",
-    "watch": "npm run clean && node ./esbuild.js --watch"
+    "watch": "npm run clean && node ./esbuild.js --watch",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test",
+    "test:unit": "mocha out/test/unit/**/*.test.js",
+    "test:integration": "vscode-test"
   },
   "dependencies": {
     "geotiff": "^2.1.3",
@@ -118,6 +123,13 @@
   "devDependencies": {
     "@types/node": "^16.11.7",
     "@types/vscode": "^1.70.0",
+    "@types/mocha": "^10.0.6",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.14.1",
+    "@vscode/test-cli": "^0.0.9",
+    "@vscode/test-electron": "^2.4.0",
+    "eslint": "^8.57.0",
+    "mocha": "^10.4.0",
     "esbuild": "^0.25.5",
     "rimraf": "^6.0.1",
     "typescript": "^4.9.4"
