@@ -453,15 +453,16 @@
 				displayRasters.push(new Float32Array(raster));
 			}
 
-			// Use the first 3 channels to determine the image stats
-			for (let i = 0; i < Math.min(rasters.length, 3); i++) {
-				for (let j = 0; j < rasters[i].length; j++) {
-					if (!isNaN(rasters[i][j])) {
-						min = Math.min(min, rasters[i][j]);
-						max = Math.max(max, rasters[i][j]);
-					}
+					// Use the first 3 channels to determine the image stats
+		for (let i = 0; i < Math.min(rasters.length, 3); i++) {
+			for (let j = 0; j < rasters[i].length; j++) {
+				const value = rasters[i][j];
+				if (!isNaN(value) && isFinite(value)) {
+					min = Math.min(min, value);
+					max = Math.max(max, value);
 				}
 			}
+		}
 			vscode.postMessage({ type: 'stats', value: { min, max } });
 
 			const normMin = settings.normalization.min;

@@ -4,6 +4,7 @@ out/test/**
 node_modules/**
 src/**
 test/**
+example/**
 preview-src/**
 
 **/*.map

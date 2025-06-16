@@ -3,6 +3,7 @@ out/
 *.tif
 *.vsix
 yarn.lock
+example/
 
 # Webpack
 *.webpack.config.js
