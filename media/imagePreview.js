@@ -95,8 +95,8 @@
 			const rect = imageElement.getBoundingClientRect();
 			const naturalWidth = imageElement.width;
 			const naturalHeight = imageElement.height;
-			const x = Math.round((e.clientX - rect.left) / rect.width * naturalWidth);
-			const y = Math.round((e.clientY - rect.top) / rect.height * naturalHeight);
+			const x = Math.floor((e.clientX - rect.left) / rect.width * naturalWidth);
+			const y = Math.floor((e.clientY - rect.top) / rect.height * naturalHeight);
 			const color = getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
 			vscode.postMessage({
@@ -112,8 +112,8 @@
 			const rect = imageElement.getBoundingClientRect();
 			const naturalWidth = imageElement.width;
 			const naturalHeight = imageElement.height;
-			const x = Math.round((e.clientX - rect.left) / rect.width * naturalWidth);
-			const y = Math.round((e.clientY - rect.top) / rect.height * naturalHeight);
+			const x = Math.floor((e.clientX - rect.left) / rect.width * naturalWidth);
+			const y = Math.floor((e.clientY - rect.top) / rect.height * naturalHeight);
 			const color = getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
 			vscode.postMessage({

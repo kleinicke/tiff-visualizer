@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "TIFF Visualizer",
   "description": "A TIFF for VS Code",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
