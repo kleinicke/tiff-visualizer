@@ -6,6 +6,8 @@ src/**
 test/**
 example/**
 preview-src/**
+extension/test-fixtures/*
+.vscode-test/** 
 
 **/*.map
 

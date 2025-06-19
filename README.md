@@ -42,10 +42,13 @@ If you have use cases that would be helpful for others or find problems, feel fr
 
 Initial release of TIFF Visualizer.
 
-Build notice
-Instead of downloading from the Marketplace, you can also build from source by cloning the repo and running:
+## Build notice
+Instead of downloading from the Marketplace, you can also build from source by cloning the repo and building it by running:
 ```bash
-bashnpm install -g vsce
+git clone https://github.com/kleinicke/tiff-visualizer
+cd tiff-visualizer
+npm install
+npm install -g vsce
 vsce package
 ```
 Then install the generated .vsix file via Extensions > Install from VSIX...

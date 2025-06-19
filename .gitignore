@@ -4,6 +4,8 @@ out/
 *.vsix
 yarn.lock
 example/
+.vscode-test/
+extension/test-fixtures/
 
 # Webpack
 *.webpack.config.js
