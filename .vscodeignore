@@ -8,6 +8,7 @@ example/**
 preview-src/**
 extension/test-fixtures/*
 .vscode-test/** 
+test-workspace/**
 
 **/*.map
 

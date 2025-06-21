@@ -18,6 +18,9 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 
 	private _tempNormalisationMin: number | undefined;
 	private _tempNormalisationMax: number | undefined;
+	private _autoNormalize: boolean = false;
+	private _gammaMode: boolean = false; // New mode for float images with gamma/brightness
+	private _needsAutoRangeUpdate: boolean = false; // Flag to update range when switching from auto to gamma
 
 	private _tempGammaIn: number | undefined;
 	private _tempGammaOut: number | undefined;
@@ -40,6 +43,8 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		return {
 			min: this._tempNormalisationMin ?? 0.0,
 			max: this._tempNormalisationMax ?? 1.0,
+			autoNormalize: this._autoNormalize,
+			gammaMode: this._gammaMode,
 		};
 	}
 
@@ -59,6 +64,34 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 	public setTempNormalization(min: number, max: number) {
 		this._tempNormalisationMin = min;
 		this._tempNormalisationMax = max;
+	}
+
+	public setAutoNormalize(enabled: boolean) {
+		this._autoNormalize = enabled;
+		if (enabled) {
+			this._gammaMode = false; // Disable gamma mode when auto-normalize is enabled
+		}
+	}
+
+	public setGammaMode(enabled: boolean) {
+		this._gammaMode = enabled;
+		if (enabled) {
+			// When enabling gamma mode, preserve current normalization range
+			if (this._autoNormalize) {
+				// Coming from auto-normalize: need to update range with image stats
+				this._autoNormalize = false;
+				this._needsAutoRangeUpdate = true;
+			}
+			// If coming from manual mode, keep the current manual values
+		}
+	}
+
+	public checkAndClearAutoRangeUpdate(): boolean {
+		if (this._needsAutoRangeUpdate) {
+			this._needsAutoRangeUpdate = false;
+			return true;
+		}
+		return false;
 	}
 
 	public setTempGamma(gammaIn: number, gammaOut: number) {
@@ -206,7 +239,21 @@ class ImagePreview extends MediaPreview {
 					{
 						if (this._isTiff) {
 							this._normalizationStatusBarEntry.updateImageStats(message.value.min, message.value.max);
+							
+							// If we switched from auto-normalize to gamma mode, update the range
+							if (this._manager.checkAndClearAutoRangeUpdate()) {
+								this._manager.setTempNormalization(message.value.min, message.value.max);
+								this._manager.updateAllPreviews();
+							}
+							
 							this.updateStatusBar();
+						}
+						return;
+					}
+				case 'formatInfo':
+					{
+						if (this._isTiff) {
+							this._sizeStatusBarEntry.updateFormatInfo(message.value);
 						}
 						return;
 					}
@@ -320,6 +367,10 @@ class ImagePreview extends MediaPreview {
 		this.render();
 	}
 
+	public get isFloatTiff(): boolean {
+		return this._isTiff && this._isFloat;
+	}
+
 	public updateStatusBar() {
 		if (this.previewState !== PreviewState.Active) {
 			return;
@@ -329,11 +380,19 @@ class ImagePreview extends MediaPreview {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
 			if (this._isTiff && this._isFloat) {
-				const { min, max } = this._manager.getNormalizationConfig();
+				const { min, max, autoNormalize, gammaMode } = this._manager.getNormalizationConfig();
 				this._normalizationStatusBarEntry.updateNormalization(min, max);
-				this._normalizationStatusBarEntry.show();
-				this._gammaStatusBarEntry.hide();
-				this._brightnessStatusBarEntry.hide();
+				this._normalizationStatusBarEntry.show(autoNormalize, gammaMode);
+				
+				if (gammaMode) {
+					// Show gamma and brightness controls in gamma mode
+					this._gammaStatusBarEntry.show();
+					this._brightnessStatusBarEntry.show();
+				} else {
+					// Hide gamma and brightness controls in other modes
+					this._gammaStatusBarEntry.hide();
+					this._brightnessStatusBarEntry.hide();
+				}
 			} else if (this._isTiff && !this._isFloat) {
 				this._normalizationStatusBarEntry.hide();
 				this._gammaStatusBarEntry.show();
@@ -497,52 +556,146 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
 		const currentConfig = previewManager.getNormalizationConfig();
-
-		const min = await vscode.window.showInputBox({
-			prompt: 'Enter the minimum normalization value.',
-			value: currentConfig.min.toString(),
-			validateInput: text => {
-				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+		const activePreview = previewManager.activePreview;
+		
+		// First show a QuickPick with options
+		const options = [
+			{
+				label: (!currentConfig.autoNormalize && !currentConfig.gammaMode) ? '$(check) Manual Range' : '$(square) Manual Range',
+				description: 'Set custom min/max values',
+				detail: `Current: [${currentConfig.min.toFixed(2)}, ${currentConfig.max.toFixed(2)}]`,
+				action: 'manual'
+			},
+			{
+				label: currentConfig.autoNormalize ? '$(check) Auto-Normalize' : '$(square) Auto-Normalize',
+				description: 'Automatically use image min/max values',
+				detail: 'Normalize each float image from its actual min to max pixel values',
+				action: 'auto'
+			},
+			{
+				label: currentConfig.gammaMode ? '$(check) Gamma/Brightness Mode' : '$(square) Gamma/Brightness Mode',
+				description: 'Normalize to fixed 0-1 range and enable gamma/brightness controls',
+				detail: 'Always normalize to 0-1 range, then apply gamma and brightness adjustments',
+				action: 'gamma'
 			}
+		];
+
+		const selected = await vscode.window.showQuickPick(options, {
+			placeHolder: 'Choose normalization method',
+			title: 'Image Normalization Settings'
 		});
 
-		if (min === undefined) {
+		if (!selected) {
 			return;
 		}
 
-		const max = await vscode.window.showInputBox({
-			prompt: 'Enter the maximum normalization value.',
-			value: currentConfig.max.toString(),
-			validateInput: text => {
-				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+		if (selected.action === 'auto') {
+			// Enable auto-normalize (don't toggle off if already enabled)
+			if (!currentConfig.autoNormalize) {
+				previewManager.setAutoNormalize(true);
+				const gammaText = currentConfig.gammaMode ? ' Gamma/brightness corrections will be applied on top.' : '';
+				vscode.window.showInformationMessage('Auto-normalize enabled. Float images will be normalized to their actual min/max values.' + gammaText);
 			}
-		});
+		} else if (selected.action === 'gamma') {
+			// Enable gamma mode (don't toggle off if already enabled)
+			if (!currentConfig.gammaMode) {
+				previewManager.setGammaMode(true);
+				vscode.window.showInformationMessage('Gamma/Brightness mode enabled. Normalization between 0 and 1 will be used with gamma/brightness controls.');
+			}
+		} else {
+			// Manual range setting
+			const min = await vscode.window.showInputBox({
+				prompt: 'Enter the minimum normalization value.',
+				value: currentConfig.min.toString(),
+				validateInput: text => {
+					return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+				}
+			});
 
-		if (max === undefined) {
-			return;
+			if (min === undefined) {
+				return;
+			}
+
+			const max = await vscode.window.showInputBox({
+				prompt: 'Enter the maximum normalization value.',
+				value: currentConfig.max.toString(),
+				validateInput: text => {
+					return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+				}
+			});
+
+			if (max === undefined) {
+				return;
+			}
+
+			if (parseFloat(min) >= parseFloat(max)) {
+				vscode.window.showErrorMessage('Min value must be smaller than max value.');
+				return;
+			}
+			
+			const newMin = parseFloat(min);
+			const newMax = parseFloat(max);
+
+			previewManager.setTempNormalization(newMin, newMax);
+			// Disable auto-normalize when manually setting values, but keep gamma mode if enabled
+			previewManager.setAutoNormalize(false);
 		}
 
-		if (parseFloat(min) >= parseFloat(max)) {
-			vscode.window.showErrorMessage('Min value must be smaller than max value.');
-			return;
-		}
-		const newMin = parseFloat(min);
-		const newMax = parseFloat(max);
-
-		previewManager.setTempNormalization(newMin, newMax);
 		previewManager.updateAllPreviews();
 
-		const activePreview = previewManager.activePreview;
 		if (activePreview) {
 			activePreview.updateStatusBar();
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setGamma', async () => {
+		const currentPreview = previewManager.activePreview;
+		const normConfig = previewManager.getNormalizationConfig();
+		
+		// Check if this is a float TIFF and not in gamma mode
+		if (currentPreview && currentPreview.isFloatTiff && !normConfig.gammaMode) {
+			const choice = await vscode.window.showQuickPick([
+				{
+					label: '$(arrow-right) Switch to Gamma/Brightness Mode',
+					description: 'Enable gamma correction for this float image',
+					detail: 'Use current normalization range with gamma/brightness controls',
+					action: 'switch'
+				},
+				{
+					label: '$(edit) Set Gamma (Manual Mode)',
+					description: 'Set gamma values for manual normalization',
+					detail: 'Keep current normalization mode and set gamma values',
+					action: 'manual'
+				},
+				{
+					label: '$(x) Cancel',
+					description: 'Go back without changes',
+					action: 'cancel'
+				}
+			], {
+				placeHolder: 'Float image detected - Choose how to apply gamma correction',
+				title: 'Gamma Correction for Float Image'
+			});
+
+			if (!choice || choice.action === 'cancel') {
+				return;
+			}
+
+			if (choice.action === 'switch') {
+				previewManager.setGammaMode(true);
+				previewManager.updateAllPreviews();
+				if (currentPreview) {
+					currentPreview.updateStatusBar();
+				}
+				vscode.window.showInformationMessage('Switched to Gamma/Brightness mode. Current normalization range will be used with gamma/brightness controls.');
+				return;
+			}
+		}
+
 		const currentConfig = previewManager.getGammaConfig();
 
 		const gammaIn = await vscode.window.showInputBox({
-			prompt: 'Enter the source gamma value.',
+			prompt: 'Enter the source gamma value. (Default: 2.2, Linear: 1.0)',
 			value: currentConfig.in.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
@@ -554,7 +707,7 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		}
 
 		const gammaOut = await vscode.window.showInputBox({
-			prompt: 'Enter the display gamma value.',
+			prompt: 'Enter the display gamma value. (Default: 2.2, Linear: 1.0)',
 			value: currentConfig.out.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
@@ -579,6 +732,49 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setBrightness', async () => {
+		const currentPreview = previewManager.activePreview;
+		const normConfig = previewManager.getNormalizationConfig();
+		
+		// Check if this is a float TIFF and not in gamma mode
+		if (currentPreview && currentPreview.isFloatTiff && !normConfig.gammaMode) {
+			const choice = await vscode.window.showQuickPick([
+				{
+					label: '$(arrow-right) Switch to Gamma/Brightness Mode',
+					description: 'Enable brightness adjustment for this float image',
+					detail: 'Use current normalization range with gamma/brightness controls',
+					action: 'switch'
+				},
+				{
+					label: '$(edit) Set Brightness (Manual Mode)',
+					description: 'Set brightness values for manual normalization',
+					detail: 'Keep current normalization mode and set brightness values',
+					action: 'manual'
+				},
+				{
+					label: '$(x) Cancel',
+					description: 'Go back without changes',
+					action: 'cancel'
+				}
+			], {
+				placeHolder: 'Float image detected - Choose how to apply brightness adjustment',
+				title: 'Brightness Adjustment for Float Image'
+			});
+
+			if (!choice || choice.action === 'cancel') {
+				return;
+			}
+
+			if (choice.action === 'switch') {
+				previewManager.setGammaMode(true);
+				previewManager.updateAllPreviews();
+				if (currentPreview) {
+					currentPreview.updateStatusBar();
+				}
+				vscode.window.showInformationMessage('Switched to Gamma/Brightness mode. Current normalization range will be used with gamma/brightness controls.');
+				return;
+			}
+		}
+
 		const currentConfig = previewManager.getBrightnessConfig();
 
 		const brightness = await vscode.window.showInputBox({

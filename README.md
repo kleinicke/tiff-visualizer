@@ -26,8 +26,7 @@ The extension is built on the built-in [VS Code Media Preview extension](https:/
 - Allow going fast through all images
 - Compare two images on top of each other to spot differences easily
 - Add option to use features of extension on other image formats, but it should be deactivated by default
-- Add gamma correction for float images
-- Add option to show int values as normalized floats
+- Add option to show int values as normalized floats?
 - Issue with lzw from tifffile. lzw images from oiiotool work ...
 - Add automatic tests for many image formats
 
@@ -42,7 +41,12 @@ If you have use cases that would be helpful for others or find problems, feel fr
 
 Initial release of TIFF Visualizer.
 
+### 1.1.0
+
+Add automatic float normalization and gamma/brightness settings for float images
+
 ## Build notice
+
 Instead of downloading from the Marketplace, you can also build from source by cloning the repo and building it by running:
 ```bash
 git clone https://github.com/kleinicke/tiff-visualizer

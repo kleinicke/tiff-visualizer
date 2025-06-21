@@ -141,19 +141,19 @@
 
 			if (samples === 1) { // Grayscale
 				const value = data[pixelIndex];
-				color = format === 3 ? value.toPrecision(3) : value.toString();
+				color = format === 3 ? value.toPrecision(4) : value.toString();
 			} else if (samples >= 3) {
 				const values = [];
 				if (planarConfig === 2) { // Planar data
 					const planeSize = naturalWidth * naturalHeight;
 					for (let i = 0; i < samples; i++) {
 						const value = data[pixelIndex + i * planeSize];
-						values.push(format === 3 ? value.toPrecision(3) : value.toString().padStart(3, '0'));
+						values.push(format === 3 ? value.toPrecision(4) : value.toString().padStart(3, '0'));
 					}
 				} else { // Interleaved data
 					for (let i = 0; i < samples; i++) {
 						const value = data[pixelIndex * samples + i];
-						values.push(format === 3 ? value.toPrecision(3) : value.toString().padStart(3, '0'));
+						values.push(format === 3 ? value.toPrecision(4) : value.toString().padStart(3, '0'));
 					}
 				}
 				if (format === 3) {
@@ -405,6 +405,29 @@
 		const width = image.getWidth();
 		const height = image.getHeight();
 		
+		// Extract compression and format information using fileDirectory
+		const fileDir = image.fileDirectory || {};
+		const compression = fileDir.Compression || 'Unknown';
+		const predictor = fileDir.Predictor;
+		const photometricInterpretation = fileDir.PhotometricInterpretation;
+		const planarConfig = fileDir.PlanarConfiguration;
+		
+		// Send format information to backend
+		vscode.postMessage({ 
+			type: 'formatInfo', 
+			value: { 
+				compression, 
+				predictor, 
+				photometricInterpretation, 
+				planarConfig,
+				width,
+				height,
+				samplesPerPixel: image.getSamplesPerPixel(),
+				bitsPerSample: image.getBitsPerSample(),
+				sampleFormat
+			} 
+		});
+		
 		const canvas = document.createElement('canvas');
 		canvas.width = width;
 		canvas.height = height;
@@ -475,20 +498,49 @@
 		}
 			vscode.postMessage({ type: 'stats', value: { min, max } });
 
-			const normMin = settings.normalization.min;
-			const normMax = settings.normalization.max;
+			// Determine normalization range based on mode
+			let normMin, normMax;
+			if (settings.normalization.autoNormalize) {
+				// Auto-normalize: use actual image min/max
+				normMin = min;
+				normMax = max;
+			} else if (settings.normalization.gammaMode) {
+				// Gamma mode: always normalize to fixed 0-1 range
+				normMin = 0;
+				normMax = 1;
+			} else {
+				// Manual mode: use user-specified range
+				normMin = settings.normalization.min;
+				normMax = settings.normalization.max;
+			}
 			const range = normMax - normMin;
 
+			// Apply normalization first, then optional gamma/brightness processing
 			for (let i = 0; i < displayRasters.length; i++) {
 				for (let j = 0; j < displayRasters[i].length; j++) {
 					let value = displayRasters[i][j];
+					// First normalize to 0-1 using the determined range
 					if (range > 0) {
 						value = (value - normMin) / range;
 					} else {
 						value = 0;
 					}
-					const clampedValue = Math.max(0, Math.min(1, value));
-					displayRasters[i][j] = clampedValue * 255;
+					value = Math.max(0, Math.min(1, value));
+					
+					// Apply gamma correction and brightness if gamma mode is enabled
+					if (settings.normalization.gammaMode) {
+						const { in: gammaIn, out: gammaOut } = settings.gamma;
+						const { offset: exposureStops } = settings.brightness;
+						
+						// Apply gamma correction and brightness in linear space
+						const linearValue = Math.pow(value, gammaIn);
+						const exposedValue = linearValue * Math.pow(2, exposureStops);
+						const gammaCorrected = Math.pow(exposedValue, 1/gammaOut);
+						
+						value = Math.max(0, Math.min(1, gammaCorrected));
+					}
+					
+					displayRasters[i][j] = value * 255;
 				}
 			}
 			
