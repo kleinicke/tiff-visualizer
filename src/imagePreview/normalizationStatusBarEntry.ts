@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
-import { Disposable } from '../util/dispose';
+import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
 const NORMALIZATION_RANGE_COMMAND_ID = 'tiffVisualizer.setNormalizationRange';
 
-export class NormalizationStatusBarEntry extends Disposable {
-	private readonly _entry: vscode.StatusBarItem;
+export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
 	private _imageRealMin: number | undefined;
 	private _imageRealMax: number | undefined;
@@ -13,14 +12,13 @@ export class NormalizationStatusBarEntry extends Disposable {
 	private _normMax: number | undefined;
 
 	constructor() {
-		super();
-		this._entry = this._register(vscode.window.createStatusBarItem(
+		super(
 			'tiffVisualizer.normalization',
+			'Image Normalization',
 			vscode.StatusBarAlignment.Right,
-			101,
-		));
-		this._entry.name = 'Image Normalization';
-		this._entry.command = NORMALIZATION_RANGE_COMMAND_ID;
+			101
+		);
+		this.entry.command = NORMALIZATION_RANGE_COMMAND_ID;
 	}
 
 	public show(autoNormalize?: boolean, gammaMode?: boolean) {
@@ -36,17 +34,17 @@ export class NormalizationStatusBarEntry extends Disposable {
 			text = `Image: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}] | ${text}`;
 		}
 
-		this._entry.text = text;
-		this._entry.tooltip = autoNormalize 
+		this.entry.text = text;
+		this.entry.tooltip = autoNormalize 
 			? 'Auto-normalize enabled - Click to change normalization settings'
 			: gammaMode
 			? 'Gamma/Brightness mode enabled - Click to change normalization settings'
 			: 'Click to set custom normalization range for floating-point images';
-		this._entry.show();
+		this.entry.show();
 	}
 
 	public hide() {
-		this._entry.hide();
+		this.entry.hide();
 	}
 
 	public updateImageStats(min: number, max: number) {

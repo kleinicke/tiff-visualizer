@@ -7,6 +7,8 @@ import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
+import { ImageSettingsManager } from './imageSettings';
+import { MessageRouter } from './messageHandlers';
 import { fromArrayBuffer } from 'geotiff';
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider {
@@ -15,19 +17,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 
 	private readonly _previews = new Set<ImagePreview>();
 	private _activePreview: ImagePreview | undefined;
-
-	private _tempNormalisationMin: number | undefined;
-	private _tempNormalisationMax: number | undefined;
-	private _autoNormalize: boolean = false;
-	private _gammaMode: boolean = false; // New mode for float images with gamma/brightness
-
-
-	private _tempGammaIn: number | undefined;
-	private _tempGammaOut: number | undefined;
-
-	private _tempBrightness: number | undefined;
-
-	private _comparisonBaseUri: vscode.Uri | undefined;
+	private readonly _settingsManager = new ImageSettingsManager();
 
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
@@ -39,70 +29,48 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		private readonly brightnessStatusBarEntry: BrightnessStatusBarEntry,
 	) { }
 
+	public get settingsManager(): ImageSettingsManager {
+		return this._settingsManager;
+	}
+
 	public getNormalizationConfig() {
-		return {
-			min: this._tempNormalisationMin ?? 0.0,
-			max: this._tempNormalisationMax ?? 1.0,
-			autoNormalize: this._autoNormalize,
-			gammaMode: this._gammaMode,
-		};
+		return this._settingsManager.settings.normalization;
 	}
 
 	public getGammaConfig() {
-		return {
-			in: this._tempGammaIn ?? 2.2,
-			out: this._tempGammaOut ?? 2.2,
-		};
+		return this._settingsManager.settings.gamma;
 	}
 
 	public getBrightnessConfig() {
-		return {
-			offset: this._tempBrightness ?? 0,
-		};
+		return this._settingsManager.settings.brightness;
 	}
 
 	public setTempNormalization(min: number, max: number) {
-		this._tempNormalisationMin = min;
-		this._tempNormalisationMax = max;
+		this._settingsManager.updateNormalization(min, max);
 	}
 
 	public setAutoNormalize(enabled: boolean) {
-		this._autoNormalize = enabled;
-		if (enabled) {
-			this._gammaMode = false; // Disable gamma mode when auto-normalize is enabled
-		}
+		this._settingsManager.setAutoNormalize(enabled);
 	}
 
 	public setGammaMode(enabled: boolean) {
-		this._gammaMode = enabled;
-		if (enabled) {
-			// When enabling gamma mode, preserve current normalization range
-			if (this._autoNormalize) {
-				// Coming from auto-normalize: disable auto mode but keep existing manual values
-				this._autoNormalize = false;
-			}
-			// If coming from manual mode, keep the current manual values
-		}
+		this._settingsManager.setGammaMode(enabled);
 	}
 
-
-
 	public setTempGamma(gammaIn: number, gammaOut: number) {
-		this._tempGammaIn = gammaIn;
-		this._tempGammaOut = gammaOut;
+		this._settingsManager.updateGamma(gammaIn, gammaOut);
 	}
 
 	public setTempBrightness(offset: number) {
-		this._tempBrightness = offset;
+		this._settingsManager.updateBrightness(offset);
 	}
 
 	public setComparisonBase(uri: vscode.Uri | undefined) {
-		this._comparisonBaseUri = uri;
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', !!uri);
+		this._settingsManager.setComparisonBase(uri);
 	}
 
 	public getComparisonBase(): vscode.Uri | undefined {
-		return this._comparisonBaseUri;
+		return this._settingsManager.comparisonBaseUri;
 	}
 
 	public updateAllPreviews() {
@@ -157,7 +125,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 }
 
 
-class ImagePreview extends MediaPreview {
+export class ImagePreview extends MediaPreview {
 
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
@@ -171,6 +139,7 @@ class ImagePreview extends MediaPreview {
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
 	private readonly _gammaStatusBarEntry: GammaStatusBarEntry;
 	private readonly _brightnessStatusBarEntry: BrightnessStatusBarEntry;
+	private readonly _messageRouter: MessageRouter;
 
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
 	public readonly onDidExport = this._onDidExport.event;
@@ -194,84 +163,10 @@ class ImagePreview extends MediaPreview {
 		this._normalizationStatusBarEntry = normalizationStatusBarEntry;
 		this._gammaStatusBarEntry = gammaStatusBarEntry;
 		this._brightnessStatusBarEntry = brightnessStatusBarEntry;
+		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
-			switch (message.type) {
-				case 'size':
-					{
-						this._imageSize = message.value;
-						this.updateStatusBar();
-						return;
-					}
-				case 'zoom':
-					{
-						this._imageZoom = message.value;
-						this.updateStatusBar();
-						return;
-					}
-				case 'pixelFocus':
-					{
-						if (this.previewState === PreviewState.Active) {
-							this._sizeStatusBarEntry.showPixelPosition(this, message.value);
-						}
-						return;
-					}
-				case 'pixelBlur':
-					{
-						if (this.previewState === PreviewState.Active) {
-							this._sizeStatusBarEntry.hidePixelPosition(this);
-							this._sizeStatusBarEntry.show(this, this._imageSize || '');
-						}
-						return;
-					}
-				case 'isFloat':
-					{
-						this._isFloat = message.value;
-						this.updateStatusBar();
-						return;
-					}
-				case 'stats':
-					{
-						if (this._isTiff) {
-							this._normalizationStatusBarEntry.updateImageStats(message.value.min, message.value.max);
-							this.updateStatusBar();
-						}
-						return;
-					}
-				case 'formatInfo':
-					{
-						if (this._isTiff) {
-							this._sizeStatusBarEntry.updateFormatInfo(message.value);
-						}
-						return;
-					}
-				case 'ready':
-					{
-						if (this.previewState === PreviewState.Disposed) {
-							return;
-						}
-						this._webviewEditor.webview.postMessage({
-							type: 'update',
-							body: {
-								isTiff: this._isTiff
-							}
-						});
-						return;
-					}
-				case 'didExportAsPng': {
-					this._onDidExport.fire(message.payload);
-					break;
-				}
-				case 'get-initial-data': {
-					this._webviewEditor.webview.postMessage({
-						type: 'update',
-						body: {
-							isTiff: this._isTiff
-						}
-					});
-					break;
-				}
-			}
+			this._messageRouter.handle(message);
 		}));
 
 		this._register(this._zoomStatusBarEntry.onDidChangeScale(e => {
@@ -281,6 +176,17 @@ class ImagePreview extends MediaPreview {
 		}));
 
 		this._register(webviewEditor.onDidChangeViewState(() => {
+			this.updateStatusBar();
+		}));
+
+		// Subscribe to settings changes for automatic updates
+		this._register(this._manager.settingsManager.onDidChangeSettings((settings) => {
+			// Update status bar entries with new values
+			this._gammaStatusBarEntry.updateGamma(settings.gamma.in, settings.gamma.out);
+			this._brightnessStatusBarEntry.updateBrightness(settings.brightness.offset);
+			
+			// Send targeted updates to webview instead of full reload
+			this.sendSettingsUpdate(settings);
 			this.updateStatusBar();
 		}));
 
@@ -359,6 +265,65 @@ class ImagePreview extends MediaPreview {
 		return this._isTiff && this._isFloat;
 	}
 
+	// Accessor methods for message handlers
+	public setImageSize(size: string): void {
+		this._imageSize = size;
+	}
+
+	public getImageSize(): string | undefined {
+		return this._imageSize;
+	}
+
+	public setImageZoom(zoom: Scale): void {
+		this._imageZoom = zoom;
+	}
+
+	public setIsFloat(isFloat: boolean): void {
+		this._isFloat = isFloat;
+	}
+
+	public get isTiff(): boolean {
+		return this._isTiff;
+	}
+
+	public getNormalizationStatusBarEntry(): NormalizationStatusBarEntry {
+		return this._normalizationStatusBarEntry;
+	}
+
+	public getSizeStatusBarEntry(): SizeStatusBarEntry {
+		return this._sizeStatusBarEntry;
+	}
+
+	public getWebview(): vscode.Webview {
+		return this._webviewEditor.webview;
+	}
+
+	public fireExportEvent(payload: string): void {
+		this._onDidExport.fire(payload);
+	}
+
+	public getManager(): ImagePreviewManager {
+		return this._manager;
+	}
+
+	public isPreviewActive(): boolean {
+		return this.previewState === PreviewState.Active;
+	}
+
+	private sendSettingsUpdate(settings: import('./imageSettings').ImageSettings): void {
+		if (this.previewState === PreviewState.Active) {
+			// Send targeted update messages instead of full reload
+			this._webviewEditor.webview.postMessage({
+				type: 'updateSettings',
+				settings: {
+					normalization: settings.normalization,
+					gamma: settings.gamma,
+					brightness: settings.brightness
+				}
+			});
+		}
+	}
+
 	public updateStatusBar() {
 		if (this.previewState !== PreviewState.Active) {
 			return;
@@ -368,11 +333,17 @@ class ImagePreview extends MediaPreview {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
 			if (this._isTiff && this._isFloat) {
-				const { min, max, autoNormalize, gammaMode } = this._manager.getNormalizationConfig();
-				this._normalizationStatusBarEntry.updateNormalization(min, max);
-				this._normalizationStatusBarEntry.show(autoNormalize, gammaMode);
+				const settings = this._manager.settingsManager.settings;
+				this._normalizationStatusBarEntry.updateNormalization(
+					settings.normalization.min, 
+					settings.normalization.max
+				);
+				this._normalizationStatusBarEntry.show(
+					settings.normalization.autoNormalize, 
+					settings.normalization.gammaMode
+				);
 				
-				if (gammaMode) {
+				if (settings.normalization.gammaMode) {
 					// Show gamma and brightness controls in gamma mode
 					this._gammaStatusBarEntry.show();
 					this._brightnessStatusBarEntry.show();
@@ -400,12 +371,13 @@ class ImagePreview extends MediaPreview {
 	}
 
 	protected override async getWebviewContents(): Promise<string> {
+		const settingsManager = this._manager.settingsManager;
 		const settings = {
 			src: await this.getResourcePath(this._webviewEditor, this.resource),
 			resourceUri: this.resource.toString(),
-			normalization: this._manager.getNormalizationConfig(),
-			gamma: this._manager.getGammaConfig(),
-			brightness: this._manager.getBrightnessConfig(),
+			normalization: settingsManager.settings.normalization,
+			gamma: settingsManager.settings.gamma,
+			brightness: settingsManager.settings.brightness,
 		};
 
 		const isTiff = this.resource.path.toLowerCase().endsWith('.tiff') || this.resource.path.toLowerCase().endsWith('.tif');

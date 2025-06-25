@@ -1,34 +1,31 @@
 import * as vscode from 'vscode';
-import { Disposable } from '../util/dispose';
+import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
 const GAMMA_COMMAND_ID = 'tiffVisualizer.setGamma';
 
-export class GammaStatusBarEntry extends Disposable {
-	private readonly _entry: vscode.StatusBarItem;
-
+export class GammaStatusBarEntry extends PreviewStatusBarEntry {
 	private _gammaIn: number | undefined;
 	private _gammaOut: number | undefined;
 
 	constructor() {
-		super();
-		this._entry = this._register(vscode.window.createStatusBarItem(
+		super(
 			'tiffVisualizer.gamma',
+			'Image Gamma',
 			vscode.StatusBarAlignment.Right,
-			100,
-		));
-		this._entry.name = 'Image Gamma';
-		this._entry.command = GAMMA_COMMAND_ID;
+			100
+		);
+		this.entry.command = GAMMA_COMMAND_ID;
 	}
 
 	public show() {
 		const text = `γ: ${(this._gammaIn ?? 2.2).toFixed(1)}→${(this._gammaOut ?? 2.2).toFixed(1)}`;
-		this._entry.text = text;
-		this._entry.tooltip = 'Click to set gamma correction';
-		this._entry.show();
+		this.entry.text = text;
+		this.entry.tooltip = 'Click to set gamma correction';
+		this.entry.show();
 	}
 
 	public hide() {
-		this._entry.hide();
+		this.entry.hide();
 	}
 
 	public updateGamma(gammaIn: number, gammaOut: number) {
