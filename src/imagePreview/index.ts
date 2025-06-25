@@ -332,6 +332,10 @@ export class ImagePreview extends MediaPreview {
 		if (this._webviewEditor.active) {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
+			
+			// Debug logging
+			console.log(`[StatusBar] isTiff: ${this._isTiff}, isFloat: ${this._isFloat}`);
+			
 			if (this._isTiff && this._isFloat) {
 				const settings = this._manager.settingsManager.settings;
 				this._normalizationStatusBarEntry.updateNormalization(
@@ -410,7 +414,7 @@ export class ImagePreview extends MediaPreview {
 		<a href="#" class="open-file-link">${vscode.l10n.t("Open file using VS Code's standard text/binary editor?")}</a>
 	</div>
 	<script src="${escapeAttribute(this.extensionResource('media', 'geotiff.min.js'))}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
+	<script type="module" src="${escapeAttribute(this.extensionResource('media', 'imagePreview.js'))}" nonce="${nonce}"></script>
 </body>
 </html>`;
 	}

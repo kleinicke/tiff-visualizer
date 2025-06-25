@@ -75,6 +75,7 @@ class PixelBlurMessageHandler implements MessageHandler {
 
 class IsFloatMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
+		console.log(`[MessageHandler] Received isFloat message: ${message.value}`);
 		preview.setIsFloat(message.value);
 		preview.updateStatusBar();
 	}

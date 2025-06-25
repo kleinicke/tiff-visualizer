@@ -22,15 +22,20 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 	}
 
 	public show(autoNormalize?: boolean, gammaMode?: boolean) {
-		let text = `Norm: [${(this._normMin ?? 0).toFixed(2)}, ${(this._normMax ?? 1).toFixed(2)}]`;
+		let text = '';
 		
 		if (autoNormalize) {
+			// Show the actual image range when auto-normalizing
 			text = `Auto-Norm: [${(this._imageRealMin ?? 0).toFixed(2)}, ${(this._imageRealMax ?? 1).toFixed(2)}]`;
 		} else if (gammaMode) {
 			text = `Gamma-Norm: [0.00, 1.00]`;
+		} else {
+			// Manual normalization - show the user-set range
+			text = `Norm: [${(this._normMin ?? 0).toFixed(2)}, ${(this._normMax ?? 1).toFixed(2)}]`;
 		}
 
-		if (this._imageRealMin !== undefined && this._imageRealMax !== undefined && !autoNormalize && !gammaMode) {
+		// Always show image stats when available (unless in auto-normalize mode where it would be redundant)
+		if (this._imageRealMin != null && this._imageRealMax != null && !autoNormalize) {
 			text = `Image: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}] | ${text}`;
 		}
 
@@ -52,8 +57,8 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 		this._imageRealMax = max;
 	}
 
-	public updateNormalization(min: number, max: number) {
-		this._normMin = min;
-		this._normMax = max;
+	public updateNormalization(min: number | null, max: number | null) {
+		this._normMin = min ?? undefined;
+		this._normMax = max ?? undefined;
 	}
 } 
