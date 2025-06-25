@@ -152,6 +152,8 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 	private setActivePreview(value: ImagePreview | undefined): void {
 		this._activePreview = value;
 	}
+
+
 }
 
 
@@ -398,9 +400,8 @@ class ImagePreview extends MediaPreview {
 	}
 
 	protected override async getWebviewContents(): Promise<string> {
-		const version = Date.now().toString();
 		const settings = {
-			src: await this.getResourcePath(this._webviewEditor, this.resource, version),
+			src: await this.getResourcePath(this._webviewEditor, this.resource),
 			resourceUri: this.resource.toString(),
 			normalization: this._manager.getNormalizationConfig(),
 			gamma: this._manager.getGammaConfig(),
@@ -447,7 +448,7 @@ class ImagePreview extends MediaPreview {
 		this._webviewEditor.webview.postMessage({ type: 'setActive', value: this._webviewEditor.active });
 	}
 
-	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri, version: string): Promise<string> {
+	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri): Promise<string> {
 		if (resource.scheme === 'git') {
 			const stat = await vscode.workspace.fs.stat(resource);
 			if (stat.size === 0) {
@@ -455,11 +456,8 @@ class ImagePreview extends MediaPreview {
 			}
 		}
 
-		// Avoid adding cache busting if there is already a query string
-		if (resource.query) {
-			return webviewEditor.webview.asWebviewUri(resource).toString();
-		}
-		return webviewEditor.webview.asWebviewUri(resource).with({ query: `version=${version}` }).toString();
+		// No cache busting - let browser/VS Code handle caching naturally
+		return webviewEditor.webview.asWebviewUri(resource).toString();
 	}
 
 	private extensionResource(...parts: string[]) {
