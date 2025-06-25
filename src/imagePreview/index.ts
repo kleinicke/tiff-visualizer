@@ -20,7 +20,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 	private _tempNormalisationMax: number | undefined;
 	private _autoNormalize: boolean = false;
 	private _gammaMode: boolean = false; // New mode for float images with gamma/brightness
-	private _needsAutoRangeUpdate: boolean = false; // Flag to update range when switching from auto to gamma
+
 
 	private _tempGammaIn: number | undefined;
 	private _tempGammaOut: number | undefined;
@@ -78,21 +78,14 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider 
 		if (enabled) {
 			// When enabling gamma mode, preserve current normalization range
 			if (this._autoNormalize) {
-				// Coming from auto-normalize: need to update range with image stats
+				// Coming from auto-normalize: disable auto mode but keep existing manual values
 				this._autoNormalize = false;
-				this._needsAutoRangeUpdate = true;
 			}
 			// If coming from manual mode, keep the current manual values
 		}
 	}
 
-	public checkAndClearAutoRangeUpdate(): boolean {
-		if (this._needsAutoRangeUpdate) {
-			this._needsAutoRangeUpdate = false;
-			return true;
-		}
-		return false;
-	}
+
 
 	public setTempGamma(gammaIn: number, gammaOut: number) {
 		this._tempGammaIn = gammaIn;
@@ -239,13 +232,6 @@ class ImagePreview extends MediaPreview {
 					{
 						if (this._isTiff) {
 							this._normalizationStatusBarEntry.updateImageStats(message.value.min, message.value.max);
-							
-							// If we switched from auto-normalize to gamma mode, update the range
-							if (this._manager.checkAndClearAutoRangeUpdate()) {
-								this._manager.setTempNormalization(message.value.min, message.value.max);
-								this._manager.updateAllPreviews();
-							}
-							
 							this.updateStatusBar();
 						}
 						return;
@@ -637,8 +623,9 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 			const newMax = parseFloat(max);
 
 			previewManager.setTempNormalization(newMin, newMax);
-			// Disable auto-normalize when manually setting values, but keep gamma mode if enabled
+			// Disable both auto-normalize and gamma mode when manually setting values
 			previewManager.setAutoNormalize(false);
+			previewManager.setGammaMode(false);
 		}
 
 		previewManager.updateAllPreviews();
