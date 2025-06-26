@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ImagePreview } from './index';
+import { ImagePreview } from './imagePreview';
 import { PreviewState } from '../mediaPreview';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 
@@ -75,9 +75,19 @@ class PixelBlurMessageHandler implements MessageHandler {
 
 class IsFloatMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		console.log(`[MessageHandler] Received isFloat message: ${message.value}`);
-		preview.setIsFloat(message.value);
-		preview.updateStatusBar();
+		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
+		outputChannel.appendLine(`TIFF Visualizer: Received isFloat message: ${JSON.stringify(message)}`);
+		
+		if (message.value !== undefined) {
+			outputChannel.appendLine(`TIFF Visualizer: Setting isFloat to: ${message.value}`);
+			preview.setIsFloat(message.value);
+			
+			outputChannel.appendLine('TIFF Visualizer: Updating status bar after isFloat change');
+			preview.updateStatusBar();
+			outputChannel.appendLine('TIFF Visualizer: Status bar update complete');
+		} else {
+			outputChannel.appendLine('TIFF Visualizer: Warning - isFloat message missing value');
+		}
 	}
 }
 

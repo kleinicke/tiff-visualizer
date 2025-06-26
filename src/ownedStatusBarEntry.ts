@@ -24,4 +24,9 @@ export abstract class PreviewStatusBarEntry extends Disposable {
 			this._showOwner = undefined;
 		}
 	}
+
+	public forceHide() {
+		this.entry.hide();
+		this._showOwner = undefined;
+	}
 }

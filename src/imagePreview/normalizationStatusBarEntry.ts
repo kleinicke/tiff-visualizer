@@ -39,17 +39,14 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 			text = `Image: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}] | ${text}`;
 		}
 
-		this.entry.text = text;
-		this.entry.tooltip = autoNormalize 
+		const tooltip = autoNormalize 
 			? 'Auto-normalize enabled - Click to change normalization settings'
 			: gammaMode
 			? 'Gamma/Brightness mode enabled - Click to change normalization settings'
 			: 'Click to set custom normalization range for floating-point images';
-		this.entry.show();
-	}
-
-	public hide() {
-		this.entry.hide();
+		
+		this.showItem(this, text);
+		this.entry.tooltip = tooltip;
 	}
 
 	public updateImageStats(min: number, max: number) {

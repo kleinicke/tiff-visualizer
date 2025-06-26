@@ -268,39 +268,9 @@ export class TiffProcessor {
 		const imageDataArray = new Uint8ClampedArray(width * height * 4);
 		const numBands = rasters.length;
 		
-		// For integer TIFFs, we need to handle normalization differently based on settings
+		// For uint images: always use traditional bit-depth normalization
+		// Normalization settings are ignored - they only apply to float images
 		const maxVal = Math.pow(2, bitsPerSample) - 1;
-		let useImageStats = false;
-		let normMin = 0;
-		let normMax = maxVal;
-		
-		// Check if we should use image statistics for normalization
-		if (settings.normalization && settings.normalization.autoNormalize) {
-			// Auto-normalization: always use image statistics
-			useImageStats = true;
-			
-			// Calculate min/max from actual data (same as float processing)
-			let min = Infinity;
-			let max = -Infinity;
-			for (let i = 0; i < Math.min(rasters.length, 3); i++) {
-				for (let j = 0; j < rasters[i].length; j++) {
-					const value = rasters[i][j];
-					if (!isNaN(value) && isFinite(value)) {
-						min = Math.min(min, value);
-						max = Math.max(max, value);
-					}
-				}
-			}
-			normMin = min;
-			normMax = max;
-		} else if (settings.normalization && 
-				   (settings.normalization.min !== 0.0 || settings.normalization.max !== 1.0)) {
-			// Manual normalization with custom values (not the default 0.0-1.0)
-			useImageStats = true;
-			normMin = settings.normalization.min;
-			normMax = settings.normalization.max;
-		}
-		// Otherwise: use traditional bit-depth normalization (useImageStats remains false)
 
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
@@ -308,58 +278,30 @@ export class TiffProcessor {
 			if (numBands === 1) {
 				let value = rasters[0][i];
 				
-				if (useImageStats) {
-					// Normalize using image statistics (like float processing)
-					const range = normMax - normMin;
-					if (range > 0) {
-						value = (value - normMin) / range;
-					} else {
-						value = 0;
-					}
-					value = this.clamp(value, 0, 1);
-					
-					// Apply gamma and brightness corrections
-					if (settings.normalization.gammaMode) {
-						value = this._applyGammaAndBrightness(value, settings);
-					}
-					
-					value = Math.round(value * 255);
-				} else {
-					// Traditional bit-depth normalization
-					value = value / maxVal; // Normalize to 0-1
+				// For uint images: always use traditional bit-depth normalization
+				value = value / maxVal; // Normalize to 0-1
+				
+				// Only apply gamma/brightness to uint images if values are non-default
+				if (this._shouldApplyGammaBrightnessToUint(settings)) {
 					value = this._applyGammaAndBrightness(value, settings);
-					value = Math.round(value * 255); // Convert to 8-bit for display
 				}
 				
+				value = Math.round(value * 255); // Convert to 8-bit for display
 				r = g = b = this.clamp(value, 0, 255);
 			} else {
 				const values = [];
 				for (let band = 0; band < Math.min(3, numBands); band++) {
 					let value = rasters[band][i];
 					
-					if (useImageStats) {
-						// Normalize using image statistics (like float processing)
-						const range = normMax - normMin;
-						if (range > 0) {
-							value = (value - normMin) / range;
-						} else {
-							value = 0;
-						}
-						value = this.clamp(value, 0, 1);
-						
-						// Apply gamma and brightness corrections
-						if (settings.normalization.gammaMode) {
-							value = this._applyGammaAndBrightness(value, settings);
-						}
-						
-						value = Math.round(value * 255);
-					} else {
-						// Traditional bit-depth normalization
-						value = value / maxVal; // Normalize to 0-1
+					// For uint images: always use traditional bit-depth normalization
+					value = value / maxVal; // Normalize to 0-1
+					
+					// Only apply gamma/brightness to uint images if values are non-default
+					if (this._shouldApplyGammaBrightnessToUint(settings)) {
 						value = this._applyGammaAndBrightness(value, settings);
-						value = Math.round(value * 255); // Convert to 8-bit for display
 					}
 					
+					value = Math.round(value * 255); // Convert to 8-bit for display
 					values.push(this.clamp(value, 0, 255));
 				}
 				
@@ -393,6 +335,22 @@ export class TiffProcessor {
 		corrected = corrected * Math.pow(2, exposureStops);
 		
 		return this.clamp(corrected, 0, 1);
+	}
+
+	/**
+	 * Check if gamma/brightness should be applied to uint images
+	 * Only apply if values are significantly different from defaults
+	 * @private
+	 */
+	_shouldApplyGammaBrightnessToUint(settings) {
+		// Check if gamma is significantly different from 1.0 (no correction)
+		const gammaRatio = settings.gamma.in / settings.gamma.out;
+		const hasGammaCorrection = Math.abs(gammaRatio - 1.0) > 0.01;
+		
+		// Check if brightness is significantly different from 0 (no adjustment)
+		const hasBrightnessCorrection = Math.abs(settings.brightness.offset) > 0.01;
+		
+		return hasGammaCorrection || hasBrightnessCorrection;
 	}
 
 	/**

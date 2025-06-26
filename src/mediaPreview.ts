@@ -88,16 +88,27 @@ export abstract class MediaPreview extends Disposable {
 	protected abstract getWebviewContents(): Promise<string>;
 
 	protected updateState() {
+		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
+		
 		if (this.previewState === PreviewState.Disposed) {
+			outputChannel.appendLine('TIFF Visualizer: updateState - preview disposed, skipping');
 			return;
 		}
 
+		outputChannel.appendLine(`TIFF Visualizer: updateState - webviewEditor.active: ${this._webviewEditor.active}`);
+		outputChannel.appendLine(`TIFF Visualizer: updateState - webviewEditor.visible: ${this._webviewEditor.visible}`);
+		outputChannel.appendLine(`TIFF Visualizer: updateState - current previewState: ${this.previewState}`);
+
 		if (this._webviewEditor.active) {
+			outputChannel.appendLine('TIFF Visualizer: Setting preview state to Active');
 			this.previewState = PreviewState.Active;
 			this._binarySizeStatusBarEntry.show(this, this._binarySize);
 		} else {
+			outputChannel.appendLine('TIFF Visualizer: Setting preview state to Visible (not active)');
 			this._binarySizeStatusBarEntry.hide(this);
 			this.previewState = PreviewState.Visible;
 		}
+		
+		outputChannel.appendLine(`TIFF Visualizer: updateState - final previewState: ${this.previewState}`);
 	}
 }
