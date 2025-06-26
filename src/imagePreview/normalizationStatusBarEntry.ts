@@ -35,7 +35,7 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 		}
 
 		// Always show image stats when available (unless in auto-normalize mode where it would be redundant)
-		if (this._imageRealMin != null && this._imageRealMax != null && !autoNormalize) {
+		if (this._imageRealMin !== undefined && this._imageRealMax !== undefined && !autoNormalize) {
 			text = `Image: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}] | ${text}`;
 		}
 

@@ -77,12 +77,36 @@ export function registerImagePreviewCommands(
 			}
 		];
 
-		const selected = await vscode.window.showQuickPick(options, {
-			placeHolder: 'Choose normalization method',
-			title: 'Image Normalization Settings',
-			canPickMany: false,
-			matchOnDescription: false,
-			matchOnDetail: false
+		// Create a custom QuickPick to disable input
+		const quickPick = vscode.window.createQuickPick<typeof options[0]>();
+		quickPick.items = options;
+		quickPick.placeholder = 'Choose normalization method';
+		quickPick.title = 'Image Normalization Settings';
+		quickPick.canSelectMany = false;
+		quickPick.ignoreFocusOut = false;
+		
+		// Disable the input box by making it non-interactive
+		quickPick.value = '';
+		
+		const selected = await new Promise<typeof options[0] | undefined>((resolve) => {
+			quickPick.onDidChangeSelection(selection => {
+				if (selection.length > 0) {
+					resolve(selection[0]);
+					quickPick.hide();
+				}
+			});
+			
+			quickPick.onDidHide(() => {
+				resolve(undefined);
+				quickPick.dispose();
+			});
+			
+			// Prevent typing by immediately clearing any input
+			quickPick.onDidChangeValue(() => {
+				quickPick.value = '';
+			});
+			
+			quickPick.show();
 		});
 
 		if (!selected) {
@@ -152,7 +176,7 @@ export function registerImagePreviewCommands(
 		
 		// Check if this is a float TIFF and not in gamma mode
 		if (currentPreview && currentPreview.isFloatTiff && !normConfig.gammaMode) {
-			const choice = await vscode.window.showQuickPick([
+			const gammaOptions = [
 				{
 					label: '$(arrow-right) Switch to Gamma/Brightness Mode',
 					description: 'Enable gamma correction for this float image',
@@ -170,12 +194,36 @@ export function registerImagePreviewCommands(
 					description: 'Go back without changes',
 					action: 'cancel'
 				}
-			], {
-				placeHolder: 'Float image detected - Choose how to apply gamma correction',
-				title: 'Gamma Correction for Float Image',
-				canPickMany: false,
-				matchOnDescription: false,
-				matchOnDetail: false
+			];
+
+			// Create a custom QuickPick to disable input
+			const gammaQuickPick = vscode.window.createQuickPick<typeof gammaOptions[0]>();
+			gammaQuickPick.items = gammaOptions;
+			gammaQuickPick.placeholder = 'Float image detected - Choose how to apply gamma correction';
+			gammaQuickPick.title = 'Gamma Correction for Float Image';
+			gammaQuickPick.canSelectMany = false;
+			gammaQuickPick.ignoreFocusOut = false;
+			gammaQuickPick.value = '';
+			
+			const choice = await new Promise<typeof gammaOptions[0] | undefined>((resolve) => {
+				gammaQuickPick.onDidChangeSelection(selection => {
+					if (selection.length > 0) {
+						resolve(selection[0]);
+						gammaQuickPick.hide();
+					}
+				});
+				
+				gammaQuickPick.onDidHide(() => {
+					resolve(undefined);
+					gammaQuickPick.dispose();
+				});
+				
+				// Prevent typing by immediately clearing any input
+				gammaQuickPick.onDidChangeValue(() => {
+					gammaQuickPick.value = '';
+				});
+				
+				gammaQuickPick.show();
 			});
 
 			if (!choice || choice.action === 'cancel') {
@@ -265,7 +313,7 @@ export function registerImagePreviewCommands(
 		
 		if (currentBase) {
 			// Already has a comparison base, offer to clear it
-			const choice = await vscode.window.showQuickPick([
+			const comparisonOptions = [
 				{
 					label: '$(file-media) Choose New Comparison Image',
 					description: 'Select a different image to compare with',
@@ -276,12 +324,36 @@ export function registerImagePreviewCommands(
 					description: 'Remove the current comparison image',
 					action: 'clear'
 				}
-			], {
-				placeHolder: `Current comparison: ${currentBase.fsPath}`,
-				title: 'Image Comparison',
-				canPickMany: false,
-				matchOnDescription: false,
-				matchOnDetail: false
+			];
+
+			// Create a custom QuickPick to disable input
+			const comparisonQuickPick = vscode.window.createQuickPick<typeof comparisonOptions[0]>();
+			comparisonQuickPick.items = comparisonOptions;
+			comparisonQuickPick.placeholder = `Current comparison: ${currentBase.fsPath}`;
+			comparisonQuickPick.title = 'Image Comparison';
+			comparisonQuickPick.canSelectMany = false;
+			comparisonQuickPick.ignoreFocusOut = false;
+			comparisonQuickPick.value = '';
+			
+			const choice = await new Promise<typeof comparisonOptions[0] | undefined>((resolve) => {
+				comparisonQuickPick.onDidChangeSelection(selection => {
+					if (selection.length > 0) {
+						resolve(selection[0]);
+						comparisonQuickPick.hide();
+					}
+				});
+				
+				comparisonQuickPick.onDidHide(() => {
+					resolve(undefined);
+					comparisonQuickPick.dispose();
+				});
+				
+				// Prevent typing by immediately clearing any input
+				comparisonQuickPick.onDidChangeValue(() => {
+					comparisonQuickPick.value = '';
+				});
+				
+				comparisonQuickPick.show();
 			});
 
 			if (!choice) {

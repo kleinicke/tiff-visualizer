@@ -2,6 +2,17 @@
 "use strict";
 
 /**
+ * @typedef {Object} GeoTIFFGlobal
+ * @property {function} fromArrayBuffer
+ */
+
+/**
+ * @type {GeoTIFFGlobal}
+ */
+// @ts-ignore - GeoTIFF is loaded globally via script tag
+const GeoTIFF = window.GeoTIFF;
+
+/**
  * TIFF Processor Module
  * Handles TIFF image processing, normalization, and data extraction
  */
