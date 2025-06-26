@@ -6,6 +6,7 @@ import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { ImageSettingsManager } from './imageSettings';
+import { AppStateManager } from './appStateManager';
 import { ImagePreview } from './imagePreview';
 import type { IImagePreview, IImagePreviewManager } from './types';
 
@@ -16,6 +17,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	private readonly _previews = new Set<IImagePreview>();
 	private _activePreview: IImagePreview | undefined;
 	private readonly _settingsManager = new ImageSettingsManager();
+	private readonly _appStateManager = new AppStateManager();
 
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
@@ -41,6 +43,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 
 	public get settingsManager(): ImageSettingsManager {
 		return this._settingsManager;
+	}
+
+	public get appStateManager(): AppStateManager {
+		return this._appStateManager;
 	}
 
 	public getNormalizationConfig() {

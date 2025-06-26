@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { ImageSettingsManager } from './imageSettings';
+import { AppStateManager } from './appStateManager';
 
 export interface IImagePreviewManager {
 	readonly settingsManager: ImageSettingsManager;
+	readonly appStateManager: AppStateManager;
 	getNormalizationConfig(): any;
 	getGammaConfig(): any;
 	getBrightnessConfig(): any;
