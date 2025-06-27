@@ -111,10 +111,11 @@
     "watch": "npm run clean && node ./esbuild.js --watch",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "npm run compile && node test/simple-behavior-test.js",
+    "test": "npm run test:behavior && npm run test:visualization",
     "test:unit": "mocha out/test/unit/**/*.test.js",
     "test:integration": "vscode-test",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
+    "test:visualization": "node test/visualization-test.js",
     "build": "webpack"
   },
   "dependencies": {
