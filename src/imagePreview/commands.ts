@@ -131,7 +131,7 @@ export function registerImagePreviewCommands(
 			previewManager.setGammaMode(false);
 			
 			const minValue = await vscode.window.showInputBox({
-				prompt: 'Enter the minimum value for normalization',
+				prompt: '↓ Enter the minimum value for normalization',
 				value: currentConfig.min.toString(),
 				validateInput: text => {
 					return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
@@ -143,7 +143,7 @@ export function registerImagePreviewCommands(
 			}
 
 			const maxValue = await vscode.window.showInputBox({
-				prompt: 'Enter the maximum value for normalization',
+				prompt: '↑ Enter the maximum value for normalization',
 				value: currentConfig.max.toString(),
 				validateInput: text => {
 					const num = parseFloat(text);
@@ -240,7 +240,7 @@ export function registerImagePreviewCommands(
 		const currentConfig = previewManager.getGammaConfig();
 
 		const gammaIn = await vscode.window.showInputBox({
-			prompt: 'Enter the source gamma value. (Default: 2.2, Linear: 1.0)',
+			prompt: '← Enter the source gamma value. (Default: 2.2, Linear: 1.0)',
 			value: currentConfig.in.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
@@ -252,7 +252,7 @@ export function registerImagePreviewCommands(
 		}
 
 		const gammaOut = await vscode.window.showInputBox({
-			prompt: 'Enter the target gamma value. (Default: 2.2, Linear: 1.0)',
+			prompt: '→ Enter the target gamma value. (Default: 2.2, Linear: 1.0)',
 			value: currentConfig.out.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
