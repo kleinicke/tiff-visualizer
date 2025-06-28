@@ -119,14 +119,12 @@ export function registerImagePreviewCommands(
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
-			vscode.window.showInformationMessage('Auto-normalization enabled. Images will be normalized using their actual min/max values.');
 		} else if (selected.action === 'gamma') {
 			previewManager.setGammaMode(true);
 			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
-			vscode.window.showInformationMessage('Gamma/Brightness mode enabled. Images will be normalized to 0-1 range with gamma/brightness controls.');
 		} else {
 			// Manual range setting
 			previewManager.setAutoNormalize(false);
@@ -166,7 +164,6 @@ export function registerImagePreviewCommands(
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
-			vscode.window.showInformationMessage(`Normalization range set to [${min.toFixed(2)}, ${max.toFixed(2)}]`);
 		}
 	}));
 
@@ -236,7 +233,6 @@ export function registerImagePreviewCommands(
 				if (currentPreview) {
 					currentPreview.updateStatusBar();
 				}
-				vscode.window.showInformationMessage('Switched to Gamma/Brightness mode. Current normalization range will be used with gamma/brightness controls.');
 				return;
 			}
 		}
@@ -275,7 +271,6 @@ export function registerImagePreviewCommands(
 		if (currentPreview) {
 			currentPreview.updateStatusBar();
 		}
-		vscode.window.showInformationMessage(`Gamma correction set to In: ${gammaInValue.toFixed(2)}, Out: ${gammaOutValue.toFixed(2)}`);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setBrightness', async () => {
@@ -300,7 +295,6 @@ export function registerImagePreviewCommands(
 		if (currentPreview) {
 			currentPreview.updateStatusBar();
 		}
-		vscode.window.showInformationMessage(`Brightness offset set to ${brightnessValue.toFixed(2)} stops`);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setComparisonBase', async () => {
