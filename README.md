@@ -3,7 +3,7 @@
 A TIFF viewer for Visual Studio Code, to display uint and floating-point images while allowing brightness and gamma corrections.
 For floating-point images, this extension allows easier handling by allowing setting the ranges, the image is normalized to.
 
-![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/tiff-visualizer.gif)
+![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
 ## Features
 
@@ -14,9 +14,11 @@ For floating-point images, this extension allows easier handling by allowing set
 - **Keep All Settings for Session**: A single VS Code Window keeps the settings applied on one image for all images. 
 - **Export as PNG**: Export the image, with the chosen image visualization as PNG for easy sharing.
 
+![float-options](assets/tiffVisualizerFloatOptions.png)
+
 ## About
 
-The extension is built on the built-in [VS Code Media Preview extension](https://github.com/microsoft/vscode/tree/main/extensions/media-preview). To add TIFF support, the [geotiff library](https://github.com/geotiffjs/geotiff.js/) is used. All coding was performed using Cursor.
+The extension is built on top of the built-in [VS Code Media Preview extension](https://github.com/microsoft/vscode/tree/main/extensions/media-preview). To add TIFF support, the [geotiff library](https://github.com/geotiffjs/geotiff.js/) is used. All coding was performed using Cursor.
 
 ## Known Issues and Missing Features
 
@@ -30,20 +32,9 @@ The extension is built on the built-in [VS Code Media Preview extension](https:/
 - Issue with lzw from tifffile. lzw images from oiiotool work ...
 - Add automatic tests for many image formats
 
-
 ## Feature Requests and Issues
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/tiff-visualizer/issues). If you know how to fix bugs or how to implement certain features, feel free to contribute.
-
-## Release Notes
-
-### 1.0.0
-
-Initial release of TIFF Visualizer.
-
-### 1.1.0
-
-Add automatic float normalization and gamma/brightness settings for float images
 
 ## Build notice
 

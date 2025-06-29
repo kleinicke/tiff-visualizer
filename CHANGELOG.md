@@ -1,6 +1,6 @@
 # Change Log
 
-### 1.1.0 (2025-06-26)
+### 1.1.0 (2025-06-30)
 
 Add automatic float normalization and gamma/brightness settings for float images
 
