@@ -256,9 +256,9 @@ export class TiffProcessor {
 					values.push(Math.round(normalized * 255));
 				}
 				
-				r = values[0] || 0;
-				g = values[1] || values[0] || 0;
-				b = values[2] || values[0] || 0;
+				r = values[0] ?? 0;
+				g = values[1] ?? 0;
+				b = values[2] ?? 0;
 			}
 
 			const pixelIndex = i * 4;
@@ -316,9 +316,9 @@ export class TiffProcessor {
 					values.push(this.clamp(value, 0, 255));
 				}
 				
-				r = values[0] || 0;
-				g = values[1] || values[0] || 0;
-				b = values[2] || values[0] || 0;
+				r = values[0] ?? 0;
+				g = values[1] ?? 0;
+				b = values[2] ?? 0;
 			}
 
 			const pixelIndex = i * 4;
