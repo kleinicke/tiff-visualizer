@@ -48,7 +48,8 @@ class TestAppStateManager {
             },
             brightness: {
                 offset: 0
-            }
+            },
+            nanColor: 'black'
         };
 
         this._uiState = {
@@ -139,6 +140,10 @@ class TestAppStateManager {
         }
     }
 
+    toggleNanColor() {
+        this._imageSettings.nanColor = this._imageSettings.nanColor === 'black' ? 'fuchsia' : 'black';
+    }
+
     dispose() {
         // Mock dispose
     }
@@ -216,6 +221,19 @@ function testAppStateManager() {
     assert.deepStrictEqual(manager.imageStats, { min: 0.0, max: 1.0 }, 'Should track image stats');
     console.log('    ✅ Image stats tracking works correctly');
     
+    // Test NaN color toggle
+    console.log('  🎨 Testing NaN color toggle...');
+    const initialColor = manager.imageSettings.nanColor;
+    manager.toggleNanColor();
+    const toggledColor = manager.imageSettings.nanColor;
+    manager.toggleNanColor();
+    const finalColor = manager.imageSettings.nanColor;
+    
+    assert.strictEqual(initialColor, 'black', 'Initial color should be black');
+    assert.strictEqual(toggledColor, 'fuchsia', 'Toggled color should be fuchsia');
+    assert.strictEqual(finalColor, 'black', 'Final color should be black again');
+    console.log('    ✅ NaN color toggle works correctly');
+    
     // Cleanup
     manager.dispose();
     cleanManager.dispose();
@@ -275,6 +293,7 @@ async function runAllTests() {
         console.log('  ✅ Normalization modes are independent');
         console.log('  ✅ UI state management works');
         console.log('  ✅ Image stats tracking works');
+        console.log('  ✅ NaN color toggle works');
         console.log('  ✅ Test image files are available');
         console.log('\n🚀 Extension refactoring Phase 1 is stable and ready!');
         console.log('\n🔍 Key Behaviors Verified:');

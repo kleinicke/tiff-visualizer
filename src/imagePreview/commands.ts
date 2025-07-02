@@ -548,5 +548,14 @@ export function registerImagePreviewCommands(
 		);
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleNanColor', () => {
+		const currentColor = previewManager.settingsManager.getNanColor();
+		previewManager.settingsManager.toggleNanColor();
+		previewManager.updateAllPreviews();
+		
+		const newColor = previewManager.settingsManager.getNanColor();
+		vscode.window.showInformationMessage(`NaN color changed to: ${newColor}`);
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 

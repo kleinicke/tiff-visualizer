@@ -35,6 +35,19 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * Get NaN color based on settings
+	 * @param {Object} settings - Current settings
+	 * @returns {Object} - RGB values for NaN color
+	 */
+	_getNanColor(settings) {
+		if (settings.nanColor === 'fuchsia') {
+			return { r: 255, g: 0, b: 255 }; // Fuchsia
+		} else {
+			return { r: 0, g: 0, b: 0 }; // Black (default)
+		}
+	}
+
+	/**
 	 * Process TIFF file from URL
 	 * @param {string} src - TIFF file URL
 	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, tiffData: Object}>}
@@ -343,11 +356,26 @@ export class TiffProcessor {
 		const imageDataArray = new Uint8ClampedArray(width * height * 4);
 		const numBands = rasters.length;
 		const range = normMax - normMin;
+		const nanColor = this._getNanColor(settings);
 
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
 
-			if (numBands === 1) {
+			// Check if any band has NaN values
+			let hasNaN = false;
+			for (let band = 0; band < Math.min(3, numBands); band++) {
+				if (isNaN(rasters[band][i])) {
+					hasNaN = true;
+					break;
+				}
+			}
+
+			if (hasNaN) {
+				// Use NaN color for this pixel
+				r = nanColor.r;
+				g = nanColor.g;
+				b = nanColor.b;
+			} else if (numBands === 1) {
 				// Grayscale
 				const value = rasters[0][i];
 				let normalized;
@@ -407,6 +435,7 @@ export class TiffProcessor {
 	_processIntegerTiff(rasters, width, height, settings, bitsPerSample) {
 		const imageDataArray = new Uint8ClampedArray(width * height * 4);
 		const numBands = rasters.length;
+		const nanColor = this._getNanColor(settings);
 		
 		// For uint images: always use traditional bit-depth normalization
 		// Normalization settings are ignored - they only apply to float images
@@ -415,7 +444,21 @@ export class TiffProcessor {
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
 
-			if (numBands === 1) {
+			// Check if any band has NaN values
+			let hasNaN = false;
+			for (let band = 0; band < Math.min(3, numBands); band++) {
+				if (isNaN(rasters[band][i])) {
+					hasNaN = true;
+					break;
+				}
+			}
+
+			if (hasNaN) {
+				// Use NaN color for this pixel
+				r = nanColor.r;
+				g = nanColor.g;
+				b = nanColor.b;
+			} else if (numBands === 1) {
 				let value = rasters[0][i];
 				
 				// For uint images: always use traditional bit-depth normalization

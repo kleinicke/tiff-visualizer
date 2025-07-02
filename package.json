@@ -87,6 +87,11 @@
         "command": "tiffVisualizer.filterByMask",
         "title": "Filter by Mask",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.toggleNanColor",
+        "title": "Toggle NaN Color (Black/Fuchsia)",
+        "category": "TIFF Visualizer"
       }
     ]
   },

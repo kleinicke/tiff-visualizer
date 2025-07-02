@@ -28,6 +28,7 @@ export interface ImageSettings {
 	gamma: GammaSettings;
 	brightness: BrightnessSettings;
 	maskFilter: MaskFilterSettings;
+	nanColor: 'black' | 'fuchsia';
 }
 
 export interface ImageStats {
@@ -58,7 +59,8 @@ export class ImageSettingsManager {
 			maskUri: undefined,
 			threshold: 0.5,
 			filterHigher: true
-		}
+		},
+		nanColor: 'black'
 	};
 
 	private _imageStats: ImageStats | undefined;
@@ -154,6 +156,15 @@ export class ImageSettingsManager {
 
 	public getMaskFilterSettings(): Readonly<MaskFilterSettings> {
 		return this._settings.maskFilter;
+	}
+
+	public toggleNanColor(): void {
+		this._settings.nanColor = this._settings.nanColor === 'black' ? 'fuchsia' : 'black';
+		this._fireSettingsChanged();
+	}
+
+	public getNanColor(): 'black' | 'fuchsia' {
+		return this._settings.nanColor;
 	}
 
 	public updateImageStats(min: number, max: number): void {
