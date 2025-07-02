@@ -65,11 +65,16 @@ export abstract class MediaPreview extends Disposable {
 		return this._resource;
 	}
 
-	protected updateBinarySize() {
-		vscode.workspace.fs.stat(this._resource).then(({ size }) => {
+	protected async updateBinarySize() {
+		try {
+			const { size } = await vscode.workspace.fs.stat(this._resource);
 			this._binarySize = size;
 			this.updateState();
-		});
+		} catch (error: unknown) {
+			console.error('Failed to get file size:', error);
+			this._binarySize = undefined;
+			this.updateState();
+		}
 	}
 
 	protected async render() {

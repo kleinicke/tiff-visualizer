@@ -92,11 +92,11 @@ export class ImagePreview extends MediaPreview {
 		// Initialize the preview
 		this.render();
 		
-		// Ensure proper state initialization
-		setTimeout(() => {
+		// Update binary size and ensure proper state initialization
+		this.updateBinarySize().then(() => {
 			this.updateState();
 			this.updateStatusBar();
-		}, 100);
+		});
 	}
 
 	public override dispose(): void {

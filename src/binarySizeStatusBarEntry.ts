@@ -32,7 +32,7 @@ class BinarySize {
 export class BinarySizeStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
-		super('status.tiffVisualizer.binarySize', vscode.l10n.t("Image Binary Size"), vscode.StatusBarAlignment.Right, 100);
+		super('status.tiffVisualizer.binarySize', vscode.l10n.t("Image Binary Size"), vscode.StatusBarAlignment.Right, 98);
 	}
 
 	public show(owner: unknown, size: number | undefined) {

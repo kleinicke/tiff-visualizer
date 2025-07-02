@@ -250,4 +250,66 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             console.log('✅ Settings consistency validated');
         });
     });
+
+    suite('5. Binary Size Status Bar Tests', () => {
+        test('Binary size status bar entry is properly configured', () => {
+            console.log('Testing binary size status bar entry configuration');
+            
+            // Import the BinarySizeStatusBarEntry class
+            const { BinarySizeStatusBarEntry } = require('../src/binarySizeStatusBarEntry');
+            
+            // Create a new instance
+            const binarySizeEntry = new BinarySizeStatusBarEntry();
+            
+            // Test that the entry has the correct properties
+            assert.ok(binarySizeEntry, 'BinarySizeStatusBarEntry should be created successfully');
+            assert.strictEqual(binarySizeEntry.entry.alignment, vscode.StatusBarAlignment.Right, 'Should be right-aligned');
+            assert.strictEqual(binarySizeEntry.entry.priority, 98, 'Should have priority 98');
+            
+            console.log('✅ Binary size status bar entry configuration is correct');
+        });
+
+        test('Binary size formatting works correctly', () => {
+            console.log('Testing binary size formatting');
+            
+            const { BinarySizeStatusBarEntry } = require('../src/binarySizeStatusBarEntry');
+            const binarySizeEntry = new BinarySizeStatusBarEntry();
+            
+            // Test different size formats
+            binarySizeEntry.show({}, 1024); // 1KB
+            assert.ok(binarySizeEntry.entry.text.includes('KB'), 'Should format 1024 bytes as KB');
+            
+            binarySizeEntry.show({}, 1048576); // 1MB
+            assert.ok(binarySizeEntry.entry.text.includes('MB'), 'Should format 1048576 bytes as MB');
+            
+            binarySizeEntry.show({}, 512); // 512B
+            assert.ok(binarySizeEntry.entry.text.includes('B'), 'Should format 512 bytes as B');
+            
+            console.log('✅ Binary size formatting works correctly');
+        });
+
+        test('Binary size is shown for existing test images', async () => {
+            console.log('Testing binary size display for actual image files');
+            
+            // Test with a real image file
+            const testImage = imageFiles[0];
+            if (testImage) {
+                const imagePath = path.join(testImagesPath, testImage);
+                const stats = fs.statSync(imagePath);
+                
+                assert.ok(stats.size > 0, 'Test image should have a positive file size');
+                console.log(`Test image ${testImage} has size: ${stats.size} bytes`);
+                
+                // Test that the size can be formatted
+                const { BinarySizeStatusBarEntry } = require('../src/binarySizeStatusBarEntry');
+                const binarySizeEntry = new BinarySizeStatusBarEntry();
+                binarySizeEntry.show({}, stats.size);
+                
+                assert.ok(binarySizeEntry.entry.text.length > 0, 'Binary size should be displayed');
+                console.log(`Formatted size: ${binarySizeEntry.entry.text}`);
+            }
+            
+            console.log('✅ Binary size display works for actual image files');
+        });
+    });
 }); 
