@@ -109,8 +109,10 @@ export class TiffProcessor {
 
 			const imageData = await this.renderTiff(image, rasters);
 			
-			// Store TIFF data for pixel inspection
+			// Store TIFF data for pixel inspection and re-rendering
 			this.rawTiffData = {
+				image: image,
+				rasters: rasters,
 				ifd: {
 					width,
 					height,
@@ -130,12 +132,140 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * Render TIFF data to ImageData with current settings
+	 * @param {*} image - GeoTIFF image object
+	 * @param {*} rasters - Raster data
+	 * @returns {Promise<ImageData>}
+	 */
+	async renderTiffWithSettings(image, rasters) {
+		// Create copies of rasters to avoid modifying the original data
+		const rastersCopy = [];
+		for (let i = 0; i < rasters.length; i++) {
+			rastersCopy.push(new Float32Array(rasters[i]));
+		}
+
+		// Apply mask filtering if enabled
+		const settings = this.settingsManager.settings;
+		if (settings.maskFilter.enabled && settings.maskFilter.maskUri) {
+			try {
+				const maskData = await this.loadMaskImage(settings.maskFilter.maskUri);
+				// Apply mask filter to each band
+				for (let band = 0; band < rastersCopy.length; band++) {
+					const filteredData = this.applyMaskFilter(
+						rastersCopy[band],
+						maskData,
+						settings.maskFilter.threshold,
+						settings.maskFilter.filterHigher
+					);
+					rastersCopy[band] = filteredData;
+				}
+			} catch (error) {
+				console.error('Error applying mask filter:', error);
+				// Continue without mask filtering if there's an error
+			}
+		}
+
+		const width = image.getWidth();
+		const height = image.getHeight();
+		const sampleFormat = image.getSampleFormat();
+		const bitsPerSample = image.getBitsPerSample();
+
+		let min = Infinity;
+		let max = -Infinity;
+
+		let imageDataArray;
+
+		// Calculate min/max from the first 3 channels only (like original code)
+		const displayRasters = [];
+		for (let i = 0; i < rastersCopy.length; i++) {
+			displayRasters.push(new Float32Array(rastersCopy[i]));
+		}
+
+		// Use the first 3 channels to determine the image stats
+		for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
+			for (let j = 0; j < rastersCopy[i].length; j++) {
+				const value = rastersCopy[i][j];
+				if (!isNaN(value) && isFinite(value)) {
+					min = Math.min(min, value);
+					max = Math.max(max, value);
+				}
+			}
+		}
+
+		// Send stats to VS Code
+		if (this.vscode) {
+			this.vscode.postMessage({ type: 'stats', value: { min, max } });
+		}
+
+		// Get normalization settings
+		let normMin, normMax;
+
+		if (settings.normalization.autoNormalize) {
+			// Auto-normalize: use actual image min/max
+			normMin = min;
+			normMax = max;
+		} else if (settings.normalization.gammaMode) {
+			// Gamma mode: always normalize to fixed 0-1 range
+			normMin = 0;
+			normMax = 1;
+		} else {
+			// Manual mode: use user-specified range
+			normMin = settings.normalization.min;
+			normMax = settings.normalization.max;
+		}
+
+		// Normalize and create image data
+		const isFloat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		console.log(`[TiffProcessor] Detected float: ${isFloat}, sampleFormat:`, sampleFormat);
+		if (isFloat) { // Float data
+			if (this.vscode) {
+				console.log(`[TiffProcessor] Sending isFloat: true message`);
+				this.vscode.postMessage({ type: 'isFloat', value: true });
+			}
+			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
+		} else {
+			if (this.vscode) {
+				console.log(`[TiffProcessor] Sending isFloat: false message`);
+				this.vscode.postMessage({ type: 'isFloat', value: false });
+			}
+			imageDataArray = this._processIntegerTiff(displayRasters, width, height, settings, bitsPerSample);
+		}
+
+		return new ImageData(imageDataArray, width, height);
+	}
+
+	/**
 	 * Render TIFF data to ImageData
 	 * @param {*} image - GeoTIFF image object
 	 * @param {*} rasters - Raster data
 	 * @returns {Promise<ImageData>}
 	 */
 	async renderTiff(image, rasters) {
+		// Apply mask filtering if enabled
+		const settings = this.settingsManager.settings;
+		if (settings.maskFilter.enabled && settings.maskFilter.maskUri) {
+			try {
+				const maskData = await this.loadMaskImage(settings.maskFilter.maskUri);
+				const maskWidth = image.getWidth();
+				const maskHeight = image.getHeight();
+				
+				// Apply mask filter to each band
+				for (let band = 0; band < rasters.length; band++) {
+					const originalData = new Float32Array(rasters[band]);
+					const filteredData = this.applyMaskFilter(
+						originalData, 
+						maskData, 
+						settings.maskFilter.threshold, 
+						settings.maskFilter.filterHigher
+					);
+					rasters[band] = filteredData;
+				}
+			} catch (error) {
+				console.error('Error applying mask filter:', error);
+				// Continue without mask filtering if there's an error
+			}
+		}
+		
 		const width = image.getWidth();
 		const height = image.getHeight();
 		const sampleFormat = image.getSampleFormat();
@@ -168,8 +298,7 @@ export class TiffProcessor {
 			this.vscode.postMessage({ type: 'stats', value: { min, max } });
 		}
 
-		// Get normalization settings
-		const settings = this.settingsManager.settings;
+		// Get normalization settings (settings already declared above)
 		let normMin, normMax;
 
 		if (settings.normalization.autoNormalize) {
@@ -362,6 +491,59 @@ export class TiffProcessor {
 		const hasBrightnessCorrection = Math.abs(settings.brightness.offset) > 0.01;
 		
 		return hasGammaCorrection || hasBrightnessCorrection;
+	}
+
+	/**
+	 * Load mask image for filtering
+	 * @param {string} maskSrc - Mask TIFF file URL
+	 * @returns {Promise<Float32Array>}
+	 */
+	async loadMaskImage(maskSrc) {
+		try {
+			const response = await fetch(maskSrc);
+			const buffer = await response.arrayBuffer();
+			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+			const image = await tiff.getImage();
+			const rasters = await image.readRasters();
+			
+			// Return the first band as a Float32Array
+			return new Float32Array(rasters[0]);
+		} catch (error) {
+			console.error('Error loading mask image:', error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Apply mask filtering to image data
+	 * @param {Float32Array} imageData - Original image data
+	 * @param {Float32Array} maskData - Mask data
+	 * @param {number} threshold - Threshold value
+	 * @param {boolean} filterHigher - Whether to filter higher or lower values
+	 * @returns {Float32Array} - Filtered image data
+	 */
+	applyMaskFilter(imageData, maskData, threshold, filterHigher) {
+		const filteredData = new Float32Array(imageData.length);
+		
+		for (let i = 0; i < imageData.length; i++) {
+			const maskValue = maskData[i];
+			const imageValue = imageData[i];
+			
+			let shouldFilter = false;
+			if (filterHigher) {
+				shouldFilter = maskValue > threshold;
+			} else {
+				shouldFilter = maskValue < threshold;
+			}
+			
+			if (shouldFilter) {
+				filteredData[i] = NaN;
+			} else {
+				filteredData[i] = imageValue;
+			}
+		}
+		
+		return filteredData;
 	}
 
 	/**

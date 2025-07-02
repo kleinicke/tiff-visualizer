@@ -5,6 +5,7 @@ import { ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
+import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { ImageSettingsManager } from './imageSettings';
 import { AppStateManager } from './appStateManager';
 import { ImagePreview } from './imagePreview';
@@ -27,6 +28,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		private readonly normalizationStatusBarEntry: NormalizationStatusBarEntry,
 		private readonly gammaStatusBarEntry: GammaStatusBarEntry,
 		private readonly brightnessStatusBarEntry: BrightnessStatusBarEntry,
+		private readonly maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
 	) { 
 		// Listen for active editor changes to hide status bar items when switching away
 		vscode.window.onDidChangeActiveTextEditor(() => {
@@ -37,6 +39,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 				this.normalizationStatusBarEntry.forceHide();
 				this.gammaStatusBarEntry.forceHide();
 				this.brightnessStatusBarEntry.forceHide();
+				this.maskFilterStatusBarEntry.hide();
 			}
 		});
 	}
@@ -119,7 +122,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel
 	): void {
-		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this);
+		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.maskFilterStatusBarEntry, this);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 

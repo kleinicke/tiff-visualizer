@@ -212,6 +212,12 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
 				break;
+			
+			case 'mask-filter-settings':
+				// Handle mask filter settings updates
+				settingsManager.updateSettings(message.settings);
+				updateImageWithNewSettings();
+				break;
 		}
 	}
 
@@ -224,12 +230,20 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// For TIFF images, re-render with new settings
 		if (primaryImageData && tiffProcessor.rawTiffData) {
 			try {
-				// Re-process the TIFF with new settings
+				console.log('Updating image with new settings:', settingsManager.settings);
+				
+				// Re-render the TIFF with current settings
+				const newImageData = await tiffProcessor.renderTiffWithSettings(
+					tiffProcessor.rawTiffData.image,
+					tiffProcessor.rawTiffData.rasters
+				);
+				
+				// Update the canvas with new image data
 				const ctx = canvas.getContext('2d');
-				if (ctx) {
-					// You would need to implement a way to re-render with new settings
-					// This is a placeholder for the actual re-rendering logic
-					console.log('Updating image with new settings:', settingsManager.settings);
+				if (ctx && newImageData) {
+					ctx.putImageData(newImageData, 0, 0);
+					primaryImageData = newImageData;
+					console.log('Image updated with new settings');
 				}
 			} catch (error) {
 				console.error('Error updating image with new settings:', error);

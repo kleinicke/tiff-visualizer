@@ -28,6 +28,7 @@ export class MessageRouter {
 		this.handlers.set('ready', new ReadyMessageHandler());
 		this.handlers.set('didExportAsPng', new ExportPngMessageHandler());
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
+		this.handlers.set('mask-filter-request', new MaskFilterRequestMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -138,5 +139,17 @@ class InitialDataMessageHandler implements MessageHandler {
 				isTiff: preview.isTiff
 			}
 		});
+	}
+}
+
+class MaskFilterRequestMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (preview.isPreviewActive()) {
+			const maskSettings = preview.getManager().settingsManager.getMaskFilterSettings();
+			preview.getWebview().postMessage({
+				type: 'mask-filter-settings',
+				settings: maskSettings
+			});
+		}
 	}
 } 

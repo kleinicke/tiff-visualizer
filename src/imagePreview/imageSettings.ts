@@ -16,10 +16,18 @@ export interface BrightnessSettings {
 	offset: number;
 }
 
+export interface MaskFilterSettings {
+	enabled: boolean;
+	maskUri: string | undefined;
+	threshold: number;
+	filterHigher: boolean; // true = filter values higher than threshold, false = filter values lower than threshold
+}
+
 export interface ImageSettings {
 	normalization: NormalizationSettings;
 	gamma: GammaSettings;
 	brightness: BrightnessSettings;
+	maskFilter: MaskFilterSettings;
 }
 
 export interface ImageStats {
@@ -44,6 +52,12 @@ export class ImageSettingsManager {
 		},
 		brightness: {
 			offset: 0
+		},
+		maskFilter: {
+			enabled: false,
+			maskUri: undefined,
+			threshold: 0.5,
+			filterHigher: true
 		}
 	};
 
@@ -108,6 +122,38 @@ export class ImageSettingsManager {
 			this._settings.brightness.offset = offset;
 			this._fireSettingsChanged();
 		}
+	}
+
+	public setMaskFilter(enabled: boolean, maskUri?: string, threshold?: number, filterHigher?: boolean): void {
+		let changed = false;
+		
+		if (this._settings.maskFilter.enabled !== enabled) {
+			this._settings.maskFilter.enabled = enabled;
+			changed = true;
+		}
+		
+		if (maskUri !== undefined && this._settings.maskFilter.maskUri !== maskUri) {
+			this._settings.maskFilter.maskUri = maskUri;
+			changed = true;
+		}
+		
+		if (threshold !== undefined && this._settings.maskFilter.threshold !== threshold) {
+			this._settings.maskFilter.threshold = threshold;
+			changed = true;
+		}
+		
+		if (filterHigher !== undefined && this._settings.maskFilter.filterHigher !== filterHigher) {
+			this._settings.maskFilter.filterHigher = filterHigher;
+			changed = true;
+		}
+		
+		if (changed) {
+			this._fireSettingsChanged();
+		}
+	}
+
+	public getMaskFilterSettings(): Readonly<MaskFilterSettings> {
+		return this._settings.maskFilter;
 	}
 
 	public updateImageStats(min: number, max: number): void {

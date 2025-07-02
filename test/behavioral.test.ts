@@ -312,4 +312,57 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             console.log('✅ Binary size display works for actual image files');
         });
     });
+
+    suite('6. Mask Filter Tests', () => {
+        test('Mask filter settings are properly configured', () => {
+            console.log('Testing mask filter settings configuration');
+            
+            const { ImageSettingsManager } = require('../src/imagePreview/imageSettings');
+            const settingsManager = new ImageSettingsManager();
+            
+            // Test default mask filter settings
+            const defaultSettings = settingsManager.getMaskFilterSettings();
+            assert.strictEqual(defaultSettings.enabled, false, 'Default should be disabled');
+            assert.strictEqual(defaultSettings.threshold, 0.5, 'Default threshold should be 0.5');
+            assert.strictEqual(defaultSettings.filterHigher, true, 'Default should filter higher values');
+            
+            console.log('✅ Default mask filter settings are correct');
+        });
+
+        test('Mask filter settings can be updated', () => {
+            console.log('Testing mask filter settings updates');
+            
+            const { ImageSettingsManager } = require('../src/imagePreview/imageSettings');
+            const settingsManager = new ImageSettingsManager();
+            
+            // Test updating mask filter settings
+            settingsManager.setMaskFilter(true, 'file:///test/mask.tif', 0.8, false);
+            
+            const updatedSettings = settingsManager.getMaskFilterSettings();
+            assert.strictEqual(updatedSettings.enabled, true, 'Should be enabled');
+            assert.strictEqual(updatedSettings.maskUri, 'file:///test/mask.tif', 'Mask URI should be set');
+            assert.strictEqual(updatedSettings.threshold, 0.8, 'Threshold should be updated');
+            assert.strictEqual(updatedSettings.filterHigher, false, 'Should filter lower values');
+            
+            console.log('✅ Mask filter settings can be updated correctly');
+        });
+
+        test('Mask filter status bar entry works correctly', () => {
+            console.log('Testing mask filter status bar entry');
+            
+            const { MaskFilterStatusBarEntry } = require('../src/imagePreview/maskFilterStatusBarEntry');
+            const maskFilterEntry = new MaskFilterStatusBarEntry();
+            
+            // Test that the entry has the correct properties
+            assert.ok(maskFilterEntry, 'MaskFilterStatusBarEntry should be created successfully');
+            assert.strictEqual(maskFilterEntry.entry.alignment, vscode.StatusBarAlignment.Right, 'Should be right-aligned');
+            assert.strictEqual(maskFilterEntry.entry.priority, 97, 'Should have priority 97');
+            
+            // Test updating the mask filter
+            maskFilterEntry.updateMaskFilter(true, 'file:///test/mask.tif', 0.7, true);
+            assert.ok(maskFilterEntry.entry.text.includes('>0.70'), 'Should show correct threshold and direction');
+            
+            console.log('✅ Mask filter status bar entry works correctly');
+        });
+    });
 }); 

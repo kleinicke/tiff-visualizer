@@ -7,6 +7,7 @@ import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
+import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager } from './types';
 import type { ImageSettings } from './imageSettings';
@@ -25,6 +26,7 @@ export class ImagePreview extends MediaPreview {
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
 	private readonly _gammaStatusBarEntry: GammaStatusBarEntry;
 	private readonly _brightnessStatusBarEntry: BrightnessStatusBarEntry;
+	private readonly _maskFilterStatusBarEntry: MaskFilterStatusBarEntry;
 	private readonly _messageRouter: MessageRouter;
 
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
@@ -40,6 +42,7 @@ export class ImagePreview extends MediaPreview {
 		normalizationStatusBarEntry: NormalizationStatusBarEntry,
 		gammaStatusBarEntry: GammaStatusBarEntry,
 		brightnessStatusBarEntry: BrightnessStatusBarEntry,
+		maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
 		private readonly _manager: IImagePreviewManager
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
@@ -49,6 +52,7 @@ export class ImagePreview extends MediaPreview {
 		this._normalizationStatusBarEntry = normalizationStatusBarEntry;
 		this._gammaStatusBarEntry = gammaStatusBarEntry;
 		this._brightnessStatusBarEntry = brightnessStatusBarEntry;
+		this._maskFilterStatusBarEntry = maskFilterStatusBarEntry;
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
@@ -73,6 +77,12 @@ export class ImagePreview extends MediaPreview {
 			// Update status bar entries with new values
 			this._gammaStatusBarEntry.updateGamma(settings.gamma.in, settings.gamma.out);
 			this._brightnessStatusBarEntry.updateBrightness(settings.brightness.offset);
+			this._maskFilterStatusBarEntry.updateMaskFilter(
+				settings.maskFilter.enabled,
+				settings.maskFilter.maskUri,
+				settings.maskFilter.threshold,
+				settings.maskFilter.filterHigher
+			);
 			
 			// Send targeted updates to webview instead of full reload
 			this.sendSettingsUpdate(settings);
@@ -86,6 +96,7 @@ export class ImagePreview extends MediaPreview {
 				this._normalizationStatusBarEntry.forceHide();
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
+				this._maskFilterStatusBarEntry.hide();
 			}
 		}));
 
@@ -106,6 +117,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
+			this._maskFilterStatusBarEntry.hide();
 		}
 		super.dispose();
 	}
@@ -211,9 +223,22 @@ export class ImagePreview extends MediaPreview {
 
 	private sendSettingsUpdate(settings: ImageSettings): void {
 		if (this.previewState === PreviewState.Active) {
+			// Convert mask URI to webview-safe URI if it exists
+			const maskUri = settings.maskFilter.maskUri
+				? this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(settings.maskFilter.maskUri)).toString()
+				: undefined;
+
+			const webviewSafeSettings = {
+				...settings,
+				maskFilter: {
+					...settings.maskFilter,
+					maskUri: maskUri
+				}
+			};
+
 			this._webviewEditor.webview.postMessage({ 
 				type: 'updateSettings', 
-				settings: settings 
+				settings: webviewSafeSettings 
 			});
 		}
 	}
@@ -227,6 +252,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
+			this._maskFilterStatusBarEntry.hide();
 			return;
 		}
 
@@ -236,9 +262,17 @@ export class ImagePreview extends MediaPreview {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
 			
+			// Show mask filter status bar entry if enabled
+			const settings = this._manager.settingsManager.settings;
+			this._maskFilterStatusBarEntry.updateMaskFilter(
+				settings.maskFilter.enabled,
+				settings.maskFilter.maskUri,
+				settings.maskFilter.threshold,
+				settings.maskFilter.filterHigher
+			);
+			
 			if (this._isTiff && this._isFloat) {
 				outputChannel.appendLine('TIFF Visualizer: Showing FLOAT TIFF controls (normalization)');
-				const settings = this._manager.settingsManager.settings;
 				this._normalizationStatusBarEntry.updateNormalization(
 					settings.normalization.min, 
 					settings.normalization.max
@@ -272,6 +306,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
+			this._maskFilterStatusBarEntry.hide();
 		}
 	}
 
@@ -291,9 +326,18 @@ export class ImagePreview extends MediaPreview {
 		const isTiff = this.resource.path.toLowerCase().endsWith('.tif') || this.resource.path.toLowerCase().endsWith('.tiff');
 		this._isTiff = isTiff;
 
+		// Convert mask URI to webview-safe URI if it exists
+		const maskUri = settings.maskFilter.maskUri
+			? this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(settings.maskFilter.maskUri)).toString()
+			: undefined;
+
 		// Extend settings with required properties for JavaScript
 		const extendedSettings = {
 			...settings,
+			maskFilter: {
+				...settings.maskFilter,
+				maskUri: maskUri
+			},
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
 			folder: folderUri.toString(),

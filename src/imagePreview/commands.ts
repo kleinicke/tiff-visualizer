@@ -380,5 +380,173 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.filterByMask', async () => {
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF preview found.');
+			return;
+		}
+
+		const currentMaskSettings = previewManager.settingsManager.getMaskFilterSettings();
+		
+		// Show options for mask filtering
+		const maskOptions = [
+			{
+				label: currentMaskSettings.enabled ? '$(check) Mask Filter Active' : '$(square) Enable Mask Filter',
+				description: currentMaskSettings.enabled ? 'Configure or disable mask filtering' : 'Enable mask-based pixel filtering',
+				detail: currentMaskSettings.enabled ? 
+					`Mask: ${currentMaskSettings.maskUri ? 'Set' : 'Not set'}, Threshold: ${currentMaskSettings.threshold}, Filter: ${currentMaskSettings.filterHigher ? 'Higher' : 'Lower'}` :
+					'Select mask image and set filtering criteria',
+				action: 'configure'
+			}
+		];
+
+		if (currentMaskSettings.enabled) {
+			maskOptions.push({
+				label: '$(x) Disable Mask Filter',
+				description: 'Remove mask filtering',
+				detail: 'Clear all mask filter settings',
+				action: 'disable'
+			});
+		}
+
+		// Create a custom QuickPick
+		const maskQuickPick = vscode.window.createQuickPick<typeof maskOptions[0]>();
+		maskQuickPick.items = maskOptions;
+		maskQuickPick.placeholder = 'Configure mask-based pixel filtering';
+		maskQuickPick.title = 'Mask Filter Settings';
+		maskQuickPick.canSelectMany = false;
+		maskQuickPick.ignoreFocusOut = false;
+		maskQuickPick.value = '';
+		
+		const choice = await new Promise<typeof maskOptions[0] | undefined>((resolve) => {
+			maskQuickPick.onDidChangeSelection(selection => {
+				if (selection.length > 0) {
+					resolve(selection[0]);
+					maskQuickPick.hide();
+				}
+			});
+			
+			maskQuickPick.onDidHide(() => {
+				resolve(undefined);
+				maskQuickPick.dispose();
+			});
+			
+			maskQuickPick.onDidChangeValue(() => {
+				maskQuickPick.value = '';
+			});
+			
+			maskQuickPick.show();
+		});
+
+		if (!choice) {
+			return;
+		}
+
+		if (choice.action === 'disable') {
+			previewManager.settingsManager.setMaskFilter(false);
+			previewManager.updateAllPreviews();
+			vscode.window.showInformationMessage('Mask filter disabled.');
+			return;
+		}
+
+		// Configure mask filter
+		// Step 1: Select mask image
+		const maskUris = await vscode.window.showOpenDialog({
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: false,
+			filters: {
+				'TIFF Images': ['tif', 'tiff']
+			},
+			title: 'Select Mask Image (TIFF)',
+			openLabel: 'Select Mask'
+		});
+
+		if (!maskUris || maskUris.length === 0) {
+			return;
+		}
+
+		const maskUri = maskUris[0];
+
+		// Step 2: Set threshold value
+		const threshold = await vscode.window.showInputBox({
+			prompt: 'Enter threshold value for filtering',
+			value: currentMaskSettings.threshold.toString(),
+			validateInput: text => {
+				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+			}
+		});
+
+		if (threshold === undefined) {
+			return;
+		}
+
+		const thresholdValue = parseFloat(threshold);
+
+		// Step 3: Choose filter direction
+		const directionOptions = [
+			{
+				label: '$(arrow-up) Filter Higher Values',
+				description: 'Set pixels to NaN where mask values are higher than threshold',
+				detail: 'Pixels with mask values > threshold will be filtered out',
+				action: true
+			},
+			{
+				label: '$(arrow-down) Filter Lower Values',
+				description: 'Set pixels to NaN where mask values are lower than threshold',
+				detail: 'Pixels with mask values < threshold will be filtered out',
+				action: false
+			}
+		];
+
+		const directionQuickPick = vscode.window.createQuickPick<typeof directionOptions[0]>();
+		directionQuickPick.items = directionOptions;
+		directionQuickPick.placeholder = 'Choose filtering direction';
+		directionQuickPick.title = 'Filter Direction';
+		directionQuickPick.canSelectMany = false;
+		directionQuickPick.ignoreFocusOut = false;
+		directionQuickPick.value = '';
+		
+		const directionChoice = await new Promise<typeof directionOptions[0] | undefined>((resolve) => {
+			directionQuickPick.onDidChangeSelection(selection => {
+				if (selection.length > 0) {
+					resolve(selection[0]);
+					directionQuickPick.hide();
+				}
+			});
+			
+			directionQuickPick.onDidHide(() => {
+				resolve(undefined);
+				directionQuickPick.dispose();
+			});
+			
+			directionQuickPick.onDidChangeValue(() => {
+				directionQuickPick.value = '';
+			});
+			
+			directionQuickPick.show();
+		});
+
+		if (!directionChoice) {
+			return;
+		}
+
+		// Apply the mask filter settings
+		previewManager.settingsManager.setMaskFilter(
+			true,
+			maskUri.toString(),
+			thresholdValue,
+			directionChoice.action
+		);
+
+		previewManager.updateAllPreviews();
+		
+		const directionText = directionChoice.action ? 'higher' : 'lower';
+		vscode.window.showInformationMessage(
+			`Mask filter enabled: ${maskUri.fsPath}\nThreshold: ${thresholdValue}, Filter: ${directionText} values`
+		);
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 
