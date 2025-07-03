@@ -17,17 +17,17 @@ export interface BrightnessSettings {
 }
 
 export interface MaskFilterSettings {
-	enabled: boolean;
-	maskUri: string | undefined;
+	maskUri: string;
 	threshold: number;
-	filterHigher: boolean; // true = filter values higher than threshold, false = filter values lower than threshold
+	filterHigher: boolean;
+	enabled: boolean;
 }
 
 export interface ImageSettings {
 	normalization: NormalizationSettings;
 	gamma: GammaSettings;
 	brightness: BrightnessSettings;
-	maskFilter: MaskFilterSettings;
+	maskFilters: MaskFilterSettings[];
 	nanColor: 'black' | 'fuchsia';
 }
 
@@ -54,14 +54,12 @@ export class ImageSettingsManager {
 		brightness: {
 			offset: 0
 		},
-		maskFilter: {
-			enabled: false,
-			maskUri: undefined,
-			threshold: 0.5,
-			filterHigher: true
-		},
+		maskFilters: [],
 		nanColor: 'black'
 	};
+
+	// Store mask filter settings per image URI
+	private _perImageMaskFilters = new Map<string, MaskFilterSettings[]>();
 
 	private _imageStats: ImageStats | undefined;
 	private _comparisonBaseUri: vscode.Uri | undefined;
@@ -126,36 +124,48 @@ export class ImageSettingsManager {
 		}
 	}
 
-	public setMaskFilter(enabled: boolean, maskUri?: string, threshold?: number, filterHigher?: boolean): void {
-		let changed = false;
-		
-		if (this._settings.maskFilter.enabled !== enabled) {
-			this._settings.maskFilter.enabled = enabled;
-			changed = true;
-		}
-		
-		if (maskUri !== undefined && this._settings.maskFilter.maskUri !== maskUri) {
-			this._settings.maskFilter.maskUri = maskUri;
-			changed = true;
-		}
-		
-		if (threshold !== undefined && this._settings.maskFilter.threshold !== threshold) {
-			this._settings.maskFilter.threshold = threshold;
-			changed = true;
-		}
-		
-		if (filterHigher !== undefined && this._settings.maskFilter.filterHigher !== filterHigher) {
-			this._settings.maskFilter.filterHigher = filterHigher;
-			changed = true;
-		}
-		
-		if (changed) {
+	public addMaskFilter(imageUri: string, mask: MaskFilterSettings): void {
+		const arr = this._perImageMaskFilters.get(imageUri) || [];
+		arr.push(mask);
+		this._perImageMaskFilters.set(imageUri, arr);
+		this._fireSettingsChanged();
+	}
+
+	public updateMaskFilter(imageUri: string, index: number, mask: Partial<MaskFilterSettings>): void {
+		const arr = this._perImageMaskFilters.get(imageUri);
+		if (arr && arr[index]) {
+			arr[index] = { ...arr[index], ...mask };
 			this._fireSettingsChanged();
 		}
 	}
 
-	public getMaskFilterSettings(): Readonly<MaskFilterSettings> {
-		return this._settings.maskFilter;
+	public removeMaskFilter(imageUri: string, index: number): void {
+		const arr = this._perImageMaskFilters.get(imageUri);
+		if (arr && arr[index]) {
+			arr.splice(index, 1);
+			this._fireSettingsChanged();
+		}
+	}
+
+	public setMaskFilterEnabled(imageUri: string, index: number, enabled: boolean): void {
+		const arr = this._perImageMaskFilters.get(imageUri);
+		if (arr && arr[index]) {
+			arr[index].enabled = enabled;
+			this._fireSettingsChanged();
+		}
+	}
+
+	public getMaskFilterSettings(imageUri: string): MaskFilterSettings[] {
+		// Migration: if old single maskFilter exists, convert to array
+		// (Assume migration logic is handled elsewhere if needed)
+		return this._perImageMaskFilters.get(imageUri) || [];
+	}
+
+	public getSettingsForImage(imageUri: string): Readonly<ImageSettings> {
+		return {
+			...this._settings,
+			maskFilters: this.getMaskFilterSettings(imageUri)
+		};
 	}
 
 	public toggleNanColor(): void {

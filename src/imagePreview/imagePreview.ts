@@ -74,18 +74,24 @@ export class ImagePreview extends MediaPreview {
 
 		// Subscribe to settings changes for automatic updates
 		this._register(this._manager.settingsManager.onDidChangeSettings((settings) => {
+			// Get image-specific settings
+			const imageSettings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
+			
 			// Update status bar entries with new values
-			this._gammaStatusBarEntry.updateGamma(settings.gamma.in, settings.gamma.out);
-			this._brightnessStatusBarEntry.updateBrightness(settings.brightness.offset);
+			this._gammaStatusBarEntry.updateGamma(imageSettings.gamma.in, imageSettings.gamma.out);
+			this._brightnessStatusBarEntry.updateBrightness(imageSettings.brightness.offset);
+			// Update mask filter status bar with summary
+			const enabledMasks = imageSettings.maskFilters.filter(mask => mask.enabled);
+			const totalMasks = imageSettings.maskFilters.length;
 			this._maskFilterStatusBarEntry.updateMaskFilter(
-				settings.maskFilter.enabled,
-				settings.maskFilter.maskUri,
-				settings.maskFilter.threshold,
-				settings.maskFilter.filterHigher
+				totalMasks > 0,
+				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
+				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
+				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
 			
 			// Send targeted updates to webview instead of full reload
-			this.sendSettingsUpdate(settings);
+			this.sendSettingsUpdate(imageSettings);
 			this.updateStatusBar();
 		}));
 
@@ -223,17 +229,15 @@ export class ImagePreview extends MediaPreview {
 
 	private sendSettingsUpdate(settings: ImageSettings): void {
 		if (this.previewState === PreviewState.Active) {
-			// Convert mask URI to webview-safe URI if it exists
-			const maskUri = settings.maskFilter.maskUri
-				? this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(settings.maskFilter.maskUri)).toString()
-				: undefined;
+			// Convert mask URIs to webview-safe URIs if they exist
+			const webviewSafeMasks = settings.maskFilters.map(mask => ({
+				...mask,
+				maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
+			}));
 
 			const webviewSafeSettings = {
 				...settings,
-				maskFilter: {
-					...settings.maskFilter,
-					maskUri: maskUri
-				}
+				maskFilters: webviewSafeMasks
 			};
 
 			this._webviewEditor.webview.postMessage({ 
@@ -262,13 +266,16 @@ export class ImagePreview extends MediaPreview {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
 			
-			// Show mask filter status bar entry if enabled
-			const settings = this._manager.settingsManager.settings;
+					// Show mask filter status bar entry if enabled
+		const settings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
+			// Update mask filter status bar with summary
+			const enabledMasks = settings.maskFilters.filter(mask => mask.enabled);
+			const totalMasks = settings.maskFilters.length;
 			this._maskFilterStatusBarEntry.updateMaskFilter(
-				settings.maskFilter.enabled,
-				settings.maskFilter.maskUri,
-				settings.maskFilter.threshold,
-				settings.maskFilter.filterHigher
+				totalMasks > 0,
+				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
+				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
+				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
 			
 			if (this._isTiff && this._isFloat) {
@@ -314,7 +321,7 @@ export class ImagePreview extends MediaPreview {
 		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
 		
 		const version = Date.now().toString();
-		const settings = this._manager.settingsManager.settings;
+		const settings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
 
 		const nonce = getNonce();
 		const cspSource = this._webviewEditor.webview.cspSource;
@@ -326,18 +333,16 @@ export class ImagePreview extends MediaPreview {
 		const isTiff = this.resource.path.toLowerCase().endsWith('.tif') || this.resource.path.toLowerCase().endsWith('.tiff');
 		this._isTiff = isTiff;
 
-		// Convert mask URI to webview-safe URI if it exists
-		const maskUri = settings.maskFilter.maskUri
-			? this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(settings.maskFilter.maskUri)).toString()
-			: undefined;
+		// Convert mask URIs to webview-safe URIs if they exist
+		const webviewSafeMasks = settings.maskFilters.map(mask => ({
+			...mask,
+			maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
+		}));
 
 		// Extend settings with required properties for JavaScript
 		const extendedSettings = {
 			...settings,
-			maskFilter: {
-				...settings.maskFilter,
-				maskUri: maskUri
-			},
+			maskFilters: webviewSafeMasks,
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
 			folder: folderUri.toString(),

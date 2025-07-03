@@ -159,21 +159,26 @@ export class TiffProcessor {
 
 		// Apply mask filtering if enabled
 		const settings = this.settingsManager.settings;
-		if (settings.maskFilter.enabled && settings.maskFilter.maskUri) {
+		if (settings.maskFilters && settings.maskFilters.length > 0) {
 			try {
-				const maskData = await this.loadMaskImage(settings.maskFilter.maskUri);
-				// Apply mask filter to each band
-				for (let band = 0; band < rastersCopy.length; band++) {
-					const filteredData = this.applyMaskFilter(
-						rastersCopy[band],
-						maskData,
-						settings.maskFilter.threshold,
-						settings.maskFilter.filterHigher
-					);
-					rastersCopy[band] = filteredData;
+				// Apply all enabled masks in sequence
+				for (const maskFilter of settings.maskFilters) {
+					if (maskFilter.enabled && maskFilter.maskUri) {
+						const maskData = await this.loadMaskImage(maskFilter.maskUri);
+						// Apply mask filter to each band
+						for (let band = 0; band < rastersCopy.length; band++) {
+							const filteredData = this.applyMaskFilter(
+								rastersCopy[band],
+								maskData,
+								maskFilter.threshold,
+								maskFilter.filterHigher
+							);
+							rastersCopy[band] = filteredData;
+						}
+					}
 				}
 			} catch (error) {
-				console.error('Error applying mask filter:', error);
+				console.error('Error applying mask filters:', error);
 				// Continue without mask filtering if there's an error
 			}
 		}
@@ -256,25 +261,30 @@ export class TiffProcessor {
 	async renderTiff(image, rasters) {
 		// Apply mask filtering if enabled
 		const settings = this.settingsManager.settings;
-		if (settings.maskFilter.enabled && settings.maskFilter.maskUri) {
+		if (settings.maskFilters && settings.maskFilters.length > 0) {
 			try {
-				const maskData = await this.loadMaskImage(settings.maskFilter.maskUri);
-				const maskWidth = image.getWidth();
-				const maskHeight = image.getHeight();
-				
-				// Apply mask filter to each band
-				for (let band = 0; band < rasters.length; band++) {
-					const originalData = new Float32Array(rasters[band]);
-					const filteredData = this.applyMaskFilter(
-						originalData, 
-						maskData, 
-						settings.maskFilter.threshold, 
-						settings.maskFilter.filterHigher
-					);
-					rasters[band] = filteredData;
+				// Apply all enabled masks in sequence
+				for (const maskFilter of settings.maskFilters) {
+					if (maskFilter.enabled && maskFilter.maskUri) {
+						const maskData = await this.loadMaskImage(maskFilter.maskUri);
+						const maskWidth = image.getWidth();
+						const maskHeight = image.getHeight();
+						
+						// Apply mask filter to each band
+						for (let band = 0; band < rasters.length; band++) {
+							const originalData = new Float32Array(rasters[band]);
+							const filteredData = this.applyMaskFilter(
+								originalData, 
+								maskData, 
+								maskFilter.threshold, 
+								maskFilter.filterHigher
+							);
+							rasters[band] = filteredData;
+						}
+					}
 				}
 			} catch (error) {
-				console.error('Error applying mask filter:', error);
+				console.error('Error applying mask filters:', error);
 				// Continue without mask filtering if there's an error
 			}
 		}

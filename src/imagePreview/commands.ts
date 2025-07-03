@@ -387,34 +387,55 @@ export function registerImagePreviewCommands(
 			return;
 		}
 
-		const currentMaskSettings = previewManager.settingsManager.getMaskFilterSettings();
+		const imageUri = activePreview.resource.toString();
+		const currentMasks = previewManager.settingsManager.getMaskFilterSettings(imageUri);
 		
-		// Show options for mask filtering
-		const maskOptions = [
-			{
-				label: currentMaskSettings.enabled ? '$(check) Mask Filter Active' : '$(square) Enable Mask Filter',
-				description: currentMaskSettings.enabled ? 'Configure or disable mask filtering' : 'Enable mask-based pixel filtering',
-				detail: currentMaskSettings.enabled ? 
-					`Mask: ${currentMaskSettings.maskUri ? 'Set' : 'Not set'}, Threshold: ${currentMaskSettings.threshold}, Filter: ${currentMaskSettings.filterHigher ? 'Higher' : 'Lower'}` :
-					'Select mask image and set filtering criteria',
-				action: 'configure'
-			}
-		];
+		// Build mask management options
+		const maskOptions: Array<{
+			label: string;
+			description: string;
+			detail: string;
+			action: string;
+			maskIndex?: number;
+		}> = [];
 
-		if (currentMaskSettings.enabled) {
+		// Add existing masks
+		currentMasks.forEach((mask, index) => {
+			const fileName = mask.maskUri.split('/').pop() || mask.maskUri.split('\\').pop() || 'Unknown';
+			const status = mask.enabled ? '$(check)' : '$(x)';
+			const direction = mask.filterHigher ? 'Higher' : 'Lower';
+			
 			maskOptions.push({
-				label: '$(x) Disable Mask Filter',
-				description: 'Remove mask filtering',
-				detail: 'Clear all mask filter settings',
-				action: 'disable'
+				label: `${status} Mask ${index + 1}: ${fileName}`,
+				description: `Threshold: ${mask.threshold}, Filter: ${direction}`,
+				detail: mask.enabled ? 'Click to edit or disable' : 'Click to enable',
+				action: 'edit',
+				maskIndex: index
+			});
+		});
+
+		// Add action options
+		maskOptions.push({
+			label: '$(plus) Add New Mask',
+			description: 'Add a new mask filter',
+			detail: 'Select mask file and configure parameters',
+			action: 'add'
+		});
+
+		if (currentMasks.length > 0) {
+			maskOptions.push({
+				label: '$(trash) Remove All Masks',
+				description: 'Remove all mask filters for this image',
+				detail: 'This will delete all masks permanently',
+				action: 'removeAll'
 			});
 		}
 
-		// Create a custom QuickPick
+		// Create QuickPick
 		const maskQuickPick = vscode.window.createQuickPick<typeof maskOptions[0]>();
 		maskQuickPick.items = maskOptions;
-		maskQuickPick.placeholder = 'Configure mask-based pixel filtering';
-		maskQuickPick.title = 'Mask Filter Settings';
+		maskQuickPick.placeholder = 'Manage mask filters for this image';
+		maskQuickPick.title = 'Mask Filter Management';
 		maskQuickPick.canSelectMany = false;
 		maskQuickPick.ignoreFocusOut = false;
 		maskQuickPick.value = '';
@@ -443,14 +464,23 @@ export function registerImagePreviewCommands(
 			return;
 		}
 
-		if (choice.action === 'disable') {
-			previewManager.settingsManager.setMaskFilter(false);
+		// Handle the selected action
+		if (choice.action === 'add') {
+			await addNewMask(previewManager, imageUri);
+		} else if (choice.action === 'edit' && choice.maskIndex !== undefined) {
+			await editMask(previewManager, imageUri, choice.maskIndex);
+		} else if (choice.action === 'removeAll') {
+			// Remove all masks
+			while (currentMasks.length > 0) {
+				previewManager.settingsManager.removeMaskFilter(imageUri, 0);
+			}
 			previewManager.updateAllPreviews();
-			vscode.window.showInformationMessage('Mask filter disabled.');
-			return;
+			vscode.window.showInformationMessage('All mask filters removed.');
 		}
+	}));
 
-		// Configure mask filter
+	// Helper function to add a new mask
+	async function addNewMask(previewManager: ImagePreviewManager, imageUri: string) {
 		// Step 1: Select mask image
 		const maskUris = await vscode.window.showOpenDialog({
 			canSelectFiles: true,
@@ -472,7 +502,7 @@ export function registerImagePreviewCommands(
 		// Step 2: Set threshold value
 		const threshold = await vscode.window.showInputBox({
 			prompt: 'Enter threshold value for filtering',
-			value: currentMaskSettings.threshold.toString(),
+			value: '0.5',
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
 			}
@@ -532,21 +562,173 @@ export function registerImagePreviewCommands(
 			return;
 		}
 
-		// Apply the mask filter settings
-		previewManager.settingsManager.setMaskFilter(
-			true,
-			maskUri.toString(),
-			thresholdValue,
-			directionChoice.action
-		);
+		// Add the new mask
+		const newMask = {
+			maskUri: maskUri.toString(),
+			threshold: thresholdValue,
+			filterHigher: directionChoice.action,
+			enabled: true
+		};
 
+		previewManager.settingsManager.addMaskFilter(imageUri, newMask);
 		previewManager.updateAllPreviews();
 		
 		const directionText = directionChoice.action ? 'higher' : 'lower';
+		const fileName = maskUri.fsPath.split('/').pop() || maskUri.fsPath.split('\\').pop() || 'Unknown';
 		vscode.window.showInformationMessage(
-			`Mask filter enabled: ${maskUri.fsPath}\nThreshold: ${thresholdValue}, Filter: ${directionText} values`
+			`New mask added: ${fileName}\nThreshold: ${thresholdValue}, Filter: ${directionText} values`
 		);
-	}));
+	}
+
+	// Helper function to edit an existing mask
+	async function editMask(previewManager: ImagePreviewManager, imageUri: string, maskIndex: number) {
+		const masks = previewManager.settingsManager.getMaskFilterSettings(imageUri);
+		const mask = masks[maskIndex];
+		
+		if (!mask) {
+			vscode.window.showErrorMessage('Mask not found.');
+			return;
+		}
+
+		// Show edit options
+		const editOptions = [
+			{
+				label: mask.enabled ? '$(x) Disable Mask' : '$(check) Enable Mask',
+				description: mask.enabled ? 'Temporarily disable this mask' : 'Enable this mask',
+				action: 'toggle'
+			},
+			{
+				label: '$(edit) Edit Parameters',
+				description: 'Change threshold and filter direction',
+				action: 'edit'
+			},
+			{
+				label: '$(trash) Delete Mask',
+				description: 'Permanently remove this mask',
+				action: 'delete'
+			}
+		];
+
+		const editQuickPick = vscode.window.createQuickPick<typeof editOptions[0]>();
+		editQuickPick.items = editOptions;
+		editQuickPick.placeholder = 'Choose action for this mask';
+		editQuickPick.title = 'Edit Mask';
+		editQuickPick.canSelectMany = false;
+		editQuickPick.ignoreFocusOut = false;
+		editQuickPick.value = '';
+		
+		const editChoice = await new Promise<typeof editOptions[0] | undefined>((resolve) => {
+			editQuickPick.onDidChangeSelection(selection => {
+				if (selection.length > 0) {
+					resolve(selection[0]);
+					editQuickPick.hide();
+				}
+			});
+			
+			editQuickPick.onDidHide(() => {
+				resolve(undefined);
+				editQuickPick.dispose();
+			});
+			
+			editQuickPick.onDidChangeValue(() => {
+				editQuickPick.value = '';
+			});
+			
+			editQuickPick.show();
+		});
+
+		if (!editChoice) {
+			return;
+		}
+
+		if (editChoice.action === 'toggle') {
+			previewManager.settingsManager.setMaskFilterEnabled(imageUri, maskIndex, !mask.enabled);
+			previewManager.updateAllPreviews();
+			vscode.window.showInformationMessage(`Mask ${mask.enabled ? 'disabled' : 'enabled'}.`);
+		} else if (editChoice.action === 'delete') {
+			previewManager.settingsManager.removeMaskFilter(imageUri, maskIndex);
+			previewManager.updateAllPreviews();
+			vscode.window.showInformationMessage('Mask deleted.');
+		} else if (editChoice.action === 'edit') {
+			// Edit threshold
+			const threshold = await vscode.window.showInputBox({
+				prompt: 'Enter new threshold value for filtering',
+				value: mask.threshold.toString(),
+				validateInput: text => {
+					return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+				}
+			});
+
+			if (threshold === undefined) {
+				return;
+			}
+
+			const thresholdValue = parseFloat(threshold);
+
+			// Edit direction
+			const directionOptions = [
+				{
+					label: '$(arrow-up) Filter Higher Values',
+					description: 'Set pixels to NaN where mask values are higher than threshold',
+					detail: 'Pixels with mask values > threshold will be filtered out',
+					action: true
+				},
+				{
+					label: '$(arrow-down) Filter Lower Values',
+					description: 'Set pixels to NaN where mask values are lower than threshold',
+					detail: 'Pixels with mask values < threshold will be filtered out',
+					action: false
+				}
+			];
+
+			const directionQuickPick = vscode.window.createQuickPick<typeof directionOptions[0]>();
+			directionQuickPick.items = directionOptions;
+			directionQuickPick.placeholder = 'Choose filtering direction';
+			directionQuickPick.title = 'Filter Direction';
+			directionQuickPick.canSelectMany = false;
+			directionQuickPick.ignoreFocusOut = false;
+			directionQuickPick.value = '';
+			
+			// Pre-select current direction
+			directionQuickPick.activeItems = [directionOptions[mask.filterHigher ? 0 : 1]];
+			
+			const directionChoice = await new Promise<typeof directionOptions[0] | undefined>((resolve) => {
+				directionQuickPick.onDidChangeSelection(selection => {
+					if (selection.length > 0) {
+						resolve(selection[0]);
+						directionQuickPick.hide();
+					}
+				});
+				
+				directionQuickPick.onDidHide(() => {
+					resolve(undefined);
+					directionQuickPick.dispose();
+				});
+				
+				directionQuickPick.onDidChangeValue(() => {
+					directionQuickPick.value = '';
+				});
+				
+				directionQuickPick.show();
+			});
+
+			if (!directionChoice) {
+				return;
+			}
+
+			// Update the mask
+			previewManager.settingsManager.updateMaskFilter(imageUri, maskIndex, {
+				threshold: thresholdValue,
+				filterHigher: directionChoice.action
+			});
+			previewManager.updateAllPreviews();
+			
+			const directionText = directionChoice.action ? 'higher' : 'lower';
+			vscode.window.showInformationMessage(
+				`Mask updated: Threshold: ${thresholdValue}, Filter: ${directionText} values`
+			);
+		}
+	}
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleNanColor', () => {
 		const currentColor = previewManager.settingsManager.getNanColor();
