@@ -14,6 +14,11 @@ import type { IImagePreview, IImagePreviewManager } from './types';
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
+	
+	// Export the viewType to ensure it's preserved in the build
+	public static getViewType() {
+		return this.viewType;
+	}
 
 	private readonly _previews = new Set<IImagePreview>();
 	private _activePreview: IImagePreview | undefined;

@@ -4,7 +4,7 @@ const path = require('path');
 
 const isWatch = process.argv.includes('--watch');
 
-// Build extension
+// Build extension for Node.js (desktop)
 const extensionBuildOptions = {
   entryPoints: ['src/extension.ts'],
   bundle: true,
@@ -13,6 +13,19 @@ const extensionBuildOptions = {
   target: 'node16',
   external: ['vscode'],
   sourcemap: true,
+};
+
+// Build extension for browser (web)
+const extensionWebBuildOptions = {
+  entryPoints: ['src/extension.ts'],
+  bundle: true,
+  outfile: 'out/extension.web.js',
+  platform: 'browser',
+  target: 'es2020',
+  external: ['vscode'],
+  sourcemap: true,
+  format: 'iife',
+  globalName: 'TIFFVisualizerExtension'
 };
 
 // Build AppStateManager separately for testing
@@ -78,9 +91,13 @@ if (isWatch) {
 
 async function buildAll() {
   try {
-    // Build extension
+    // Build extension for Node.js
     await build(extensionBuildOptions);
-    console.log('Extension built successfully');
+    console.log('Extension (Node.js) built successfully');
+    
+    // Build extension for browser
+    await build(extensionWebBuildOptions);
+    console.log('Extension (Web) built successfully');
     
     // Build AppStateManager separately for testing
     await build(appStateManagerBuildOptions);

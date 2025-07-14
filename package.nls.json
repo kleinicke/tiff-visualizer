@@ -4,5 +4,5 @@
 	"customEditor.tiffVisualizer.displayName": "TIFF Visualizer",
 	"command.zoomIn": "Zoom in",
 	"command.zoomOut": "Zoom out",
-	"command.copyImage": "Copy",
+	"command.copyImage": "Copy"
 }

@@ -53,9 +53,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	);
 
 	// Register the custom editor provider
-	outputChannel.appendLine(`TIFF Visualizer: Registering custom editor provider for viewType: ${ImagePreviewManager.viewType}`);
-	console.log('TIFF Visualizer: Registering custom editor provider for viewType:', ImagePreviewManager.viewType);
-	disposables.push(vscode.window.registerCustomEditorProvider(ImagePreviewManager.viewType, previewManager, {
+	const viewType = ImagePreviewManager.getViewType();
+	outputChannel.appendLine(`TIFF Visualizer: Registering custom editor provider for viewType: ${viewType}`);
+	console.log('TIFF Visualizer: Registering custom editor provider for viewType:', viewType);
+	disposables.push(vscode.window.registerCustomEditorProvider(viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
 	}));
 

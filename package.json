@@ -10,6 +10,7 @@
     "vscode": "^1.80.0"
   },
   "main": "./out/extension.js",
+  "browser": "./out/extension.web.js",
   "categories": [
     "Other"
   ],
@@ -129,7 +130,7 @@
     "test:playwright": "playwright test",
     "test:playwright:ui": "playwright test --ui",
     "test:playwright:debug": "playwright test --debug",
-    "start:vscode-web": "npx @vscode/test-web --extensionDevelopmentPath=. --extensionTestsPath=./test/playwright",
+    "start:vscode-web": "npx @vscode/test-web --extensionDevelopmentPath=. --extensionTestsPath=./test/playwright/vscode-web-runner.ts",
     "setup:playwright": "node scripts/setup-playwright.js",
     "build": "webpack"
   },

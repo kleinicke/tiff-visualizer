@@ -6,6 +6,12 @@ yarn.lock
 example/
 .vscode-test/
 extension/test-fixtures/
+.vscode-test-web/
+test-results/
+test-workspace/
+playwright-report/
+
+package-lock.json
 
 # Webpack
 *.webpack.config.js
