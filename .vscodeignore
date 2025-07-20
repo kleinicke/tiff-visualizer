@@ -9,6 +9,7 @@ preview-src/**
 extension/test-fixtures/*
 .vscode-test/** 
 test-workspace/**
+test-resources/**
 
 **/*.map
 

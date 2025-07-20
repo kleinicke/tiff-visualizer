@@ -9,5 +9,6 @@
 		"strict": true,
 		"esModuleInterop": true
 	},
-	"exclude": ["node_modules", ".vscode-test"]
+	"include": ["src/**/*"],
+	"exclude": ["node_modules", ".vscode-test", "test-resources"]
 }

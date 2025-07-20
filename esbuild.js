@@ -47,22 +47,45 @@ const testBuildOptions = {
   outdir: 'out/test',
   platform: 'node',
   target: 'node16',
-  external: ['vscode', 'assert', 'mocha'],
+  external: [
+    'vscode', 
+    'assert', 
+    'mocha', 
+    'chai', 
+    'vscode-extension-tester',
+    'selenium-webdriver',
+    'keytar',
+    '@aws-sdk/client-s3',
+    'monocart-coverage-reports',
+    'unzipper',
+    'c8'
+  ],
   sourcemap: true,
   format: 'cjs'
 };
 
-// Find test files
-const testDir = 'test';
-if (fs.existsSync(testDir)) {
-  const testFiles = fs.readdirSync(testDir)
-    .filter(file => file.endsWith('.test.ts'))
-    .map(file => path.join(testDir, file));
-  
-  if (testFiles.length > 0) {
-    testBuildOptions.entryPoints = testFiles;
-    console.log('Found test files:', testFiles);
+// Find test files recursively
+function findTestFiles(dir) {
+  let testFiles = [];
+  if (fs.existsSync(dir)) {
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        testFiles = testFiles.concat(findTestFiles(fullPath));
+      } else if (item.endsWith('.test.ts')) {
+        testFiles.push(fullPath);
+      }
+    }
   }
+  return testFiles;
+}
+
+const testFiles = findTestFiles('test');
+if (testFiles.length > 0) {
+  testBuildOptions.entryPoints = testFiles;
+  console.log('Found test files:', testFiles);
 }
 
 if (isWatch) {

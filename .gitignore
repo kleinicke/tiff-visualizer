@@ -10,6 +10,7 @@ extension/test-fixtures/
 test-results/
 test-workspace/
 playwright-report/
+test-resources/
 
 package-lock.json
 
