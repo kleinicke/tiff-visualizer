@@ -70,12 +70,12 @@ export class MouseHandler {
 	 */
 	_handleMouseEnter(e) {
 		if (!this.imageElement) return;
-		
 		const pixelInfo = this._getPixelInfo(e);
-		this.vscode.postMessage({
-			type: 'pixelFocus',
-			value: pixelInfo
-		});
+		if (pixelInfo) {
+			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
+		} else {
+			this.vscode.postMessage({ type: 'pixelBlur' });
+		}
 	}
 
 	/**
@@ -84,12 +84,12 @@ export class MouseHandler {
 	 */
 	_handleMouseMove(e) {
 		if (!this.imageElement) return;
-		
 		const pixelInfo = this._getPixelInfo(e);
-		this.vscode.postMessage({
-			type: 'pixelFocus',
-			value: pixelInfo
-		});
+		if (pixelInfo) {
+			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
+		} else {
+			this.vscode.postMessage({ type: 'pixelBlur' });
+		}
 	}
 
 	/**
@@ -113,8 +113,21 @@ export class MouseHandler {
 		const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
 		const naturalWidth = canvas.width;
 		const naturalHeight = canvas.height;
-		const x = Math.floor((e.clientX - rect.left) / rect.width * naturalWidth);
-		const y = Math.floor((e.clientY - rect.top) / rect.height * naturalHeight);
+		// Ignore when outside the element's content box
+		if (
+			e.clientX < rect.left || e.clientX > rect.right ||
+			e.clientY < rect.top || e.clientY > rect.bottom ||
+			rect.width <= 0 || rect.height <= 0
+		) {
+			return '';
+		}
+		const ratioX = (e.clientX - rect.left) / rect.width;
+		const ratioY = (e.clientY - rect.top) / rect.height;
+		let x = Math.floor(ratioX * naturalWidth);
+		let y = Math.floor(ratioY * naturalHeight);
+		// Clamp to valid pixel indices
+		x = Math.min(Math.max(0, x), Math.max(0, naturalWidth - 1));
+		y = Math.min(Math.max(0, y), Math.max(0, naturalHeight - 1));
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
 		
 		return `${x}x${y} ${color}`;
