@@ -57,9 +57,15 @@ body img {
 	object-fit: contain;
 }
 
-.container img,
-.container canvas {
-	margin: auto;
+/* Center only in fit mode so top-left is reachable in zoomed states */
+.container img.scale-to-fit,
+.container canvas.scale-to-fit {
+    margin: auto;
+}
+
+.container img:not(.scale-to-fit),
+.container canvas:not(.scale-to-fit) {
+    margin: 0;
 }
 
 .container.ready.zoom-in {

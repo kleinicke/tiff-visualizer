@@ -55,22 +55,21 @@ export class ZoomController {
 		}
 
 		const constants = this.settingsManager.constants;
-		const isTiff = !!this.canvas;
 		const wasInFitMode = this.scale === 'fit';
 
 		if (newScale === 'fit') {
 			this.scale = 'fit';
 			this.imageElement.classList.add('scale-to-fit');
 			this.imageElement.classList.remove('pixelated');
-			if (isTiff) {
-				this.imageElement.style.transform = '';
-				this.imageElement.style.transformOrigin = '';
-			} else {
-				// @ts-ignore Non-standard CSS property
-				this.imageElement.style.zoom = 'normal';
-			}
+			// Clear inline sizing and transforms when returning to fit
+			this.imageElement.style.transform = '';
+			this.imageElement.style.transformOrigin = '';
+			this.imageElement.style.width = '';
+			this.imageElement.style.height = '';
+			this.imageElement.style.margin = '';
 			this.vscode.setState(undefined);
 		} else {
+			const oldScale = this.scale;
 			this.scale = this._clamp(newScale, constants.MIN_SCALE, constants.MAX_SCALE);
 			if (this.scale >= constants.PIXELATION_THRESHOLD) {
 				this.imageElement.classList.add('pixelated');
@@ -78,33 +77,54 @@ export class ZoomController {
 				this.imageElement.classList.remove('pixelated');
 			}
 
-			let dx, dy;
-			
-			if (wasInFitMode) {
-				// When transitioning from 'fit' mode, center the image
-				// Since the image was centered in fit mode, we want to keep it centered
-				dx = 0.5; // Center horizontally
-				dy = 0.5; // Center vertically
-			} else {
-				// Normal zoom operation - maintain current viewport center
-				dx = (window.scrollX + this.container.clientWidth / 2) / this.container.scrollWidth;
-				dy = (window.scrollY + this.container.clientHeight / 2) / this.container.scrollHeight;
-			}
+			// Compute the image-space point under the viewport center before scaling
+			const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
+			const naturalWidth = canvas.width;
+			const naturalHeight = canvas.height;
+			const prevScale = (wasInFitMode)
+				? (canvas.clientWidth / naturalWidth)
+				: /** @type {number} */ (oldScale);
 
+			// Viewport center in document coordinates
+			const viewportCenterX = window.scrollX + this.container.clientWidth / 2;
+			const viewportCenterY = window.scrollY + this.container.clientHeight / 2;
+			// Element top-left in document coordinates
+			const rectBefore = this.imageElement.getBoundingClientRect();
+			const elemLeftDoc = window.scrollX + rectBefore.left;
+			const elemTopDoc = window.scrollY + rectBefore.top;
+			// Image-space center point
+			const centerXImage = (viewportCenterX - elemLeftDoc) / prevScale;
+			const centerYImage = (viewportCenterY - elemTopDoc) / prevScale;
+
+			// Switch to layout-based scaling: remove fit class and set explicit size
 			this.imageElement.classList.remove('scale-to-fit');
-			
-			if (isTiff) {
-				// Set transform origin to top-left to make scaling behavior consistent
-				this.imageElement.style.transformOrigin = '0 0';
-				this.imageElement.style.transform = `scale(${this.scale})`;
-			} else {
-				// @ts-ignore Non-standard CSS property
-				this.imageElement.style.zoom = this.scale;
-			}
+			this.imageElement.style.transform = '';
+			this.imageElement.style.transformOrigin = '';
+			this.imageElement.style.width = `${naturalWidth * this.scale}px`;
+			this.imageElement.style.height = `${naturalHeight * this.scale}px`;
 
-			// Calculate new scroll position to maintain the center point
-			const newScrollX = this.container.scrollWidth * dx - this.container.clientWidth / 2;
-			const newScrollY = this.container.scrollHeight * dy - this.container.clientHeight / 2;
+			// Center when smaller than viewport, remove margins when scrollable
+			const canScrollX = this.container.scrollWidth > this.container.clientWidth + 1;
+			const canScrollY = this.container.scrollHeight > this.container.clientHeight + 1;
+			this.imageElement.style.marginLeft = canScrollX ? '0' : 'auto';
+			this.imageElement.style.marginRight = canScrollX ? '0' : 'auto';
+			this.imageElement.style.marginTop = canScrollY ? '0' : 'auto';
+			this.imageElement.style.marginBottom = canScrollY ? '0' : 'auto';
+
+			// Recalculate element position after layout change
+			const rectAfter = this.imageElement.getBoundingClientRect();
+			const elemLeftDocAfter = window.scrollX + rectAfter.left;
+			const elemTopDocAfter = window.scrollY + rectAfter.top;
+
+			// Calculate new scroll position to keep the same image point centered
+			let newScrollX = centerXImage * this.scale + elemLeftDocAfter - this.container.clientWidth / 2;
+			let newScrollY = centerYImage * this.scale + elemTopDocAfter - this.container.clientHeight / 2;
+
+			// Clamp scroll positions to valid ranges
+			const maxScrollX = Math.max(0, this.container.scrollWidth - this.container.clientWidth);
+			const maxScrollY = Math.max(0, this.container.scrollHeight - this.container.clientHeight);
+			newScrollX = Math.min(Math.max(0, newScrollX), maxScrollX);
+			newScrollY = Math.min(Math.max(0, newScrollY), maxScrollY);
 
 			window.scrollTo(newScrollX, newScrollY);
 
