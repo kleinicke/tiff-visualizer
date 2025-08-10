@@ -23,7 +23,6 @@ The extension is built on top of the built-in [VS Code Media Preview extension](
 
 ## Known Issues and Missing Features
 
-- Image jumps to top left, when starting to zoom in
 - Adding a Histogram
 - Allow to rotate the image
 - Allow going fast through all images

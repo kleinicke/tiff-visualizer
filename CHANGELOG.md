@@ -5,6 +5,7 @@
 Fix Image size visualization
 Allow masks to filter images
 Add option to switch NaN color to fuchsia
+Fix Image jumps to top left when starting to zoom in
 
 ### 1.1.0 (2025-07-01)
 
