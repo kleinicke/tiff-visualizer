@@ -129,11 +129,22 @@
         "command": "tiffVisualizer.toggleNanColor",
         "title": "Toggle NaN Color (Black/Fuchsia)",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.openWith",
+        "title": "Open with TIFF Visualizer",
+        "category": "TIFF Visualizer"
       }
-    ]
-  },
-  "menus": {
-    "editor/context": [
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "tiffVisualizer.openWith",
+          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/context": [
       {
         "command": "tiffVisualizer.selectForCompare",
         "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
@@ -149,7 +160,8 @@
         "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
         "group": "export@1"
       }
-    ]
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
