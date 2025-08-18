@@ -11,6 +11,7 @@ interface FormatInfo {
 	samplesPerPixel: number;
 	bitsPerSample: number;
 	sampleFormat: number;
+	formatLabel?: string; // e.g., 'TIFF', 'NPY', 'PFM'
 }
 
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
@@ -55,7 +56,7 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 		if (this._formatInfo) {
 			const info = this._formatInfo;
 			tooltip.appendMarkdown(`**Dimensions:** ${info.width} × ${info.height}\n\n`);
-			tooltip.appendMarkdown(`**Format:** TIFF\n\n`);
+			tooltip.appendMarkdown(`**Format:** ${info.formatLabel ?? 'TIFF'}\n\n`);
 			tooltip.appendMarkdown(`**Compression:** ${this.getCompressionName(info.compression)}\n\n`);
 			
 			if (info.predictor && info.predictor !== 1) {

@@ -10,6 +10,8 @@ extension/test-fixtures/*
 .vscode-test/** 
 test-workspace/**
 test-resources/**
+playwright-report/**
+.github/**
 
 **/*.map
 

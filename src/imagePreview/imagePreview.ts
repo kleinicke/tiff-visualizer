@@ -278,7 +278,8 @@ export class ImagePreview extends MediaPreview {
 				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
 			
-			if (this._isTiff && this._isFloat) {
+			// Show float controls not only for TIFF but for any float source
+			if (this._isFloat) {
 				outputChannel.appendLine('TIFF Visualizer: Showing FLOAT TIFF controls (normalization)');
 				this._normalizationStatusBarEntry.updateNormalization(
 					settings.normalization.min, 
@@ -330,7 +331,8 @@ export class ImagePreview extends MediaPreview {
 		const workspaceUri = vscode.workspace.getWorkspaceFolder(this.resource)?.uri ?? this.resource;
 		const folderUri = this._webviewEditor.webview.asWebviewUri(workspaceUri);
 
-		const isTiff = this.resource.path.toLowerCase().endsWith('.tif') || this.resource.path.toLowerCase().endsWith('.tiff');
+		const lower = this.resource.path.toLowerCase();
+		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
 		this._isTiff = isTiff;
 
 		// Convert mask URIs to webview-safe URIs if they exist

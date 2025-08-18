@@ -3,6 +3,8 @@
 
 import { SettingsManager } from './modules/settings-manager.js';
 import { TiffProcessor } from './modules/tiff-processor.js';
+import { NpyProcessor } from './modules/npy-processor.js';
+import { PfmProcessor } from './modules/pfm-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 
@@ -19,6 +21,10 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	const tiffProcessor = new TiffProcessor(settingsManager, vscode);
 	const zoomController = new ZoomController(settingsManager, vscode);
 	const mouseHandler = new MouseHandler(settingsManager, vscode, tiffProcessor);
+	const npyProcessor = new NpyProcessor(settingsManager, vscode);
+	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
+	mouseHandler.setNpyProcessor(npyProcessor);
+	mouseHandler.setPfmProcessor(pfmProcessor);
 
 	// Application state
 	let hasLoadedImage = false;
@@ -46,6 +52,10 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
 			handleTiff(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
+			handlePfm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
+			handleNpy(settings.src);
 		} else {
 			image.src = settings.src;
 		}
@@ -123,6 +133,48 @@ import { MouseHandler } from './modules/mouse-handler.js';
 
 		} catch (error) {
 			console.error('Error handling TIFF:', error);
+			onImageError();
+		}
+	}
+
+	/**
+	 * Handle PFM file loading
+	 */
+	async function handlePfm(src) {
+		try {
+			const result = await pfmProcessor.processPfm(src);
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				ctx.putImageData(primaryImageData, 0, 0);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+		} catch (error) {
+			console.error('Error handling PFM:', error);
+			onImageError();
+		}
+	}
+
+	/**
+	 * Handle NPY/NPZ file loading
+	 */
+	async function handleNpy(src) {
+		try {
+			const result = await npyProcessor.processNpy(src);
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				ctx.putImageData(primaryImageData, 0, 0);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+		} catch (error) {
+			console.error('Error handling NPY/NPZ:', error);
 			onImageError();
 		}
 	}

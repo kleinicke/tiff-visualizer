@@ -29,6 +29,7 @@ export class MessageRouter {
 		this.handlers.set('didExportAsPng', new ExportPngMessageHandler());
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
 		this.handlers.set('mask-filter-request', new MaskFilterRequestMessageHandler());
+		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -94,20 +95,17 @@ class IsFloatMessageHandler implements MessageHandler {
 
 class StatsMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		if (preview.isTiff) {
-			// Update the stats in the settings manager
-			preview.getManager().settingsManager.updateImageStats(message.value.min, message.value.max);
-			preview.getNormalizationStatusBarEntry().updateImageStats(message.value.min, message.value.max);
-			preview.updateStatusBar();
-		}
+		// Update stats for any image sending stats (TIFF and non-TIFF float sources)
+		preview.getManager().settingsManager.updateImageStats(message.value.min, message.value.max);
+		preview.getNormalizationStatusBarEntry().updateImageStats(message.value.min, message.value.max);
+		preview.updateStatusBar();
 	}
 }
 
 class FormatInfoMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		if (preview.isTiff) {
-			preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
-		}
+		// Accept format info from any source (TIFF and non-TIFF processors)
+		preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
 	}
 }
 
@@ -153,3 +151,9 @@ class MaskFilterRequestMessageHandler implements MessageHandler {
 		}
 	}
 } 
+
+class RefreshStatusMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.updateStatusBar();
+	}
+}

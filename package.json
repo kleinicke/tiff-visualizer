@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "TIFF Visualizer",
   "description": "Analyze float and int TIFF images",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
@@ -64,7 +64,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff}"
+            "filenamePattern": "*.{tif,tiff,pfm,npy,npz}"
           }
         ]
       }
@@ -140,26 +140,26 @@
       "explorer/context": [
         {
           "command": "tiffVisualizer.openWith",
-          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg",
+          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz",
           "group": "navigation@0"
         }
       ],
       "editor/context": [
-      {
-        "command": "tiffVisualizer.selectForCompare",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
-        "group": "comparison@1"
-      },
-      {
-        "command": "tiffVisualizer.compareWithSelected",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
-        "group": "comparison@1"
-      },
-      {
-        "command": "tiffVisualizer.exportAsPng",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
-        "group": "export@1"
-      }
+        {
+          "command": "tiffVisualizer.selectForCompare",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "group": "comparison@1"
+        },
+        {
+          "command": "tiffVisualizer.compareWithSelected",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
+          "group": "comparison@1"
+        },
+        {
+          "command": "tiffVisualizer.exportAsPng",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "group": "export@1"
+        }
       ]
     }
   },
