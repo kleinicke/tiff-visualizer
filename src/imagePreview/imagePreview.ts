@@ -333,7 +333,8 @@ export class ImagePreview extends MediaPreview {
 
 		const lower = this.resource.path.toLowerCase();
 		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
-		this._isTiff = isTiff;
+		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm');
+		this._isTiff = isTiff || isPpm;
 
 		// Convert mask URIs to webview-safe URIs if they exist
 		const webviewSafeMasks = settings.maskFilters.map(mask => ({
@@ -353,6 +354,7 @@ export class ImagePreview extends MediaPreview {
 
 		outputChannel.appendLine(`TIFF Visualizer: Creating webview for: ${this.resource.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: Is TIFF file: ${isTiff}`);
+		outputChannel.appendLine(`TIFF Visualizer: Is PPM/PGM file: ${isPpm}`);
 		outputChannel.appendLine(`TIFF Visualizer: Webview URI: ${uri.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: Extension root: ${this.extensionRoot.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: Extended settings: ${JSON.stringify(extendedSettings)}`);

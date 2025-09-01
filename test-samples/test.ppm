@@ -1,0 +1,6 @@
+P3
+# Simple PPM test image - 2x2 RGB squares
+2 2
+255
+255 0 0    0 255 0
+0 0 255    255 255 0

@@ -5,6 +5,7 @@ import { SettingsManager } from './modules/settings-manager.js';
 import { TiffProcessor } from './modules/tiff-processor.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
+import { PpmProcessor } from './modules/ppm-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 
@@ -23,8 +24,10 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	const mouseHandler = new MouseHandler(settingsManager, vscode, tiffProcessor);
 	const npyProcessor = new NpyProcessor(settingsManager, vscode);
 	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
+	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
+	mouseHandler.setPpmProcessor(ppmProcessor);
 
 	// Application state
 	let hasLoadedImage = false;
@@ -54,6 +57,8 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			handleTiff(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
 			handlePfm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm')) {
+			handlePpm(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
 			handleNpy(settings.src);
 		} else {
@@ -154,6 +159,27 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			finalizeImageSetup();
 		} catch (error) {
 			console.error('Error handling PFM:', error);
+			onImageError();
+		}
+	}
+
+	/**
+	 * Handle PPM/PGM file loading
+	 */
+	async function handlePpm(src) {
+		try {
+			const result = await ppmProcessor.processPpm(src);
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				ctx.putImageData(primaryImageData, 0, 0);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+		} catch (error) {
+			console.error('Error handling PPM/PGM:', error);
 			onImageError();
 		}
 	}

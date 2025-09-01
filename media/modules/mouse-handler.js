@@ -12,6 +12,7 @@ export class MouseHandler {
 		this.tiffProcessor = tiffProcessor;
 		this.npyProcessor = null;
 		this.pfmProcessor = null;
+		this.ppmProcessor = null;
 		
 		// State
 		this.ctrlPressed = false;
@@ -36,6 +37,7 @@ export class MouseHandler {
 
 	setNpyProcessor(proc) { this.npyProcessor = proc; }
 	setPfmProcessor(proc) { this.pfmProcessor = proc; }
+	setPpmProcessor(proc) { this.ppmProcessor = proc; }
 
 	/**
 	 * Set active state
@@ -151,13 +153,17 @@ export class MouseHandler {
 			}
 		}
 
-		// Try NPY/PFM processors for float images
+		// Try NPY/PFM/PPM processors for other image formats
 		if (this.npyProcessor) {
 			const v = this.npyProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (v) return v;
 		}
 		if (this.pfmProcessor) {
 			const v = this.pfmProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
+		}
+		if (this.ppmProcessor) {
+			const v = this.ppmProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (v) return v;
 		}
 

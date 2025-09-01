@@ -29,6 +29,10 @@ export class PfmProcessor {
                 gray[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
             }
         }
+        
+        // PFM format stores rows from bottom to top, so we need to flip vertically
+        gray = this._flipImageVertically(gray, width, height);
+        
         this._lastRaw = { width, height, data: gray };
         this._postFormatInfo(width, height, channels, 'PFM');
         const imageData = this._toImageDataFloat(gray, width, height);
@@ -149,6 +153,18 @@ export class PfmProcessor {
                 formatLabel
             }
         });
+    }
+
+    _flipImageVertically(data, width, height) {
+        const flipped = new Float32Array(data.length);
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const srcIdx = y * width + x;
+                const dstIdx = (height - 1 - y) * width + x;
+                flipped[dstIdx] = data[srcIdx];
+            }
+        }
+        return flipped;
     }
 }
 

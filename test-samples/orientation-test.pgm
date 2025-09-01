@@ -1,0 +1,6 @@
+P2
+# Orientation test PGM - gradient from dark (top) to light (bottom)
+4 2
+255
+0 85 170 255
+50 100 150 200
