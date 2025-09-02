@@ -176,7 +176,7 @@ export class MouseHandler {
 		// Fallback to canvas pixel reading for standard images
 		if (this.imageElement) {
 			const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
-			const ctx = canvas.getContext('2d');
+			const ctx = canvas.getContext('2d', { willReadFrequently: true });
 			if (ctx) {
 				const pixel = ctx.getImageData(x, y, 1, 1).data;
 				return `${pixel[0].toString().padStart(3, '0')} ${pixel[1].toString().padStart(3, '0')} ${pixel[2].toString().padStart(3, '0')}`;

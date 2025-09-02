@@ -16,7 +16,7 @@ export class PngProcessor {
         // Load the image to get pixel data
         const image = new Image();
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         if (!ctx) {
             throw new Error('Could not get canvas context');
@@ -35,18 +35,6 @@ export class PngProcessor {
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                     const rawData = imageData.data; // Uint8ClampedArray [R,G,B,A,R,G,B,A,...]
                     
-                    // Convert to grayscale for display consistency with other processors
-                    const pixelCount = canvas.width * canvas.height;
-                    const grayscaleData = new Uint8ClampedArray(pixelCount);
-                    
-                    for (let i = 0; i < pixelCount; i++) {
-                        const r = rawData[i * 4 + 0];
-                        const g = rawData[i * 4 + 1];
-                        const b = rawData[i * 4 + 2];
-                        // Standard luminance formula
-                        grayscaleData[i] = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
-                    }
-                    
                     // Determine if image has alpha channel
                     let hasAlpha = false;
                     for (let i = 3; i < rawData.length; i += 4) {
@@ -59,7 +47,7 @@ export class PngProcessor {
                     this._lastRaw = { 
                         width: canvas.width, 
                         height: canvas.height, 
-                        data: grayscaleData, 
+                        data: rawData, // Keep full RGBA data
                         channels: hasAlpha ? 4 : 3 
                     };
                     
@@ -71,7 +59,7 @@ export class PngProcessor {
                     this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, format);
                     
                     // Apply gamma correction if enabled
-                    const finalImageData = this._toImageDataWithGamma(grayscaleData, canvas.width, canvas.height);
+                    const finalImageData = this._toImageDataWithGamma(rawData, canvas.width, canvas.height);
                     
                     // Force status refresh
                     this.vscode.postMessage({ type: 'refresh-status' });
@@ -94,46 +82,65 @@ export class PngProcessor {
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
         
+        // data is RGBA format [R,G,B,A,R,G,B,A,...]
         for (let i = 0; i < width * height; i++) {
-            let pixelValue = data[i];
+            const srcIdx = i * 4;
+            let r = data[srcIdx + 0];
+            let g = data[srcIdx + 1];
+            let b = data[srcIdx + 2];
+            const a = data[srcIdx + 3];
             
-            // Apply gamma and brightness corrections
+            // Apply gamma and brightness corrections to each channel
             if (settings.gamma || settings.brightness) {
-                // Normalize to 0-1 range
-                let normalizedValue = pixelValue / 255;
-                
-                // Apply gamma correction
-                if (settings.gamma) {
-                    const gi = settings.gamma.in ?? 1.0;
-                    const go = settings.gamma.out ?? 1.0;
-                    normalizedValue = Math.pow(normalizedValue, gi / go);
+                // Process each color channel
+                for (let channel = 0; channel < 3; channel++) {
+                    let channelValue = channel === 0 ? r : channel === 1 ? g : b;
+                    
+                    // Normalize to 0-1 range
+                    let normalizedValue = channelValue / 255;
+                    
+                    // Apply gamma correction
+                    if (settings.gamma) {
+                        const gi = settings.gamma.in ?? 1.0;
+                        const go = settings.gamma.out ?? 1.0;
+                        normalizedValue = Math.pow(normalizedValue, gi / go);
+                    }
+                    
+                    // Apply brightness adjustment
+                    if (settings.brightness) {
+                        const stops = settings.brightness.offset ?? 0;
+                        normalizedValue = normalizedValue * Math.pow(2, stops);
+                    }
+                    
+                    // Clamp and convert back to 0-255
+                    normalizedValue = Math.max(0, Math.min(1, normalizedValue));
+                    const correctedValue = Math.round(normalizedValue * 255);
+                    
+                    // Update the channel value
+                    if (channel === 0) r = correctedValue;
+                    else if (channel === 1) g = correctedValue;
+                    else b = correctedValue;
                 }
-                
-                // Apply brightness adjustment
-                if (settings.brightness) {
-                    const stops = settings.brightness.offset ?? 0;
-                    normalizedValue = normalizedValue * Math.pow(2, stops);
-                }
-                
-                // Clamp and convert back to 0-255
-                normalizedValue = Math.max(0, Math.min(1, normalizedValue));
-                pixelValue = Math.round(normalizedValue * 255);
             }
             
-            const p = i * 4;
-            out[p] = pixelValue;     // R
-            out[p + 1] = pixelValue; // G
-            out[p + 2] = pixelValue; // B
-            out[p + 3] = 255;        // A
+            const outIdx = i * 4;
+            out[outIdx + 0] = r;
+            out[outIdx + 1] = g;
+            out[outIdx + 2] = b;
+            out[outIdx + 3] = a;
         }
 
-        // Send stats to VS Code
+        // Send stats to VS Code (calculate from all RGB values)
         if (this.vscode) {
             let min = Infinity, max = -Infinity;
-            for (let i = 0; i < data.length; i++) {
-                const value = data[i];
-                if (value < min) min = value;
-                if (value > max) max = value;
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * 4;
+                // Check RGB channels (skip alpha)
+                for (let c = 0; c < 3; c++) {
+                    const value = data[srcIdx + c];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
             }
             // Mark as non-float but enable basic gamma controls
             this.vscode.postMessage({ type: 'isFloat', value: false });
@@ -157,9 +164,23 @@ export class PngProcessor {
         const { width, height, data } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
         
-        const idx = y * width + x;
-        if (idx >= 0 && idx < data.length) {
-            return data[idx].toString();
+        const pixelIdx = y * width + x;
+        const dataIdx = pixelIdx * 4; // RGBA format
+        
+        if (dataIdx >= 0 && dataIdx < data.length - 3) {
+            const r = data[dataIdx + 0];
+            const g = data[dataIdx + 1];
+            const b = data[dataIdx + 2];
+            const a = data[dataIdx + 3];
+            
+            // Return RGB values in the same format as other processors
+            if (a < 255) {
+                // For transparency, show the alpha value
+                return `${r.toString().padStart(3, '0')} ${g.toString().padStart(3, '0')} ${b.toString().padStart(3, '0')} α:${(a/255).toFixed(2)}`;
+            } else {
+                // Standard RGB format matching other processors
+                return `${r.toString().padStart(3, '0')} ${g.toString().padStart(3, '0')} ${b.toString().padStart(3, '0')}`;
+            }
         }
         return '';
     }

@@ -133,7 +133,17 @@ export class PfmProcessor {
         if (Number.isFinite(value)) {
             return value.toPrecision(4);
         }
-        return '';
+        // Show specific invalid values instead of generic "nan"
+        if (Number.isNaN(value)) {
+            return 'NaN';
+        } else if (value === Infinity) {
+            return 'Inf';
+        } else if (value === -Infinity) {
+            return '-Inf';
+        } else {
+            // Fallback for any other non-finite values
+            return 'invalid';
+        }
     }
 
     _postFormatInfo(width, height, channels, formatLabel) {
