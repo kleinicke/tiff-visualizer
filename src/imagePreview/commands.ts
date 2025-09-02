@@ -739,5 +739,27 @@ export function registerImagePreviewCommands(
 		vscode.window.showInformationMessage(`NaN color changed to: ${newColor}`);
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openWith', async (resource?: vscode.Uri) => {
+		if (!resource) {
+			// Try to get the resource from the active editor
+			const activeEditor = vscode.window.activeTextEditor;
+			if (activeEditor) {
+				resource = activeEditor.document.uri;
+			}
+		}
+
+		if (!resource) {
+			vscode.window.showErrorMessage('No file selected to open with TIFF Visualizer.');
+			return;
+		}
+
+		// Open the file with the TIFF Visualizer custom editor
+		try {
+			await vscode.commands.executeCommand('vscode.openWith', resource, 'tiffVisualizer.previewEditor');
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to open with TIFF Visualizer: ${error}`);
+		}
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 

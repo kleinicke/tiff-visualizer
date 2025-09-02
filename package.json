@@ -20,6 +20,9 @@
   "keywords": [
     "tiff",
     "tif",
+    "ppm",
+    "pgm",
+    "pbm",
     "image",
     "viewer",
     "visualizer",
@@ -44,7 +47,12 @@
     "nan",
     "mask",
     "preview",
-    "custom editor"
+    "custom editor",
+    "netpbm",
+    "png",
+    "jpg",
+    "jpeg",
+    "npy"
   ],
   "extensionKind": [
     "ui",
@@ -64,7 +72,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,pfm,npy,npz}"
+            "filenamePattern": "*.{tif,tiff,pfm,npy,npz,ppm,pgm,pbm}"
           }
         ]
       }
@@ -140,7 +148,7 @@
       "explorer/context": [
         {
           "command": "tiffVisualizer.openWith",
-          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz",
+          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm",
           "group": "navigation@0"
         }
       ],

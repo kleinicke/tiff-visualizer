@@ -1,0 +1,7 @@
+P2
+# Wide range PGM for testing auto-normalization - values 100-1000
+4 3
+1000
+100 300 700 1000
+200 400 800 950  
+150 500 850 975

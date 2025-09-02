@@ -333,8 +333,9 @@ export class ImagePreview extends MediaPreview {
 
 		const lower = this.resource.path.toLowerCase();
 		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
-		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm');
-		this._isTiff = isTiff || isPpm;
+		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm');
+		const isPng = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+		this._isTiff = isTiff || isPpm || isPng;
 
 		// Convert mask URIs to webview-safe URIs if they exist
 		const webviewSafeMasks = settings.maskFilters.map(mask => ({
@@ -354,7 +355,8 @@ export class ImagePreview extends MediaPreview {
 
 		outputChannel.appendLine(`TIFF Visualizer: Creating webview for: ${this.resource.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: Is TIFF file: ${isTiff}`);
-		outputChannel.appendLine(`TIFF Visualizer: Is PPM/PGM file: ${isPpm}`);
+		outputChannel.appendLine(`TIFF Visualizer: Is PPM/PGM/PBM file: ${isPpm}`);
+		outputChannel.appendLine(`TIFF Visualizer: Is PNG/JPEG file: ${isPng}`);
 		outputChannel.appendLine(`TIFF Visualizer: Webview URI: ${uri.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: Extension root: ${this.extensionRoot.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: Extended settings: ${JSON.stringify(extendedSettings)}`);

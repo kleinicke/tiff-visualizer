@@ -41,7 +41,11 @@ export class PpmProcessor {
         this._lastRaw = { width, height, data: displayData, maxval, channels };
         this._postFormatInfo(width, height, channels, format, maxval);
         
-        const imageData = this._toImageData(displayData, width, height, maxval);
+        // For PGM files, treat as float-like to enable normalization controls
+        const isPgm = channels === 1;
+        const imageData = isPgm ? 
+            this._toImageDataWithNormalization(displayData, width, height, maxval) :
+            this._toImageData(displayData, width, height, maxval);
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -88,35 +92,69 @@ export class PpmProcessor {
 
         // Read magic number
         const magic = readToken();
-        if (!['P2', 'P3', 'P5', 'P6'].includes(magic)) {
-            throw new Error(`Invalid PPM/PGM magic number: ${magic}`);
+        if (!['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].includes(magic)) {
+            throw new Error(`Invalid PPM/PGM/PBM magic number: ${magic}`);
         }
 
-        const isAscii = magic === 'P2' || magic === 'P3';
-        const channels = (magic === 'P2' || magic === 'P5') ? 1 : 3;
-        const format = magic === 'P2' ? 'PGM (ASCII)' : 
+        const isAscii = magic === 'P1' || magic === 'P2' || magic === 'P3';
+        const channels = (magic === 'P1' || magic === 'P4' || magic === 'P2' || magic === 'P5') ? 1 : 3;
+        const format = magic === 'P1' ? 'PBM (ASCII)' :
+                     magic === 'P2' ? 'PGM (ASCII)' : 
                      magic === 'P3' ? 'PPM (ASCII)' :
+                     magic === 'P4' ? 'PBM (Binary)' :
                      magic === 'P5' ? 'PGM (Binary)' : 'PPM (Binary)';
+        const isPbm = magic === 'P1' || magic === 'P4';
 
         // Read dimensions
         const width = parseInt(readToken(), 10);
         const height = parseInt(readToken(), 10);
-        const maxval = parseInt(readToken(), 10);
+        // PBM files don't have maxval, only PGM/PPM do
+        const maxval = isPbm ? 1 : parseInt(readToken(), 10);
 
-        if (width <= 0 || height <= 0 || maxval <= 0) {
-            throw new Error('Invalid PPM/PGM dimensions or maxval');
+        if (width <= 0 || height <= 0 || (!isPbm && maxval <= 0)) {
+            throw new Error('Invalid PPM/PGM/PBM dimensions or maxval');
         }
 
         const pixelCount = width * height;
         const totalValues = pixelCount * channels;
         
         // Determine data type based on maxval
-        const use16bit = maxval > 255;
+        const use16bit = !isPbm && maxval > 255;
         const DataType = use16bit ? Uint16Array : Uint8Array;
         const data = new DataType(totalValues);
 
-        if (isAscii) {
-            // ASCII format - read space-separated values
+        if (isPbm && isAscii) {
+            // PBM ASCII format (P1) - read 0s and 1s
+            for (let i = 0; i < totalValues; i++) {
+                const token = readToken();
+                const value = parseInt(token, 10);
+                if (value !== 0 && value !== 1) {
+                    throw new Error(`Invalid PBM pixel value: ${token} (must be 0 or 1)`);
+                }
+                // Convert 0=white to 255, 1=black to 0 for display
+                data[i] = value === 0 ? 255 : 0;
+            }
+        } else if (isPbm && !isAscii) {
+            // PBM binary format (P4) - packed bits
+            const bytesPerRow = Math.ceil(width / 8);
+            const expectedBytes = bytesPerRow * height;
+            
+            if (offset + expectedBytes > uint8Array.length) {
+                throw new Error('Insufficient data for binary PBM');
+            }
+
+            let dataIdx = 0;
+            for (let row = 0; row < height; row++) {
+                for (let col = 0; col < width; col++) {
+                    const byteIdx = offset + row * bytesPerRow + Math.floor(col / 8);
+                    const bitIdx = 7 - (col % 8); // Most significant bit first
+                    const bit = (uint8Array[byteIdx] >> bitIdx) & 1;
+                    // Convert 0=white to 255, 1=black to 0 for display
+                    data[dataIdx++] = bit === 0 ? 255 : 0;
+                }
+            }
+        } else if (isAscii) {
+            // ASCII format - read space-separated values (P2/P3)
             for (let i = 0; i < totalValues; i++) {
                 const token = readToken();
                 const value = parseInt(token, 10);
@@ -126,7 +164,7 @@ export class PpmProcessor {
                 data[i] = value;
             }
         } else {
-            // Binary format
+            // Binary format (P5/P6)
             const bytesPerValue = use16bit ? 2 : 1;
             const expectedBytes = totalValues * bytesPerValue;
             
@@ -189,11 +227,88 @@ export class PpmProcessor {
                 if (value < min) min = value;
                 if (value > max) max = value;
             }
-            this.vscode.postMessage({ type: 'isFloat', value: false });
+            // Mark PGM files as "float" to enable normalization controls
+            const isPgm = this._lastRaw && this._lastRaw.channels === 1;
+            this.vscode.postMessage({ type: 'isFloat', value: isPgm });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 
         return new ImageData(out, width, height);
+    }
+
+    _toImageDataWithNormalization(data, width, height, maxval) {
+        // Calculate min/max for auto-normalization
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < data.length; i++) {
+            const value = data[i];
+            if (value < min) min = value;
+            if (value > max) max = value;
+        }
+
+        const settings = this.settingsManager.settings;
+        let normMin, normMax;
+        
+        // Apply auto-normalization by default for PGM files
+        if (settings.normalization && settings.normalization.autoNormalize) {
+            normMin = min;
+            normMax = max;
+        } else if (settings.normalization && settings.normalization.gammaMode) {
+            // In gamma mode, normalize to 0-1 range based on maxval
+            normMin = 0;
+            normMax = maxval;
+        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
+            // Use user-specified range
+            normMin = settings.normalization.min;
+            normMax = settings.normalization.max;
+        } else {
+            // Default: auto-normalize to full data range
+            normMin = min;
+            normMax = max;
+        }
+
+        const range = normMax - normMin || 1;
+        const out = new Uint8ClampedArray(width * height * 4);
+        
+        for (let i = 0; i < width * height; i++) {
+            let normalizedValue = (data[i] - normMin) / range;
+            normalizedValue = Math.max(0, Math.min(1, normalizedValue));
+            
+            // Apply gamma and brightness if in gamma mode
+            if (settings.normalization && settings.normalization.gammaMode) {
+                const gi = settings.gamma?.in ?? 1.0;
+                const go = settings.gamma?.out ?? 1.0;
+                normalizedValue = Math.pow(normalizedValue, gi / go);
+                const stops = settings.brightness?.offset ?? 0;
+                normalizedValue = normalizedValue * Math.pow(2, stops);
+                normalizedValue = Math.max(0, Math.min(1, normalizedValue));
+            }
+            
+            const pixelValue = Math.round(normalizedValue * 255);
+            const p = i * 4;
+            out[p] = pixelValue;     // R
+            out[p + 1] = pixelValue; // G
+            out[p + 2] = pixelValue; // B
+            out[p + 3] = 255;        // A
+        }
+
+        // Send stats to VS Code
+        if (this.vscode) {
+            // Mark PGM files as "float" to enable normalization controls
+            const isPgm = this._lastRaw && this._lastRaw.channels === 1;
+            this.vscode.postMessage({ type: 'isFloat', value: isPgm });
+            this.vscode.postMessage({ type: 'stats', value: { min, max } });
+        }
+
+        return new ImageData(out, width, height);
+    }
+
+    /**
+     * Re-render PGM with current settings (for real-time updates)
+     */
+    renderPgmWithSettings() {
+        if (!this._lastRaw || this._lastRaw.channels !== 1) return null;
+        const { width, height, data, maxval } = this._lastRaw;
+        return this._toImageDataWithNormalization(data, width, height, maxval);
     }
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {

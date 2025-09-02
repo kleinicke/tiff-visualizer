@@ -13,6 +13,7 @@ export class MouseHandler {
 		this.npyProcessor = null;
 		this.pfmProcessor = null;
 		this.ppmProcessor = null;
+		this.pngProcessor = null;
 		
 		// State
 		this.ctrlPressed = false;
@@ -38,6 +39,7 @@ export class MouseHandler {
 	setNpyProcessor(proc) { this.npyProcessor = proc; }
 	setPfmProcessor(proc) { this.pfmProcessor = proc; }
 	setPpmProcessor(proc) { this.ppmProcessor = proc; }
+	setPngProcessor(proc) { this.pngProcessor = proc; }
 
 	/**
 	 * Set active state
@@ -164,6 +166,10 @@ export class MouseHandler {
 		}
 		if (this.ppmProcessor) {
 			const v = this.ppmProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
+		}
+		if (this.pngProcessor) {
+			const v = this.pngProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (v) return v;
 		}
 

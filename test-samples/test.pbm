@@ -1,0 +1,7 @@
+P1
+# Simple PBM test - ASCII format, 6x4 pattern
+6 4
+0 1 0 1 0 1
+1 0 1 0 1 0
+0 0 1 1 0 0
+1 1 0 0 1 1

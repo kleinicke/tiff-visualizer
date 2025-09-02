@@ -6,6 +6,7 @@ import { TiffProcessor } from './modules/tiff-processor.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
+import { PngProcessor } from './modules/png-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 
@@ -25,9 +26,11 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	const npyProcessor = new NpyProcessor(settingsManager, vscode);
 	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
 	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
+	const pngProcessor = new PngProcessor(settingsManager, vscode);
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
 	mouseHandler.setPpmProcessor(ppmProcessor);
+	mouseHandler.setPngProcessor(pngProcessor);
 
 	// Application state
 	let hasLoadedImage = false;
@@ -57,8 +60,10 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			handleTiff(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
 			handlePfm(settings.src);
-		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm')) {
+		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
 			handlePpm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
+			handlePng(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
 			handleNpy(settings.src);
 		} else {
@@ -180,6 +185,27 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			finalizeImageSetup();
 		} catch (error) {
 			console.error('Error handling PPM/PGM:', error);
+			onImageError();
+		}
+	}
+
+	/**
+	 * Handle PNG/JPEG file loading
+	 */
+	async function handlePng(src) {
+		try {
+			const result = await pngProcessor.processPng(src);
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				ctx.putImageData(primaryImageData, 0, 0);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+		} catch (error) {
+			console.error('Error handling PNG/JPEG:', error);
 			onImageError();
 		}
 	}
@@ -308,7 +334,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// For TIFF images, re-render with new settings
 		if (primaryImageData && tiffProcessor.rawTiffData) {
 			try {
-				console.log('Updating image with new settings:', settingsManager.settings);
+				console.log('Updating TIFF image with new settings:', settingsManager.settings);
 				
 				// Re-render the TIFF with current settings
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
@@ -321,10 +347,54 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				if (ctx && newImageData) {
 					ctx.putImageData(newImageData, 0, 0);
 					primaryImageData = newImageData;
-					console.log('Image updated with new settings');
+					console.log('TIFF image updated with new settings');
 				}
 			} catch (error) {
-				console.error('Error updating image with new settings:', error);
+				console.error('Error updating TIFF image with new settings:', error);
+			}
+		}
+		
+		// For PGM images, re-render with new settings
+		if (primaryImageData && ppmProcessor) {
+			try {
+				console.log('Updating PGM image with new settings:', settingsManager.settings);
+				
+				// Re-render the PGM with current settings
+				const newImageData = ppmProcessor.renderPgmWithSettings();
+				
+				if (newImageData) {
+					// Update the canvas with new image data
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						ctx.putImageData(newImageData, 0, 0);
+						primaryImageData = newImageData;
+						console.log('PGM image updated with new settings');
+					}
+				}
+			} catch (error) {
+				console.error('Error updating PGM image with new settings:', error);
+			}
+		}
+		
+		// For PNG/JPEG images, re-render with new settings
+		if (primaryImageData && pngProcessor) {
+			try {
+				console.log('Updating PNG/JPEG image with new settings:', settingsManager.settings);
+				
+				// Re-render the PNG with current settings
+				const newImageData = pngProcessor.renderPngWithSettings();
+				
+				if (newImageData) {
+					// Update the canvas with new image data
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						ctx.putImageData(newImageData, 0, 0);
+						primaryImageData = newImageData;
+						console.log('PNG/JPEG image updated with new settings');
+					}
+				}
+			} catch (error) {
+				console.error('Error updating PNG/JPEG image with new settings:', error);
 			}
 		}
 	}
