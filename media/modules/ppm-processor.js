@@ -18,22 +18,8 @@ export class PpmProcessor {
         const buffer = await response.arrayBuffer();
         const { width, height, channels, data, maxval, format } = this._parsePpm(buffer);
         
-        // Convert to grayscale if RGB for display consistency with other processors
-        let displayData;
-        if (channels === 1) {
-            displayData = data;
-        } else {
-            // Convert RGB to grayscale using luminance formula
-            const pixelCount = width * height;
-            displayData = new (data.constructor)(pixelCount);
-            for (let i = 0; i < pixelCount; i++) {
-                const r = data[i * 3 + 0];
-                const g = data[i * 3 + 1];
-                const b = data[i * 3 + 2];
-                // Standard luminance formula
-                displayData[i] = Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b);
-            }
-        }
+        // Keep RGB data for color display
+        const displayData = data;
 
         // PPM stores pixels from top-to-bottom, which is the correct orientation for canvas
         // No flipping needed unless specifically required by the format
@@ -44,8 +30,8 @@ export class PpmProcessor {
         // For PGM files, treat as float-like to enable normalization controls
         const isPgm = channels === 1;
         const imageData = isPgm ? 
-            this._toImageDataWithNormalization(displayData, width, height, maxval) :
-            this._toImageData(displayData, width, height, maxval);
+            this._toImageDataWithNormalization(displayData, width, height, maxval, channels) :
+            this._toImageData(displayData, width, height, maxval, channels);
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -189,7 +175,7 @@ export class PpmProcessor {
         return { width, height, channels, data, maxval, format };
     }
 
-    _toImageData(data, width, height, maxval) {
+    _toImageData(data, width, height, maxval, channels = 1) {
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
         
@@ -197,25 +183,35 @@ export class PpmProcessor {
         const scale = 255 / maxval;
         
         for (let i = 0; i < width * height; i++) {
-            let value = data[i] * scale;
+            let r, g, b;
+            
+            if (channels === 3) {
+                // RGB data
+                r = data[i * 3 + 0] * scale;
+                g = data[i * 3 + 1] * scale;
+                b = data[i * 3 + 2] * scale;
+            } else {
+                // Grayscale data
+                const value = data[i] * scale;
+                r = g = b = value;
+            }
             
             // Apply gamma and brightness if in gamma mode
             if (settings.normalization && settings.normalization.gammaMode) {
-                value = value / 255; // Normalize to 0-1
                 const gi = settings.gamma?.in ?? 1.0;
                 const go = settings.gamma?.out ?? 1.0;
-                value = Math.pow(value, gi / go);
                 const stops = settings.brightness?.offset ?? 0;
-                value = value * Math.pow(2, stops);
-                value = Math.max(0, Math.min(1, value));
-                value = value * 255; // Back to 0-255
+                const brightness = Math.pow(2, stops);
+                
+                r = Math.pow(r / 255, gi / go) * brightness * 255;
+                g = Math.pow(g / 255, gi / go) * brightness * 255;
+                b = Math.pow(b / 255, gi / go) * brightness * 255;
             }
             
-            const pixelValue = Math.round(Math.max(0, Math.min(255, value)));
             const p = i * 4;
-            out[p] = pixelValue;     // R
-            out[p + 1] = pixelValue; // G
-            out[p + 2] = pixelValue; // B
+            out[p] = Math.round(Math.max(0, Math.min(255, r)));     // R
+            out[p + 1] = Math.round(Math.max(0, Math.min(255, g))); // G
+            out[p + 2] = Math.round(Math.max(0, Math.min(255, b))); // B
             out[p + 3] = 255;        // A
         }
 
@@ -236,7 +232,7 @@ export class PpmProcessor {
         return new ImageData(out, width, height);
     }
 
-    _toImageDataWithNormalization(data, width, height, maxval) {
+    _toImageDataWithNormalization(data, width, height, maxval, channels = 1) {
         // Calculate min/max for auto-normalization
         let min = Infinity, max = -Infinity;
         for (let i = 0; i < data.length; i++) {
@@ -313,12 +309,24 @@ export class PpmProcessor {
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data } = this._lastRaw;
+        const { width, height, data, channels } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
         
         const idx = y * width + x;
-        if (idx >= 0 && idx < data.length) {
-            return data[idx].toString();
+        if (channels === 3) {
+            // RGB data
+            const baseIdx = idx * 3;
+            if (baseIdx >= 0 && baseIdx + 2 < data.length) {
+                const r = data[baseIdx];
+                const g = data[baseIdx + 1];
+                const b = data[baseIdx + 2];
+                return `RGB(${r}, ${g}, ${b})`;
+            }
+        } else {
+            // Grayscale data
+            if (idx >= 0 && idx < data.length) {
+                return data[idx].toString();
+            }
         }
         return '';
     }

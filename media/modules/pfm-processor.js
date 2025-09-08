@@ -16,26 +16,15 @@ export class PfmProcessor {
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
         const { width, height, channels, data } = this._parsePfm(buffer);
-        // For visualization, convert to grayscale if RGB by luminance
-        let gray;
-        if (channels === 1) {
-            gray = data;
-        } else {
-            gray = new Float32Array(width * height);
-            for (let i = 0; i < width * height; i++) {
-                const r = data[i * 3 + 0];
-                const g = data[i * 3 + 1];
-                const b = data[i * 3 + 2];
-                gray[i] = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-            }
-        }
+        // Keep color data for RGB PFM files
+        let displayData = data;
         
         // PFM format stores rows from bottom to top, so we need to flip vertically
-        gray = this._flipImageVertically(gray, width, height);
+        displayData = this._flipImageVertically(displayData, width, height, channels);
         
-        this._lastRaw = { width, height, data: gray };
+        this._lastRaw = { width, height, data: displayData, channels };
         this._postFormatInfo(width, height, channels, 'PFM');
-        const imageData = this._toImageDataFloat(gray, width, height);
+        const imageData = this._toImageDataFloat(displayData, width, height, channels);
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -77,7 +66,7 @@ export class PfmProcessor {
         return { width, height, channels, data: out };
     }
 
-    _toImageDataFloat(data, width, height) {
+    _toImageDataFloat(data, width, height, channels = 1) {
         let min = Infinity, max = -Infinity;
         for (let i = 0; i < data.length; i++) {
             const v = data[i];
@@ -103,19 +92,43 @@ export class PfmProcessor {
         const range = normMax - normMin || 1;
         const out = new Uint8ClampedArray(width * height * 4);
         for (let i = 0; i < width * height; i++) {
-            let n = (data[i] - normMin) / range;
-            n = Math.max(0, Math.min(1, n));
+            let r, g, b;
+            
+            if (channels === 3) {
+                // RGB data
+                r = (data[i * 3 + 0] - normMin) / range;
+                g = (data[i * 3 + 1] - normMin) / range;
+                b = (data[i * 3 + 2] - normMin) / range;
+            } else {
+                // Grayscale data
+                const n = (data[i] - normMin) / range;
+                r = g = b = n;
+            }
+            
+            r = Math.max(0, Math.min(1, r));
+            g = Math.max(0, Math.min(1, g));
+            b = Math.max(0, Math.min(1, b));
+            
             if (settings.normalization && settings.normalization.gammaMode) {
                 const gi = settings.gamma?.in ?? 1.0;
                 const go = settings.gamma?.out ?? 1.0;
-                n = Math.pow(n, gi / go);
                 const stops = settings.brightness?.offset ?? 0;
-                n = n * Math.pow(2, stops);
-                n = Math.max(0, Math.min(1, n));
+                const brightness = Math.pow(2, stops);
+                
+                r = Math.pow(r, gi / go) * brightness;
+                g = Math.pow(g, gi / go) * brightness;
+                b = Math.pow(b, gi / go) * brightness;
+                
+                r = Math.max(0, Math.min(1, r));
+                g = Math.max(0, Math.min(1, g));
+                b = Math.max(0, Math.min(1, b));
             }
-            const v = Math.round(n * 255);
+            
             const p = i * 4;
-            out[p] = v; out[p + 1] = v; out[p + 2] = v; out[p + 3] = 255;
+            out[p] = Math.round(r * 255);     // R
+            out[p + 1] = Math.round(g * 255); // G
+            out[p + 2] = Math.round(b * 255); // B
+            out[p + 3] = 255;                 // A
         }
         if (this.vscode) {
             this.vscode.postMessage({ type: 'isFloat', value: true });
@@ -126,24 +139,50 @@ export class PfmProcessor {
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data } = this._lastRaw;
+        const { width, height, data, channels } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
+        
         const idx = y * width + x;
-        const value = data[idx];
-        if (Number.isFinite(value)) {
-            return value.toPrecision(4);
-        }
-        // Show specific invalid values instead of generic "nan"
-        if (Number.isNaN(value)) {
-            return 'NaN';
-        } else if (value === Infinity) {
-            return 'Inf';
-        } else if (value === -Infinity) {
-            return '-Inf';
+        if (channels === 3) {
+            // RGB data
+            const baseIdx = idx * 3;
+            if (baseIdx >= 0 && baseIdx + 2 < data.length) {
+                const r = data[baseIdx];
+                const g = data[baseIdx + 1];
+                const b = data[baseIdx + 2];
+                
+                if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+                    return `RGB(${r.toPrecision(4)}, ${g.toPrecision(4)}, ${b.toPrecision(4)})`;
+                }
+                
+                // Handle special values
+                const formatValue = (v) => {
+                    if (Number.isNaN(v)) return 'NaN';
+                    if (v === Infinity) return 'Inf';
+                    if (v === -Infinity) return '-Inf';
+                    return v.toPrecision(4);
+                };
+                return `RGB(${formatValue(r)}, ${formatValue(g)}, ${formatValue(b)})`;
+            }
         } else {
-            // Fallback for any other non-finite values
-            return 'invalid';
+            // Grayscale data
+            const value = data[idx];
+            if (Number.isFinite(value)) {
+                return value.toPrecision(4);
+            }
+            // Show specific invalid values instead of generic "nan"
+            if (Number.isNaN(value)) {
+                return 'NaN';
+            } else if (value === Infinity) {
+                return 'Inf';
+            } else if (value === -Infinity) {
+                return '-Inf';
+            } else {
+                // Fallback for any other non-finite values
+                return 'invalid';
+            }
         }
+        return '';
     }
 
     _postFormatInfo(width, height, channels, formatLabel) {
@@ -165,13 +204,23 @@ export class PfmProcessor {
         });
     }
 
-    _flipImageVertically(data, width, height) {
+    _flipImageVertically(data, width, height, channels = 1) {
         const flipped = new Float32Array(data.length);
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
-                const srcIdx = y * width + x;
-                const dstIdx = (height - 1 - y) * width + x;
-                flipped[dstIdx] = data[srcIdx];
+                if (channels === 3) {
+                    // RGB data - flip each channel
+                    const srcIdx = (y * width + x) * 3;
+                    const dstIdx = ((height - 1 - y) * width + x) * 3;
+                    flipped[dstIdx] = data[srcIdx];         // R
+                    flipped[dstIdx + 1] = data[srcIdx + 1]; // G
+                    flipped[dstIdx + 2] = data[srcIdx + 2]; // B
+                } else {
+                    // Grayscale data
+                    const srcIdx = y * width + x;
+                    const dstIdx = (height - 1 - y) * width + x;
+                    flipped[dstIdx] = data[srcIdx];
+                }
             }
         }
         return flipped;
