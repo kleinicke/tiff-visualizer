@@ -1,12 +1,12 @@
 # Change Log
 
-### 1.2.0
+### 1.2.0 (2025-09-09)
 
 Fix Image size visualization
 Allow masks to filter images
 Add option to switch NaN color to fuchsia
 Fix Image jumps to top left when starting to zoom in
-Add support for Npy, png, jpg, pfm, ppm and pgm files
+Add support for npy, png, jpg, pfm, ppm and pgm files
 
 ### 1.1.0 (2025-07-01)
 
