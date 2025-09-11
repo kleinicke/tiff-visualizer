@@ -30,6 +30,10 @@ export class MessageRouter {
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
 		this.handlers.set('mask-filter-request', new MaskFilterRequestMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
+		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
+		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
+		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
+		this.handlers.set('imagePreloaded', new ImagePreloadedMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -155,5 +159,38 @@ class MaskFilterRequestMessageHandler implements MessageHandler {
 class RefreshStatusMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.updateStatusBar();
+	}
+}
+
+class ZoomStateResponseMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Store the zoom state for later restoration
+		(preview as any)._currentZoomState = message.state;
+	}
+}
+
+class ToggleImageMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.toggleToNextImage();
+	}
+}
+
+class ToggleImageReverseMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.toggleToPreviousImage();
+	}
+}
+
+class ImagePreloadedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Mark image as loaded in the preload cache
+		const cacheKey = message.cacheKey;
+		if (cacheKey) {
+			const cachedData = (preview as any)._preloadedImageData.get(cacheKey);
+			if (cachedData) {
+				cachedData.loaded = true;
+				(preview as any)._preloadedImageData.set(cacheKey, cachedData);
+			}
+		}
 	}
 }

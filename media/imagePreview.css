@@ -118,3 +118,53 @@ body img {
 .vscode-high-contrast .loading-indicator {
 	background-image: url('./loading-hc.svg');
 }
+
+/* Image Collection Overlay */
+.image-collection-overlay {
+	position: fixed;
+	top: 10px;
+	right: 10px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px;
+	padding: 8px 12px;
+	z-index: 1000;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: var(--vscode-editor-font-size, 12px);
+	color: var(--vscode-editor-foreground, #cccccc);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.image-collection-overlay .overlay-content {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+}
+
+.image-collection-overlay .image-counter {
+	font-weight: 600;
+	color: var(--vscode-textLink-foreground, #3794ff);
+}
+
+.image-collection-overlay .toggle-hint {
+	font-size: 10px;
+	opacity: 0.7;
+	color: var(--vscode-descriptionForeground, #cccccc99);
+}
+
+/* Light theme adjustments */
+.vscode-light .image-collection-overlay {
+	background: var(--vscode-editor-background, #ffffff);
+	border: 1px solid var(--vscode-panel-border, #e5e5e5);
+	color: var(--vscode-editor-foreground, #333333);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .image-collection-overlay .image-counter {
+	color: var(--vscode-textLink-foreground, #006ab1);
+}
+
+.vscode-light .image-collection-overlay .toggle-hint {
+	color: var(--vscode-descriptionForeground, #666666);
+}

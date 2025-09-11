@@ -19,6 +19,12 @@ export class ImagePreview extends MediaPreview {
 	private _isTiff: boolean = false;
 	private _isFloat: boolean = false;
 
+	// Image collection management
+	private _imageCollection: vscode.Uri[] = [];
+	private _currentImageIndex: number = 0;
+	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
+	private _currentZoomState: { scale: Scale; x: number; y: number } | undefined;
+
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
 	private readonly _sizeStatusBarEntry: SizeStatusBarEntry;
@@ -106,8 +112,16 @@ export class ImagePreview extends MediaPreview {
 			}
 		}));
 
+		// Initialize the image collection with the current image
+		this._imageCollection = [this.resource];
+		
 		// Initialize the preview
 		this.render();
+		
+		// Ensure the original image gets cached after rendering
+		setTimeout(() => {
+			this.ensureOriginalImageIsCached();
+		}, 500);
 		
 		// Update binary size and ensure proper state initialization
 		this.updateBinarySize().then(() => {
@@ -225,6 +239,132 @@ export class ImagePreview extends MediaPreview {
 
 	public isPreviewActive(): boolean {
 		return this.previewState === PreviewState.Active;
+	}
+
+	// Image collection management methods
+	public async addToImageCollection(uri: vscode.Uri): Promise<void> {
+		if (!this._imageCollection.some(img => img.toString() === uri.toString())) {
+			this._imageCollection.push(uri);
+			// Start preloading the image data (async, don't wait)
+			this.preloadImageData(uri);
+			// Update overlay immediately
+			this.updateImageCollectionOverlay();
+		}
+	}
+
+	public toggleToNextImage(): void {
+		if (this._imageCollection.length <= 1) {
+			return; // No other images to toggle to
+		}
+		
+		// Save current zoom/position state
+		this.saveCurrentZoomState();
+		
+		// Move to next image (cycle back to 0 if at end)
+		this._currentImageIndex = (this._currentImageIndex + 1) % this._imageCollection.length;
+		
+		// Update current resource and reload
+		this.switchToImageAtIndex(this._currentImageIndex);
+	}
+
+	public toggleToPreviousImage(): void {
+		if (this._imageCollection.length <= 1) {
+			return; // No other images to toggle to
+		}
+		
+		// Save current zoom/position state
+		this.saveCurrentZoomState();
+		
+		// Move to previous image (cycle to end if at beginning)
+		this._currentImageIndex = (this._currentImageIndex - 1 + this._imageCollection.length) % this._imageCollection.length;
+		
+		// Update current resource and reload
+		this.switchToImageAtIndex(this._currentImageIndex);
+	}
+
+	private async preloadImageData(uri: vscode.Uri): Promise<void> {
+		const key = uri.toString();
+		const webviewUri = this._webviewEditor.webview.asWebviewUri(uri);
+		
+		// Store the URI info immediately
+		this._preloadedImageData.set(key, {
+			uri: uri,
+			webviewUri: webviewUri.toString(),
+			loaded: false
+		});
+		
+		// Send preload request to webview
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.webview.postMessage({
+				type: 'preloadImage',
+				uri: webviewUri.toString(),
+				resourceUri: uri.toString(),
+				cacheKey: key
+			});
+		}
+	}
+
+	private saveCurrentZoomState(): void {
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.webview.postMessage({ type: 'getZoomState' });
+		}
+	}
+
+	private switchToImageAtIndex(index: number): void {
+		if (index < 0 || index >= this._imageCollection.length) {
+			return;
+		}
+		
+		this._currentImageIndex = index;
+		const newResource = this._imageCollection[index];
+		const cacheKey = newResource.toString();
+		const cachedData = this._preloadedImageData.get(cacheKey);
+		
+		// Send switch request to webview with cache info
+		this._webviewEditor.webview.postMessage({
+			type: 'switchToImageFromCache',
+			cacheKey: cacheKey,
+			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
+			resourceUri: newResource.toString(),
+			isPreloaded: cachedData?.loaded || false
+		});
+		
+		// Update overlay
+		this.updateImageCollectionOverlay();
+		
+		// Restore zoom state after a brief delay
+		setTimeout(() => {
+			if (this._currentZoomState) {
+				this._webviewEditor.webview.postMessage({ 
+					type: 'restoreZoomState', 
+					state: this._currentZoomState 
+				});
+			}
+		}, 100);
+	}
+
+	private updateImageCollectionOverlay(): void {
+		if (this.previewState === PreviewState.Active) {
+			const overlayData = {
+				totalImages: this._imageCollection.length,
+				currentIndex: this._currentImageIndex,
+				show: this._imageCollection.length > 1
+			};
+			
+			this._webviewEditor.webview.postMessage({ 
+				type: 'updateImageCollectionOverlay', 
+				data: overlayData 
+			});
+		}
+	}
+
+	private ensureOriginalImageIsCached(): void {
+		if (this.previewState === PreviewState.Active) {
+			// Tell webview to cache the current image
+			this._webviewEditor.webview.postMessage({
+				type: 'cacheCurrentImage'
+			});
+		}
 	}
 
 	private sendSettingsUpdate(settings: ImageSettings): void {

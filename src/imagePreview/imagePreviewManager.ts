@@ -159,5 +159,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 
 	private setActivePreview(value: IImagePreview | undefined): void {
 		this._activePreview = value;
+		// Update context for menu visibility
+		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', !!value);
 	}
 } 

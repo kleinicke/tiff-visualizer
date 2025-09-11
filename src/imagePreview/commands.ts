@@ -761,5 +761,26 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openNextToCurrent', async (resource?: vscode.Uri) => {
+		if (!resource) {
+			vscode.window.showErrorMessage('No file selected to open next to current image.');
+			return;
+		}
+
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open a TIFF image first.');
+			return;
+		}
+
+		// Add the image to the current preview's collection
+		try {
+			await activePreview.addToImageCollection(resource);
+			vscode.window.showInformationMessage(`Added ${resource.fsPath.split('/').pop()} to image collection. Press 't' to toggle between images.`);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
+		}
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 

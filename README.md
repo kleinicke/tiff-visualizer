@@ -8,10 +8,11 @@ For floating-point images, this extension allows easier handling by allowing set
 ## Features
 
 - **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types. Also supports compressed TIFF images using Deflate or LZW with predictors.
+- **Additional files Support**: Support for single channel npy, png, jpg, ppm, pfm and pgm images.
 - **Interactive Pixel Inspection**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.
 - **Dynamic Normalization**: Interactively adjust the normalization range for floating-point images to reveal hidden details or choose automatic normalization.
-- **Gamma and Brightness Correction**: Add or remove gamma correction for an image. To change brightness, the source gamma correction is removed, the brightness change (2**Change) is multiplied in linear space onto the image, and the target gamma correction is applied.
-- **Keep All Settings for Session**: A single VS Code Window keeps the settings applied on one image for all images. 
+- **Gamma and Brightness Correction**: Add or remove gamma correction for an image. To change brightness, the source gamma correction is removed, the brightness change (2\*\*Change) is multiplied in linear space onto the image, and the target gamma correction is applied.
+- **Keep All Settings for Session**: A single VS Code Window keeps the settings applied on one image for all images.
 - **Export as PNG**: Export the image, with the chosen image visualization as PNG for easy sharing.
 
 Float Image Visualization Options:
@@ -39,6 +40,7 @@ If you have use cases that would be helpful for others or find problems, feel fr
 ## Build notice
 
 Instead of downloading from the Marketplace, you can also build from source by cloning the repo and building it by running:
+
 ```bash
 git clone https://github.com/kleinicke/tiff-visualizer
 cd tiff-visualizer
@@ -46,4 +48,5 @@ npm install
 npm install -g vsce
 vsce package
 ```
+
 Then install the generated .vsix file via Extensions > Install from VSIX...

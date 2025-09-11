@@ -39,6 +39,18 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	let primaryImageData = null;
 	let peerImageData = null;
 	let isShowingPeer = false;
+	
+	// Image collection state
+	let imageCollection = {
+		totalImages: 1,
+		currentIndex: 0,
+		show: false
+	};
+	let overlayElement = null;
+	
+	// Global image cache for instant switching (shared across all instances)
+	window.tiffVisualizerImageCache = window.tiffVisualizerImageCache || new Map();
+	let imageCache = window.tiffVisualizerImageCache; // cacheKey -> { canvas, imageData, metadata }
 
 	// DOM elements
 	const container = document.body;
@@ -51,23 +63,32 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
+		createImageCollectionOverlay();
 		
 		// Start loading the image
 		const settings = settingsManager.settings;
 		const resourceUri = settings.resourceUri;
 		
-		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
-			handleTiff(settings.src);
-		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
-			handlePfm(settings.src);
-		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
-			handlePpm(settings.src);
-		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
-			handlePng(settings.src);
-		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
-			handleNpy(settings.src);
+		// Check if this image is already cached
+		if (imageCache.has(resourceUri)) {
+			console.log('Loading from cache:', resourceUri);
+			loadFromCache(resourceUri);
 		} else {
-			image.src = settings.src;
+			console.log('Loading fresh:', resourceUri);
+			// Load fresh and cache the result
+			if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
+				handleTiff(settings.src);
+			} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
+				handlePfm(settings.src);
+			} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
+				handlePpm(settings.src);
+			} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
+				handlePng(settings.src);
+			} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
+				handleNpy(settings.src);
+			} else {
+				image.src = settings.src;
+			}
 		}
 	}
 
@@ -252,9 +273,72 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		container.classList.add('ready');
 		container.append(imageElement);
 
+		// Cache the current image if it's not already cached
+		cacheCurrentImage();
+
 		// Apply initial zoom and setup mouse handling
 		zoomController.applyInitialZoom();
 		mouseHandler.addMouseListeners(imageElement);
+	}
+
+	/**
+	 * Load image from cache for instant display
+	 */
+	function loadFromCache(resourceUri) {
+		const cachedData = imageCache.get(resourceUri);
+		if (!cachedData) {
+			console.error('Cache miss for:', resourceUri);
+			return;
+		}
+		
+		console.log('Loading from cache:', resourceUri);
+		
+		// Use cached data directly
+		canvas = cachedData.canvas.cloneNode(true);
+		canvas.classList.add('scale-to-fit');
+		primaryImageData = cachedData.imageData;
+		imageElement = canvas;
+		
+		// Apply cached image data to canvas
+		const ctx = canvas.getContext('2d');
+		if (ctx && primaryImageData) {
+			ctx.putImageData(primaryImageData, 0, 0);
+		}
+		
+		hasLoadedImage = true;
+		finalizeImageSetup();
+	}
+
+	/**
+	 * Cache the currently loaded image
+	 */
+	function cacheCurrentImage() {
+		const settings = settingsManager.settings;
+		const cacheKey = settings.resourceUri;
+		
+		if (!imageCache.has(cacheKey) && canvas && primaryImageData) {
+			console.log('Caching current image:', settings.resourceUri);
+			
+			// Manage cache size (limit to 10 images to prevent memory issues)
+			if (imageCache.size >= 10) {
+				// Remove oldest cached image
+				const oldestKey = Array.from(imageCache.keys())[0];
+				imageCache.delete(oldestKey);
+				console.log('Cache limit reached, removed oldest:', oldestKey);
+			}
+			
+			imageCache.set(cacheKey, {
+				canvas: canvas.cloneNode(true),
+				imageData: primaryImageData,
+				metadata: {
+					uri: settings.src,
+					resourceUri: settings.resourceUri,
+					timestamp: Date.now()
+				}
+			});
+			
+			console.log('Cache size:', imageCache.size);
+		}
 	}
 
 	/**
@@ -315,12 +399,56 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				// Handle real-time settings updates
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
+				// Update cached images with new settings
+				updateCachedImagesWithNewSettings();
 				break;
 			
 			case 'mask-filter-settings':
 				// Handle mask filter settings updates
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
+				// Update cached images with new settings
+				updateCachedImagesWithNewSettings();
+				break;
+				
+			case 'updateImageCollectionOverlay':
+				updateImageCollectionOverlay(message.data);
+				break;
+				
+			case 'getZoomState':
+				// Send current zoom state back to extension
+				const zoomState = zoomController.getCurrentState();
+				vscode.postMessage({ 
+					type: 'zoomStateResponse', 
+					state: zoomState 
+				});
+				break;
+				
+			case 'restoreZoomState':
+				// Restore zoom state after image change
+				if (message.state) {
+					zoomController.restoreState(message.state);
+				}
+				break;
+				
+			case 'switchToImage':
+				// Switch to a new image in the collection (legacy)
+				switchToNewImage(message.uri, message.resourceUri);
+				break;
+				
+			case 'switchToImageFromCache':
+				// Switch using cached data if available
+				switchToImageFromCache(message.cacheKey, message.uri, message.resourceUri, message.isPreloaded);
+				break;
+				
+			case 'preloadImage':
+				// Preload image in background
+				preloadImageInBackground(message.cacheKey, message.uri, message.resourceUri);
+				break;
+				
+			case 'cacheCurrentImage':
+				// Cache the currently displayed image
+				cacheCurrentImage();
 				break;
 		}
 	}
@@ -490,10 +618,305 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			vscode.postMessage({ type: 'reopen-as-text' });
 		});
 
+		// Keyboard handling for image toggling
+		window.addEventListener('keydown', (e) => {
+			if (imageCollection.totalImages > 1) {
+				// 't' key to toggle forward through images
+				if (e.key.toLowerCase() === 't') {
+					e.preventDefault();
+					vscode.postMessage({ type: 'toggleImage' });
+				}
+				// 'r' key to toggle backward through images
+				else if (e.key.toLowerCase() === 'r') {
+					e.preventDefault();
+					vscode.postMessage({ type: 'toggleImageReverse' });
+				}
+			}
+		});
+
 		// Window beforeunload
 		window.addEventListener('beforeunload', () => {
 			zoomController.saveState();
 		});
+	}
+
+	/**
+	 * Create image collection overlay
+	 */
+	function createImageCollectionOverlay() {
+		overlayElement = document.createElement('div');
+		overlayElement.classList.add('image-collection-overlay');
+		overlayElement.style.display = 'none';
+		
+		overlayElement.innerHTML = `
+			<div class="overlay-content">
+				<span class="image-counter">1 of 1</span>
+				<span class="toggle-hint">Press 't'/'r' to navigate</span>
+			</div>
+		`;
+		
+		document.body.appendChild(overlayElement);
+	}
+
+	/**
+	 * Update image collection overlay
+	 */
+	function updateImageCollectionOverlay(data) {
+		if (!overlayElement) return;
+		
+		imageCollection = data;
+		
+		if (data.show && data.totalImages > 1) {
+			const counter = overlayElement.querySelector('.image-counter');
+			if (counter) {
+				counter.textContent = `${data.currentIndex + 1} of ${data.totalImages}`;
+			}
+			overlayElement.style.display = 'block';
+		} else {
+			overlayElement.style.display = 'none';
+		}
+	}
+
+	/**
+	 * Switch to a new image in the collection (legacy - for fallback)
+	 */
+	function switchToNewImage(uri, resourceUri) {
+		// Update the settings with the new resource URI
+		settingsManager.settings.resourceUri = resourceUri;
+		settingsManager.settings.src = uri;
+		
+		// Reset the state
+		hasLoadedImage = false;
+		canvas = null;
+		imageElement = null;
+		primaryImageData = null;
+		
+		// Clear the container
+		const container = document.body;
+		container.className = 'container';
+		
+		// Remove any existing image/canvas elements
+		const existingImages = container.querySelectorAll('img, canvas');
+		existingImages.forEach(el => el.remove());
+		
+		// Show loading state
+		container.classList.add('loading');
+		
+		// Load the new image based on file type
+		loadImageByType(uri, resourceUri);
+	}
+
+	/**
+	 * Switch to image using cached data for instant switching
+	 */
+	function switchToImageFromCache(cacheKey, uri, resourceUri, isPreloaded) {
+		// Update settings
+		settingsManager.settings.resourceUri = resourceUri;
+		settingsManager.settings.src = uri;
+		
+		if (isPreloaded && imageCache.has(cacheKey)) {
+			// Use cached data for instant switch
+			const cachedData = imageCache.get(cacheKey);
+			
+			// Reset state
+			hasLoadedImage = false;
+			
+			// Clear container
+			const container = document.body;
+			container.className = 'container';
+			const existingImages = container.querySelectorAll('img, canvas');
+			existingImages.forEach(el => el.remove());
+			
+			// Use cached canvas and data
+			canvas = cachedData.canvas.cloneNode(true);
+			canvas.classList.add('scale-to-fit');
+			primaryImageData = cachedData.imageData;
+			imageElement = canvas;
+			
+			// Apply cached image data to canvas
+			const ctx = canvas.getContext('2d');
+			if (ctx && primaryImageData) {
+				ctx.putImageData(primaryImageData, 0, 0);
+			}
+			
+			hasLoadedImage = true;
+			finalizeImageSetup();
+		} else {
+			// Not preloaded yet, load normally and cache the result
+			switchToNewImage(uri, resourceUri);
+		}
+	}
+
+	/**
+	 * Preload image in background for instant switching
+	 */
+	async function preloadImageInBackground(cacheKey, uri, resourceUri) {
+		if (imageCache.has(cacheKey)) {
+			return; // Already cached
+		}
+		
+		try {
+			console.log('Preloading image:', resourceUri);
+			
+			// Load and process the image based on type
+			const result = await loadAndProcessImage(uri, resourceUri);
+			
+			if (result) {
+				// Cache the processed result
+				imageCache.set(cacheKey, {
+					canvas: result.canvas.cloneNode(true),
+					imageData: result.imageData,
+					metadata: {
+						uri: uri,
+						resourceUri: resourceUri,
+						timestamp: Date.now()
+					}
+				});
+				
+				console.log('Image preloaded and cached:', resourceUri);
+				
+				// Notify extension that preloading is complete
+				vscode.postMessage({
+					type: 'imagePreloaded',
+					cacheKey: cacheKey
+				});
+			}
+		} catch (error) {
+			console.error('Failed to preload image:', resourceUri, error);
+		}
+	}
+
+	/**
+	 * Load and process image by type (helper function)
+	 */
+	async function loadAndProcessImage(uri, resourceUri) {
+		const lower = resourceUri.toLowerCase();
+		
+		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+			return await tiffProcessor.processTiff(uri);
+		} else if (lower.endsWith('.pfm')) {
+			return await pfmProcessor.processPfm(uri);
+		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
+			return await ppmProcessor.processPpm(uri);
+		} else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+			return await pngProcessor.processPng(uri);
+		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {
+			return await npyProcessor.processNpy(uri);
+		} else {
+			// Fallback to regular image loading
+			return await loadRegularImage(uri);
+		}
+	}
+
+	/**
+	 * Load regular image and convert to canvas/imageData
+	 */
+	function loadRegularImage(uri) {
+		return new Promise((resolve, reject) => {
+			const img = new Image();
+			img.onload = () => {
+				const canvas = document.createElement('canvas');
+				canvas.width = img.naturalWidth;
+				canvas.height = img.naturalHeight;
+				
+				const ctx = canvas.getContext('2d');
+				if (ctx) {
+					ctx.drawImage(img, 0, 0);
+					const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+					resolve({ canvas, imageData });
+				} else {
+					reject(new Error('Could not get canvas context'));
+				}
+			};
+			img.onerror = () => reject(new Error('Failed to load image'));
+			img.src = uri;
+		});
+	}
+
+	/**
+	 * Update all cached images with new settings
+	 */
+	async function updateCachedImagesWithNewSettings() {
+		console.log('Updating cached images with new settings...');
+		
+		// Get all cached images
+		const cacheEntries = Array.from(imageCache.entries());
+		
+		for (const [cacheKey, cachedData] of cacheEntries) {
+			try {
+				console.log('Re-processing cached image:', cachedData.metadata.resourceUri);
+				
+				// Re-process the image with new settings
+				const result = await loadAndProcessImage(cachedData.metadata.uri, cachedData.metadata.resourceUri);
+				
+				if (result) {
+					// Update the cache with new processed data
+					imageCache.set(cacheKey, {
+						canvas: result.canvas.cloneNode(true),
+						imageData: result.imageData,
+						metadata: {
+							...cachedData.metadata,
+							timestamp: Date.now() // Update timestamp
+						}
+					});
+					
+					console.log('Updated cached image:', cachedData.metadata.resourceUri);
+				}
+			} catch (error) {
+				console.error('Failed to update cached image:', cachedData.metadata.resourceUri, error);
+			}
+		}
+		
+		// Update the currently displayed image cache as well
+		cacheCurrentImage();
+		
+		console.log('Finished updating cached images');
+	}
+
+	/**
+	 * Load image by type (wrapper function)
+	 */
+	function loadImageByType(uri, resourceUri) {
+		const lower = resourceUri.toLowerCase();
+		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+			handleTiff(uri);
+		} else if (lower.endsWith('.pfm')) {
+			handlePfm(uri);
+		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
+			handlePpm(uri);
+		} else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+			handlePng(uri);
+		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {
+			handleNpy(uri);
+		} else {
+			// Fallback to regular image loading
+			const newImage = document.createElement('img');
+			newImage.classList.add('scale-to-fit');
+			newImage.src = uri;
+			
+			newImage.addEventListener('load', () => {
+				if (hasLoadedImage) return;
+				
+				// Create canvas and draw image
+				canvas = document.createElement('canvas');
+				canvas.width = newImage.naturalWidth;
+				canvas.height = newImage.naturalHeight;
+				canvas.classList.add('scale-to-fit');
+				
+				const ctx = canvas.getContext('2d');
+				if (ctx) {
+					ctx.drawImage(newImage, 0, 0);
+				}
+				
+				imageElement = canvas;
+				finalizeImageSetup();
+			});
+			
+			newImage.addEventListener('error', () => {
+				if (hasLoadedImage) return;
+				onImageError();
+			});
+		}
 	}
 
 	/**

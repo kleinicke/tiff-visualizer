@@ -251,6 +251,32 @@ export class ZoomController {
 	}
 
 	/**
+	 * Get current zoom state for image switching
+	 */
+	getCurrentState() {
+		return {
+			scale: this.scale,
+			x: window.scrollX,
+			y: window.scrollY
+		};
+	}
+
+	/**
+	 * Restore zoom state after image switching
+	 */
+	restoreState(state) {
+		if (state && state.scale !== undefined) {
+			this.updateScale(state.scale);
+			if (state.x !== undefined && state.y !== undefined) {
+				// Use setTimeout to ensure the new image is fully rendered
+				setTimeout(() => {
+					window.scrollTo(state.x, state.y);
+				}, 50);
+			}
+		}
+	}
+
+	/**
 	 * Clamp a value between min and max
 	 * @private
 	 */

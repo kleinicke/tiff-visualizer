@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "Float and TIFF Visualizer",
   "description": "Analyze float and int TIFF images, also works with single channel npy, png, jpg, ppm, pfm and pgm images.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
@@ -142,6 +142,11 @@
         "command": "tiffVisualizer.openWith",
         "title": "Open with TIFF Visualizer",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.openNextToCurrent",
+        "title": "Open Next to Current Image",
+        "category": "TIFF Visualizer"
       }
     ],
     "menus": {
@@ -150,6 +155,11 @@
           "command": "tiffVisualizer.openWith",
           "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm",
           "group": "navigation@0"
+        },
+        {
+          "command": "tiffVisualizer.openNextToCurrent",
+          "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
+          "group": "navigation@1"
         }
       ],
       "editor/context": [
