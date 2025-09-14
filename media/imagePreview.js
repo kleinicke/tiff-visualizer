@@ -38,7 +38,21 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	let imageElement = null;
 	let primaryImageData = null;
 	let peerImageData = null;
+	let peerImageUris = []; // Track peer URIs for comparison state
 	let isShowingPeer = false;
+	
+	// Restore persisted state if available
+	const persistedState = vscode.getState();
+	console.log('Checking for persisted state...');
+	if (persistedState) {
+		console.log('Found persisted state, restoring:', persistedState);
+		peerImageUris = persistedState.peerImageUris || [];
+		isShowingPeer = persistedState.isShowingPeer || false;
+		console.log('Restored peerImageUris:', peerImageUris);
+		console.log('Restored isShowingPeer:', isShowingPeer);
+	} else {
+		console.log('No persisted state found, starting fresh');
+	}
 	
 	// Image collection state
 	let imageCollection = {
@@ -48,9 +62,41 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	};
 	let overlayElement = null;
 	
-	// Global image cache for instant switching (shared across all instances)
-	window.tiffVisualizerImageCache = window.tiffVisualizerImageCache || new Map();
-	let imageCache = window.tiffVisualizerImageCache; // cacheKey -> { canvas, imageData, metadata }
+	// Image cache for this webview instance (each TIFF file has its own webview)
+	let imageCache = new Map(); // cacheKey -> { canvas, imageData, metadata }
+	
+	/**
+	 * Save current state to VS Code webview state for persistence across tab switches
+	 */
+	function saveState() {
+		// Only save serializable state (no ImageData/Canvas objects)
+		const state = {
+			peerImageUris: peerImageUris,
+			isShowingPeer: isShowingPeer,
+			currentResourceUri: settingsManager.settings.resourceUri,
+			timestamp: Date.now()
+		};
+		vscode.setState(state);
+		console.log('STATE SAVED:', state);
+	}
+
+	/**
+	 * Clear cached images except the current one to ensure fresh rendering with new settings
+	 */
+	function clearStaleCache() {
+		const currentResourceUri = settingsManager.settings.resourceUri;
+		const cacheKeys = Array.from(imageCache.keys());
+		let clearedCount = 0;
+		
+		for (const cacheKey of cacheKeys) {
+			if (cacheKey !== currentResourceUri) {
+				imageCache.delete(cacheKey);
+				clearedCount++;
+			}
+		}
+		
+		console.log(`Cleared ${clearedCount} stale cached images, kept current image`);
+	}
 
 	// DOM elements
 	const container = document.body;
@@ -60,21 +106,37 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	 * Initialize the application
 	 */
 	function initialize() {
+		console.log('Initializing TIFF Visualizer webview');
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
+		
+		// Save state when webview might be disposed
+		window.addEventListener('beforeunload', () => {
+			console.log('Webview beforeunload - saving state');
+			saveState();
+		});
+		
+		window.addEventListener('pagehide', () => {
+			console.log('Webview pagehide - saving state');
+			saveState();
+		});
 		
 		// Start loading the image
 		const settings = settingsManager.settings;
 		const resourceUri = settings.resourceUri;
 		
 		// Check if this image is already cached
+		console.log('Cache check - resourceUri:', resourceUri);
+		console.log('Cache contents:', Array.from(imageCache.keys()));
+		console.log('Cache size:', imageCache.size);
+		
 		if (imageCache.has(resourceUri)) {
 			console.log('Loading from cache:', resourceUri);
 			loadFromCache(resourceUri);
 		} else {
-			console.log('Loading fresh:', resourceUri);
+			console.log('Loading fresh (cache miss):', resourceUri);
 			// Load fresh and cache the result
 			if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
 				handleTiff(settings.src);
@@ -89,6 +151,31 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			} else {
 				image.src = settings.src;
 			}
+		}
+		
+		// Restore comparison state if we have peer images
+		if (peerImageUris.length > 0) {
+			console.log('RESTORING COMPARISON STATE - Found', peerImageUris.length, 'peer images:', peerImageUris);
+			
+			// Notify extension about restored peer images so it can update the image collection
+			console.log('Notifying extension about restored peer images...');
+			for (const peerUri of peerImageUris) {
+				vscode.postMessage({
+					type: 'restorePeerImage',
+					peerUri: peerUri
+				});
+			}
+			
+			setTimeout(() => {
+				console.log('Starting to reload comparison images...');
+				// Reload comparison images after main image loads
+				for (const peerUri of peerImageUris) {
+					console.log('Reloading comparison image:', peerUri);
+					handleStartComparison(peerUri);
+				}
+			}, 1000); // Give main image time to load
+		} else {
+			console.log('No comparison state to restore');
 		}
 	}
 
@@ -338,6 +425,12 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			});
 			
 			console.log('Cache size:', imageCache.size);
+			
+			// Notify extension that this image is now cached
+			vscode.postMessage({
+				type: 'imagePreloaded',
+				cacheKey: cacheKey
+			});
 		}
 	}
 
@@ -399,16 +492,18 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				// Handle real-time settings updates
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
-				// Update cached images with new settings
-				updateCachedImagesWithNewSettings();
+				// Clear cached images (except current) to ensure they get updated with new settings when accessed
+				clearStaleCache();
+				console.log('Settings updated, stale cache cleared');
 				break;
 			
 			case 'mask-filter-settings':
 				// Handle mask filter settings updates
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
-				// Update cached images with new settings
-				updateCachedImagesWithNewSettings();
+				// Clear cached images (except current) to ensure they get updated with new settings when accessed
+				clearStaleCache();
+				console.log('Mask filter settings updated, stale cache cleared');
 				break;
 				
 			case 'updateImageCollectionOverlay':
@@ -424,10 +519,36 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				});
 				break;
 				
+			case 'getComparisonState':
+				// Send current comparison state back to extension
+				const comparisonState = {
+					peerUris: peerImageUris,
+					isShowingPeer: isShowingPeer
+				};
+				vscode.postMessage({ 
+					type: 'comparisonStateResponse', 
+					state: comparisonState 
+				});
+				break;
+				
 			case 'restoreZoomState':
 				// Restore zoom state after image change
 				if (message.state) {
 					zoomController.restoreState(message.state);
+				}
+				break;
+				
+			case 'restoreComparisonState':
+				// Restore comparison state after image change
+				if (message.state && message.state.peerUris && message.state.peerUris.length > 0) {
+					console.log('Restoring comparison state:', message.state);
+					peerImageUris = message.state.peerUris;
+					isShowingPeer = message.state.isShowingPeer;
+					
+					// Reload peer images for comparison
+					for (const peerUri of peerImageUris) {
+						handleStartComparison(peerUri);
+					}
 				}
 				break;
 				
@@ -438,7 +559,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				
 			case 'switchToImageFromCache':
 				// Switch using cached data if available
-				switchToImageFromCache(message.cacheKey, message.uri, message.resourceUri, message.isPreloaded);
+				switchToImageFromCache(message.cacheKey, message.uri, message.resourceUri);
 				break;
 				
 			case 'preloadImage':
@@ -459,12 +580,30 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	async function updateImageWithNewSettings() {
 		if (!canvas || !hasLoadedImage) return;
 
-		// For TIFF images, re-render with new settings
+		// For TIFF images, try fast parameter update first
 		if (primaryImageData && tiffProcessor.rawTiffData) {
 			try {
-				console.log('Updating TIFF image with new settings:', settingsManager.settings);
+				console.log('Fast updating TIFF image with new settings');
 				
-				// Re-render the TIFF with current settings
+				// Try fast parameter update (gamma/normalization only)
+				const fastUpdate = await tiffProcessor.fastParameterUpdate(primaryImageData);
+				
+				if (fastUpdate) {
+					// Apply fast update directly to canvas
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						ctx.putImageData(fastUpdate, 0, 0);
+						primaryImageData = fastUpdate;
+						console.log('TIFF image fast-updated');
+						
+						// Update the cache with the new data for this image
+						cacheCurrentImage();
+						return;
+					}
+				}
+				
+				// Fallback to full re-render if fast update not possible
+				console.log('Fast update not possible, falling back to full re-render');
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
 					tiffProcessor.rawTiffData.image,
 					tiffProcessor.rawTiffData.rasters
@@ -475,7 +614,10 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				if (ctx && newImageData) {
 					ctx.putImageData(newImageData, 0, 0);
 					primaryImageData = newImageData;
-					console.log('TIFF image updated with new settings');
+					console.log('TIFF image fully re-rendered');
+					
+					// Update the cache with the new data for this image
+					cacheCurrentImage();
 				}
 			} catch (error) {
 				console.error('Error updating TIFF image with new settings:', error);
@@ -497,6 +639,9 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
 						console.log('PGM image updated with new settings');
+						
+						// Update the cache with the new data for this image
+						cacheCurrentImage();
 					}
 				}
 			} catch (error) {
@@ -519,6 +664,9 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
 						console.log('PNG/JPEG image updated with new settings');
+						
+						// Update the cache with the new data for this image
+						cacheCurrentImage();
 					}
 				}
 			} catch (error) {
@@ -609,6 +757,9 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				if (ctx && imageData) {
 					ctx.putImageData(imageData, 0, 0);
 				}
+				
+				// Save state after toggling comparison
+				saveState();
 			}
 		});
 
@@ -709,12 +860,14 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	/**
 	 * Switch to image using cached data for instant switching
 	 */
-	function switchToImageFromCache(cacheKey, uri, resourceUri, isPreloaded) {
+	function switchToImageFromCache(cacheKey, uri, resourceUri) {
 		// Update settings
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
 		
-		if (isPreloaded && imageCache.has(cacheKey)) {
+		// Check cache first, regardless of preload status
+		if (imageCache.has(cacheKey)) {
+			console.log('Using cached image:', cacheKey);
 			// Use cached data for instant switch
 			const cachedData = imageCache.get(cacheKey);
 			
@@ -742,7 +895,8 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			hasLoadedImage = true;
 			finalizeImageSetup();
 		} else {
-			// Not preloaded yet, load normally and cache the result
+			console.log('Cache miss, loading fresh:', cacheKey);
+			// Not cached yet, load normally and cache the result
 			switchToNewImage(uri, resourceUri);
 		}
 	}
@@ -841,8 +995,15 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		
 		// Get all cached images
 		const cacheEntries = Array.from(imageCache.entries());
+		const currentResourceUri = settingsManager.settings.resourceUri;
 		
 		for (const [cacheKey, cachedData] of cacheEntries) {
+			// Skip the currently displayed image since it was already updated by updateImageWithNewSettings
+			if (cacheKey === currentResourceUri) {
+				console.log('Skipping current image, already updated:', cachedData.metadata.resourceUri);
+				continue;
+			}
+			
 			try {
 				console.log('Re-processing cached image:', cachedData.metadata.resourceUri);
 				
@@ -980,8 +1141,19 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	async function handleStartComparison(peerUri) {
 		try {
 			vscode.postMessage({ type: 'show-loading' });
+			
+			// Track peer URI for state persistence
+			if (!peerImageUris.includes(peerUri)) {
+				peerImageUris.push(peerUri);
+			}
+			
 			const result = await tiffProcessor.processTiff(peerUri);
 			peerImageData = result.imageData;
+			
+			// Save state after adding peer image
+			console.log('Peer image added, saving state...');
+			saveState();
+			
 			vscode.postMessage({ type: 'comparison-ready' });
 		} catch (error) {
 			console.error('Failed to load peer image for comparison:', error);

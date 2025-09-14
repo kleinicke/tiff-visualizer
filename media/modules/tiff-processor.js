@@ -646,4 +646,74 @@ export class TiffProcessor {
 
 		return '';
 	}
+
+	/**
+	 * Fast parameter update - apply gamma/normalization to existing ImageData without re-processing TIFF
+	 * @param {ImageData} existingImageData - Current image data
+	 * @returns {Promise<ImageData|null>} - Updated image data or null if fast update not possible
+	 */
+	async fastParameterUpdate(existingImageData) {
+		try {
+			const settings = this.settingsManager.settings;
+			
+			// Check if we can do a fast update (only gamma/normalization/brightness changes)
+			// Fast update is not possible if mask filters are enabled (they require raw data)
+			if (settings.maskFilters && settings.maskFilters.some(mask => mask.enabled)) {
+				console.log('Fast update skipped: mask filters are enabled');
+				return null;
+			}
+			
+			// Clone the existing image data
+			const width = existingImageData.width;
+			const height = existingImageData.height;
+			const newImageData = new ImageData(width, height);
+			const srcData = existingImageData.data;
+			const destData = newImageData.data;
+			
+			// Apply gamma and brightness transformations
+			const gammaIn = settings.gamma.in;
+			const gammaOut = settings.gamma.out;
+			const brightness = settings.brightness.offset;
+			
+			console.log(`Applying fast update: gamma(${gammaIn}, ${gammaOut}), brightness(${brightness})`);
+			
+			// Process each pixel
+			for (let i = 0; i < srcData.length; i += 4) {
+				let r = srcData[i] / 255.0;
+				let g = srcData[i + 1] / 255.0;
+				let b = srcData[i + 2] / 255.0;
+				
+				// Apply gamma correction
+				if (gammaIn !== 1.0) {
+					r = Math.pow(r, gammaIn);
+					g = Math.pow(g, gammaIn);
+					b = Math.pow(b, gammaIn);
+				}
+				
+				if (gammaOut !== 1.0) {
+					r = Math.pow(r, 1.0 / gammaOut);
+					g = Math.pow(g, 1.0 / gammaOut);
+					b = Math.pow(b, 1.0 / gammaOut);
+				}
+				
+				// Apply brightness
+				r += brightness;
+				g += brightness;
+				b += brightness;
+				
+				// Clamp values to [0, 1] and convert back to [0, 255]
+				destData[i] = Math.round(this.clamp(r, 0, 1) * 255);
+				destData[i + 1] = Math.round(this.clamp(g, 0, 1) * 255);
+				destData[i + 2] = Math.round(this.clamp(b, 0, 1) * 255);
+				destData[i + 3] = srcData[i + 3]; // Keep alpha unchanged
+			}
+			
+			console.log('Fast parameter update completed');
+			return newImageData;
+			
+		} catch (error) {
+			console.error('Fast parameter update failed:', error);
+			return null;
+		}
+	}
 } 

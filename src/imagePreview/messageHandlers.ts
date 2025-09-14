@@ -31,9 +31,11 @@ export class MessageRouter {
 		this.handlers.set('mask-filter-request', new MaskFilterRequestMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
 		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
+		this.handlers.set('comparisonStateResponse', new ComparisonStateResponseMessageHandler());
 		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
 		this.handlers.set('imagePreloaded', new ImagePreloadedMessageHandler());
+		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -178,6 +180,24 @@ class ToggleImageMessageHandler implements MessageHandler {
 class ToggleImageReverseMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.toggleToPreviousImage();
+	}
+}
+
+class ComparisonStateResponseMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Store the comparison state for later restoration
+		(preview as any)._currentComparisonState = message.state;
+	}
+}
+
+class RestorePeerImageMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Add restored peer image to image collection
+		const peerUri = message.peerUri;
+		if (peerUri) {
+			const uri = vscode.Uri.parse(peerUri);
+			preview.addToImageCollection(uri);
+		}
 	}
 }
 

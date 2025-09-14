@@ -1,0 +1,110 @@
+body {
+	font-family: var(--vscode-font-family);
+	font-size: var(--vscode-font-size);
+	font-weight: var(--vscode-font-weight);
+	color: var(--vscode-foreground);
+	background-color: var(--vscode-editor-background);
+	margin: 0;
+	padding: 0;
+}
+
+.header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--vscode-panel-border);
+	background-color: var(--vscode-panel-background);
+}
+
+.header h2 {
+	margin: 0;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.image-count {
+	color: var(--vscode-descriptionForeground);
+	font-size: 12px;
+}
+
+.container {
+	padding: 16px;
+	height: calc(100vh - 60px);
+	overflow-y: auto;
+}
+
+.image-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: 16px;
+}
+
+.image-item {
+	border: 1px solid var(--vscode-panel-border);
+	border-radius: 4px;
+	overflow: hidden;
+	background-color: var(--vscode-panel-background);
+	transition: border-color 0.2s;
+}
+
+.image-item:hover {
+	border-color: var(--vscode-focusBorder);
+}
+
+.image-preview {
+	width: 100%;
+	height: 150px;
+	object-fit: contain;
+	background-color: var(--vscode-editor-background);
+	cursor: pointer;
+}
+
+.image-info {
+	padding: 8px 12px;
+	border-top: 1px solid var(--vscode-panel-border);
+}
+
+.image-filename {
+	font-size: 12px;
+	font-weight: 500;
+	margin-bottom: 4px;
+	word-break: break-all;
+}
+
+.image-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.action-button {
+	background: var(--vscode-button-background);
+	color: var(--vscode-button-foreground);
+	border: none;
+	padding: 4px 8px;
+	font-size: 11px;
+	border-radius: 2px;
+	cursor: pointer;
+	transition: background-color 0.2s;
+}
+
+.action-button:hover {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.action-button.secondary {
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+}
+
+.action-button.secondary:hover {
+	background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.empty-state {
+	text-align: center;
+	color: var(--vscode-descriptionForeground);
+	font-style: italic;
+	padding: 40px 20px;
+	grid-column: 1 / -1;
+}

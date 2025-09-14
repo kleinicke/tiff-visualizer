@@ -8,6 +8,7 @@ import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { registerImagePreviewCommands } from './commands';
+import { registerComparisonPanelSupport } from '../comparisonPanel/index';
 
 // Re-export the main classes for backward compatibility
 export { ImagePreviewManager } from './imagePreviewManager';
@@ -62,6 +63,9 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 	// Register commands
 	disposables.push(registerImagePreviewCommands(context, previewManager, binarySizeStatusBarEntry));
+
+	// Register comparison panel support
+	disposables.push(registerComparisonPanelSupport(context));
 
 	outputChannel.appendLine('TIFF Visualizer: Image preview support registered successfully');
 	console.log('TIFF Visualizer: Image preview support registered successfully');

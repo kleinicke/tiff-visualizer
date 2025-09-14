@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
+import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
 
 export function registerImagePreviewCommands(
 	context: vscode.ExtensionContext, 
@@ -780,6 +781,38 @@ export function registerImagePreviewCommands(
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
 		}
+	}));
+
+	// Comparison Panel Commands
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.selectForCompare', async () => {
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found.');
+			return;
+		}
+
+		// Add current image to the comparison panel
+		const panel = ComparisonPanel.create(context.extensionUri);
+		panel.addImage(activePreview.resource);
+		
+		vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
+		
+		// Set context to show that we have a comparison image
+		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', true);
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.compareWithSelected', async () => {
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found.');
+			return;
+		}
+
+		// Get or create comparison panel and add current image
+		const panel = ComparisonPanel.create(context.extensionUri);
+		panel.addImage(activePreview.resource);
+		
+		vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
 	}));
 
 	return vscode.Disposable.from(...disposables);

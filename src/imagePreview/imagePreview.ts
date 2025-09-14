@@ -24,6 +24,7 @@ export class ImagePreview extends MediaPreview {
 	private _currentImageIndex: number = 0;
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentZoomState: { scale: Scale; x: number; y: number } | undefined;
+	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -115,13 +116,16 @@ export class ImagePreview extends MediaPreview {
 		// Initialize the image collection with the current image
 		this._imageCollection = [this.resource];
 		
+		// Add the first image to preloaded data tracking
+		const webviewUri = this._webviewEditor.webview.asWebviewUri(this.resource);
+		this._preloadedImageData.set(this.resource.toString(), {
+			uri: this.resource,
+			webviewUri: webviewUri.toString(),
+			loaded: false // Will be set to true when cacheCurrentImage sends imagePreloaded message
+		});
+		
 		// Initialize the preview
 		this.render();
-		
-		// Ensure the original image gets cached after rendering
-		setTimeout(() => {
-			this.ensureOriginalImageIsCached();
-		}, 500);
 		
 		// Update binary size and ensure proper state initialization
 		this.updateBinarySize().then(() => {
@@ -185,6 +189,14 @@ export class ImagePreview extends MediaPreview {
 
 	public startComparison(peerUri: vscode.Uri) {
 		if (this.previewState === PreviewState.Active) {
+			// Update comparison state
+			if (!this._currentComparisonState) {
+				this._currentComparisonState = { peerUris: [], isShowingPeer: false };
+			}
+			if (!this._currentComparisonState.peerUris.includes(peerUri.toString())) {
+				this._currentComparisonState.peerUris.push(peerUri.toString());
+			}
+			
 			this._webviewEditor.webview.postMessage({ type: 'start-comparison', peerUri: peerUri.toString() });
 		}
 	}
@@ -307,6 +319,7 @@ export class ImagePreview extends MediaPreview {
 	private saveCurrentZoomState(): void {
 		if (this.previewState === PreviewState.Active) {
 			this._webviewEditor.webview.postMessage({ type: 'getZoomState' });
+			this._webviewEditor.webview.postMessage({ type: 'getComparisonState' });
 		}
 	}
 
@@ -325,14 +338,13 @@ export class ImagePreview extends MediaPreview {
 			type: 'switchToImageFromCache',
 			cacheKey: cacheKey,
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
-			resourceUri: newResource.toString(),
-			isPreloaded: cachedData?.loaded || false
+			resourceUri: newResource.toString()
 		});
 		
 		// Update overlay
 		this.updateImageCollectionOverlay();
 		
-		// Restore zoom state after a brief delay
+		// Restore zoom and comparison state after a brief delay
 		setTimeout(() => {
 			if (this._currentZoomState) {
 				this._webviewEditor.webview.postMessage({ 
@@ -340,7 +352,13 @@ export class ImagePreview extends MediaPreview {
 					state: this._currentZoomState 
 				});
 			}
-		}, 100);
+			if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
+				this._webviewEditor.webview.postMessage({ 
+					type: 'restoreComparisonState', 
+					state: this._currentComparisonState 
+				});
+			}
+		}, 150);
 	}
 
 	private updateImageCollectionOverlay(): void {
