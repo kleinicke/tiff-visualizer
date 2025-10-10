@@ -224,6 +224,12 @@ export class FormatInfoMessageHandler implements MessageHandler<FormatInfoMessag
 
 	handle(message: FormatInfoMessage, context: HandlerContext): void {
 		context.appStateManager.setFormatInfo(message.value);
+
+		// Set the format type for per-format settings
+		if (message.value && message.value.formatType) {
+			context.appStateManager.setImageFormat(message.value.formatType);
+		}
+
 		if (context.preview.isTiff && context.preview.getSizeStatusBarEntry) {
 			context.preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
 		}

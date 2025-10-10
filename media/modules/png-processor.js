@@ -91,31 +91,32 @@ export class PngProcessor {
             const a = data[srcIdx + 3];
             
             // Apply gamma and brightness corrections to each channel
+            // The correct order is: remove gamma → apply brightness → add gamma back
             if (settings.gamma || settings.brightness) {
+                const gammaIn = settings.gamma?.in ?? 1.0;
+                const gammaOut = settings.gamma?.out ?? 1.0;
+                const exposureStops = settings.brightness?.offset ?? 0;
+
                 // Process each color channel
                 for (let channel = 0; channel < 3; channel++) {
                     let channelValue = channel === 0 ? r : channel === 1 ? g : b;
-                    
+
                     // Normalize to 0-1 range
                     let normalizedValue = channelValue / 255;
-                    
-                    // Apply gamma correction
-                    if (settings.gamma) {
-                        const gi = settings.gamma.in ?? 1.0;
-                        const go = settings.gamma.out ?? 1.0;
-                        normalizedValue = Math.pow(normalizedValue, gi / go);
-                    }
-                    
-                    // Apply brightness adjustment
-                    if (settings.brightness) {
-                        const stops = settings.brightness.offset ?? 0;
-                        normalizedValue = normalizedValue * Math.pow(2, stops);
-                    }
-                    
+
+                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                    let linear = Math.pow(normalizedValue, gammaIn);
+
+                    // Step 2: Apply brightness (exposure compensation) in linear space
+                    linear = linear * Math.pow(2, exposureStops);
+
+                    // Step 3: Apply output gamma - raise to 1/gammaOut power
+                    normalizedValue = Math.pow(linear, 1.0 / gammaOut);
+
                     // Clamp and convert back to 0-255
                     normalizedValue = Math.max(0, Math.min(1, normalizedValue));
                     const correctedValue = Math.round(normalizedValue * 255);
-                    
+
                     // Update the channel value
                     if (channel === 0) r = correctedValue;
                     else if (channel === 1) g = correctedValue;
@@ -199,7 +200,8 @@ export class PngProcessor {
                 samplesPerPixel: channels,
                 bitsPerSample: 8,
                 sampleFormat: 1, // Unsigned integer
-                formatLabel
+                formatLabel,
+                formatType: 'png' // For per-format settings
             }
         });
     }

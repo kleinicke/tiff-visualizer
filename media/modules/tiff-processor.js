@@ -73,6 +73,10 @@ export class TiffProcessor {
 
 			// Send format information to VS Code
 			if (this.vscode) {
+				// Determine if this is a float TIFF or int TIFF
+				const isFloatTiff = sampleFormat === 3; // 3 = IEEE floating point
+				const formatType = isFloatTiff ? 'tiff-float' : 'tiff-int';
+
 				this.vscode.postMessage({
 					type: 'formatInfo',
 					value: {
@@ -84,7 +88,8 @@ export class TiffProcessor {
 						photometricInterpretation: photometricInterpretation,
 						planarConfig: planarConfig,
 						samplesPerPixel: image.getSamplesPerPixel(),
-						bitsPerSample: image.getBitsPerSample()
+						bitsPerSample: image.getBitsPerSample(),
+						formatType: formatType // For per-format settings
 					}
 				});
 			}
@@ -515,18 +520,23 @@ export class TiffProcessor {
 
 	/**
 	 * Apply gamma and brightness corrections
+	 * The correct order is: remove input gamma → apply brightness → apply output gamma
 	 * @private
 	 */
 	_applyGammaAndBrightness(normalizedValue, settings) {
-		// Apply gamma correction
 		const gammaIn = settings.gamma.in;
 		const gammaOut = settings.gamma.out;
-		let corrected = Math.pow(normalizedValue, gammaIn / gammaOut);
-		
-		// Apply brightness (exposure compensation)
+
+		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
+		let linear = Math.pow(normalizedValue, gammaIn);
+
+		// Step 2: Apply brightness (exposure compensation) in linear space
 		const exposureStops = settings.brightness.offset;
-		corrected = corrected * Math.pow(2, exposureStops);
-		
+		linear = linear * Math.pow(2, exposureStops);
+
+		// Step 3: Apply output gamma - raise to 1/gammaOut power
+		let corrected = Math.pow(linear, 1.0 / gammaOut);
+
 		return this.clamp(corrected, 0, 1);
 	}
 
@@ -648,72 +658,16 @@ export class TiffProcessor {
 	}
 
 	/**
-	 * Fast parameter update - apply gamma/normalization to existing ImageData without re-processing TIFF
+	 * Fast parameter update - DISABLED to prevent double-correction
+	 * We always re-render from raw TIFF data to ensure correct gamma/brightness application
 	 * @param {ImageData} existingImageData - Current image data
-	 * @returns {Promise<ImageData|null>} - Updated image data or null if fast update not possible
+	 * @returns {Promise<ImageData|null>} - Always returns null to force full re-render
 	 */
 	async fastParameterUpdate(existingImageData) {
-		try {
-			const settings = this.settingsManager.settings;
-			
-			// Check if we can do a fast update (only gamma/normalization/brightness changes)
-			// Fast update is not possible if mask filters are enabled (they require raw data)
-			if (settings.maskFilters && settings.maskFilters.some(mask => mask.enabled)) {
-				console.log('Fast update skipped: mask filters are enabled');
-				return null;
-			}
-			
-			// Clone the existing image data
-			const width = existingImageData.width;
-			const height = existingImageData.height;
-			const newImageData = new ImageData(width, height);
-			const srcData = existingImageData.data;
-			const destData = newImageData.data;
-			
-			// Apply gamma and brightness transformations
-			const gammaIn = settings.gamma.in;
-			const gammaOut = settings.gamma.out;
-			const brightness = settings.brightness.offset;
-			
-			console.log(`Applying fast update: gamma(${gammaIn}, ${gammaOut}), brightness(${brightness})`);
-			
-			// Process each pixel
-			for (let i = 0; i < srcData.length; i += 4) {
-				let r = srcData[i] / 255.0;
-				let g = srcData[i + 1] / 255.0;
-				let b = srcData[i + 2] / 255.0;
-				
-				// Apply gamma correction
-				if (gammaIn !== 1.0) {
-					r = Math.pow(r, gammaIn);
-					g = Math.pow(g, gammaIn);
-					b = Math.pow(b, gammaIn);
-				}
-				
-				if (gammaOut !== 1.0) {
-					r = Math.pow(r, 1.0 / gammaOut);
-					g = Math.pow(g, 1.0 / gammaOut);
-					b = Math.pow(b, 1.0 / gammaOut);
-				}
-				
-				// Apply brightness
-				r += brightness;
-				g += brightness;
-				b += brightness;
-				
-				// Clamp values to [0, 1] and convert back to [0, 255]
-				destData[i] = Math.round(this.clamp(r, 0, 1) * 255);
-				destData[i + 1] = Math.round(this.clamp(g, 0, 1) * 255);
-				destData[i + 2] = Math.round(this.clamp(b, 0, 1) * 255);
-				destData[i + 3] = srcData[i + 3]; // Keep alpha unchanged
-			}
-			
-			console.log('Fast parameter update completed');
-			return newImageData;
-			
-		} catch (error) {
-			console.error('Fast parameter update failed:', error);
-			return null;
-		}
+		// Fast update is disabled because it causes double-application of corrections
+		// and produces incorrect results (white/black flash, wrong colors).
+		// Always return null to force a full re-render from raw TIFF data.
+		console.log('Fast update disabled - will re-render from raw TIFF data');
+		return null;
 	}
 } 

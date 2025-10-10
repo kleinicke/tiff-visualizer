@@ -34,19 +34,38 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		private readonly gammaStatusBarEntry: GammaStatusBarEntry,
 		private readonly brightnessStatusBarEntry: BrightnessStatusBarEntry,
 		private readonly maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
-	) { 
+	) {
 		// Listen for active editor changes to hide status bar items when switching away
+		// This handles text editors
 		vscode.window.onDidChangeActiveTextEditor(() => {
-			// If no active preview or the active editor is not our custom editor, hide all items
-			if (!this._activePreview || !this._activePreview.isPreviewActive()) {
-				this.sizeStatusBarEntry.forceHide();
-				this.zoomStatusBarEntry.forceHide();
-				this.normalizationStatusBarEntry.forceHide();
-				this.gammaStatusBarEntry.forceHide();
-				this.brightnessStatusBarEntry.forceHide();
-				this.maskFilterStatusBarEntry.hide();
-			}
+			this.hideStatusBarIfNotActive();
 		});
+
+		// Listen for active tab changes to handle all editor types (including image viewers)
+		vscode.window.tabGroups.onDidChangeTabs(() => {
+			this.hideStatusBarIfNotActive();
+		});
+
+		// Also listen for tab group changes
+		vscode.window.tabGroups.onDidChangeTabGroups(() => {
+			this.hideStatusBarIfNotActive();
+		});
+	}
+
+	/**
+	 * Hide status bar entries if no active TIFF preview is showing
+	 */
+	private hideStatusBarIfNotActive(): void {
+		// If no active preview or the active editor is not our custom editor, hide all items
+		if (!this._activePreview || !this._activePreview.isPreviewActive()) {
+			this.sizeStatusBarEntry.forceHide();
+			this.binarySizeStatusBarEntry.forceHide();
+			this.zoomStatusBarEntry.forceHide();
+			this.normalizationStatusBarEntry.forceHide();
+			this.gammaStatusBarEntry.forceHide();
+			this.brightnessStatusBarEntry.forceHide();
+			this.maskFilterStatusBarEntry.hide();
+		}
 	}
 
 	public get settingsManager(): ImageSettingsManager {

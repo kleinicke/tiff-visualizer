@@ -279,7 +279,8 @@ export function registerImagePreviewCommands(
 		const currentPreview = previewManager.activePreview;
 
 		const brightness = await vscode.window.showInputBox({
-			prompt: 'Enter brightness offset in stops. (0 = no change, +1 = 2x brighter, -1 = 2x darker)',
+			prompt: 'Enter brightness offset in exposure stops (applied in linear space (2^Exposure) after removing gamma, then gamma is reapplied)',
+			placeHolder: '0 = no change, +1 = 2× brighter, -1 = 2× darker in linear space',
 			value: currentConfig.offset.toString(),
 			validateInput: text => {
 				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
