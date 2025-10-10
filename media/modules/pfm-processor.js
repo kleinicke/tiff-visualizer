@@ -110,15 +110,27 @@ export class PfmProcessor {
             b = Math.max(0, Math.min(1, b));
             
             if (settings.normalization && settings.normalization.gammaMode) {
-                const gi = settings.gamma?.in ?? 1.0;
-                const go = settings.gamma?.out ?? 1.0;
-                const stops = settings.brightness?.offset ?? 0;
-                const brightness = Math.pow(2, stops);
-                
-                r = Math.pow(r, gi / go) * brightness;
-                g = Math.pow(g, gi / go) * brightness;
-                b = Math.pow(b, gi / go) * brightness;
-                
+                const gammaIn = settings.gamma?.in ?? 1.0;
+                const gammaOut = settings.gamma?.out ?? 1.0;
+                const exposureStops = settings.brightness?.offset ?? 0;
+
+                // Correct order: remove input gamma → apply brightness → apply output gamma
+                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                r = Math.pow(r, gammaIn);
+                g = Math.pow(g, gammaIn);
+                b = Math.pow(b, gammaIn);
+
+                // Step 2: Apply brightness in linear space
+                const brightnessFactor = Math.pow(2, exposureStops);
+                r = r * brightnessFactor;
+                g = g * brightnessFactor;
+                b = b * brightnessFactor;
+
+                // Step 3: Apply output gamma - raise to 1/gammaOut power
+                r = Math.pow(r, 1.0 / gammaOut);
+                g = Math.pow(g, 1.0 / gammaOut);
+                b = Math.pow(b, 1.0 / gammaOut);
+
                 r = Math.max(0, Math.min(1, r));
                 g = Math.max(0, Math.min(1, g));
                 b = Math.max(0, Math.min(1, b));
@@ -199,7 +211,8 @@ export class PfmProcessor {
                 samplesPerPixel: channels,
                 bitsPerSample: 32,
                 sampleFormat: 3,
-                formatLabel
+                formatLabel,
+                formatType: 'pfm' // For per-format settings
             }
         });
     }

@@ -522,10 +522,14 @@ export class ImagePreview extends MediaPreview {
 		const cssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.css'));
 		const jsUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.js'));
 		const geotiffUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'geotiff.min.js'));
+		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
+		const upngUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'upng.min.js'));
 
 		outputChannel.appendLine(`TIFF Visualizer: CSS URI: ${cssUri.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: JS URI: ${jsUri.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: GeoTIFF URI: ${geotiffUri.toString()}`);
+		outputChannel.appendLine(`TIFF Visualizer: Pako URI: ${pakoUri.toString()}`);
+		outputChannel.appendLine(`TIFF Visualizer: UPNG URI: ${upngUri.toString()}`);
 
 		return /* html */`<!DOCTYPE html>
 <html lang="en">
@@ -565,8 +569,13 @@ export class ImagePreview extends MediaPreview {
 		});
 	</script>
 	
-	${isTiff ? 
-		`<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>` : 
+	${isTiff ?
+		`<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>` :
+		''
+	}
+	${isPng ?
+		`<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
+	<script src="${escapeAttribute(upngUri.toString())}" nonce="${nonce}"></script>` :
 		''
 	}
 	<script type="module" src="${escapeAttribute(jsUri.toString())}" nonce="${nonce}"></script>

@@ -196,16 +196,38 @@ export class PpmProcessor {
                 r = g = b = value;
             }
             
-            // Apply gamma and brightness if in gamma mode
-            if (settings.normalization && settings.normalization.gammaMode) {
-                const gi = settings.gamma?.in ?? 1.0;
-                const go = settings.gamma?.out ?? 1.0;
-                const stops = settings.brightness?.offset ?? 0;
-                const brightness = Math.pow(2, stops);
-                
-                r = Math.pow(r / 255, gi / go) * brightness * 255;
-                g = Math.pow(g / 255, gi / go) * brightness * 255;
-                b = Math.pow(b / 255, gi / go) * brightness * 255;
+            // Apply gamma and brightness corrections
+            // Correct order: remove input gamma → apply brightness → apply output gamma
+            if (settings.gamma || settings.brightness) {
+                const gammaIn = settings.gamma?.in ?? 1.0;
+                const gammaOut = settings.gamma?.out ?? 1.0;
+                const exposureStops = settings.brightness?.offset ?? 0;
+
+                // Normalize to 0-1 range first
+                r = r / 255;
+                g = g / 255;
+                b = b / 255;
+
+                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                r = Math.pow(r, gammaIn);
+                g = Math.pow(g, gammaIn);
+                b = Math.pow(b, gammaIn);
+
+                // Step 2: Apply brightness in linear space
+                const brightnessFactor = Math.pow(2, exposureStops);
+                r = r * brightnessFactor;
+                g = g * brightnessFactor;
+                b = b * brightnessFactor;
+
+                // Step 3: Apply output gamma - raise to 1/gammaOut power
+                r = Math.pow(r, 1.0 / gammaOut);
+                g = Math.pow(g, 1.0 / gammaOut);
+                b = Math.pow(b, 1.0 / gammaOut);
+
+                // Convert back to 0-255 range
+                r = r * 255;
+                g = g * 255;
+                b = b * 255;
             }
             
             const p = i * 4;
@@ -270,12 +292,21 @@ export class PpmProcessor {
             normalizedValue = Math.max(0, Math.min(1, normalizedValue));
             
             // Apply gamma and brightness if in gamma mode
+            // Correct order: remove input gamma → apply brightness → apply output gamma
             if (settings.normalization && settings.normalization.gammaMode) {
-                const gi = settings.gamma?.in ?? 1.0;
-                const go = settings.gamma?.out ?? 1.0;
-                normalizedValue = Math.pow(normalizedValue, gi / go);
-                const stops = settings.brightness?.offset ?? 0;
-                normalizedValue = normalizedValue * Math.pow(2, stops);
+                const gammaIn = settings.gamma?.in ?? 1.0;
+                const gammaOut = settings.gamma?.out ?? 1.0;
+                const exposureStops = settings.brightness?.offset ?? 0;
+
+                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                normalizedValue = Math.pow(normalizedValue, gammaIn);
+
+                // Step 2: Apply brightness in linear space
+                normalizedValue = normalizedValue * Math.pow(2, exposureStops);
+
+                // Step 3: Apply output gamma - raise to 1/gammaOut power
+                normalizedValue = Math.pow(normalizedValue, 1.0 / gammaOut);
+
                 normalizedValue = Math.max(0, Math.min(1, normalizedValue));
             }
             
@@ -358,7 +389,8 @@ export class PpmProcessor {
                 bitsPerSample: maxval > 255 ? 16 : 8,
                 sampleFormat: 1, // Unsigned integer
                 formatLabel,
-                maxval
+                maxval,
+                formatType: 'ppm' // For per-format settings
             }
         });
     }

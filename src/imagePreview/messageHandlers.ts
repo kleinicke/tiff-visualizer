@@ -149,7 +149,8 @@ class InitialDataMessageHandler implements MessageHandler {
 class MaskFilterRequestMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		if (preview.isPreviewActive()) {
-			const maskSettings = preview.getManager().settingsManager.getMaskFilterSettings();
+			const imageUri = preview.resource.toString();
+			const maskSettings = preview.getManager().settingsManager.getMaskFilterSettings(imageUri);
 			preview.getWebview().postMessage({
 				type: 'mask-filter-settings',
 				settings: maskSettings

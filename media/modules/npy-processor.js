@@ -179,12 +179,21 @@ export class NpyProcessor {
         for (let i = 0; i < width * height; i++) {
             let n = (data[i] - normMin) / range;
             n = Math.max(0, Math.min(1, n));
+            // Correct order: remove input gamma → apply brightness → apply output gamma
             if (settings.normalization && settings.normalization.gammaMode) {
-                const gi = settings.gamma?.in ?? 1.0;
-                const go = settings.gamma?.out ?? 1.0;
-                n = Math.pow(n, gi / go);
-                const stops = settings.brightness?.offset ?? 0;
-                n = n * Math.pow(2, stops);
+                const gammaIn = settings.gamma?.in ?? 1.0;
+                const gammaOut = settings.gamma?.out ?? 1.0;
+                const exposureStops = settings.brightness?.offset ?? 0;
+
+                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                n = Math.pow(n, gammaIn);
+
+                // Step 2: Apply brightness in linear space
+                n = n * Math.pow(2, exposureStops);
+
+                // Step 3: Apply output gamma - raise to 1/gammaOut power
+                n = Math.pow(n, 1.0 / gammaOut);
+
                 n = Math.max(0, Math.min(1, n));
             }
             const v = Math.round(n * 255);
@@ -224,7 +233,8 @@ export class NpyProcessor {
                 samplesPerPixel: 1,
                 bitsPerSample: 32,
                 sampleFormat: 3,
-                formatLabel
+                formatLabel,
+                formatType: 'npy' // For per-format settings
             }
         });
     }

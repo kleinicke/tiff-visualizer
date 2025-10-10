@@ -23,6 +23,9 @@ export interface ImageSettings {
 	brightness: BrightnessSettings;
 }
 
+// Image format types for per-format settings
+export type ImageFormatType = 'png' | 'ppm' | 'tiff-float' | 'tiff-int' | 'pfm' | 'npy';
+
 export interface ImageStats {
 	min: number;
 	max: number;
@@ -100,6 +103,10 @@ export class AppStateManager {
 		visibleEntries: new Set()
 	};
 
+	// Per-format settings cache
+	private _formatSettingsCache: Map<ImageFormatType, ImageSettings> = new Map();
+	private _currentFormat: ImageFormatType | undefined;
+
 	// Getters for readonly access
 	public get imageSettings(): Readonly<ImageSettings> {
 		return this._imageSettings;
@@ -168,6 +175,68 @@ export class AppStateManager {
 			this._imageSettings.brightness.offset = offset;
 			this._emitSettingsChanged();
 		}
+	}
+
+	// Per-format Settings Management
+	public setImageFormat(format: ImageFormatType): void {
+		// Save current settings for the previous format
+		if (this._currentFormat) {
+			this._formatSettingsCache.set(this._currentFormat, this._deepCopySettings(this._imageSettings));
+		}
+
+		this._currentFormat = format;
+
+		// Load settings for the new format
+		const cachedSettings = this._formatSettingsCache.get(format);
+		if (cachedSettings) {
+			this._imageSettings = this._deepCopySettings(cachedSettings);
+			this._emitSettingsChanged();
+		} else {
+			// Use default settings for this format
+			this._imageSettings = this._getDefaultSettingsForFormat(format);
+			this._emitSettingsChanged();
+		}
+	}
+
+	private _deepCopySettings(settings: ImageSettings): ImageSettings {
+		return {
+			normalization: { ...settings.normalization },
+			gamma: { ...settings.gamma },
+			brightness: { ...settings.brightness }
+		};
+	}
+
+	private _getDefaultSettingsForFormat(format: ImageFormatType): ImageSettings {
+		// Default settings based on format type
+		const defaults: ImageSettings = {
+			normalization: {
+				min: 0.0,
+				max: 1.0,
+				autoNormalize: false,
+				gammaMode: false
+			},
+			gamma: {
+				in: 2.2,
+				out: 2.2
+			},
+			brightness: {
+				offset: 0
+			}
+		};
+
+		// Adjust defaults based on format
+		if (format === 'tiff-float' || format === 'pfm') {
+			// TIFF float and PFM: normalize to [0, 1] range by default (assume data is in [0, 1])
+			defaults.normalization.min = 0.0;
+			defaults.normalization.max = 1.0;
+			defaults.normalization.autoNormalize = false;
+			defaults.normalization.gammaMode = false;
+		} else if (format === 'npy') {
+			// NPY: auto-normalize by default (scientific data with arbitrary range)
+			defaults.normalization.autoNormalize = true;
+		}
+
+		return defaults;
 	}
 
 	// UI State Management
