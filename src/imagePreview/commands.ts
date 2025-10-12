@@ -173,7 +173,7 @@ export function registerImagePreviewCommands(
 		const normConfig = previewManager.getNormalizationConfig();
 		
 		// Check if this is a float TIFF and not in gamma mode
-		if (currentPreview && currentPreview.isFloatTiff && !normConfig.gammaMode) {
+		if (currentPreview && currentPreview.showNormTiff && !normConfig.gammaMode) {
 			const gammaOptions = [
 				{
 					label: '$(arrow-right) Switch to Gamma/Brightness Mode',

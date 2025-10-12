@@ -229,9 +229,10 @@ export class PngProcessor {
             }
         }
 
+        // Enable normalization controls for PNG files
         this.vscode.postMessage({
-            type: 'isFloat',
-            value: false
+            type: 'showNorm',
+            value: true
         });
         this.vscode.postMessage({
             type: 'stats',
@@ -354,7 +355,8 @@ export class PngProcessor {
                     if (value > max) max = value;
                 }
             }
-            this.vscode.postMessage({ type: 'isFloat', value: false });
+            // Enable normalization controls for PNG files
+            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 

@@ -74,8 +74,8 @@ export class TiffProcessor {
 			// Send format information to VS Code
 			if (this.vscode) {
 				// Determine if this is a float TIFF or int TIFF
-				const isFloatTiff = sampleFormat === 3; // 3 = IEEE floating point
-				const formatType = isFloatTiff ? 'tiff-float' : 'tiff-int';
+				const showNormTiff = sampleFormat === 3; // 3 = IEEE floating point
+				const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
 
 				this.vscode.postMessage({
 					type: 'formatInfo',
@@ -104,8 +104,8 @@ export class TiffProcessor {
 
 			// Choose the correct typed array based on sample format and bits per sample
 			let data;
-			const isFloatFormat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (isFloatFormat) {
+			const showNormFormat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (showNormFormat) {
 				data = new Float32Array(width * height * samplesPerPixel);
 			} else if (bitsPerSample === 16) {
 				data = new Uint16Array(width * height * samplesPerPixel);
@@ -238,19 +238,18 @@ export class TiffProcessor {
 		}
 
 		// Normalize and create image data
-		const isFloat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		console.log(`[TiffProcessor] Detected float: ${isFloat}, sampleFormat:`, sampleFormat);
-		if (isFloat) { // Float data
-			if (this.vscode) {
-				console.log(`[TiffProcessor] Sending isFloat: true message`);
-				this.vscode.postMessage({ type: 'isFloat', value: true });
-			}
+		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		console.log(`[TiffProcessor] Detected float: ${showNorm}, sampleFormat:`, sampleFormat);
+
+		// Always enable normalization controls (for both float and uint)
+		if (this.vscode) {
+			console.log(`[TiffProcessor] Sending showNorm: true message (enable controls)`);
+			this.vscode.postMessage({ type: 'showNorm', value: true });
+		}
+
+		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
 		} else {
-			if (this.vscode) {
-				console.log(`[TiffProcessor] Sending isFloat: false message`);
-				this.vscode.postMessage({ type: 'isFloat', value: false });
-			}
 			imageDataArray = this._processIntegerTiff(displayRasters, width, height, settings, bitsPerSample);
 		}
 
@@ -344,19 +343,18 @@ export class TiffProcessor {
 		}
 
 		// Normalize and create image data
-		const isFloat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		console.log(`[TiffProcessor] Detected float: ${isFloat}, sampleFormat:`, sampleFormat);
-		if (isFloat) { // Float data
-			if (this.vscode) {
-				console.log(`[TiffProcessor] Sending isFloat: true message`);
-				this.vscode.postMessage({ type: 'isFloat', value: true });
-			}
+		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		console.log(`[TiffProcessor] Detected float: ${showNorm}, sampleFormat:`, sampleFormat);
+
+		// Always enable normalization controls (for both float and uint)
+		if (this.vscode) {
+			console.log(`[TiffProcessor] Sending showNorm: true message (enable controls)`);
+			this.vscode.postMessage({ type: 'showNorm', value: true });
+		}
+
+		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
 		} else {
-			if (this.vscode) {
-				console.log(`[TiffProcessor] Sending isFloat: false message`);
-				this.vscode.postMessage({ type: 'isFloat', value: false });
-			}
 			imageDataArray = this._processIntegerTiff(displayRasters, width, height, settings, bitsPerSample);
 		}
 

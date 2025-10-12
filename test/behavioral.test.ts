@@ -180,14 +180,14 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             console.log('Using img_deflate_uint8_pred2.tif as reference uint8 image');
             
             // Simulate integer image (not float)
-            stateManager.setIsFloat(false);
+            stateManager.setshowNorm(false);
             
             // Try to set float-specific modes that shouldn't affect uint8/uint16 rendering
             stateManager.setAutoNormalize(true);
             stateManager.updateNormalization(0.1, 0.9);
             
             // The state manager allows setting these, but the rendering should ignore them for integer images
-            assert.strictEqual(stateManager.uiState.isFloat, false, 'Should be marked as non-float');
+            assert.strictEqual(stateManager.uiState.showNorm, false, 'Should be marked as non-float');
             
             // For integer images, the key is that the rendering pipeline should ignore float-specific settings
             // The settings can be set, but they shouldn't affect the display
@@ -200,7 +200,7 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             console.log('Testing gamma mode with integer images');
             
             // Gamma should work for both float and integer images
-            stateManager.setIsFloat(false); // Simulate integer image
+            stateManager.setshowNorm(false); // Simulate integer image
             stateManager.setGammaMode(true);
             stateManager.updateGamma(2.0, 2.2);
             
@@ -210,7 +210,7 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             assert.strictEqual(settings.gamma.out, 2.2);
             
             // Test with float image too
-            stateManager.setIsFloat(true);
+            stateManager.setshowNorm(true);
             assert.strictEqual(settings.normalization.gammaMode, true, 'Gamma should work for float images too');
             
             console.log('✅ Gamma mode works for all image types');
@@ -226,7 +226,7 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             const manager = new AppStateManager();
             
             // Test scenario 1: Float image with manual normalization
-            manager.setIsFloat(true);
+            manager.setshowNorm(true);
             manager.setAutoNormalize(false);
             manager.setGammaMode(false);
             manager.updateNormalization(0.3, 0.7);

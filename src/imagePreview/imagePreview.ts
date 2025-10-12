@@ -17,7 +17,7 @@ export class ImagePreview extends MediaPreview {
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
 	private _isTiff: boolean = false;
-	private _isFloat: boolean = false;
+	private _showNorm: boolean = false;
 
 	// Image collection management
 	private _imageCollection: vscode.Uri[] = [];
@@ -205,8 +205,8 @@ export class ImagePreview extends MediaPreview {
 		this.render();
 	}
 
-	public get isFloatTiff(): boolean {
-		return this._isTiff && this._isFloat;
+	public get showNormTiff(): boolean {
+		return this._isTiff && this._showNorm;
 	}
 
 	public setImageSize(size: string): void {
@@ -221,8 +221,8 @@ export class ImagePreview extends MediaPreview {
 		this._imageZoom = zoom;
 	}
 
-	public setIsFloat(isFloat: boolean): void {
-		this._isFloat = isFloat;
+	public setshowNorm(showNorm: boolean): void {
+		this._showNorm = showNorm;
 	}
 
 	public get isTiff(): boolean {
@@ -418,7 +418,7 @@ export class ImagePreview extends MediaPreview {
 			return;
 		}
 
-		outputChannel.appendLine(`TIFF Visualizer: updateStatusBar - isTiff: ${this._isTiff}, isFloat: ${this._isFloat}, active: ${this._webviewEditor.active}, visible: ${this._webviewEditor.visible}`);
+		outputChannel.appendLine(`TIFF Visualizer: updateStatusBar - isTiff: ${this._isTiff}, showNorm: ${this._showNorm}, active: ${this._webviewEditor.active}, visible: ${this._webviewEditor.visible}`);
 
 		if (this._webviewEditor.active && this._webviewEditor.visible) {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
@@ -437,7 +437,7 @@ export class ImagePreview extends MediaPreview {
 			);
 			
 			// Show float controls not only for TIFF but for any float source
-			if (this._isFloat) {
+			if (this._showNorm) {
 				outputChannel.appendLine('TIFF Visualizer: Showing FLOAT TIFF controls (normalization)');
 				this._normalizationStatusBarEntry.updateNormalization(
 					settings.normalization.min, 
@@ -455,7 +455,7 @@ export class ImagePreview extends MediaPreview {
 					this._gammaStatusBarEntry.hide();
 					this._brightnessStatusBarEntry.hide();
 				}
-			} else if (this._isTiff && !this._isFloat) {
+			} else if (this._isTiff && !this._showNorm) {
 				outputChannel.appendLine('TIFF Visualizer: Showing INTEGER TIFF controls (gamma/brightness only)');
 				this._normalizationStatusBarEntry.forceHide();
 				this._gammaStatusBarEntry.show();

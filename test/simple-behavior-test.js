@@ -55,7 +55,7 @@ class TestAppStateManager {
         this._uiState = {
             zoom: 'fit',
             imageSize: undefined,
-            isFloat: false,
+            showNorm: false,
             formatInfo: undefined,
             pixelPosition: undefined
         };
@@ -128,9 +128,9 @@ class TestAppStateManager {
         }
     }
 
-    setIsFloat(isFloat) {
-        if (this._uiState.isFloat !== isFloat) {
-            this._uiState.isFloat = isFloat;
+    setshowNorm(showNorm) {
+        if (this._uiState.showNorm !== showNorm) {
+            this._uiState.showNorm = showNorm;
         }
     }
 
@@ -239,11 +239,11 @@ function testAppStateManager() {
     
     // Test UI state
     console.log('  🖥️  Testing UI state management...');
-    manager.setIsFloat(true);
+    manager.setshowNorm(true);
     manager.setImageSize('1024x768');
     manager.setImageZoom('2x');
     
-    assert.strictEqual(manager.uiState.isFloat, true, 'Should track float state');
+    assert.strictEqual(manager.uiState.showNorm, true, 'Should track float state');
     assert.strictEqual(manager.uiState.imageSize, '1024x768', 'Should track image size');
     assert.strictEqual(manager.uiState.zoom, '2x', 'Should track zoom');
     console.log('    ✅ UI state management works correctly');

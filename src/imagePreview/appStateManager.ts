@@ -34,7 +34,7 @@ export interface ImageStats {
 export interface UIState {
 	zoom: any;
 	imageSize: string | undefined;
-	isFloat: boolean;
+	showNorm: boolean;
 	formatInfo: any;
 	pixelPosition: any;
 }
@@ -91,7 +91,7 @@ export class AppStateManager {
 	private _uiState: UIState = {
 		zoom: 'fit',
 		imageSize: undefined,
-		isFloat: false,
+		showNorm: false,
 		formatInfo: undefined,
 		pixelPosition: undefined
 	};
@@ -232,8 +232,14 @@ export class AppStateManager {
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.gammaMode = false;
 		} else if (format === 'npy') {
-			// NPY: auto-normalize by default (scientific data with arbitrary range)
+			// NPY: auto-normalize by default (for float data; uint will override to gamma mode)
+			// Note: NPY uint images will detect and switch to gamma mode automatically
 			defaults.normalization.autoNormalize = true;
+			defaults.normalization.gammaMode = false;
+		} else if (format === 'ppm' || format === 'png') {
+			// PPM/PGM/PNG: uint formats, default to gamma mode
+			defaults.normalization.gammaMode = true;
+			defaults.normalization.autoNormalize = false;
 		}
 
 		return defaults;
@@ -254,9 +260,9 @@ export class AppStateManager {
 		}
 	}
 
-	public setIsFloat(isFloat: boolean): void {
-		if (this._uiState.isFloat !== isFloat) {
-			this._uiState.isFloat = isFloat;
+	public setshowNorm(showNorm: boolean): void {
+		if (this._uiState.showNorm !== showNorm) {
+			this._uiState.showNorm = showNorm;
 			this._emitUIChanged();
 		}
 	}

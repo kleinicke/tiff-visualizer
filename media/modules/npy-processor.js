@@ -9,7 +9,7 @@ export class NpyProcessor {
     constructor(settingsManager, vscode) {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
-        this._lastRaw = null; // { width, height, data: Float32Array }
+        this._lastRaw = null; // { width, height, data: Float32Array, dtype: string, showNorm: boolean }
     }
 
     async processNpy(src) {
@@ -19,8 +19,8 @@ export class NpyProcessor {
 
         // NPZ (ZIP) signature 0x04034b50
         if (buffer.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50) {
-            const { data, width, height } = this._parseNpz(buffer);
-            this._lastRaw = { width, height, data };
+            const { data, width, height, dtype, showNorm, channels } = this._parseNpz(buffer);
+            this._lastRaw = { width, height, data, dtype, showNorm, channels };
             this._postFormatInfo(width, height, 'NPY');
             const imageData = this._toImageDataFloat(data, width, height);
             const canvas = document.createElement('canvas');
@@ -31,8 +31,8 @@ export class NpyProcessor {
             return { canvas, imageData };
         }
 
-        const { data, width, height } = this._parseNpy(buffer);
-        this._lastRaw = { width, height, data };
+        const { data, width, height, dtype, showNorm, channels } = this._parseNpy(buffer);
+        this._lastRaw = { width, height, data, dtype, showNorm, channels };
         this._postFormatInfo(width, height, 'NPY');
         const imageData = this._toImageDataFloat(data, width, height);
         const canvas = document.createElement('canvas');
@@ -68,6 +68,10 @@ export class NpyProcessor {
         const dtypeMatch = header.match(/'descr':\s*'([^']+)'/);
         if (!dtypeMatch) throw new Error('NPY missing dtype');
         const dtype = dtypeMatch[1];
+
+        // Determine if this is a float type
+        const showNorm = dtype.includes('f');
+
         let height, width, channels = 1;
         if (dims.length === 2) {
             height = dims[0];
@@ -118,11 +122,15 @@ export class NpyProcessor {
         let data;
         if (channels === 1) {
             data = raw;
+        } else if (channels === 3 || channels === 4) {
+            // Keep RGB/RGBA data intact
+            data = raw;
         } else {
+            // For other channel counts, take first channel only
             data = new Float32Array(width * height);
             for (let i = 0; i < width * height; i++) data[i] = raw[i * channels + 0];
         }
-        return { data, width, height };
+        return { data, width, height, dtype, showNorm, channels };
     }
 
     _parseNpz(arrayBuffer) {
@@ -140,8 +148,8 @@ export class NpyProcessor {
             const dataOffset = offset + 30 + nameLen + extraLen;
             if (fileName.endsWith('.npy') && comp === 0) {
                 const slice = arrayBuffer.slice(dataOffset, dataOffset + compSize);
-                const { data, width, height } = this._parseNpy(slice);
-                arrays[fileName.replace('.npy', '')] = { data, width, height };
+                const { data, width, height, dtype, showNorm, channels } = this._parseNpy(slice);
+                arrays[fileName.replace('.npy', '')] = { data, width, height, dtype, showNorm, channels };
             }
             offset = dataOffset + compSize;
         }
@@ -151,10 +159,12 @@ export class NpyProcessor {
         let pick = keys.find(k => /depth|dispar|inv|z|range/i.test(k));
         if (!pick) pick = keys[0];
         const a = arrays[pick];
-        return { data: a.data, width: a.width, height: a.height };
+        return { data: a.data, width: a.width, height: a.height, dtype: a.dtype, showNorm: a.showNorm, channels: a.channels };
     }
 
     _toImageDataFloat(data, width, height) {
+        const channels = this._lastRaw?.channels || 1;
+
         // Compute min/max for normalization
         let min = Infinity, max = -Infinity;
         for (let i = 0; i < data.length; i++) {
@@ -165,43 +175,132 @@ export class NpyProcessor {
         }
         const settings = this.settingsManager.settings;
         let normMin, normMax;
+
+        // Default to gamma mode for uint types, auto-normalize for float types
+        const isUintType = this._lastRaw && !this._lastRaw.showNorm;
+        const defaultToGammaMode = isUintType;
+
         if (settings.normalization && settings.normalization.autoNormalize) {
             normMin = min; normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode) {
-            normMin = 0; normMax = 1;
-        } else if (settings.normalization) {
+        } else if (settings.normalization && settings.normalization.gammaMode !== undefined ? settings.normalization.gammaMode : defaultToGammaMode) {
+            // For gamma mode (default for uint), use appropriate max value based on dtype
+            normMin = 0;
+            if (this._lastRaw && this._lastRaw.showNorm) {
+                // Float types: normalize to 0-1
+                normMax = 1;
+            } else if (this._lastRaw && this._lastRaw.dtype) {
+                // Integer types: use max value for the bit depth
+                const dtype = this._lastRaw.dtype;
+                if (dtype.includes('u1') || dtype.includes('i1')) {
+                    // uint8 or int8
+                    normMax = dtype.includes('u') ? 255 : 127;
+                } else if (dtype.includes('u2') || dtype.includes('i2')) {
+                    // uint16 or int16
+                    normMax = dtype.includes('u') ? 65535 : 32767;
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    // uint32 or int32
+                    normMax = dtype.includes('u') ? 4294967295 : 2147483647;
+                } else {
+                    // Default to max value found in data
+                    normMax = max;
+                }
+            } else {
+                // Fallback to 0-1 for unknown types
+                normMax = 1;
+            }
+        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
             normMin = settings.normalization.min; normMax = settings.normalization.max;
         } else {
-            normMin = min; normMax = max;
+            // Default behavior
+            if (defaultToGammaMode) {
+                // For uint, use gamma mode by default
+                normMin = 0;
+                const dtype = this._lastRaw?.dtype || '';
+                if (dtype.includes('u1') || dtype.includes('i1')) {
+                    normMax = dtype.includes('u') ? 255 : 127;
+                } else if (dtype.includes('u2') || dtype.includes('i2')) {
+                    normMax = dtype.includes('u') ? 65535 : 32767;
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    normMax = dtype.includes('u') ? 4294967295 : 2147483647;
+                } else {
+                    normMax = max;
+                }
+            } else {
+                // For float, auto-normalize
+                normMin = min; normMax = max;
+            }
         }
         const range = normMax - normMin || 1;
         const out = new Uint8ClampedArray(width * height * 4);
+
+        // Apply gamma correction by default for uint types
+        const applyGamma = settings.normalization?.gammaMode !== undefined ? settings.normalization.gammaMode : defaultToGammaMode;
+
         for (let i = 0; i < width * height; i++) {
-            let n = (data[i] - normMin) / range;
-            n = Math.max(0, Math.min(1, n));
+            let r, g, b, a = 255;
+
+            if (channels === 3) {
+                // RGB data
+                const srcIdx = i * 3;
+                r = (data[srcIdx + 0] - normMin) / range;
+                g = (data[srcIdx + 1] - normMin) / range;
+                b = (data[srcIdx + 2] - normMin) / range;
+            } else if (channels === 4) {
+                // RGBA data
+                const srcIdx = i * 4;
+                r = (data[srcIdx + 0] - normMin) / range;
+                g = (data[srcIdx + 1] - normMin) / range;
+                b = (data[srcIdx + 2] - normMin) / range;
+                a = Math.round(Math.max(0, Math.min(1, data[srcIdx + 3] / normMax)) * 255);
+            } else {
+                // Grayscale data
+                let n = (data[i] - normMin) / range;
+                r = g = b = n;
+            }
+
+            // Clamp to 0-1 range
+            r = Math.max(0, Math.min(1, r));
+            g = Math.max(0, Math.min(1, g));
+            b = Math.max(0, Math.min(1, b));
+
+            // Apply gamma and brightness correction
             // Correct order: remove input gamma → apply brightness → apply output gamma
-            if (settings.normalization && settings.normalization.gammaMode) {
+            if (applyGamma) {
                 const gammaIn = settings.gamma?.in ?? 1.0;
                 const gammaOut = settings.gamma?.out ?? 1.0;
                 const exposureStops = settings.brightness?.offset ?? 0;
 
                 // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                n = Math.pow(n, gammaIn);
+                r = Math.pow(r, gammaIn);
+                g = Math.pow(g, gammaIn);
+                b = Math.pow(b, gammaIn);
 
                 // Step 2: Apply brightness in linear space
-                n = n * Math.pow(2, exposureStops);
+                const brightnessFactor = Math.pow(2, exposureStops);
+                r = r * brightnessFactor;
+                g = g * brightnessFactor;
+                b = b * brightnessFactor;
 
                 // Step 3: Apply output gamma - raise to 1/gammaOut power
-                n = Math.pow(n, 1.0 / gammaOut);
+                r = Math.pow(r, 1.0 / gammaOut);
+                g = Math.pow(g, 1.0 / gammaOut);
+                b = Math.pow(b, 1.0 / gammaOut);
 
-                n = Math.max(0, Math.min(1, n));
+                // Clamp after gamma correction
+                r = Math.max(0, Math.min(1, r));
+                g = Math.max(0, Math.min(1, g));
+                b = Math.max(0, Math.min(1, b));
             }
-            const v = Math.round(n * 255);
+
             const p = i * 4;
-            out[p] = v; out[p + 1] = v; out[p + 2] = v; out[p + 3] = 255;
+            out[p] = Math.round(r * 255);
+            out[p + 1] = Math.round(g * 255);
+            out[p + 2] = Math.round(b * 255);
+            out[p + 3] = a;
         }
         if (this.vscode) {
-            this.vscode.postMessage({ type: 'isFloat', value: true });
+            // Always enable normalization controls for NPY files
+            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
         return new ImageData(out, width, height);
@@ -209,18 +308,72 @@ export class NpyProcessor {
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data } = this._lastRaw;
+        const { width, height, data, channels } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
-        const idx = y * width + x;
-        const value = data[idx];
-        if (Number.isFinite(value)) {
-            return value.toPrecision(4);
+
+        const pixelIdx = y * width + x;
+
+        if (channels === 3) {
+            // RGB data
+            const srcIdx = pixelIdx * 3;
+            const r = data[srcIdx + 0];
+            const g = data[srcIdx + 1];
+            const b = data[srcIdx + 2];
+            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
+                return `RGB(${r.toPrecision(4)}, ${g.toPrecision(4)}, ${b.toPrecision(4)})`;
+            }
+        } else if (channels === 4) {
+            // RGBA data
+            const srcIdx = pixelIdx * 4;
+            const r = data[srcIdx + 0];
+            const g = data[srcIdx + 1];
+            const b = data[srcIdx + 2];
+            const a = data[srcIdx + 3];
+            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && Number.isFinite(a)) {
+                return `RGBA(${r.toPrecision(4)}, ${g.toPrecision(4)}, ${b.toPrecision(4)}, ${a.toPrecision(4)})`;
+            }
+        } else {
+            // Grayscale data
+            const value = data[pixelIdx];
+            if (Number.isFinite(value)) {
+                return value.toPrecision(4);
+            }
         }
         return '';
     }
 
     _postFormatInfo(width, height, formatLabel) {
         if (!this.vscode) return;
+
+        // Determine actual bit depth and sample format from dtype
+        let bitsPerSample = 32;
+        let sampleFormat = 3; // Float
+
+        if (this._lastRaw && this._lastRaw.dtype) {
+            const dtype = this._lastRaw.dtype;
+
+            // Determine sample format: 1=uint, 2=int, 3=float
+            if (dtype.includes('f')) {
+                sampleFormat = 3; // Float
+                if (dtype.includes('f4')) bitsPerSample = 32;
+                else if (dtype.includes('f8')) bitsPerSample = 64;
+            } else if (dtype.includes('u')) {
+                sampleFormat = 1; // Unsigned int
+                if (dtype.includes('u1')) bitsPerSample = 8;
+                else if (dtype.includes('u2')) bitsPerSample = 16;
+                else if (dtype.includes('u4')) bitsPerSample = 32;
+                else if (dtype.includes('u8')) bitsPerSample = 64;
+            } else if (dtype.includes('i')) {
+                sampleFormat = 2; // Signed int
+                if (dtype.includes('i1')) bitsPerSample = 8;
+                else if (dtype.includes('i2')) bitsPerSample = 16;
+                else if (dtype.includes('i4')) bitsPerSample = 32;
+                else if (dtype.includes('i8')) bitsPerSample = 64;
+            }
+        }
+
+        const channels = this._lastRaw?.channels || 1;
+
         this.vscode.postMessage({
             type: 'formatInfo',
             value: {
@@ -228,11 +381,11 @@ export class NpyProcessor {
                 height,
                 compression: '1',
                 predictor: 3,
-                photometricInterpretation: undefined,
+                photometricInterpretation: channels >= 3 ? 2 : 1,
                 planarConfig: 1,
-                samplesPerPixel: 1,
-                bitsPerSample: 32,
-                sampleFormat: 3,
+                samplesPerPixel: channels,
+                bitsPerSample,
+                sampleFormat,
                 formatLabel,
                 formatType: 'npy' // For per-format settings
             }

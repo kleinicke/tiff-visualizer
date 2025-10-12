@@ -23,15 +23,12 @@ export class PpmProcessor {
 
         // PPM stores pixels from top-to-bottom, which is the correct orientation for canvas
         // No flipping needed unless specifically required by the format
-        
+
         this._lastRaw = { width, height, data: displayData, maxval, channels };
         this._postFormatInfo(width, height, channels, format, maxval);
-        
-        // For PGM files, treat as float-like to enable normalization controls
-        const isPgm = channels === 1;
-        const imageData = isPgm ? 
-            this._toImageDataWithNormalization(displayData, width, height, maxval, channels) :
-            this._toImageData(displayData, width, height, maxval, channels);
+
+        // All PPM/PGM files are uint, so use gamma mode approach for proper normalization
+        const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels);
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
@@ -151,9 +148,19 @@ export class PpmProcessor {
             }
         } else {
             // Binary format (P5/P6)
+            // PPM spec: after maxval, there is exactly ONE whitespace character (usually newline),
+            // then the binary data starts immediately
+            // Skip the single whitespace separator
+            if (offset < uint8Array.length) {
+                const char = uint8Array[offset];
+                if (char === 32 || char === 9 || char === 10 || char === 13) {
+                    offset++;
+                }
+            }
+
             const bytesPerValue = use16bit ? 2 : 1;
             const expectedBytes = totalValues * bytesPerValue;
-            
+
             if (offset + expectedBytes > uint8Array.length) {
                 throw new Error('Insufficient data for binary PPM/PGM');
             }
@@ -245,9 +252,8 @@ export class PpmProcessor {
                 if (value < min) min = value;
                 if (value > max) max = value;
             }
-            // Mark PGM files as "float" to enable normalization controls
-            const isPgm = this._lastRaw && this._lastRaw.channels === 1;
-            this.vscode.postMessage({ type: 'isFloat', value: isPgm });
+            // Mark all PPM/PGM as "float" to enable normalization controls
+            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 
@@ -265,64 +271,90 @@ export class PpmProcessor {
 
         const settings = this.settingsManager.settings;
         let normMin, normMax;
-        
-        // Apply auto-normalization by default for PGM files
+
+        // PPM/PGM files are always uint, so default to gamma mode (0-maxval range)
+        // unless user explicitly requests auto-normalization or custom range
         if (settings.normalization && settings.normalization.autoNormalize) {
+            // User explicitly requested auto-normalize
             normMin = min;
             normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode) {
-            // In gamma mode, normalize to 0-1 range based on maxval
-            normMin = 0;
-            normMax = maxval;
-        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
-            // Use user-specified range
+        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined) && !settings.normalization.gammaMode) {
+            // User specified custom range AND gamma mode is not enabled
+            // (if gammaMode is enabled, we should use maxval instead)
             normMin = settings.normalization.min;
             normMax = settings.normalization.max;
         } else {
-            // Default: auto-normalize to full data range
-            normMin = min;
-            normMax = max;
+            // Default for all PPM/PGM: use gamma mode with 0-maxval range
+            normMin = 0;
+            normMax = maxval;
         }
 
         const range = normMax - normMin || 1;
         const out = new Uint8ClampedArray(width * height * 4);
-        
+
         for (let i = 0; i < width * height; i++) {
-            let normalizedValue = (data[i] - normMin) / range;
-            normalizedValue = Math.max(0, Math.min(1, normalizedValue));
-            
-            // Apply gamma and brightness if in gamma mode
+            let r, g, b;
+
+            if (channels === 3) {
+                // RGB data (PPM)
+                const srcIdx = i * 3;
+                r = (data[srcIdx + 0] - normMin) / range;
+                g = (data[srcIdx + 1] - normMin) / range;
+                b = (data[srcIdx + 2] - normMin) / range;
+
+                // Clamp to 0-1 range
+                r = Math.max(0, Math.min(1, r));
+                g = Math.max(0, Math.min(1, g));
+                b = Math.max(0, Math.min(1, b));
+            } else {
+                // Grayscale data (PGM)
+                let normalizedValue = (data[i] - normMin) / range;
+                normalizedValue = Math.max(0, Math.min(1, normalizedValue));
+                r = g = b = normalizedValue;
+            }
+
+            // Apply gamma and brightness if in gamma mode (default for PPM/PGM)
             // Correct order: remove input gamma → apply brightness → apply output gamma
-            if (settings.normalization && settings.normalization.gammaMode) {
+            const applyGamma = !settings.normalization || settings.normalization.gammaMode !== false;
+            if (applyGamma) {
                 const gammaIn = settings.gamma?.in ?? 1.0;
                 const gammaOut = settings.gamma?.out ?? 1.0;
                 const exposureStops = settings.brightness?.offset ?? 0;
 
                 // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                normalizedValue = Math.pow(normalizedValue, gammaIn);
+                r = Math.pow(r, gammaIn);
+                g = Math.pow(g, gammaIn);
+                b = Math.pow(b, gammaIn);
 
                 // Step 2: Apply brightness in linear space
-                normalizedValue = normalizedValue * Math.pow(2, exposureStops);
+                const brightnessFactor = Math.pow(2, exposureStops);
+                r = r * brightnessFactor;
+                g = g * brightnessFactor;
+                b = b * brightnessFactor;
 
                 // Step 3: Apply output gamma - raise to 1/gammaOut power
-                normalizedValue = Math.pow(normalizedValue, 1.0 / gammaOut);
+                r = Math.pow(r, 1.0 / gammaOut);
+                g = Math.pow(g, 1.0 / gammaOut);
+                b = Math.pow(b, 1.0 / gammaOut);
 
-                normalizedValue = Math.max(0, Math.min(1, normalizedValue));
+                // Clamp after gamma correction
+                r = Math.max(0, Math.min(1, r));
+                g = Math.max(0, Math.min(1, g));
+                b = Math.max(0, Math.min(1, b));
             }
-            
-            const pixelValue = Math.round(normalizedValue * 255);
+
             const p = i * 4;
-            out[p] = pixelValue;     // R
-            out[p + 1] = pixelValue; // G
-            out[p + 2] = pixelValue; // B
-            out[p + 3] = 255;        // A
+            out[p] = Math.round(r * 255);     // R
+            out[p + 1] = Math.round(g * 255); // G
+            out[p + 2] = Math.round(b * 255); // B
+            out[p + 3] = 255;                 // A
         }
 
         // Send stats to VS Code
         if (this.vscode) {
-            // Mark PGM files as "float" to enable normalization controls
-            const isPgm = this._lastRaw && this._lastRaw.channels === 1;
-            this.vscode.postMessage({ type: 'isFloat', value: isPgm });
+            // Mark all PPM/PGM as "float" to enable normalization controls
+            // (even though they're uint, users should be able to switch between gamma/auto-normalize/custom)
+            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 
@@ -330,12 +362,12 @@ export class PpmProcessor {
     }
 
     /**
-     * Re-render PGM with current settings (for real-time updates)
+     * Re-render PPM/PGM with current settings (for real-time updates)
      */
     renderPgmWithSettings() {
-        if (!this._lastRaw || this._lastRaw.channels !== 1) return null;
-        const { width, height, data, maxval } = this._lastRaw;
-        return this._toImageDataWithNormalization(data, width, height, maxval);
+        if (!this._lastRaw) return null;
+        const { width, height, data, maxval, channels } = this._lastRaw;
+        return this._toImageDataWithNormalization(data, width, height, maxval, channels);
     }
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
