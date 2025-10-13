@@ -19,7 +19,7 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 	private _formatInfo: FormatInfo | undefined;
 
 	constructor() {
-		super('status.tiffVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 110 /* to the left of zoom (102) */);
+		super('status.tiffVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 102 /* to the right of zoom (110) */);
 		this.updateTooltip();
 	}
 

@@ -23,7 +23,7 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
 	public show(autoNormalize?: boolean, gammaMode?: boolean) {
 		let text = '';
-		
+
 		if (autoNormalize) {
 			// Show the actual image range when auto-normalizing
 			text = `Auto-Norm: [${(this._imageRealMin ?? 0).toFixed(2)}, ${(this._imageRealMax ?? 1).toFixed(2)}]`;
@@ -34,17 +34,20 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 			text = `Norm: [${(this._normMin ?? 0).toFixed(2)}, ${(this._normMax ?? 1).toFixed(2)}]`;
 		}
 
-		// Always show image stats when available (unless in auto-normalize mode where it would be redundant)
-		if (this._imageRealMin !== undefined && this._imageRealMax !== undefined && !autoNormalize) {
-			text = `Image: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}] | ${text}`;
+		// Build tooltip with image range information
+		let tooltip = '';
+		if (this._imageRealMin !== undefined && this._imageRealMax !== undefined) {
+			tooltip = `Image Range: [${this._imageRealMin.toFixed(2)}, ${this._imageRealMax.toFixed(2)}]\n\n`;
 		}
 
-		const tooltip = autoNormalize 
-			? 'Auto-normalize enabled - Click to change normalization settings'
-			: gammaMode
-			? 'Gamma/Brightness mode enabled - Click to change normalization settings'
-			: 'Click to set custom normalization range for floating-point images';
-		
+		if (autoNormalize) {
+			tooltip += 'Auto-normalize enabled - Click to change normalization settings';
+		} else if (gammaMode) {
+			tooltip += 'Gamma/Brightness mode enabled - Click to change normalization settings';
+		} else {
+			tooltip += 'Click to set custom normalization range for floating-point images';
+		}
+
 		this.showItem(this, text);
 		this.entry.tooltip = tooltip;
 	}
