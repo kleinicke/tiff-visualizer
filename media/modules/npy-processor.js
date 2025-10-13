@@ -2,6 +2,32 @@
 "use strict";
 
 /**
+ * Convert IEEE 754 half-precision (float16) to single-precision (float32)
+ * @param {number} uint16 - The 16-bit representation
+ * @returns {number} The float32 value
+ */
+function float16ToFloat32(uint16) {
+    const sign = (uint16 & 0x8000) >> 15;
+    const exponent = (uint16 & 0x7C00) >> 10;
+    const fraction = uint16 & 0x03FF;
+
+    if (exponent === 0) {
+        // Subnormal or zero
+        if (fraction === 0) {
+            return sign ? -0.0 : 0.0;
+        }
+        // Subnormal numbers
+        return (sign ? -1 : 1) * Math.pow(2, -14) * (fraction / 1024);
+    } else if (exponent === 0x1F) {
+        // Infinity or NaN
+        return fraction ? NaN : (sign ? -Infinity : Infinity);
+    }
+
+    // Normalized number
+    return (sign ? -1 : 1) * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
+}
+
+/**
  * NPY/NPZ Processor for TIFF Visualizer
  * Parses NumPy .npy and .npz files and renders them to ImageData
  */
@@ -103,6 +129,19 @@ export class NpyProcessor {
             const src = new Float64Array(arrayBuffer, off, elems);
             raw = new Float32Array(elems);
             for (let i = 0; i < elems; i++) raw[i] = src[i];
+        } else if (dtype.includes('f2')) {
+            // Float16 (half precision) - JavaScript doesn't have native Float16Array
+            // We need to decode manually
+            const bytes = new Uint8Array(arrayBuffer, off, elems * 2);
+            const little = dtype.startsWith('<') || dtype.startsWith('=');
+            raw = new Float32Array(elems);
+            for (let i = 0; i < elems; i++) {
+                const p = i * 2;
+                const uint16 = little ?
+                    bytes[p] | (bytes[p + 1] << 8) :
+                    (bytes[p] << 8) | bytes[p + 1];
+                raw[i] = float16ToFloat32(uint16);
+            }
         } else {
             // Fallback for integers
             const bytes = parseInt(dtype.slice(-1), 10);
@@ -355,7 +394,8 @@ export class NpyProcessor {
             // Determine sample format: 1=uint, 2=int, 3=float
             if (dtype.includes('f')) {
                 sampleFormat = 3; // Float
-                if (dtype.includes('f4')) bitsPerSample = 32;
+                if (dtype.includes('f2')) bitsPerSample = 16;
+                else if (dtype.includes('f4')) bitsPerSample = 32;
                 else if (dtype.includes('f8')) bitsPerSample = 64;
             } else if (dtype.includes('u')) {
                 sampleFormat = 1; // Unsigned int
@@ -374,6 +414,14 @@ export class NpyProcessor {
 
         const channels = this._lastRaw?.channels || 1;
 
+        // Determine specific NPY format type for per-format settings
+        let formatType = 'npy';
+        if (sampleFormat === 3) {
+            formatType = 'npy-float';
+        } else if (sampleFormat === 1 || sampleFormat === 2) {
+            formatType = 'npy-uint';
+        }
+
         this.vscode.postMessage({
             type: 'formatInfo',
             value: {
@@ -387,7 +435,7 @@ export class NpyProcessor {
                 bitsPerSample,
                 sampleFormat,
                 formatLabel,
-                formatType: 'npy' // For per-format settings
+                formatType // For per-format settings: 'npy-float' or 'npy-uint'
             }
         });
     }

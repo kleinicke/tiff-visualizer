@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "Float and TIFF Visualizer",
   "description": "Analyze float and int TIFF images, also works with single channel npy, png, jpg, ppm, pfm and pgm images.",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
@@ -151,6 +151,11 @@
       {
         "command": "tiffVisualizer.openComparisonPanel",
         "title": "Open Image Comparison Panel",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.resetAllSettings",
+        "title": "Reset All Settings to Defaults",
         "category": "TIFF Visualizer"
       }
     ],

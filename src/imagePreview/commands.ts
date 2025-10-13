@@ -812,8 +812,27 @@ export function registerImagePreviewCommands(
 		// Get or create comparison panel and add current image
 		const panel = ComparisonPanel.create(context.extensionUri);
 		panel.addImage(activePreview.resource);
-		
+
 		vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetAllSettings', async () => {
+		const choice = await vscode.window.showWarningMessage(
+			'Reset all TIFF Visualizer settings to defaults? This will clear all cached normalization, gamma, and brightness settings for all image formats.',
+			{ modal: true },
+			'Reset All',
+			'Cancel'
+		);
+
+		if (choice === 'Reset All') {
+			previewManager.appStateManager.clearAllCaches();
+			previewManager.appStateManager.resetToDefaults();
+
+			// Refresh all open previews to apply default settings
+			previewManager.updateAllPreviews();
+
+			vscode.window.showInformationMessage('All TIFF Visualizer settings have been reset to defaults.');
+		}
 	}));
 
 	return vscode.Disposable.from(...disposables);

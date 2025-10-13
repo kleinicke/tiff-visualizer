@@ -24,7 +24,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'ppm' | 'tiff-float' | 'tiff-int' | 'pfm' | 'npy';
+export type ImageFormatType = 'png' | 'ppm' | 'tiff-float' | 'tiff-int' | 'pfm' | 'npy' | 'npy-float' | 'npy-uint';
 
 export interface ImageStats {
 	min: number;
@@ -179,21 +179,34 @@ export class AppStateManager {
 
 	// Per-format Settings Management
 	public setImageFormat(format: ImageFormatType): void {
+		console.log(`[AppStateManager] setImageFormat called with format: ${format}`);
+
 		// Save current settings for the previous format
 		if (this._currentFormat) {
+			console.log(`[AppStateManager] Saving settings for previous format: ${this._currentFormat}`);
 			this._formatSettingsCache.set(this._currentFormat, this._deepCopySettings(this._imageSettings));
 		}
 
 		this._currentFormat = format;
 
+		// Invalidate old generic 'npy' cache if we're loading a specific npy format
+		// This ensures we use the new correct defaults for npy-float vs npy-uint
+		if ((format === 'npy-float' || format === 'npy-uint') && this._formatSettingsCache.has('npy')) {
+			console.log(`[AppStateManager] Invalidating old 'npy' cache for specific format: ${format}`);
+			this._formatSettingsCache.delete('npy');
+		}
+
 		// Load settings for the new format
 		const cachedSettings = this._formatSettingsCache.get(format);
 		if (cachedSettings) {
+			console.log(`[AppStateManager] Using cached settings for format: ${format}`, cachedSettings);
 			this._imageSettings = this._deepCopySettings(cachedSettings);
 			this._emitSettingsChanged();
 		} else {
 			// Use default settings for this format
-			this._imageSettings = this._getDefaultSettingsForFormat(format);
+			const defaults = this._getDefaultSettingsForFormat(format);
+			console.log(`[AppStateManager] Using default settings for format: ${format}`, defaults);
+			this._imageSettings = defaults;
 			this._emitSettingsChanged();
 		}
 	}
@@ -225,17 +238,14 @@ export class AppStateManager {
 		};
 
 		// Adjust defaults based on format
-		if (format === 'tiff-float' || format === 'pfm') {
-			// TIFF float and PFM: normalize to [0, 1] range by default (assume data is in [0, 1])
-			defaults.normalization.min = 0.0;
-			defaults.normalization.max = 1.0;
-			defaults.normalization.autoNormalize = false;
-			defaults.normalization.gammaMode = false;
-		} else if (format === 'npy') {
-			// NPY: auto-normalize by default (for float data; uint will override to gamma mode)
-			// Note: NPY uint images will detect and switch to gamma mode automatically
+		if (format === 'tiff-float' || format === 'pfm' || format === 'npy-float') {
+			// TIFF float, PFM, and NPY float: auto-normalize by default
 			defaults.normalization.autoNormalize = true;
 			defaults.normalization.gammaMode = false;
+		} else if (format === 'npy' || format === 'npy-uint') {
+			// NPY with unknown/uint type: use gamma mode by default
+			defaults.normalization.gammaMode = true;
+			defaults.normalization.autoNormalize = false;
 		} else if (format === 'ppm' || format === 'png') {
 			// PPM/PGM/PNG: uint formats, default to gamma mode
 			defaults.normalization.gammaMode = true;
@@ -338,6 +348,29 @@ export class AppStateManager {
 
 	private _emitUIChanged(): void {
 		this._onDidChangeUI.fire(this._uiState);
+	}
+
+	// Cache Management
+	public clearAllCaches(): void {
+		this._formatSettingsCache.clear();
+	}
+
+	public resetToDefaults(format?: ImageFormatType): void {
+		if (format) {
+			// Reset specific format
+			this._formatSettingsCache.delete(format);
+			if (this._currentFormat === format) {
+				this._imageSettings = this._getDefaultSettingsForFormat(format);
+				this._emitSettingsChanged();
+			}
+		} else {
+			// Reset all
+			this._formatSettingsCache.clear();
+			if (this._currentFormat) {
+				this._imageSettings = this._getDefaultSettingsForFormat(this._currentFormat);
+				this._emitSettingsChanged();
+			}
+		}
 	}
 
 	// Disposal
