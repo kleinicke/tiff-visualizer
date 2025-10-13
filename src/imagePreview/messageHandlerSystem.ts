@@ -223,11 +223,15 @@ export class FormatInfoMessageHandler implements MessageHandler<FormatInfoMessag
 	readonly type = 'formatInfo';
 
 	handle(message: FormatInfoMessage, context: HandlerContext): void {
+		console.log('[FormatInfoMessageHandler] Received formatInfo message:', message.value);
 		context.appStateManager.setFormatInfo(message.value);
 
 		// Set the format type for per-format settings
 		if (message.value && message.value.formatType) {
+			console.log('[FormatInfoMessageHandler] Setting format type:', message.value.formatType);
 			context.appStateManager.setImageFormat(message.value.formatType);
+		} else {
+			console.log('[FormatInfoMessageHandler] WARNING: No formatType in message!');
 		}
 
 		if (context.preview.isTiff && context.preview.getSizeStatusBarEntry) {

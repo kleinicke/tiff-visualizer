@@ -110,8 +110,18 @@ class StatsMessageHandler implements MessageHandler {
 
 class FormatInfoMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
+		console.log('[FormatInfoMessageHandler] Received formatInfo:', message.value);
+
 		// Accept format info from any source (TIFF and non-TIFF processors)
 		preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
+
+		// Set the format type for per-format settings
+		if (message.value && message.value.formatType) {
+			console.log('[FormatInfoMessageHandler] Setting image format:', message.value.formatType);
+			preview.getManager().appStateManager.setImageFormat(message.value.formatType);
+		} else {
+			console.log('[FormatInfoMessageHandler] WARNING: No formatType in message!');
+		}
 	}
 }
 

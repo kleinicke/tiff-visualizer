@@ -83,7 +83,7 @@ export class ImagePreview extends MediaPreview {
 		this._register(this._manager.settingsManager.onDidChangeSettings((settings) => {
 			// Get image-specific settings
 			const imageSettings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
-			
+
 			// Update status bar entries with new values
 			this._gammaStatusBarEntry.updateGamma(imageSettings.gamma.in, imageSettings.gamma.out);
 			this._brightnessStatusBarEntry.updateBrightness(imageSettings.brightness.offset);
@@ -96,9 +96,34 @@ export class ImagePreview extends MediaPreview {
 				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
 				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
-			
+
 			// Send targeted updates to webview instead of full reload
 			this.sendSettingsUpdate(imageSettings);
+			this.updateStatusBar();
+		}));
+
+		// Subscribe to appStateManager settings changes (for format-specific defaults)
+		this._register(this._manager.appStateManager.onDidChangeSettings((settings) => {
+			console.log('[ImagePreview] appStateManager settings changed:', settings);
+			console.log('[ImagePreview]   normalization:', JSON.stringify(settings.normalization));
+
+			// Update status bar entries with new values
+			this._gammaStatusBarEntry.updateGamma(settings.gamma.in, settings.gamma.out);
+			this._brightnessStatusBarEntry.updateBrightness(settings.brightness.offset);
+
+			// Create full settings object with default values for fields not in appStateManager
+			const webviewSettings = {
+				normalization: settings.normalization,
+				gamma: settings.gamma,
+				brightness: settings.brightness,
+				maskFilters: [], // appStateManager doesn't handle these
+				nanColor: 'black' as const // default value
+			};
+
+			console.log('[ImagePreview]   Sending to webview:', JSON.stringify(webviewSettings.normalization));
+
+			// Send settings directly to webview (don't merge with old settingsManager)
+			this.sendSettingsUpdate(webviewSettings);
 			this.updateStatusBar();
 		}));
 

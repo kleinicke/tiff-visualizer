@@ -199,7 +199,9 @@ export class AppStateManager {
 		// Load settings for the new format
 		const cachedSettings = this._formatSettingsCache.get(format);
 		if (cachedSettings) {
-			console.log(`[AppStateManager] Using cached settings for format: ${format}`, cachedSettings);
+			console.log(`[AppStateManager] ⚠️  USING CACHED SETTINGS for format: ${format}`);
+			console.log(`[AppStateManager]   Cached: autoNormalize=${cachedSettings.normalization.autoNormalize}, gammaMode=${cachedSettings.normalization.gammaMode}, range=[${cachedSettings.normalization.min}, ${cachedSettings.normalization.max}]`);
+			console.log(`[AppStateManager]   💡 Use "Reset All Settings" command to clear cache and apply new defaults`);
 			this._imageSettings = this._deepCopySettings(cachedSettings);
 			this._emitSettingsChanged();
 		} else {
@@ -220,7 +222,11 @@ export class AppStateManager {
 	}
 
 	private _getDefaultSettingsForFormat(format: ImageFormatType): ImageSettings {
-		// Default settings based on format type
+		console.log(`\n========================================`);
+		console.log(`[AppStateManager] 📋 Getting defaults for format: ${format}`);
+		console.log(`========================================`);
+
+		// Base defaults - gamma correction settings apply to all
 		const defaults: ImageSettings = {
 			normalization: {
 				min: 0.0,
@@ -237,21 +243,55 @@ export class AppStateManager {
 			}
 		};
 
-		// Adjust defaults based on format
-		if (format === 'tiff-float' || format === 'pfm' || format === 'npy-float') {
-			// TIFF float, PFM, and NPY float: auto-normalize by default
-			defaults.normalization.autoNormalize = true;
-			defaults.normalization.gammaMode = false;
-		} else if (format === 'npy' || format === 'npy-uint') {
-			// NPY with unknown/uint type: use gamma mode by default
+		// ============================================
+		// NORMALIZATION DEFAULT RULES (SIMPLE & CLEAR)
+		// ============================================
+
+		// Rule 1: Integer formats → Gamma mode with type-specific ranges
+		// (Ranges will be set by webview based on actual bit depth)
+		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
-		} else if (format === 'ppm' || format === 'png') {
-			// PPM/PGM/PNG: uint formats, default to gamma mode
-			defaults.normalization.gammaMode = true;
-			defaults.normalization.autoNormalize = false;
+			defaults.normalization.min = 0;
+			defaults.normalization.max = 1; // Will be overridden by webview based on bit depth
+			console.log(`[AppStateManager] ✓ INTEGER FORMAT → Gamma mode`);
+			console.log(`[AppStateManager]   Reason: Integer data needs type-specific ranges (uint8=0-255, uint16=0-65535, etc.)`);
+			console.log(`[AppStateManager]   Settings: gammaMode=true, autoNormalize=false`);
 		}
 
+		// Rule 2: Float images (TIFF, PFM) → Gamma mode with 0-1 range
+		// (These are typically images stored as floats, expected in 0-1 range)
+		else if (format === 'tiff-float' || format === 'pfm') {
+			defaults.normalization.gammaMode = true;
+			defaults.normalization.autoNormalize = false;
+			defaults.normalization.min = 0;
+			defaults.normalization.max = 1;
+			console.log(`[AppStateManager] ✓ FLOAT IMAGE FORMAT → Gamma mode with [0, 1] range`);
+			console.log(`[AppStateManager]   Reason: Float images are typically normalized to 0-1`);
+			console.log(`[AppStateManager]   Settings: gammaMode=true, autoNormalize=false, range=[0,1]`);
+		}
+
+		// Rule 3: Float data (NPY) → Auto-normalize to actual data range
+		// (Scientific data can have any range, needs auto-detection)
+		else if (format === 'npy-float') {
+			defaults.normalization.gammaMode = false;
+			defaults.normalization.autoNormalize = true;
+			// min/max will be computed from actual data
+			console.log(`[AppStateManager] ✓ FLOAT DATA FORMAT → Auto-normalize mode`);
+			console.log(`[AppStateManager]   Reason: Scientific float data can have arbitrary ranges`);
+			console.log(`[AppStateManager]   Settings: gammaMode=false, autoNormalize=true`);
+		}
+
+		// Fallback: Generic NPY or unknown formats
+		else {
+			defaults.normalization.gammaMode = false;
+			defaults.normalization.autoNormalize = true;
+			console.log(`[AppStateManager] ⚠️  UNKNOWN FORMAT → Auto-normalize mode (fallback)`);
+			console.log(`[AppStateManager]   Settings: gammaMode=false, autoNormalize=true`);
+		}
+
+		console.log(`[AppStateManager] 📦 Final defaults:`, JSON.stringify(defaults, null, 2));
+		console.log(`========================================\n`);
 		return defaults;
 	}
 

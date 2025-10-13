@@ -205,75 +205,106 @@ export class NpyProcessor {
         const channels = this._lastRaw?.channels || 1;
 
         // Compute min/max for normalization
-        let min = Infinity, max = -Infinity;
+        let dataMin = Infinity, dataMax = -Infinity;
         for (let i = 0; i < data.length; i++) {
             const v = data[i];
             if (!Number.isFinite(v)) continue;
-            if (v < min) min = v;
-            if (v > max) max = v;
+            if (v < dataMin) dataMin = v;
+            if (v > dataMax) dataMax = v;
         }
+
+        console.log(`\n========================================`);
+        console.log(`[NpyProcessor] 🎨 APPLYING NORMALIZATION`);
+        console.log(`========================================`);
+        console.log(`[NpyProcessor] Data stats: min=${dataMin.toFixed(2)}, max=${dataMax.toFixed(2)}`);
+
         const settings = this.settingsManager.settings;
         let normMin, normMax;
 
-        // Default to gamma mode for uint types, auto-normalize for float types
-        const isUintType = this._lastRaw && !this._lastRaw.showNorm;
-        const defaultToGammaMode = isUintType;
+        // ============================================
+        // NORMALIZATION APPLICATION (SIMPLE & CLEAR)
+        // Priority order: autoNormalize > gammaMode > manual min/max
+        //
+        // IMPORTANT: We check flags BEFORE checking min/max values
+        // because default settings always have min/max defined
+        // ============================================
 
-        if (settings.normalization && settings.normalization.autoNormalize) {
-            normMin = min; normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode !== undefined ? settings.normalization.gammaMode : defaultToGammaMode) {
-            // For gamma mode (default for uint), use appropriate max value based on dtype
-            normMin = 0;
-            if (this._lastRaw && this._lastRaw.showNorm) {
-                // Float types: normalize to 0-1
-                normMax = 1;
-            } else if (this._lastRaw && this._lastRaw.dtype) {
-                // Integer types: use max value for the bit depth
-                const dtype = this._lastRaw.dtype;
-                if (dtype.includes('u1') || dtype.includes('i1')) {
-                    // uint8 or int8
-                    normMax = dtype.includes('u') ? 255 : 127;
-                } else if (dtype.includes('u2') || dtype.includes('i2')) {
-                    // uint16 or int16
-                    normMax = dtype.includes('u') ? 65535 : 32767;
-                } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                    // uint32 or int32
-                    normMax = dtype.includes('u') ? 4294967295 : 2147483647;
-                } else {
-                    // Default to max value found in data
-                    normMax = max;
-                }
-            } else {
-                // Fallback to 0-1 for unknown types
-                normMax = 1;
-            }
-        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
-            normMin = settings.normalization.min; normMax = settings.normalization.max;
-        } else {
-            // Default behavior
-            if (defaultToGammaMode) {
-                // For uint, use gamma mode by default
-                normMin = 0;
-                const dtype = this._lastRaw?.dtype || '';
-                if (dtype.includes('u1') || dtype.includes('i1')) {
-                    normMax = dtype.includes('u') ? 255 : 127;
-                } else if (dtype.includes('u2') || dtype.includes('i2')) {
-                    normMax = dtype.includes('u') ? 65535 : 32767;
-                } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                    normMax = dtype.includes('u') ? 4294967295 : 2147483647;
-                } else {
-                    normMax = max;
-                }
-            } else {
-                // For float, auto-normalize
-                normMin = min; normMax = max;
-            }
+        console.log(`[NpyProcessor] Settings flags: autoNormalize=${settings.normalization?.autoNormalize}, gammaMode=${settings.normalization?.gammaMode}`);
+        console.log(`[NpyProcessor] Settings range: min=${settings.normalization?.min}, max=${settings.normalization?.max}`);
+
+        // Step 1: Check if auto-normalize is enabled (highest priority)
+        if (settings.normalization?.autoNormalize === true) {
+            normMin = dataMin;
+            normMax = dataMax;
+            console.log(`[NpyProcessor] ✓ Mode: AUTO-NORMALIZE`);
+            console.log(`[NpyProcessor]   Using data range: [${normMin.toFixed(2)}, ${normMax.toFixed(2)}]`);
         }
+
+        // Step 2: Check if gamma mode is enabled (second priority)
+        // MUST check this BEFORE manual range, because gamma mode has default min/max too
+        else if (settings.normalization?.gammaMode === true) {
+            normMin = 0;
+
+            // Determine normMax based on data type
+            if (this._lastRaw && this._lastRaw.dtype) {
+                const dtype = this._lastRaw.dtype;
+
+                // Integer types: use type-specific max
+                if (dtype.includes('u1') || dtype.includes('i1')) {
+                    normMax = dtype.includes('u') ? 255 : 127;
+                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (${dtype.includes('u') ? 'uint8' : 'int8'})`);
+                } else if (dtype.includes('u2') || dtype.includes('i2')) {
+                    normMax = dtype.includes('u') ? 65535 : 32767;
+                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (${dtype.includes('u') ? 'uint16' : 'int16'})`);
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    normMax = dtype.includes('u') ? 4294967295 : 2147483647;
+                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (${dtype.includes('u') ? 'uint32' : 'int32'})`);
+                }
+                // Float types: use 0-1 range
+                else if (dtype.includes('f')) {
+                    normMax = 1;
+                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (float)`);
+                } else {
+                    normMax = 1;
+                    console.log(`[NpyProcessor] ⚠️  Mode: GAMMA (unknown type, using 0-1)`);
+                }
+            } else {
+                normMax = 1;
+                console.log(`[NpyProcessor] ⚠️  Mode: GAMMA (no dtype info, using 0-1)`);
+            }
+
+            console.log(`[NpyProcessor]   Using range: [${normMin}, ${normMax}]`);
+        }
+
+        // Step 3: Manual normalization (user-specified range, only if both flags are false)
+        // This handles the case where user explicitly sets a custom range
+        else if (settings.normalization &&
+                 settings.normalization.autoNormalize === false &&
+                 settings.normalization.gammaMode === false &&
+                 settings.normalization.min !== undefined &&
+                 settings.normalization.max !== undefined) {
+            normMin = settings.normalization.min;
+            normMax = settings.normalization.max;
+            console.log(`[NpyProcessor] ✓ Mode: MANUAL (user-specified)`);
+            console.log(`[NpyProcessor]   Using user range: [${normMin}, ${normMax}]`);
+        }
+
+        // Step 4: Fallback - shouldn't happen with proper defaults
+        else {
+            normMin = dataMin;
+            normMax = dataMax;
+            console.log(`[NpyProcessor] ⚠️  Mode: FALLBACK (auto-normalize)`);
+            console.log(`[NpyProcessor]   This shouldn't happen - check default settings!`);
+            console.log(`[NpyProcessor]   Using data range: [${normMin.toFixed(2)}, ${normMax.toFixed(2)}]`);
+        }
+
         const range = normMax - normMin || 1;
+        console.log(`[NpyProcessor] 📊 Final normalization: [${normMin}, ${normMax}], range=${range}`);
+        console.log(`========================================\n`);
         const out = new Uint8ClampedArray(width * height * 4);
 
-        // Apply gamma correction by default for uint types
-        const applyGamma = settings.normalization?.gammaMode !== undefined ? settings.normalization.gammaMode : defaultToGammaMode;
+        // Apply gamma correction when in gamma mode
+        const applyGamma = settings.normalization?.gammaMode || false;
 
         for (let i = 0; i < width * height; i++) {
             let r, g, b, a = 255;
@@ -340,9 +371,19 @@ export class NpyProcessor {
         if (this.vscode) {
             // Always enable normalization controls for NPY files
             this.vscode.postMessage({ type: 'showNorm', value: true });
-            this.vscode.postMessage({ type: 'stats', value: { min, max } });
+            this.vscode.postMessage({ type: 'stats', value: { min: dataMin, max: dataMax } });
         }
         return new ImageData(out, width, height);
+    }
+
+    /**
+     * Re-render NPY with current settings (for real-time updates)
+     * @returns {ImageData | null}
+     */
+    renderNpyWithSettings() {
+        if (!this._lastRaw) return null;
+        const { width, height, data } = this._lastRaw;
+        return this._toImageDataFloat(data, width, height);
     }
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
@@ -390,6 +431,7 @@ export class NpyProcessor {
 
         if (this._lastRaw && this._lastRaw.dtype) {
             const dtype = this._lastRaw.dtype;
+            console.log(`[NpyProcessor] Detected dtype: ${dtype}`);
 
             // Determine sample format: 1=uint, 2=int, 3=float
             if (dtype.includes('f')) {
@@ -397,18 +439,21 @@ export class NpyProcessor {
                 if (dtype.includes('f2')) bitsPerSample = 16;
                 else if (dtype.includes('f4')) bitsPerSample = 32;
                 else if (dtype.includes('f8')) bitsPerSample = 64;
+                console.log(`[NpyProcessor] Detected as FLOAT, bitsPerSample: ${bitsPerSample}`);
             } else if (dtype.includes('u')) {
                 sampleFormat = 1; // Unsigned int
                 if (dtype.includes('u1')) bitsPerSample = 8;
                 else if (dtype.includes('u2')) bitsPerSample = 16;
                 else if (dtype.includes('u4')) bitsPerSample = 32;
                 else if (dtype.includes('u8')) bitsPerSample = 64;
+                console.log(`[NpyProcessor] Detected as UINT, bitsPerSample: ${bitsPerSample}`);
             } else if (dtype.includes('i')) {
                 sampleFormat = 2; // Signed int
                 if (dtype.includes('i1')) bitsPerSample = 8;
                 else if (dtype.includes('i2')) bitsPerSample = 16;
                 else if (dtype.includes('i4')) bitsPerSample = 32;
                 else if (dtype.includes('i8')) bitsPerSample = 64;
+                console.log(`[NpyProcessor] Detected as SIGNED INT, bitsPerSample: ${bitsPerSample}`);
             }
         }
 
@@ -421,6 +466,7 @@ export class NpyProcessor {
         } else if (sampleFormat === 1 || sampleFormat === 2) {
             formatType = 'npy-uint';
         }
+        console.log(`[NpyProcessor] Sending formatType: ${formatType}, sampleFormat: ${sampleFormat}`);
 
         this.vscode.postMessage({
             type: 'formatInfo',
