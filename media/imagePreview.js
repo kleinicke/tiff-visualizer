@@ -624,14 +624,17 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			}
 		}
 		
+		// Re-render based on which processor was used (mutually exclusive)
+		// Check in order: PGM -> PNG/JPEG -> NPY
+
 		// For PGM images, re-render with new settings
-		if (primaryImageData && ppmProcessor) {
+		if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
 			try {
 				console.log('Updating PGM image with new settings:', settingsManager.settings);
-				
+
 				// Re-render the PGM with current settings
 				const newImageData = ppmProcessor.renderPgmWithSettings();
-				
+
 				if (newImageData) {
 					// Update the canvas with new image data
 					const ctx = canvas.getContext('2d');
@@ -639,7 +642,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
 						console.log('PGM image updated with new settings');
-						
+
 						// Update the cache with the new data for this image
 						cacheCurrentImage();
 					}
@@ -648,34 +651,8 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				console.error('Error updating PGM image with new settings:', error);
 			}
 		}
-		
-		// For PNG/JPEG images, re-render with new settings
-		if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
-			try {
-				console.log('Updating PNG/JPEG image with new settings:', settingsManager.settings);
-
-				// Re-render the PNG with current settings
-				const newImageData = pngProcessor.renderPngWithSettings();
-
-				if (newImageData) {
-					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						ctx.putImageData(newImageData, 0, 0);
-						primaryImageData = newImageData;
-						console.log('PNG/JPEG image updated with new settings');
-
-						// Update the cache with the new data for this image
-						cacheCurrentImage();
-					}
-				}
-			} catch (error) {
-				console.error('Error updating PNG/JPEG image with new settings:', error);
-			}
-		}
-
 		// For NPY images, re-render with new settings
-		if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
+		else if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
 			try {
 				console.log('Updating NPY image with new settings:', settingsManager.settings);
 
@@ -696,6 +673,30 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				}
 			} catch (error) {
 				console.error('Error updating NPY image with new settings:', error);
+			}
+		}
+		// For PNG/JPEG images, re-render with new settings
+		else if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
+			try {
+				console.log('Updating PNG/JPEG image with new settings:', settingsManager.settings);
+
+				// Re-render the PNG with current settings
+				const newImageData = pngProcessor.renderPngWithSettings();
+
+				if (newImageData) {
+					// Update the canvas with new image data
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						ctx.putImageData(newImageData, 0, 0);
+						primaryImageData = newImageData;
+						console.log('PNG/JPEG image updated with new settings');
+
+						// Update the cache with the new data for this image
+						cacheCurrentImage();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating PNG/JPEG image with new settings:', error);
 			}
 		}
 	}

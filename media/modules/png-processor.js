@@ -9,6 +9,7 @@
  * @property {number} channels
  * @property {number} bitDepth
  * @property {number} maxValue
+ * @property {boolean} isRgbaFormat - If true, data is RGBA format; if false, data is raw channel format
  */
 
 /**
@@ -119,7 +120,8 @@ export class PngProcessor {
                 data: rawData,
                 channels,
                 bitDepth,
-                maxValue: bitDepth === 16 ? 65535 : 255
+                maxValue: bitDepth === 16 ? 65535 : 255,
+                isRgbaFormat: false  // UPNG path stores raw channel format
             };
 
             const canvas = document.createElement('canvas');
@@ -180,7 +182,8 @@ export class PngProcessor {
                         data: rawData,
                         channels: hasAlpha ? 4 : 3,
                         bitDepth: 8,
-                        maxValue: 255
+                        maxValue: 255,
+                        isRgbaFormat: true  // Fallback path stores RGBA format from getImageData
                     };
 
                     const format = src.toLowerCase().includes('.png') ? 'PNG' :
@@ -214,14 +217,18 @@ export class PngProcessor {
         if (!this._lastRaw) {
             throw new Error('No raw image data available');
         }
-        const { width, height, data, channels, bitDepth, maxValue } = this._lastRaw;
+        const { width, height, data, channels, bitDepth, maxValue, isRgbaFormat } = this._lastRaw;
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
+
+        // Determine the correct stride based on data format
+        const stride = isRgbaFormat ? 4 : channels;
+        console.log(`[PngProcessor] _renderToImageData: channels=${channels}, isRgbaFormat=${isRgbaFormat}, stride=${stride}`);
 
         // Calculate stats for normalization status bar
         let min = Infinity, max = -Infinity;
         for (let i = 0; i < width * height; i++) {
-            const srcIdx = i * channels;
+            const srcIdx = i * stride;
             for (let c = 0; c < Math.min(3, channels); c++) {
                 const value = data[srcIdx + c];
                 if (value < min) min = value;
@@ -241,7 +248,7 @@ export class PngProcessor {
 
         // Render pixels
         for (let i = 0; i < width * height; i++) {
-            const srcIdx = i * channels;
+            const srcIdx = i * stride;  // Use stride instead of channels
             const outIdx = i * 4;
 
             let r, g, b, a = 255;
