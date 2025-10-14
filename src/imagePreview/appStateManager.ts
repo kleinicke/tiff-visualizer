@@ -24,7 +24,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'ppm' | 'tiff-float' | 'tiff-int' | 'pfm' | 'npy' | 'npy-float' | 'npy-uint';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'pfm' | 'npy-float' | 'npy-uint';
 
 export interface ImageStats {
 	min: number;
@@ -189,13 +189,6 @@ export class AppStateManager {
 
 		this._currentFormat = format;
 
-		// Invalidate old generic 'npy' cache if we're loading a specific npy format
-		// This ensures we use the new correct defaults for npy-float vs npy-uint
-		if ((format === 'npy-float' || format === 'npy-uint') && this._formatSettingsCache.has('npy')) {
-			console.log(`[AppStateManager] Invalidating old 'npy' cache for specific format: ${format}`);
-			this._formatSettingsCache.delete('npy');
-		}
-
 		// Load settings for the new format
 		const cachedSettings = this._formatSettingsCache.get(format);
 		if (cachedSettings) {
@@ -249,7 +242,7 @@ export class AppStateManager {
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
-		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png') {
+		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;
@@ -282,7 +275,7 @@ export class AppStateManager {
 			console.log(`[AppStateManager]   Settings: gammaMode=false, autoNormalize=true`);
 		}
 
-		// Fallback: Generic NPY or unknown formats
+		// Fallback: Unknown formats
 		else {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;

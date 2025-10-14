@@ -77,35 +77,35 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	}
 
 	public getNormalizationConfig() {
-		return this._settingsManager.settings.normalization;
+		return this._appStateManager.imageSettings.normalization;
 	}
 
 	public getGammaConfig() {
-		return this._settingsManager.settings.gamma;
+		return this._appStateManager.imageSettings.gamma;
 	}
 
 	public getBrightnessConfig() {
-		return this._settingsManager.settings.brightness;
+		return this._appStateManager.imageSettings.brightness;
 	}
 
 	public setTempNormalization(min: number, max: number) {
-		this._settingsManager.updateNormalization(min, max);
+		this._appStateManager.updateNormalization(min, max);
 	}
 
 	public setAutoNormalize(enabled: boolean) {
-		this._settingsManager.setAutoNormalize(enabled);
+		this._appStateManager.setAutoNormalize(enabled);
 	}
 
 	public setGammaMode(enabled: boolean) {
-		this._settingsManager.setGammaMode(enabled);
+		this._appStateManager.setGammaMode(enabled);
 	}
 
 	public setTempGamma(gammaIn: number, gammaOut: number) {
-		this._settingsManager.updateGamma(gammaIn, gammaOut);
+		this._appStateManager.updateGamma(gammaIn, gammaOut);
 	}
 
 	public setTempBrightness(offset: number) {
-		this._settingsManager.updateBrightness(offset);
+		this._appStateManager.updateBrightness(offset);
 	}
 
 	public setComparisonBase(uri: vscode.Uri | undefined) {

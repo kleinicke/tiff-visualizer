@@ -540,17 +540,22 @@ export class TiffProcessor {
 
 	/**
 	 * Check if gamma/brightness should be applied to uint images
-	 * Only apply if values are significantly different from defaults
+	 * Only apply if gamma mode is enabled OR values are significantly different from defaults
 	 * @private
 	 */
 	_shouldApplyGammaBrightnessToUint(settings) {
+		// If gamma mode is explicitly enabled, always apply gamma/brightness
+		if (settings.normalization && settings.normalization.gammaMode) {
+			return true;
+		}
+
 		// Check if gamma is significantly different from 1.0 (no correction)
 		const gammaRatio = settings.gamma.in / settings.gamma.out;
 		const hasGammaCorrection = Math.abs(gammaRatio - 1.0) > 0.01;
-		
+
 		// Check if brightness is significantly different from 0 (no adjustment)
 		const hasBrightnessCorrection = Math.abs(settings.brightness.offset) > 0.01;
-		
+
 		return hasGammaCorrection || hasBrightnessCorrection;
 	}
 

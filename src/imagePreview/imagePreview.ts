@@ -79,17 +79,14 @@ export class ImagePreview extends MediaPreview {
 			this.updateState();
 		}));
 
-		// Subscribe to settings changes for automatic updates
-		this._register(this._manager.settingsManager.onDidChangeSettings((settings) => {
-			// Get image-specific settings
-			const imageSettings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
+		// Subscribe to mask filter changes from settingsManager (only for mask filters now)
+		this._register(this._manager.settingsManager.onDidChangeSettings(() => {
+			// Get mask filters for this image
+			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
+			const enabledMasks = maskFilters.filter(mask => mask.enabled);
+			const totalMasks = maskFilters.length;
 
-			// Update status bar entries with new values
-			this._gammaStatusBarEntry.updateGamma(imageSettings.gamma.in, imageSettings.gamma.out);
-			this._brightnessStatusBarEntry.updateBrightness(imageSettings.brightness.offset);
-			// Update mask filter status bar with summary
-			const enabledMasks = imageSettings.maskFilters.filter(mask => mask.enabled);
-			const totalMasks = imageSettings.maskFilters.length;
+			// Update mask filter status bar
 			this._maskFilterStatusBarEntry.updateMaskFilter(
 				totalMasks > 0,
 				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
@@ -97,12 +94,18 @@ export class ImagePreview extends MediaPreview {
 				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
 
-			// Send targeted updates to webview instead of full reload
-			this.sendSettingsUpdate(imageSettings);
-			this.updateStatusBar();
+			// Send mask filter update to webview
+			const webviewSettings = {
+				normalization: this._manager.appStateManager.imageSettings.normalization,
+				gamma: this._manager.appStateManager.imageSettings.gamma,
+				brightness: this._manager.appStateManager.imageSettings.brightness,
+				maskFilters: maskFilters,
+				nanColor: this._manager.settingsManager.getNanColor()
+			};
+			this.sendSettingsUpdate(webviewSettings);
 		}));
 
-		// Subscribe to appStateManager settings changes (for format-specific defaults)
+		// Subscribe to appStateManager settings changes (for normalization/gamma/brightness)
 		this._register(this._manager.appStateManager.onDidChangeSettings((settings) => {
 			console.log('[ImagePreview] appStateManager settings changed:', settings);
 			console.log('[ImagePreview]   normalization:', JSON.stringify(settings.normalization));
@@ -111,18 +114,18 @@ export class ImagePreview extends MediaPreview {
 			this._gammaStatusBarEntry.updateGamma(settings.gamma.in, settings.gamma.out);
 			this._brightnessStatusBarEntry.updateBrightness(settings.brightness.offset);
 
-			// Create full settings object with default values for fields not in appStateManager
+			// Create full settings object merging appStateManager settings with mask filters
+			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
 			const webviewSettings = {
 				normalization: settings.normalization,
 				gamma: settings.gamma,
 				brightness: settings.brightness,
-				maskFilters: [], // appStateManager doesn't handle these
-				nanColor: 'black' as const // default value
+				maskFilters: maskFilters,
+				nanColor: this._manager.settingsManager.getNanColor()
 			};
 
 			console.log('[ImagePreview]   Sending to webview:', JSON.stringify(webviewSettings.normalization));
 
-			// Send settings directly to webview (don't merge with old settingsManager)
 			this.sendSettingsUpdate(webviewSettings);
 			this.updateStatusBar();
 		}));
@@ -448,12 +451,12 @@ export class ImagePreview extends MediaPreview {
 		if (this._webviewEditor.active && this._webviewEditor.visible) {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
-			
-					// Show mask filter status bar entry if enabled
-		const settings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
+
+			// Show mask filter status bar entry if enabled
+			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
 			// Update mask filter status bar with summary
-			const enabledMasks = settings.maskFilters.filter(mask => mask.enabled);
-			const totalMasks = settings.maskFilters.length;
+			const enabledMasks = maskFilters.filter(mask => mask.enabled);
+			const totalMasks = maskFilters.length;
 			this._maskFilterStatusBarEntry.updateMaskFilter(
 				totalMasks > 0,
 				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
@@ -464,16 +467,17 @@ export class ImagePreview extends MediaPreview {
 			// Show float controls not only for TIFF but for any float source
 			if (this._showNorm) {
 				outputChannel.appendLine('TIFF Visualizer: Showing FLOAT TIFF controls (normalization)');
+				const normSettings = this._manager.appStateManager.imageSettings.normalization;
 				this._normalizationStatusBarEntry.updateNormalization(
-					settings.normalization.min, 
-					settings.normalization.max
+					normSettings.min,
+					normSettings.max
 				);
 				this._normalizationStatusBarEntry.show(
-					settings.normalization.autoNormalize, 
-					settings.normalization.gammaMode
+					normSettings.autoNormalize,
+					normSettings.gammaMode
 				);
-				
-				if (settings.normalization.gammaMode) {
+
+				if (normSettings.gammaMode) {
 					this._gammaStatusBarEntry.show();
 					this._brightnessStatusBarEntry.show();
 				} else {
@@ -503,9 +507,20 @@ export class ImagePreview extends MediaPreview {
 
 	protected override async getWebviewContents(): Promise<string> {
 		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-		
+
 		const version = Date.now().toString();
-		const settings = this._manager.settingsManager.getSettingsForImage(this.resource.toString());
+
+		// Merge settings from both managers:
+		// - normalization, gamma, brightness from appStateManager (per-format)
+		// - maskFilters from settingsManager (per-image)
+		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
+		const settings = {
+			normalization: this._manager.appStateManager.imageSettings.normalization,
+			gamma: this._manager.appStateManager.imageSettings.gamma,
+			brightness: this._manager.appStateManager.imageSettings.brightness,
+			maskFilters: maskFilters,
+			nanColor: this._manager.settingsManager.getNanColor()
+		};
 
 		const nonce = getNonce();
 		const cspSource = this._webviewEditor.webview.cspSource;
