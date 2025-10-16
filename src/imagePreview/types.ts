@@ -36,4 +36,5 @@ export interface IImagePreview {
 	exportAsPng(): Promise<string | undefined>;
 	startComparison(peerUri: vscode.Uri): void;
 	updateStatusBar(): void;
+	addToImageCollection(uri: vscode.Uri): Promise<void>;
 } 

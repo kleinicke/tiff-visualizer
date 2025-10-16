@@ -194,6 +194,8 @@ export class AppStateManager {
 		if (cachedSettings) {
 			console.log(`[AppStateManager] ⚠️  USING CACHED SETTINGS for format: ${format}`);
 			console.log(`[AppStateManager]   Cached: autoNormalize=${cachedSettings.normalization.autoNormalize}, gammaMode=${cachedSettings.normalization.gammaMode}, range=[${cachedSettings.normalization.min}, ${cachedSettings.normalization.max}]`);
+			console.log(`[AppStateManager]   Cached gamma: in=${cachedSettings.gamma.in}, out=${cachedSettings.gamma.out}`);
+			console.log(`[AppStateManager]   Cached brightness: offset=${cachedSettings.brightness.offset}`);
 			console.log(`[AppStateManager]   💡 Use "Reset All Settings" command to clear cache and apply new defaults`);
 			this._imageSettings = this._deepCopySettings(cachedSettings);
 			this._emitSettingsChanged();

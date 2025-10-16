@@ -34,7 +34,6 @@ export class MessageRouter {
 		this.handlers.set('comparisonStateResponse', new ComparisonStateResponseMessageHandler());
 		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
-		this.handlers.set('imagePreloaded', new ImagePreloadedMessageHandler());
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 	}
 
@@ -208,20 +207,6 @@ class RestorePeerImageMessageHandler implements MessageHandler {
 		if (peerUri) {
 			const uri = vscode.Uri.parse(peerUri);
 			preview.addToImageCollection(uri);
-		}
-	}
-}
-
-class ImagePreloadedMessageHandler implements MessageHandler {
-	handle(message: any, preview: ImagePreview): void {
-		// Mark image as loaded in the preload cache
-		const cacheKey = message.cacheKey;
-		if (cacheKey) {
-			const cachedData = (preview as any)._preloadedImageData.get(cacheKey);
-			if (cachedData) {
-				cachedData.loaded = true;
-				(preview as any)._preloadedImageData.set(cacheKey, cachedData);
-			}
 		}
 	}
 }

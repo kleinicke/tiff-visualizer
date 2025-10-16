@@ -61,10 +61,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		show: false
 	};
 	let overlayElement = null;
-	
-	// Image cache for this webview instance (each TIFF file has its own webview)
-	let imageCache = new Map(); // cacheKey -> { canvas, imageData, metadata }
-	
+
 	/**
 	 * Save current state to VS Code webview state for persistence across tab switches
 	 */
@@ -78,24 +75,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		};
 		vscode.setState(state);
 		console.log('STATE SAVED:', state);
-	}
-
-	/**
-	 * Clear cached images except the current one to ensure fresh rendering with new settings
-	 */
-	function clearStaleCache() {
-		const currentResourceUri = settingsManager.settings.resourceUri;
-		const cacheKeys = Array.from(imageCache.keys());
-		let clearedCount = 0;
-		
-		for (const cacheKey of cacheKeys) {
-			if (cacheKey !== currentResourceUri) {
-				imageCache.delete(cacheKey);
-				clearedCount++;
-			}
-		}
-		
-		console.log(`Cleared ${clearedCount} stale cached images, kept current image`);
 	}
 
 	// DOM elements
@@ -126,31 +105,22 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// Start loading the image
 		const settings = settingsManager.settings;
 		const resourceUri = settings.resourceUri;
-		
-		// Check if this image is already cached
-		console.log('Cache check - resourceUri:', resourceUri);
-		console.log('Cache contents:', Array.from(imageCache.keys()));
-		console.log('Cache size:', imageCache.size);
-		
-		if (imageCache.has(resourceUri)) {
-			console.log('Loading from cache:', resourceUri);
-			loadFromCache(resourceUri);
+
+		console.log('Loading image:', resourceUri);
+
+		// Load image based on file extension
+		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
+			handleTiff(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
+			handlePfm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
+			handlePpm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
+			handlePng(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
+			handleNpy(settings.src);
 		} else {
-			console.log('Loading fresh (cache miss):', resourceUri);
-			// Load fresh and cache the result
-			if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
-				handleTiff(settings.src);
-			} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
-				handlePfm(settings.src);
-			} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
-				handlePpm(settings.src);
-			} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
-				handlePng(settings.src);
-			} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
-				handleNpy(settings.src);
-			} else {
-				image.src = settings.src;
-			}
+			image.src = settings.src;
 		}
 		
 		// Restore comparison state if we have peer images
@@ -360,78 +330,9 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		container.classList.add('ready');
 		container.append(imageElement);
 
-		// Cache the current image if it's not already cached
-		cacheCurrentImage();
-
 		// Apply initial zoom and setup mouse handling
 		zoomController.applyInitialZoom();
 		mouseHandler.addMouseListeners(imageElement);
-	}
-
-	/**
-	 * Load image from cache for instant display
-	 */
-	function loadFromCache(resourceUri) {
-		const cachedData = imageCache.get(resourceUri);
-		if (!cachedData) {
-			console.error('Cache miss for:', resourceUri);
-			return;
-		}
-		
-		console.log('Loading from cache:', resourceUri);
-		
-		// Use cached data directly
-		canvas = cachedData.canvas.cloneNode(true);
-		canvas.classList.add('scale-to-fit');
-		primaryImageData = cachedData.imageData;
-		imageElement = canvas;
-		
-		// Apply cached image data to canvas
-		const ctx = canvas.getContext('2d');
-		if (ctx && primaryImageData) {
-			ctx.putImageData(primaryImageData, 0, 0);
-		}
-		
-		hasLoadedImage = true;
-		finalizeImageSetup();
-	}
-
-	/**
-	 * Cache the currently loaded image
-	 */
-	function cacheCurrentImage() {
-		const settings = settingsManager.settings;
-		const cacheKey = settings.resourceUri;
-		
-		if (!imageCache.has(cacheKey) && canvas && primaryImageData) {
-			console.log('Caching current image:', settings.resourceUri);
-			
-			// Manage cache size (limit to 10 images to prevent memory issues)
-			if (imageCache.size >= 10) {
-				// Remove oldest cached image
-				const oldestKey = Array.from(imageCache.keys())[0];
-				imageCache.delete(oldestKey);
-				console.log('Cache limit reached, removed oldest:', oldestKey);
-			}
-			
-			imageCache.set(cacheKey, {
-				canvas: canvas.cloneNode(true),
-				imageData: primaryImageData,
-				metadata: {
-					uri: settings.src,
-					resourceUri: settings.resourceUri,
-					timestamp: Date.now()
-				}
-			});
-			
-			console.log('Cache size:', imageCache.size);
-			
-			// Notify extension that this image is now cached
-			vscode.postMessage({
-				type: 'imagePreloaded',
-				cacheKey: cacheKey
-			});
-		}
 	}
 
 	/**
@@ -490,20 +391,26 @@ import { MouseHandler } from './modules/mouse-handler.js';
 
 			case 'updateSettings':
 				// Handle real-time settings updates
+				const oldResourceUri = settingsManager.settings.resourceUri;
 				settingsManager.updateSettings(message.settings);
-				updateImageWithNewSettings();
-				// Clear cached images (except current) to ensure they get updated with new settings when accessed
-				clearStaleCache();
-				console.log('Settings updated, stale cache cleared');
+				const newResourceUri = settingsManager.settings.resourceUri;
+
+				// If resource URI changed, reload the entire image
+				if (oldResourceUri !== newResourceUri) {
+					console.log('Resource changed from', oldResourceUri, 'to', newResourceUri, '- reloading image');
+					initialize();
+				} else {
+					// Just update rendering with new settings
+					updateImageWithNewSettings();
+					console.log('Settings updated');
+				}
 				break;
-			
+
 			case 'mask-filter-settings':
 				// Handle mask filter settings updates
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
-				// Clear cached images (except current) to ensure they get updated with new settings when accessed
-				clearStaleCache();
-				console.log('Mask filter settings updated, stale cache cleared');
+				console.log('Mask filter settings updated');
 				break;
 				
 			case 'updateImageCollectionOverlay':
@@ -553,23 +460,8 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				break;
 				
 			case 'switchToImage':
-				// Switch to a new image in the collection (legacy)
+				// Switch to a different image
 				switchToNewImage(message.uri, message.resourceUri);
-				break;
-				
-			case 'switchToImageFromCache':
-				// Switch using cached data if available
-				switchToImageFromCache(message.cacheKey, message.uri, message.resourceUri);
-				break;
-				
-			case 'preloadImage':
-				// Preload image in background
-				preloadImageInBackground(message.cacheKey, message.uri, message.resourceUri);
-				break;
-				
-			case 'cacheCurrentImage':
-				// Cache the currently displayed image
-				cacheCurrentImage();
 				break;
 		}
 	}
@@ -596,8 +488,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						primaryImageData = fastUpdate;
 						console.log('TIFF image fast-updated');
 						
-						// Update the cache with the new data for this image
-						cacheCurrentImage();
+
 						return;
 					}
 				}
@@ -616,8 +507,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 					primaryImageData = newImageData;
 					console.log('TIFF image fully re-rendered');
 					
-					// Update the cache with the new data for this image
-					cacheCurrentImage();
+
 				}
 			} catch (error) {
 				console.error('Error updating TIFF image with new settings:', error);
@@ -643,8 +533,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						primaryImageData = newImageData;
 						console.log('PGM image updated with new settings');
 
-						// Update the cache with the new data for this image
-						cacheCurrentImage();
+
 					}
 				}
 			} catch (error) {
@@ -667,8 +556,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						primaryImageData = newImageData;
 						console.log('NPY image updated with new settings');
 
-						// Update the cache with the new data for this image
-						cacheCurrentImage();
+
 					}
 				}
 			} catch (error) {
@@ -691,8 +579,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 						primaryImageData = newImageData;
 						console.log('PNG/JPEG image updated with new settings');
 
-						// Update the cache with the new data for this image
-						cacheCurrentImage();
+
 					}
 				}
 			} catch (error) {
@@ -881,183 +768,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		
 		// Load the new image based on file type
 		loadImageByType(uri, resourceUri);
-	}
-
-	/**
-	 * Switch to image using cached data for instant switching
-	 */
-	function switchToImageFromCache(cacheKey, uri, resourceUri) {
-		// Update settings
-		settingsManager.settings.resourceUri = resourceUri;
-		settingsManager.settings.src = uri;
-		
-		// Check cache first, regardless of preload status
-		if (imageCache.has(cacheKey)) {
-			console.log('Using cached image:', cacheKey);
-			// Use cached data for instant switch
-			const cachedData = imageCache.get(cacheKey);
-			
-			// Reset state
-			hasLoadedImage = false;
-			
-			// Clear container
-			const container = document.body;
-			container.className = 'container';
-			const existingImages = container.querySelectorAll('img, canvas');
-			existingImages.forEach(el => el.remove());
-			
-			// Use cached canvas and data
-			canvas = cachedData.canvas.cloneNode(true);
-			canvas.classList.add('scale-to-fit');
-			primaryImageData = cachedData.imageData;
-			imageElement = canvas;
-			
-			// Apply cached image data to canvas
-			const ctx = canvas.getContext('2d');
-			if (ctx && primaryImageData) {
-				ctx.putImageData(primaryImageData, 0, 0);
-			}
-			
-			hasLoadedImage = true;
-			finalizeImageSetup();
-		} else {
-			console.log('Cache miss, loading fresh:', cacheKey);
-			// Not cached yet, load normally and cache the result
-			switchToNewImage(uri, resourceUri);
-		}
-	}
-
-	/**
-	 * Preload image in background for instant switching
-	 */
-	async function preloadImageInBackground(cacheKey, uri, resourceUri) {
-		if (imageCache.has(cacheKey)) {
-			return; // Already cached
-		}
-		
-		try {
-			console.log('Preloading image:', resourceUri);
-			
-			// Load and process the image based on type
-			const result = await loadAndProcessImage(uri, resourceUri);
-			
-			if (result) {
-				// Cache the processed result
-				imageCache.set(cacheKey, {
-					canvas: result.canvas.cloneNode(true),
-					imageData: result.imageData,
-					metadata: {
-						uri: uri,
-						resourceUri: resourceUri,
-						timestamp: Date.now()
-					}
-				});
-				
-				console.log('Image preloaded and cached:', resourceUri);
-				
-				// Notify extension that preloading is complete
-				vscode.postMessage({
-					type: 'imagePreloaded',
-					cacheKey: cacheKey
-				});
-			}
-		} catch (error) {
-			console.error('Failed to preload image:', resourceUri, error);
-		}
-	}
-
-	/**
-	 * Load and process image by type (helper function)
-	 */
-	async function loadAndProcessImage(uri, resourceUri) {
-		const lower = resourceUri.toLowerCase();
-		
-		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
-			return await tiffProcessor.processTiff(uri);
-		} else if (lower.endsWith('.pfm')) {
-			return await pfmProcessor.processPfm(uri);
-		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
-			return await ppmProcessor.processPpm(uri);
-		} else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-			return await pngProcessor.processPng(uri);
-		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {
-			return await npyProcessor.processNpy(uri);
-		} else {
-			// Fallback to regular image loading
-			return await loadRegularImage(uri);
-		}
-	}
-
-	/**
-	 * Load regular image and convert to canvas/imageData
-	 */
-	function loadRegularImage(uri) {
-		return new Promise((resolve, reject) => {
-			const img = new Image();
-			img.onload = () => {
-				const canvas = document.createElement('canvas');
-				canvas.width = img.naturalWidth;
-				canvas.height = img.naturalHeight;
-				
-				const ctx = canvas.getContext('2d');
-				if (ctx) {
-					ctx.drawImage(img, 0, 0);
-					const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-					resolve({ canvas, imageData });
-				} else {
-					reject(new Error('Could not get canvas context'));
-				}
-			};
-			img.onerror = () => reject(new Error('Failed to load image'));
-			img.src = uri;
-		});
-	}
-
-	/**
-	 * Update all cached images with new settings
-	 */
-	async function updateCachedImagesWithNewSettings() {
-		console.log('Updating cached images with new settings...');
-		
-		// Get all cached images
-		const cacheEntries = Array.from(imageCache.entries());
-		const currentResourceUri = settingsManager.settings.resourceUri;
-		
-		for (const [cacheKey, cachedData] of cacheEntries) {
-			// Skip the currently displayed image since it was already updated by updateImageWithNewSettings
-			if (cacheKey === currentResourceUri) {
-				console.log('Skipping current image, already updated:', cachedData.metadata.resourceUri);
-				continue;
-			}
-			
-			try {
-				console.log('Re-processing cached image:', cachedData.metadata.resourceUri);
-				
-				// Re-process the image with new settings
-				const result = await loadAndProcessImage(cachedData.metadata.uri, cachedData.metadata.resourceUri);
-				
-				if (result) {
-					// Update the cache with new processed data
-					imageCache.set(cacheKey, {
-						canvas: result.canvas.cloneNode(true),
-						imageData: result.imageData,
-						metadata: {
-							...cachedData.metadata,
-							timestamp: Date.now() // Update timestamp
-						}
-					});
-					
-					console.log('Updated cached image:', cachedData.metadata.resourceUri);
-				}
-			} catch (error) {
-				console.error('Failed to update cached image:', cachedData.metadata.resourceUri, error);
-			}
-		}
-		
-		// Update the currently displayed image cache as well
-		cacheCurrentImage();
-		
-		console.log('Finished updating cached images');
 	}
 
 	/**

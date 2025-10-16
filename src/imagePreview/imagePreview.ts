@@ -10,7 +10,14 @@ import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager } from './types';
-import type { ImageSettings } from './imageSettings';
+import type { ImageSettings } from './appStateManager';
+import type { MaskFilterSettings } from './imageSettings';
+
+// Extended settings for webview (includes per-image mask filters and nanColor)
+interface WebviewImageSettings extends ImageSettings {
+	maskFilters: MaskFilterSettings[];
+	nanColor: 'black' | 'fuchsia';
+}
 
 export class ImagePreview extends MediaPreview {
 
@@ -79,14 +86,16 @@ export class ImagePreview extends MediaPreview {
 			this.updateState();
 		}));
 
-		// Subscribe to mask filter changes from settingsManager (only for mask filters now)
-		this._register(this._manager.settingsManager.onDidChangeSettings(() => {
-			// Get mask filters for this image
+		// Single unified settings update handler
+		const updateSettings = () => {
+			// Get current settings from both managers
 			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
 			const enabledMasks = maskFilters.filter(mask => mask.enabled);
 			const totalMasks = maskFilters.length;
 
-			// Update mask filter status bar
+			// Update status bar entries
+			this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
+			this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
 			this._maskFilterStatusBarEntry.updateMaskFilter(
 				totalMasks > 0,
 				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
@@ -94,7 +103,7 @@ export class ImagePreview extends MediaPreview {
 				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
 
-			// Send mask filter update to webview
+			// Create full settings object
 			const webviewSettings = {
 				normalization: this._manager.appStateManager.imageSettings.normalization,
 				gamma: this._manager.appStateManager.imageSettings.gamma,
@@ -102,33 +111,15 @@ export class ImagePreview extends MediaPreview {
 				maskFilters: maskFilters,
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
-			this.sendSettingsUpdate(webviewSettings);
-		}));
 
-		// Subscribe to appStateManager settings changes (for normalization/gamma/brightness)
-		this._register(this._manager.appStateManager.onDidChangeSettings((settings) => {
-			console.log('[ImagePreview] appStateManager settings changed:', settings);
-			console.log('[ImagePreview]   normalization:', JSON.stringify(settings.normalization));
-
-			// Update status bar entries with new values
-			this._gammaStatusBarEntry.updateGamma(settings.gamma.in, settings.gamma.out);
-			this._brightnessStatusBarEntry.updateBrightness(settings.brightness.offset);
-
-			// Create full settings object merging appStateManager settings with mask filters
-			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
-			const webviewSettings = {
-				normalization: settings.normalization,
-				gamma: settings.gamma,
-				brightness: settings.brightness,
-				maskFilters: maskFilters,
-				nanColor: this._manager.settingsManager.getNanColor()
-			};
-
-			console.log('[ImagePreview]   Sending to webview:', JSON.stringify(webviewSettings.normalization));
-
+			// Send to webview once
 			this.sendSettingsUpdate(webviewSettings);
 			this.updateStatusBar();
-		}));
+		};
+
+		// Subscribe to both managers but use single update function
+		this._register(this._manager.settingsManager.onDidChangeSettings(updateSettings));
+		this._register(this._manager.appStateManager.onDidChangeSettings(updateSettings));
 
 		this._register(webviewEditor.onDidDispose(() => {
 			if (this.previewState === PreviewState.Active) {
@@ -149,7 +140,7 @@ export class ImagePreview extends MediaPreview {
 		this._preloadedImageData.set(this.resource.toString(), {
 			uri: this.resource,
 			webviewUri: webviewUri.toString(),
-			loaded: false // Will be set to true when cacheCurrentImage sends imagePreloaded message
+			loaded: false
 		});
 		
 		// Initialize the preview
@@ -325,23 +316,13 @@ export class ImagePreview extends MediaPreview {
 	private async preloadImageData(uri: vscode.Uri): Promise<void> {
 		const key = uri.toString();
 		const webviewUri = this._webviewEditor.webview.asWebviewUri(uri);
-		
-		// Store the URI info immediately
+
+		// Store the webview URI for later use
 		this._preloadedImageData.set(key, {
 			uri: uri,
 			webviewUri: webviewUri.toString(),
 			loaded: false
 		});
-		
-		// Send preload request to webview
-		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({
-				type: 'preloadImage',
-				uri: webviewUri.toString(),
-				resourceUri: uri.toString(),
-				cacheKey: key
-			});
-		}
 	}
 
 	private saveCurrentZoomState(): void {
@@ -361,10 +342,9 @@ export class ImagePreview extends MediaPreview {
 		const cacheKey = newResource.toString();
 		const cachedData = this._preloadedImageData.get(cacheKey);
 		
-		// Send switch request to webview with cache info
+		// Send switch request to webview
 		this._webviewEditor.webview.postMessage({
-			type: 'switchToImageFromCache',
-			cacheKey: cacheKey,
+			type: 'switchToImage',
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
 			resourceUri: newResource.toString()
 		});
@@ -404,16 +384,7 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
-	private ensureOriginalImageIsCached(): void {
-		if (this.previewState === PreviewState.Active) {
-			// Tell webview to cache the current image
-			this._webviewEditor.webview.postMessage({
-				type: 'cacheCurrentImage'
-			});
-		}
-	}
-
-	private sendSettingsUpdate(settings: ImageSettings): void {
+	private sendSettingsUpdate(settings: WebviewImageSettings): void {
 		if (this.previewState === PreviewState.Active) {
 			// Convert mask URIs to webview-safe URIs if they exist
 			const webviewSafeMasks = settings.maskFilters.map(mask => ({
@@ -421,14 +392,18 @@ export class ImagePreview extends MediaPreview {
 				maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
 			}));
 
+			// Include resourceUri so webview can detect file changes
+			const uri = this._webviewEditor.webview.asWebviewUri(this.resource);
 			const webviewSafeSettings = {
 				...settings,
-				maskFilters: webviewSafeMasks
+				maskFilters: webviewSafeMasks,
+				resourceUri: this.resource.toString(),
+				src: uri.toString()
 			};
 
-			this._webviewEditor.webview.postMessage({ 
-				type: 'updateSettings', 
-				settings: webviewSafeSettings 
+			this._webviewEditor.webview.postMessage({
+				type: 'updateSettings',
+				settings: webviewSafeSettings
 			});
 		}
 	}
@@ -510,6 +485,30 @@ export class ImagePreview extends MediaPreview {
 
 		const version = Date.now().toString();
 
+		// Detect format from file extension and set it early so HTML gets correct settings
+		const lower = this.resource.path.toLowerCase();
+		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
+		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm');
+		const isPng = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+		const isPfm = lower.endsWith('.pfm');
+		const isNpy = lower.endsWith('.npy') || lower.endsWith('.npz');
+		this._isTiff = isTiff || isPpm || isPng;
+
+		// Pre-set format based on file extension (will be confirmed by webview later)
+		// This ensures HTML is created with correct format-specific settings
+		if (isPfm) {
+			this._manager.appStateManager.setImageFormat('pfm');
+		} else if (isNpy) {
+			// NPY format will be determined by dtype later (float vs uint)
+			// For now, use float as default since we can't know without reading the file
+			this._manager.appStateManager.setImageFormat('npy-float');
+		} else if (isPng) {
+			this._manager.appStateManager.setImageFormat('png');
+		} else if (isPpm) {
+			this._manager.appStateManager.setImageFormat('ppm');
+		}
+		// TIFF format will be set by webview after detecting float vs int
+
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness from appStateManager (per-format)
 		// - maskFilters from settingsManager (per-image)
@@ -528,12 +527,6 @@ export class ImagePreview extends MediaPreview {
 		const uri = this._webviewEditor.webview.asWebviewUri(this.resource);
 		const workspaceUri = vscode.workspace.getWorkspaceFolder(this.resource)?.uri ?? this.resource;
 		const folderUri = this._webviewEditor.webview.asWebviewUri(workspaceUri);
-
-		const lower = this.resource.path.toLowerCase();
-		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
-		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm');
-		const isPng = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
-		this._isTiff = isTiff || isPpm || isPng;
 
 		// Convert mask URIs to webview-safe URIs if they exist
 		const webviewSafeMasks = settings.maskFilters.map(mask => ({
