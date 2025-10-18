@@ -108,6 +108,7 @@ export class ImagePreview extends MediaPreview {
 				normalization: this._manager.appStateManager.imageSettings.normalization,
 				gamma: this._manager.appStateManager.imageSettings.gamma,
 				brightness: this._manager.appStateManager.imageSettings.brightness,
+				rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 				maskFilters: maskFilters,
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
@@ -510,13 +511,14 @@ export class ImagePreview extends MediaPreview {
 		// TIFF format will be set by webview after detecting float vs int
 
 		// Merge settings from both managers:
-		// - normalization, gamma, brightness from appStateManager (per-format)
+		// - normalization, gamma, brightness, rgbAs24BitGrayscale from appStateManager (per-format)
 		// - maskFilters from settingsManager (per-image)
 		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
 		const settings = {
 			normalization: this._manager.appStateManager.imageSettings.normalization,
 			gamma: this._manager.appStateManager.imageSettings.gamma,
 			brightness: this._manager.appStateManager.imageSettings.brightness,
+			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 			maskFilters: maskFilters,
 			nanColor: this._manager.settingsManager.getNanColor()
 		};

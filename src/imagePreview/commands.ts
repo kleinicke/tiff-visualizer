@@ -55,9 +55,18 @@ export function registerImagePreviewCommands(
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
 		const currentConfig = previewManager.getNormalizationConfig();
 		const activePreview = previewManager.activePreview;
-		
+
+		// Check if we have an RGB image (3 or more channels)
+		const formatInfo = activePreview?.getManager().appStateManager.uiState.formatInfo;
+		const isRgbImage = formatInfo && formatInfo.samplesPerPixel >= 3;
+		const rgbModeEnabled = previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
+
+		console.log('[setNormalizationRange] formatInfo:', formatInfo);
+		console.log('[setNormalizationRange] isRgbImage:', isRgbImage);
+		console.log('[setNormalizationRange] samplesPerPixel:', formatInfo?.samplesPerPixel);
+
 		// First show a QuickPick with options
-		const options = [
+		const options: Array<vscode.QuickPickItem & { action?: string }> = [
 			{
 				label: (!currentConfig.autoNormalize && !currentConfig.gammaMode) ? '$(check) Manual Range' : '$(square) Manual Range',
 				description: 'Set custom min/max values',
@@ -77,6 +86,22 @@ export function registerImagePreviewCommands(
 				action: 'gamma'
 			}
 		];
+
+		// Add RGB mode option only for RGB images
+		if (isRgbImage) {
+			options.push(
+				{
+					label: '',
+					kind: vscode.QuickPickItemKind.Separator
+				},
+				{
+					label: rgbModeEnabled ? '$(check) RGB as 24-bit Grayscale' : '$(square) RGB as 24-bit Grayscale',
+					description: 'Interpret RGB channels as single 24-bit value',
+					detail: 'Combines R, G, B into one 24-bit integer: (R<<16)|(G<<8)|B (0-16777215)',
+					action: 'rgb24bit'
+				}
+			);
+		}
 
 		// Create a custom QuickPick to disable input
 		const quickPick = vscode.window.createQuickPick<typeof options[0]>();
@@ -122,6 +147,14 @@ export function registerImagePreviewCommands(
 			}
 		} else if (selected.action === 'gamma') {
 			previewManager.setGammaMode(true);
+			previewManager.updateAllPreviews();
+			if (activePreview) {
+				activePreview.updateStatusBar();
+			}
+		} else if (selected.action === 'rgb24bit') {
+			// Toggle RGB as 24-bit grayscale mode (independent of normalization mode)
+			const newState = !previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
+			previewManager.appStateManager.setRgbAs24BitGrayscale(newState);
 			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();

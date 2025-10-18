@@ -371,6 +371,8 @@ export class TiffProcessor {
 		const range = normMax - normMin;
 		const nanColor = this._getNanColor(settings);
 
+		console.log(`[TiffProcessor] _processFloatTiff: numBands=${numBands}, rgbAs24BitGrayscale=${settings.rgbAs24BitGrayscale}`);
+
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
 
@@ -398,16 +400,47 @@ export class TiffProcessor {
 					normalized = 0; // Handle case where min === max
 				}
 				normalized = this.clamp(normalized, 0, 1);
-				
+
 				// Apply gamma and brightness corrections
 				if (settings.normalization.gammaMode) {
 					normalized = this._applyGammaAndBrightness(normalized, settings);
 				}
-				
+
 				const displayValue = Math.round(normalized * 255);
 				r = g = b = displayValue;
+			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
+				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
+				// Get normalized RGB values (0-255 range)
+				const values = [];
+				for (let band = 0; band < 3; band++) {
+					let value = rasters[band][i];
+					let normalized;
+					if (range > 0) {
+						normalized = (value - normMin) / range;
+					} else {
+						normalized = 0;
+					}
+					normalized = this.clamp(normalized, 0, 1);
+					values.push(Math.round(normalized * 255));
+				}
+
+				// Combine into 24-bit value: (R << 16) | (G << 8) | B
+				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+				// Max value is 16777215 (0xFFFFFF)
+
+				// Normalize 24-bit value to 0-1 range
+				let normalized24 = combined24bit / 16777215.0;
+
+				// Apply gamma and brightness to the combined value
+				if (settings.normalization.gammaMode) {
+					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+				}
+
+				// Display as grayscale
+				const displayValue = Math.round(normalized24 * 255);
+				r = g = b = displayValue;
 			} else {
-				// RGB or multi-band
+				// RGB or multi-band (normal mode)
 				const values = [];
 				for (let band = 0; band < Math.min(3, numBands); band++) {
 					let value = rasters[band][i];
@@ -418,14 +451,14 @@ export class TiffProcessor {
 						normalized = 0; // Handle case where min === max
 					}
 					normalized = this.clamp(normalized, 0, 1);
-					
+
 					if (settings.normalization.gammaMode) {
 						normalized = this._applyGammaAndBrightness(normalized, settings);
 					}
-					
+
 					values.push(Math.round(normalized * 255));
 				}
-				
+
 				r = values[0] ?? 0;
 				g = values[1] ?? 0;
 				b = values[2] ?? 0;
@@ -473,34 +506,61 @@ export class TiffProcessor {
 				b = nanColor.b;
 			} else if (numBands === 1) {
 				let value = rasters[0][i];
-				
+
 				// For uint images: always use traditional bit-depth normalization
 				value = value / maxVal; // Normalize to 0-1
-				
+
 				// Only apply gamma/brightness to uint images if values are non-default
 				if (this._shouldApplyGammaBrightnessToUint(settings)) {
 					value = this._applyGammaAndBrightness(value, settings);
 				}
-				
+
 				value = Math.round(value * 255); // Convert to 8-bit for display
 				r = g = b = this.clamp(value, 0, 255);
+			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
+				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
+				// For integer images, directly use the pixel values scaled to 0-255
+				const values = [];
+				for (let band = 0; band < 3; band++) {
+					let value = rasters[band][i];
+					// Normalize to 0-255 range based on bit depth
+					value = value / maxVal; // Normalize to 0-1
+					value = Math.round(value * 255); // Convert to 8-bit
+					values.push(this.clamp(value, 0, 255));
+				}
+
+				// Combine into 24-bit value: (R << 16) | (G << 8) | B
+				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+				// Max value is 16777215 (0xFFFFFF)
+
+				// Normalize 24-bit value to 0-1 range
+				let normalized24 = combined24bit / 16777215.0;
+
+				// Apply gamma/brightness to the combined value
+				if (this._shouldApplyGammaBrightnessToUint(settings)) {
+					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+				}
+
+				// Display as grayscale
+				const displayValue = Math.round(normalized24 * 255);
+				r = g = b = this.clamp(displayValue, 0, 255);
 			} else {
 				const values = [];
 				for (let band = 0; band < Math.min(3, numBands); band++) {
 					let value = rasters[band][i];
-					
+
 					// For uint images: always use traditional bit-depth normalization
 					value = value / maxVal; // Normalize to 0-1
-					
+
 					// Only apply gamma/brightness to uint images if values are non-default
 					if (this._shouldApplyGammaBrightnessToUint(settings)) {
 						value = this._applyGammaAndBrightness(value, settings);
 					}
-					
+
 					value = Math.round(value * 255); // Convert to 8-bit for display
 					values.push(this.clamp(value, 0, 255));
 				}
-				
+
 				r = values[0] ?? 0;
 				g = values[1] ?? 0;
 				b = values[2] ?? 0;

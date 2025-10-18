@@ -114,6 +114,9 @@ class FormatInfoMessageHandler implements MessageHandler {
 		// Accept format info from any source (TIFF and non-TIFF processors)
 		preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
 
+		// Store format info in app state for access by commands
+		preview.getManager().appStateManager.setFormatInfo(message.value);
+
 		// Set the format type for per-format settings
 		if (message.value && message.value.formatType) {
 			console.log('[FormatInfoMessageHandler] Setting image format:', message.value.formatType);

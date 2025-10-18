@@ -21,6 +21,7 @@ export interface ImageSettings {
 	normalization: NormalizationSettings;
 	gamma: GammaSettings;
 	brightness: BrightnessSettings;
+	rgbAs24BitGrayscale: boolean;
 }
 
 // Image format types for per-format settings
@@ -85,7 +86,8 @@ export class AppStateManager {
 		},
 		brightness: {
 			offset: 0
-		}
+		},
+		rgbAs24BitGrayscale: false
 	};
 
 	private _uiState: UIState = {
@@ -177,6 +179,13 @@ export class AppStateManager {
 		}
 	}
 
+	public setRgbAs24BitGrayscale(enabled: boolean): void {
+		if (this._imageSettings.rgbAs24BitGrayscale !== enabled) {
+			this._imageSettings.rgbAs24BitGrayscale = enabled;
+			this._emitSettingsChanged();
+		}
+	}
+
 	// Per-format Settings Management
 	public setImageFormat(format: ImageFormatType): void {
 		console.log(`[AppStateManager] setImageFormat called with format: ${format}`);
@@ -212,7 +221,8 @@ export class AppStateManager {
 		return {
 			normalization: { ...settings.normalization },
 			gamma: { ...settings.gamma },
-			brightness: { ...settings.brightness }
+			brightness: { ...settings.brightness },
+			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale
 		};
 	}
 
@@ -235,7 +245,8 @@ export class AppStateManager {
 			},
 			brightness: {
 				offset: 0
-			}
+			},
+			rgbAs24BitGrayscale: false
 		};
 
 		// ============================================

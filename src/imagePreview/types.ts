@@ -37,4 +37,5 @@ export interface IImagePreview {
 	startComparison(peerUri: vscode.Uri): void;
 	updateStatusBar(): void;
 	addToImageCollection(uri: vscode.Uri): Promise<void>;
+	getManager(): IImagePreviewManager;
 } 

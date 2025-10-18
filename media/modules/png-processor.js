@@ -224,6 +224,8 @@ export class PngProcessor {
         // Determine the correct stride based on data format
         const stride = isRgbaFormat ? 4 : channels;
         console.log(`[PngProcessor] _renderToImageData: channels=${channels}, isRgbaFormat=${isRgbaFormat}, stride=${stride}`);
+        console.log(`[PngProcessor] settings.rgbAs24BitGrayscale:`, settings.rgbAs24BitGrayscale);
+        console.log(`[PngProcessor] Full settings:`, settings);
 
         // Calculate stats for normalization status bar
         let min = Infinity, max = -Infinity;
@@ -264,8 +266,32 @@ export class PngProcessor {
                 const corrected = this._applyGammaAndBrightness(value, settings);
                 r = g = b = Math.round(corrected * 255);
                 a = Math.round((data[srcIdx + 1] / maxValue) * 255);
+            } else if (settings.rgbAs24BitGrayscale && channels >= 3) {
+                // RGB as 24-bit grayscale mode
+                // Get RGB values normalized to 0-255
+                const rVal = Math.round((data[srcIdx] / maxValue) * 255);
+                const gVal = Math.round((data[srcIdx + 1] / maxValue) * 255);
+                const bVal = Math.round((data[srcIdx + 2] / maxValue) * 255);
+
+                // Combine into 24-bit value: (R << 16) | (G << 8) | B
+                const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
+                // Max value is 16777215 (0xFFFFFF)
+
+                // Normalize 24-bit value to 0-1 range
+                let normalized24 = combined24bit / 16777215.0;
+
+                // Apply gamma/brightness to the combined value
+                normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+
+                // Display as grayscale
+                r = g = b = Math.round(normalized24 * 255);
+
+                // Handle alpha channel if present (RGBA)
+                if (channels === 4) {
+                    a = Math.round((data[srcIdx + 3] / maxValue) * 255);
+                }
             } else if (channels === 3) {
-                // RGB
+                // RGB (normal mode)
                 const rVal = this._applyGammaAndBrightness(data[srcIdx] / maxValue, settings);
                 const gVal = this._applyGammaAndBrightness(data[srcIdx + 1] / maxValue, settings);
                 const bVal = this._applyGammaAndBrightness(data[srcIdx + 2] / maxValue, settings);
@@ -273,7 +299,7 @@ export class PngProcessor {
                 g = Math.round(gVal * 255);
                 b = Math.round(bVal * 255);
             } else {
-                // RGBA
+                // RGBA (normal mode)
                 const rVal = this._applyGammaAndBrightness(data[srcIdx] / maxValue, settings);
                 const gVal = this._applyGammaAndBrightness(data[srcIdx + 1] / maxValue, settings);
                 const bVal = this._applyGammaAndBrightness(data[srcIdx + 2] / maxValue, settings);
