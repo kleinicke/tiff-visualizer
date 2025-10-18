@@ -204,13 +204,13 @@ export function registerImagePreviewCommands(
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setGamma', async () => {
 		const currentPreview = previewManager.activePreview;
 		const normConfig = previewManager.getNormalizationConfig();
-		
-		// Check if this is a float TIFF and not in gamma mode
-		if (currentPreview && currentPreview.showNormTiff && !normConfig.gammaMode) {
+
+		// Check if not in gamma mode (offer to switch to gamma mode)
+		if (currentPreview && !normConfig.gammaMode) {
 			const gammaOptions = [
 				{
 					label: '$(arrow-right) Switch to Gamma/Brightness Mode',
-					description: 'Enable gamma correction for this float image',
+					description: 'Enable gamma correction for this image',
 					detail: 'Use current normalization range with gamma/brightness controls',
 					action: 'switch'
 				},
@@ -230,8 +230,8 @@ export function registerImagePreviewCommands(
 			// Create a custom QuickPick to disable input
 			const gammaQuickPick = vscode.window.createQuickPick<typeof gammaOptions[0]>();
 			gammaQuickPick.items = gammaOptions;
-			gammaQuickPick.placeholder = 'Float image detected - Choose how to apply gamma correction';
-			gammaQuickPick.title = 'Gamma Correction for Float Image';
+			gammaQuickPick.placeholder = 'Not in gamma mode - Choose how to apply gamma correction';
+			gammaQuickPick.title = 'Gamma Correction';
 			gammaQuickPick.canSelectMany = false;
 			gammaQuickPick.ignoreFocusOut = false;
 			gammaQuickPick.value = '';

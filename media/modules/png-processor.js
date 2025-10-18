@@ -238,15 +238,36 @@ export class PngProcessor {
             }
         }
 
-        // Enable normalization controls for PNG files
-        this.vscode.postMessage({
-            type: 'showNorm',
-            value: true
-        });
+        // Send stats to VS Code for status bar
         this.vscode.postMessage({
             type: 'stats',
             value: { min, max }
         });
+
+        // Calculate normalization range based on settings
+        let normMin, normMax;
+
+        if (settings.normalization && settings.normalization.autoNormalize) {
+            // Auto-normalize: use actual image min/max
+            normMin = min;
+            normMax = max;
+            console.log(`[PngProcessor] Auto-normalize mode: [${normMin}, ${normMax}]`);
+        } else if (settings.normalization && settings.normalization.gammaMode) {
+            // Gamma mode: normalize to bit-depth range (0 to maxValue)
+            normMin = 0;
+            normMax = maxValue;
+            console.log(`[PngProcessor] Gamma mode: [${normMin}, ${normMax}] (bit depth: ${bitDepth})`);
+        } else if (settings.normalization) {
+            // Manual mode: use user-specified range
+            normMin = settings.normalization.min;
+            normMax = settings.normalization.max;
+            console.log(`[PngProcessor] Manual mode: [${normMin}, ${normMax}]`);
+        } else {
+            // Fallback: use bit-depth range
+            normMin = 0;
+            normMax = maxValue;
+            console.log(`[PngProcessor] Fallback mode: [${normMin}, ${normMax}]`);
+        }
 
         // Render pixels
         for (let i = 0; i < width * height; i++) {
@@ -257,21 +278,30 @@ export class PngProcessor {
 
             if (channels === 1) {
                 // Grayscale
-                const value = data[srcIdx] / maxValue;
-                const corrected = this._applyGammaAndBrightness(value, settings);
+                const rawValue = data[srcIdx];
+                const normalized = (rawValue - normMin) / (normMax - normMin);
+                const clamped = Math.max(0, Math.min(1, normalized));
+                const corrected = this._applyGammaAndBrightness(clamped, settings);
                 r = g = b = Math.round(corrected * 255);
             } else if (channels === 2) {
                 // Grayscale + Alpha
-                const value = data[srcIdx] / maxValue;
-                const corrected = this._applyGammaAndBrightness(value, settings);
+                const rawValue = data[srcIdx];
+                const normalized = (rawValue - normMin) / (normMax - normMin);
+                const clamped = Math.max(0, Math.min(1, normalized));
+                const corrected = this._applyGammaAndBrightness(clamped, settings);
                 r = g = b = Math.round(corrected * 255);
                 a = Math.round((data[srcIdx + 1] / maxValue) * 255);
             } else if (settings.rgbAs24BitGrayscale && channels >= 3) {
                 // RGB as 24-bit grayscale mode
-                // Get RGB values normalized to 0-255
-                const rVal = Math.round((data[srcIdx] / maxValue) * 255);
-                const gVal = Math.round((data[srcIdx + 1] / maxValue) * 255);
-                const bVal = Math.round((data[srcIdx + 2] / maxValue) * 255);
+                // Apply normalization to each channel first, then combine
+                const rNorm = Math.max(0, Math.min(1, (data[srcIdx] - normMin) / (normMax - normMin)));
+                const gNorm = Math.max(0, Math.min(1, (data[srcIdx + 1] - normMin) / (normMax - normMin)));
+                const bNorm = Math.max(0, Math.min(1, (data[srcIdx + 2] - normMin) / (normMax - normMin)));
+
+                // Convert to 0-255 range for combining
+                const rVal = Math.round(rNorm * 255);
+                const gVal = Math.round(gNorm * 255);
+                const bVal = Math.round(bNorm * 255);
 
                 // Combine into 24-bit value: (R << 16) | (G << 8) | B
                 const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
@@ -292,17 +322,23 @@ export class PngProcessor {
                 }
             } else if (channels === 3) {
                 // RGB (normal mode)
-                const rVal = this._applyGammaAndBrightness(data[srcIdx] / maxValue, settings);
-                const gVal = this._applyGammaAndBrightness(data[srcIdx + 1] / maxValue, settings);
-                const bVal = this._applyGammaAndBrightness(data[srcIdx + 2] / maxValue, settings);
+                const rNorm = Math.max(0, Math.min(1, (data[srcIdx] - normMin) / (normMax - normMin)));
+                const gNorm = Math.max(0, Math.min(1, (data[srcIdx + 1] - normMin) / (normMax - normMin)));
+                const bNorm = Math.max(0, Math.min(1, (data[srcIdx + 2] - normMin) / (normMax - normMin)));
+                const rVal = this._applyGammaAndBrightness(rNorm, settings);
+                const gVal = this._applyGammaAndBrightness(gNorm, settings);
+                const bVal = this._applyGammaAndBrightness(bNorm, settings);
                 r = Math.round(rVal * 255);
                 g = Math.round(gVal * 255);
                 b = Math.round(bVal * 255);
             } else {
                 // RGBA (normal mode)
-                const rVal = this._applyGammaAndBrightness(data[srcIdx] / maxValue, settings);
-                const gVal = this._applyGammaAndBrightness(data[srcIdx + 1] / maxValue, settings);
-                const bVal = this._applyGammaAndBrightness(data[srcIdx + 2] / maxValue, settings);
+                const rNorm = Math.max(0, Math.min(1, (data[srcIdx] - normMin) / (normMax - normMin)));
+                const gNorm = Math.max(0, Math.min(1, (data[srcIdx + 1] - normMin) / (normMax - normMin)));
+                const bNorm = Math.max(0, Math.min(1, (data[srcIdx + 2] - normMin) / (normMax - normMin)));
+                const rVal = this._applyGammaAndBrightness(rNorm, settings);
+                const gVal = this._applyGammaAndBrightness(gNorm, settings);
+                const bVal = this._applyGammaAndBrightness(bNorm, settings);
                 r = Math.round(rVal * 255);
                 g = Math.round(gVal * 255);
                 b = Math.round(bVal * 255);
@@ -329,6 +365,42 @@ export class PngProcessor {
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
 
+        // Calculate stats for normalization
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < width * height; i++) {
+            const srcIdx = i * 4;
+            for (let c = 0; c < 3; c++) {
+                const value = data[srcIdx + c];
+                if (value < min) min = value;
+                if (value > max) max = value;
+            }
+        }
+
+        // Send stats to VS Code
+        if (this.vscode) {
+            this.vscode.postMessage({ type: 'stats', value: { min, max } });
+        }
+
+        // Calculate normalization range (data is already 0-255, so maxValue = 255)
+        let normMin, normMax;
+
+        if (settings.normalization && settings.normalization.autoNormalize) {
+            normMin = min;
+            normMax = max;
+            console.log(`[PngProcessor] _toImageDataWithGamma Auto-normalize: [${normMin}, ${normMax}]`);
+        } else if (settings.normalization && settings.normalization.gammaMode) {
+            normMin = 0;
+            normMax = 255;
+            console.log(`[PngProcessor] _toImageDataWithGamma Gamma mode: [${normMin}, ${normMax}]`);
+        } else if (settings.normalization) {
+            normMin = settings.normalization.min;
+            normMax = settings.normalization.max;
+            console.log(`[PngProcessor] _toImageDataWithGamma Manual mode: [${normMin}, ${normMax}]`);
+        } else {
+            normMin = 0;
+            normMax = 255;
+        }
+
         // data is RGBA format [R,G,B,A,R,G,B,A,...]
         for (let i = 0; i < width * height; i++) {
             const srcIdx = i * 4;
@@ -337,60 +409,27 @@ export class PngProcessor {
             let b = data[srcIdx + 2];
             const a = data[srcIdx + 3];
 
-            // Apply gamma and brightness corrections to each channel
-            if (settings.gamma || settings.brightness) {
-                const gammaIn = settings.gamma?.in ?? 1.0;
-                const gammaOut = settings.gamma?.out ?? 1.0;
-                const exposureStops = settings.brightness?.offset ?? 0;
+            // Apply normalization first, then gamma and brightness
+            // Normalize each channel
+            r = Math.max(0, Math.min(1, (r - normMin) / (normMax - normMin)));
+            g = Math.max(0, Math.min(1, (g - normMin) / (normMax - normMin)));
+            b = Math.max(0, Math.min(1, (b - normMin) / (normMax - normMin)));
 
-                // Process each color channel
-                for (let channel = 0; channel < 3; channel++) {
-                    let channelValue = channel === 0 ? r : channel === 1 ? g : b;
+            // Apply gamma and brightness corrections
+            r = this._applyGammaAndBrightness(r, settings);
+            g = this._applyGammaAndBrightness(g, settings);
+            b = this._applyGammaAndBrightness(b, settings);
 
-                    // Normalize to 0-1 range
-                    let normalizedValue = channelValue / 255;
-
-                    // Step 1: Remove input gamma (linearize)
-                    let linear = Math.pow(normalizedValue, gammaIn);
-
-                    // Step 2: Apply brightness in linear space
-                    linear = linear * Math.pow(2, exposureStops);
-
-                    // Step 3: Apply output gamma
-                    normalizedValue = Math.pow(linear, 1.0 / gammaOut);
-
-                    // Clamp and convert back to 0-255
-                    normalizedValue = Math.max(0, Math.min(1, normalizedValue));
-                    const correctedValue = Math.round(normalizedValue * 255);
-
-                    // Update the channel value
-                    if (channel === 0) r = correctedValue;
-                    else if (channel === 1) g = correctedValue;
-                    else b = correctedValue;
-                }
-            }
+            // Convert back to 0-255
+            r = Math.round(r * 255);
+            g = Math.round(g * 255);
+            b = Math.round(b * 255);
 
             const outIdx = i * 4;
             out[outIdx + 0] = r;
             out[outIdx + 1] = g;
             out[outIdx + 2] = b;
             out[outIdx + 3] = a;
-        }
-
-        // Send stats to VS Code
-        if (this.vscode) {
-            let min = Infinity, max = -Infinity;
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * 4;
-                for (let c = 0; c < 3; c++) {
-                    const value = data[srcIdx + c];
-                    if (value < min) min = value;
-                    if (value > max) max = value;
-                }
-            }
-            // Enable normalization controls for PNG files
-            this.vscode.postMessage({ type: 'showNorm', value: true });
-            this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 
         return new ImageData(out, width, height);

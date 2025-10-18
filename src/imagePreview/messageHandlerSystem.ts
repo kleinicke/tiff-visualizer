@@ -69,7 +69,6 @@ export class TypedMessageRouter {
 		this.registerHandler(new ZoomMessageHandler());
 		this.registerHandler(new PixelFocusMessageHandler());
 		this.registerHandler(new PixelBlurMessageHandler());
-		this.registerHandler(new showNormMessageHandler());
 		this.registerHandler(new StatsMessageHandler());
 		this.registerHandler(new FormatInfoMessageHandler());
 		this.registerHandler(new ReadyMessageHandler());
@@ -96,11 +95,6 @@ export interface PixelFocusMessage {
 
 export interface PixelBlurMessage {
 	type: 'pixelBlur';
-}
-
-export interface showNormMessage {
-	type: 'showNorm';
-	value: boolean;
 }
 
 export interface StatsMessage {
@@ -180,27 +174,6 @@ export class PixelBlurMessageHandler implements MessageHandler<PixelBlurMessage>
 					context.preview.getSizeStatusBarEntry().show(context.preview, imageSize);
 				}
 			}
-		}
-	}
-}
-
-export class showNormMessageHandler implements MessageHandler<showNormMessage> {
-	readonly type = 'showNorm';
-
-	handle(message: showNormMessage, context: HandlerContext): void {
-		context.outputChannel.appendLine(`TIFF Visualizer: Received showNorm message: ${JSON.stringify(message)}`);
-		
-		if (message.value !== undefined) {
-			context.outputChannel.appendLine(`TIFF Visualizer: Setting showNorm to: ${message.value}`);
-			context.appStateManager.setshowNorm(message.value);
-			
-			context.outputChannel.appendLine('TIFF Visualizer: Updating status bar after showNorm change');
-			if (context.preview.updateStatusBar) {
-				context.preview.updateStatusBar();
-			}
-			context.outputChannel.appendLine('TIFF Visualizer: Status bar update complete');
-		} else {
-			context.outputChannel.appendLine('TIFF Visualizer: Warning - showNorm message missing value');
 		}
 	}
 }

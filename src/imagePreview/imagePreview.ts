@@ -24,7 +24,6 @@ export class ImagePreview extends MediaPreview {
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
 	private _isTiff: boolean = false;
-	private _showNorm: boolean = false;
 
 	// Image collection management
 	private _imageCollection: vscode.Uri[] = [];
@@ -225,10 +224,6 @@ export class ImagePreview extends MediaPreview {
 		this.render();
 	}
 
-	public get showNormTiff(): boolean {
-		return this._isTiff && this._showNorm;
-	}
-
 	public setImageSize(size: string): void {
 		this._imageSize = size;
 	}
@@ -239,10 +234,6 @@ export class ImagePreview extends MediaPreview {
 
 	public setImageZoom(zoom: Scale): void {
 		this._imageZoom = zoom;
-	}
-
-	public setshowNorm(showNorm: boolean): void {
-		this._showNorm = showNorm;
 	}
 
 	public get isTiff(): boolean {
@@ -422,7 +413,7 @@ export class ImagePreview extends MediaPreview {
 			return;
 		}
 
-		outputChannel.appendLine(`TIFF Visualizer: updateStatusBar - isTiff: ${this._isTiff}, showNorm: ${this._showNorm}, active: ${this._webviewEditor.active}, visible: ${this._webviewEditor.visible}`);
+		outputChannel.appendLine(`TIFF Visualizer: updateStatusBar - isTiff: ${this._isTiff}, active: ${this._webviewEditor.active}, visible: ${this._webviewEditor.visible}`);
 
 		if (this._webviewEditor.active && this._webviewEditor.visible) {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
@@ -439,35 +430,24 @@ export class ImagePreview extends MediaPreview {
 				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
 				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
 			);
-			
-			// Show float controls not only for TIFF but for any float source
-			if (this._showNorm) {
-				outputChannel.appendLine('TIFF Visualizer: Showing FLOAT TIFF controls (normalization)');
-				const normSettings = this._manager.appStateManager.imageSettings.normalization;
-				this._normalizationStatusBarEntry.updateNormalization(
-					normSettings.min,
-					normSettings.max
-				);
-				this._normalizationStatusBarEntry.show(
-					normSettings.autoNormalize,
-					normSettings.gammaMode
-				);
 
-				if (normSettings.gammaMode) {
-					this._gammaStatusBarEntry.show();
-					this._brightnessStatusBarEntry.show();
-				} else {
-					this._gammaStatusBarEntry.hide();
-					this._brightnessStatusBarEntry.hide();
-				}
-			} else if (this._isTiff && !this._showNorm) {
-				outputChannel.appendLine('TIFF Visualizer: Showing INTEGER TIFF controls (gamma/brightness only)');
-				this._normalizationStatusBarEntry.forceHide();
+			// Always show normalization controls for all image formats
+			outputChannel.appendLine('TIFF Visualizer: Showing normalization controls');
+			const normSettings = this._manager.appStateManager.imageSettings.normalization;
+			this._normalizationStatusBarEntry.updateNormalization(
+				normSettings.min,
+				normSettings.max
+			);
+			this._normalizationStatusBarEntry.show(
+				normSettings.autoNormalize,
+				normSettings.gammaMode
+			);
+
+			// Show gamma/brightness controls when in gamma mode
+			if (normSettings.gammaMode) {
 				this._gammaStatusBarEntry.show();
 				this._brightnessStatusBarEntry.show();
 			} else {
-				outputChannel.appendLine('TIFF Visualizer: Hiding all TIFF-specific controls (not a TIFF)');
-				this._normalizationStatusBarEntry.forceHide();
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
 			}

@@ -241,16 +241,11 @@ export class TiffProcessor {
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
 		console.log(`[TiffProcessor] Detected float: ${showNorm}, sampleFormat:`, sampleFormat);
 
-		// Always enable normalization controls (for both float and uint)
-		if (this.vscode) {
-			console.log(`[TiffProcessor] Sending showNorm: true message (enable controls)`);
-			this.vscode.postMessage({ type: 'showNorm', value: true });
-		}
-
 		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
 		} else {
-			imageDataArray = this._processIntegerTiff(displayRasters, width, height, settings, bitsPerSample);
+			// Pass normalization parameters to integer TIFF processing too
+			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
 		}
 
 		return new ImageData(imageDataArray, width, height);
@@ -346,16 +341,11 @@ export class TiffProcessor {
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
 		console.log(`[TiffProcessor] Detected float: ${showNorm}, sampleFormat:`, sampleFormat);
 
-		// Always enable normalization controls (for both float and uint)
-		if (this.vscode) {
-			console.log(`[TiffProcessor] Sending showNorm: true message (enable controls)`);
-			this.vscode.postMessage({ type: 'showNorm', value: true });
-		}
-
 		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
 		} else {
-			imageDataArray = this._processIntegerTiff(displayRasters, width, height, settings, bitsPerSample);
+			// Pass normalization parameters to integer TIFF processing too
+			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
 		}
 
 		return new ImageData(imageDataArray, width, height);
@@ -478,14 +468,13 @@ export class TiffProcessor {
 	 * Process integer TIFF data
 	 * @private
 	 */
-	_processIntegerTiff(rasters, width, height, settings, bitsPerSample) {
+	_processIntegerTiff(rasters, width, height, normMin, normMax, settings, bitsPerSample) {
 		const imageDataArray = new Uint8ClampedArray(width * height * 4);
 		const numBands = rasters.length;
 		const nanColor = this._getNanColor(settings);
-		
-		// For uint images: always use traditional bit-depth normalization
-		// Normalization settings are ignored - they only apply to float images
-		const maxVal = Math.pow(2, bitsPerSample) - 1;
+
+		// Use normalization settings (normMin/normMax are already calculated based on mode)
+		const range = normMax - normMin;
 
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
@@ -507,25 +496,37 @@ export class TiffProcessor {
 			} else if (numBands === 1) {
 				let value = rasters[0][i];
 
-				// For uint images: always use traditional bit-depth normalization
-				value = value / maxVal; // Normalize to 0-1
+				// Apply normalization based on settings (auto/gamma/manual)
+				let normalized;
+				if (range > 0) {
+					normalized = (value - normMin) / range;
+				} else {
+					normalized = 0; // Handle case where min === max
+				}
+				normalized = this.clamp(normalized, 0, 1);
 
-				// Only apply gamma/brightness to uint images if values are non-default
-				if (this._shouldApplyGammaBrightnessToUint(settings)) {
-					value = this._applyGammaAndBrightness(value, settings);
+				// Apply gamma and brightness corrections
+				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
+					normalized = this._applyGammaAndBrightness(normalized, settings);
 				}
 
-				value = Math.round(value * 255); // Convert to 8-bit for display
+				value = Math.round(normalized * 255); // Convert to 8-bit for display
 				r = g = b = this.clamp(value, 0, 255);
 			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
 				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
-				// For integer images, directly use the pixel values scaled to 0-255
+				// Apply normalization to each channel first, then combine
 				const values = [];
 				for (let band = 0; band < 3; band++) {
 					let value = rasters[band][i];
-					// Normalize to 0-255 range based on bit depth
-					value = value / maxVal; // Normalize to 0-1
-					value = Math.round(value * 255); // Convert to 8-bit
+					// Apply normalization
+					let normalized;
+					if (range > 0) {
+						normalized = (value - normMin) / range;
+					} else {
+						normalized = 0;
+					}
+					normalized = this.clamp(normalized, 0, 1);
+					value = Math.round(normalized * 255); // Convert to 8-bit
 					values.push(this.clamp(value, 0, 255));
 				}
 
@@ -537,7 +538,7 @@ export class TiffProcessor {
 				let normalized24 = combined24bit / 16777215.0;
 
 				// Apply gamma/brightness to the combined value
-				if (this._shouldApplyGammaBrightnessToUint(settings)) {
+				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
 					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
 				}
 
@@ -549,15 +550,21 @@ export class TiffProcessor {
 				for (let band = 0; band < Math.min(3, numBands); band++) {
 					let value = rasters[band][i];
 
-					// For uint images: always use traditional bit-depth normalization
-					value = value / maxVal; // Normalize to 0-1
+					// Apply normalization based on settings
+					let normalized;
+					if (range > 0) {
+						normalized = (value - normMin) / range;
+					} else {
+						normalized = 0;
+					}
+					normalized = this.clamp(normalized, 0, 1);
 
-					// Only apply gamma/brightness to uint images if values are non-default
-					if (this._shouldApplyGammaBrightnessToUint(settings)) {
-						value = this._applyGammaAndBrightness(value, settings);
+					// Apply gamma/brightness
+					if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
+						normalized = this._applyGammaAndBrightness(normalized, settings);
 					}
 
-					value = Math.round(value * 255); // Convert to 8-bit for display
+					value = Math.round(normalized * 255); // Convert to 8-bit for display
 					values.push(this.clamp(value, 0, 255));
 				}
 

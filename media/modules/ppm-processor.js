@@ -252,8 +252,6 @@ export class PpmProcessor {
                 if (value < min) min = value;
                 if (value > max) max = value;
             }
-            // Mark all PPM/PGM as "float" to enable normalization controls
-            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 
@@ -352,9 +350,6 @@ export class PpmProcessor {
 
         // Send stats to VS Code
         if (this.vscode) {
-            // Mark all PPM/PGM as "float" to enable normalization controls
-            // (even though they're uint, users should be able to switch between gamma/auto-normalize/custom)
-            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
 

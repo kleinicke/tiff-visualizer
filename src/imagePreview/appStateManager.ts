@@ -35,7 +35,6 @@ export interface ImageStats {
 export interface UIState {
 	zoom: any;
 	imageSize: string | undefined;
-	showNorm: boolean;
 	formatInfo: any;
 	pixelPosition: any;
 }
@@ -93,7 +92,6 @@ export class AppStateManager {
 	private _uiState: UIState = {
 		zoom: 'fit',
 		imageSize: undefined,
-		showNorm: false,
 		formatInfo: undefined,
 		pixelPosition: undefined
 	};
@@ -312,13 +310,6 @@ export class AppStateManager {
 	public setImageSize(size: string | undefined): void {
 		if (this._uiState.imageSize !== size) {
 			this._uiState.imageSize = size;
-			this._emitUIChanged();
-		}
-	}
-
-	public setshowNorm(showNorm: boolean): void {
-		if (this._uiState.showNorm !== showNorm) {
-			this._uiState.showNorm = showNorm;
 			this._emitUIChanged();
 		}
 	}

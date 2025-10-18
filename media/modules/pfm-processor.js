@@ -143,7 +143,6 @@ export class PfmProcessor {
             out[p + 3] = 255;                 // A
         }
         if (this.vscode) {
-            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
         return new ImageData(out, width, height);

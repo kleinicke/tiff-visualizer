@@ -369,8 +369,6 @@ export class NpyProcessor {
             out[p + 3] = a;
         }
         if (this.vscode) {
-            // Always enable normalization controls for NPY files
-            this.vscode.postMessage({ type: 'showNorm', value: true });
             this.vscode.postMessage({ type: 'stats', value: { min: dataMin, max: dataMax } });
         }
         return new ImageData(out, width, height);

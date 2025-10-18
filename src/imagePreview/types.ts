@@ -23,11 +23,9 @@ export interface IImagePreview {
 	readonly viewColumn: vscode.ViewColumn | undefined;
 	updatePreview(): void;
 	isPreviewActive(): boolean;
-	readonly showNormTiff: boolean;
 	setImageSize(size: string): void;
 	getImageSize(): string | undefined;
 	setImageZoom(zoom: any): void;
-	setshowNorm(showNorm: boolean): void;
 	readonly isTiff: boolean;
 	zoomIn(): void;
 	zoomOut(): void;
