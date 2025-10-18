@@ -150,6 +150,79 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	}
 
 	/**
+	 * Reload image when file changes on disk (preserves zoom state)
+	 * @param {any} savedZoomState - The zoom state to restore after reload
+	 */
+	function reloadImage(savedZoomState) {
+		console.log('Reloading image with saved zoom state:', savedZoomState);
+
+		// Reset the state
+		hasLoadedImage = false;
+		canvas = null;
+		imageElement = null;
+		primaryImageData = null;
+		peerImageData = null;
+
+		// Clear the container
+		container.className = 'container image';
+
+		// Remove any existing image/canvas elements
+		const existingImages = container.querySelectorAll('img, canvas');
+		existingImages.forEach(el => el.remove());
+
+		// Remove loading indicator if present
+		const loadingIndicator = container.querySelector('.loading-indicator');
+		if (loadingIndicator) {
+			loadingIndicator.remove();
+		}
+
+		// Show loading state
+		container.classList.add('loading');
+
+		// Load the image based on file type
+		const settings = settingsManager.settings;
+		const resourceUri = settings.resourceUri || '';
+
+		console.log('Reloading image:', resourceUri);
+
+		// Track whether we should restore zoom
+		const shouldRestoreZoom = savedZoomState && savedZoomState.scale !== 'fit';
+
+		// Store the zoom state to restore after image loads
+		if (shouldRestoreZoom) {
+			// Wait for image to load, then restore zoom
+			const checkAndRestore = setInterval(() => {
+				// @ts-ignore - imageElement is set during image loading
+				if (hasLoadedImage && imageElement) {
+					clearInterval(checkAndRestore);
+					setTimeout(() => {
+						console.log('Restoring zoom state after reload:', savedZoomState);
+						zoomController.restoreState(savedZoomState);
+					}, 100);
+				}
+			}, 50);
+
+			// Safety timeout to prevent infinite checking
+			setTimeout(() => clearInterval(checkAndRestore), 5000);
+		}
+
+		// Load image based on file extension
+		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
+			handleTiff(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
+			handlePfm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
+			handlePpm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
+			handlePng(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
+			handleNpy(settings.src);
+		} else {
+			image.src = settings.src || '';
+		}
+	}
+
+	/**
 	 * Setup image loading handlers
 	 */
 	function setupImageLoading() {
@@ -398,7 +471,13 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				// If resource URI changed, reload the entire image
 				if (oldResourceUri !== newResourceUri) {
 					console.log('Resource changed from', oldResourceUri, 'to', newResourceUri, '- reloading image');
-					initialize();
+
+					// Save current zoom state before reloading (for file recreation case)
+					const currentZoomState = zoomController.getCurrentState();
+					console.log('Saved zoom state before reload:', currentZoomState);
+
+					// Reload the image without reinitializing event listeners
+					reloadImage(currentZoomState);
 				} else {
 					// Just update rendering with new settings
 					updateImageWithNewSettings();
