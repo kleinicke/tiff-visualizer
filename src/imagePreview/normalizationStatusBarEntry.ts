@@ -10,6 +10,7 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
 	private _normMin: number | undefined;
 	private _normMax: number | undefined;
+	private _rgbAs24BitMode: boolean = false;
 
 	constructor() {
 		super(
@@ -26,12 +27,26 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
 		if (autoNormalize) {
 			// Show the actual image range when auto-normalizing
-			text = `Auto-Norm: [${(this._imageRealMin ?? 0).toFixed(2)}, ${(this._imageRealMax ?? 1).toFixed(2)}]`;
+			if (this._rgbAs24BitMode && this._imageRealMax !== undefined && this._imageRealMax > 1000) {
+				// For 24-bit mode with large values, use integer formatting
+				text = `Auto-Norm: [${Math.round(this._imageRealMin ?? 0)}, ${Math.round(this._imageRealMax ?? 16777215)}]`;
+			} else {
+				text = `Auto-Norm: [${(this._imageRealMin ?? 0).toFixed(2)}, ${(this._imageRealMax ?? 1).toFixed(2)}]`;
+			}
 		} else if (gammaMode) {
-			text = `Gamma-Norm: [0.00, 1.00]`;
+			if (this._rgbAs24BitMode) {
+				// For 24-bit mode, show the full range
+				text = `Gamma-Norm: [0, 16777215]`;
+			} else {
+				text = `Gamma-Norm: [0.00, 1.00]`;
+			}
 		} else {
 			// Manual normalization - show the user-set range
-			text = `Norm: [${(this._normMin ?? 0).toFixed(2)}, ${(this._normMax ?? 1).toFixed(2)}]`;
+			if (this._rgbAs24BitMode && (this._normMax ?? 1) > 1000) {
+				text = `Norm: [${Math.round(this._normMin ?? 0)}, ${Math.round(this._normMax ?? 16777215)}]`;
+			} else {
+				text = `Norm: [${(this._normMin ?? 0).toFixed(2)}, ${(this._normMax ?? 1).toFixed(2)}]`;
+			}
 		}
 
 		// Build tooltip with image range information
@@ -60,5 +75,9 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 	public updateNormalization(min: number | null, max: number | null) {
 		this._normMin = min ?? undefined;
 		this._normMax = max ?? undefined;
+	}
+
+	public setRgbAs24BitMode(enabled: boolean) {
+		this._rgbAs24BitMode = enabled;
 	}
 } 

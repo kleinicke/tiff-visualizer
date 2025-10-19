@@ -205,12 +205,39 @@ export class TiffProcessor {
 		}
 
 		// Use the first 3 channels to determine the image stats
-		for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-			for (let j = 0; j < rastersCopy[i].length; j++) {
-				const value = rastersCopy[i][j];
-				if (!isNaN(value) && isFinite(value)) {
-					min = Math.min(min, value);
-					max = Math.max(max, value);
+		// For RGB-as-24bit mode, calculate stats from combined 24-bit values
+		if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
+			console.log(`[TiffProcessor] Computing 24-bit stats from ${rastersCopy[0].length} pixels`);
+			// Calculate min/max of combined 24-bit values
+			for (let j = 0; j < rastersCopy[0].length; j++) {
+				// Get RGB values and normalize to 0-255 range
+				const values = [];
+				for (let i = 0; i < 3; i++) {
+					const value = rastersCopy[i][j];
+					if (!isNaN(value) && isFinite(value)) {
+						values.push(Math.round(Math.max(0, Math.min(255, value))));
+					} else {
+						values.push(0);
+					}
+				}
+				// Combine into 24-bit value
+				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+				if (j === 0) {
+					console.log(`[TiffProcessor] First pixel 24-bit stats: R=${values[0]}, G=${values[1]}, B=${values[2]}, combined=${combined24bit}`);
+				}
+				min = Math.min(min, combined24bit);
+				max = Math.max(max, combined24bit);
+			}
+			console.log(`[TiffProcessor] 24-bit stats: min=${min}, max=${max}`);
+		} else {
+			// Normal mode: use individual channel values
+			for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
+				for (let j = 0; j < rastersCopy[i].length; j++) {
+					const value = rastersCopy[i][j];
+					if (!isNaN(value) && isFinite(value)) {
+						min = Math.min(min, value);
+						max = Math.max(max, value);
+					}
 				}
 			}
 		}
@@ -305,12 +332,34 @@ export class TiffProcessor {
 		}
 
 		// Use the first 3 channels to determine the image stats
-		for (let i = 0; i < Math.min(rasters.length, 3); i++) {
-			for (let j = 0; j < rasters[i].length; j++) {
-				const value = rasters[i][j];
-				if (!isNaN(value) && isFinite(value)) {
-					min = Math.min(min, value);
-					max = Math.max(max, value);
+		// For RGB-as-24bit mode, calculate stats from combined 24-bit values
+		if (settings.rgbAs24BitGrayscale && rasters.length >= 3) {
+			// Calculate min/max of combined 24-bit values
+			for (let j = 0; j < rasters[0].length; j++) {
+				// Get RGB values and normalize to 0-255 range
+				const values = [];
+				for (let i = 0; i < 3; i++) {
+					const value = rasters[i][j];
+					if (!isNaN(value) && isFinite(value)) {
+						values.push(Math.round(Math.max(0, Math.min(255, value))));
+					} else {
+						values.push(0);
+					}
+				}
+				// Combine into 24-bit value
+				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+				min = Math.min(min, combined24bit);
+				max = Math.max(max, combined24bit);
+			}
+		} else {
+			// Normal mode: use individual channel values
+			for (let i = 0; i < Math.min(rasters.length, 3); i++) {
+				for (let j = 0; j < rasters[i].length; j++) {
+					const value = rasters[i][j];
+					if (!isNaN(value) && isFinite(value)) {
+						min = Math.min(min, value);
+						max = Math.max(max, value);
+					}
 				}
 			}
 		}
@@ -400,7 +449,7 @@ export class TiffProcessor {
 				r = g = b = displayValue;
 			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
 				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
-				// Get normalized RGB values (0-255 range)
+				// First normalize each channel to 0-255 range, then combine
 				const values = [];
 				for (let band = 0; band < 3; band++) {
 					let value = rasters[band][i];
@@ -418,7 +467,9 @@ export class TiffProcessor {
 				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
 				// Max value is 16777215 (0xFFFFFF)
 
-				// Normalize 24-bit value to 0-1 range
+				// Normalize 24-bit value to 0-1 range for display
+				// NOTE: For gamma mode, this should use 0-16777215 as the expected range
+				// For auto-normalize, it should use the actual min/max of combined values
 				let normalized24 = combined24bit / 16777215.0;
 
 				// Apply gamma and brightness to the combined value
@@ -514,28 +565,35 @@ export class TiffProcessor {
 				r = g = b = this.clamp(value, 0, 255);
 			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
 				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
-				// Apply normalization to each channel first, then combine
+				// Get raw RGB values (these are already in their native type range, e.g., 0-255 for uint8)
 				const values = [];
 				for (let band = 0; band < 3; band++) {
 					let value = rasters[band][i];
-					// Apply normalization
-					let normalized;
-					if (range > 0) {
-						normalized = (value - normMin) / range;
-					} else {
-						normalized = 0;
-					}
-					normalized = this.clamp(normalized, 0, 1);
-					value = Math.round(normalized * 255); // Convert to 8-bit
-					values.push(this.clamp(value, 0, 255));
+					// Clamp to valid 8-bit range (rasters should already be in native range)
+					values.push(this.clamp(Math.round(value), 0, 255));
 				}
 
 				// Combine into 24-bit value: (R << 16) | (G << 8) | B
 				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
 				// Max value is 16777215 (0xFFFFFF)
 
-				// Normalize 24-bit value to 0-1 range
-				let normalized24 = combined24bit / 16777215.0;
+				// Debug logging for first pixel
+				if (i === 0) {
+					console.log(`[TiffProcessor] 24-bit mode - First pixel: R=${values[0]}, G=${values[1]}, B=${values[2]}`);
+					console.log(`[TiffProcessor] Combined 24-bit value: ${combined24bit}`);
+					console.log(`[TiffProcessor] Normalization range: [${normMin}, ${normMax}]`);
+				}
+
+				// Now normalize the combined 24-bit value using the normalization settings
+				// For 24-bit mode, normMin/normMax should be in the range [0, 16777215]
+				let normalized24;
+				const norm24Range = normMax - normMin;
+				if (norm24Range > 0) {
+					normalized24 = (combined24bit - normMin) / norm24Range;
+				} else {
+					normalized24 = 0;
+				}
+				normalized24 = this.clamp(normalized24, 0, 1);
 
 				// Apply gamma/brightness to the combined value
 				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
@@ -544,6 +602,12 @@ export class TiffProcessor {
 
 				// Display as grayscale
 				const displayValue = Math.round(normalized24 * 255);
+
+				// Debug logging for first pixel
+				if (i === 0) {
+					console.log(`[TiffProcessor] Normalized: ${normalized24}, Display value: ${displayValue}`);
+				}
+
 				r = g = b = this.clamp(displayValue, 0, 255);
 			} else {
 				const values = [];
@@ -698,6 +762,9 @@ export class TiffProcessor {
 		const format = ifd.t339; // SampleFormat
 		const samples = ifd.t277;
 		const planarConfig = ifd.t284;
+		const settings = this.settingsManager.settings;
+
+		console.log(`[TiffProcessor] getColorAtPixel: rgbAs24BitGrayscale=${settings.rgbAs24BitGrayscale}, samples=${samples}`);
 
 		if (samples === 1) { // Grayscale
 			const value = data[pixelIndex];
@@ -716,7 +783,24 @@ export class TiffProcessor {
 					values.push(format === 3 ? value.toPrecision(4) : value.toString().padStart(3, '0'));
 				}
 			}
-			
+
+			// If RGB as 24-bit grayscale is enabled, show combined value
+			if (settings.rgbAs24BitGrayscale && samples >= 3) {
+				// Convert string values back to numbers for calculation
+				const r = parseInt(values[0]);
+				const g = parseInt(values[1]);
+				const b = parseInt(values[2]);
+				// Combine into 24-bit value: (R << 16) | (G << 8) | B
+				const combined24bit = (r << 16) | (g << 8) | b;
+
+				// Apply scale factor for display
+				const scaleFactor = settings.scale24BitFactor || 1000;
+				const scaledValue = (combined24bit / scaleFactor).toFixed(3);
+
+				console.log(`[TiffProcessor] getColorAtPixel: R=${r}, G=${g}, B=${b}, combined=${combined24bit}, scaled=${scaledValue}`);
+				return scaledValue;
+			}
+
 			if (format === 3) {
 				return values.join(' ');
 			} else {

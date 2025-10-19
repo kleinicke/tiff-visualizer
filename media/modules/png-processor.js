@@ -229,12 +229,42 @@ export class PngProcessor {
 
         // Calculate stats for normalization status bar
         let min = Infinity, max = -Infinity;
-        for (let i = 0; i < width * height; i++) {
-            const srcIdx = i * stride;
-            for (let c = 0; c < Math.min(3, channels); c++) {
-                const value = data[srcIdx + c];
-                if (value < min) min = value;
-                if (value > max) max = value;
+
+        if (settings.rgbAs24BitGrayscale && channels >= 3) {
+            // For 24-bit mode, calculate stats from combined 24-bit values
+            console.log(`[PngProcessor] Computing 24-bit stats from ${width * height} pixels`);
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * stride;
+                // Get RGB values
+                const rVal = data[srcIdx];
+                const gVal = data[srcIdx + 1];
+                const bVal = data[srcIdx + 2];
+
+                // Scale to 8-bit if needed (for 16-bit images)
+                const rByte = maxValue === 65535 ? Math.round(rVal / 257) : rVal;
+                const gByte = maxValue === 65535 ? Math.round(gVal / 257) : gVal;
+                const bByte = maxValue === 65535 ? Math.round(bVal / 257) : bVal;
+
+                // Combine into 24-bit value
+                const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
+
+                if (i === 0) {
+                    console.log(`[PngProcessor] First pixel 24-bit stats: R=${rByte}, G=${gByte}, B=${bByte}, combined=${combined24bit}`);
+                }
+
+                if (combined24bit < min) min = combined24bit;
+                if (combined24bit > max) max = combined24bit;
+            }
+            console.log(`[PngProcessor] 24-bit stats: min=${min}, max=${max}`);
+        } else {
+            // Normal mode: calculate stats from individual channels
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * stride;
+                for (let c = 0; c < Math.min(3, channels); c++) {
+                    const value = data[srcIdx + c];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
             }
         }
 
@@ -253,10 +283,17 @@ export class PngProcessor {
             normMax = max;
             console.log(`[PngProcessor] Auto-normalize mode: [${normMin}, ${normMax}]`);
         } else if (settings.normalization && settings.normalization.gammaMode) {
-            // Gamma mode: normalize to bit-depth range (0 to maxValue)
+            // Gamma mode: normalize to appropriate range
             normMin = 0;
-            normMax = maxValue;
-            console.log(`[PngProcessor] Gamma mode: [${normMin}, ${normMax}] (bit depth: ${bitDepth})`);
+            if (settings.rgbAs24BitGrayscale && channels >= 3) {
+                // For 24-bit mode, use full 24-bit range
+                normMax = 16777215; // 0xFFFFFF
+                console.log(`[PngProcessor] Gamma mode (24-bit): [${normMin}, ${normMax}]`);
+            } else {
+                // For normal mode, use bit-depth range
+                normMax = maxValue;
+                console.log(`[PngProcessor] Gamma mode: [${normMin}, ${normMax}] (bit depth: ${bitDepth})`);
+            }
         } else if (settings.normalization) {
             // Manual mode: use user-specified range
             normMin = settings.normalization.min;
@@ -293,25 +330,41 @@ export class PngProcessor {
                 a = Math.round((data[srcIdx + 1] / maxValue) * 255);
             } else if (settings.rgbAs24BitGrayscale && channels >= 3) {
                 // RGB as 24-bit grayscale mode
-                // Apply normalization to each channel first, then combine
-                const rNorm = Math.max(0, Math.min(1, (data[srcIdx] - normMin) / (normMax - normMin)));
-                const gNorm = Math.max(0, Math.min(1, (data[srcIdx + 1] - normMin) / (normMax - normMin)));
-                const bNorm = Math.max(0, Math.min(1, (data[srcIdx + 2] - normMin) / (normMax - normMin)));
+                // Get raw RGB values (PNG stores as 0-255 for 8-bit, 0-65535 for 16-bit)
+                const rVal = Math.round(Math.max(0, Math.min(maxValue, data[srcIdx])));
+                const gVal = Math.round(Math.max(0, Math.min(maxValue, data[srcIdx + 1])));
+                const bVal = Math.round(Math.max(0, Math.min(maxValue, data[srcIdx + 2])));
 
-                // Convert to 0-255 range for combining
-                const rVal = Math.round(rNorm * 255);
-                const gVal = Math.round(gNorm * 255);
-                const bVal = Math.round(bNorm * 255);
+                // For 16-bit images, scale down to 8-bit for combining
+                const rByte = maxValue === 65535 ? Math.round(rVal / 257) : rVal;
+                const gByte = maxValue === 65535 ? Math.round(gVal / 257) : gVal;
+                const bByte = maxValue === 65535 ? Math.round(bVal / 257) : bVal;
 
                 // Combine into 24-bit value: (R << 16) | (G << 8) | B
-                const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
+                const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
                 // Max value is 16777215 (0xFFFFFF)
 
-                // Normalize 24-bit value to 0-1 range
-                let normalized24 = combined24bit / 16777215.0;
+                if (i === 0) {
+                    console.log(`[PngProcessor] 24-bit mode - First pixel: R=${rByte}, G=${gByte}, B=${bByte}, combined=${combined24bit}`);
+                    console.log(`[PngProcessor] Normalization range: [${normMin}, ${normMax}]`);
+                }
+
+                // Now normalize the combined 24-bit value using normMin/normMax
+                const norm24Range = normMax - normMin;
+                let normalized24;
+                if (norm24Range > 0) {
+                    normalized24 = (combined24bit - normMin) / norm24Range;
+                } else {
+                    normalized24 = 0;
+                }
+                normalized24 = Math.max(0, Math.min(1, normalized24));
 
                 // Apply gamma/brightness to the combined value
                 normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+
+                if (i === 0) {
+                    console.log(`[PngProcessor] Normalized: ${normalized24}, Display value: ${Math.round(normalized24 * 255)}`);
+                }
 
                 // Display as grayscale
                 r = g = b = Math.round(normalized24 * 255);
@@ -483,6 +536,7 @@ export class PngProcessor {
 
         const pixelIdx = y * width + x;
         const dataIdx = pixelIdx * channels;
+        const settings = this.settingsManager.settings;
 
         if (dataIdx >= 0 && dataIdx < data.length) {
             if (channels === 1) {
@@ -494,28 +548,51 @@ export class PngProcessor {
                 const gray = data[dataIdx];
                 const alpha = data[dataIdx + 1];
                 return `${gray} α:${(alpha / maxVal).toFixed(2)}`;
-            } else if (channels === 3) {
-                // RGB - show actual bit depth values
+            } else if (channels === 3 || channels === 4) {
+                // RGB or RGBA
                 const r = data[dataIdx];
                 const g = data[dataIdx + 1];
                 const b = data[dataIdx + 2];
-                if (bitDepth === 16) {
-                    return `${r} ${g} ${b}`;
-                } else {
-                    return `${r.toString().padStart(3, '0')} ${g.toString().padStart(3, '0')} ${b.toString().padStart(3, '0')}`;
-                }
-            } else {
-                // RGBA
-                const maxVal = bitDepth === 16 ? 65535 : 255;
-                const r = data[dataIdx];
-                const g = data[dataIdx + 1];
-                const b = data[dataIdx + 2];
-                const a = data[dataIdx + 3];
 
-                if (bitDepth === 16) {
-                    return `${r} ${g} ${b} α:${(a / maxVal).toFixed(2)}`;
+                // If RGB as 24-bit grayscale is enabled, show combined value
+                if (settings.rgbAs24BitGrayscale && channels >= 3) {
+                    // Scale to 8-bit if needed
+                    const rByte = bitDepth === 16 ? Math.round(r / 257) : r;
+                    const gByte = bitDepth === 16 ? Math.round(g / 257) : g;
+                    const bByte = bitDepth === 16 ? Math.round(b / 257) : b;
+
+                    // Combine into 24-bit value
+                    const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
+
+                    // Apply scale factor for display
+                    const scaleFactor = settings.scale24BitFactor || 1000;
+                    const scaledValue = (combined24bit / scaleFactor).toFixed(3);
+
+                    if (channels === 4) {
+                        const maxVal = bitDepth === 16 ? 65535 : 255;
+                        const a = data[dataIdx + 3];
+                        return `${scaledValue} α:${(a / maxVal).toFixed(2)}`;
+                    } else {
+                        return scaledValue;
+                    }
+                }
+
+                // Normal mode - show RGB values
+                if (channels === 3) {
+                    if (bitDepth === 16) {
+                        return `${r} ${g} ${b}`;
+                    } else {
+                        return `${r.toString().padStart(3, '0')} ${g.toString().padStart(3, '0')} ${b.toString().padStart(3, '0')}`;
+                    }
                 } else {
-                    return `${r.toString().padStart(3, '0')} ${g.toString().padStart(3, '0')} ${b.toString().padStart(3, '0')} α:${(a / maxVal).toFixed(2)}`;
+                    // RGBA
+                    const maxVal = bitDepth === 16 ? 65535 : 255;
+                    const a = data[dataIdx + 3];
+                    if (bitDepth === 16) {
+                        return `${r} ${g} ${b} α:${(a / maxVal).toFixed(2)}`;
+                    } else {
+                        return `${r.toString().padStart(3, '0')} ${g.toString().padStart(3, '0')} ${b.toString().padStart(3, '0')} α:${(a / maxVal).toFixed(2)}`;
+                    }
                 }
             }
         }

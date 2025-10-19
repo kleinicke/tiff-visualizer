@@ -152,9 +152,32 @@ export function registerImagePreviewCommands(
 				activePreview.updateStatusBar();
 			}
 		} else if (selected.action === 'rgb24bit') {
-			// Toggle RGB as 24-bit grayscale mode (independent of normalization mode)
+			// Toggle RGB as 24-bit grayscale mode
 			const newState = !previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
-			previewManager.appStateManager.setRgbAs24BitGrayscale(newState);
+
+			if (newState) {
+				// Enabling 24-bit mode - ask for scale factor
+				const scaleFactorInput = await vscode.window.showInputBox({
+					prompt: 'Enter scale factor for 24-bit values (divides values for display in color picker)',
+					value: previewManager.appStateManager.imageSettings.scale24BitFactor.toString(),
+					placeHolder: '1000',
+					validateInput: text => {
+						const num = parseFloat(text);
+						return isNaN(num) || num <= 0 ? 'Please enter a positive number.' : null;
+					}
+				});
+
+				if (scaleFactorInput === undefined) {
+					return; // User cancelled
+				}
+
+				const scaleFactor = parseFloat(scaleFactorInput);
+				previewManager.appStateManager.setRgbAs24BitGrayscale(true, scaleFactor);
+			} else {
+				// Disabling 24-bit mode
+				previewManager.appStateManager.setRgbAs24BitGrayscale(false);
+			}
+
 			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();

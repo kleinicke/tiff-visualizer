@@ -1,5 +1,11 @@
 # Change Log
 
+### 1.3.0
+
+Allow manual normalizations for all data formats
+Simplify the normalization implementations
+Allow interpreting rgb uint8 images as 24 bit image
+
 ### 1.2.0 (2025-09-09)
 
 Fix Image size visualization

@@ -22,6 +22,7 @@ export interface ImageSettings {
 	gamma: GammaSettings;
 	brightness: BrightnessSettings;
 	rgbAs24BitGrayscale: boolean;
+	scale24BitFactor: number; // Divide 24-bit values by this for display (default 1000)
 }
 
 // Image format types for per-format settings
@@ -86,7 +87,8 @@ export class AppStateManager {
 		brightness: {
 			offset: 0
 		},
-		rgbAs24BitGrayscale: false
+		rgbAs24BitGrayscale: false,
+		scale24BitFactor: 1000
 	};
 
 	private _uiState: UIState = {
@@ -177,9 +179,39 @@ export class AppStateManager {
 		}
 	}
 
-	public setRgbAs24BitGrayscale(enabled: boolean): void {
+	public setRgbAs24BitGrayscale(enabled: boolean, scaleFactor?: number): void {
 		if (this._imageSettings.rgbAs24BitGrayscale !== enabled) {
 			this._imageSettings.rgbAs24BitGrayscale = enabled;
+
+			// Update scale factor if provided
+			if (scaleFactor !== undefined) {
+				this._imageSettings.scale24BitFactor = scaleFactor;
+			}
+
+			console.log(`[AppStateManager] setRgbAs24BitGrayscale: enabled=${enabled}, scaleFactor=${this._imageSettings.scale24BitFactor}, current gammaMode=${this._imageSettings.normalization.gammaMode}, autoNorm=${this._imageSettings.normalization.autoNormalize}`);
+
+			// When enabling 24-bit mode, use auto-normalize by default
+			if (enabled) {
+				// Enable auto-normalize mode for 24-bit (user requirement)
+				this._imageSettings.normalization.autoNormalize = true;
+				this._imageSettings.normalization.gammaMode = false;
+				console.log(`[AppStateManager] 24-bit mode enabled - switching to auto-normalize mode`);
+			} else if (!enabled) {
+				// When disabling 24-bit mode, switch back to gamma mode
+				this._imageSettings.normalization.autoNormalize = false;
+				this._imageSettings.normalization.gammaMode = true;
+				this._imageSettings.normalization.min = 0;
+				this._imageSettings.normalization.max = 255;
+				console.log(`[AppStateManager] 24-bit mode disabled - switching to gamma mode [0, 255]`);
+			}
+
+			this._emitSettingsChanged();
+		}
+	}
+
+	public setScale24BitFactor(factor: number): void {
+		if (this._imageSettings.scale24BitFactor !== factor) {
+			this._imageSettings.scale24BitFactor = factor;
 			this._emitSettingsChanged();
 		}
 	}
@@ -220,7 +252,8 @@ export class AppStateManager {
 			normalization: { ...settings.normalization },
 			gamma: { ...settings.gamma },
 			brightness: { ...settings.brightness },
-			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale
+			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
+			scale24BitFactor: settings.scale24BitFactor
 		};
 	}
 
@@ -244,7 +277,8 @@ export class AppStateManager {
 			brightness: {
 				offset: 0
 			},
-			rgbAs24BitGrayscale: false
+			rgbAs24BitGrayscale: false,
+			scale24BitFactor: 1000
 		};
 
 		// ============================================
