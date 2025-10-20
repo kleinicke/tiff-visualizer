@@ -114,6 +114,11 @@ class FormatInfoMessageHandler implements MessageHandler {
 		// Accept format info from any source (TIFF and non-TIFF processors)
 		preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
 
+		// Update normalization status bar with format info
+		if (message.value && message.value.bitsPerSample !== undefined && message.value.sampleFormat !== undefined) {
+			preview.getNormalizationStatusBarEntry().updateFormatInfo(message.value.bitsPerSample, message.value.sampleFormat);
+		}
+
 		// Store format info in app state for access by commands
 		preview.getManager().appStateManager.setFormatInfo(message.value);
 

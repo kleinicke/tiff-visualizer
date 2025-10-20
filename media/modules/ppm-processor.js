@@ -259,15 +259,32 @@ export class PpmProcessor {
     }
 
     _toImageDataWithNormalization(data, width, height, maxval, channels = 1) {
+        const settings = this.settingsManager.settings;
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+
         // Calculate min/max for auto-normalization
         let min = Infinity, max = -Infinity;
-        for (let i = 0; i < data.length; i++) {
-            const value = data[i];
-            if (value < min) min = value;
-            if (value > max) max = value;
+
+        if (rgbAs24BitMode) {
+            // For 24-bit mode, compute stats from combined 24-bit values
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * 3;
+                const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+                const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+                const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                const combined24bit = (r << 16) | (g << 8) | b;
+                min = Math.min(min, combined24bit);
+                max = Math.max(max, combined24bit);
+            }
+        } else {
+            // Normal mode: use individual channel values
+            for (let i = 0; i < data.length; i++) {
+                const value = data[i];
+                if (value < min) min = value;
+                if (value > max) max = value;
+            }
         }
 
-        const settings = this.settingsManager.settings;
         let normMin, normMax;
 
         // PPM/PGM files are always uint, so default to gamma mode (0-maxval range)
@@ -276,11 +293,26 @@ export class PpmProcessor {
             // User explicitly requested auto-normalize
             normMin = min;
             normMax = max;
-        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined) && !settings.normalization.gammaMode) {
-            // User specified custom range AND gamma mode is not enabled
-            // (if gammaMode is enabled, we should use maxval instead)
+        } else if (settings.normalization && settings.normalization.gammaMode) {
+            // Gamma mode: use type-appropriate range
+            normMin = 0;
+            if (rgbAs24BitMode) {
+                normMax = 16777215; // 24-bit max
+            } else {
+                normMax = maxval; // Use file's maxval
+            }
+        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
+            // Manual mode: user-specified range
             normMin = settings.normalization.min;
             normMax = settings.normalization.max;
+
+            // If normalized float mode is enabled, interpret the range as 0-1
+            if (settings.normalizedFloatMode) {
+                // Multiply by maxval
+                normMin = normMin * maxval;
+                normMax = normMax * maxval;
+                console.log(`[PpmProcessor] Manual with normalized float mode: [${settings.normalization.min}, ${settings.normalization.max}] → [${normMin}, ${normMax}]`);
+            }
         } else {
             // Default for all PPM/PGM: use gamma mode with 0-maxval range
             normMin = 0;
@@ -293,7 +325,16 @@ export class PpmProcessor {
         for (let i = 0; i < width * height; i++) {
             let r, g, b;
 
-            if (channels === 3) {
+            if (rgbAs24BitMode) {
+                // RGB as 24-bit grayscale
+                const srcIdx = i * 3;
+                const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+                const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+                const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
+                const normalized = (combined24bit - normMin) / range;
+                r = g = b = Math.max(0, Math.min(1, normalized));
+            } else if (channels === 3) {
                 // RGB data (PPM)
                 const srcIdx = i * 3;
                 r = (data[srcIdx + 0] - normMin) / range;
@@ -311,9 +352,9 @@ export class PpmProcessor {
                 r = g = b = normalizedValue;
             }
 
-            // Apply gamma and brightness if in gamma mode (default for PPM/PGM)
-            // Correct order: remove input gamma → apply brightness → apply output gamma
-            const applyGamma = !settings.normalization || settings.normalization.gammaMode !== false;
+            // Apply gamma and brightness only in gamma mode, NOT in auto-normalize mode
+            const applyGamma = settings.normalization?.gammaMode === true &&
+                              settings.normalization?.autoNormalize !== true;
             if (applyGamma) {
                 const gammaIn = settings.gamma?.in ?? 1.0;
                 const gammaOut = settings.gamma?.out ?? 1.0;
@@ -367,12 +408,30 @@ export class PpmProcessor {
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data, channels } = this._lastRaw;
+        const { width, height, data, channels, maxval } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
-        
+
+        const settings = this.settingsManager.settings;
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const normalizedFloatMode = settings.normalizedFloatMode;
+
         const idx = y * width + x;
-        if (channels === 3) {
-            // RGB data
+        if (rgbAs24BitMode) {
+            // RGB as 24-bit grayscale: show combined value
+            const baseIdx = idx * 3;
+            if (baseIdx >= 0 && baseIdx + 2 < data.length) {
+                const r = Math.round(Math.max(0, Math.min(255, data[baseIdx])));
+                const g = Math.round(Math.max(0, Math.min(255, data[baseIdx + 1])));
+                const b = Math.round(Math.max(0, Math.min(255, data[baseIdx + 2])));
+                const combined24bit = (r << 16) | (g << 8) | b;
+
+                // Apply scale factor for display
+                const scaleFactor = settings.scale24BitFactor || 1000;
+                const scaledValue = (combined24bit / scaleFactor).toFixed(3);
+                return scaledValue;
+            }
+        } else if (channels === 3) {
+            // RGB data (normal mode)
             const baseIdx = idx * 3;
             if (baseIdx >= 0 && baseIdx + 2 < data.length) {
                 const r = data[baseIdx];
@@ -383,7 +442,16 @@ export class PpmProcessor {
         } else {
             // Grayscale data
             if (idx >= 0 && idx < data.length) {
-                return data[idx].toString();
+                const value = data[idx];
+
+                // Check if normalized float mode is enabled
+                if (normalizedFloatMode) {
+                    // Convert uint to normalized float (0-1)
+                    const normalized = value / maxval;
+                    return normalized.toPrecision(4);
+                }
+
+                return value.toString();
             }
         }
         return '';

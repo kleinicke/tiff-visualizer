@@ -109,6 +109,7 @@ export class ImagePreview extends MediaPreview {
 				brightness: this._manager.appStateManager.imageSettings.brightness,
 				rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
+				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 				maskFilters: maskFilters,
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
@@ -438,6 +439,9 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.setRgbAs24BitMode(
 				this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale
 			);
+			this._normalizationStatusBarEntry.setNormalizedFloatMode(
+				this._manager.appStateManager.imageSettings.normalizedFloatMode
+			);
 			this._normalizationStatusBarEntry.updateNormalization(
 				normSettings.min,
 				normSettings.max
@@ -495,7 +499,7 @@ export class ImagePreview extends MediaPreview {
 		// TIFF format will be set by webview after detecting float vs int
 
 		// Merge settings from both managers:
-		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor from appStateManager (per-format)
+		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)
 		// - maskFilters from settingsManager (per-image)
 		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
 		const settings = {
@@ -504,6 +508,7 @@ export class ImagePreview extends MediaPreview {
 			brightness: this._manager.appStateManager.imageSettings.brightness,
 			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
+			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			maskFilters: maskFilters,
 			nanColor: this._manager.settingsManager.getNanColor()
 		};

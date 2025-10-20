@@ -58,11 +58,18 @@ export function registerImagePreviewCommands(
 
 		// Check if we have an RGB image (3 or more channels)
 		const formatInfo = activePreview?.getManager().appStateManager.uiState.formatInfo;
-		const isRgbImage = formatInfo && formatInfo.samplesPerPixel >= 3;
+		// 24-bit mode only for 8-bit uint RGB images
+		const isRgb8BitUint = formatInfo &&
+			formatInfo.samplesPerPixel >= 3 &&
+			formatInfo.bitsPerSample === 8 &&
+			formatInfo.sampleFormat !== 3; // Not float
+		const isSingleChannelUint = formatInfo && formatInfo.samplesPerPixel === 1 && formatInfo.sampleFormat !== 3; // Not float
 		const rgbModeEnabled = previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
+		const normalizedFloatModeEnabled = previewManager.appStateManager.imageSettings.normalizedFloatMode;
 
 		console.log('[setNormalizationRange] formatInfo:', formatInfo);
-		console.log('[setNormalizationRange] isRgbImage:', isRgbImage);
+		console.log('[setNormalizationRange] isRgb8BitUint:', isRgb8BitUint);
+		console.log('[setNormalizationRange] isSingleChannelUint:', isSingleChannelUint);
 		console.log('[setNormalizationRange] samplesPerPixel:', formatInfo?.samplesPerPixel);
 
 		// First show a QuickPick with options
@@ -87,8 +94,8 @@ export function registerImagePreviewCommands(
 			}
 		];
 
-		// Add RGB mode option only for RGB images
-		if (isRgbImage) {
+		// Add RGB 24-bit mode option only for 8-bit uint RGB images
+		if (isRgb8BitUint) {
 			options.push(
 				{
 					label: '',
@@ -99,6 +106,22 @@ export function registerImagePreviewCommands(
 					description: 'Interpret RGB channels as single 24-bit value',
 					detail: 'Combines R, G, B into one 24-bit integer: (R<<16)|(G<<8)|B (0-16777215)',
 					action: 'rgb24bit'
+				}
+			);
+		}
+
+		// Add normalized float mode option for single-channel uint images
+		if (isSingleChannelUint) {
+			options.push(
+				{
+					label: '',
+					kind: vscode.QuickPickItemKind.Separator
+				},
+				{
+					label: normalizedFloatModeEnabled ? '$(check) Normalized Float Mode' : '$(square) Normalized Float Mode',
+					description: 'Display uint values as normalized floats (0-1)',
+					detail: 'Color picker shows float values, normalization borders use float range',
+					action: 'normalizedFloat'
 				}
 			);
 		}
@@ -182,11 +205,19 @@ export function registerImagePreviewCommands(
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
+		} else if (selected.action === 'normalizedFloat') {
+			// Toggle normalized float mode
+			const newState = !previewManager.appStateManager.imageSettings.normalizedFloatMode;
+			previewManager.appStateManager.setNormalizedFloatMode(newState);
+			previewManager.updateAllPreviews();
+			if (activePreview) {
+				activePreview.updateStatusBar();
+			}
 		} else {
 			// Manual range setting
 			previewManager.setAutoNormalize(false);
 			previewManager.setGammaMode(false);
-			
+
 			const minValue = await vscode.window.showInputBox({
 				prompt: '↓ Enter the minimum value for normalization',
 				value: currentConfig.min.toString(),
@@ -204,7 +235,7 @@ export function registerImagePreviewCommands(
 				value: currentConfig.max.toString(),
 				validateInput: text => {
 					const num = parseFloat(text);
-					return isNaN(num) ? 'Please enter a valid number.' : 
+					return isNaN(num) ? 'Please enter a valid number.' :
 						   num <= parseFloat(minValue) ? 'Maximum must be greater than minimum.' : null;
 				}
 			});

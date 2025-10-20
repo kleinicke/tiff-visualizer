@@ -23,6 +23,7 @@ export interface ImageSettings {
 	brightness: BrightnessSettings;
 	rgbAs24BitGrayscale: boolean;
 	scale24BitFactor: number; // Divide 24-bit values by this for display (default 1000)
+	normalizedFloatMode: boolean; // Convert uint images to normalized float (0-1 range)
 }
 
 // Image format types for per-format settings
@@ -88,7 +89,8 @@ export class AppStateManager {
 			offset: 0
 		},
 		rgbAs24BitGrayscale: false,
-		scale24BitFactor: 1000
+		scale24BitFactor: 1000,
+		normalizedFloatMode: false
 	};
 
 	private _uiState: UIState = {
@@ -216,6 +218,14 @@ export class AppStateManager {
 		}
 	}
 
+	public setNormalizedFloatMode(enabled: boolean): void {
+		if (this._imageSettings.normalizedFloatMode !== enabled) {
+			this._imageSettings.normalizedFloatMode = enabled;
+			console.log(`[AppStateManager] setNormalizedFloatMode: enabled=${enabled}`);
+			this._emitSettingsChanged();
+		}
+	}
+
 	// Per-format Settings Management
 	public setImageFormat(format: ImageFormatType): void {
 		console.log(`[AppStateManager] setImageFormat called with format: ${format}`);
@@ -253,7 +263,8 @@ export class AppStateManager {
 			gamma: { ...settings.gamma },
 			brightness: { ...settings.brightness },
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
-			scale24BitFactor: settings.scale24BitFactor
+			scale24BitFactor: settings.scale24BitFactor,
+			normalizedFloatMode: settings.normalizedFloatMode
 		};
 	}
 
@@ -278,7 +289,8 @@ export class AppStateManager {
 				offset: 0
 			},
 			rgbAs24BitGrayscale: false,
-			scale24BitFactor: 1000
+			scale24BitFactor: 1000,
+			normalizedFloatMode: false
 		};
 
 		// ============================================

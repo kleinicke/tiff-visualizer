@@ -204,21 +204,43 @@ export class NpyProcessor {
     _toImageDataFloat(data, width, height) {
         const channels = this._lastRaw?.channels || 1;
 
+        const settings = this.settingsManager.settings;
+
+        // Check if RGB as 24-bit mode is enabled
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+
         // Compute min/max for normalization
         let dataMin = Infinity, dataMax = -Infinity;
-        for (let i = 0; i < data.length; i++) {
-            const v = data[i];
-            if (!Number.isFinite(v)) continue;
-            if (v < dataMin) dataMin = v;
-            if (v > dataMax) dataMax = v;
+
+        if (rgbAs24BitMode) {
+            // For 24-bit mode, compute stats from combined 24-bit values
+            console.log(`[NpyProcessor] Computing 24-bit stats from ${width * height} pixels`);
+            for (let i = 0; i < width * height; i++) {
+                const srcIdx = i * 3;
+                // Get RGB values and clamp to 0-255 range
+                const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+                const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+                const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                // Combine into 24-bit value
+                const combined24bit = (r << 16) | (g << 8) | b;
+                dataMin = Math.min(dataMin, combined24bit);
+                dataMax = Math.max(dataMax, combined24bit);
+            }
+        } else {
+            // Normal mode: use individual channel values
+            for (let i = 0; i < data.length; i++) {
+                const v = data[i];
+                if (!Number.isFinite(v)) continue;
+                if (v < dataMin) dataMin = v;
+                if (v > dataMax) dataMax = v;
+            }
         }
 
         console.log(`\n========================================`);
         console.log(`[NpyProcessor] 🎨 APPLYING NORMALIZATION`);
         console.log(`========================================`);
         console.log(`[NpyProcessor] Data stats: min=${dataMin.toFixed(2)}, max=${dataMax.toFixed(2)}`);
-
-        const settings = this.settingsManager.settings;
+        console.log(`[NpyProcessor] RGB as 24-bit mode: ${rgbAs24BitMode}`);
         let normMin, normMax;
 
         // ============================================
@@ -245,8 +267,13 @@ export class NpyProcessor {
         else if (settings.normalization?.gammaMode === true) {
             normMin = 0;
 
+            // For 24-bit RGB mode, use full 24-bit range
+            if (rgbAs24BitMode) {
+                normMax = 16777215; // 2^24 - 1
+                console.log(`[NpyProcessor] ✓ Mode: GAMMA (24-bit RGB)`);
+            }
             // Determine normMax based on data type
-            if (this._lastRaw && this._lastRaw.dtype) {
+            else if (this._lastRaw && this._lastRaw.dtype) {
                 const dtype = this._lastRaw.dtype;
 
                 // Integer types: use type-specific max
@@ -285,8 +312,25 @@ export class NpyProcessor {
                  settings.normalization.max !== undefined) {
             normMin = settings.normalization.min;
             normMax = settings.normalization.max;
-            console.log(`[NpyProcessor] ✓ Mode: MANUAL (user-specified)`);
-            console.log(`[NpyProcessor]   Using user range: [${normMin}, ${normMax}]`);
+
+            // If normalized float mode is enabled for uint images, interpret the range as 0-1
+            if (settings.normalizedFloatMode && this._lastRaw && this._lastRaw.dtype && !this._lastRaw.dtype.includes('f')) {
+                // Multiply by type's maximum value
+                const dtype = this._lastRaw.dtype;
+                let typeMax = 255;
+                if (dtype.includes('u2') || dtype.includes('i2')) {
+                    typeMax = dtype.includes('u') ? 65535 : 32767;
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    typeMax = dtype.includes('u') ? 4294967295 : 2147483647;
+                }
+                normMin = normMin * typeMax;
+                normMax = normMax * typeMax;
+                console.log(`[NpyProcessor] ✓ Mode: MANUAL with normalized float mode`);
+                console.log(`[NpyProcessor]   User range [${settings.normalization.min}, ${settings.normalization.max}] → [${normMin}, ${normMax}]`);
+            } else {
+                console.log(`[NpyProcessor] ✓ Mode: MANUAL (user-specified)`);
+                console.log(`[NpyProcessor]   Using user range: [${normMin}, ${normMax}]`);
+            }
         }
 
         // Step 4: Fallback - shouldn't happen with proper defaults
@@ -303,13 +347,26 @@ export class NpyProcessor {
         console.log(`========================================\n`);
         const out = new Uint8ClampedArray(width * height * 4);
 
-        // Apply gamma correction when in gamma mode
-        const applyGamma = settings.normalization?.gammaMode || false;
+        // Apply gamma correction only in gamma mode, NOT in auto-normalize mode
+        // Auto-normalize mode should NOT apply gamma/brightness corrections
+        const applyGamma = settings.normalization?.gammaMode === true &&
+                          settings.normalization?.autoNormalize !== true;
 
         for (let i = 0; i < width * height; i++) {
             let r, g, b, a = 255;
 
-            if (channels === 3) {
+            if (rgbAs24BitMode) {
+                // RGB as 24-bit grayscale: combine RGB into single 24-bit value
+                const srcIdx = i * 3;
+                const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+                const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+                const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
+
+                // Normalize the 24-bit value
+                const normalized = (combined24bit - normMin) / range;
+                r = g = b = Math.max(0, Math.min(1, normalized));
+            } else if (channels === 3) {
                 // RGB data
                 const srcIdx = i * 3;
                 r = (data[srcIdx + 0] - normMin) / range;
@@ -386,12 +443,27 @@ export class NpyProcessor {
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data, channels } = this._lastRaw;
+        const { width, height, data, channels, dtype } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
 
         const pixelIdx = y * width + x;
+        const settings = this.settingsManager.settings;
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const normalizedFloatMode = settings.normalizedFloatMode;
 
-        if (channels === 3) {
+        if (rgbAs24BitMode) {
+            // RGB as 24-bit grayscale: show combined value
+            const srcIdx = pixelIdx * 3;
+            const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+            const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+            const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+            const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
+
+            // Apply scale factor for display
+            const scaleFactor = settings.scale24BitFactor || 1000;
+            const scaledValue = (combined24bit / scaleFactor).toFixed(3);
+            return scaledValue;
+        } else if (channels === 3) {
             // RGB data
             const srcIdx = pixelIdx * 3;
             const r = data[srcIdx + 0];
@@ -414,6 +486,18 @@ export class NpyProcessor {
             // Grayscale data
             const value = data[pixelIdx];
             if (Number.isFinite(value)) {
+                // Check if normalized float mode is enabled for uint images
+                if (normalizedFloatMode && dtype && !dtype.includes('f')) {
+                    // Convert uint to normalized float (0-1)
+                    let maxValue = 255;
+                    if (dtype.includes('u2') || dtype.includes('i2')) {
+                        maxValue = dtype.includes('u') ? 65535 : 32767;
+                    } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                        maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
+                    }
+                    const normalized = value / maxValue;
+                    return normalized.toPrecision(4);
+                }
                 return value.toPrecision(4);
             }
         }

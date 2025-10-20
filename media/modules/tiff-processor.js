@@ -255,13 +255,35 @@ export class TiffProcessor {
 			normMin = min;
 			normMax = max;
 		} else if (settings.normalization.gammaMode) {
-			// Gamma mode: always normalize to fixed 0-1 range
-			normMin = 0;
-			normMax = 1;
+			// Gamma mode normalization range depends on data type
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (showNorm) {
+				// Float TIFFs: normalize to 0-1 range (floats are typically already in 0-1 range)
+				normMin = 0;
+				normMax = 1;
+			} else {
+				// Integer TIFFs: normalize to type's maximum value
+				normMin = 0;
+				if (bitsPerSample === 16) {
+					normMax = 65535;
+				} else {
+					normMax = 255;
+				}
+			}
 		} else {
 			// Manual mode: use user-specified range
 			normMin = settings.normalization.min;
 			normMax = settings.normalization.max;
+
+			// If normalized float mode is enabled for uint images, interpret the range as 0-1
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (settings.normalizedFloatMode && !showNorm) {
+				// Multiply by type's maximum value
+				const typeMax = bitsPerSample === 16 ? 65535 : 255;
+				normMin = normMin * typeMax;
+				normMax = normMax * typeMax;
+				console.log(`[TiffProcessor] Normalized float mode: converting range [${settings.normalization.min}, ${settings.normalization.max}] to [${normMin}, ${normMax}]`);
+			}
 		}
 
 		// Normalize and create image data
@@ -377,13 +399,35 @@ export class TiffProcessor {
 			normMin = min;
 			normMax = max;
 		} else if (settings.normalization.gammaMode) {
-			// Gamma mode: always normalize to fixed 0-1 range
-			normMin = 0;
-			normMax = 1;
+			// Gamma mode normalization range depends on data type
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (showNorm) {
+				// Float TIFFs: normalize to 0-1 range (floats are typically already in 0-1 range)
+				normMin = 0;
+				normMax = 1;
+			} else {
+				// Integer TIFFs: normalize to type's maximum value
+				normMin = 0;
+				if (bitsPerSample === 16) {
+					normMax = 65535;
+				} else {
+					normMax = 255;
+				}
+			}
 		} else {
 			// Manual mode: use user-specified range
 			normMin = settings.normalization.min;
 			normMax = settings.normalization.max;
+
+			// If normalized float mode is enabled for uint images, interpret the range as 0-1
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (settings.normalizedFloatMode && !showNorm) {
+				// Multiply by type's maximum value
+				const typeMax = bitsPerSample === 16 ? 65535 : 255;
+				normMin = normMin * typeMax;
+				normMax = normMax * typeMax;
+				console.log(`[TiffProcessor] Normalized float mode: converting range [${settings.normalization.min}, ${settings.normalization.max}] to [${normMin}, ${normMax}]`);
+			}
 		}
 
 		// Normalize and create image data
@@ -680,6 +724,11 @@ export class TiffProcessor {
 			return true;
 		}
 
+		// Do NOT apply gamma/brightness in auto-normalize mode
+		if (settings.normalization && settings.normalization.autoNormalize) {
+			return false;
+		}
+
 		// Check if gamma is significantly different from 1.0 (no correction)
 		const gammaRatio = settings.gamma.in / settings.gamma.out;
 		const hasGammaCorrection = Math.abs(gammaRatio - 1.0) > 0.01;
@@ -762,12 +811,22 @@ export class TiffProcessor {
 		const format = ifd.t339; // SampleFormat
 		const samples = ifd.t277;
 		const planarConfig = ifd.t284;
+		const bitsPerSample = ifd.t258;
 		const settings = this.settingsManager.settings;
 
-		console.log(`[TiffProcessor] getColorAtPixel: rgbAs24BitGrayscale=${settings.rgbAs24BitGrayscale}, samples=${samples}`);
+		console.log(`[TiffProcessor] getColorAtPixel: rgbAs24BitGrayscale=${settings.rgbAs24BitGrayscale}, normalizedFloatMode=${settings.normalizedFloatMode}, samples=${samples}, format=${format}`);
 
 		if (samples === 1) { // Grayscale
 			const value = data[pixelIndex];
+
+			// Check if normalized float mode is enabled for uint images
+			if (settings.normalizedFloatMode && format !== 3) {
+				// Convert uint to normalized float (0-1)
+				const maxValue = bitsPerSample === 16 ? 65535 : 255;
+				const normalized = value / maxValue;
+				return normalized.toPrecision(4);
+			}
+
 			return format === 3 ? value.toPrecision(4) : value.toString();
 		} else if (samples >= 3) {
 			const values = [];

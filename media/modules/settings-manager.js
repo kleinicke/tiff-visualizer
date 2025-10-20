@@ -35,6 +35,9 @@
  * @property {BrightnessSettings} [brightness]
  * @property {MaskFilterSettings[]} [maskFilters]
  * @property {string} [nanColor]
+ * @property {boolean} [rgbAs24BitGrayscale]
+ * @property {number} [scale24BitFactor]
+ * @property {boolean} [normalizedFloatMode]
  * @property {string} [resourceUri]
  * @property {string} [src]
  */

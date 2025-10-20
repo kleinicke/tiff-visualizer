@@ -298,7 +298,16 @@ export class PngProcessor {
             // Manual mode: use user-specified range
             normMin = settings.normalization.min;
             normMax = settings.normalization.max;
-            console.log(`[PngProcessor] Manual mode: [${normMin}, ${normMax}]`);
+
+            // If normalized float mode is enabled, interpret the range as 0-1
+            if (settings.normalizedFloatMode && channels === 1) {
+                // Multiply by maxValue
+                normMin = normMin * maxValue;
+                normMax = normMax * maxValue;
+                console.log(`[PngProcessor] Manual with normalized float mode: [${settings.normalization.min}, ${settings.normalization.max}] → [${normMin}, ${normMax}]`);
+            } else {
+                console.log(`[PngProcessor] Manual mode: [${normMin}, ${normMax}]`);
+            }
         } else {
             // Fallback: use bit-depth range
             normMin = 0;
@@ -531,7 +540,7 @@ export class PngProcessor {
      */
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data, channels, bitDepth } = this._lastRaw;
+        const { width, height, data, channels, bitDepth, maxValue } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
 
         const pixelIdx = y * width + x;
@@ -540,8 +549,18 @@ export class PngProcessor {
 
         if (dataIdx >= 0 && dataIdx < data.length) {
             if (channels === 1) {
-                // Grayscale - show actual bit depth value
-                return data[dataIdx].toString();
+                // Grayscale
+                const value = data[dataIdx];
+
+                // Check if normalized float mode is enabled
+                if (settings.normalizedFloatMode) {
+                    // Convert uint to normalized float (0-1)
+                    const normalized = value / maxValue;
+                    return normalized.toPrecision(4);
+                }
+
+                // Normal mode - show actual bit depth value
+                return value.toString();
             } else if (channels === 2) {
                 // Grayscale + Alpha
                 const maxVal = bitDepth === 16 ? 65535 : 255;
