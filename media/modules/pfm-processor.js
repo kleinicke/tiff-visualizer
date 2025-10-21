@@ -10,6 +10,8 @@ export class PfmProcessor {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
         this._lastRaw = null; // { width, height, data: Float32Array }
+        this._pendingRenderData = null; // Store data waiting for format-specific settings
+        this._isInitialLoad = true; // Track if this is the first render
     }
 
     async processPfm(src) {
@@ -23,12 +25,23 @@ export class PfmProcessor {
         displayData = this._flipImageVertically(displayData, width, height, channels);
         
         this._lastRaw = { width, height, data: displayData, channels };
-        this._postFormatInfo(width, height, channels, 'PFM');
-        const imageData = this._toImageDataFloat(displayData, width, height, channels);
+
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        // Force status refresh so normalization UI appears immediately
+
+        // Send format info BEFORE rendering (for deferred rendering)
+        if (this._isInitialLoad) {
+            this._postFormatInfo(width, height, channels, 'PFM');
+            this._pendingRenderData = { displayData, width, height, channels };
+            // Return placeholder
+            const placeholderImageData = new ImageData(width, height);
+            return { canvas, imageData: placeholderImageData };
+        }
+
+        // Non-initial loads - render immediately
+        this._postFormatInfo(width, height, channels, 'PFM');
+        const imageData = this._toImageDataFloat(displayData, width, height, channels);
         this.vscode.postMessage({ type: 'refresh-status' });
         return { canvas, imageData };
     }
@@ -211,9 +224,33 @@ export class PfmProcessor {
                 bitsPerSample: 32,
                 sampleFormat: 3,
                 formatLabel,
-                formatType: 'pfm' // For per-format settings
+                formatType: 'pfm', // For per-format settings
+                isInitialLoad: this._isInitialLoad // Signal that this is the first load
             }
         });
+    }
+
+    /**
+     * Perform the initial render if it was deferred
+     * Called when format-specific settings have been applied
+     * @returns {ImageData|null} - The rendered image data, or null if no pending render
+     */
+    performDeferredRender() {
+        if (!this._pendingRenderData) {
+            return null;
+        }
+
+        const { displayData, width, height, channels } = this._pendingRenderData;
+        this._pendingRenderData = null;
+        this._isInitialLoad = false;
+
+        // Now render with the correct format-specific settings
+        const imageData = this._toImageDataFloat(displayData, width, height, channels);
+
+        // Force status refresh
+        this.vscode.postMessage({ type: 'refresh-status' });
+
+        return imageData;
     }
 
     _flipImageVertically(data, width, height, channels = 1) {

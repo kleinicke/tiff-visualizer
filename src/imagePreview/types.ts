@@ -36,4 +36,5 @@ export interface IImagePreview {
 	updateStatusBar(): void;
 	addToImageCollection(uri: vscode.Uri): Promise<void>;
 	getManager(): IImagePreviewManager;
+	toggleHistogram(): void;
 } 

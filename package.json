@@ -157,6 +157,19 @@
         "command": "tiffVisualizer.resetAllSettings",
         "title": "Reset All Settings to Defaults",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.toggleHistogram",
+        "title": "Toggle Histogram",
+        "category": "TIFF Visualizer"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "tiffVisualizer.toggleHistogram",
+        "key": "ctrl+h",
+        "mac": "cmd+h",
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       }
     ],
     "menus": {

@@ -922,5 +922,9 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleHistogram', () => {
+		previewManager.activePreview?.toggleHistogram();
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 

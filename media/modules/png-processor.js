@@ -26,6 +26,8 @@ export class PngProcessor {
         this.vscode = vscode;
         /** @type {RawImageData | null} */
         this._lastRaw = null;
+        this._pendingRenderData = null; // Store data waiting for format-specific settings
+        this._isInitialLoad = true; // Track if this is the first render
     }
 
     /**
@@ -34,9 +36,16 @@ export class PngProcessor {
      * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
      */
     async processPng(src) {
+        // JPEG files should use fallback path (browser Image API)
+        const isJpeg = src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg');
+
         // Check if UPNG is available (loaded via script tag)
         // @ts-ignore
-        if (typeof UPNG === 'undefined') {
+        if (typeof UPNG === 'undefined' || isJpeg) {
+            if (isJpeg) {
+                // JPEG files use browser Image API directly
+                return this._processPngFallback(src);
+            }
             console.warn('UPNG.js not available, falling back to browser Image API');
             return this._processPngFallback(src);
         }
@@ -128,14 +137,19 @@ export class PngProcessor {
             canvas.width = width;
             canvas.height = height;
 
+            // Send format info BEFORE rendering (for deferred rendering)
+            if (this._isInitialLoad) {
+                this._postFormatInfo(width, height, channels, bitDepth, 'PNG');
+                this._pendingRenderData = true; // Flag that _lastRaw is ready for deferred render
+                // Return placeholder
+                const placeholderImageData = new ImageData(width, height);
+                return { canvas, imageData: placeholderImageData };
+            }
+
+            // Non-initial loads - render immediately
             this._postFormatInfo(width, height, channels, bitDepth, 'PNG');
-
-            // Render to ImageData
             const imageData = this._renderToImageData();
-
-            // Force status refresh
             this.vscode.postMessage({ type: 'refresh-status' });
-
             return { canvas, imageData };
         } catch (error) {
             console.error('UPNG.js processing failed, falling back to browser Image API:', error);
@@ -190,8 +204,18 @@ export class PngProcessor {
                                   src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg') ? 'JPEG' :
                                   'Image';
 
-                    this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
+                    // Send format info BEFORE rendering (for deferred rendering)
+                    if (this._isInitialLoad) {
+                        this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
+                        this._pendingRenderData = true; // Flag that _lastRaw is ready for deferred render
+                        // Return placeholder
+                        const placeholderImageData = new ImageData(canvas.width, canvas.height);
+                        resolve({ canvas, imageData: placeholderImageData });
+                        return;
+                    }
 
+                    // Non-initial loads - render immediately
+                    this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
                     const finalImageData = this._toImageDataWithGamma(rawData, canvas.width, canvas.height);
                     this.vscode.postMessage({ type: 'refresh-status' });
 
@@ -223,16 +247,11 @@ export class PngProcessor {
 
         // Determine the correct stride based on data format
         const stride = isRgbaFormat ? 4 : channels;
-        console.log(`[PngProcessor] _renderToImageData: channels=${channels}, isRgbaFormat=${isRgbaFormat}, stride=${stride}`);
-        console.log(`[PngProcessor] settings.rgbAs24BitGrayscale:`, settings.rgbAs24BitGrayscale);
-        console.log(`[PngProcessor] Full settings:`, settings);
-
         // Calculate stats for normalization status bar
         let min = Infinity, max = -Infinity;
 
         if (settings.rgbAs24BitGrayscale && channels >= 3) {
             // For 24-bit mode, calculate stats from combined 24-bit values
-            console.log(`[PngProcessor] Computing 24-bit stats from ${width * height} pixels`);
             for (let i = 0; i < width * height; i++) {
                 const srcIdx = i * stride;
                 // Get RGB values
@@ -248,14 +267,9 @@ export class PngProcessor {
                 // Combine into 24-bit value
                 const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
 
-                if (i === 0) {
-                    console.log(`[PngProcessor] First pixel 24-bit stats: R=${rByte}, G=${gByte}, B=${bByte}, combined=${combined24bit}`);
-                }
-
                 if (combined24bit < min) min = combined24bit;
                 if (combined24bit > max) max = combined24bit;
             }
-            console.log(`[PngProcessor] 24-bit stats: min=${min}, max=${max}`);
         } else {
             // Normal mode: calculate stats from individual channels
             for (let i = 0; i < width * height; i++) {
@@ -281,18 +295,15 @@ export class PngProcessor {
             // Auto-normalize: use actual image min/max
             normMin = min;
             normMax = max;
-            console.log(`[PngProcessor] Auto-normalize mode: [${normMin}, ${normMax}]`);
         } else if (settings.normalization && settings.normalization.gammaMode) {
             // Gamma mode: normalize to appropriate range
             normMin = 0;
             if (settings.rgbAs24BitGrayscale && channels >= 3) {
                 // For 24-bit mode, use full 24-bit range
                 normMax = 16777215; // 0xFFFFFF
-                console.log(`[PngProcessor] Gamma mode (24-bit): [${normMin}, ${normMax}]`);
             } else {
                 // For normal mode, use bit-depth range
                 normMax = maxValue;
-                console.log(`[PngProcessor] Gamma mode: [${normMin}, ${normMax}] (bit depth: ${bitDepth})`);
             }
         } else if (settings.normalization) {
             // Manual mode: use user-specified range
@@ -304,15 +315,11 @@ export class PngProcessor {
                 // Multiply by maxValue
                 normMin = normMin * maxValue;
                 normMax = normMax * maxValue;
-                console.log(`[PngProcessor] Manual with normalized float mode: [${settings.normalization.min}, ${settings.normalization.max}] → [${normMin}, ${normMax}]`);
-            } else {
-                console.log(`[PngProcessor] Manual mode: [${normMin}, ${normMax}]`);
             }
         } else {
             // Fallback: use bit-depth range
             normMin = 0;
             normMax = maxValue;
-            console.log(`[PngProcessor] Fallback mode: [${normMin}, ${normMax}]`);
         }
 
         // Render pixels
@@ -353,11 +360,6 @@ export class PngProcessor {
                 const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
                 // Max value is 16777215 (0xFFFFFF)
 
-                if (i === 0) {
-                    console.log(`[PngProcessor] 24-bit mode - First pixel: R=${rByte}, G=${gByte}, B=${bByte}, combined=${combined24bit}`);
-                    console.log(`[PngProcessor] Normalization range: [${normMin}, ${normMax}]`);
-                }
-
                 // Now normalize the combined 24-bit value using normMin/normMax
                 const norm24Range = normMax - normMin;
                 let normalized24;
@@ -370,10 +372,6 @@ export class PngProcessor {
 
                 // Apply gamma/brightness to the combined value
                 normalized24 = this._applyGammaAndBrightness(normalized24, settings);
-
-                if (i === 0) {
-                    console.log(`[PngProcessor] Normalized: ${normalized24}, Display value: ${Math.round(normalized24 * 255)}`);
-                }
 
                 // Display as grayscale
                 r = g = b = Math.round(normalized24 * 255);
@@ -449,15 +447,12 @@ export class PngProcessor {
         if (settings.normalization && settings.normalization.autoNormalize) {
             normMin = min;
             normMax = max;
-            console.log(`[PngProcessor] _toImageDataWithGamma Auto-normalize: [${normMin}, ${normMax}]`);
         } else if (settings.normalization && settings.normalization.gammaMode) {
             normMin = 0;
             normMax = 255;
-            console.log(`[PngProcessor] _toImageDataWithGamma Gamma mode: [${normMin}, ${normMax}]`);
         } else if (settings.normalization) {
             normMin = settings.normalization.min;
             normMax = settings.normalization.max;
-            console.log(`[PngProcessor] _toImageDataWithGamma Manual mode: [${normMin}, ${normMax}]`);
         } else {
             normMin = 0;
             normMax = 255;
@@ -641,8 +636,43 @@ export class PngProcessor {
                 bitsPerSample: bitDepth,
                 sampleFormat: 1, // Unsigned integer
                 formatLabel: `${formatLabel} (${bitDepth}-bit)`,
-                formatType: 'png'
+                formatType: 'png',
+                isInitialLoad: this._isInitialLoad // Signal that this is the first load
             }
         });
+    }
+
+    /**
+     * Perform the initial render if it was deferred
+     * Called when format-specific settings have been applied
+     * @returns {ImageData|null} - The rendered image data, or null if no pending render
+     */
+    performDeferredRender() {
+        if (!this._pendingRenderData || !this._lastRaw) {
+            return null;
+        }
+
+        this._pendingRenderData = null;
+        this._isInitialLoad = false;
+
+        // Render with the correct format-specific settings
+        let imageData;
+        if (this._lastRaw.isRgbaFormat) {
+            // Fallback path - data is already RGBA format (Uint8ClampedArray)
+            // Type assertion is safe because fallback path always creates Uint8ClampedArray
+            imageData = this._toImageDataWithGamma(
+                /** @type {Uint8Array | Uint8ClampedArray} */ (this._lastRaw.data),
+                this._lastRaw.width,
+                this._lastRaw.height
+            );
+        } else {
+            // UPNG path - data is in raw channel format
+            imageData = this._renderToImageData();
+        }
+
+        // Force status refresh
+        this.vscode.postMessage({ type: 'refresh-status' });
+
+        return imageData;
     }
 }

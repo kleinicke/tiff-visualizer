@@ -9,6 +9,7 @@ import { PpmProcessor } from './modules/ppm-processor.js';
 import { PngProcessor } from './modules/png-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
+import { HistogramOverlay } from './modules/histogram-overlay.js';
 
 /**
  * Main Image Preview Application
@@ -27,6 +28,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
 	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
 	const pngProcessor = new PngProcessor(settingsManager, vscode);
+	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
 	mouseHandler.setPpmProcessor(ppmProcessor);
@@ -43,15 +45,9 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
-	console.log('Checking for persisted state...');
 	if (persistedState) {
-		console.log('Found persisted state, restoring:', persistedState);
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
-		console.log('Restored peerImageUris:', peerImageUris);
-		console.log('Restored isShowingPeer:', isShowingPeer);
-	} else {
-		console.log('No persisted state found, starting fresh');
 	}
 	
 	// Image collection state
@@ -74,7 +70,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
-		console.log('STATE SAVED:', state);
 	}
 
 	// DOM elements
@@ -85,28 +80,18 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	 * Initialize the application
 	 */
 	function initialize() {
-		console.log('Initializing TIFF Visualizer webview');
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
-		
+
 		// Save state when webview might be disposed
-		window.addEventListener('beforeunload', () => {
-			console.log('Webview beforeunload - saving state');
-			saveState();
-		});
-		
-		window.addEventListener('pagehide', () => {
-			console.log('Webview pagehide - saving state');
-			saveState();
-		});
-		
+		window.addEventListener('beforeunload', saveState);
+		window.addEventListener('pagehide', saveState);
+
 		// Start loading the image
 		const settings = settingsManager.settings;
 		const resourceUri = settings.resourceUri;
-
-		console.log('Loading image:', resourceUri);
 
 		// Load image based on file extension
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
@@ -125,27 +110,20 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		
 		// Restore comparison state if we have peer images
 		if (peerImageUris.length > 0) {
-			console.log('RESTORING COMPARISON STATE - Found', peerImageUris.length, 'peer images:', peerImageUris);
-			
 			// Notify extension about restored peer images so it can update the image collection
-			console.log('Notifying extension about restored peer images...');
 			for (const peerUri of peerImageUris) {
 				vscode.postMessage({
 					type: 'restorePeerImage',
 					peerUri: peerUri
 				});
 			}
-			
+
+			// Reload comparison images after main image loads
 			setTimeout(() => {
-				console.log('Starting to reload comparison images...');
-				// Reload comparison images after main image loads
 				for (const peerUri of peerImageUris) {
-					console.log('Reloading comparison image:', peerUri);
 					handleStartComparison(peerUri);
 				}
 			}, 1000); // Give main image time to load
-		} else {
-			console.log('No comparison state to restore');
 		}
 	}
 
@@ -154,8 +132,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	 * @param {any} savedZoomState - The zoom state to restore after reload
 	 */
 	function reloadImage(savedZoomState) {
-		console.log('Reloading image with saved zoom state:', savedZoomState);
-
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
@@ -183,8 +159,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		const settings = settingsManager.settings;
 		const resourceUri = settings.resourceUri || '';
 
-		console.log('Reloading image:', resourceUri);
-
 		// Track whether we should restore zoom
 		const shouldRestoreZoom = savedZoomState && savedZoomState.scale !== 'fit';
 
@@ -196,7 +170,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				if (hasLoadedImage && imageElement) {
 					clearInterval(checkAndRestore);
 					setTimeout(() => {
-						console.log('Restoring zoom state after reload:', savedZoomState);
 						zoomController.restoreState(savedZoomState);
 					}, 100);
 				}
@@ -406,19 +379,22 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// Apply initial zoom and setup mouse handling
 		zoomController.applyInitialZoom();
 		mouseHandler.addMouseListeners(imageElement);
+
+		// Update histogram if visible
+		updateHistogramData();
 	}
 
 	/**
 	 * Setup VS Code message handling
 	 */
 	function setupMessageHandling() {
-		window.addEventListener('message', (e) => {
+		window.addEventListener('message', async (e) => {
 			if (e.origin !== window.origin) {
 				console.error('Dropping message from unknown origin in image preview');
 				return;
 			}
 
-			handleVSCodeMessage(e.data);
+			await handleVSCodeMessage(e.data);
 		});
 
 		// Send ready message to VS Code
@@ -428,7 +404,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	/**
 	 * Handle messages from VS Code
 	 */
-	function handleVSCodeMessage(message) {
+	async function handleVSCodeMessage(message) {
 		switch (message.type) {
 			case 'setScale':
 				zoomController.updateScale(message.scale);
@@ -468,20 +444,42 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				settingsManager.updateSettings(message.settings);
 				const newResourceUri = settingsManager.settings.resourceUri;
 
-				// If resource URI changed, reload the entire image
-				if (oldResourceUri !== newResourceUri) {
-					console.log('Resource changed from', oldResourceUri, 'to', newResourceUri, '- reloading image');
+				// Check if this is a deferred render trigger (initial load)
+				if (message.isInitialRender && canvas) {
+					// Trigger deferred rendering for the appropriate processor
+					let deferredImageData = null;
 
+					if (tiffProcessor._pendingRenderData) {
+						deferredImageData = await tiffProcessor.performDeferredRender();
+					} else if (npyProcessor._pendingRenderData) {
+						deferredImageData = npyProcessor.performDeferredRender();
+					} else if (pngProcessor._pendingRenderData) {
+						deferredImageData = pngProcessor.performDeferredRender();
+					} else if (ppmProcessor._pendingRenderData) {
+						deferredImageData = ppmProcessor.performDeferredRender();
+					} else if (pfmProcessor._pendingRenderData) {
+						deferredImageData = pfmProcessor.performDeferredRender();
+					}
+
+					if (deferredImageData) {
+						const ctx = canvas.getContext('2d');
+						if (ctx) {
+							ctx.putImageData(deferredImageData, 0, 0);
+							primaryImageData = deferredImageData;
+							updateHistogramData();
+						}
+					}
+				}
+				// If resource URI changed, reload the entire image
+				else if (oldResourceUri !== newResourceUri) {
 					// Save current zoom state before reloading (for file recreation case)
 					const currentZoomState = zoomController.getCurrentState();
-					console.log('Saved zoom state before reload:', currentZoomState);
 
 					// Reload the image without reinitializing event listeners
 					reloadImage(currentZoomState);
 				} else {
 					// Just update rendering with new settings
 					updateImageWithNewSettings();
-					console.log('Settings updated');
 				}
 				break;
 
@@ -489,7 +487,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				// Handle mask filter settings updates
 				settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings();
-				console.log('Mask filter settings updated');
 				break;
 				
 			case 'updateImageCollectionOverlay':
@@ -527,10 +524,9 @@ import { MouseHandler } from './modules/mouse-handler.js';
 			case 'restoreComparisonState':
 				// Restore comparison state after image change
 				if (message.state && message.state.peerUris && message.state.peerUris.length > 0) {
-					console.log('Restoring comparison state:', message.state);
 					peerImageUris = message.state.peerUris;
 					isShowingPeer = message.state.isShowingPeer;
-					
+
 					// Reload peer images for comparison
 					for (const peerUri of peerImageUris) {
 						handleStartComparison(peerUri);
@@ -542,6 +538,44 @@ import { MouseHandler } from './modules/mouse-handler.js';
 				// Switch to a different image
 				switchToNewImage(message.uri, message.resourceUri);
 				break;
+
+			case 'toggleHistogram':
+				// Toggle histogram visibility
+				histogramOverlay.toggle();
+				updateHistogramData();
+				// Notify extension of new state
+				vscode.postMessage({
+					type: 'histogramVisibilityChanged',
+					isVisible: histogramOverlay.getVisibility()
+				});
+				break;
+
+			case 'requestHistogram':
+				// Extension requested histogram update
+				updateHistogramData();
+				break;
+		}
+	}
+
+	/**
+	 * Update histogram with current image data
+	 */
+	function updateHistogramData() {
+		if (!canvas || !hasLoadedImage) {
+			return;
+		}
+
+		try {
+			const ctx = canvas.getContext('2d');
+			if (!ctx) return;
+
+			// Get current image data from canvas
+			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+			// Update histogram overlay
+			histogramOverlay.update(imageData);
+		} catch (error) {
+			console.error('Error updating histogram:', error);
 		}
 	}
 
@@ -554,39 +588,32 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// For TIFF images, try fast parameter update first
 		if (primaryImageData && tiffProcessor.rawTiffData) {
 			try {
-				console.log('Fast updating TIFF image with new settings');
-				
 				// Try fast parameter update (gamma/normalization only)
 				const fastUpdate = await tiffProcessor.fastParameterUpdate(primaryImageData);
-				
+
 				if (fastUpdate) {
 					// Apply fast update directly to canvas
 					const ctx = canvas.getContext('2d');
 					if (ctx) {
 						ctx.putImageData(fastUpdate, 0, 0);
 						primaryImageData = fastUpdate;
-						console.log('TIFF image fast-updated');
-						
-
+						updateHistogramData();
 						return;
 					}
 				}
-				
+
 				// Fallback to full re-render if fast update not possible
-				console.log('Fast update not possible, falling back to full re-render');
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
 					tiffProcessor.rawTiffData.image,
 					tiffProcessor.rawTiffData.rasters
 				);
-				
+
 				// Update the canvas with new image data
 				const ctx = canvas.getContext('2d');
 				if (ctx && newImageData) {
 					ctx.putImageData(newImageData, 0, 0);
 					primaryImageData = newImageData;
-					console.log('TIFF image fully re-rendered');
-					
-
+					updateHistogramData();
 				}
 			} catch (error) {
 				console.error('Error updating TIFF image with new settings:', error);
@@ -599,8 +626,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// For PGM images, re-render with new settings
 		if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
 			try {
-				console.log('Updating PGM image with new settings:', settingsManager.settings);
-
 				// Re-render the PGM with current settings
 				const newImageData = ppmProcessor.renderPgmWithSettings();
 
@@ -610,9 +635,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 					if (ctx) {
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
-						console.log('PGM image updated with new settings');
-
-
+						updateHistogramData();
 					}
 				}
 			} catch (error) {
@@ -622,8 +645,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// For NPY images, re-render with new settings
 		else if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
 			try {
-				console.log('Updating NPY image with new settings:', settingsManager.settings);
-
 				// Re-render the NPY with current settings
 				const newImageData = npyProcessor.renderNpyWithSettings();
 
@@ -633,9 +654,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 					if (ctx) {
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
-						console.log('NPY image updated with new settings');
-
-
+						updateHistogramData();
 					}
 				}
 			} catch (error) {
@@ -645,8 +664,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 		// For PNG/JPEG images, re-render with new settings
 		else if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
 			try {
-				console.log('Updating PNG/JPEG image with new settings:', settingsManager.settings);
-
 				// Re-render the PNG with current settings
 				const newImageData = pngProcessor.renderPngWithSettings();
 
@@ -656,9 +673,6 @@ import { MouseHandler } from './modules/mouse-handler.js';
 					if (ctx) {
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
-						console.log('PNG/JPEG image updated with new settings');
-
-
 					}
 				}
 			} catch (error) {
@@ -956,17 +970,17 @@ import { MouseHandler } from './modules/mouse-handler.js';
 	async function handleStartComparison(peerUri) {
 		try {
 			vscode.postMessage({ type: 'show-loading' });
-			
+
+
 			// Track peer URI for state persistence
 			if (!peerImageUris.includes(peerUri)) {
 				peerImageUris.push(peerUri);
 			}
-			
+
 			const result = await tiffProcessor.processTiff(peerUri);
 			peerImageData = result.imageData;
-			
+
 			// Save state after adding peer image
-			console.log('Peer image added, saving state...');
 			saveState();
 			
 			vscode.postMessage({ type: 'comparison-ready' });

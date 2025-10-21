@@ -36,6 +36,8 @@ export class NpyProcessor {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
         this._lastRaw = null; // { width, height, data: Float32Array, dtype: string, showNorm: boolean }
+        this._pendingRenderData = null; // Store data waiting for format-specific settings
+        this._isInitialLoad = true; // Track if this is the first render
     }
 
     async processNpy(src) {
@@ -47,24 +49,44 @@ export class NpyProcessor {
         if (buffer.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50) {
             const { data, width, height, dtype, showNorm, channels } = this._parseNpz(buffer);
             this._lastRaw = { width, height, data, dtype, showNorm, channels };
-            this._postFormatInfo(width, height, 'NPY');
-            const imageData = this._toImageDataFloat(data, width, height);
+
             const canvas = document.createElement('canvas');
             canvas.width = width;
             canvas.height = height;
-            // Force status refresh so normalization UI appears immediately
+
+            // Send format info BEFORE rendering (for deferred rendering)
+            if (this._isInitialLoad) {
+                this._postFormatInfo(width, height, 'NPY');
+                this._pendingRenderData = { data, width, height };
+                // Return placeholder
+                const placeholderImageData = new ImageData(width, height);
+                return { canvas, imageData: placeholderImageData };
+            }
+
+            // Non-initial loads - render immediately
+            const imageData = this._toImageDataFloat(data, width, height);
             this.vscode.postMessage({ type: 'refresh-status' });
             return { canvas, imageData };
         }
 
         const { data, width, height, dtype, showNorm, channels } = this._parseNpy(buffer);
         this._lastRaw = { width, height, data, dtype, showNorm, channels };
-        this._postFormatInfo(width, height, 'NPY');
-        const imageData = this._toImageDataFloat(data, width, height);
+
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        // Force status refresh so normalization UI appears immediately
+
+        // Send format info BEFORE rendering (for deferred rendering)
+        if (this._isInitialLoad) {
+            this._postFormatInfo(width, height, 'NPY');
+            this._pendingRenderData = { data, width, height };
+            // Return placeholder
+            const placeholderImageData = new ImageData(width, height);
+            return { canvas, imageData: placeholderImageData };
+        }
+
+        // Non-initial loads - render immediately
+        const imageData = this._toImageDataFloat(data, width, height);
         this.vscode.postMessage({ type: 'refresh-status' });
         return { canvas, imageData };
     }
@@ -214,7 +236,6 @@ export class NpyProcessor {
 
         if (rgbAs24BitMode) {
             // For 24-bit mode, compute stats from combined 24-bit values
-            console.log(`[NpyProcessor] Computing 24-bit stats from ${width * height} pixels`);
             for (let i = 0; i < width * height; i++) {
                 const srcIdx = i * 3;
                 // Get RGB values and clamp to 0-255 range
@@ -236,30 +257,15 @@ export class NpyProcessor {
             }
         }
 
-        console.log(`\n========================================`);
-        console.log(`[NpyProcessor] 🎨 APPLYING NORMALIZATION`);
-        console.log(`========================================`);
-        console.log(`[NpyProcessor] Data stats: min=${dataMin.toFixed(2)}, max=${dataMax.toFixed(2)}`);
-        console.log(`[NpyProcessor] RGB as 24-bit mode: ${rgbAs24BitMode}`);
         let normMin, normMax;
 
-        // ============================================
-        // NORMALIZATION APPLICATION (SIMPLE & CLEAR)
+        // Normalization application
         // Priority order: autoNormalize > gammaMode > manual min/max
-        //
-        // IMPORTANT: We check flags BEFORE checking min/max values
-        // because default settings always have min/max defined
-        // ============================================
-
-        console.log(`[NpyProcessor] Settings flags: autoNormalize=${settings.normalization?.autoNormalize}, gammaMode=${settings.normalization?.gammaMode}`);
-        console.log(`[NpyProcessor] Settings range: min=${settings.normalization?.min}, max=${settings.normalization?.max}`);
 
         // Step 1: Check if auto-normalize is enabled (highest priority)
         if (settings.normalization?.autoNormalize === true) {
             normMin = dataMin;
             normMax = dataMax;
-            console.log(`[NpyProcessor] ✓ Mode: AUTO-NORMALIZE`);
-            console.log(`[NpyProcessor]   Using data range: [${normMin.toFixed(2)}, ${normMax.toFixed(2)}]`);
         }
 
         // Step 2: Check if gamma mode is enabled (second priority)
@@ -270,7 +276,6 @@ export class NpyProcessor {
             // For 24-bit RGB mode, use full 24-bit range
             if (rgbAs24BitMode) {
                 normMax = 16777215; // 2^24 - 1
-                console.log(`[NpyProcessor] ✓ Mode: GAMMA (24-bit RGB)`);
             }
             // Determine normMax based on data type
             else if (this._lastRaw && this._lastRaw.dtype) {
@@ -279,28 +284,20 @@ export class NpyProcessor {
                 // Integer types: use type-specific max
                 if (dtype.includes('u1') || dtype.includes('i1')) {
                     normMax = dtype.includes('u') ? 255 : 127;
-                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (${dtype.includes('u') ? 'uint8' : 'int8'})`);
                 } else if (dtype.includes('u2') || dtype.includes('i2')) {
                     normMax = dtype.includes('u') ? 65535 : 32767;
-                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (${dtype.includes('u') ? 'uint16' : 'int16'})`);
                 } else if (dtype.includes('u4') || dtype.includes('i4')) {
                     normMax = dtype.includes('u') ? 4294967295 : 2147483647;
-                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (${dtype.includes('u') ? 'uint32' : 'int32'})`);
                 }
                 // Float types: use 0-1 range
                 else if (dtype.includes('f')) {
                     normMax = 1;
-                    console.log(`[NpyProcessor] ✓ Mode: GAMMA (float)`);
                 } else {
                     normMax = 1;
-                    console.log(`[NpyProcessor] ⚠️  Mode: GAMMA (unknown type, using 0-1)`);
                 }
             } else {
                 normMax = 1;
-                console.log(`[NpyProcessor] ⚠️  Mode: GAMMA (no dtype info, using 0-1)`);
             }
-
-            console.log(`[NpyProcessor]   Using range: [${normMin}, ${normMax}]`);
         }
 
         // Step 3: Manual normalization (user-specified range, only if both flags are false)
@@ -325,11 +322,6 @@ export class NpyProcessor {
                 }
                 normMin = normMin * typeMax;
                 normMax = normMax * typeMax;
-                console.log(`[NpyProcessor] ✓ Mode: MANUAL with normalized float mode`);
-                console.log(`[NpyProcessor]   User range [${settings.normalization.min}, ${settings.normalization.max}] → [${normMin}, ${normMax}]`);
-            } else {
-                console.log(`[NpyProcessor] ✓ Mode: MANUAL (user-specified)`);
-                console.log(`[NpyProcessor]   Using user range: [${normMin}, ${normMax}]`);
             }
         }
 
@@ -337,14 +329,9 @@ export class NpyProcessor {
         else {
             normMin = dataMin;
             normMax = dataMax;
-            console.log(`[NpyProcessor] ⚠️  Mode: FALLBACK (auto-normalize)`);
-            console.log(`[NpyProcessor]   This shouldn't happen - check default settings!`);
-            console.log(`[NpyProcessor]   Using data range: [${normMin.toFixed(2)}, ${normMax.toFixed(2)}]`);
         }
 
         const range = normMax - normMin || 1;
-        console.log(`[NpyProcessor] 📊 Final normalization: [${normMin}, ${normMax}], range=${range}`);
-        console.log(`========================================\n`);
         const out = new Uint8ClampedArray(width * height * 4);
 
         // Apply gamma correction only in gamma mode, NOT in auto-normalize mode
@@ -513,7 +500,6 @@ export class NpyProcessor {
 
         if (this._lastRaw && this._lastRaw.dtype) {
             const dtype = this._lastRaw.dtype;
-            console.log(`[NpyProcessor] Detected dtype: ${dtype}`);
 
             // Determine sample format: 1=uint, 2=int, 3=float
             if (dtype.includes('f')) {
@@ -521,21 +507,18 @@ export class NpyProcessor {
                 if (dtype.includes('f2')) bitsPerSample = 16;
                 else if (dtype.includes('f4')) bitsPerSample = 32;
                 else if (dtype.includes('f8')) bitsPerSample = 64;
-                console.log(`[NpyProcessor] Detected as FLOAT, bitsPerSample: ${bitsPerSample}`);
             } else if (dtype.includes('u')) {
                 sampleFormat = 1; // Unsigned int
                 if (dtype.includes('u1')) bitsPerSample = 8;
                 else if (dtype.includes('u2')) bitsPerSample = 16;
                 else if (dtype.includes('u4')) bitsPerSample = 32;
                 else if (dtype.includes('u8')) bitsPerSample = 64;
-                console.log(`[NpyProcessor] Detected as UINT, bitsPerSample: ${bitsPerSample}`);
             } else if (dtype.includes('i')) {
                 sampleFormat = 2; // Signed int
                 if (dtype.includes('i1')) bitsPerSample = 8;
                 else if (dtype.includes('i2')) bitsPerSample = 16;
                 else if (dtype.includes('i4')) bitsPerSample = 32;
                 else if (dtype.includes('i8')) bitsPerSample = 64;
-                console.log(`[NpyProcessor] Detected as SIGNED INT, bitsPerSample: ${bitsPerSample}`);
             }
         }
 
@@ -548,7 +531,6 @@ export class NpyProcessor {
         } else if (sampleFormat === 1 || sampleFormat === 2) {
             formatType = 'npy-uint';
         }
-        console.log(`[NpyProcessor] Sending formatType: ${formatType}, sampleFormat: ${sampleFormat}`);
 
         this.vscode.postMessage({
             type: 'formatInfo',
@@ -563,9 +545,33 @@ export class NpyProcessor {
                 bitsPerSample,
                 sampleFormat,
                 formatLabel,
-                formatType // For per-format settings: 'npy-float' or 'npy-uint'
+                formatType, // For per-format settings: 'npy-float' or 'npy-uint'
+                isInitialLoad: this._isInitialLoad // Signal that this is the first load
             }
         });
+    }
+
+    /**
+     * Perform the initial render if it was deferred
+     * Called when format-specific settings have been applied
+     * @returns {ImageData|null} - The rendered image data, or null if no pending render
+     */
+    performDeferredRender() {
+        if (!this._pendingRenderData) {
+            return null;
+        }
+
+        const { data, width, height } = this._pendingRenderData;
+        this._pendingRenderData = null;
+        this._isInitialLoad = false;
+
+        // Now render with the correct format-specific settings
+        const imageData = this._toImageDataFloat(data, width, height);
+
+        // Force status refresh so normalization UI appears
+        this.vscode.postMessage({ type: 'refresh-status' });
+
+        return imageData;
     }
 }
 

@@ -21,6 +21,8 @@ export class TiffProcessor {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
 		this.rawTiffData = null;
+		this._pendingRenderData = null; // Store data waiting for format-specific settings
+		this._isInitialLoad = true; // Track if this is the first render
 	}
 
 	/**
@@ -71,29 +73,6 @@ export class TiffProcessor {
 			const photometricInterpretation = fileDir.PhotometricInterpretation;
 			const planarConfig = fileDir.PlanarConfiguration;
 
-			// Send format information to VS Code
-			if (this.vscode) {
-				// Determine if this is a float TIFF or int TIFF
-				const showNormTiff = sampleFormat === 3; // 3 = IEEE floating point
-				const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
-
-				this.vscode.postMessage({
-					type: 'formatInfo',
-					value: {
-						width: width,
-						height: height,
-						sampleFormat: sampleFormat,
-						compression: compression,
-						predictor: predictor,
-						photometricInterpretation: photometricInterpretation,
-						planarConfig: planarConfig,
-						samplesPerPixel: image.getSamplesPerPixel(),
-						bitsPerSample: image.getBitsPerSample(),
-						formatType: formatType // For per-format settings
-					}
-				});
-			}
-
 			const canvas = document.createElement('canvas');
 			canvas.width = width;
 			canvas.height = height;
@@ -125,8 +104,6 @@ export class TiffProcessor {
 				}
 			}
 
-			const imageData = await this.renderTiff(image, rasters);
-			
 			// Store TIFF data for pixel inspection and re-rendering
 			this.rawTiffData = {
 				image: image,
@@ -142,6 +119,40 @@ export class TiffProcessor {
 				data: data
 			};
 
+			// Send format information to VS Code BEFORE rendering
+			// This allows the extension to apply format-specific settings first
+			if (this.vscode && this._isInitialLoad) {
+				// Determine if this is a float TIFF or int TIFF
+				const showNormTiff = sampleFormat === 3; // 3 = IEEE floating point
+				const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
+
+				this.vscode.postMessage({
+					type: 'formatInfo',
+					value: {
+						width: width,
+						height: height,
+						sampleFormat: sampleFormat,
+						compression: compression,
+						predictor: predictor,
+						photometricInterpretation: photometricInterpretation,
+						planarConfig: planarConfig,
+						samplesPerPixel: image.getSamplesPerPixel(),
+						bitsPerSample: image.getBitsPerSample(),
+						formatType: formatType, // For per-format settings
+						isInitialLoad: true // Signal that this is the first load
+					}
+				});
+
+				// Store pending render data - will render when settings are updated
+				this._pendingRenderData = { image, rasters };
+
+				// Return placeholder - actual rendering happens when settings update
+				const placeholderImageData = new ImageData(width, height);
+				return { canvas, imageData: placeholderImageData, tiffData: this.rawTiffData };
+			}
+
+			// Non-initial loads or if no vscode (render immediately)
+			const imageData = await this.renderTiff(image, rasters);
 			return { canvas, imageData, tiffData: this.rawTiffData };
 		} catch (error) {
 			console.error('Error processing TIFF:', error);
@@ -207,7 +218,6 @@ export class TiffProcessor {
 		// Use the first 3 channels to determine the image stats
 		// For RGB-as-24bit mode, calculate stats from combined 24-bit values
 		if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
-			console.log(`[TiffProcessor] Computing 24-bit stats from ${rastersCopy[0].length} pixels`);
 			// Calculate min/max of combined 24-bit values
 			for (let j = 0; j < rastersCopy[0].length; j++) {
 				// Get RGB values and normalize to 0-255 range
@@ -222,13 +232,9 @@ export class TiffProcessor {
 				}
 				// Combine into 24-bit value
 				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-				if (j === 0) {
-					console.log(`[TiffProcessor] First pixel 24-bit stats: R=${values[0]}, G=${values[1]}, B=${values[2]}, combined=${combined24bit}`);
-				}
 				min = Math.min(min, combined24bit);
 				max = Math.max(max, combined24bit);
 			}
-			console.log(`[TiffProcessor] 24-bit stats: min=${min}, max=${max}`);
 		} else {
 			// Normal mode: use individual channel values
 			for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
@@ -282,13 +288,11 @@ export class TiffProcessor {
 				const typeMax = bitsPerSample === 16 ? 65535 : 255;
 				normMin = normMin * typeMax;
 				normMax = normMax * typeMax;
-				console.log(`[TiffProcessor] Normalized float mode: converting range [${settings.normalization.min}, ${settings.normalization.max}] to [${normMin}, ${normMax}]`);
 			}
 		}
 
 		// Normalize and create image data
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		console.log(`[TiffProcessor] Detected float: ${showNorm}, sampleFormat:`, sampleFormat);
 
 		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
@@ -426,13 +430,11 @@ export class TiffProcessor {
 				const typeMax = bitsPerSample === 16 ? 65535 : 255;
 				normMin = normMin * typeMax;
 				normMax = normMax * typeMax;
-				console.log(`[TiffProcessor] Normalized float mode: converting range [${settings.normalization.min}, ${settings.normalization.max}] to [${normMin}, ${normMax}]`);
 			}
 		}
 
 		// Normalize and create image data
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		console.log(`[TiffProcessor] Detected float: ${showNorm}, sampleFormat:`, sampleFormat);
 
 		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
@@ -453,8 +455,6 @@ export class TiffProcessor {
 		const numBands = rasters.length;
 		const range = normMax - normMin;
 		const nanColor = this._getNanColor(settings);
-
-		console.log(`[TiffProcessor] _processFloatTiff: numBands=${numBands}, rgbAs24BitGrayscale=${settings.rgbAs24BitGrayscale}`);
 
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
@@ -621,13 +621,6 @@ export class TiffProcessor {
 				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
 				// Max value is 16777215 (0xFFFFFF)
 
-				// Debug logging for first pixel
-				if (i === 0) {
-					console.log(`[TiffProcessor] 24-bit mode - First pixel: R=${values[0]}, G=${values[1]}, B=${values[2]}`);
-					console.log(`[TiffProcessor] Combined 24-bit value: ${combined24bit}`);
-					console.log(`[TiffProcessor] Normalization range: [${normMin}, ${normMax}]`);
-				}
-
 				// Now normalize the combined 24-bit value using the normalization settings
 				// For 24-bit mode, normMin/normMax should be in the range [0, 16777215]
 				let normalized24;
@@ -646,11 +639,6 @@ export class TiffProcessor {
 
 				// Display as grayscale
 				const displayValue = Math.round(normalized24 * 255);
-
-				// Debug logging for first pixel
-				if (i === 0) {
-					console.log(`[TiffProcessor] Normalized: ${normalized24}, Display value: ${displayValue}`);
-				}
 
 				r = g = b = this.clamp(displayValue, 0, 255);
 			} else {
@@ -814,8 +802,6 @@ export class TiffProcessor {
 		const bitsPerSample = ifd.t258;
 		const settings = this.settingsManager.settings;
 
-		console.log(`[TiffProcessor] getColorAtPixel: rgbAs24BitGrayscale=${settings.rgbAs24BitGrayscale}, normalizedFloatMode=${settings.normalizedFloatMode}, samples=${samples}, format=${format}`);
-
 		if (samples === 1) { // Grayscale
 			const value = data[pixelIndex];
 
@@ -856,7 +842,6 @@ export class TiffProcessor {
 				const scaleFactor = settings.scale24BitFactor || 1000;
 				const scaledValue = (combined24bit / scaleFactor).toFixed(3);
 
-				console.log(`[TiffProcessor] getColorAtPixel: R=${r}, G=${g}, B=${b}, combined=${combined24bit}, scaled=${scaledValue}`);
 				return scaledValue;
 			}
 
@@ -880,7 +865,25 @@ export class TiffProcessor {
 		// Fast update is disabled because it causes double-application of corrections
 		// and produces incorrect results (white/black flash, wrong colors).
 		// Always return null to force a full re-render from raw TIFF data.
-		console.log('Fast update disabled - will re-render from raw TIFF data');
 		return null;
+	}
+
+	/**
+	 * Perform the initial render if it was deferred
+	 * Called when format-specific settings have been applied
+	 * @returns {Promise<ImageData|null>} - The rendered image data, or null if no pending render
+	 */
+	async performDeferredRender() {
+		if (!this._pendingRenderData) {
+			return null;
+		}
+
+		const { image, rasters } = this._pendingRenderData;
+		this._pendingRenderData = null;
+		this._isInitialLoad = false;
+
+		// Now render with the correct format-specific settings
+		const imageData = await this.renderTiff(image, rasters);
+		return imageData;
 	}
 } 

@@ -11,6 +11,8 @@ export class PpmProcessor {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
         this._lastRaw = null; // { width, height, data: Uint8Array|Uint16Array, maxval, channels }
+        this._pendingRenderData = null; // Store data waiting for format-specific settings
+        this._isInitialLoad = true; // Track if this is the first render
     }
 
     async processPpm(src) {
@@ -25,15 +27,23 @@ export class PpmProcessor {
         // No flipping needed unless specifically required by the format
 
         this._lastRaw = { width, height, data: displayData, maxval, channels };
-        this._postFormatInfo(width, height, channels, format, maxval);
 
-        // All PPM/PGM files are uint, so use gamma mode approach for proper normalization
-        const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels);
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
-        
-        // Force status refresh
+
+        // Send format info BEFORE rendering (for deferred rendering)
+        if (this._isInitialLoad) {
+            this._postFormatInfo(width, height, channels, format, maxval);
+            this._pendingRenderData = { displayData, width, height, maxval, channels };
+            // Return placeholder
+            const placeholderImageData = new ImageData(width, height);
+            return { canvas, imageData: placeholderImageData };
+        }
+
+        // Non-initial loads - render immediately
+        this._postFormatInfo(width, height, channels, format, maxval);
+        const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels);
         this.vscode.postMessage({ type: 'refresh-status' });
         return { canvas, imageData };
     }
@@ -485,8 +495,32 @@ export class PpmProcessor {
                 sampleFormat: 1, // Unsigned integer
                 formatLabel,
                 maxval,
-                formatType: 'ppm' // For per-format settings
+                formatType: 'ppm', // For per-format settings
+                isInitialLoad: this._isInitialLoad // Signal that this is the first load
             }
         });
+    }
+
+    /**
+     * Perform the initial render if it was deferred
+     * Called when format-specific settings have been applied
+     * @returns {ImageData|null} - The rendered image data, or null if no pending render
+     */
+    performDeferredRender() {
+        if (!this._pendingRenderData) {
+            return null;
+        }
+
+        const { displayData, width, height, maxval, channels } = this._pendingRenderData;
+        this._pendingRenderData = null;
+        this._isInitialLoad = false;
+
+        // Now render with the correct format-specific settings
+        const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels);
+
+        // Force status refresh
+        this.vscode.postMessage({ type: 'refresh-status' });
+
+        return imageData;
     }
 }

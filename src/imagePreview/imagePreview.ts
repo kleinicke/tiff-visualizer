@@ -8,6 +8,7 @@ import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
+import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager } from './types';
 import type { ImageSettings } from './appStateManager';
@@ -40,6 +41,7 @@ export class ImagePreview extends MediaPreview {
 	private readonly _gammaStatusBarEntry: GammaStatusBarEntry;
 	private readonly _brightnessStatusBarEntry: BrightnessStatusBarEntry;
 	private readonly _maskFilterStatusBarEntry: MaskFilterStatusBarEntry;
+	private readonly _histogramStatusBarEntry: HistogramStatusBarEntry;
 	private readonly _messageRouter: MessageRouter;
 
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
@@ -56,6 +58,7 @@ export class ImagePreview extends MediaPreview {
 		gammaStatusBarEntry: GammaStatusBarEntry,
 		brightnessStatusBarEntry: BrightnessStatusBarEntry,
 		maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
+		histogramStatusBarEntry: HistogramStatusBarEntry,
 		private readonly _manager: IImagePreviewManager
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
@@ -66,6 +69,7 @@ export class ImagePreview extends MediaPreview {
 		this._gammaStatusBarEntry = gammaStatusBarEntry;
 		this._brightnessStatusBarEntry = brightnessStatusBarEntry;
 		this._maskFilterStatusBarEntry = maskFilterStatusBarEntry;
+		this._histogramStatusBarEntry = histogramStatusBarEntry;
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
@@ -131,6 +135,7 @@ export class ImagePreview extends MediaPreview {
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
 				this._maskFilterStatusBarEntry.hide();
+				this._histogramStatusBarEntry.hide();
 			}
 		}));
 
@@ -163,6 +168,7 @@ export class ImagePreview extends MediaPreview {
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
 			this._maskFilterStatusBarEntry.hide();
+			this._histogramStatusBarEntry.hide();
 		}
 		super.dispose();
 	}
@@ -264,6 +270,16 @@ export class ImagePreview extends MediaPreview {
 
 	public isPreviewActive(): boolean {
 		return this.previewState === PreviewState.Active;
+	}
+
+	public updateHistogramVisibility(isVisible: boolean): void {
+		this._histogramStatusBarEntry.updateVisibility(isVisible);
+	}
+
+	public toggleHistogram(): void {
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.webview.postMessage({ type: 'toggleHistogram' });
+		}
 	}
 
 	// Image collection management methods
@@ -404,7 +420,7 @@ export class ImagePreview extends MediaPreview {
 
 	public updateStatusBar() {
 		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-		
+
 		if (this.previewState !== PreviewState.Active) {
 			this._sizeStatusBarEntry.hide(this);
 			this._zoomStatusBarEntry.hide(this);
@@ -412,6 +428,7 @@ export class ImagePreview extends MediaPreview {
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
 			this._maskFilterStatusBarEntry.hide();
+			this._histogramStatusBarEntry.hide();
 			return;
 		}
 
@@ -459,6 +476,9 @@ export class ImagePreview extends MediaPreview {
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
 			}
+
+			// Always show histogram button
+			this._histogramStatusBarEntry.show();
 		} else {
 			this._sizeStatusBarEntry.hide(this);
 			this._zoomStatusBarEntry.hide(this);
@@ -466,6 +486,7 @@ export class ImagePreview extends MediaPreview {
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
 			this._maskFilterStatusBarEntry.hide();
+			this._histogramStatusBarEntry.hide();
 		}
 	}
 
@@ -580,15 +601,11 @@ export class ImagePreview extends MediaPreview {
 	</div>
 	
 	<script nonce="${nonce}">
-		console.log('TIFF Visualizer: Webview HTML loaded');
-		console.log('TIFF Visualizer: Settings:', ${JSON.stringify(extendedSettings)});
-		console.log('TIFF Visualizer: Resource URI:', '${escapeAttribute(uri.toString())}');
-		
 		// Add error handler for module loading
 		window.addEventListener('error', function(e) {
 			console.error('TIFF Visualizer: Script error:', e.error, e.filename, e.lineno, e.colno);
 		});
-		
+
 		window.addEventListener('unhandledrejection', function(e) {
 			console.error('TIFF Visualizer: Unhandled promise rejection:', e.reason);
 		});
@@ -604,10 +621,6 @@ export class ImagePreview extends MediaPreview {
 		''
 	}
 	<script type="module" src="${escapeAttribute(jsUri.toString())}" nonce="${nonce}"></script>
-	
-	<script nonce="${nonce}">
-		console.log('TIFF Visualizer: All scripts loaded');
-	</script>
 </body>
 </html>`;
 	}

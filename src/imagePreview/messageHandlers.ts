@@ -35,6 +35,7 @@ export class MessageRouter {
 		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
+		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -109,8 +110,6 @@ class StatsMessageHandler implements MessageHandler {
 
 class FormatInfoMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		console.log('[FormatInfoMessageHandler] Received formatInfo:', message.value);
-
 		// Accept format info from any source (TIFF and non-TIFF processors)
 		preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
 
@@ -124,10 +123,17 @@ class FormatInfoMessageHandler implements MessageHandler {
 
 		// Set the format type for per-format settings
 		if (message.value && message.value.formatType) {
-			console.log('[FormatInfoMessageHandler] Setting image format:', message.value.formatType);
 			preview.getManager().appStateManager.setImageFormat(message.value.formatType);
-		} else {
-			console.log('[FormatInfoMessageHandler] WARNING: No formatType in message!');
+		}
+
+		// If this is initial load, send settings back with render trigger
+		if (message.value && message.value.isInitialLoad) {
+			const settings = preview.getManager().appStateManager.imageSettings;
+			preview.getWebview().postMessage({
+				type: 'updateSettings',
+				settings: settings,
+				isInitialRender: true  // Trigger deferred rendering
+			});
 		}
 	}
 }
@@ -216,5 +222,12 @@ class RestorePeerImageMessageHandler implements MessageHandler {
 			const uri = vscode.Uri.parse(peerUri);
 			preview.addToImageCollection(uri);
 		}
+	}
+}
+
+class HistogramVisibilityChangedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		const isVisible = message.isVisible;
+		preview.updateHistogramVisibility(isVisible);
 	}
 }

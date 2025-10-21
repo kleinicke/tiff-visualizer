@@ -190,21 +190,17 @@ export class AppStateManager {
 				this._imageSettings.scale24BitFactor = scaleFactor;
 			}
 
-			console.log(`[AppStateManager] setRgbAs24BitGrayscale: enabled=${enabled}, scaleFactor=${this._imageSettings.scale24BitFactor}, current gammaMode=${this._imageSettings.normalization.gammaMode}, autoNorm=${this._imageSettings.normalization.autoNormalize}`);
-
 			// When enabling 24-bit mode, use auto-normalize by default
 			if (enabled) {
 				// Enable auto-normalize mode for 24-bit (user requirement)
 				this._imageSettings.normalization.autoNormalize = true;
 				this._imageSettings.normalization.gammaMode = false;
-				console.log(`[AppStateManager] 24-bit mode enabled - switching to auto-normalize mode`);
 			} else if (!enabled) {
 				// When disabling 24-bit mode, switch back to gamma mode
 				this._imageSettings.normalization.autoNormalize = false;
 				this._imageSettings.normalization.gammaMode = true;
 				this._imageSettings.normalization.min = 0;
 				this._imageSettings.normalization.max = 255;
-				console.log(`[AppStateManager] 24-bit mode disabled - switching to gamma mode [0, 255]`);
 			}
 
 			this._emitSettingsChanged();
@@ -221,18 +217,14 @@ export class AppStateManager {
 	public setNormalizedFloatMode(enabled: boolean): void {
 		if (this._imageSettings.normalizedFloatMode !== enabled) {
 			this._imageSettings.normalizedFloatMode = enabled;
-			console.log(`[AppStateManager] setNormalizedFloatMode: enabled=${enabled}`);
 			this._emitSettingsChanged();
 		}
 	}
 
 	// Per-format Settings Management
 	public setImageFormat(format: ImageFormatType): void {
-		console.log(`[AppStateManager] setImageFormat called with format: ${format}`);
-
 		// Save current settings for the previous format
 		if (this._currentFormat) {
-			console.log(`[AppStateManager] Saving settings for previous format: ${this._currentFormat}`);
 			this._formatSettingsCache.set(this._currentFormat, this._deepCopySettings(this._imageSettings));
 		}
 
@@ -241,17 +233,11 @@ export class AppStateManager {
 		// Load settings for the new format
 		const cachedSettings = this._formatSettingsCache.get(format);
 		if (cachedSettings) {
-			console.log(`[AppStateManager] ⚠️  USING CACHED SETTINGS for format: ${format}`);
-			console.log(`[AppStateManager]   Cached: autoNormalize=${cachedSettings.normalization.autoNormalize}, gammaMode=${cachedSettings.normalization.gammaMode}, range=[${cachedSettings.normalization.min}, ${cachedSettings.normalization.max}]`);
-			console.log(`[AppStateManager]   Cached gamma: in=${cachedSettings.gamma.in}, out=${cachedSettings.gamma.out}`);
-			console.log(`[AppStateManager]   Cached brightness: offset=${cachedSettings.brightness.offset}`);
-			console.log(`[AppStateManager]   💡 Use "Reset All Settings" command to clear cache and apply new defaults`);
 			this._imageSettings = this._deepCopySettings(cachedSettings);
 			this._emitSettingsChanged();
 		} else {
 			// Use default settings for this format
 			const defaults = this._getDefaultSettingsForFormat(format);
-			console.log(`[AppStateManager] Using default settings for format: ${format}`, defaults);
 			this._imageSettings = defaults;
 			this._emitSettingsChanged();
 		}
@@ -269,10 +255,6 @@ export class AppStateManager {
 	}
 
 	private _getDefaultSettingsForFormat(format: ImageFormatType): ImageSettings {
-		console.log(`\n========================================`);
-		console.log(`[AppStateManager] 📋 Getting defaults for format: ${format}`);
-		console.log(`========================================`);
-
 		// Base defaults - gamma correction settings apply to all
 		const defaults: ImageSettings = {
 			normalization: {
@@ -293,10 +275,6 @@ export class AppStateManager {
 			normalizedFloatMode: false
 		};
 
-		// ============================================
-		// NORMALIZATION DEFAULT RULES (SIMPLE & CLEAR)
-		// ============================================
-
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
 		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg') {
@@ -304,11 +282,7 @@ export class AppStateManager {
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;
 			defaults.normalization.max = 1; // Will be overridden by webview based on bit depth
-			console.log(`[AppStateManager] ✓ INTEGER FORMAT → Gamma mode`);
-			console.log(`[AppStateManager]   Reason: Integer data needs type-specific ranges (uint8=0-255, uint16=0-65535, etc.)`);
-			console.log(`[AppStateManager]   Settings: gammaMode=true, autoNormalize=false`);
 		}
-
 		// Rule 2: Float images (TIFF, PFM) → Gamma mode with 0-1 range
 		// (These are typically images stored as floats, expected in 0-1 range)
 		else if (format === 'tiff-float' || format === 'pfm') {
@@ -316,32 +290,19 @@ export class AppStateManager {
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;
 			defaults.normalization.max = 1;
-			console.log(`[AppStateManager] ✓ FLOAT IMAGE FORMAT → Gamma mode with [0, 1] range`);
-			console.log(`[AppStateManager]   Reason: Float images are typically normalized to 0-1`);
-			console.log(`[AppStateManager]   Settings: gammaMode=true, autoNormalize=false, range=[0,1]`);
 		}
-
 		// Rule 3: Float data (NPY) → Auto-normalize to actual data range
 		// (Scientific data can have any range, needs auto-detection)
 		else if (format === 'npy-float') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
-			// min/max will be computed from actual data
-			console.log(`[AppStateManager] ✓ FLOAT DATA FORMAT → Auto-normalize mode`);
-			console.log(`[AppStateManager]   Reason: Scientific float data can have arbitrary ranges`);
-			console.log(`[AppStateManager]   Settings: gammaMode=false, autoNormalize=true`);
 		}
-
 		// Fallback: Unknown formats
 		else {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
-			console.log(`[AppStateManager] ⚠️  UNKNOWN FORMAT → Auto-normalize mode (fallback)`);
-			console.log(`[AppStateManager]   Settings: gammaMode=false, autoNormalize=true`);
 		}
 
-		console.log(`[AppStateManager] 📦 Final defaults:`, JSON.stringify(defaults, null, 2));
-		console.log(`========================================\n`);
 		return defaults;
 	}
 
