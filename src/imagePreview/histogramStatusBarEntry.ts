@@ -17,7 +17,8 @@ export class HistogramStatusBarEntry implements StatusBarEntryInterface {
 	}
 
 	public show(): void {
-		this._statusBarEntry.show();
+		// Temporarily hidden - keeping functionality for future use
+		// this._statusBarEntry.show();
 	}
 
 	public hide(): void {
