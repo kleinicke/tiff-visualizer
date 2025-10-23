@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'pfm' | 'npy-float' | 'npy-uint';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'exr-float' | 'pfm' | 'npy-float' | 'npy-uint';
 
 export interface ImageStats {
 	min: number;

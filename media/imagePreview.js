@@ -3,6 +3,7 @@
 
 import { SettingsManager } from './modules/settings-manager.js';
 import { TiffProcessor } from './modules/tiff-processor.js';
+import { ExrProcessor } from './modules/exr-processor.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -22,6 +23,7 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 	// Initialize all modules
 	const settingsManager = new SettingsManager();
 	const tiffProcessor = new TiffProcessor(settingsManager, vscode);
+	const exrProcessor = new ExrProcessor(settingsManager, vscode);
 	const zoomController = new ZoomController(settingsManager, vscode);
 	const mouseHandler = new MouseHandler(settingsManager, vscode, tiffProcessor);
 	const npyProcessor = new NpyProcessor(settingsManager, vscode);
@@ -33,6 +35,7 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 	mouseHandler.setPfmProcessor(pfmProcessor);
 	mouseHandler.setPpmProcessor(ppmProcessor);
 	mouseHandler.setPngProcessor(pngProcessor);
+	mouseHandler.setExrProcessor(exrProcessor);
 
 	// Application state
 	let hasLoadedImage = false;
@@ -96,6 +99,8 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 		// Load image based on file extension
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
 			handleTiff(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.exr')) {
+			handleExr(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
 			handlePfm(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
@@ -267,6 +272,32 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 
 		} catch (error) {
 			console.error('Error handling TIFF:', error);
+			onImageError();
+		}
+	}
+
+	/**
+	 * Handle EXR file loading
+	 */
+	async function handleExr(src) {
+		try {
+			const result = await exrProcessor.processExr(src);
+
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+
+			// Draw the processed image data to canvas
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				ctx.putImageData(primaryImageData, 0, 0);
+			}
+
+			hasLoadedImage = true;
+			finalizeImageSetup();
+
+		} catch (error) {
+			console.error('Error handling EXR:', error);
 			onImageError();
 		}
 	}
@@ -623,8 +654,28 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 		// Re-render based on which processor was used (mutually exclusive)
 		// Check in order: PGM -> PNG/JPEG -> NPY
 
+		// For EXR images, re-render with new settings
+		if (primaryImageData && exrProcessor && exrProcessor.rawExrData) {
+			try {
+				console.log('EXR: Calling updateSettings from updateImageWithNewSettings');
+				// Re-render the EXR with current settings
+				const newImageData = exrProcessor.updateSettings(settingsManager.settings);
+
+				if (newImageData) {
+					// Update the canvas with new image data
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						ctx.putImageData(newImageData, 0, 0);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating EXR image with new settings:', error);
+			}
+		}
 		// For PGM images, re-render with new settings
-		if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
+		else if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
 			try {
 				// Re-render the PGM with current settings
 				const newImageData = ppmProcessor.renderPgmWithSettings();

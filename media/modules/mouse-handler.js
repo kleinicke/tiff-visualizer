@@ -10,6 +10,7 @@ export class MouseHandler {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
 		this.tiffProcessor = tiffProcessor;
+		this.exrProcessor = null;
 		this.npyProcessor = null;
 		this.pfmProcessor = null;
 		this.ppmProcessor = null;
@@ -36,6 +37,7 @@ export class MouseHandler {
 		this.imageElement = element;
 	}
 
+	setExrProcessor(proc) { this.exrProcessor = proc; }
 	setNpyProcessor(proc) { this.npyProcessor = proc; }
 	setPfmProcessor(proc) { this.pfmProcessor = proc; }
 	setPpmProcessor(proc) { this.ppmProcessor = proc; }
@@ -152,6 +154,24 @@ export class MouseHandler {
 			const tiffColor = this.tiffProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (tiffColor) {
 				return tiffColor;
+			}
+		}
+
+		// Try EXR processor for HDR images
+		if (this.exrProcessor && this.exrProcessor.rawExrData) {
+			const pixelValues = this.exrProcessor.getPixelValue(x, y);
+			if (pixelValues) {
+				// Format HDR values with more precision
+				if (pixelValues.length === 1) {
+					// Grayscale
+					return pixelValues[0].toFixed(6);
+				} else if (pixelValues.length === 3) {
+					// RGB
+					return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)}`;
+				} else if (pixelValues.length === 4) {
+					// RGBA
+					return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)} A:${pixelValues[3].toFixed(6)}`;
+				}
 			}
 		}
 

@@ -1,6 +1,6 @@
 # TIFF Visualizer for Visual Studio Code
 
-A TIFF viewer for Visual Studio Code, to display uint and floating-point images while allowing brightness and gamma corrections.
+A TIFF and OpenEXR viewer for Visual Studio Code, to display uint, floating-point, and HDR images while allowing brightness and gamma corrections.
 For floating-point images, this extension allows easier handling by allowing setting the ranges, the image is normalized to.
 
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
@@ -8,7 +8,7 @@ For floating-point images, this extension allows easier handling by allowing set
 ## Features
 
 - **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types. Also supports compressed TIFF images using Deflate or LZW with predictors.
-- **Additional files Support**: Support for single channel npy, png, jpg, ppm, pfm and pgm images.
+- **Additional files Support**: Support for exr, npy, png, jpg, ppm, pfm and pgm images with uint8/16 and float16/32 support for bw, rgb and rgba images.
 - **Interactive Pixel Inspection**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.
 - **Dynamic Normalization**: Interactively adjust the normalization range for floating-point images to reveal hidden details or choose automatic normalization.
 - **Gamma and Brightness Correction**: Add or remove gamma correction for an image. To change brightness, the source gamma correction is removed, the brightness change (2\*\*Change) is multiplied in linear space onto the image, and the target gamma correction is applied.
@@ -20,7 +20,7 @@ Float Image Visualization Options:
 
 ## About
 
-The extension is built on top of the built-in [VS Code Media Preview extension](https://github.com/microsoft/vscode/tree/main/extensions/media-preview). To add TIFF support, the [geotiff library](https://github.com/geotiffjs/geotiff.js/) is used. All coding was performed using Cursor.
+The extension is built on top of the built-in [VS Code Media Preview extension](https://github.com/microsoft/vscode/tree/main/extensions/media-preview). TIFF support uses the [geotiff library](https://github.com/geotiffjs/geotiff.js/). All coding was performed using Cursor and claude code.
 
 ## Known Issues and Missing Features
 
@@ -28,10 +28,7 @@ The extension is built on top of the built-in [VS Code Media Preview extension](
 - Allow to rotate the image
 - Allow going fast through all images
 - Compare two images on top of each other to spot differences easily
-- Add option to use features of extension on other image formats, but it should be deactivated by default
-- Add option to show int values as normalized floats?
 - Issue with lzw from tifffile. lzw images from oiiotool work ...
-- Add automatic tests for many image formats
 
 ## Feature Requests and Issues
 

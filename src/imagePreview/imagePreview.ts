@@ -502,6 +502,7 @@ export class ImagePreview extends MediaPreview {
 		const isPng = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
 		const isPfm = lower.endsWith('.pfm');
 		const isNpy = lower.endsWith('.npy') || lower.endsWith('.npz');
+		const isExr = lower.endsWith('.exr');
 		this._isTiff = isTiff || isPpm || isPng;
 
 		// Pre-set format based on file extension (will be confirmed by webview later)
@@ -516,6 +517,8 @@ export class ImagePreview extends MediaPreview {
 			this._manager.appStateManager.setImageFormat('png');
 		} else if (isPpm) {
 			this._manager.appStateManager.setImageFormat('ppm');
+		} else if (isExr) {
+			this._manager.appStateManager.setImageFormat('exr-float');
 		}
 		// TIFF format will be set by webview after detecting float vs int
 
@@ -570,6 +573,7 @@ export class ImagePreview extends MediaPreview {
 		const geotiffUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'geotiff.min.js'));
 		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
 		const upngUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'upng.min.js'));
+		const parseExrUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'parse-exr.js'));
 
 		outputChannel.appendLine(`TIFF Visualizer: CSS URI: ${cssUri.toString()}`);
 		outputChannel.appendLine(`TIFF Visualizer: JS URI: ${jsUri.toString()}`);
@@ -618,6 +622,10 @@ export class ImagePreview extends MediaPreview {
 	${isPng ?
 		`<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(upngUri.toString())}" nonce="${nonce}"></script>` :
+		''
+	}
+	${isExr ?
+		`<script src="${escapeAttribute(parseExrUri.toString())}" nonce="${nonce}"></script>` :
 		''
 	}
 	<script type="module" src="${escapeAttribute(jsUri.toString())}" nonce="${nonce}"></script>

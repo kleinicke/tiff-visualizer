@@ -2,16 +2,19 @@ import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
 interface FormatInfo {
-	compression: string;
+	compression?: string;
 	predictor?: number;
 	photometricInterpretation?: number;
 	planarConfig?: number;
 	width: number;
 	height: number;
 	samplesPerPixel: number;
-	bitsPerSample: number;
-	sampleFormat: number;
-	formatLabel?: string; // e.g., 'TIFF', 'NPY', 'PFM'
+	bitsPerSample?: number;
+	sampleFormat?: number;
+	formatLabel?: string; // e.g., 'TIFF', 'NPY', 'PFM', 'EXR'
+	dataType?: string; // e.g., 'float16', 'float32' for EXR
+	isHdr?: boolean; // For EXR/HDR files
+	channels?: number; // Alternative to samplesPerPixel
 }
 
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
@@ -57,20 +60,37 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			const info = this._formatInfo;
 			tooltip.appendMarkdown(`**Dimensions:** ${info.width} × ${info.height}\n\n`);
 			tooltip.appendMarkdown(`**Format:** ${info.formatLabel ?? 'TIFF'}\n\n`);
-			tooltip.appendMarkdown(`**Compression:** ${this.getCompressionName(info.compression)}\n\n`);
-			
+
+			if (info.compression) {
+				tooltip.appendMarkdown(`**Compression:** ${this.getCompressionName(info.compression)}\n\n`);
+			}
+
+			if (info.dataType) {
+				tooltip.appendMarkdown(`**Data Type:** ${info.dataType}\n\n`);
+			}
+
 			if (info.predictor && info.predictor !== 1) {
 				tooltip.appendMarkdown(`**Predictor:** ${this.getPredictorName(info.predictor)}\n\n`);
 			}
-			
-			tooltip.appendMarkdown(`**Sample Format:** ${this.getSampleFormatName(info.sampleFormat)}\n\n`);
-			tooltip.appendMarkdown(`**Bits per Sample:** ${info.bitsPerSample}\n\n`);
-			tooltip.appendMarkdown(`**Samples per Pixel:** ${info.samplesPerPixel}\n\n`);
-			
+
+			if (info.sampleFormat !== undefined) {
+				tooltip.appendMarkdown(`**Sample Format:** ${this.getSampleFormatName(info.sampleFormat)}\n\n`);
+			}
+
+			if (info.bitsPerSample !== undefined) {
+				tooltip.appendMarkdown(`**Bits per Sample:** ${info.bitsPerSample}\n\n`);
+			}
+
+			tooltip.appendMarkdown(`**Samples per Pixel:** ${info.channels ?? info.samplesPerPixel}\n\n`);
+
+			if (info.isHdr) {
+				tooltip.appendMarkdown(`**HDR:** Yes\n\n`);
+			}
+
 			if (info.photometricInterpretation !== undefined) {
 				tooltip.appendMarkdown(`**Color Space:** ${this.getPhotometricName(info.photometricInterpretation)}\n\n`);
 			}
-			
+
 			if (info.planarConfig !== undefined) {
 				tooltip.appendMarkdown(`**Planar Config:** ${info.planarConfig === 1 ? 'Chunky' : 'Planar'}\n\n`);
 			}
