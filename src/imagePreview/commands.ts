@@ -926,5 +926,181 @@ export function registerImagePreviewCommands(
 		previewManager.activePreview?.toggleHistogram();
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.convertColormapToFloat', async () => {
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active image preview found.');
+			return;
+		}
+
+		// Step 1: Select colormap
+		const colormapOptions = [
+			{ label: 'Viridis', description: 'Purple-blue-green-yellow perceptually uniform colormap', value: 'viridis' },
+			{ label: 'Plasma', description: 'Purple-pink-orange perceptually uniform colormap', value: 'plasma' },
+			{ label: 'Inferno', description: 'Black-purple-orange-yellow perceptually uniform colormap', value: 'inferno' },
+			{ label: 'Magma', description: 'Black-purple-pink-yellow perceptually uniform colormap', value: 'magma' },
+			{ label: 'Jet', description: 'Rainbow colormap (blue-cyan-green-yellow-red)', value: 'jet' },
+			{ label: 'Hot', description: 'Black-red-orange-yellow-white colormap', value: 'hot' },
+			{ label: 'Cool', description: 'Cyan-magenta colormap', value: 'cool' },
+			{ label: 'Turbo', description: 'Improved rainbow colormap', value: 'turbo' },
+			{ label: 'Gray', description: 'Grayscale colormap', value: 'gray' }
+		];
+
+		const colormapPick = vscode.window.createQuickPick();
+		colormapPick.items = colormapOptions;
+		colormapPick.placeholder = 'Select the colormap used in your image';
+		colormapPick.title = 'Colormap Selection';
+		colormapPick.canSelectMany = false;
+		colormapPick.ignoreFocusOut = false;
+		colormapPick.value = '';
+
+		const selectedColormap = await new Promise<typeof colormapOptions[0] | undefined>((resolve) => {
+			colormapPick.onDidChangeSelection(selection => {
+				if (selection.length > 0) {
+					resolve(selection[0] as typeof colormapOptions[0]);
+					colormapPick.hide();
+				}
+			});
+
+			colormapPick.onDidHide(() => {
+				resolve(undefined);
+				colormapPick.dispose();
+			});
+
+			colormapPick.onDidChangeValue(() => {
+				colormapPick.value = '';
+			});
+
+			colormapPick.show();
+		});
+
+		if (!selectedColormap) {
+			return;
+		}
+
+		// Step 2: Select mapping mode
+		const mappingOptions = [
+			{
+				label: 'Linear - Normal',
+				description: 'Linear mapping from dark to bright',
+				detail: 'Colormap start → minimum value, Colormap end → maximum value',
+				value: { inverted: false, logarithmic: false }
+			},
+			{
+				label: 'Linear - Inverted',
+				description: 'Linear mapping from bright to dark',
+				detail: 'Colormap start → maximum value, Colormap end → minimum value',
+				value: { inverted: true, logarithmic: false }
+			},
+			{
+				label: 'Logarithmic - Normal',
+				description: 'Logarithmic mapping from dark to bright',
+				detail: 'Better for data with large dynamic range (e.g., 0.001 to 1000)',
+				value: { inverted: false, logarithmic: true }
+			},
+			{
+				label: 'Logarithmic - Inverted',
+				description: 'Logarithmic mapping from bright to dark',
+				detail: 'Inverted logarithmic scale for high dynamic range data',
+				value: { inverted: true, logarithmic: true }
+			}
+		];
+
+		const mappingPick = vscode.window.createQuickPick();
+		mappingPick.items = mappingOptions;
+		mappingPick.placeholder = 'Select mapping mode';
+		mappingPick.title = 'Colormap Mapping Mode';
+		mappingPick.canSelectMany = false;
+		mappingPick.ignoreFocusOut = false;
+		mappingPick.value = '';
+
+		const selectedMapping = await new Promise<typeof mappingOptions[0] | undefined>((resolve) => {
+			mappingPick.onDidChangeSelection(selection => {
+				if (selection.length > 0) {
+					resolve(selection[0] as typeof mappingOptions[0]);
+					mappingPick.hide();
+				}
+			});
+
+			mappingPick.onDidHide(() => {
+				resolve(undefined);
+				mappingPick.dispose();
+			});
+
+			mappingPick.onDidChangeValue(() => {
+				mappingPick.value = '';
+			});
+
+			mappingPick.show();
+		});
+
+		if (!selectedMapping) {
+			return;
+		}
+
+		// Step 3: Get minimum value
+		const minPrompt = selectedMapping.value.inverted
+			? 'Enter the minimum value (corresponds to the end of the colormap - brightest)'
+			: 'Enter the minimum value (corresponds to the start of the colormap - darkest)';
+
+		const minValue = await vscode.window.showInputBox({
+			prompt: minPrompt,
+			value: '0',
+			placeHolder: '0',
+			validateInput: text => {
+				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
+			}
+		});
+
+		if (minValue === undefined) {
+			return;
+		}
+
+		// Step 4: Get maximum value
+		const maxPrompt = selectedMapping.value.inverted
+			? 'Enter the maximum value (corresponds to the start of the colormap - darkest)'
+			: 'Enter the maximum value (corresponds to the end of the colormap - brightest)';
+
+		const maxValue = await vscode.window.showInputBox({
+			prompt: maxPrompt,
+			value: '1',
+			placeHolder: '1',
+			validateInput: text => {
+				const num = parseFloat(text);
+				return isNaN(num) ? 'Please enter a valid number.' :
+					   num <= parseFloat(minValue) ? 'Maximum must be greater than minimum.' : null;
+			}
+		});
+
+		if (maxValue === undefined) {
+			return;
+		}
+
+		const min = parseFloat(minValue);
+		const max = parseFloat(maxValue);
+
+		// Send conversion request to webview
+		// Cast to ImagePreview to access getWebview method
+		const preview = activePreview as any;
+		if (preview.getWebview) {
+			preview.getWebview().postMessage({
+				type: 'convertColormapToFloat',
+				colormap: selectedColormap.value,
+				min: min,
+				max: max,
+				inverted: selectedMapping.value.inverted,
+				logarithmic: selectedMapping.value.logarithmic
+			});
+
+			const mappingDesc = selectedMapping.value.logarithmic
+				? (selectedMapping.value.inverted ? 'logarithmic inverted' : 'logarithmic')
+				: (selectedMapping.value.inverted ? 'inverted' : 'normal');
+
+			vscode.window.showInformationMessage(
+				`Converting ${selectedColormap.label} colormap to float values [${min}, ${max}] (${mappingDesc})...`
+			);
+		}
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 

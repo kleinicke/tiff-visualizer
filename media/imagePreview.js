@@ -11,6 +11,7 @@ import { PngProcessor } from './modules/png-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
+import { ColormapConverter } from './modules/colormap-converter.js';
 
 /**
  * Main Image Preview Application
@@ -31,6 +32,7 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
 	const pngProcessor = new PngProcessor(settingsManager, vscode);
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
+	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
 	mouseHandler.setPpmProcessor(ppmProcessor);
@@ -46,11 +48,15 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 	let peerImageUris = []; // Track peer URIs for comparison state
 	let isShowingPeer = false;
 	
+	// Colormap conversion state
+	let colormapConversionState = null;
+
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
 	if (persistedState) {
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
+		colormapConversionState = persistedState.colormapConversionState || null;
 	}
 	
 	// Image collection state
@@ -70,6 +76,7 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 			peerImageUris: peerImageUris,
 			isShowingPeer: isShowingPeer,
 			currentResourceUri: settingsManager.settings.resourceUri,
+			colormapConversionState: colormapConversionState,
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
@@ -129,6 +136,30 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 					handleStartComparison(peerUri);
 				}
 			}, 1000); // Give main image time to load
+		}
+
+		// Restore colormap conversion if it was previously applied
+		if (colormapConversionState) {
+			// Wait for image to load, then reapply colormap conversion
+			// Use polling to detect when image is ready to minimize visual flash
+			const checkAndApplyColormap = async () => {
+				if (hasLoadedImage && canvas) {
+					// Apply colormap conversion immediately
+					await handleColormapConversion(
+						colormapConversionState.colormapName,
+						colormapConversionState.minValue,
+						colormapConversionState.maxValue,
+						colormapConversionState.inverted,
+						colormapConversionState.logarithmic
+					);
+				} else {
+					// Check again in 50ms if not ready yet
+					setTimeout(checkAndApplyColormap, 50);
+				}
+			};
+
+			// Start checking after a brief delay to allow initial setup
+			setTimeout(checkAndApplyColormap, 100);
 		}
 	}
 
@@ -585,6 +616,17 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 				// Extension requested histogram update
 				updateHistogramData();
 				break;
+
+			case 'convertColormapToFloat':
+				// Convert colormap image to float values
+				await handleColormapConversion(
+					message.colormap,
+					message.min,
+					message.max,
+					message.inverted || false,
+					message.logarithmic || false
+				);
+				break;
 		}
 	}
 
@@ -607,6 +649,149 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 			histogramOverlay.update(imageData);
 		} catch (error) {
 			console.error('Error updating histogram:', error);
+		}
+	}
+
+	/**
+	 * Convert colormap image to float values
+	 * @param {string} colormapName - Name of the colormap to use
+	 * @param {number} minValue - Minimum value to map to
+	 * @param {number} maxValue - Maximum value to map to
+	 * @param {boolean} inverted - Whether to invert the mapping
+	 * @param {boolean} logarithmic - Whether to use logarithmic mapping
+	 */
+	async function handleColormapConversion(colormapName, minValue, maxValue, inverted, logarithmic) {
+		if (!canvas || !hasLoadedImage) {
+			console.error('No image loaded for colormap conversion');
+			return;
+		}
+
+		try {
+			const ctx = canvas.getContext('2d');
+			if (!ctx) {
+				console.error('Could not get canvas context');
+				return;
+			}
+
+			// Get the current image data from canvas
+			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+			// Convert to float using the colormap
+			const floatData = colormapConverter.convertToFloat(
+				imageData,
+				colormapName,
+				minValue,
+				maxValue,
+				inverted,
+				logarithmic
+			);
+
+			// Create a new ImageData for the float visualization
+			// We'll render it as if it's a float TIFF
+			const width = imageData.width;
+			const height = imageData.height;
+
+			// Store the float data for display
+			// Create a temporary processor-like object to handle the float data
+			const floatImageData = new ImageData(width, height);
+
+			// Enable auto-normalization and set the range
+			if (settingsManager.settings.normalization) {
+				settingsManager.settings.normalization.autoNormalize = true;
+				settingsManager.settings.normalization.min = minValue;
+				settingsManager.settings.normalization.max = maxValue;
+			}
+
+			// Normalize float values to 0-255 for display
+			for (let i = 0; i < floatData.length; i++) {
+				const value = floatData[i];
+				// Normalize to 0-255
+				const normalized = ((value - minValue) / (maxValue - minValue)) * 255;
+				const clamped = Math.max(0, Math.min(255, normalized));
+
+				const offset = i * 4;
+				floatImageData.data[offset] = clamped;     // R
+				floatImageData.data[offset + 1] = clamped; // G
+				floatImageData.data[offset + 2] = clamped; // B
+				floatImageData.data[offset + 3] = 255;     // A
+			}
+
+			// Display the converted float image
+			ctx.putImageData(floatImageData, 0, 0);
+			primaryImageData = floatImageData;
+
+			// Force a visual update by triggering a reflow
+			// This ensures the canvas changes are actually displayed
+			if (imageElement === canvas) {
+				// Canvas is already in DOM, force a repaint
+				canvas.style.display = 'none';
+				canvas.offsetHeight; // Trigger reflow
+				canvas.style.display = '';
+			}
+
+			// Update zoom controller to refresh the display
+			zoomController.updateScale(zoomController.scale || 'fit');
+
+			// Store the float data for pixel inspection
+			// Store converted float data in a custom property (dynamic property)
+			// @ts-ignore - Adding dynamic property for converted colormap data
+			tiffProcessor._convertedFloatData = {
+				floatData: floatData,
+				width: width,
+				height: height,
+				min: minValue,
+				max: maxValue
+			};
+
+			// Clear the raw processor data to prevent re-rendering from original data
+			// After colormap conversion, we want to work with the converted float data
+			tiffProcessor.rawTiffData = null;
+			if (exrProcessor) exrProcessor.rawExrData = null;
+			if (npyProcessor) npyProcessor._lastRaw = null;
+			if (ppmProcessor) ppmProcessor._lastRaw = null;
+			if (pfmProcessor) pfmProcessor._lastRaw = null;
+			if (pngProcessor) pngProcessor._lastRaw = null;
+
+			// Update settings display
+			vscode.postMessage({
+				type: 'stats',
+				value: { min: minValue, max: maxValue }
+			});
+
+			// Send format info
+			vscode.postMessage({
+				type: 'formatInfo',
+				value: {
+					width: width,
+					height: height,
+					bitsPerSample: 32,
+					sampleFormat: 3, // Float
+					samplesPerPixel: 1,
+					formatType: 'colormap-converted',
+					isInitialLoad: false
+				}
+			});
+
+			// Update histogram
+			updateHistogramData();
+
+			// Save the colormap conversion state for persistence
+			colormapConversionState = {
+				colormapName: colormapName,
+				minValue: minValue,
+				maxValue: maxValue,
+				inverted: inverted,
+				logarithmic: logarithmic
+			};
+			saveState();
+
+			console.log(`Colormap conversion complete: ${colormapName} [${minValue}, ${maxValue}]`);
+		} catch (error) {
+			console.error('Error during colormap conversion:', error);
+			vscode.postMessage({
+				type: 'error',
+				message: `Colormap conversion failed: ${error.message}`
+			});
 		}
 	}
 

@@ -167,6 +167,11 @@
         "command": "tiffVisualizer.toggleHistogram",
         "title": "Toggle Histogram",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.convertColormapToFloat",
+        "title": "Convert Colormap Image to Float",
+        "category": "TIFF Visualizer"
       }
     ],
     "keybindings": [

@@ -789,6 +789,13 @@ export class TiffProcessor {
 	 * @returns {string}
 	 */
 	getColorAtPixel(x, y, naturalWidth, naturalHeight) {
+		// Check for converted colormap data first
+		if (this._convertedFloatData) {
+			const pixelIndex = y * naturalWidth + x;
+			const floatValue = this._convertedFloatData.floatData[pixelIndex];
+			return floatValue.toPrecision(6);
+		}
+
 		if (!this.rawTiffData) {
 			return '';
 		}
