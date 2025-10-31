@@ -1,9 +1,10 @@
 # Change Log
 
-## 1.4.0 (2025-10-23)
+## 1.4.0 (2025-11-??)
 
 - Add support for OpenEXR (.exr) HDR image files
 - Support for 16-bit half-float and 32-bit full-float EXR images using the parse-exr library with Single channel (grayscale/depth), RGB, and RGBA support
+- Speed up normalization changes
 
 ## 1.3.0 (2025-10-21)
 

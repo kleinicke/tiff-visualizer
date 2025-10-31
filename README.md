@@ -1,7 +1,8 @@
-# TIFF Visualizer for Visual Studio Code
+# Float and TIFF Visualizer for Visual Studio Code
 
-A TIFF and OpenEXR viewer for Visual Studio Code, to display uint, floating-point, and HDR images while allowing brightness and gamma corrections.
-For floating-point images, this extension allows easier handling by allowing setting the ranges, the image is normalized to.
+A Image viewer for Visual Studio Code, for the formats tiff, exr, npy, png, jpg, ppm, pfm and pgm.
+It visualizes 8 and 16 bit uint images and 16 and 32 bit float images. The visualization of all images can be normalized to a specified range.
+Additionally it allows for brightness and gamma corrections and offers a color value picker.
 
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
