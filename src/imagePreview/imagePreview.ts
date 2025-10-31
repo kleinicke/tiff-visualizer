@@ -442,8 +442,6 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	public updateStatusBar() {
-		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-
 		if (this.previewState !== PreviewState.Active) {
 			this._sizeStatusBarEntry.hide(this);
 			this._zoomStatusBarEntry.hide(this);
@@ -454,8 +452,6 @@ export class ImagePreview extends MediaPreview {
 			this._histogramStatusBarEntry.hide();
 			return;
 		}
-
-		outputChannel.appendLine(`TIFF Visualizer: updateStatusBar - isTiff: ${this._isTiff}, active: ${this._webviewEditor.active}, visible: ${this._webviewEditor.visible}`);
 
 		if (this._webviewEditor.active && this._webviewEditor.visible) {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
@@ -474,7 +470,6 @@ export class ImagePreview extends MediaPreview {
 			);
 
 			// Always show normalization controls for all image formats
-			outputChannel.appendLine('TIFF Visualizer: Showing normalization controls');
 			const normSettings = this._manager.appStateManager.imageSettings.normalization;
 			this._normalizationStatusBarEntry.setRgbAs24BitMode(
 				this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale
@@ -514,8 +509,6 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	protected override async getWebviewContents(): Promise<string> {
-		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-
 		const version = Date.now().toString();
 
 		// Detect format from file extension and set it early so HTML gets correct settings
@@ -583,26 +576,12 @@ export class ImagePreview extends MediaPreview {
 			version: version
 		};
 
-		outputChannel.appendLine(`TIFF Visualizer: Creating webview for: ${this.resource.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: Is TIFF file: ${isTiff}`);
-		outputChannel.appendLine(`TIFF Visualizer: Is PPM/PGM/PBM file: ${isPpm}`);
-		outputChannel.appendLine(`TIFF Visualizer: Is PNG/JPEG file: ${isPng}`);
-		outputChannel.appendLine(`TIFF Visualizer: Webview URI: ${uri.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: Extension root: ${this.extensionRoot.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: Extended settings: ${JSON.stringify(extendedSettings)}`);
-
 		const cssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.css'));
 		const jsUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.js'));
 		const geotiffUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'geotiff.min.js'));
 		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
 		const upngUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'upng.min.js'));
 		const parseExrUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'parse-exr.js'));
-
-		outputChannel.appendLine(`TIFF Visualizer: CSS URI: ${cssUri.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: JS URI: ${jsUri.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: GeoTIFF URI: ${geotiffUri.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: Pako URI: ${pakoUri.toString()}`);
-		outputChannel.appendLine(`TIFF Visualizer: UPNG URI: ${upngUri.toString()}`);
 
 		return /* html */`<!DOCTYPE html>
 <html lang="en">
@@ -657,21 +636,11 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	protected override async render(): Promise<void> {
-		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-		outputChannel.appendLine('TIFF Visualizer: Starting render process...');
-		
 		try {
 			const content = await this.getWebviewContents();
-			outputChannel.appendLine(`TIFF Visualizer: Generated webview content (${content.length} characters)`);
-			outputChannel.appendLine('TIFF Visualizer: Setting webview HTML...');
-			
 			this._webviewEditor.webview.html = content;
-			
-			outputChannel.appendLine('TIFF Visualizer: Webview HTML set successfully');
 			this.updateStatusBar();
-			outputChannel.appendLine('TIFF Visualizer: Render complete');
 		} catch (error) {
-			outputChannel.appendLine(`TIFF Visualizer: Render error: ${error}`);
 			console.error('TIFF Visualizer render error:', error);
 		}
 	}

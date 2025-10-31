@@ -10,14 +10,15 @@ import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { registerImagePreviewCommands } from './commands';
 import { registerComparisonPanelSupport } from '../comparisonPanel/index';
+import { getOutputChannel } from '../extension';
 
 // Re-export the main classes for backward compatibility
 export { ImagePreviewManager } from './imagePreviewManager';
 export { ImagePreview } from './imagePreview';
 
 export function registerImagePreviewSupport(context: vscode.ExtensionContext, binarySizeStatusBarEntry: BinarySizeStatusBarEntry): vscode.Disposable {
-	const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-	
+	const outputChannel = getOutputChannel();
+
 	outputChannel.appendLine('TIFF Visualizer: Registering image preview support...');
 	console.log('TIFF Visualizer: Registering image preview support...');
 	

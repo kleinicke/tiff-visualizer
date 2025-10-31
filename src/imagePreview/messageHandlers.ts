@@ -83,18 +83,9 @@ class PixelBlurMessageHandler implements MessageHandler {
 
 class showNormMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		const outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
-		outputChannel.appendLine(`TIFF Visualizer: Received showNorm message: ${JSON.stringify(message)}`);
-		
 		if (message.value !== undefined) {
-			outputChannel.appendLine(`TIFF Visualizer: Setting showNorm to: ${message.value}`);
 			preview.setshowNorm(message.value);
-			
-			outputChannel.appendLine('TIFF Visualizer: Updating status bar after showNorm change');
 			preview.updateStatusBar();
-			outputChannel.appendLine('TIFF Visualizer: Status bar update complete');
-		} else {
-			outputChannel.appendLine('TIFF Visualizer: Warning - showNorm message missing value');
 		}
 	}
 }

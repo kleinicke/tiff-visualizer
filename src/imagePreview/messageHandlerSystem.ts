@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { AppStateManager } from './appStateManager';
+import { getOutputChannel } from '../extension';
 
 /**
  * Context object passed to all message handlers containing shared dependencies
@@ -35,9 +36,9 @@ export class TypedMessageRouter {
 			appStateManager,
 			preview,
 			webview,
-			outputChannel: vscode.window.createOutputChannel('TIFF Visualizer Debug')
+			outputChannel: getOutputChannel()
 		};
-		
+
 		this.registerDefaultHandlers();
 	}
 
