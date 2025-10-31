@@ -168,6 +168,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * @param {any} savedZoomState - The zoom state to restore after reload
 	 */
 	function reloadImage(savedZoomState) {
+		console.log('🔄 RELOAD IMAGE CALLED - This is the FULL reload path!', {
+			savedZoomState: savedZoomState,
+			stackTrace: new Error().stack
+		});
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
@@ -501,9 +505,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				break;
 
 			case 'updateSettings':
+				console.log('📨 MESSAGE RECEIVED: updateSettings', {
+					isInitialRender: message.isInitialRender,
+					settingsKeys: Object.keys(message.settings || {})
+				});
 				// Handle real-time settings updates
 				const oldResourceUri = settingsManager.settings.resourceUri;
-				settingsManager.updateSettings(message.settings);
+				const changes = settingsManager.updateSettings(message.settings);
+				console.log('🔄 Settings updated, changes detected:', changes);
 				const newResourceUri = settingsManager.settings.resourceUri;
 
 				// Check if this is a deferred render trigger (initial load)
@@ -534,21 +543,26 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				}
 				// If resource URI changed, reload the entire image
 				else if (oldResourceUri !== newResourceUri) {
+					console.log('🔄 FULL RELOAD TRIGGERED: Resource URI changed', {
+						old: oldResourceUri,
+						new: newResourceUri
+					});
 					// Save current zoom state before reloading (for file recreation case)
 					const currentZoomState = zoomController.getCurrentState();
 
 					// Reload the image without reinitializing event listeners
 					reloadImage(currentZoomState);
 				} else {
-					// Just update rendering with new settings
-					updateImageWithNewSettings();
+					console.log('➡️ Calling updateImageWithNewSettings');
+					// Update rendering with new settings, using optimization hints
+					updateImageWithNewSettings(changes);
 				}
 				break;
 
 			case 'mask-filter-settings':
 				// Handle mask filter settings updates
-				settingsManager.updateSettings(message.settings);
-				updateImageWithNewSettings();
+				const maskChanges = settingsManager.updateSettings(message.settings);
+				updateImageWithNewSettings(maskChanges);
 				break;
 				
 			case 'updateImageCollectionOverlay':
@@ -797,52 +811,102 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Update image rendering with new settings
+	 * @param {Object} changes - What changed in settings (from settingsManager.updateSettings)
 	 */
-	async function updateImageWithNewSettings() {
-		if (!canvas || !hasLoadedImage) return;
+	async function updateImageWithNewSettings(changes) {
+		console.log('🎨 updateImageWithNewSettings called with changes:', changes);
 
-		// For TIFF images, try fast parameter update first
+		if (!canvas || !hasLoadedImage) {
+			console.log('⚠️ Skipping update - no canvas or image not loaded');
+			return;
+		}
+
+		// Default to full update if no change info provided
+		if (!changes) {
+			changes = { parametersOnly: false, changedMasks: false, changedStructure: false };
+			console.log('⚠️ No changes provided, defaulting to full update');
+		}
+
+		// If nothing changed and it's a parameters-only update with no structural changes,
+		// this is likely a duplicate message - skip rendering
+		if (changes.parametersOnly && !changes.changedMasks && !changes.changedStructure) {
+			// Check if this is truly a no-op by seeing if settings are identical
+			// For now, we'll trust the fast path to be efficient enough even for duplicates
+			console.log('ℹ️ Parameters-only update (may be duplicate, but using fast path)');
+		}
+
+		// If masks changed, clear the mask cache
+		if (changes.changedMasks && tiffProcessor._maskCache) {
+			console.log('🗑️ Clearing mask cache');
+			tiffProcessor.clearMaskCache();
+		}
+
+		// For TIFF images, optimize based on what changed
 		if (primaryImageData && tiffProcessor.rawTiffData) {
+			console.log('📄 Processing TIFF update');
 			try {
-				// Try fast parameter update (gamma/normalization only)
-				const fastUpdate = await tiffProcessor.fastParameterUpdate(primaryImageData);
+				// If only parameters changed (gamma/brightness/normalization), use optimized path
+				if (changes.parametersOnly) {
+					console.log('⚡ FAST PATH: Parameters-only update (gamma/brightness/norm)');
+					console.time('⏱️ Fast render');
 
-				if (fastUpdate) {
-					// Apply fast update directly to canvas
+					// Skip mask loading and statistics recalculation
+					// Just re-render with new parameters from raw data
+					const newImageData = await tiffProcessor.renderTiffWithSettingsFast(
+						tiffProcessor.rawTiffData.image,
+						tiffProcessor.rawTiffData.rasters,
+						true // skipMasks flag
+					);
+
+					console.timeEnd('⏱️ Fast render');
+
+					// Update the canvas with new image data
 					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						ctx.putImageData(fastUpdate, 0, 0);
-						primaryImageData = fastUpdate;
+					if (ctx && newImageData) {
+						console.log('✅ CANVAS UPDATE (TIFF fast path): Applying new ImageData to canvas');
+						ctx.putImageData(newImageData, 0, 0);
+						primaryImageData = newImageData;
 						updateHistogramData();
-						return;
 					}
+					console.log('✨ Fast path complete, returning');
+					return;
 				}
 
-				// Fallback to full re-render if fast update not possible
+				console.log('🐌 SLOW PATH: Full re-render (structural/mask changes)');
+				console.time('⏱️ Full render');
+
+				// Fallback to full re-render for structural changes or mask changes
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
 					tiffProcessor.rawTiffData.image,
 					tiffProcessor.rawTiffData.rasters
 				);
 
+				console.timeEnd('⏱️ Full render');
+
 				// Update the canvas with new image data
 				const ctx = canvas.getContext('2d');
 				if (ctx && newImageData) {
+					console.log('✅ CANVAS UPDATE (TIFF slow path): Applying new ImageData to canvas');
 					ctx.putImageData(newImageData, 0, 0);
 					primaryImageData = newImageData;
 					updateHistogramData();
 				}
+				console.log('✨ Slow path complete, returning');
+				return; // Don't fall through to other processors
 			} catch (error) {
-				console.error('Error updating TIFF image with new settings:', error);
+				console.error('❌ Error updating TIFF image with new settings:', error);
 			}
+			console.log('↩️ Returning after TIFF processing (even on error)');
+			return; // Return even on error to prevent fall-through
 		}
-		
+
 		// Re-render based on which processor was used (mutually exclusive)
-		// Check in order: PGM -> PNG/JPEG -> NPY
+		// Check in order: EXR -> PGM -> PNG/JPEG -> NPY
 
 		// For EXR images, re-render with new settings
 		if (primaryImageData && exrProcessor && exrProcessor.rawExrData) {
+			console.log('📄 Processing EXR update');
 			try {
-				console.log('EXR: Calling updateSettings from updateImageWithNewSettings');
 				// Re-render the EXR with current settings
 				const newImageData = exrProcessor.updateSettings(settingsManager.settings);
 
@@ -850,14 +914,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					// Update the canvas with new image data
 					const ctx = canvas.getContext('2d');
 					if (ctx) {
+						console.log('✅ CANVAS UPDATE (EXR): Applying new ImageData to canvas');
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
 						updateHistogramData();
 					}
 				}
 			} catch (error) {
-				console.error('Error updating EXR image with new settings:', error);
+				console.error('❌ Error updating EXR image with new settings:', error);
 			}
+			return;
 		}
 		// For PGM images, re-render with new settings
 		else if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {

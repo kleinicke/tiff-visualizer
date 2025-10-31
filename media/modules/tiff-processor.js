@@ -23,6 +23,9 @@ export class TiffProcessor {
 		this.rawTiffData = null;
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
+		this._maskCache = new Map(); // Cache loaded mask images by URI
+		this._lastImageData = null; // Store the last rendered image data for fast parameter updates
+		this._lastStatistics = null; // Cache min/max statistics
 	}
 
 	/**
@@ -248,6 +251,9 @@ export class TiffProcessor {
 			}
 		}
 
+		// Cache the statistics
+		this._lastStatistics = { min, max };
+
 		// Send stats to VS Code
 		if (this.vscode) {
 			this.vscode.postMessage({ type: 'stats', value: { min, max } });
@@ -298,6 +304,129 @@ export class TiffProcessor {
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
 		} else {
 			// Pass normalization parameters to integer TIFF processing too
+			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
+		}
+
+		return new ImageData(imageDataArray, width, height);
+	}
+
+	/**
+	 * Fast render TIFF data with current settings (skips mask loading and uses cached statistics)
+	 * @param {*} image - GeoTIFF image object
+	 * @param {*} rasters - Raster data
+	 * @param {boolean} skipMasks - Whether to skip mask filtering
+	 * @returns {Promise<ImageData>}
+	 */
+	async renderTiffWithSettingsFast(image, rasters, skipMasks = true) {
+		// Create copies of rasters to avoid modifying the original data
+		const rastersCopy = [];
+		for (let i = 0; i < rasters.length; i++) {
+			rastersCopy.push(new Float32Array(rasters[i]));
+		}
+
+		const settings = this.settingsManager.settings;
+		const width = image.getWidth();
+		const height = image.getHeight();
+		const sampleFormat = image.getSampleFormat();
+		const bitsPerSample = image.getBitsPerSample();
+
+		let min, max;
+
+		// Use cached statistics if available, otherwise recalculate
+		if (this._lastStatistics && !settings.normalization.autoNormalize) {
+			min = this._lastStatistics.min;
+			max = this._lastStatistics.max;
+		} else {
+			// Recalculate statistics (needed for auto-normalize)
+			min = Infinity;
+			max = -Infinity;
+
+			const displayRasters = [];
+			for (let i = 0; i < rastersCopy.length; i++) {
+				displayRasters.push(new Float32Array(rastersCopy[i]));
+			}
+
+			// Calculate min/max from the first 3 channels only
+			if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
+				for (let j = 0; j < rastersCopy[0].length; j++) {
+					const values = [];
+					for (let i = 0; i < 3; i++) {
+						const value = rastersCopy[i][j];
+						if (!isNaN(value) && isFinite(value)) {
+							values.push(Math.round(Math.max(0, Math.min(255, value))));
+						} else {
+							values.push(0);
+						}
+					}
+					const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+					min = Math.min(min, combined24bit);
+					max = Math.max(max, combined24bit);
+				}
+			} else {
+				for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
+					for (let j = 0; j < rastersCopy[i].length; j++) {
+						const value = rastersCopy[i][j];
+						if (!isNaN(value) && isFinite(value)) {
+							min = Math.min(min, value);
+							max = Math.max(max, value);
+						}
+					}
+				}
+			}
+
+			// Cache the statistics
+			this._lastStatistics = { min, max };
+
+			// Send stats to VS Code
+			if (this.vscode) {
+				this.vscode.postMessage({ type: 'stats', value: { min, max } });
+			}
+		}
+
+		// Get normalization settings
+		let normMin, normMax;
+
+		if (settings.normalization.autoNormalize) {
+			normMin = min;
+			normMax = max;
+		} else if (settings.normalization.gammaMode) {
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (showNorm) {
+				normMin = 0;
+				normMax = 1;
+			} else {
+				normMin = 0;
+				if (bitsPerSample === 16) {
+					normMax = 65535;
+				} else {
+					normMax = 255;
+				}
+			}
+		} else {
+			normMin = settings.normalization.min;
+			normMax = settings.normalization.max;
+
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			if (settings.normalizedFloatMode && !showNorm) {
+				const typeMax = bitsPerSample === 16 ? 65535 : 255;
+				normMin = normMin * typeMax;
+				normMax = normMax * typeMax;
+			}
+		}
+
+		// Create display rasters
+		const displayRasters = [];
+		for (let i = 0; i < rastersCopy.length; i++) {
+			displayRasters.push(new Float32Array(rastersCopy[i]));
+		}
+
+		// Normalize and create image data
+		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+
+		let imageDataArray;
+		if (showNorm) {
+			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
+		} else {
 			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
 		}
 
@@ -733,19 +862,36 @@ export class TiffProcessor {
 	 * @returns {Promise<Float32Array>}
 	 */
 	async loadMaskImage(maskSrc) {
+		// Check cache first
+		if (this._maskCache.has(maskSrc)) {
+			return this._maskCache.get(maskSrc);
+		}
+
 		try {
 			const response = await fetch(maskSrc);
 			const buffer = await response.arrayBuffer();
 			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
 			const image = await tiff.getImage();
 			const rasters = await image.readRasters();
-			
+
 			// Return the first band as a Float32Array
-			return new Float32Array(rasters[0]);
+			const maskData = new Float32Array(rasters[0]);
+
+			// Cache the mask data
+			this._maskCache.set(maskSrc, maskData);
+
+			return maskData;
 		} catch (error) {
 			console.error('Error loading mask image:', error);
 			throw error;
 		}
+	}
+
+	/**
+	 * Clear the mask cache (call when mask URIs change)
+	 */
+	clearMaskCache() {
+		this._maskCache.clear();
 	}
 
 	/**

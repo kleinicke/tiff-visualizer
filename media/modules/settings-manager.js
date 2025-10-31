@@ -108,10 +108,82 @@ export class SettingsManager {
   /**
    * Update settings from new data (for real-time updates)
    * @param {ImageSettings} newSettings - New settings object
+   * @returns {{parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} - What changed
    */
   updateSettings(newSettings) {
     if (!newSettings) {
-      return;
+      return { parametersOnly: false, changedMasks: false, changedStructure: false };
+    }
+
+    // Track what changed
+    const changes = {
+      parametersOnly: false,
+      changedMasks: false,
+      changedStructure: false
+    };
+
+    // Check if only parameters changed (gamma, brightness, normalization ranges)
+    const oldSettings = this._settings;
+
+    // Check parameter changes
+    const gammaChanged = JSON.stringify(oldSettings.gamma) !== JSON.stringify(newSettings.gamma);
+    const brightnessChanged = JSON.stringify(oldSettings.brightness) !== JSON.stringify(newSettings.brightness);
+    const normRangeChanged = oldSettings.normalization?.min !== newSettings.normalization?.min ||
+                             oldSettings.normalization?.max !== newSettings.normalization?.max;
+    const normAutoChanged = oldSettings.normalization?.autoNormalize !== newSettings.normalization?.autoNormalize;
+    const normGammaModeChanged = oldSettings.normalization?.gammaMode !== newSettings.normalization?.gammaMode;
+
+    // Debug logging
+    if (gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged) {
+      console.log('🔍 Parameter changes detected:', {
+        gammaChanged,
+        brightnessChanged,
+        normRangeChanged,
+        normAutoChanged,
+        normGammaModeChanged
+      });
+    }
+
+    // Check structural changes
+    const masksChanged = JSON.stringify(oldSettings.maskFilters) !== JSON.stringify(newSettings.maskFilters);
+    const rgbModeChanged = oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
+    const scaleModeChanged = oldSettings.scale24BitFactor !== newSettings.scale24BitFactor;
+    const floatModeChanged = oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
+    const nanColorChanged = oldSettings.nanColor !== newSettings.nanColor;
+
+    // Determine change type
+    if (masksChanged) {
+      changes.changedMasks = true;
+    }
+
+    if (rgbModeChanged || scaleModeChanged || floatModeChanged) {
+      changes.changedStructure = true;
+    }
+
+    // Determine if anything changed at all
+    const somethingChanged = gammaChanged || brightnessChanged || normRangeChanged ||
+                             normAutoChanged || normGammaModeChanged || masksChanged ||
+                             rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged;
+
+    // Debug logging for no changes
+    if (!somethingChanged) {
+      console.log('ℹ️ No settings changes detected - treating as parameters-only');
+    }
+
+    // If only gamma, brightness, or normalization ranges changed, it's parameters-only
+    // Also treat "no changes" as parameters-only to avoid unnecessary slow path
+    if (!somethingChanged ||
+        ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged) &&
+         !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged && !nanColorChanged)) {
+      changes.parametersOnly = true;
+    } else {
+      console.log('⚠️ Structural changes detected:', {
+        masksChanged,
+        rgbModeChanged,
+        scaleModeChanged,
+        floatModeChanged,
+        nanColorChanged
+      });
     }
 
     // Deep merge to ensure nested objects are fully replaced
@@ -131,5 +203,7 @@ export class SettingsManager {
         ? [...newSettings.maskFilters]
         : this._settings.maskFilters,
     };
+
+    return changes;
   }
 }

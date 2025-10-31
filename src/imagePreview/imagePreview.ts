@@ -229,7 +229,29 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	public updatePreview() {
-		this.render();
+		// Instead of full render (which reloads HTML), just send updated settings
+		// This allows fast parameter updates without HTML reload
+		this.sendCurrentSettings();
+	}
+
+	private sendCurrentSettings() {
+		// Get current settings from both managers
+		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
+
+		// Create full settings object
+		const webviewSettings = {
+			normalization: this._manager.appStateManager.imageSettings.normalization,
+			gamma: this._manager.appStateManager.imageSettings.gamma,
+			brightness: this._manager.appStateManager.imageSettings.brightness,
+			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
+			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
+			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
+			maskFilters: maskFilters,
+			nanColor: this._manager.settingsManager.getNanColor()
+		};
+
+		// Send to webview
+		this.sendSettingsUpdate(webviewSettings);
 	}
 
 	public setImageSize(size: string): void {
@@ -395,7 +417,8 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	private sendSettingsUpdate(settings: WebviewImageSettings): void {
-		if (this.previewState === PreviewState.Active) {
+		// Send to both Active and Visible previews (for multi-preview support)
+		if (this.previewState === PreviewState.Active || this.previewState === PreviewState.Visible) {
 			// Convert mask URIs to webview-safe URIs if they exist
 			const webviewSafeMasks = settings.maskFilters.map(mask => ({
 				...mask,
