@@ -19,9 +19,6 @@ export { ImagePreview } from './imagePreview';
 export function registerImagePreviewSupport(context: vscode.ExtensionContext, binarySizeStatusBarEntry: BinarySizeStatusBarEntry): vscode.Disposable {
 	const outputChannel = getOutputChannel();
 
-	outputChannel.appendLine('TIFF Visualizer: Registering image preview support...');
-	console.log('TIFF Visualizer: Registering image preview support...');
-	
 	const disposables: vscode.Disposable[] = [];
 
 	// Create status bar entries
@@ -61,8 +58,6 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 	// Register the custom editor provider
 	const viewType = ImagePreviewManager.getViewType();
-	outputChannel.appendLine(`TIFF Visualizer: Registering custom editor provider for viewType: ${viewType}`);
-	console.log('TIFF Visualizer: Registering custom editor provider for viewType:', viewType);
 	disposables.push(vscode.window.registerCustomEditorProvider(viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
 	}));
@@ -73,7 +68,6 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	// Register comparison panel support
 	disposables.push(registerComparisonPanelSupport(context));
 
-	outputChannel.appendLine('TIFF Visualizer: Image preview support registered successfully');
-	console.log('TIFF Visualizer: Image preview support registered successfully');
+	outputChannel.appendLine('Image preview support registered successfully');
 	return vscode.Disposable.from(...disposables);
 } 

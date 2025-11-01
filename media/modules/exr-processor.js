@@ -64,7 +64,6 @@ export class ExrProcessor {
 
 			const response = await fetch(src);
 			const buffer = await response.arrayBuffer();
-			console.log('EXR: Fetched buffer, size:', buffer.byteLength);
 
 			// Parse EXR using parse-exr library
 			// Use FloatType (1015) to get Float32Array with decoded float values
@@ -74,10 +73,7 @@ export class ExrProcessor {
 			// @ts-ignore
 			const exrResult = parseExr(buffer, FloatType);
 
-			console.log('EXR: Parsed result:', exrResult);
 			const { width, height, data, format, type } = exrResult;
-			console.log(`EXR: Dimensions ${width}x${height}, format: ${format}, type: ${type}, data type: ${data.constructor.name}, data length: ${data.length}`);
-			console.log(`EXR: First few pixel values:`, Array.from(data.slice(0, 10)));
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028
@@ -92,7 +88,6 @@ export class ExrProcessor {
 				const totalValues = data.length;
 				channels = totalValues / pixelCount;
 			}
-			console.log('EXR: Detected channels:', channels);
 
 			// Create canvas
 			const canvas = document.createElement('canvas');
@@ -129,7 +124,6 @@ export class ExrProcessor {
 
 				// Store pending render data - will render when settings are updated
 				this._pendingRenderData = { width, height, data, channels, type, format };
-				console.log('EXR: Initial load - returning placeholder, waiting for settings update');
 
 				// Return placeholder - actual rendering happens when settings update
 				const placeholderImageData = new ImageData(width, height);
@@ -141,7 +135,6 @@ export class ExrProcessor {
 			}
 
 			// If not initial load, render immediately with current settings
-			console.log('EXR: Not initial load - rendering with current settings');
 			const imageData = this.renderExrToCanvas(canvas, this.settingsManager.settings);
 
 			return {
@@ -178,16 +171,11 @@ export class ExrProcessor {
 		const brightness = settings.brightness || { offset: 0 };
 		const nanColor = this._getNanColor(settings);
 
-		console.log('EXR: Normalization settings:', normalization);
-
 		// Auto-detect normalization range if needed
 		let min = normalization.min;
 		let max = normalization.max;
 
 		if (normalization.autoNormalize) {
-			console.log('EXR: Auto-normalization enabled, scanning pixel values...');
-			console.log('EXR: Scanning data type:', data.constructor.name, 'length:', data.length);
-			console.log('EXR: First 10 values from data being scanned:', Array.from(data.slice(0, 10)));
 			min = Infinity;
 			max = -Infinity;
 			for (let i = 0; i < data.length; i++) {
@@ -197,8 +185,6 @@ export class ExrProcessor {
 					if (value > max) max = value;
 				}
 			}
-
-			console.log(`EXR: Auto-detected range: min=${min}, max=${max}`);
 
 			// Update settings manager with detected range so UI reflects it
 			if (this.settingsManager && this.settingsManager.settings.normalization) {
@@ -216,8 +202,6 @@ export class ExrProcessor {
 					}
 				});
 			}
-		} else {
-			console.log(`EXR: Using manual normalization range: min=${min}, max=${max}`);
 		}
 
 		const range = max - min;
@@ -361,10 +345,8 @@ export class ExrProcessor {
 	 * @returns {ImageData|null} - Updated image data
 	 */
 	updateSettings(settings) {
-		console.log('EXR: updateSettings called', { hasPending: !!this._pendingRenderData, isInitial: this._isInitialLoad });
 		if (this._pendingRenderData && this._isInitialLoad) {
 			// First render after initial load - use pending data
-			console.log('EXR: Rendering from pending data');
 			const { width, height } = this._pendingRenderData;
 			const canvas = document.createElement('canvas');
 			canvas.width = width;
@@ -374,11 +356,9 @@ export class ExrProcessor {
 			this._isInitialLoad = false;
 			this._pendingRenderData = null;
 
-			console.log('EXR: Rendered imageData:', imageData);
 			return imageData;
 		} else if (this.rawExrData) {
 			// Re-render with new settings
-			console.log('EXR: Re-rendering with new settings');
 			const { width, height } = this.rawExrData;
 			const canvas = document.createElement('canvas');
 			canvas.width = width;
@@ -386,7 +366,6 @@ export class ExrProcessor {
 
 			return this.renderExrToCanvas(canvas, settings);
 		}
-		console.log('EXR: updateSettings - no data to render');
 		return null;
 	}
 }

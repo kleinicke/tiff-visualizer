@@ -168,10 +168,6 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * @param {any} savedZoomState - The zoom state to restore after reload
 	 */
 	function reloadImage(savedZoomState) {
-		console.log('🔄 RELOAD IMAGE CALLED - This is the FULL reload path!', {
-			savedZoomState: savedZoomState,
-			stackTrace: new Error().stack
-		});
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
@@ -505,14 +501,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				break;
 
 			case 'updateSettings':
-				console.log('📨 MESSAGE RECEIVED: updateSettings', {
-					isInitialRender: message.isInitialRender,
-					settingsKeys: Object.keys(message.settings || {})
-				});
 				// Handle real-time settings updates
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const changes = settingsManager.updateSettings(message.settings);
-				console.log('🔄 Settings updated, changes detected:', changes);
 				const newResourceUri = settingsManager.settings.resourceUri;
 
 				// Check if this is a deferred render trigger (initial load)
@@ -545,17 +536,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				}
 				// If resource URI changed, reload the entire image
 				else if (oldResourceUri !== newResourceUri) {
-					console.log('🔄 FULL RELOAD TRIGGERED: Resource URI changed', {
-						old: oldResourceUri,
-						new: newResourceUri
-					});
 					// Save current zoom state before reloading (for file recreation case)
 					const currentZoomState = zoomController.getCurrentState();
 
 					// Reload the image without reinitializing event listeners
 					reloadImage(currentZoomState);
 				} else {
-					console.log('➡️ Calling updateImageWithNewSettings');
 					// Update rendering with new settings, using optimization hints
 					updateImageWithNewSettings(changes);
 				}
@@ -816,42 +802,25 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * @param {Object} changes - What changed in settings (from settingsManager.updateSettings)
 	 */
 	async function updateImageWithNewSettings(changes) {
-		console.log('🎨 updateImageWithNewSettings called with changes:', changes);
-
 		if (!canvas || !hasLoadedImage) {
-			console.log('⚠️ Skipping update - no canvas or image not loaded');
 			return;
 		}
 
 		// Default to full update if no change info provided
 		if (!changes) {
 			changes = { parametersOnly: false, changedMasks: false, changedStructure: false };
-			console.log('⚠️ No changes provided, defaulting to full update');
-		}
-
-		// If nothing changed and it's a parameters-only update with no structural changes,
-		// this is likely a duplicate message - skip rendering
-		if (changes.parametersOnly && !changes.changedMasks && !changes.changedStructure) {
-			// Check if this is truly a no-op by seeing if settings are identical
-			// For now, we'll trust the fast path to be efficient enough even for duplicates
-			console.log('ℹ️ Parameters-only update (may be duplicate, but using fast path)');
 		}
 
 		// If masks changed, clear the mask cache
 		if (changes.changedMasks && tiffProcessor._maskCache) {
-			console.log('🗑️ Clearing mask cache');
 			tiffProcessor.clearMaskCache();
 		}
 
 		// For TIFF images, optimize based on what changed
 		if (primaryImageData && tiffProcessor.rawTiffData) {
-			console.log('📄 Processing TIFF update');
 			try {
 				// If only parameters changed (gamma/brightness/normalization), use optimized path
 				if (changes.parametersOnly) {
-					console.log('⚡ FAST PATH: Parameters-only update (gamma/brightness/norm)');
-					console.time('⏱️ Fast render');
-
 					// Skip mask loading and statistics recalculation
 					// Just re-render with new parameters from raw data
 					const newImageData = await tiffProcessor.renderTiffWithSettingsFast(
@@ -860,30 +829,21 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						true // skipMasks flag
 					);
 
-					console.timeEnd('⏱️ Fast render');
-
 					// Update the canvas with new image data
 					const ctx = canvas.getContext('2d');
 					if (ctx && newImageData) {
-						console.log('✅ CANVAS UPDATE (TIFF fast path): Applying new ImageData to canvas');
 						ctx.putImageData(newImageData, 0, 0);
 						primaryImageData = newImageData;
 						updateHistogramData();
 					}
-					console.log('✨ Fast path complete, returning');
 					return;
 				}
-
-				console.log('🐌 SLOW PATH: Full re-render (structural/mask changes)');
-				console.time('⏱️ Full render');
 
 				// Fallback to full re-render for structural changes or mask changes
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
 					tiffProcessor.rawTiffData.image,
 					tiffProcessor.rawTiffData.rasters
 				);
-
-				console.timeEnd('⏱️ Full render');
 
 				// Update the canvas with new image data
 				const ctx = canvas.getContext('2d');

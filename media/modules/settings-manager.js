@@ -133,17 +133,6 @@ export class SettingsManager {
     const normAutoChanged = oldSettings.normalization?.autoNormalize !== newSettings.normalization?.autoNormalize;
     const normGammaModeChanged = oldSettings.normalization?.gammaMode !== newSettings.normalization?.gammaMode;
 
-    // Debug logging
-    if (gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged) {
-      console.log('🔍 Parameter changes detected:', {
-        gammaChanged,
-        brightnessChanged,
-        normRangeChanged,
-        normAutoChanged,
-        normGammaModeChanged
-      });
-    }
-
     // Check structural changes
     const masksChanged = JSON.stringify(oldSettings.maskFilters) !== JSON.stringify(newSettings.maskFilters);
     const rgbModeChanged = oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
@@ -164,11 +153,6 @@ export class SettingsManager {
     const somethingChanged = gammaChanged || brightnessChanged || normRangeChanged ||
                              normAutoChanged || normGammaModeChanged || masksChanged ||
                              rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged;
-
-    // Debug logging for no changes
-    if (!somethingChanged) {
-      console.log('ℹ️ No settings changes detected - treating as parameters-only');
-    }
 
     // If only gamma, brightness, or normalization ranges changed, it's parameters-only
     // Also treat "no changes" as parameters-only to avoid unnecessary slow path

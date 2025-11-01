@@ -67,11 +67,6 @@ export function registerImagePreviewCommands(
 		const rgbModeEnabled = previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
 		const normalizedFloatModeEnabled = previewManager.appStateManager.imageSettings.normalizedFloatMode;
 
-		console.log('[setNormalizationRange] formatInfo:', formatInfo);
-		console.log('[setNormalizationRange] isRgb8BitUint:', isRgb8BitUint);
-		console.log('[setNormalizationRange] isSingleChannelUint:', isSingleChannelUint);
-		console.log('[setNormalizationRange] samplesPerPixel:', formatInfo?.samplesPerPixel);
-
 		// First show a QuickPick with options
 		const options: Array<vscode.QuickPickItem & { action?: string }> = [
 			{
