@@ -85,6 +85,7 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Histogram visualization (experimental)
+- **ColormapConverter**: Converts colormap images to float values using various colormaps (viridis, plasma, jet, etc.)
 
 ### Status Bar Integration
 Comprehensive status bar system with 8+ specialized entries:
@@ -130,6 +131,7 @@ All commands registered with `tiffVisualizer.` prefix ([src/imagePreview/command
 - **Export**: `exportAsPng`, `copyImage`
 - **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`, `openNextToCurrent`
 - **Filters**: `filterByMask`, `toggleNanColor`
+- **Colormap conversion**: `convertColormapToFloat` - converts colormap images to float values
 - **Reset**: `resetAllSettings`
 - **Histogram**: `toggleHistogram` (Ctrl+H / Cmd+H)
 
@@ -146,6 +148,18 @@ Sophisticated normalization system for float images:
 - **Gamma mode**: Apply gamma before or after normalization
 - **NaN handling**: Display NaN pixels as black or fuchsia
 - **24-bit mode**: Special handling for depth data stored as RGB
+
+### OpenEXR (EXR) Format Support
+Comprehensive HDR image support via parse-exr library ([media/modules/exr-processor.js](media/modules/exr-processor.js)):
+- **Float precision**: Supports both Float16 (half) and Float32 formats
+- **Channel support**: Grayscale (1 channel), RGB (3 channels), RGBA (4 channels)
+- **Y-axis flipping**: Automatically handles EXR bottom-left origin vs canvas top-left origin
+- **HDR tone mapping**: Applies normalization, gamma, and brightness in sequence
+- **Pixel inspection**: Returns raw HDR float values for accurate analysis
+- **Per-format defaults**: Uses gamma mode with 0-1 range by default (configurable in AppStateManager)
+- **Auto-normalization**: Scans all pixel values to detect actual data range for HDR content
+- **Initial load pattern**: Sends format info before rendering to get correct per-format settings
+- **Re-rendering**: Supports real-time settings updates without reloading file
 
 ## Build Configuration Details
 
@@ -228,7 +242,8 @@ media/
 │   ├── png-processor.js              # PNG with float support
 │   ├── zoom-controller.js            # Pan/zoom functionality
 │   ├── mouse-handler.js              # Pixel inspection
-│   └── histogram-overlay.js          # Histogram visualization
+│   ├── histogram-overlay.js          # Histogram visualization
+│   └── colormap-converter.js         # Colormap to float conversion
 ├── geotiff.min.js                    # TIFF processing library (copied from node_modules)
 ├── parse-exr.js                      # EXR processing library
 ├── upng.min.js                       # PNG decoding
@@ -277,12 +292,27 @@ example/
 - **Webview** (JavaScript): Use Developer Tools (Help > Toggle Developer Tools), check Console tab
 - **Message passing**: Add `console.log` in both extension host and webview to trace messages
 
+### Working with Format Processors
+When modifying or debugging format processors (TIFF, EXR, NPY, etc.):
+- **Initial load pattern**: Format processors should send `formatInfo` message BEFORE first render
+  - This allows AppStateManager to load per-format default settings
+  - Store pending render data and wait for settings update callback
+  - Example: See ExrProcessor._pendingRenderData and _isInitialLoad pattern
+- **Re-rendering**: Implement `updateSettings(settings)` method for real-time updates
+- **Raw data storage**: Keep raw data (Float32Array, etc.) for pixel inspection and re-renders
+- **Coordinate systems**: Handle origin differences (EXR: bottom-left, Canvas: top-left)
+- **Type detection**: Auto-detect bit depth, channels, and data type, send via `formatInfo`
+
 ## Important Notes
 
 ### Multi-Format Support
 The extension handles diverse image formats with format-specific logic:
 - **TIFF**: via geotiff.js, supports LZW/Deflate compression, predictors, multi-channel
-- **OpenEXR**: via parse-exr, supports HDR, float16/float32
+- **OpenEXR**: via parse-exr, supports HDR, float16/float32, with special handling:
+  - Uses FloatType (1015) for Float32Array with decoded values
+  - Automatically flips Y-axis (EXR uses bottom-left origin)
+  - Stores raw float data for pixel inspection and re-rendering
+  - Initial load sends format info before rendering for correct per-format settings
 - **NPY/NPZ**: Native NumPy array parsing, supports float and uint types
 - **PFM/PPM/PGM/PBM**: NetPBM formats, both binary and ASCII
 - **PNG/JPG**: Standard formats with uint8/16 and float16/32 extensions
