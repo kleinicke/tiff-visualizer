@@ -1018,6 +1018,57 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			copyImage();
 		});
 
+		// Custom context menu - only show copy option
+		document.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+
+			// Remove any existing custom context menu
+			const existingMenu = document.querySelector('.custom-context-menu');
+			if (existingMenu) {
+				existingMenu.remove();
+			}
+
+			// Create custom context menu
+			const menu = document.createElement('div');
+			menu.className = 'custom-context-menu';
+			menu.style.left = `${e.pageX}px`;
+			menu.style.top = `${e.pageY}px`;
+
+			// Add copy option
+			const copyOption = document.createElement('div');
+			copyOption.className = 'context-menu-item';
+			copyOption.textContent = 'Copy';
+			copyOption.addEventListener('click', () => {
+				copyImage();
+				menu.remove();
+			});
+
+			menu.appendChild(copyOption);
+			document.body.appendChild(menu);
+
+			// Remove menu when clicking outside
+			const removeMenu = (event) => {
+				if (!menu.contains(event.target)) {
+					menu.remove();
+					document.removeEventListener('click', removeMenu);
+				}
+			};
+
+			// Use setTimeout to avoid immediate removal
+			setTimeout(() => {
+				document.addEventListener('click', removeMenu);
+			}, 0);
+		});
+
+		// Prevent cut and paste operations (only copy makes sense for image viewer)
+		document.addEventListener('cut', (e) => {
+			e.preventDefault();
+		});
+
+		document.addEventListener('paste', (e) => {
+			e.preventDefault();
+		});
+
 		// Comparison toggle
 		document.addEventListener('keydown', (e) => {
 			if (e.key === 'c' && peerImageData) {

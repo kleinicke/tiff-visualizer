@@ -347,3 +347,45 @@ body img {
 .vscode-light .copy-notification-error {
 	border-left-color: var(--vscode-notificationsErrorIcon-foreground, #e51400);
 }
+
+/* Custom Context Menu */
+.custom-context-menu {
+	position: fixed;
+	background: var(--vscode-menu-background, #252526);
+	border: 1px solid var(--vscode-menu-border, #454545);
+	border-radius: 4px;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+	padding: 4px 0;
+	z-index: 3000;
+	min-width: 120px;
+	user-select: none;
+}
+
+.context-menu-item {
+	padding: 6px 16px;
+	cursor: pointer;
+	color: var(--vscode-menu-foreground, #cccccc);
+	font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: var(--vscode-font-size, 13px);
+}
+
+.context-menu-item:hover {
+	background: var(--vscode-menu-selectionBackground, #094771);
+	color: var(--vscode-menu-selectionForeground, #ffffff);
+}
+
+/* Light theme adjustments for context menu */
+.vscode-light .custom-context-menu {
+	background: var(--vscode-menu-background, #ffffff);
+	border: 1px solid var(--vscode-menu-border, #d4d4d4);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light .context-menu-item {
+	color: var(--vscode-menu-foreground, #333333);
+}
+
+.vscode-light .context-menu-item:hover {
+	background: var(--vscode-menu-selectionBackground, #e8e8e8);
+	color: var(--vscode-menu-selectionForeground, #333333);
+}
