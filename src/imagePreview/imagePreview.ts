@@ -25,6 +25,7 @@ export class ImagePreview extends MediaPreview {
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
 	private _isTiff: boolean = false;
+	private _currentFormat: import('./appStateManager').ImageFormatType | undefined;
 
 	// Image collection management
 	private _imageCollection: vscode.Uri[] = [];
@@ -124,8 +125,19 @@ export class ImagePreview extends MediaPreview {
 		};
 
 		// Subscribe to both managers but use single update function
+		// Per-image settings (maskFilters) always apply to this preview
 		this._register(this._manager.settingsManager.onDidChangeSettings(updateSettings));
-		this._register(this._manager.appStateManager.onDidChangeSettings(updateSettings));
+		// Per-format settings (normalization, gamma, brightness) only apply if format matches
+		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
+			// Only update if settings are for our format (prevents cross-format contamination)
+			console.log(`[ImagePreview] Settings change event received. Preview format: ${this._currentFormat}, Current format: ${this._manager.appStateManager.currentFormat}, Match: ${this._currentFormat === this._manager.appStateManager.currentFormat}`);
+			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
+				console.log(`[ImagePreview] Format matches! Applying settings update for ${this._currentFormat}`);
+				updateSettings();
+			} else {
+				console.log(`[ImagePreview] Format mismatch! Ignoring settings update. Preview is ${this._currentFormat}, update is for ${this._manager.appStateManager.currentFormat}`);
+			}
+		}));
 
 		this._register(webviewEditor.onDidDispose(() => {
 			if (this.previewState === PreviewState.Active) {
@@ -264,6 +276,14 @@ export class ImagePreview extends MediaPreview {
 
 	public setImageZoom(zoom: Scale): void {
 		this._imageZoom = zoom;
+	}
+
+	public setCurrentFormat(format: import('./appStateManager').ImageFormatType): void {
+		this._currentFormat = format;
+	}
+
+	public getCurrentFormat(): import('./appStateManager').ImageFormatType | undefined {
+		return this._currentFormat;
 	}
 
 	public get isTiff(): boolean {
@@ -511,7 +531,9 @@ export class ImagePreview extends MediaPreview {
 	protected override async getWebviewContents(): Promise<string> {
 		const version = Date.now().toString();
 
-		// Detect format from file extension and set it early so HTML gets correct settings
+		// Detect format from file extension for HTML generation
+		// Note: We do NOT call setImageFormat() here to avoid premature format switching
+		// The webview will report the actual format via formatInfo message
 		const lower = this.resource.path.toLowerCase();
 		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
 		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm');
@@ -520,23 +542,6 @@ export class ImagePreview extends MediaPreview {
 		const isNpy = lower.endsWith('.npy') || lower.endsWith('.npz');
 		const isExr = lower.endsWith('.exr');
 		this._isTiff = isTiff || isPpm || isPng;
-
-		// Pre-set format based on file extension (will be confirmed by webview later)
-		// This ensures HTML is created with correct format-specific settings
-		if (isPfm) {
-			this._manager.appStateManager.setImageFormat('pfm');
-		} else if (isNpy) {
-			// NPY format will be determined by dtype later (float vs uint)
-			// For now, use float as default since we can't know without reading the file
-			this._manager.appStateManager.setImageFormat('npy-float');
-		} else if (isPng) {
-			this._manager.appStateManager.setImageFormat('png');
-		} else if (isPpm) {
-			this._manager.appStateManager.setImageFormat('ppm');
-		} else if (isExr) {
-			this._manager.appStateManager.setImageFormat('exr-float');
-		}
-		// TIFF format will be set by webview after detecting float vs int
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)

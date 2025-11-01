@@ -132,6 +132,10 @@ export class AppStateManager {
 		return this._statusBarState.activePreview;
 	}
 
+	public get currentFormat(): ImageFormatType | undefined {
+		return this._currentFormat;
+	}
+
 	// Image Settings Management
 	public updateNormalization(min: number, max: number): void {
 		if (this._imageSettings.normalization.min !== min || this._imageSettings.normalization.max !== max) {
