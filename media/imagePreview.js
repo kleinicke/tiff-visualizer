@@ -1186,11 +1186,61 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
+	 * Show a notification message
+	 * @param {string} message - The message to display
+	 * @param {string} type - The type of notification ('success' or 'error')
+	 */
+	function showNotification(message, type = 'success') {
+		// Remove any existing notification
+		const existingNotification = document.querySelector('.copy-notification');
+		if (existingNotification) {
+			existingNotification.remove();
+		}
+
+		// Create notification element
+		const notification = document.createElement('div');
+		notification.className = `copy-notification copy-notification-${type}`;
+		notification.textContent = message;
+
+		// Add to document
+		document.body.appendChild(notification);
+
+		// Auto-dismiss success notifications after 3 seconds
+		if (type === 'success') {
+			setTimeout(() => {
+				notification.classList.add('copy-notification-fadeout');
+				setTimeout(() => {
+					if (notification.parentElement) {
+						notification.remove();
+					}
+				}, 300); // Match the CSS transition duration
+			}, 3000);
+		}
+
+		// Allow manual dismissal by clicking
+		notification.addEventListener('click', () => {
+			notification.classList.add('copy-notification-fadeout');
+			setTimeout(() => {
+				if (notification.parentElement) {
+					notification.remove();
+				}
+			}, 300);
+		});
+	}
+
+	/**
 	 * Copy image to clipboard
 	 */
 	async function copyImage(retries = 5) {
 		if (!document.hasFocus() && retries > 0) {
 			setTimeout(() => { copyImage(retries - 1); }, 20);
+			return;
+		}
+
+		// Check if we have an image to copy
+		if (!canvas && (!image || !image.naturalWidth)) {
+			showNotification('No image loaded to copy', 'error');
+			console.error('Copy failed: No image available');
 			return;
 		}
 
@@ -1212,7 +1262,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						copyCanvas.height = image.naturalHeight;
 						ctx.drawImage(image, 0, 0);
 					}
-					
+
 					copyCanvas.toBlob((blob) => {
 						if (blob) {
 							resolve(blob);
@@ -1223,8 +1273,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					}, 'image/png');
 				})
 			})]);
+
+			// Show success notification
+			showNotification('Image copied to clipboard', 'success');
 		} catch (e) {
 			console.error('Copy failed:', e);
+			showNotification(`Failed to copy image: ${e.message}`, 'error');
 		}
 	}
 

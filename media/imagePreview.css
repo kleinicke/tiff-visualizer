@@ -296,3 +296,54 @@ body img {
 .vscode-light .histogram-close:hover {
 	background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
 }
+
+/* Copy Notification */
+.copy-notification {
+	position: fixed;
+	top: 20px;
+	left: 50%;
+	transform: translateX(-50%);
+	background: var(--vscode-notifications-background, #252526);
+	border: 1px solid var(--vscode-notifications-border, #454545);
+	border-radius: 6px;
+	padding: 12px 20px;
+	z-index: 2000;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: var(--vscode-editor-font-size, 13px);
+	color: var(--vscode-notifications-foreground, #cccccc);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	cursor: pointer;
+	user-select: none;
+	min-width: 200px;
+	text-align: center;
+	opacity: 1;
+	transition: opacity 0.3s ease-in-out;
+}
+
+.copy-notification-success {
+	border-left: 4px solid var(--vscode-notificationsInfoIcon-foreground, #3794ff);
+}
+
+.copy-notification-error {
+	border-left: 4px solid var(--vscode-notificationsErrorIcon-foreground, #f48771);
+}
+
+.copy-notification-fadeout {
+	opacity: 0;
+}
+
+/* Light theme adjustments for notification */
+.vscode-light .copy-notification {
+	background: var(--vscode-notifications-background, #ffffff);
+	border: 1px solid var(--vscode-notifications-border, #d4d4d4);
+	color: var(--vscode-notifications-foreground, #333333);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light .copy-notification-success {
+	border-left-color: var(--vscode-notificationsInfoIcon-foreground, #1976d2);
+}
+
+.vscode-light .copy-notification-error {
+	border-left-color: var(--vscode-notificationsErrorIcon-foreground, #e51400);
+}
