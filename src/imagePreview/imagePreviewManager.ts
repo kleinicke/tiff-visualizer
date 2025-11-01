@@ -11,6 +11,7 @@ import { ImageSettingsManager } from './imageSettings';
 import { AppStateManager } from './appStateManager';
 import { ImagePreview } from './imagePreview';
 import type { IImagePreview, IImagePreviewManager } from './types';
+import { getOutputChannel } from '../extension';
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
@@ -98,40 +99,44 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	private ensureActivePreviewFormat(): void {
 		if (this._activePreview && 'getCurrentFormat' in this._activePreview) {
 			const format = (this._activePreview as any).getCurrentFormat();
-			console.log(`[ImagePreviewManager] ensureActivePreviewFormat: Active preview format = ${format}, Current global format = ${this._appStateManager.currentFormat}`);
 			if (format && format !== this._appStateManager.currentFormat) {
-				console.log(`[ImagePreviewManager] Switching global format from ${this._appStateManager.currentFormat} to ${format}`);
 				this._appStateManager.setImageFormat(format);
-			} else {
-				console.log(`[ImagePreviewManager] Format already matches, no switch needed`);
 			}
-		} else {
-			console.log(`[ImagePreviewManager] No active preview or format not available`);
 		}
 	}
 
 	public setTempNormalization(min: number, max: number) {
 		this.ensureActivePreviewFormat();
+		const format = this._appStateManager.currentFormat;
+		getOutputChannel().appendLine(`[${format}] Normalization: [${min.toFixed(2)}, ${max.toFixed(2)}]`);
 		this._appStateManager.updateNormalization(min, max);
 	}
 
 	public setAutoNormalize(enabled: boolean) {
 		this.ensureActivePreviewFormat();
+		const format = this._appStateManager.currentFormat;
+		getOutputChannel().appendLine(`[${format}] Auto-normalize: ${enabled ? 'ON' : 'OFF'}`);
 		this._appStateManager.setAutoNormalize(enabled);
 	}
 
 	public setGammaMode(enabled: boolean) {
 		this.ensureActivePreviewFormat();
+		const format = this._appStateManager.currentFormat;
+		getOutputChannel().appendLine(`[${format}] Gamma mode: ${enabled ? 'ON' : 'OFF'}`);
 		this._appStateManager.setGammaMode(enabled);
 	}
 
 	public setTempGamma(gammaIn: number, gammaOut: number) {
 		this.ensureActivePreviewFormat();
+		const format = this._appStateManager.currentFormat;
+		getOutputChannel().appendLine(`[${format}] Gamma: in=${gammaIn.toFixed(2)}, out=${gammaOut.toFixed(2)}`);
 		this._appStateManager.updateGamma(gammaIn, gammaOut);
 	}
 
 	public setTempBrightness(offset: number) {
 		this.ensureActivePreviewFormat();
+		const format = this._appStateManager.currentFormat;
+		getOutputChannel().appendLine(`[${format}] Brightness: ${offset >= 0 ? '+' : ''}${offset}`);
 		this._appStateManager.updateBrightness(offset);
 	}
 
@@ -146,21 +151,16 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	public updateAllPreviews() {
 		// Only update previews that match the current format
 		const currentFormat = this._appStateManager.currentFormat;
-		console.log(`[ImagePreviewManager] updateAllPreviews called for format: ${currentFormat}`);
 
 		for (const preview of this._previews) {
 			// Check if this preview matches the current format
 			if ('getCurrentFormat' in preview) {
 				const previewFormat = (preview as any).getCurrentFormat();
 				if (previewFormat === currentFormat) {
-					console.log(`[ImagePreviewManager] Updating preview with format ${previewFormat} (matches current format)`);
 					preview.updatePreview();
-				} else {
-					console.log(`[ImagePreviewManager] Skipping preview with format ${previewFormat} (current format is ${currentFormat})`);
 				}
 			} else {
 				// Fallback: update preview if format can't be determined
-				console.log(`[ImagePreviewManager] Updating preview (format unknown)`);
 				preview.updatePreview();
 			}
 		}
@@ -174,6 +174,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
 	): Promise<void> {
+		// Log when opening a new file
+		const fileName = document.uri.path.split('/').pop() || document.uri.path;
+		getOutputChannel().appendLine(`📂 Opened: ${fileName}`);
+
 		this.createPreview(ImagePreview, this.extensionRoot, document, webviewEditor);
 	}
 
@@ -220,7 +224,9 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		if (value && 'getCurrentFormat' in value) {
 			const format = (value as any).getCurrentFormat();
 			if (format) {
-				console.log(`[ImagePreviewManager] Active preview changed to format: ${format}`);
+				// Log format switch for debugging
+				getOutputChannel().appendLine(`→ Switched to format: ${format}`);
+
 				// Switch AppStateManager to this preview's format
 				// This will load the cached settings for this format
 				this._appStateManager.setImageFormat(format);

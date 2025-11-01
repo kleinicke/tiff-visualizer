@@ -130,12 +130,8 @@ export class ImagePreview extends MediaPreview {
 		// Per-format settings (normalization, gamma, brightness) only apply if format matches
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
 			// Only update if settings are for our format (prevents cross-format contamination)
-			console.log(`[ImagePreview] Settings change event received. Preview format: ${this._currentFormat}, Current format: ${this._manager.appStateManager.currentFormat}, Match: ${this._currentFormat === this._manager.appStateManager.currentFormat}`);
 			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
-				console.log(`[ImagePreview] Format matches! Applying settings update for ${this._currentFormat}`);
 				updateSettings();
-			} else {
-				console.log(`[ImagePreview] Format mismatch! Ignoring settings update. Preview is ${this._currentFormat}, update is for ${this._manager.appStateManager.currentFormat}`);
 			}
 		}));
 

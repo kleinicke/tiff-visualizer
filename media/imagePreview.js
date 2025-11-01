@@ -530,6 +530,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						deferredImageData = ppmProcessor.performDeferredRender();
 					} else if (pfmProcessor._pendingRenderData) {
 						deferredImageData = pfmProcessor.performDeferredRender();
+					} else if (exrProcessor._pendingRenderData) {
+						deferredImageData = exrProcessor.updateSettings(settingsManager.settings);
 					}
 
 					if (deferredImageData) {

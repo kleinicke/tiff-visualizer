@@ -117,6 +117,13 @@ class FormatInfoMessageHandler implements MessageHandler {
 			preview.getManager().appStateManager.setImageFormat(message.value.formatType);
 			// Track the format in this preview instance
 			preview.setCurrentFormat(message.value.formatType);
+
+			// Log format detection (only on initial load to avoid duplicate logs)
+			if (message.value.isInitialLoad) {
+				const output = require('../extension').getOutputChannel();
+				const formatDetails = `${message.value.formatType} (${message.value.width}×${message.value.height}, ${message.value.bitsPerSample}bit)`;
+				output.appendLine(`   Format detected: ${formatDetails}`);
+			}
 		}
 
 		// If this is initial load, send settings back with render trigger
