@@ -374,6 +374,12 @@ body img {
 	color: var(--vscode-menu-selectionForeground, #ffffff);
 }
 
+.context-menu-separator {
+	height: 1px;
+	background: var(--vscode-menu-separatorBackground, #454545);
+	margin: 4px 0;
+}
+
 /* Light theme adjustments for context menu */
 .vscode-light .custom-context-menu {
 	background: var(--vscode-menu-background, #ffffff);
@@ -388,4 +394,8 @@ body img {
 .vscode-light .context-menu-item:hover {
 	background: var(--vscode-menu-selectionBackground, #e8e8e8);
 	color: var(--vscode-menu-selectionForeground, #333333);
+}
+
+.vscode-light .context-menu-separator {
+	background: var(--vscode-menu-separatorBackground, #d4d4d4);
 }

@@ -36,6 +36,7 @@ export class MessageRouter {
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
+		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -229,5 +230,13 @@ class HistogramVisibilityChangedMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		const isVisible = message.isVisible;
 		preview.updateHistogramVisibility(isVisible);
+	}
+}
+
+class ExecuteCommandMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (message.command) {
+			vscode.commands.executeCommand(message.command);
+		}
 	}
 }

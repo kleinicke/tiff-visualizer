@@ -19,8 +19,24 @@ import { ColormapConverter } from './modules/colormap-converter.js';
  */
 (function () {
 	// @ts-ignore
-	const vscode = acquireVsCodeApi();
-	
+	const originalVscode = acquireVsCodeApi();
+
+	// Format info tracking for context menu
+	let currentFormatInfo = null;
+
+	// Wrap vscode.postMessage to track formatInfo
+	const vscode = {
+		postMessage: (message) => {
+			// Track formatInfo when it's sent
+			if (message.type === 'formatInfo' && message.value) {
+				currentFormatInfo = message.value;
+			}
+			return originalVscode.postMessage(message);
+		},
+		setState: originalVscode.setState,
+		getState: originalVscode.getState
+	};
+
 	// Initialize all modules
 	const settingsManager = new SettingsManager();
 	const tiffProcessor = new TiffProcessor(settingsManager, vscode);
@@ -229,6 +245,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		} else {
 			image.src = settings.src || '';
 		}
+	}
+
+	/**
+	 * Helper function to send formatInfo (tracking happens automatically in vscode wrapper)
+	 */
+	function sendFormatInfo(formatInfo) {
+		vscode.postMessage({
+			type: 'formatInfo',
+			value: formatInfo
+		});
 	}
 
 	/**
@@ -761,17 +787,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			});
 
 			// Send format info
-			vscode.postMessage({
-				type: 'formatInfo',
-				value: {
-					width: width,
-					height: height,
-					bitsPerSample: 32,
-					sampleFormat: 3, // Float
-					samplesPerPixel: 1,
-					formatType: 'colormap-converted',
-					isInitialLoad: false
-				}
+			sendFormatInfo({
+				width: width,
+				height: height,
+				bitsPerSample: 32,
+				sampleFormat: 3, // Float
+				samplesPerPixel: 1,
+				formatType: 'colormap-converted',
+				isInitialLoad: false
 			});
 
 			// Update histogram
@@ -1018,7 +1041,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			copyImage();
 		});
 
-		// Custom context menu - only show copy option
+		// Custom context menu with various commands
 		document.addEventListener('contextmenu', (e) => {
 			e.preventDefault();
 
@@ -1034,16 +1057,64 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			menu.style.left = `${e.pageX}px`;
 			menu.style.top = `${e.pageY}px`;
 
-			// Add copy option
-			const copyOption = document.createElement('div');
-			copyOption.className = 'context-menu-item';
-			copyOption.textContent = 'Copy';
-			copyOption.addEventListener('click', () => {
-				copyImage();
-				menu.remove();
-			});
+			// Helper function to create menu items
+			const createMenuItem = (text, action) => {
+				const item = document.createElement('div');
+				item.className = 'context-menu-item';
+				item.textContent = text;
+				item.addEventListener('click', (e) => {
+					e.stopPropagation(); // Prevent event bubbling
+					menu.remove();
+					// Execute action after removing menu to avoid timing issues
+					setTimeout(() => action(), 0);
+				});
+				return item;
+			};
 
-			menu.appendChild(copyOption);
+			// Helper function to create separator
+			const createSeparator = () => {
+				const separator = document.createElement('div');
+				separator.className = 'context-menu-separator';
+				return separator;
+			};
+
+			// Add Copy option (triggers command via extension for logging)
+			menu.appendChild(createMenuItem('Copy', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.copyImage' });
+			}));
+
+			// Add Export as PNG option (triggers command via extension)
+			menu.appendChild(createMenuItem('Export as PNG', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' });
+			}));
+
+			menu.appendChild(createSeparator());
+
+			// Add Toggle Histogram option (triggers command via extension for logging)
+			menu.appendChild(createMenuItem('Toggle Histogram', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
+			}));
+
+			// Check if image is RGB (3+ channels) for RGB-specific options
+			// Only show for images that we know are RGB (need formatInfo)
+			const isRgbImage = currentFormatInfo && currentFormatInfo.samplesPerPixel >= 3;
+
+			if (isRgbImage) {
+				menu.appendChild(createSeparator());
+
+				// Add Convert Colormap to Float option (uses command - needs user input)
+				menu.appendChild(createMenuItem('Convert Colormap to Float', () => {
+					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.convertColormapToFloat' });
+				}));
+			}
+
+			menu.appendChild(createSeparator());
+
+			// Add Filter by Mask option (uses command - needs user input)
+			menu.appendChild(createMenuItem('Filter by Mask', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
+			}));
+
 			document.body.appendChild(menu);
 
 			// Remove menu when clicking outside
@@ -1233,6 +1304,20 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				type: 'didExportAsPng',
 				payload: canvas.toDataURL('image/png')
 			});
+		} else if (image && image.src) {
+			// If no canvas, create a temporary canvas from the image element
+			const tempCanvas = document.createElement('canvas');
+			tempCanvas.width = image.naturalWidth;
+			tempCanvas.height = image.naturalHeight;
+			const ctx = tempCanvas.getContext('2d');
+			if (ctx) {
+				ctx.drawImage(image, 0, 0);
+				vscode.postMessage({
+					type: 'didExportAsPng',
+					payload: tempCanvas.toDataURL('image/png')
+				});
+				tempCanvas.remove();
+			}
 		}
 	}
 

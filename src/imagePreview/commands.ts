@@ -2,34 +2,79 @@ import * as vscode from 'vscode';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
+import { getOutputChannel } from '../extension';
+
+/**
+ * Logs command execution to the output channel
+ */
+function logCommand(commandName: string, status: 'start' | 'success' | 'error', details?: string) {
+	const output = getOutputChannel();
+	const timestamp = new Date().toLocaleTimeString();
+	const statusIcon = status === 'start' ? '▶️' : status === 'success' ? '✅' : '❌';
+
+	if (status === 'start') {
+		output.appendLine(`[${timestamp}] ${statusIcon} Command: ${commandName}`);
+	} else if (status === 'success') {
+		output.appendLine(`[${timestamp}] ${statusIcon} Command: ${commandName} - SUCCESS${details ? ` (${details})` : ''}`);
+	} else {
+		output.appendLine(`[${timestamp}] ${statusIcon} Command: ${commandName} - FAILED${details ? ` - ${details}` : ''}`);
+	}
+}
 
 export function registerImagePreviewCommands(
-	context: vscode.ExtensionContext, 
+	context: vscode.ExtensionContext,
 	previewManager: ImagePreviewManager,
 	binarySizeStatusBarEntry: BinarySizeStatusBarEntry
 ): vscode.Disposable {
 	const disposables: vscode.Disposable[] = [];
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomIn', () => {
-		previewManager.activePreview?.zoomIn();
+		logCommand('zoomIn', 'start');
+		try {
+			previewManager.activePreview?.zoomIn();
+			logCommand('zoomIn', 'success');
+		} catch (error) {
+			logCommand('zoomIn', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomOut', () => {
-		previewManager.activePreview?.zoomOut();
+		logCommand('zoomOut', 'start');
+		try {
+			previewManager.activePreview?.zoomOut();
+			logCommand('zoomOut', 'success');
+		} catch (error) {
+			logCommand('zoomOut', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetZoom', () => {
-		previewManager.activePreview?.resetZoom();
+		logCommand('resetZoom', 'start');
+		try {
+			previewManager.activePreview?.resetZoom();
+			logCommand('resetZoom', 'success');
+		} catch (error) {
+			logCommand('resetZoom', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.copyImage', async () => {
-		const activePreview = previewManager.activePreview;
-		if (activePreview) {
-			activePreview.copyImage();
+		logCommand('copyImage', 'start');
+		try {
+			const activePreview = previewManager.activePreview;
+			if (activePreview) {
+				activePreview.copyImage();
+				logCommand('copyImage', 'success');
+			} else {
+				logCommand('copyImage', 'error', 'No active preview');
+			}
+		} catch (error) {
+			logCommand('copyImage', 'error', String(error));
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsPng', async () => {
+		logCommand('exportAsPng', 'start');
 		const activePreview = previewManager.activePreview;
 		if (activePreview) {
 			try {
@@ -39,20 +84,29 @@ export function registerImagePreviewCommands(
 						filters: { 'PNG Images': ['png'] },
 						defaultUri: vscode.Uri.file(activePreview.resource.path.replace(/\.[^/.]+$/, '.png'))
 					});
-					
+
 					if (saveUri) {
 						const buffer = Buffer.from(result.split(',')[1], 'base64');
 						await vscode.workspace.fs.writeFile(saveUri, buffer);
 						vscode.window.showInformationMessage(`Image exported to ${saveUri.fsPath}`);
+						logCommand('exportAsPng', 'success', saveUri.fsPath);
+					} else {
+						logCommand('exportAsPng', 'error', 'User cancelled save dialog');
 					}
+				} else {
+					logCommand('exportAsPng', 'error', 'No result from exportAsPng');
 				}
 			} catch (error) {
 				vscode.window.showErrorMessage(`Failed to export image: ${error}`);
+				logCommand('exportAsPng', 'error', String(error));
 			}
+		} else {
+			logCommand('exportAsPng', 'error', 'No active preview');
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
+		logCommand('setNormalizationRange', 'start');
 		const currentConfig = previewManager.getNormalizationConfig();
 		const activePreview = previewManager.activePreview;
 
@@ -154,6 +208,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!selected) {
+			logCommand('setNormalizationRange', 'error', 'User cancelled');
 			return;
 		}
 
@@ -163,12 +218,14 @@ export function registerImagePreviewCommands(
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
+			logCommand('setNormalizationRange', 'success', 'Auto-normalize enabled');
 		} else if (selected.action === 'gamma') {
 			previewManager.setGammaMode(true);
 			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
+			logCommand('setNormalizationRange', 'success', 'Gamma/brightness mode enabled');
 		} else if (selected.action === 'rgb24bit') {
 			// Toggle RGB as 24-bit grayscale mode
 			const newState = !previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
@@ -186,14 +243,17 @@ export function registerImagePreviewCommands(
 				});
 
 				if (scaleFactorInput === undefined) {
+					logCommand('setNormalizationRange', 'error', 'User cancelled 24-bit scale factor input');
 					return; // User cancelled
 				}
 
 				const scaleFactor = parseFloat(scaleFactorInput);
 				previewManager.appStateManager.setRgbAs24BitGrayscale(true, scaleFactor);
+				logCommand('setNormalizationRange', 'success', `RGB 24-bit mode enabled with scale factor: ${scaleFactor}`);
 			} else {
 				// Disabling 24-bit mode
 				previewManager.appStateManager.setRgbAs24BitGrayscale(false);
+				logCommand('setNormalizationRange', 'success', 'RGB 24-bit mode disabled');
 			}
 
 			previewManager.updateAllPreviews();
@@ -208,6 +268,7 @@ export function registerImagePreviewCommands(
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
+			logCommand('setNormalizationRange', 'success', `Normalized float mode ${newState ? 'enabled' : 'disabled'}`);
 		} else {
 			// Manual range setting
 			previewManager.setAutoNormalize(false);
@@ -222,6 +283,7 @@ export function registerImagePreviewCommands(
 			});
 
 			if (minValue === undefined) {
+				logCommand('setNormalizationRange', 'error', 'User cancelled min value input');
 				return;
 			}
 
@@ -236,6 +298,7 @@ export function registerImagePreviewCommands(
 			});
 
 			if (maxValue === undefined) {
+				logCommand('setNormalizationRange', 'error', 'User cancelled max value input');
 				return;
 			}
 
@@ -247,10 +310,12 @@ export function registerImagePreviewCommands(
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
+			logCommand('setNormalizationRange', 'success', `Manual range: [${min}, ${max}]`);
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setGamma', async () => {
+		logCommand('setGamma', 'start');
 		const currentPreview = previewManager.activePreview;
 		const normConfig = previewManager.getNormalizationConfig();
 
@@ -307,6 +372,7 @@ export function registerImagePreviewCommands(
 			});
 
 			if (!choice || choice.action === 'cancel') {
+				logCommand('setGamma', 'error', 'User cancelled');
 				return;
 			}
 
@@ -316,6 +382,7 @@ export function registerImagePreviewCommands(
 				if (currentPreview) {
 					currentPreview.updateStatusBar();
 				}
+				logCommand('setGamma', 'success', 'Switched to gamma/brightness mode');
 				return;
 			}
 		}
@@ -331,6 +398,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (gammaIn === undefined) {
+			logCommand('setGamma', 'error', 'User cancelled gamma in input');
 			return;
 		}
 
@@ -343,6 +411,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (gammaOut === undefined) {
+			logCommand('setGamma', 'error', 'User cancelled gamma out input');
 			return;
 		}
 
@@ -354,9 +423,11 @@ export function registerImagePreviewCommands(
 		if (currentPreview) {
 			currentPreview.updateStatusBar();
 		}
+		logCommand('setGamma', 'success', `Gamma set: in=${gammaInValue}, out=${gammaOutValue}`);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setBrightness', async () => {
+		logCommand('setBrightness', 'start');
 		const currentConfig = previewManager.getBrightnessConfig();
 		const currentPreview = previewManager.activePreview;
 
@@ -370,6 +441,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (brightness === undefined) {
+			logCommand('setBrightness', 'error', 'User cancelled');
 			return;
 		}
 
@@ -379,11 +451,14 @@ export function registerImagePreviewCommands(
 		if (currentPreview) {
 			currentPreview.updateStatusBar();
 		}
+		logCommand('setBrightness', 'success', `Brightness set: ${brightnessValue}`);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setComparisonBase', async () => {
+		logCommand('setComparisonBase', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
+			logCommand('setComparisonBase', 'error', 'No active preview');
 			return;
 		}
 
@@ -435,12 +510,14 @@ export function registerImagePreviewCommands(
 			});
 
 			if (!choice) {
+				logCommand('setComparisonBase', 'error', 'User cancelled');
 				return;
 			}
 
 			if (choice.action === 'clear') {
 				previewManager.setComparisonBase(undefined);
 				vscode.window.showInformationMessage('Comparison cleared.');
+				logCommand('setComparisonBase', 'success', 'Comparison cleared');
 				return;
 			}
 		}
@@ -461,13 +538,18 @@ export function registerImagePreviewCommands(
 			previewManager.setComparisonBase(comparisonUri);
 			activePreview.startComparison(comparisonUri);
 			vscode.window.showInformationMessage(`Comparison set to: ${comparisonUri.fsPath}`);
+			logCommand('setComparisonBase', 'success', comparisonUri.fsPath);
+		} else {
+			logCommand('setComparisonBase', 'error', 'No file selected');
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.filterByMask', async () => {
+		logCommand('filterByMask', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
 			vscode.window.showErrorMessage('No active TIFF preview found.');
+			logCommand('filterByMask', 'error', 'No active preview');
 			return;
 		}
 
@@ -545,14 +627,25 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!choice) {
+			logCommand('filterByMask', 'error', 'User cancelled');
 			return;
 		}
 
 		// Handle the selected action
 		if (choice.action === 'add') {
-			await addNewMask(previewManager, imageUri);
+			const result = await addNewMask(previewManager, imageUri);
+			if (result) {
+				logCommand('filterByMask', 'success', `Mask added: ${result}`);
+			} else {
+				logCommand('filterByMask', 'error', 'Failed to add mask');
+			}
 		} else if (choice.action === 'edit' && choice.maskIndex !== undefined) {
-			await editMask(previewManager, imageUri, choice.maskIndex);
+			const result = await editMask(previewManager, imageUri, choice.maskIndex);
+			if (result) {
+				logCommand('filterByMask', 'success', `Mask ${choice.maskIndex} ${result}`);
+			} else {
+				logCommand('filterByMask', 'error', 'Failed to edit mask');
+			}
 		} else if (choice.action === 'removeAll') {
 			// Remove all masks
 			while (currentMasks.length > 0) {
@@ -560,11 +653,12 @@ export function registerImagePreviewCommands(
 			}
 			previewManager.updateAllPreviews();
 			vscode.window.showInformationMessage('All mask filters removed.');
+			logCommand('filterByMask', 'success', 'All masks removed');
 		}
 	}));
 
 	// Helper function to add a new mask
-	async function addNewMask(previewManager: ImagePreviewManager, imageUri: string) {
+	async function addNewMask(previewManager: ImagePreviewManager, imageUri: string): Promise<string | null> {
 		// Step 1: Select mask image
 		const maskUris = await vscode.window.showOpenDialog({
 			canSelectFiles: true,
@@ -578,7 +672,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!maskUris || maskUris.length === 0) {
-			return;
+			return null;
 		}
 
 		const maskUri = maskUris[0];
@@ -593,7 +687,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (threshold === undefined) {
-			return;
+			return null;
 		}
 
 		const thresholdValue = parseFloat(threshold);
@@ -643,7 +737,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!directionChoice) {
-			return;
+			return null;
 		}
 
 		// Add the new mask
@@ -656,22 +750,23 @@ export function registerImagePreviewCommands(
 
 		previewManager.settingsManager.addMaskFilter(imageUri, newMask);
 		previewManager.updateAllPreviews();
-		
+
 		const directionText = directionChoice.action ? 'higher' : 'lower';
 		const fileName = maskUri.fsPath.split('/').pop() || maskUri.fsPath.split('\\').pop() || 'Unknown';
 		vscode.window.showInformationMessage(
 			`New mask added: ${fileName}\nThreshold: ${thresholdValue}, Filter: ${directionText} values`
 		);
+		return `${fileName} (threshold: ${thresholdValue}, filter: ${directionText})`;
 	}
 
 	// Helper function to edit an existing mask
-	async function editMask(previewManager: ImagePreviewManager, imageUri: string, maskIndex: number) {
+	async function editMask(previewManager: ImagePreviewManager, imageUri: string, maskIndex: number): Promise<string | null> {
 		const masks = previewManager.settingsManager.getMaskFilterSettings(imageUri);
 		const mask = masks[maskIndex];
-		
+
 		if (!mask) {
 			vscode.window.showErrorMessage('Mask not found.');
-			return;
+			return null;
 		}
 
 		// Show edit options
@@ -722,17 +817,19 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!editChoice) {
-			return;
+			return null;
 		}
 
 		if (editChoice.action === 'toggle') {
 			previewManager.settingsManager.setMaskFilterEnabled(imageUri, maskIndex, !mask.enabled);
 			previewManager.updateAllPreviews();
 			vscode.window.showInformationMessage(`Mask ${mask.enabled ? 'disabled' : 'enabled'}.`);
+			return mask.enabled ? 'disabled' : 'enabled';
 		} else if (editChoice.action === 'delete') {
 			previewManager.settingsManager.removeMaskFilter(imageUri, maskIndex);
 			previewManager.updateAllPreviews();
 			vscode.window.showInformationMessage('Mask deleted.');
+			return 'deleted';
 		} else if (editChoice.action === 'edit') {
 			// Edit threshold
 			const threshold = await vscode.window.showInputBox({
@@ -744,7 +841,7 @@ export function registerImagePreviewCommands(
 			});
 
 			if (threshold === undefined) {
-				return;
+				return null;
 			}
 
 			const thresholdValue = parseFloat(threshold);
@@ -797,7 +894,7 @@ export function registerImagePreviewCommands(
 			});
 
 			if (!directionChoice) {
-				return;
+				return null;
 			}
 
 			// Update the mask
@@ -806,24 +903,33 @@ export function registerImagePreviewCommands(
 				filterHigher: directionChoice.action
 			});
 			previewManager.updateAllPreviews();
-			
+
 			const directionText = directionChoice.action ? 'higher' : 'lower';
 			vscode.window.showInformationMessage(
 				`Mask updated: Threshold: ${thresholdValue}, Filter: ${directionText} values`
 			);
+			return `edited (threshold: ${thresholdValue}, filter: ${directionText})`;
 		}
+		return null;
 	}
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleNanColor', () => {
-		const currentColor = previewManager.settingsManager.getNanColor();
-		previewManager.settingsManager.toggleNanColor();
-		previewManager.updateAllPreviews();
-		
-		const newColor = previewManager.settingsManager.getNanColor();
-		vscode.window.showInformationMessage(`NaN color changed to: ${newColor}`);
+		logCommand('toggleNanColor', 'start');
+		try {
+			const currentColor = previewManager.settingsManager.getNanColor();
+			previewManager.settingsManager.toggleNanColor();
+			previewManager.updateAllPreviews();
+
+			const newColor = previewManager.settingsManager.getNanColor();
+			vscode.window.showInformationMessage(`NaN color changed to: ${newColor}`);
+			logCommand('toggleNanColor', 'success', `Changed to: ${newColor}`);
+		} catch (error) {
+			logCommand('toggleNanColor', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openWith', async (resource?: vscode.Uri) => {
+		logCommand('openWith', 'start');
 		if (!resource) {
 			// Try to get the resource from the active editor
 			const activeEditor = vscode.window.activeTextEditor;
@@ -834,26 +940,32 @@ export function registerImagePreviewCommands(
 
 		if (!resource) {
 			vscode.window.showErrorMessage('No file selected to open with TIFF Visualizer.');
+			logCommand('openWith', 'error', 'No file selected');
 			return;
 		}
 
 		// Open the file with the TIFF Visualizer custom editor
 		try {
 			await vscode.commands.executeCommand('vscode.openWith', resource, 'tiffVisualizer.previewEditor');
+			logCommand('openWith', 'success', resource.fsPath);
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to open with TIFF Visualizer: ${error}`);
+			logCommand('openWith', 'error', String(error));
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openNextToCurrent', async (resource?: vscode.Uri) => {
+		logCommand('openNextToCurrent', 'start');
 		if (!resource) {
 			vscode.window.showErrorMessage('No file selected to open next to current image.');
+			logCommand('openNextToCurrent', 'error', 'No file selected');
 			return;
 		}
 
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
 			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open a TIFF image first.');
+			logCommand('openNextToCurrent', 'error', 'No active preview');
 			return;
 		}
 
@@ -861,44 +973,61 @@ export function registerImagePreviewCommands(
 		try {
 			await activePreview.addToImageCollection(resource);
 			vscode.window.showInformationMessage(`Added ${resource.fsPath.split('/').pop()} to image collection. Press 't' to toggle between images.`);
+			logCommand('openNextToCurrent', 'success', resource.fsPath);
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
+			logCommand('openNextToCurrent', 'error', String(error));
 		}
 	}));
 
 	// Comparison Panel Commands
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.selectForCompare', async () => {
+		logCommand('selectForCompare', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
 			vscode.window.showErrorMessage('No active TIFF Visualizer preview found.');
+			logCommand('selectForCompare', 'error', 'No active preview');
 			return;
 		}
 
-		// Add current image to the comparison panel
-		const panel = ComparisonPanel.create(context.extensionUri);
-		panel.addImage(activePreview.resource);
-		
-		vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
-		
-		// Set context to show that we have a comparison image
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', true);
+		try {
+			// Add current image to the comparison panel
+			const panel = ComparisonPanel.create(context.extensionUri);
+			panel.addImage(activePreview.resource);
+
+			vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
+
+			// Set context to show that we have a comparison image
+			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', true);
+			logCommand('selectForCompare', 'success', activePreview.resource.fsPath);
+		} catch (error) {
+			logCommand('selectForCompare', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.compareWithSelected', async () => {
+		logCommand('compareWithSelected', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
 			vscode.window.showErrorMessage('No active TIFF Visualizer preview found.');
+			logCommand('compareWithSelected', 'error', 'No active preview');
 			return;
 		}
 
-		// Get or create comparison panel and add current image
-		const panel = ComparisonPanel.create(context.extensionUri);
-		panel.addImage(activePreview.resource);
+		try {
+			// Get or create comparison panel and add current image
+			const panel = ComparisonPanel.create(context.extensionUri);
+			panel.addImage(activePreview.resource);
 
-		vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
+			vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
+			logCommand('compareWithSelected', 'success', activePreview.resource.fsPath);
+		} catch (error) {
+			logCommand('compareWithSelected', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetAllSettings', async () => {
+		logCommand('resetAllSettings', 'start');
 		const choice = await vscode.window.showWarningMessage(
 			'Reset all TIFF Visualizer settings to defaults? This will clear all cached normalization, gamma, and brightness settings for all image formats.',
 			{ modal: true },
@@ -907,24 +1036,39 @@ export function registerImagePreviewCommands(
 		);
 
 		if (choice === 'Reset All') {
-			previewManager.appStateManager.clearAllCaches();
-			previewManager.appStateManager.resetToDefaults();
+			try {
+				previewManager.appStateManager.clearAllCaches();
+				previewManager.appStateManager.resetToDefaults();
 
-			// Refresh all open previews to apply default settings
-			previewManager.updateAllPreviews();
+				// Refresh all open previews to apply default settings
+				previewManager.updateAllPreviews();
 
-			vscode.window.showInformationMessage('All TIFF Visualizer settings have been reset to defaults.');
+				vscode.window.showInformationMessage('All TIFF Visualizer settings have been reset to defaults.');
+				logCommand('resetAllSettings', 'success');
+			} catch (error) {
+				logCommand('resetAllSettings', 'error', String(error));
+			}
+		} else {
+			logCommand('resetAllSettings', 'error', 'User cancelled');
 		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleHistogram', () => {
-		previewManager.activePreview?.toggleHistogram();
+		logCommand('toggleHistogram', 'start');
+		try {
+			previewManager.activePreview?.toggleHistogram();
+			logCommand('toggleHistogram', 'success');
+		} catch (error) {
+			logCommand('toggleHistogram', 'error', String(error));
+		}
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.convertColormapToFloat', async () => {
+		logCommand('convertColormapToFloat', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
 			vscode.window.showErrorMessage('No active image preview found.');
+			logCommand('convertColormapToFloat', 'error', 'No active preview');
 			return;
 		}
 
@@ -970,6 +1114,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!selectedColormap) {
+			logCommand('convertColormapToFloat', 'error', 'User cancelled colormap selection');
 			return;
 		}
 
@@ -1030,6 +1175,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (!selectedMapping) {
+			logCommand('convertColormapToFloat', 'error', 'User cancelled mapping selection');
 			return;
 		}
 
@@ -1048,6 +1194,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (minValue === undefined) {
+			logCommand('convertColormapToFloat', 'error', 'User cancelled min value input');
 			return;
 		}
 
@@ -1068,6 +1215,7 @@ export function registerImagePreviewCommands(
 		});
 
 		if (maxValue === undefined) {
+			logCommand('convertColormapToFloat', 'error', 'User cancelled max value input');
 			return;
 		}
 
@@ -1094,6 +1242,9 @@ export function registerImagePreviewCommands(
 			vscode.window.showInformationMessage(
 				`Converting ${selectedColormap.label} colormap to float values [${min}, ${max}] (${mappingDesc})...`
 			);
+			logCommand('convertColormapToFloat', 'success', `${selectedColormap.value} [${min}, ${max}] ${mappingDesc}`);
+		} else {
+			logCommand('convertColormapToFloat', 'error', 'No webview available');
 		}
 	}));
 
