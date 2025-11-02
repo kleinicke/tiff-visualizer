@@ -180,10 +180,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
-	 * Reload image when file changes on disk (preserves zoom state)
-	 * @param {any} savedZoomState - The zoom state to restore after reload
+	 * Reload image when file changes on disk
+	 * Always resets zoom to 'fit' when file is rewritten to avoid dimension mismatch issues
 	 */
-	function reloadImage(savedZoomState) {
+	function reloadImage() {
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
@@ -211,25 +211,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		const settings = settingsManager.settings;
 		const resourceUri = settings.resourceUri || '';
 
-		// Track whether we should restore zoom
-		const shouldRestoreZoom = savedZoomState && savedZoomState.scale !== 'fit';
-
-		// Store the zoom state to restore after image loads
-		if (shouldRestoreZoom) {
-			// Wait for image to load, then restore zoom
-			const checkAndRestore = setInterval(() => {
-				// @ts-ignore - imageElement is set during image loading
-				if (hasLoadedImage && imageElement) {
-					clearInterval(checkAndRestore);
-					setTimeout(() => {
-						zoomController.restoreState(savedZoomState);
-					}, 100);
-				}
-			}, 50);
-
-			// Safety timeout to prevent infinite checking
-			setTimeout(() => clearInterval(checkAndRestore), 5000);
-		}
+		// When file is rewritten, always reset zoom to 'fit' to avoid dimension mismatches
+		// The file on disk may have changed size, so preserving zoom state would cause
+		// incorrect calculations in zoomController.updateScale() which uses canvas.width/height
+		zoomController.resetZoom();
 
 		// Load image based on file extension
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
@@ -562,11 +547,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				}
 				// If resource URI changed, reload the entire image
 				else if (oldResourceUri !== newResourceUri) {
-					// Save current zoom state before reloading (for file recreation case)
-					const currentZoomState = zoomController.getCurrentState();
-
-					// Reload the image without reinitializing event listeners
-					reloadImage(currentZoomState);
+					// Reload the image - zoom will be reset to 'fit' to handle dimension changes
+					reloadImage();
 				} else {
 					// Update rendering with new settings, using optimization hints
 					updateImageWithNewSettings(changes);
