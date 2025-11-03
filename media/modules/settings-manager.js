@@ -134,39 +134,45 @@ export class SettingsManager {
     const normGammaModeChanged = oldSettings.normalization?.gammaMode !== newSettings.normalization?.gammaMode;
 
     // Check structural changes
-    const masksChanged = JSON.stringify(oldSettings.maskFilters) !== JSON.stringify(newSettings.maskFilters);
     const rgbModeChanged = oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
     const scaleModeChanged = oldSettings.scale24BitFactor !== newSettings.scale24BitFactor;
     const floatModeChanged = oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
     const nanColorChanged = oldSettings.nanColor !== newSettings.nanColor;
 
-    // Determine change type
-    if (masksChanged) {
-      changes.changedMasks = true;
-    }
+    // Check mask changes - masks are per-image settings, not per-format settings
+    // They can only be applied when the image is in foreground, so they don't affect
+    // structural change detection or image switching
+    const masksChanged = JSON.stringify(oldSettings.maskFilters) !== JSON.stringify(newSettings.maskFilters);
 
+    // Determine change type
+    // NOTE: maskFilters are PER-IMAGE, not per-format, so they NEVER cause structural changes
+    // nanColorChanged is NOT a structural change - it's a rendering parameter
+    // Only RGB mode, scale mode, and float mode are structural (affect data layout)
     if (rgbModeChanged || scaleModeChanged || floatModeChanged) {
       changes.changedStructure = true;
     }
 
-    // Determine if anything changed at all
+    // Track mask changes separately for per-image state updates
+    if (masksChanged) {
+      changes.changedMasks = true;
+    }
+
+    // Determine if anything changed at all (excluding masks and nanColor from structural consideration)
     const somethingChanged = gammaChanged || brightnessChanged || normRangeChanged ||
-                             normAutoChanged || normGammaModeChanged || masksChanged ||
-                             rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged;
+                             normAutoChanged || normGammaModeChanged ||
+                             rgbModeChanged || scaleModeChanged || floatModeChanged;
 
     // If only gamma, brightness, or normalization ranges changed, it's parameters-only
     // Also treat "no changes" as parameters-only to avoid unnecessary slow path
     if (!somethingChanged ||
         ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged) &&
-         !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged && !nanColorChanged)) {
+         !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
       changes.parametersOnly = true;
     } else {
       console.log('⚠️ Structural changes detected:', {
-        masksChanged,
         rgbModeChanged,
         scaleModeChanged,
-        floatModeChanged,
-        nanColorChanged
+        floatModeChanged
       });
     }
 

@@ -110,6 +110,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Initialize the application
 	 */
 	function initialize() {
+		const resourceUri = settingsManager.settings.resourceUri || '';
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
@@ -121,7 +122,6 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Start loading the image
 		const settings = settingsManager.settings;
-		const resourceUri = settings.resourceUri;
 
 		// Load image based on file extension
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
@@ -611,8 +611,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				break;
 				
 			case 'switchToImage':
-				// Switch to a different image
+				// Switch to a different image (full reload from disk/cache)
 				switchToNewImage(message.uri, message.resourceUri);
+				break;
+
+			case 'reuseCachedImage':
+				// Reuse cached image without reloading from disk
+				reuseCachedImage(message.uri, message.resourceUri, message.needsRerender, message.maskFilters);
 				break;
 
 			case 'toggleHistogram':
@@ -1275,26 +1280,83 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
-		
+
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
-		
+
 		// Clear the container
 		const container = document.body;
 		container.className = 'container';
-		
+
 		// Remove any existing image/canvas elements
 		const existingImages = container.querySelectorAll('img, canvas');
 		existingImages.forEach(el => el.remove());
-		
+
 		// Show loading state
 		container.classList.add('loading');
-		
+
 		// Load the new image based on file type
 		loadImageByType(uri, resourceUri);
+	}
+
+	/**
+	 * Reuse a cached image without reloading from disk
+	 * Masks are per-image settings, so they're applied regardless of cache validity
+	 * @param {string} uri - The webview URI of the image
+	 * @param {string} resourceUri - The resource URI of the image
+	 * @param {boolean} needsRerender - Whether the image needs to be re-rendered with new per-format settings
+	 * @param {any} maskFilters - Per-image mask filters to apply
+	 */
+	function reuseCachedImage(uri, resourceUri, needsRerender, maskFilters) {
+		console.log('[CACHE-WEBVIEW] Reusing cached image:', resourceUri.split('/').pop());
+		console.log('[CACHE-WEBVIEW] Needs rerender:', needsRerender);
+		// @ts-ignore - canvas and primaryImageData are dynamic globals
+		console.log('[CACHE-WEBVIEW] Has loaded:', hasLoadedImage, 'Has canvas:', !!canvas, 'Has data:', !!primaryImageData);
+
+		// Update resource URI for the current image
+		settingsManager.settings.resourceUri = resourceUri;
+		settingsManager.settings.src = uri;
+
+		// Apply per-image mask filters directly (masks are per-image, not per-format)
+		settingsManager.settings.maskFilters = maskFilters || [];
+
+		// @ts-ignore - canvas and primaryImageData are dynamic globals
+		if (!hasLoadedImage || !canvas || !primaryImageData) {
+			// If somehow the cache is invalid, fall back to full reload
+			console.log('[CACHE-WEBVIEW] Cache invalid, falling back to full reload');
+			switchToNewImage(uri, resourceUri);
+			return;
+		}
+
+		console.log('[CACHE-WEBVIEW] Cache is valid, reusing');
+
+		// If per-format settings changed (gamma, normalization, brightness), re-render with cached data
+		if (needsRerender) {
+			updateImageWithNewSettings({
+				normalization: true,
+				gamma: true,
+				brightness: true,
+				rgbMode: true,
+				scaleMode: true,
+				floatMode: true
+			});
+		}
+
+		// Always apply per-image mask filters after switching (they're image-specific)
+		if (maskFilters && maskFilters.length > 0) {
+			updateImageWithNewSettings({
+				maskFilters: true
+			});
+		}
+
+		// Update the overlay
+		updateImageCollectionOverlay(imageCollection);
+
+		// Save the updated state
+		saveState();
 	}
 
 	/**

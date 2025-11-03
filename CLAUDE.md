@@ -39,6 +39,15 @@ vsce package            # Creates .vsix file for distribution
 
 ## Architecture Overview
 
+### Image Caching System (New)
+The extension now includes an intelligent caching system that keeps up to 5 images loaded per view column:
+- **Fast tab switching**: No disk I/O when switching between cached images
+- **Smart invalidation**: Re-renders cached images only when format settings change
+- **State preservation**: Restores exact zoom/pan position and mask filters
+- **Automatic LRU eviction**: Least recently used image is removed when cache fills
+
+See [CACHING_SYSTEM.md](CACHING_SYSTEM.md) for detailed documentation.
+
 ### Triple Build System
 The extension uses a sophisticated three-bundle build approach:
 

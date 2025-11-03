@@ -10,6 +10,7 @@ import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
+import { ViewCache } from './viewCache';
 import type { IImagePreviewManager } from './types';
 import type { ImageSettings } from './appStateManager';
 import type { MaskFilterSettings } from './imageSettings';
@@ -33,6 +34,9 @@ export class ImagePreview extends MediaPreview {
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentZoomState: { scale: Scale; x: number; y: number } | undefined;
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
+
+	// View cache for keeping up to 5 images in memory per subwindow
+	private _viewCache = new ViewCache();
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -85,9 +89,18 @@ export class ImagePreview extends MediaPreview {
 
 		this._register(webviewEditor.onDidChangeViewState(() => {
 			this.updateStatusBar();
-			
+
 			// Also update the global state
 			this.updateState();
+
+			// If we're becoming inactive (hidden), save current view to cache
+			if (!webviewEditor.active && this.previewState === PreviewState.Visible) {
+				this.saveCurrentZoomState();
+				// Save to cache after a small delay to allow messages to be processed
+				setTimeout(() => {
+					this.saveCurrentViewToCache();
+				}, 50);
+			}
 		}));
 
 		// Single unified settings update handler
@@ -127,10 +140,21 @@ export class ImagePreview extends MediaPreview {
 		// Subscribe to both managers but use single update function
 		// Per-image settings (maskFilters) always apply to this preview
 		this._register(this._manager.settingsManager.onDidChangeSettings(updateSettings));
+
 		// Per-format settings (normalization, gamma, brightness) only apply if format matches
+		let lastSettingsJson = '';
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
 			// Only update if settings are for our format (prevents cross-format contamination)
 			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
+				// Check if settings actually changed (not just format switching)
+				const currentSettingsJson = JSON.stringify(this._manager.appStateManager.imageSettings);
+				const settingsActuallyChanged = lastSettingsJson !== '' && currentSettingsJson !== lastSettingsJson;
+
+				if (settingsActuallyChanged && this._currentFormat) {
+					this._viewCache.invalidateFormat(this._currentFormat);
+				}
+
+				lastSettingsJson = currentSettingsJson;
 				updateSettings();
 			}
 		}));
@@ -335,30 +359,38 @@ export class ImagePreview extends MediaPreview {
 		if (this._imageCollection.length <= 1) {
 			return; // No other images to toggle to
 		}
-		
-		// Save current zoom/position state
+
+		// Request and save current state BEFORE switching
 		this.saveCurrentZoomState();
-		
-		// Move to next image (cycle back to 0 if at end)
-		this._currentImageIndex = (this._currentImageIndex + 1) % this._imageCollection.length;
-		
-		// Update current resource and reload
-		this.switchToImageAtIndex(this._currentImageIndex);
+
+		// Use a small delay to allow zoom/comparison state messages to be processed
+		// and cache to be populated before switching to next image
+		setTimeout(() => {
+			// Move to next image (cycle back to 0 if at end)
+			this._currentImageIndex = (this._currentImageIndex + 1) % this._imageCollection.length;
+
+			// Update current resource and reload
+			this.switchToImageAtIndex(this._currentImageIndex);
+		}, 50);
 	}
 
 	public toggleToPreviousImage(): void {
 		if (this._imageCollection.length <= 1) {
 			return; // No other images to toggle to
 		}
-		
-		// Save current zoom/position state
+
+		// Request and save current state BEFORE switching
 		this.saveCurrentZoomState();
-		
-		// Move to previous image (cycle to end if at beginning)
-		this._currentImageIndex = (this._currentImageIndex - 1 + this._imageCollection.length) % this._imageCollection.length;
-		
-		// Update current resource and reload
-		this.switchToImageAtIndex(this._currentImageIndex);
+
+		// Use a small delay to allow zoom/comparison state messages to be processed
+		// and cache to be populated before switching to previous image
+		setTimeout(() => {
+			// Move to previous image (cycle to end if at beginning)
+			this._currentImageIndex = (this._currentImageIndex - 1 + this._imageCollection.length) % this._imageCollection.length;
+
+			// Update current resource and reload
+			this.switchToImageAtIndex(this._currentImageIndex);
+		}, 50);
 	}
 
 	private async preloadImageData(uri: vscode.Uri): Promise<void> {
@@ -380,38 +412,90 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
+	/**
+	 * Save current image view to cache before switching
+	 */
+	public saveCurrentViewToCache(): void {
+		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
+		this._viewCache.set(
+			this.resource,
+			this._currentFormat,
+			this._manager.appStateManager.imageSettings,
+			maskFilters,
+			this._currentZoomState,
+			this._currentComparisonState
+		);
+	}
+
+	/**
+	 * Check if an image view is cached and valid
+	 */
+	public isViewCached(resourceUri: vscode.Uri): boolean {
+		return this._viewCache.isValid(
+			resourceUri,
+			this._manager.appStateManager.imageSettings,
+			this._currentFormat
+		);
+	}
+
+	/**
+	 * Get cached view data
+	 */
+	public getCachedView(resourceUri: vscode.Uri) {
+		return this._viewCache.get(resourceUri);
+	}
+
 	private switchToImageAtIndex(index: number): void {
 		if (index < 0 || index >= this._imageCollection.length) {
 			return;
 		}
-		
+
 		this._currentImageIndex = index;
 		const newResource = this._imageCollection[index];
 		const cacheKey = newResource.toString();
 		const cachedData = this._preloadedImageData.get(cacheKey);
-		
+
+		// Check if we have a valid cached view for this image
+		const cachedView = this._viewCache.get(newResource);
+
+		// Validate cache using the cached format (not the current/old format)
+		// This ensures we can reuse cached images even when switching between different formats
+		const isCacheValid = cachedView && this._viewCache.isValid(
+			newResource,
+			this._manager.appStateManager.imageSettings,
+			cachedView.format // Use cached format, not currentFormat (which is the old image's format)
+		);
+
+		// Determine if we need to reload or can reuse cache
+		const messageType = isCacheValid ? 'reuseCachedImage' : 'switchToImage';
+		const needsRerender = cachedView && !isCacheValid; // Cache exists but settings changed
+
 		// Send switch request to webview
 		this._webviewEditor.webview.postMessage({
-			type: 'switchToImage',
+			type: messageType,
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
-			resourceUri: newResource.toString()
+			resourceUri: newResource.toString(),
+			needsRerender: needsRerender, // If true, re-render with new settings
+			maskFilters: cachedView?.maskFilters || [] // Restore mask filters from cache
 		});
-		
+
 		// Update overlay
 		this.updateImageCollectionOverlay();
-		
+
 		// Restore zoom and comparison state after a brief delay
 		setTimeout(() => {
-			if (this._currentZoomState) {
-				this._webviewEditor.webview.postMessage({ 
-					type: 'restoreZoomState', 
-					state: this._currentZoomState 
+			if (cachedView?.zoomState) {
+				this._currentZoomState = cachedView.zoomState;
+				this._webviewEditor.webview.postMessage({
+					type: 'restoreZoomState',
+					state: this._currentZoomState
 				});
 			}
-			if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
-				this._webviewEditor.webview.postMessage({ 
-					type: 'restoreComparisonState', 
-					state: this._currentComparisonState 
+			if (cachedView?.comparisonState && cachedView.comparisonState.peerUris.length > 0) {
+				this._currentComparisonState = cachedView.comparisonState;
+				this._webviewEditor.webview.postMessage({
+					type: 'restoreComparisonState',
+					state: this._currentComparisonState
 				});
 			}
 		}, 150);

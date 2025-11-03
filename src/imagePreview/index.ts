@@ -60,6 +60,9 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const viewType = ImagePreviewManager.getViewType();
 	disposables.push(vscode.window.registerCustomEditorProvider(viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
+		webviewOptions: {
+			retainContextWhenHidden: true,
+		},
 	}));
 
 	// Register commands

@@ -193,6 +193,8 @@ class ZoomStateResponseMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		// Store the zoom state for later restoration
 		(preview as any)._currentZoomState = message.state;
+		// Also save to cache
+		preview.saveCurrentViewToCache();
 	}
 }
 
