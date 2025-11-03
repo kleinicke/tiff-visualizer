@@ -1247,6 +1247,33 @@ export function registerImagePreviewCommands(
 			logCommand('convertColormapToFloat', 'error', 'No webview available');
 		}
 	}));
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.revertToOriginal', async () => {
+		logCommand('revertToOriginal', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active image preview found.');
+			logCommand('revertToOriginal', 'error', 'No active preview');
+			return;
+		}
+
+		// Reset the RGB 24-bit mode
+		previewManager.appStateManager.setRgbAs24BitGrayscale(false);
+
+		// Send revert message to webview to reload original image
+		const preview = activePreview as any;
+		if (preview.getWebview) {
+			preview.getWebview().postMessage({
+				type: 'revertToOriginal'
+			});
+		}
+
+		previewManager.updateAllPreviews();
+		if (activePreview) {
+			activePreview.updateStatusBar();
+		}
+
+		logCommand('revertToOriginal', 'success', 'Reverted to original image');
+	}));
 
 	return vscode.Disposable.from(...disposables);
 } 

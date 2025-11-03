@@ -67,6 +67,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	// Colormap conversion state
 	let colormapConversionState = null;
 
+	// Original image state (for reverting from conversions)
+	let originalImageData = null;
+	let hasAppliedConversion = false;
+
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
 	if (persistedState) {
@@ -637,6 +641,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					message.logarithmic || false
 				);
 				break;
+
+			case 'revertToOriginal':
+				// Revert to the original image
+				handleRevertToOriginal();
+				break;
 		}
 	}
 
@@ -790,6 +799,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				inverted: inverted,
 				logarithmic: logarithmic
 			};
+			hasAppliedConversion = true;
 			saveState();
 
 			console.log(`Colormap conversion complete: ${colormapName} [${minValue}, ${maxValue}]`);
@@ -798,6 +808,53 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			vscode.postMessage({
 				type: 'error',
 				message: `Colormap conversion failed: ${error.message}`
+			});
+		}
+	}
+
+	/**
+	 * Revert to the original image before any conversions
+	 */
+	function handleRevertToOriginal() {
+		if (!canvas || !hasLoadedImage) {
+			console.error('No image loaded to revert');
+			return;
+		}
+
+		try {
+			// Reload the original image based on file type
+			const settings = settingsManager.settings;
+			const resourceUri = settings.resourceUri || '';
+
+			// Reset the conversion state
+			colormapConversionState = null;
+			hasAppliedConversion = false;
+			originalImageData = null;
+
+			// Clear converted data from processors
+			tiffProcessor.rawTiffData = null;
+			if (exrProcessor) exrProcessor.rawExrData = null;
+			if (npyProcessor) npyProcessor._lastRaw = null;
+			if (ppmProcessor) ppmProcessor._lastRaw = null;
+			if (pfmProcessor) pfmProcessor._lastRaw = null;
+			if (pngProcessor) pngProcessor._lastRaw = null;
+			// @ts-ignore
+			tiffProcessor._convertedFloatData = null;
+
+			// Reload the image
+			reloadImage();
+
+			vscode.postMessage({
+				type: 'notifyRevert',
+				message: 'Reverted to original image'
+			});
+
+			console.log('Reverted to original image');
+		} catch (error) {
+			console.error('Error reverting to original image:', error);
+			vscode.postMessage({
+				type: 'error',
+				message: `Failed to revert to original image: ${error.message}`
 			});
 		}
 	}
@@ -1073,7 +1130,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			menu.appendChild(createSeparator());
 
 			// Add Toggle Histogram option (triggers command via extension for logging)
-			menu.appendChild(createMenuItem('Toggle Histogram', () => {
+			menu.appendChild(createMenuItem('Toggle Histogram (beta)', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
 
@@ -1090,10 +1147,19 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				}));
 			}
 
+			// Show revert option if a colormap conversion has been applied
+			if (hasAppliedConversion) {
+				menu.appendChild(createSeparator());
+
+				menu.appendChild(createMenuItem('Revert to Original', () => {
+					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.revertToOriginal' });
+				}));
+			}
+
 			menu.appendChild(createSeparator());
 
 			// Add Filter by Mask option (uses command - needs user input)
-			menu.appendChild(createMenuItem('Filter by Mask', () => {
+			menu.appendChild(createMenuItem('Filter by Mask (beta)', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
 			}));
 
