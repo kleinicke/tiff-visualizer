@@ -1333,6 +1333,20 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		console.log('[CACHE-WEBVIEW] Cache is valid, reusing');
 
+		// IMPORTANT: Send format info to extension to ensure status bar is updated
+		// This is necessary because when reusing cached images, the format doesn't change
+		// but the extension needs to know to update the UI for the new image
+		if (currentFormatInfo) {
+			console.log('[CACHE-WEBVIEW] Sending format info for cached image');
+			vscode.postMessage({
+				type: 'formatInfo',
+				value: {
+					...currentFormatInfo,
+					isInitialLoad: false // Not an initial load, just a format confirmation
+				}
+			});
+		}
+
 		// If per-format settings changed (gamma, normalization, brightness), re-render with cached data
 		if (needsRerender) {
 			updateImageWithNewSettings({
