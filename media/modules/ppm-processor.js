@@ -230,7 +230,7 @@ export class PpmProcessor {
                 g = Math.pow(g, gammaIn);
                 b = Math.pow(b, gammaIn);
 
-                // Step 2: Apply brightness in linear space
+                // Step 2: Apply brightness in linear space (no clamping)
                 const brightnessFactor = Math.pow(2, exposureStops);
                 r = r * brightnessFactor;
                 g = g * brightnessFactor;
@@ -241,13 +241,14 @@ export class PpmProcessor {
                 g = Math.pow(g, 1.0 / gammaOut);
                 b = Math.pow(b, 1.0 / gammaOut);
 
-                // Convert back to 0-255 range
+                // Convert back to 0-255 range (without clamping - allows values outside range)
                 r = r * 255;
                 g = g * 255;
                 b = b * 255;
             }
-            
+
             const p = i * 4;
+            // Clamp only for display conversion to valid byte range
             out[p] = Math.round(Math.max(0, Math.min(255, r)));     // R
             out[p + 1] = Math.round(Math.max(0, Math.min(255, g))); // G
             out[p + 2] = Math.round(Math.max(0, Math.min(255, b))); // B

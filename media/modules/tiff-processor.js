@@ -611,14 +611,14 @@ export class TiffProcessor {
 				} else {
 					normalized = 0; // Handle case where min === max
 				}
-				normalized = this.clamp(normalized, 0, 1);
 
-				// Apply gamma and brightness corrections
+				// Apply gamma and brightness corrections (may result in values outside [0,1])
 				if (settings.normalization.gammaMode) {
 					normalized = this._applyGammaAndBrightness(normalized, settings);
 				}
 
-				const displayValue = Math.round(normalized * 255);
+				// Clamp only for display conversion to 0-255 range
+				const displayValue = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
 				r = g = b = displayValue;
 			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
 				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
@@ -632,8 +632,7 @@ export class TiffProcessor {
 					} else {
 						normalized = 0;
 					}
-					normalized = this.clamp(normalized, 0, 1);
-					values.push(Math.round(normalized * 255));
+					values.push(Math.round(Math.max(0, Math.min(1, normalized)) * 255));
 				}
 
 				// Combine into 24-bit value: (R << 16) | (G << 8) | B
@@ -645,13 +644,13 @@ export class TiffProcessor {
 				// For auto-normalize, it should use the actual min/max of combined values
 				let normalized24 = combined24bit / 16777215.0;
 
-				// Apply gamma and brightness to the combined value
+				// Apply gamma and brightness to the combined value (may result in values outside [0,1])
 				if (settings.normalization.gammaMode) {
 					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
 				}
 
-				// Display as grayscale
-				const displayValue = Math.round(normalized24 * 255);
+				// Display as grayscale (clamp only for display conversion)
+				const displayValue = Math.round(Math.max(0, Math.min(1, normalized24)) * 255);
 				r = g = b = displayValue;
 			} else {
 				// RGB or multi-band (normal mode)
@@ -664,13 +663,14 @@ export class TiffProcessor {
 					} else {
 						normalized = 0; // Handle case where min === max
 					}
-					normalized = this.clamp(normalized, 0, 1);
 
+					// Apply gamma and brightness corrections (may result in values outside [0,1])
 					if (settings.normalization.gammaMode) {
 						normalized = this._applyGammaAndBrightness(normalized, settings);
 					}
 
-					values.push(Math.round(normalized * 255));
+					// Clamp only for display conversion to 0-255 range
+					values.push(Math.round(Math.max(0, Math.min(1, normalized)) * 255));
 				}
 
 				r = values[0] ?? 0;
@@ -727,15 +727,15 @@ export class TiffProcessor {
 				} else {
 					normalized = 0; // Handle case where min === max
 				}
-				normalized = this.clamp(normalized, 0, 1);
 
-				// Apply gamma and brightness corrections
+				// Apply gamma and brightness corrections (may result in values outside [0,1])
 				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
 					normalized = this._applyGammaAndBrightness(normalized, settings);
 				}
 
-				value = Math.round(normalized * 255); // Convert to 8-bit for display
-				r = g = b = this.clamp(value, 0, 255);
+				// Clamp only for display conversion to 0-255 range
+				value = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+				r = g = b = value;
 			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
 				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
 				// Get raw RGB values (these are already in their native type range, e.g., 0-255 for uint8)
@@ -759,17 +759,16 @@ export class TiffProcessor {
 				} else {
 					normalized24 = 0;
 				}
-				normalized24 = this.clamp(normalized24, 0, 1);
 
-				// Apply gamma/brightness to the combined value
+				// Apply gamma/brightness to the combined value (may result in values outside [0,1])
 				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
 					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
 				}
 
-				// Display as grayscale
-				const displayValue = Math.round(normalized24 * 255);
+				// Display as grayscale (clamp only for display conversion)
+				const displayValue = Math.round(Math.max(0, Math.min(1, normalized24)) * 255);
 
-				r = g = b = this.clamp(displayValue, 0, 255);
+				r = g = b = displayValue;
 			} else {
 				const values = [];
 				for (let band = 0; band < Math.min(3, numBands); band++) {
@@ -782,15 +781,15 @@ export class TiffProcessor {
 					} else {
 						normalized = 0;
 					}
-					normalized = this.clamp(normalized, 0, 1);
 
-					// Apply gamma/brightness
+					// Apply gamma/brightness (may result in values outside [0,1])
 					if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
 						normalized = this._applyGammaAndBrightness(normalized, settings);
 					}
 
-					value = Math.round(normalized * 255); // Convert to 8-bit for display
-					values.push(this.clamp(value, 0, 255));
+					// Clamp only for display conversion to 0-255 range
+					value = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+					values.push(value);
 				}
 
 				r = values[0] ?? 0;
@@ -820,14 +819,16 @@ export class TiffProcessor {
 		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
 		let linear = Math.pow(normalizedValue, gammaIn);
 
-		// Step 2: Apply brightness (exposure compensation) in linear space
+		// Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
 		const exposureStops = settings.brightness.offset;
 		linear = linear * Math.pow(2, exposureStops);
 
 		// Step 3: Apply output gamma - raise to 1/gammaOut power
 		let corrected = Math.pow(linear, 1.0 / gammaOut);
 
-		return this.clamp(corrected, 0, 1);
+		// Note: Do NOT clamp here - allow values outside [0,1] for float images
+		// Clamping will happen at display conversion time
+		return corrected;
 	}
 
 	/**

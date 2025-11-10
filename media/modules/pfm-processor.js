@@ -117,11 +117,7 @@ export class PfmProcessor {
                 const n = (data[i] - normMin) / range;
                 r = g = b = n;
             }
-            
-            r = Math.max(0, Math.min(1, r));
-            g = Math.max(0, Math.min(1, g));
-            b = Math.max(0, Math.min(1, b));
-            
+
             if (settings.normalization && settings.normalization.gammaMode) {
                 const gammaIn = settings.gamma?.in ?? 1.0;
                 const gammaOut = settings.gamma?.out ?? 1.0;
@@ -133,7 +129,7 @@ export class PfmProcessor {
                 g = Math.pow(g, gammaIn);
                 b = Math.pow(b, gammaIn);
 
-                // Step 2: Apply brightness in linear space
+                // Step 2: Apply brightness in linear space (no clamping)
                 const brightnessFactor = Math.pow(2, exposureStops);
                 r = r * brightnessFactor;
                 g = g * brightnessFactor;
@@ -143,16 +139,13 @@ export class PfmProcessor {
                 r = Math.pow(r, 1.0 / gammaOut);
                 g = Math.pow(g, 1.0 / gammaOut);
                 b = Math.pow(b, 1.0 / gammaOut);
-
-                r = Math.max(0, Math.min(1, r));
-                g = Math.max(0, Math.min(1, g));
-                b = Math.max(0, Math.min(1, b));
             }
-            
+
+            // Clamp only for display conversion to 0-255 range
             const p = i * 4;
-            out[p] = Math.round(r * 255);     // R
-            out[p + 1] = Math.round(g * 255); // G
-            out[p + 2] = Math.round(b * 255); // B
+            out[p] = Math.round(Math.max(0, Math.min(1, r)) * 255);     // R
+            out[p + 1] = Math.round(Math.max(0, Math.min(1, g)) * 255); // G
+            out[p + 2] = Math.round(Math.max(0, Math.min(1, b)) * 255); // B
             out[p + 3] = 255;                 // A
         }
         if (this.vscode) {

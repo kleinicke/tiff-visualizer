@@ -232,15 +232,16 @@ export class ExrProcessor {
 					} else {
 						// Normalize and apply tone mapping
 						let normalized = (value - min) / (max - min);
-						normalized = this.clamp(normalized, 0, 1);
 
 						// Apply gamma correction
 						normalized = Math.pow(normalized, gamma.in / gamma.out);
 
-						// Apply brightness
-						normalized = this.clamp(normalized + brightness.offset, 0, 1);
+						// Apply brightness in linear space (no clamping)
+						normalized = normalized + brightness.offset;
 
-						const intensity = Math.round(normalized * 255);
+						// Clamp only for display conversion to 0-255 range
+						const displayValue = Math.max(0, Math.min(1, normalized));
+						const intensity = Math.round(displayValue * 255);
 						r = g = b = intensity;
 					}
 				} else if (channels === 3) {
@@ -255,22 +256,24 @@ export class ExrProcessor {
 						b = nanColor.b;
 					} else {
 						// Normalize each channel
-						r = this.clamp((rVal - min) / (max - min), 0, 1);
-						g = this.clamp((gVal - min) / (max - min), 0, 1);
-						b = this.clamp((bVal - min) / (max - min), 0, 1);
+						r = (rVal - min) / (max - min);
+						g = (gVal - min) / (max - min);
+						b = (bVal - min) / (max - min);
 
-						// Apply gamma and brightness
+						// Apply gamma correction
 						r = Math.pow(r, gamma.in / gamma.out);
 						g = Math.pow(g, gamma.in / gamma.out);
 						b = Math.pow(b, gamma.in / gamma.out);
 
-						r = this.clamp(r + brightness.offset, 0, 1);
-						g = this.clamp(g + brightness.offset, 0, 1);
-						b = this.clamp(b + brightness.offset, 0, 1);
+						// Apply brightness in linear space (no clamping)
+						r = r + brightness.offset;
+						g = g + brightness.offset;
+						b = b + brightness.offset;
 
-						r = Math.round(r * 255);
-						g = Math.round(g * 255);
-						b = Math.round(b * 255);
+						// Clamp only for display conversion to 0-255 range
+						r = Math.round(Math.max(0, Math.min(1, r)) * 255);
+						g = Math.round(Math.max(0, Math.min(1, g)) * 255);
+						b = Math.round(Math.max(0, Math.min(1, b)) * 255);
 					}
 				} else if (channels === 4) {
 					// RGBA
@@ -286,22 +289,24 @@ export class ExrProcessor {
 						a = 255;
 					} else {
 						// Normalize RGB channels
-						r = this.clamp((rVal - min) / (max - min), 0, 1);
-						g = this.clamp((gVal - min) / (max - min), 0, 1);
-						b = this.clamp((bVal - min) / (max - min), 0, 1);
+						r = (rVal - min) / (max - min);
+						g = (gVal - min) / (max - min);
+						b = (bVal - min) / (max - min);
 
-						// Apply gamma and brightness
+						// Apply gamma correction
 						r = Math.pow(r, gamma.in / gamma.out);
 						g = Math.pow(g, gamma.in / gamma.out);
 						b = Math.pow(b, gamma.in / gamma.out);
 
-						r = this.clamp(r + brightness.offset, 0, 1);
-						g = this.clamp(g + brightness.offset, 0, 1);
-						b = this.clamp(b + brightness.offset, 0, 1);
+						// Apply brightness in linear space (no clamping)
+						r = r + brightness.offset;
+						g = g + brightness.offset;
+						b = b + brightness.offset;
 
-						r = Math.round(r * 255);
-						g = Math.round(g * 255);
-						b = Math.round(b * 255);
+						// Clamp only for display conversion to 0-255 range
+						r = Math.round(Math.max(0, Math.min(1, r)) * 255);
+						g = Math.round(Math.max(0, Math.min(1, g)) * 255);
+						b = Math.round(Math.max(0, Math.min(1, b)) * 255);
 
 						// Alpha channel (usually 0-1 range)
 						a = Math.round(this.clamp(aVal, 0, 1) * 255);

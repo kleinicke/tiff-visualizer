@@ -497,7 +497,7 @@ export class PngProcessor {
      * Order: remove source gamma → apply brightness → apply target gamma
      * @param {number} normalizedValue - Value in 0-1 range
      * @param {any} settings - Settings object with gamma and brightness
-     * @returns {number} Corrected value in 0-1 range
+     * @returns {number} Corrected value (may be outside 0-1 range for float images)
      */
     _applyGammaAndBrightness(normalizedValue, settings) {
         const gammaIn = settings.gamma?.in ?? 1.0;   // Source/input gamma (to remove)
@@ -507,13 +507,15 @@ export class PngProcessor {
         // Step 1: Remove input gamma (linearize) - raise to gammaIn power
         let linear = Math.pow(normalizedValue, gammaIn);
 
-        // Step 2: Apply brightness (exposure compensation) in linear space
+        // Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
         linear = linear * Math.pow(2, exposureStops);
 
         // Step 3: Apply output gamma - raise to 1/gammaOut power
         normalizedValue = Math.pow(linear, 1.0 / gammaOut);
 
-        return Math.max(0, Math.min(1, normalizedValue));
+        // Note: Do NOT clamp here - allow values outside [0,1] for float images
+        // Clamping will happen when converting to display pixels (0-255)
+        return normalizedValue;
     }
 
     /**
