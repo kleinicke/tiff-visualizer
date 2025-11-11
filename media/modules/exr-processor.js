@@ -336,7 +336,9 @@ export class ExrProcessor {
 		const { width, height, data, channels } = this.rawExrData;
 		if (x < 0 || x >= width || y < 0 || y >= height) return null;
 
-		const dataIndex = (y * width + x) * channels;
+		// Apply Y-flip to match rendering (EXR uses bottom-left origin, canvas uses top-left)
+		const flippedY = height - 1 - y;
+		const dataIndex = (flippedY * width + x) * channels;
 		const values = [];
 		for (let i = 0; i < channels; i++) {
 			values.push(data[dataIndex + i]);
