@@ -20,6 +20,7 @@ interface FormatInfo {
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 	private _pixelPosition: string | undefined;
 	private _formatInfo: FormatInfo | undefined;
+	private _colorPickerShowModified: boolean = false;
 
 	constructor() {
 		super('status.tiffVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 102 /* to the right of zoom (110) */);
@@ -47,6 +48,11 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 
 	public updateFormatInfo(formatInfo: FormatInfo) {
 		this._formatInfo = formatInfo;
+		this.updateTooltip();
+	}
+
+	public updateColorPickerMode(showModified: boolean) {
+		this._colorPickerShowModified = showModified;
 		this.updateTooltip();
 	}
 
@@ -95,13 +101,17 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 				tooltip.appendMarkdown(`**Planar Config:** ${info.planarConfig === 1 ? 'Chunky' : 'Planar'}\n\n`);
 			}
 		}
-		
+
+		// Add color picker mode info
+		tooltip.appendMarkdown(`**Color Picker:** ${this._colorPickerShowModified ? 'Modified (gamma + exposure)' : 'Original'}\n\n`);
+		tooltip.appendMarkdown('Right-click on the image to toggle between original and modified values\n\n');
+
 		if (this._pixelPosition) {
 			tooltip.appendMarkdown(`**Pixel Info:** ${this._pixelPosition}`);
 		} else {
 			tooltip.appendMarkdown('Hover over the image to see pixel coordinates and values');
 		}
-		
+
 		this.entry.tooltip = tooltip;
 	}
 

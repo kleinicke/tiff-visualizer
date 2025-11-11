@@ -38,6 +38,7 @@
  * @property {boolean} [rgbAs24BitGrayscale]
  * @property {number} [scale24BitFactor]
  * @property {boolean} [normalizedFloatMode]
+ * @property {boolean} [colorPickerShowModified]
  * @property {string} [resourceUri]
  * @property {string} [src]
  */

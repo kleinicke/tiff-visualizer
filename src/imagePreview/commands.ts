@@ -1275,5 +1275,18 @@ export function registerImagePreviewCommands(
 		logCommand('revertToOriginal', 'success', 'Reverted to original image');
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleColorPickerMode', () => {
+		logCommand('toggleColorPickerMode', 'start');
+		try {
+			previewManager.settingsManager.toggleColorPickerShowModified();
+			const isEnabled = previewManager.settingsManager.getColorPickerShowModified();
+			const mode = isEnabled ? 'modified values' : 'original values';
+			vscode.window.showInformationMessage(`Color picker now shows ${mode}`);
+			logCommand('toggleColorPickerMode', 'success', `${mode}`);
+		} catch (error) {
+			logCommand('toggleColorPickerMode', 'error', String(error));
+		}
+	}));
+
 	return vscode.Disposable.from(...disposables);
 } 

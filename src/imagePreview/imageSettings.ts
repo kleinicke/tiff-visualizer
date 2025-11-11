@@ -18,6 +18,7 @@ export class ImageSettingsManager {
 	private _imageStats: ImageStats | undefined;
 	private _comparisonBaseUri: vscode.Uri | undefined;
 	private _nanColor: 'black' | 'fuchsia' = 'black';
+	private _colorPickerShowModified: boolean = false;
 
 	public get imageStats(): Readonly<ImageStats> | undefined {
 		return this._imageStats;
@@ -70,6 +71,15 @@ export class ImageSettingsManager {
 
 	public getNanColor(): 'black' | 'fuchsia' {
 		return this._nanColor;
+	}
+
+	public toggleColorPickerShowModified(): void {
+		this._colorPickerShowModified = !this._colorPickerShowModified;
+		this._fireSettingsChanged();
+	}
+
+	public getColorPickerShowModified(): boolean {
+		return this._colorPickerShowModified;
 	}
 
 	public updateImageStats(min: number, max: number): void {

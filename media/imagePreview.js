@@ -1163,6 +1163,23 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
 			}));
 
+
+			menu.appendChild(createSeparator());
+
+			// Add Open Comparison Panel option
+			// menu.appendChild(createMenuItem('Open Comparison Panel', () => {
+			// 	vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openComparisonPanel' });
+			// }));
+
+			// Add Toggle NaN Color option
+			menu.appendChild(createMenuItem('Toggle NaN Color', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
+			}));
+
+			// Add Toggle Color Picker Mode option
+			menu.appendChild(createMenuItem('Toggle Color Picker: Show Modified Values', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
+			}));
 			document.body.appendChild(menu);
 
 			// Remove menu when clicking outside

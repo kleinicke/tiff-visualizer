@@ -7,6 +7,7 @@ import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
+import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { registerImagePreviewCommands } from './commands';
 import { registerComparisonPanelSupport } from '../comparisonPanel/index';
@@ -43,6 +44,9 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const histogramStatusBarEntry = new HistogramStatusBarEntry();
 	disposables.push(histogramStatusBarEntry);
 
+	const colorPickerModeStatusBarEntry = new ColorPickerModeStatusBarEntry();
+	disposables.push(colorPickerModeStatusBarEntry);
+
 	// Create the preview manager
 	const previewManager = new ImagePreviewManager(
 		context.extensionUri,
@@ -53,7 +57,8 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		gammaStatusBarEntry,
 		brightnessStatusBarEntry,
 		maskFilterStatusBarEntry,
-		histogramStatusBarEntry
+		histogramStatusBarEntry,
+		colorPickerModeStatusBarEntry
 	);
 
 	// Register the custom editor provider

@@ -9,6 +9,7 @@ import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
 import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
+import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager } from './types';
 import type { ImageSettings } from './appStateManager';
@@ -18,6 +19,7 @@ import type { MaskFilterSettings } from './imageSettings';
 interface WebviewImageSettings extends ImageSettings {
 	maskFilters: MaskFilterSettings[];
 	nanColor: 'black' | 'fuchsia';
+	colorPickerShowModified: boolean;
 }
 
 export class ImagePreview extends MediaPreview {
@@ -43,6 +45,7 @@ export class ImagePreview extends MediaPreview {
 	private readonly _brightnessStatusBarEntry: BrightnessStatusBarEntry;
 	private readonly _maskFilterStatusBarEntry: MaskFilterStatusBarEntry;
 	private readonly _histogramStatusBarEntry: HistogramStatusBarEntry;
+	private readonly _colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry;
 	private readonly _messageRouter: MessageRouter;
 
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
@@ -60,6 +63,7 @@ export class ImagePreview extends MediaPreview {
 		brightnessStatusBarEntry: BrightnessStatusBarEntry,
 		maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
 		histogramStatusBarEntry: HistogramStatusBarEntry,
+		colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 		private readonly _manager: IImagePreviewManager
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
@@ -71,6 +75,7 @@ export class ImagePreview extends MediaPreview {
 		this._brightnessStatusBarEntry = brightnessStatusBarEntry;
 		this._maskFilterStatusBarEntry = maskFilterStatusBarEntry;
 		this._histogramStatusBarEntry = histogramStatusBarEntry;
+		this._colorPickerModeStatusBarEntry = colorPickerModeStatusBarEntry;
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
@@ -100,6 +105,7 @@ export class ImagePreview extends MediaPreview {
 			// Update status bar entries
 			this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
 			this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
+			this._sizeStatusBarEntry.updateColorPickerMode(this._manager.settingsManager.getColorPickerShowModified());
 			this._maskFilterStatusBarEntry.updateMaskFilter(
 				totalMasks > 0,
 				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
@@ -115,6 +121,7 @@ export class ImagePreview extends MediaPreview {
 				rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
+				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 				maskFilters: maskFilters,
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
@@ -144,6 +151,7 @@ export class ImagePreview extends MediaPreview {
 				this._brightnessStatusBarEntry.hide();
 				this._maskFilterStatusBarEntry.hide();
 				this._histogramStatusBarEntry.hide();
+				this._colorPickerModeStatusBarEntry.hide();
 			}
 		}));
 
@@ -255,7 +263,8 @@ export class ImagePreview extends MediaPreview {
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			maskFilters: maskFilters,
-			nanColor: this._manager.settingsManager.getNanColor()
+			nanColor: this._manager.settingsManager.getNanColor(),
+			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified()
 		};
 
 		// Send to webview
@@ -551,7 +560,8 @@ export class ImagePreview extends MediaPreview {
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			maskFilters: maskFilters,
-			nanColor: this._manager.settingsManager.getNanColor()
+			nanColor: this._manager.settingsManager.getNanColor(),
+			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified()
 		};
 
 		const nonce = getNonce();
