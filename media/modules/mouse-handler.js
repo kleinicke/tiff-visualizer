@@ -198,11 +198,20 @@ export class MouseHandler {
 			const pixelValues = this.exrProcessor.getPixelValue(x, y);
 			if (pixelValues) {
 				if (showModified) {
-					// Apply gamma and brightness to HDR values
-					const transformed = pixelValues.map(v => {
-						if (isNaN(v) || !isFinite(v)) return v;
-						return this._applyGammaBrightness(v);
-					});
+					// Apply gamma and brightness to HDR values (but NOT to alpha)
+					const transformed = [];
+					for (let i = 0; i < pixelValues.length; i++) {
+						const v = pixelValues[i];
+						if (isNaN(v) || !isFinite(v)) {
+							transformed.push(v);
+						} else if (i === 3 && pixelValues.length === 4) {
+							// Alpha channel: do NOT apply gamma/brightness
+							transformed.push(v);
+						} else {
+							// RGB channels: apply gamma/brightness
+							transformed.push(this._applyGammaBrightness(v));
+						}
+					}
 
 					// Format HDR values with more precision
 					if (transformed.length === 1) {
@@ -212,7 +221,7 @@ export class MouseHandler {
 						// RGB
 						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)}`;
 					} else if (transformed.length === 4) {
-						// RGBA
+						// RGBA - alpha is shown unmodified
 						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)} A:${transformed[3].toFixed(6)}`;
 					}
 				} else {

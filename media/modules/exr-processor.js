@@ -50,6 +50,30 @@ export class ExrProcessor {
 	}
 
 	/**
+	 * Apply gamma and brightness corrections in the correct order
+	 * The correct order is: remove input gamma → apply brightness → apply output gamma
+	 * @param {number} normalizedValue - Value in 0-1 range
+	 * @param {Object} gamma - Gamma settings {in, out}
+	 * @param {Object} brightness - Brightness settings {offset}
+	 * @returns {number} - Corrected value
+	 */
+	_applyGammaAndBrightness(normalizedValue, gamma, brightness) {
+		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
+		let linear = Math.pow(normalizedValue, gamma.in);
+
+		// Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
+		const exposureStops = brightness.offset;
+		linear = linear * Math.pow(2, exposureStops);
+
+		// Step 3: Apply output gamma - raise to 1/gammaOut power
+		let corrected = Math.pow(linear, 1.0 / gamma.out);
+
+		// Note: Do NOT clamp here - allow values outside [0,1] for float images
+		// Clamping will happen at display conversion time
+		return corrected;
+	}
+
+	/**
 	 * Process EXR file from URL
 	 * @param {string} src - EXR file URL
 	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, exrData: Object}>}
@@ -233,11 +257,8 @@ export class ExrProcessor {
 						// Normalize and apply tone mapping
 						let normalized = (value - min) / (max - min);
 
-						// Apply gamma correction
-						normalized = Math.pow(normalized, gamma.in / gamma.out);
-
-						// Apply brightness in linear space (no clamping)
-						normalized = normalized + brightness.offset;
+						// Apply gamma and brightness corrections using the correct order
+						normalized = this._applyGammaAndBrightness(normalized, gamma, brightness);
 
 						// Clamp only for display conversion to 0-255 range
 						const displayValue = Math.max(0, Math.min(1, normalized));
@@ -260,15 +281,10 @@ export class ExrProcessor {
 						g = (gVal - min) / (max - min);
 						b = (bVal - min) / (max - min);
 
-						// Apply gamma correction
-						r = Math.pow(r, gamma.in / gamma.out);
-						g = Math.pow(g, gamma.in / gamma.out);
-						b = Math.pow(b, gamma.in / gamma.out);
-
-						// Apply brightness in linear space (no clamping)
-						r = r + brightness.offset;
-						g = g + brightness.offset;
-						b = b + brightness.offset;
+						// Apply gamma and brightness corrections using the correct order
+						r = this._applyGammaAndBrightness(r, gamma, brightness);
+						g = this._applyGammaAndBrightness(g, gamma, brightness);
+						b = this._applyGammaAndBrightness(b, gamma, brightness);
 
 						// Clamp only for display conversion to 0-255 range
 						r = Math.round(Math.max(0, Math.min(1, r)) * 255);
@@ -293,22 +309,18 @@ export class ExrProcessor {
 						g = (gVal - min) / (max - min);
 						b = (bVal - min) / (max - min);
 
-						// Apply gamma correction
-						r = Math.pow(r, gamma.in / gamma.out);
-						g = Math.pow(g, gamma.in / gamma.out);
-						b = Math.pow(b, gamma.in / gamma.out);
-
-						// Apply brightness in linear space (no clamping)
-						r = r + brightness.offset;
-						g = g + brightness.offset;
-						b = b + brightness.offset;
+						// Apply gamma and brightness corrections using the correct order
+						r = this._applyGammaAndBrightness(r, gamma, brightness);
+						g = this._applyGammaAndBrightness(g, gamma, brightness);
+						b = this._applyGammaAndBrightness(b, gamma, brightness);
 
 						// Clamp only for display conversion to 0-255 range
 						r = Math.round(Math.max(0, Math.min(1, r)) * 255);
 						g = Math.round(Math.max(0, Math.min(1, g)) * 255);
 						b = Math.round(Math.max(0, Math.min(1, b)) * 255);
 
-						// Alpha channel (usually 0-1 range)
+						// Alpha channel - normalize to 0-1 range and clamp for display
+						// Do NOT apply gamma/brightness to alpha as it represents opacity
 						a = Math.round(this.clamp(aVal, 0, 1) * 255);
 					}
 				}
