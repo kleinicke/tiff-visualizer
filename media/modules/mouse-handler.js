@@ -222,7 +222,7 @@ export class MouseHandler {
 						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)}`;
 					} else if (transformed.length === 4) {
 						// RGBA - alpha is shown unmodified
-						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)} A:${transformed[3].toFixed(6)}`;
+						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)} α:${transformed[3].toFixed(6)}`;
 					}
 				} else {
 					// Show original values
@@ -231,7 +231,8 @@ export class MouseHandler {
 					} else if (pixelValues.length === 3) {
 						return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)}`;
 					} else if (pixelValues.length === 4) {
-						return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)} A:${pixelValues[3].toFixed(6)}`;
+						// RGBA - consistent format with α: prefix for alpha
+						return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)} α:${pixelValues[3].toFixed(6)}`;
 					}
 				}
 			}
@@ -338,7 +339,8 @@ export class MouseHandler {
 	}
 
 	/**
-	 * Parse float color string to array of values (space-separated floats)
+	 * Parse float color string to array of values (space-separated floats or NaN/Inf)
+	 * Handles formats like: "1.234 2.345 3.456" or "1.234 2.345 3.456 A:4.567" or "NaN Inf -Inf"
 	 * @private
 	 * @param {string} colorStr - Color string
 	 * @returns {Array<number>|null} - Array of numeric values or null
@@ -348,9 +350,14 @@ export class MouseHandler {
 			// Float colors are space-separated numbers (possibly with A: prefix for alpha)
 			const parts = colorStr.trim().split(/\s+/);
 			const values = parts.map(p => {
-				// Handle "A:0.5" format
-				const num = parseFloat(p.replace('A:', ''));
-				return isNaN(num) ? null : num;
+				// Remove "A:" prefix if present
+				const cleanPart = p.replace('A:', '');
+				// Handle special values
+				if (cleanPart === 'NaN') return NaN;
+				if (cleanPart === 'Inf') return Infinity;
+				if (cleanPart === '-Inf') return -Infinity;
+				const num = parseFloat(cleanPart);
+				return isNaN(num) && cleanPart !== 'NaN' ? null : num;
 			});
 			return values.every(v => v !== null) ? values : null;
 		} catch (e) {
@@ -380,6 +387,7 @@ export class MouseHandler {
 
 	/**
 	 * Format color values back to string
+	 * Handles both integer and float formats consistently
 	 * @private
 	 * @param {Array<number>} values - Color values
 	 * @param {number} count - Number of values (for formatting)
@@ -387,12 +395,20 @@ export class MouseHandler {
 	 * @returns {string} - Formatted color string
 	 */
 	_formatColorValues(values, count, asIntegers = false) {
-		if (asIntegers) {
-			return values.slice(0, count).map(v => Math.round(v).toString().padStart(3, '0')).join(' ');
-		} else {
-			// Float format with 6 decimal places
-			return values.slice(0, count).map(v => v.toFixed(6)).join(' ');
+		const formatted = values.slice(0, count).map((v, idx) => {
+			if (asIntegers) {
+				return Math.round(v).toString().padStart(3, '0');
+			} else {
+				// Float format with appropriate precision
+				return v.toFixed(6);
+			}
+		});
+
+		// Add alpha label if we have 4 values (RGBA)
+		if (count === 4) {
+			return `${formatted[0]} ${formatted[1]} ${formatted[2]} α:${formatted[3]}`;
 		}
+		return formatted.join(' ');
 	}
 
 	/**

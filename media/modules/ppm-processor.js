@@ -442,13 +442,13 @@ export class PpmProcessor {
                 return scaledValue;
             }
         } else if (channels === 3) {
-            // RGB data (normal mode)
+            // RGB data (normal mode) - return space-separated values
             const baseIdx = idx * 3;
             if (baseIdx >= 0 && baseIdx + 2 < data.length) {
                 const r = data[baseIdx];
                 const g = data[baseIdx + 1];
                 const b = data[baseIdx + 2];
-                return `RGB(${r}, ${g}, ${b})`;
+                return `${r} ${g} ${b}`;
             }
         } else {
             // Grayscale data

@@ -158,46 +158,32 @@ export class PfmProcessor {
         if (!this._lastRaw) return '';
         const { width, height, data, channels } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
-        
+
         const idx = y * width + x;
+
+        // Helper to format individual values (avoid scientific notation)
+        const formatValue = (v) => {
+            if (Number.isNaN(v)) return 'NaN';
+            if (v === Infinity) return 'Inf';
+            if (v === -Infinity) return '-Inf';
+            // Use fixed decimal notation to avoid scientific notation
+            // Show up to 6 decimal places, but remove trailing zeros
+            return parseFloat(v.toFixed(6)).toString();
+        };
+
         if (channels === 3) {
-            // RGB data
+            // RGB data - return space-separated values
             const baseIdx = idx * 3;
             if (baseIdx >= 0 && baseIdx + 2 < data.length) {
                 const r = data[baseIdx];
                 const g = data[baseIdx + 1];
                 const b = data[baseIdx + 2];
-                
-                if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
-                    return `RGB(${r.toPrecision(4)}, ${g.toPrecision(4)}, ${b.toPrecision(4)})`;
-                }
-                
-                // Handle special values
-                const formatValue = (v) => {
-                    if (Number.isNaN(v)) return 'NaN';
-                    if (v === Infinity) return 'Inf';
-                    if (v === -Infinity) return '-Inf';
-                    return v.toPrecision(4);
-                };
-                return `RGB(${formatValue(r)}, ${formatValue(g)}, ${formatValue(b)})`;
+                return `${formatValue(r)} ${formatValue(g)} ${formatValue(b)}`;
             }
         } else {
             // Grayscale data
             const value = data[idx];
-            if (Number.isFinite(value)) {
-                return value.toPrecision(4);
-            }
-            // Show specific invalid values instead of generic "nan"
-            if (Number.isNaN(value)) {
-                return 'NaN';
-            } else if (value === Infinity) {
-                return 'Inf';
-            } else if (value === -Infinity) {
-                return '-Inf';
-            } else {
-                // Fallback for any other non-finite values
-                return 'invalid';
-            }
+            return formatValue(value);
         }
         return '';
     }

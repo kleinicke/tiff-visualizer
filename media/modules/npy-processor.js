@@ -442,28 +442,43 @@ export class NpyProcessor {
             const scaledValue = (combined24bit / scaleFactor).toFixed(3);
             return scaledValue;
         } else if (channels === 3) {
-            // RGB data
+            // RGB data - return space-separated values (avoid scientific notation)
             const srcIdx = pixelIdx * 3;
             const r = data[srcIdx + 0];
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
             if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
-                return `RGB(${r.toPrecision(4)}, ${g.toPrecision(4)}, ${b.toPrecision(4)})`;
+                const formatNumber = (n) => {
+                    // Use fixed decimal notation to avoid scientific notation
+                    // Show up to 6 decimal places, but remove trailing zeros
+                    return parseFloat(n.toFixed(6)).toString();
+                };
+                return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
             }
         } else if (channels === 4) {
-            // RGBA data
+            // RGBA data - return space-separated values with α: prefix for alpha
             const srcIdx = pixelIdx * 4;
             const r = data[srcIdx + 0];
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
             const a = data[srcIdx + 3];
             if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && Number.isFinite(a)) {
-                return `RGBA(${r.toPrecision(4)}, ${g.toPrecision(4)}, ${b.toPrecision(4)}, ${a.toPrecision(4)})`;
+                const formatNumber = (n) => {
+                    // Use fixed decimal notation to avoid scientific notation
+                    // Show up to 6 decimal places, but remove trailing zeros
+                    return parseFloat(n.toFixed(6)).toString();
+                };
+                return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} α:${formatNumber(a)}`;
             }
         } else {
             // Grayscale data
             const value = data[pixelIdx];
             if (Number.isFinite(value)) {
+                const formatNumber = (n) => {
+                    // Use fixed decimal notation to avoid scientific notation
+                    // Show up to 6 decimal places, but remove trailing zeros
+                    return parseFloat(n.toFixed(6)).toString();
+                };
                 // Check if normalized float mode is enabled for uint images
                 if (normalizedFloatMode && dtype && !dtype.includes('f')) {
                     // Convert uint to normalized float (0-1)
@@ -474,9 +489,9 @@ export class NpyProcessor {
                         maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
                     }
                     const normalized = value / maxValue;
-                    return normalized.toPrecision(4);
+                    return formatNumber(normalized);
                 }
-                return value.toPrecision(4);
+                return formatNumber(value);
             }
         }
         return '';
