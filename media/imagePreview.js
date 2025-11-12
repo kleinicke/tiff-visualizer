@@ -1172,12 +1172,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// }));
 
 			// Add Toggle NaN Color option
-			menu.appendChild(createMenuItem('Toggle NaN Color', () => {
+			const currentNanColor = settingsManager.settings.nanColor || 'black';
+			const nextNanColor = currentNanColor === 'black' ? 'fuchsia' : 'black';
+			menu.appendChild(createMenuItem(`Show NaN Color as ${nextNanColor}`, () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
 			}));
 
 			// Add Toggle Color Picker Mode option
-			menu.appendChild(createMenuItem('Toggle Color Picker: Show Modified Values', () => {
+			const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
+			const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
+			menu.appendChild(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
 			}));
 			document.body.appendChild(menu);

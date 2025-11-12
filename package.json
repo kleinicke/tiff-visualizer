@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "Float and TIFF Visualizer",
   "description": "Analyze float and int TIFF images, also works with exr, npy, png, jpg, ppm, pfm and pgm images.",
-  "version": "1.3.6",
+  "version": "1.4.0",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
