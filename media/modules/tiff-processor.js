@@ -450,14 +450,14 @@ export class TiffProcessor {
 						const maskData = await this.loadMaskImage(maskFilter.maskUri);
 						const maskWidth = image.getWidth();
 						const maskHeight = image.getHeight();
-						
+
 						// Apply mask filter to each band
 						for (let band = 0; band < rasters.length; band++) {
 							const originalData = new Float32Array(rasters[band]);
 							const filteredData = this.applyMaskFilter(
-								originalData, 
-								maskData, 
-								maskFilter.threshold, 
+								originalData,
+								maskData,
+								maskFilter.threshold,
 								maskFilter.filterHigher
 							);
 							rasters[band] = filteredData;
@@ -469,7 +469,7 @@ export class TiffProcessor {
 				// Continue without mask filtering if there's an error
 			}
 		}
-		
+
 		const width = image.getWidth();
 		const height = image.getHeight();
 		const sampleFormat = image.getSampleFormat();
@@ -815,12 +815,17 @@ export class TiffProcessor {
 	_applyGammaAndBrightness(normalizedValue, settings) {
 		const gammaIn = settings.gamma.in;
 		const gammaOut = settings.gamma.out;
+		const exposureStops = settings.brightness.offset;
+
+		// Optimization: Skip if no changes (gamma is identity and brightness is 0)
+		if (Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001) {
+			return normalizedValue;
+		}
 
 		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
 		let linear = Math.pow(normalizedValue, gammaIn);
 
 		// Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
-		const exposureStops = settings.brightness.offset;
 		linear = linear * Math.pow(2, exposureStops);
 
 		// Step 3: Apply output gamma - raise to 1/gammaOut power
@@ -905,25 +910,25 @@ export class TiffProcessor {
 	 */
 	applyMaskFilter(imageData, maskData, threshold, filterHigher) {
 		const filteredData = new Float32Array(imageData.length);
-		
+
 		for (let i = 0; i < imageData.length; i++) {
 			const maskValue = maskData[i];
 			const imageValue = imageData[i];
-			
+
 			let shouldFilter = false;
 			if (filterHigher) {
 				shouldFilter = maskValue > threshold;
 			} else {
 				shouldFilter = maskValue < threshold;
 			}
-			
+
 			if (shouldFilter) {
 				filteredData[i] = NaN;
 			} else {
 				filteredData[i] = imageValue;
 			}
 		}
-		
+
 		return filteredData;
 	}
 

@@ -19,7 +19,7 @@ export class PpmProcessor {
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
         const { width, height, channels, data, maxval, format } = this._parsePpm(buffer);
-        
+
         // Keep RGB data for color display
         const displayData = data;
 
@@ -51,7 +51,7 @@ export class PpmProcessor {
     _parsePpm(arrayBuffer) {
         const uint8Array = new Uint8Array(arrayBuffer);
         let offset = 0;
-        
+
         // Helper function to read next token
         const readToken = () => {
             // Skip whitespace and comments
@@ -69,7 +69,7 @@ export class PpmProcessor {
                     break;
                 }
             }
-            
+
             // Read token
             let token = '';
             while (offset < uint8Array.length) {
@@ -92,10 +92,10 @@ export class PpmProcessor {
         const isAscii = magic === 'P1' || magic === 'P2' || magic === 'P3';
         const channels = (magic === 'P1' || magic === 'P4' || magic === 'P2' || magic === 'P5') ? 1 : 3;
         const format = magic === 'P1' ? 'PBM (ASCII)' :
-                     magic === 'P2' ? 'PGM (ASCII)' : 
-                     magic === 'P3' ? 'PPM (ASCII)' :
-                     magic === 'P4' ? 'PBM (Binary)' :
-                     magic === 'P5' ? 'PGM (Binary)' : 'PPM (Binary)';
+            magic === 'P2' ? 'PGM (ASCII)' :
+                magic === 'P3' ? 'PPM (ASCII)' :
+                    magic === 'P4' ? 'PBM (Binary)' :
+                        magic === 'P5' ? 'PGM (Binary)' : 'PPM (Binary)';
         const isPbm = magic === 'P1' || magic === 'P4';
 
         // Read dimensions
@@ -110,7 +110,7 @@ export class PpmProcessor {
 
         const pixelCount = width * height;
         const totalValues = pixelCount * channels;
-        
+
         // Determine data type based on maxval
         const use16bit = !isPbm && maxval > 255;
         const DataType = use16bit ? Uint16Array : Uint8Array;
@@ -131,7 +131,7 @@ export class PpmProcessor {
             // PBM binary format (P4) - packed bits
             const bytesPerRow = Math.ceil(width / 8);
             const expectedBytes = bytesPerRow * height;
-            
+
             if (offset + expectedBytes > uint8Array.length) {
                 throw new Error('Insufficient data for binary PBM');
             }
@@ -195,13 +195,13 @@ export class PpmProcessor {
     _toImageData(data, width, height, maxval, channels = 1) {
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
-        
+
         // Normalize to 0-255 range
         const scale = 255 / maxval;
-        
+
         for (let i = 0; i < width * height; i++) {
             let r, g, b;
-            
+
             if (channels === 3) {
                 // RGB data
                 r = data[i * 3 + 0] * scale;
@@ -212,7 +212,7 @@ export class PpmProcessor {
                 const value = data[i] * scale;
                 r = g = b = value;
             }
-            
+
             // Apply gamma and brightness corrections
             // Correct order: remove input gamma → apply brightness → apply output gamma
             if (settings.gamma || settings.brightness) {
@@ -365,32 +365,35 @@ export class PpmProcessor {
 
             // Apply gamma and brightness only in gamma mode, NOT in auto-normalize mode
             const applyGamma = settings.normalization?.gammaMode === true &&
-                              settings.normalization?.autoNormalize !== true;
+                settings.normalization?.autoNormalize !== true;
             if (applyGamma) {
                 const gammaIn = settings.gamma?.in ?? 1.0;
                 const gammaOut = settings.gamma?.out ?? 1.0;
                 const exposureStops = settings.brightness?.offset ?? 0;
 
-                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                r = Math.pow(r, gammaIn);
-                g = Math.pow(g, gammaIn);
-                b = Math.pow(b, gammaIn);
+                // Optimization: Skip if no changes (gamma is identity and brightness is 0)
+                if (Math.abs(gammaIn - gammaOut) >= 0.001 || Math.abs(exposureStops) >= 0.001) {
+                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                    r = Math.pow(r, gammaIn);
+                    g = Math.pow(g, gammaIn);
+                    b = Math.pow(b, gammaIn);
 
-                // Step 2: Apply brightness in linear space
-                const brightnessFactor = Math.pow(2, exposureStops);
-                r = r * brightnessFactor;
-                g = g * brightnessFactor;
-                b = b * brightnessFactor;
+                    // Step 2: Apply brightness in linear space
+                    const brightnessFactor = Math.pow(2, exposureStops);
+                    r = r * brightnessFactor;
+                    g = g * brightnessFactor;
+                    b = b * brightnessFactor;
 
-                // Step 3: Apply output gamma - raise to 1/gammaOut power
-                r = Math.pow(r, 1.0 / gammaOut);
-                g = Math.pow(g, 1.0 / gammaOut);
-                b = Math.pow(b, 1.0 / gammaOut);
+                    // Step 3: Apply output gamma - raise to 1/gammaOut power
+                    r = Math.pow(r, 1.0 / gammaOut);
+                    g = Math.pow(g, 1.0 / gammaOut);
+                    b = Math.pow(b, 1.0 / gammaOut);
 
-                // Clamp after gamma correction
-                r = Math.max(0, Math.min(1, r));
-                g = Math.max(0, Math.min(1, g));
-                b = Math.max(0, Math.min(1, b));
+                    // Clamp after gamma correction
+                    r = Math.max(0, Math.min(1, r));
+                    g = Math.max(0, Math.min(1, g));
+                    b = Math.max(0, Math.min(1, b));
+                }
             }
 
             const p = i * 4;

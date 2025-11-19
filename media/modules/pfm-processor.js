@@ -20,10 +20,10 @@ export class PfmProcessor {
         const { width, height, channels, data } = this._parsePfm(buffer);
         // Keep color data for RGB PFM files
         let displayData = data;
-        
+
         // PFM format stores rows from bottom to top, so we need to flip vertically
         displayData = this._flipImageVertically(displayData, width, height, channels);
-        
+
         this._lastRaw = { width, height, data: displayData, channels };
 
         const canvas = document.createElement('canvas');
@@ -106,7 +106,7 @@ export class PfmProcessor {
         const out = new Uint8ClampedArray(width * height * 4);
         for (let i = 0; i < width * height; i++) {
             let r, g, b;
-            
+
             if (channels === 3) {
                 // RGB data
                 r = (data[i * 3 + 0] - normMin) / range;
@@ -123,22 +123,25 @@ export class PfmProcessor {
                 const gammaOut = settings.gamma?.out ?? 1.0;
                 const exposureStops = settings.brightness?.offset ?? 0;
 
-                // Correct order: remove input gamma → apply brightness → apply output gamma
-                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                r = Math.pow(r, gammaIn);
-                g = Math.pow(g, gammaIn);
-                b = Math.pow(b, gammaIn);
+                // Optimization: Skip if no changes (gamma is identity and brightness is 0)
+                if (Math.abs(gammaIn - 1.0) >= 0.001 || Math.abs(gammaOut - 1.0) >= 0.001 || Math.abs(exposureStops) >= 0.001) {
+                    // Correct order: remove input gamma → apply brightness → apply output gamma
+                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                    r = Math.pow(r, gammaIn);
+                    g = Math.pow(g, gammaIn);
+                    b = Math.pow(b, gammaIn);
 
-                // Step 2: Apply brightness in linear space (no clamping)
-                const brightnessFactor = Math.pow(2, exposureStops);
-                r = r * brightnessFactor;
-                g = g * brightnessFactor;
-                b = b * brightnessFactor;
+                    // Step 2: Apply brightness in linear space (no clamping)
+                    const brightnessFactor = Math.pow(2, exposureStops);
+                    r = r * brightnessFactor;
+                    g = g * brightnessFactor;
+                    b = b * brightnessFactor;
 
-                // Step 3: Apply output gamma - raise to 1/gammaOut power
-                r = Math.pow(r, 1.0 / gammaOut);
-                g = Math.pow(g, 1.0 / gammaOut);
-                b = Math.pow(b, 1.0 / gammaOut);
+                    // Step 3: Apply output gamma - raise to 1/gammaOut power
+                    r = Math.pow(r, 1.0 / gammaOut);
+                    g = Math.pow(g, 1.0 / gammaOut);
+                    b = Math.pow(b, 1.0 / gammaOut);
+                }
             }
 
             // Clamp only for display conversion to 0-255 range

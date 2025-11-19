@@ -303,10 +303,10 @@ export class NpyProcessor {
         // Step 3: Manual normalization (user-specified range, only if both flags are false)
         // This handles the case where user explicitly sets a custom range
         else if (settings.normalization &&
-                 settings.normalization.autoNormalize === false &&
-                 settings.normalization.gammaMode === false &&
-                 settings.normalization.min !== undefined &&
-                 settings.normalization.max !== undefined) {
+            settings.normalization.autoNormalize === false &&
+            settings.normalization.gammaMode === false &&
+            settings.normalization.min !== undefined &&
+            settings.normalization.max !== undefined) {
             normMin = settings.normalization.min;
             normMax = settings.normalization.max;
 
@@ -337,7 +337,7 @@ export class NpyProcessor {
         // Apply gamma correction only in gamma mode, NOT in auto-normalize mode
         // Auto-normalize mode should NOT apply gamma/brightness corrections
         const applyGamma = settings.normalization?.gammaMode === true &&
-                          settings.normalization?.autoNormalize !== true;
+            settings.normalization?.autoNormalize !== true;
 
         for (let i = 0; i < width * height; i++) {
             let r, g, b, a = 255;
@@ -379,21 +379,24 @@ export class NpyProcessor {
                 const gammaOut = settings.gamma?.out ?? 1.0;
                 const exposureStops = settings.brightness?.offset ?? 0;
 
-                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                r = Math.pow(r, gammaIn);
-                g = Math.pow(g, gammaIn);
-                b = Math.pow(b, gammaIn);
+                // Optimization: Skip if no changes (gamma is identity and brightness is 0)
+                if (Math.abs(gammaIn - gammaOut) >= 0.001 || Math.abs(exposureStops) >= 0.001) {
+                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
+                    r = Math.pow(r, gammaIn);
+                    g = Math.pow(g, gammaIn);
+                    b = Math.pow(b, gammaIn);
 
-                // Step 2: Apply brightness in linear space (no clamping)
-                const brightnessFactor = Math.pow(2, exposureStops);
-                r = r * brightnessFactor;
-                g = g * brightnessFactor;
-                b = b * brightnessFactor;
+                    // Step 2: Apply brightness in linear space (no clamping)
+                    const brightnessFactor = Math.pow(2, exposureStops);
+                    r = r * brightnessFactor;
+                    g = g * brightnessFactor;
+                    b = b * brightnessFactor;
 
-                // Step 3: Apply output gamma - raise to 1/gammaOut power
-                r = Math.pow(r, 1.0 / gammaOut);
-                g = Math.pow(g, 1.0 / gammaOut);
-                b = Math.pow(b, 1.0 / gammaOut);
+                    // Step 3: Apply output gamma - raise to 1/gammaOut power
+                    r = Math.pow(r, 1.0 / gammaOut);
+                    g = Math.pow(g, 1.0 / gammaOut);
+                    b = Math.pow(b, 1.0 / gammaOut);
+                }
             }
 
             // Clamp only for display conversion to 0-255 range

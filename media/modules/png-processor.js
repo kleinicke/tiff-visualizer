@@ -201,8 +201,8 @@ export class PngProcessor {
                     };
 
                     const format = src.toLowerCase().includes('.png') ? 'PNG' :
-                                  src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg') ? 'JPEG' :
-                                  'Image';
+                        src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg') ? 'JPEG' :
+                            'Image';
 
                     // Send format info BEFORE rendering (for deferred rendering)
                     if (this._isInitialLoad) {
@@ -504,6 +504,11 @@ export class PngProcessor {
         const gammaOut = settings.gamma?.out ?? 1.0; // Target/output gamma (to apply)
         const exposureStops = settings.brightness?.offset ?? 0;
 
+        // Optimization: Skip if no changes (gamma is identity and brightness is 0)
+        if (Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001) {
+            return normalizedValue;
+        }
+
         // Step 1: Remove input gamma (linearize) - raise to gammaIn power
         let linear = Math.pow(normalizedValue, gammaIn);
 
@@ -663,7 +668,7 @@ export class PngProcessor {
             // Fallback path - data is already RGBA format (Uint8ClampedArray)
             // Type assertion is safe because fallback path always creates Uint8ClampedArray
             imageData = this._toImageDataWithGamma(
-                /** @type {Uint8Array | Uint8ClampedArray} */ (this._lastRaw.data),
+                /** @type {Uint8Array | Uint8ClampedArray} */(this._lastRaw.data),
                 this._lastRaw.width,
                 this._lastRaw.height
             );

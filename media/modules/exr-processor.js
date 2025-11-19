@@ -58,6 +58,11 @@ export class ExrProcessor {
 	 * @returns {number} - Corrected value
 	 */
 	_applyGammaAndBrightness(normalizedValue, gamma, brightness) {
+		// Optimization: Skip if no changes (gamma is identity and brightness is 0)
+		if (Math.abs(gamma.in - gamma.out) < 0.001 && Math.abs(brightness.offset) < 0.001) {
+			return normalizedValue;
+		}
+
 		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
 		let linear = Math.pow(normalizedValue, gamma.in);
 
