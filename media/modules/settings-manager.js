@@ -130,16 +130,16 @@ export class SettingsManager {
     const gammaChanged = JSON.stringify(oldSettings.gamma) !== JSON.stringify(newSettings.gamma);
     const brightnessChanged = JSON.stringify(oldSettings.brightness) !== JSON.stringify(newSettings.brightness);
     const normRangeChanged = oldSettings.normalization?.min !== newSettings.normalization?.min ||
-                             oldSettings.normalization?.max !== newSettings.normalization?.max;
+      oldSettings.normalization?.max !== newSettings.normalization?.max;
     const normAutoChanged = oldSettings.normalization?.autoNormalize !== newSettings.normalization?.autoNormalize;
     const normGammaModeChanged = oldSettings.normalization?.gammaMode !== newSettings.normalization?.gammaMode;
 
     // Check structural changes
-    const masksChanged = JSON.stringify(oldSettings.maskFilters) !== JSON.stringify(newSettings.maskFilters);
+    const masksChanged = JSON.stringify(oldSettings.maskFilters || []) !== JSON.stringify(newSettings.maskFilters || []);
     const rgbModeChanged = oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
     const scaleModeChanged = oldSettings.scale24BitFactor !== newSettings.scale24BitFactor;
     const floatModeChanged = oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
-    const nanColorChanged = oldSettings.nanColor !== newSettings.nanColor;
+    const nanColorChanged = (oldSettings.nanColor ?? 'black') !== (newSettings.nanColor ?? 'black');
 
     // Determine change type
     if (masksChanged) {
@@ -152,14 +152,14 @@ export class SettingsManager {
 
     // Determine if anything changed at all
     const somethingChanged = gammaChanged || brightnessChanged || normRangeChanged ||
-                             normAutoChanged || normGammaModeChanged || masksChanged ||
-                             rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged;
+      normAutoChanged || normGammaModeChanged || masksChanged ||
+      rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged;
 
-    // If only gamma, brightness, or normalization ranges changed, it's parameters-only
+    // If only gamma, brightness, normalization ranges, or nanColor changed, it's parameters-only
     // Also treat "no changes" as parameters-only to avoid unnecessary slow path
     if (!somethingChanged ||
-        ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged) &&
-         !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged && !nanColorChanged)) {
+      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged) &&
+        !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
       changes.parametersOnly = true;
     } else {
       console.log('⚠️ Structural changes detected:', {
