@@ -63,7 +63,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let peerImageData = null;
 	let peerImageUris = []; // Track peer URIs for comparison state
 	let isShowingPeer = false;
-	
+	let initialLoadStartTime = 0;
+	let currentLoadFormat = '';
+
 	// Colormap conversion state
 	let colormapConversionState = null;
 
@@ -78,7 +80,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
 	}
-	
+
 	// Image collection state
 	let imageCollection = {
 		totalImages: 1,
@@ -110,6 +112,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Initialize the application
 	 */
 	function initialize() {
+		initialLoadStartTime = performance.now();
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
@@ -139,7 +142,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		} else {
 			image.src = settings.src;
 		}
-		
+
 		// Restore comparison state if we have peer images
 		if (peerImageUris.length > 0) {
 			// Notify extension about restored peer images so it can update the image collection
@@ -247,6 +250,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
+	 * Helper to log to VS Code Output
+	 */
+	function logToOutput(message) {
+		vscode.postMessage({
+			type: 'log',
+			value: message
+		});
+	}
+
+	/**
 	 * Setup image loading handlers
 	 */
 	function setupImageLoading() {
@@ -300,9 +313,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle TIFF file loading
 	 */
 	async function handleTiff(src) {
+		currentLoadFormat = 'TIFF';
 		try {
 			const result = await tiffProcessor.processTiff(src);
-			
+
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
@@ -316,6 +330,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			hasLoadedImage = true;
 			finalizeImageSetup();
 
+			if (!tiffProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				logToOutput(`[Perf] TIFF Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+			}
+
 		} catch (error) {
 			console.error('Error handling TIFF:', error);
 			onImageError();
@@ -326,6 +345,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle EXR file loading
 	 */
 	async function handleExr(src) {
+		currentLoadFormat = 'EXR';
 		try {
 			const result = await exrProcessor.processExr(src);
 
@@ -342,6 +362,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			hasLoadedImage = true;
 			finalizeImageSetup();
 
+			if (!exrProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				logToOutput(`[Perf] EXR Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+			}
+
 		} catch (error) {
 			console.error('Error handling EXR:', error);
 			onImageError();
@@ -352,6 +377,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle PFM file loading
 	 */
 	async function handlePfm(src) {
+		currentLoadFormat = 'PFM';
 		try {
 			const result = await pfmProcessor.processPfm(src);
 			canvas = result.canvas;
@@ -363,6 +389,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+
+			if (!pfmProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				logToOutput(`[Perf] PFM Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+			}
 		} catch (error) {
 			console.error('Error handling PFM:', error);
 			onImageError();
@@ -373,6 +404,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle PPM/PGM file loading
 	 */
 	async function handlePpm(src) {
+		currentLoadFormat = 'PPM/PGM';
 		try {
 			const result = await ppmProcessor.processPpm(src);
 			canvas = result.canvas;
@@ -384,6 +416,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+
+			if (!ppmProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				logToOutput(`[Perf] PPM/PGM Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+			}
 		} catch (error) {
 			console.error('Error handling PPM/PGM:', error);
 			onImageError();
@@ -394,6 +431,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle PNG/JPEG file loading
 	 */
 	async function handlePng(src) {
+		currentLoadFormat = 'PNG/JPEG';
 		try {
 			const result = await pngProcessor.processPng(src);
 			canvas = result.canvas;
@@ -405,6 +443,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+
+			if (!pngProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				logToOutput(`[Perf] PNG/JPEG Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+			}
 		} catch (error) {
 			console.error('Error handling PNG/JPEG:', error);
 			onImageError();
@@ -415,6 +458,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle NPY/NPZ file loading
 	 */
 	async function handleNpy(src) {
+		currentLoadFormat = 'NPY/NPZ';
 		try {
 			const result = await npyProcessor.processNpy(src);
 			canvas = result.canvas;
@@ -426,6 +470,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+
+			if (!npyProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				logToOutput(`[Perf] NPY/NPZ Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+			}
 		} catch (error) {
 			console.error('Error handling NPY/NPZ:', error);
 			onImageError();
@@ -486,31 +535,31 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			case 'setScale':
 				zoomController.updateScale(message.scale);
 				break;
-			
+
 			case 'setActive':
 				mouseHandler.setActive(message.value);
 				break;
-			
+
 			case 'zoomIn':
 				zoomController.zoomIn();
 				break;
-			
+
 			case 'zoomOut':
 				zoomController.zoomOut();
 				break;
-			
+
 			case 'resetZoom':
 				zoomController.resetZoom();
 				break;
-			
+
 			case 'exportAsPng':
 				exportAsPng();
 				break;
-			
+
 			case 'start-comparison':
 				handleStartComparison(message.peerUri);
 				break;
-			
+
 			case 'copyImage':
 				copyImage();
 				break;
@@ -548,6 +597,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 							updateHistogramData();
 						}
 					}
+
+					// Log deferred render completion
+					if (initialLoadStartTime > 0) {
+						const endTime = performance.now();
+						logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+						initialLoadStartTime = 0; // Reset
+					}
 				}
 				// If resource URI changed, reload the entire image
 				else if (oldResourceUri !== newResourceUri) {
@@ -555,7 +611,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					reloadImage();
 				} else {
 					// Update rendering with new settings, using optimization hints
+					const startTime = performance.now();
 					updateImageWithNewSettings(changes);
+					const endTime = performance.now();
+					logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
 				}
 				break;
 
@@ -564,39 +623,39 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				const maskChanges = settingsManager.updateSettings(message.settings);
 				updateImageWithNewSettings(maskChanges);
 				break;
-				
+
 			case 'updateImageCollectionOverlay':
 				updateImageCollectionOverlay(message.data);
 				break;
-				
+
 			case 'getZoomState':
 				// Send current zoom state back to extension
 				const zoomState = zoomController.getCurrentState();
-				vscode.postMessage({ 
-					type: 'zoomStateResponse', 
-					state: zoomState 
+				vscode.postMessage({
+					type: 'zoomStateResponse',
+					state: zoomState
 				});
 				break;
-				
+
 			case 'getComparisonState':
 				// Send current comparison state back to extension
 				const comparisonState = {
 					peerUris: peerImageUris,
 					isShowingPeer: isShowingPeer
 				};
-				vscode.postMessage({ 
-					type: 'comparisonStateResponse', 
-					state: comparisonState 
+				vscode.postMessage({
+					type: 'comparisonStateResponse',
+					state: comparisonState
 				});
 				break;
-				
+
 			case 'restoreZoomState':
 				// Restore zoom state after image change
 				if (message.state) {
 					zoomController.restoreState(message.state);
 				}
 				break;
-				
+
 			case 'restoreComparisonState':
 				// Restore comparison state after image change
 				if (message.state && message.state.peerUris && message.state.peerUris.length > 0) {
@@ -609,7 +668,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					}
 				}
 				break;
-				
+
 			case 'switchToImage':
 				// Switch to a different image
 				switchToNewImage(message.uri, message.resourceUri);
@@ -1017,7 +1076,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			if (e.ctrlKey) {
 				e.preventDefault();
 			}
-			
+
 			const keyState = mouseHandler.getKeyboardState();
 			zoomController.handleWheelZoom(e, keyState.ctrlPressed, keyState.altPressed);
 		}, { passive: false });
@@ -1218,7 +1277,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				if (ctx && imageData) {
 					ctx.putImageData(imageData, 0, 0);
 				}
-				
+
 				// Save state after toggling comparison
 				saveState();
 			}
@@ -1259,14 +1318,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		overlayElement = document.createElement('div');
 		overlayElement.classList.add('image-collection-overlay');
 		overlayElement.style.display = 'none';
-		
+
 		overlayElement.innerHTML = `
 			<div class="overlay-content">
 				<span class="image-counter">1 of 1</span>
 				<span class="toggle-hint">Press 't'/'r' to navigate</span>
 			</div>
 		`;
-		
+
 		document.body.appendChild(overlayElement);
 	}
 
@@ -1275,9 +1334,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 */
 	function updateImageCollectionOverlay(data) {
 		if (!overlayElement) return;
-		
+
 		imageCollection = data;
-		
+
 		if (data.show && data.totalImages > 1) {
 			const counter = overlayElement.querySelector('.image-counter');
 			if (counter) {
@@ -1296,24 +1355,24 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
-		
+
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
-		
+
 		// Clear the container
 		const container = document.body;
 		container.className = 'container';
-		
+
 		// Remove any existing image/canvas elements
 		const existingImages = container.querySelectorAll('img, canvas');
 		existingImages.forEach(el => el.remove());
-		
+
 		// Show loading state
 		container.classList.add('loading');
-		
+
 		// Load the new image based on file type
 		loadImageByType(uri, resourceUri);
 	}
@@ -1338,25 +1397,25 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			const newImage = document.createElement('img');
 			newImage.classList.add('scale-to-fit');
 			newImage.src = uri;
-			
+
 			newImage.addEventListener('load', () => {
 				if (hasLoadedImage) return;
-				
+
 				// Create canvas and draw image
 				canvas = document.createElement('canvas');
 				canvas.width = newImage.naturalWidth;
 				canvas.height = newImage.naturalHeight;
 				canvas.classList.add('scale-to-fit');
-				
+
 				const ctx = canvas.getContext('2d');
 				if (ctx) {
 					ctx.drawImage(newImage, 0, 0);
 				}
-				
+
 				imageElement = canvas;
 				finalizeImageSetup();
 			});
-			
+
 			newImage.addEventListener('error', () => {
 				if (hasLoadedImage) return;
 				onImageError();
@@ -1505,7 +1564,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Save state after adding peer image
 			saveState();
-			
+
 			vscode.postMessage({ type: 'comparison-ready' });
 		} catch (error) {
 			console.error('Failed to load peer image for comparison:', error);

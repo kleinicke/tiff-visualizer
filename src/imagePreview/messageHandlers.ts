@@ -37,6 +37,7 @@ export class MessageRouter {
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
+		this.handlers.set('log', new LogMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -237,6 +238,15 @@ class ExecuteCommandMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		if (message.command) {
 			vscode.commands.executeCommand(message.command);
+		}
+	}
+}
+
+class LogMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (message.value) {
+			const output = require('../extension').getOutputChannel();
+			output.appendLine(message.value);
 		}
 	}
 }
