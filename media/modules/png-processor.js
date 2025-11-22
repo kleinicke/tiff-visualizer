@@ -41,9 +41,9 @@ export class PngProcessor {
         // JPEG files always use native browser Image API (they don't support 16-bit)
         const isJpeg = src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg');
 
-            if (isJpeg) {
+        if (isJpeg) {
             return this._processWithNativeAPI(src);
-            }
+        }
 
         // For PNG files, detect bit depth and choose appropriate loader
         try {
@@ -159,16 +159,16 @@ export class PngProcessor {
             return { canvas, imageData };
         } catch (error) {
             console.error('UPNG.js processing failed, falling back to browser Image API:', error);
-            return this._processPngFallback(src);
+            return this._processWithNativeAPI(src);
         }
     }
 
     /**
-     * Fallback to browser Image API for compatibility
+     * Process image using native browser Image API (for 8-bit PNGs and JPEGs)
      * @param {string} src - Source URI
      * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
      */
-    async _processPngFallback(src) {
+    async _processWithNativeAPI(src) {
         const image = new Image();
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -210,17 +210,8 @@ export class PngProcessor {
                         src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg') ? 'JPEG' :
                             'Image';
 
-                    // Send format info BEFORE rendering (for deferred rendering)
-                    if (this._isInitialLoad) {
-                        this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
-                        this._pendingRenderData = true; // Flag that _lastRaw is ready for deferred render
-                        // Return placeholder
-                        const placeholderImageData = new ImageData(canvas.width, canvas.height);
-                        resolve({ canvas, imageData: placeholderImageData });
-                        return;
-                    }
-
-                    // Non-initial loads - render immediately
+                    // For native API path (8-bit images), render immediately
+                    // The browser decode is fast enough that deferred rendering adds overhead
                     this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
                     const finalImageData = this._toImageDataWithGamma(rawData, canvas.width, canvas.height);
                     this.vscode.postMessage({ type: 'refresh-status' });
@@ -267,63 +258,63 @@ export class PngProcessor {
             max = this._cachedStats.max;
         } else {
             // Stats mode: compute stats for the first time
-        if (settings.rgbAs24BitGrayscale && channels >= 3) {
-            // For 24-bit mode, calculate stats from combined 24-bit values
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * stride;
-                // Get RGB values
-                const rVal = data[srcIdx];
-                const gVal = data[srcIdx + 1];
-                const bVal = data[srcIdx + 2];
+            if (settings.rgbAs24BitGrayscale && channels >= 3) {
+                // For 24-bit mode, calculate stats from combined 24-bit values
+                for (let i = 0; i < width * height; i++) {
+                    const srcIdx = i * stride;
+                    // Get RGB values
+                    const rVal = data[srcIdx];
+                    const gVal = data[srcIdx + 1];
+                    const bVal = data[srcIdx + 2];
 
-                // Scale to 8-bit if needed (for 16-bit images)
-                const rByte = maxValue === 65535 ? Math.round(rVal / 257) : rVal;
-                const gByte = maxValue === 65535 ? Math.round(gVal / 257) : gVal;
-                const bByte = maxValue === 65535 ? Math.round(bVal / 257) : bVal;
+                    // Scale to 8-bit if needed (for 16-bit images)
+                    const rByte = maxValue === 65535 ? Math.round(rVal / 257) : rVal;
+                    const gByte = maxValue === 65535 ? Math.round(gVal / 257) : gVal;
+                    const bByte = maxValue === 65535 ? Math.round(bVal / 257) : bVal;
 
-                // Combine into 24-bit value
-                const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
+                    // Combine into 24-bit value
+                    const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
 
-                if (combined24bit < min) min = combined24bit;
-                if (combined24bit > max) max = combined24bit;
-            }
-        } else {
-            // Optimization: Fast paths for stats calculation
-            if ((channels === 1 || channels === 3) && !isRgbaFormat) {
-                // Contiguous data (Gray or RGB), no alpha to skip
-                // We can iterate the array directly
-                const len = data.length;
-                for (let i = 0; i < len; i++) {
-                    const value = data[i];
-                    if (value < min) min = value;
-                    if (value > max) max = value;
-                }
-            } else if (channels === 4 || isRgbaFormat) {
-                // RGBA data, need to skip alpha (every 4th byte)
-                // Unrolled loop for performance
-                const len = width * height * 4;
-                for (let i = 0; i < len; i += 4) {
-                    const r = data[i];
-                    const g = data[i + 1];
-                    const b = data[i + 2];
-
-                    if (r < min) min = r;
-                    if (r > max) max = r;
-                    if (g < min) min = g;
-                    if (g > max) max = g;
-                    if (b < min) min = b;
-                    if (b > max) max = b;
+                    if (combined24bit < min) min = combined24bit;
+                    if (combined24bit > max) max = combined24bit;
                 }
             } else {
-                // Fallback for other cases (e.g. Gray+Alpha)
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * stride;
-                for (let c = 0; c < Math.min(3, channels); c++) {
-                    const value = data[srcIdx + c];
-                    if (value < min) min = value;
-                    if (value > max) max = value;
-                }
-            }
+                // Optimization: Fast paths for stats calculation
+                if ((channels === 1 || channels === 3) && !isRgbaFormat) {
+                    // Contiguous data (Gray or RGB), no alpha to skip
+                    // We can iterate the array directly
+                    const len = data.length;
+                    for (let i = 0; i < len; i++) {
+                        const value = data[i];
+                        if (value < min) min = value;
+                        if (value > max) max = value;
+                    }
+                } else if (channels === 4 || isRgbaFormat) {
+                    // RGBA data, need to skip alpha (every 4th byte)
+                    // Unrolled loop for performance
+                    const len = width * height * 4;
+                    for (let i = 0; i < len; i += 4) {
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+
+                        if (r < min) min = r;
+                        if (r > max) max = r;
+                        if (g < min) min = g;
+                        if (g > max) max = g;
+                        if (b < min) min = b;
+                        if (b > max) max = b;
+                    }
+                } else {
+                    // Fallback for other cases (e.g. Gray+Alpha)
+                    for (let i = 0; i < width * height; i++) {
+                        const srcIdx = i * stride;
+                        for (let c = 0; c < Math.min(3, channels); c++) {
+                            const value = data[srcIdx + c];
+                            if (value < min) min = value;
+                            if (value > max) max = value;
+                        }
+                    }
                 }
             }
 
@@ -421,8 +412,8 @@ export class PngProcessor {
                 }
                 console.timeEnd('PNG: Identity Path');
                 return new ImageData(out, width, height);
-                }
-                }
+            }
+        }
 
         // Render pixels
         for (let i = 0; i < width * height; i++) {
@@ -519,23 +510,51 @@ export class PngProcessor {
     /**
      * Fallback gamma rendering for browser Image API path
      * @param {Uint8Array | Uint8ClampedArray} data
+```
      * @param {number} width
      * @param {number} height
      * @returns {ImageData}
      */
     _toImageDataWithGamma(data, width, height) {
+        const { maxValue } = this._lastRaw;
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
 
+        // Early check for identity transform (before expensive stats calculation)
+        // If normalization is full range AND gamma/brightness are identity, we can skip everything
+        const gammaIn = settings.gamma?.in ?? 1.0;
+        const gammaOut = settings.gamma?.out ?? 1.0;
+        const exposureStops = settings.brightness?.offset ?? 0;
+        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+
+        // Check if normalization will be full range (0-255 for 8-bit)
+        const normSettings = settings.normalization;
+        const willBeFullRange = normSettings?.gammaMode === true ||
+            (!normSettings?.autoNormalize &&
+                normSettings?.min === 0 &&
+                normSettings?.max === 255);
+
+        if (isIdentityGamma && willBeFullRange) {
         // Calculate stats for normalization
-        let min = Infinity, max = -Infinity;
-        for (let i = 0; i < width * height; i++) {
-            const srcIdx = i * 4;
-            for (let c = 0; c < 3; c++) {
-                const value = data[srcIdx + c];
-                if (value < min) min = value;
-                if (value > max) max = value;
+            // Send fixed stats for 8-bit images
+            if (this.vscode) {
+                this.vscode.postMessage({ type: 'stats', value: { min: 0, max: 255 } });
             }
+            return new ImageData(new Uint8ClampedArray(data), width, height);
+        }
+
+        // Calculate min/max for status bar (only if needed for non-identity transforms)
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            if (r < min) min = r;
+            if (r > max) max = r;
+            if (g < min) min = g;
+            if (g > max) max = g;
+            if (b < min) min = b;
+            if (b > max) max = b;
         }
 
         // Send stats to VS Code
@@ -560,18 +579,12 @@ export class PngProcessor {
             normMax = 255;
         }
 
-        // Optimization: Check for identity transform
-        // If normalization is full range (0-255) AND gamma/brightness are identity
-        // We can skip the entire pixel loop
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
-        const exposureStops = settings.brightness?.offset ?? 0;
-        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+        // Second check for identity transform (after normalization is determined)
+        // This catches cases where autoNormalize resulted in full range
         const isFullRange = normMin === 0 && normMax === 255;
 
         if (isIdentityGamma && isFullRange) {
             console.log('PNG: Identity transform detected, skipping pixel loop');
-            // data is already RGBA and Uint8ClampedArray (or compatible)
             return new ImageData(new Uint8ClampedArray(data), width, height);
         }
 
