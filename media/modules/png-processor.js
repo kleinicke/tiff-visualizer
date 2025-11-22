@@ -32,31 +32,34 @@ export class PngProcessor {
     }
 
     /**
-     * Process PNG file using UPNG.js
+     * Process PNG/JPEG file - uses native API for 8-bit PNGs and all JPEGs, UPNG for 16-bit PNGs
+     * Note: JPEG handling is included here since JPEGs are always 8-bit and use the same native Image API path
      * @param {string} src - Source URI
      * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
      */
     async processPng(src) {
-        // JPEG files should use fallback path (browser Image API)
+        // JPEG files always use native browser Image API (they don't support 16-bit)
         const isJpeg = src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg');
 
-        // Check if UPNG is available (loaded via script tag)
-        // @ts-ignore
-        if (typeof UPNG === 'undefined' || isJpeg) {
             if (isJpeg) {
-                // JPEG files use browser Image API directly
-                return this._processPngFallback(src);
+            return this._processWithNativeAPI(src);
             }
-            console.warn('UPNG.js not available, falling back to browser Image API');
-            return this._processPngFallback(src);
-        }
 
+        // For PNG files, detect bit depth and choose appropriate loader
         try {
             // Invalidate stats cache for new image
             this._cachedStats = undefined;
             // Fetch PNG file as ArrayBuffer
             const response = await fetch(src);
             const arrayBuffer = await response.arrayBuffer();
+
+            // Quick bit depth detection from PNG IHDR chunk (just reads byte 24)
+            const bitDepth = this._detectPngBitDepth(arrayBuffer);
+            // For 8-bit images, use native browser API for better performance
+            if (bitDepth === 8 || bitDepth === null) {
+                return this._processWithNativeAPI(src);
+            }
+
 
             // Decode with UPNG.js
             // @ts-ignore
@@ -82,7 +85,7 @@ export class PngProcessor {
 
             const width = png.width;
             const height = png.height;
-            let bitDepth = png.depth;
+            let pngBitDepth = png.depth;
             const colorType = png.ctype;
 
             // Determine channels
@@ -103,10 +106,10 @@ export class PngProcessor {
                 const rgba = UPNG.toRGBA8(png);
                 rawData = new Uint8Array(rgba[0]); // First frame
                 channels = 4;
-                bitDepth = 8;
+                pngBitDepth = 8;
             } else {
                 // Use raw data - may be uint8 or uint16!
-                if (bitDepth === 16) {
+                if (pngBitDepth === 16) {
                     // PNG stores uint16 in big-endian format, need to swap bytes
                     const uint8Data = new Uint8Array(png.data);
                     const uint16Data = new Uint16Array(uint8Data.length / 2);
@@ -131,8 +134,8 @@ export class PngProcessor {
                 height,
                 data: rawData,
                 channels,
-                bitDepth,
-                maxValue: bitDepth === 16 ? 65535 : 255,
+                bitDepth: pngBitDepth,
+                maxValue: pngBitDepth === 16 ? 65535 : 255,
                 isRgbaFormat: false  // UPNG path stores raw channel format
             };
 
@@ -795,5 +798,32 @@ export class PngProcessor {
         this.vscode.postMessage({ type: 'refresh-status' });
 
         return imageData;
+    }
+
+    /**
+     * Detect PNG bit depth by reading the IHDR chunk
+     * @param {ArrayBuffer} arrayBuffer - PNG file data
+     * @returns {number|null} - Bit depth (1, 2, 4, 8, or 16), or null if detection fails
+     */
+    _detectPngBitDepth(arrayBuffer) {
+        try {
+            const data = new Uint8Array(arrayBuffer);
+
+            // PNG signature: 137 80 78 71 13 10 26 10
+            if (data.length < 8 || data[0] !== 137 || data[1] !== 80 || data[2] !== 78 || data[3] !== 71) {
+                console.warn('PNG: Invalid PNG signature');
+                return null;
+            }
+
+            // IHDR chunk starts at byte 8
+            // Structure: [length:4][type:4="IHDR"][data:13][crc:4]
+            // IHDR data: [width:4][height:4][bitDepth:1][colorType:1][compression:1][filter:1][interlace:1]
+            const bitDepth = data[24]; // Bit depth is at offset 24
+
+            return bitDepth;
+        } catch (error) {
+            console.error('PNG: Failed to detect bit depth:', error);
+            return null;
+        }
     }
 }
