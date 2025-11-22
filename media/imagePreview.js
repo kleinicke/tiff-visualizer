@@ -595,14 +595,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 							ctx.putImageData(deferredImageData, 0, 0);
 							primaryImageData = deferredImageData;
 							updateHistogramData();
-						}
 					}
 
-					// Log deferred render completion
+						// Log deferred render completion (only if we actually rendered deferred data)
 					if (initialLoadStartTime > 0) {
 						const endTime = performance.now();
 						logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
 						initialLoadStartTime = 0; // Reset
+						}
 					}
 				}
 				// If resource URI changed, reload the entire image

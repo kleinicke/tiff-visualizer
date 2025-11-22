@@ -49,7 +49,7 @@ export class PngProcessor {
         try {
             // Invalidate stats cache for new image
             this._cachedStats = undefined;
-            // Fetch PNG file as ArrayBuffer
+
             const response = await fetch(src);
             const arrayBuffer = await response.arrayBuffer();
 
@@ -153,7 +153,7 @@ export class PngProcessor {
             }
 
             // Non-initial loads - render immediately
-            this._postFormatInfo(width, height, channels, bitDepth, 'PNG');
+            this._postFormatInfo(width, height, channels, pngBitDepth, 'PNG');
             const imageData = this._renderToImageData();
             this.vscode.postMessage({ type: 'refresh-status' });
             return { canvas, imageData };
@@ -210,13 +210,14 @@ export class PngProcessor {
                         src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg') ? 'JPEG' :
                             'Image';
 
-                    // For native API path (8-bit images), render immediately
-                    // The browser decode is fast enough that deferred rendering adds overhead
+                    // Use deferred rendering for consistency with other formats
+                    // Send format info and return placeholder - actual rendering happens in performDeferredRender()
                     this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
-                    const finalImageData = this._toImageDataWithGamma(rawData, canvas.width, canvas.height);
-                    this.vscode.postMessage({ type: 'refresh-status' });
+                    this._pendingRenderData = true; // Flag that _lastRaw is ready for deferred render
 
-                    resolve({ canvas, imageData: finalImageData });
+                    // Return placeholder
+                    const placeholderImageData = new ImageData(canvas.width, canvas.height);
+                    resolve({ canvas, imageData: placeholderImageData });
                 } catch (error) {
                     reject(error);
                 }
@@ -528,8 +529,9 @@ export class PngProcessor {
         const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
 
         // Check if normalization will be full range (0-255 for 8-bit)
+        // Handle undefined/null settings gracefully - default to gammaMode behavior (0-255)
         const normSettings = settings.normalization;
-        const willBeFullRange = normSettings?.gammaMode === true ||
+        const willBeFullRange = (normSettings === undefined || normSettings === null || normSettings.gammaMode === true) ||
             (!normSettings?.autoNormalize &&
                 normSettings?.min === 0 &&
                 normSettings?.max === 255);
@@ -544,7 +546,18 @@ export class PngProcessor {
         }
 
         // Calculate min/max for status bar (only if needed for non-identity transforms)
-        let min = Infinity, max = -Infinity;
+        // Use caching to avoid recomputation when toggling settings
+        let min, max;
+
+        if (this._cachedStats !== undefined) {
+            // Reuse cached stats
+            console.log('PNG (native): Using cached stats');
+            min = this._cachedStats.min;
+            max = this._cachedStats.max;
+        } else {
+            // Compute stats for the first time
+            min = Infinity;
+            max = -Infinity;
         for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i + 1];
@@ -555,6 +568,10 @@ export class PngProcessor {
             if (g > max) max = g;
             if (b < min) min = b;
             if (b > max) max = b;
+            }
+
+            // Cache the computed stats for reuse
+            this._cachedStats = { min, max };
         }
 
         // Send stats to VS Code
