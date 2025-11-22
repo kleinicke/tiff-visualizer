@@ -330,6 +330,73 @@ export class PpmProcessor {
             normMax = maxval;
         }
 
+        // Optimization: Check for identity transform
+        const gammaIn = settings.gamma?.in ?? 1.0;
+        const gammaOut = settings.gamma?.out ?? 1.0;
+        const exposureStops = settings.brightness?.offset ?? 0;
+        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+        const isFullRange = normMin === 0 && normMax === maxval;
+
+        if (isIdentityGamma && isFullRange && !rgbAs24BitMode) {
+            // Fast path for 8-bit (maxval <= 255)
+            if (maxval <= 255) {
+                console.log('PPM: Identity transform detected (8-bit), using fast loop');
+                const out = new Uint8ClampedArray(width * height * 4);
+
+                if (channels === 3) {
+                    // RGB -> RGBA
+                    for (let i = 0; i < width * height; i++) {
+                        const srcIdx = i * 3;
+                        const outIdx = i * 4;
+                        out[outIdx] = data[srcIdx];
+                        out[outIdx + 1] = data[srcIdx + 1];
+                        out[outIdx + 2] = data[srcIdx + 2];
+                        out[outIdx + 3] = 255;
+                    }
+                } else {
+                    // Gray -> RGBA
+                    for (let i = 0; i < width * height; i++) {
+                        const val = data[i];
+                        const outIdx = i * 4;
+                        out[outIdx] = val;
+                        out[outIdx + 1] = val;
+                        out[outIdx + 2] = val;
+                        out[outIdx + 3] = 255;
+                    }
+                }
+                return new ImageData(out, width, height);
+            }
+
+            // Fast path for 16-bit (maxval > 255) - just scaling, no gamma
+            if (maxval > 255) {
+                console.log('PPM: Identity transform detected (16-bit), using fast scaling loop');
+                const out = new Uint8ClampedArray(width * height * 4);
+                const scale = 255 / maxval;
+
+                if (channels === 3) {
+                    for (let i = 0; i < width * height; i++) {
+                        const srcIdx = i * 3;
+                        const outIdx = i * 4;
+                        // Simple scaling
+                        out[outIdx] = data[srcIdx] * scale;
+                        out[outIdx + 1] = data[srcIdx + 1] * scale;
+                        out[outIdx + 2] = data[srcIdx + 2] * scale;
+                        out[outIdx + 3] = 255;
+                    }
+                } else {
+                    for (let i = 0; i < width * height; i++) {
+                        const val = data[i] * scale;
+                        const outIdx = i * 4;
+                        out[outIdx] = val;
+                        out[outIdx + 1] = val;
+                        out[outIdx + 2] = val;
+                        out[outIdx + 3] = 255;
+                    }
+                }
+                return new ImageData(out, width, height);
+            }
+        }
+
         const range = normMax - normMin || 1;
         const out = new Uint8ClampedArray(width * height * 4);
 

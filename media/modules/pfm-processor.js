@@ -118,6 +118,22 @@ export class PfmProcessor {
                 r = g = b = n;
             }
 
+            // Optimization: Check for identity transform
+            const gammaIn = settings.gamma?.in ?? 1.0;
+            const gammaOut = settings.gamma?.out ?? 1.0;
+            const exposureStops = settings.brightness?.offset ?? 0;
+            const isIdentityGamma = Math.abs(gammaIn - 1.0) < 0.001 && Math.abs(gammaOut - 1.0) < 0.001 && Math.abs(exposureStops) < 0.001;
+
+            if (isIdentityGamma) {
+                // Fast path: just clamp and assign
+                const p = i * 4;
+                out[p] = Math.round(Math.max(0, Math.min(1, r)) * 255);     // R
+                out[p + 1] = Math.round(Math.max(0, Math.min(1, g)) * 255); // G
+                out[p + 2] = Math.round(Math.max(0, Math.min(1, b)) * 255); // B
+                out[p + 3] = 255;                 // A
+                continue;
+            }
+
             if (settings.normalization && settings.normalization.gammaMode) {
                 const gammaIn = settings.gamma?.in ?? 1.0;
                 const gammaOut = settings.gamma?.out ?? 1.0;

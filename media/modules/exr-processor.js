@@ -240,6 +240,71 @@ export class ExrProcessor {
 			max = 1;
 		}
 
+		// Optimization: Check for identity transform
+		const gammaIn = gamma.in ?? 1.0;
+		const gammaOut = gamma.out ?? 1.0;
+		const exposureStops = brightness.offset ?? 0;
+		const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+
+		if (isIdentityGamma) {
+			console.log('EXR: Identity transform detected, using fast loop');
+			// Fast path loop: just normalize and clamp, no gamma math
+			for (let y = 0; y < height; y++) {
+				for (let x = 0; x < width; x++) {
+					const flippedY = height - 1 - y;
+					const pixelIndex = (y * width + x) * 4;
+					const dataIndex = (flippedY * width + x) * channels;
+
+					let r, g, b, a = 255;
+
+					if (channels === 1) {
+						const value = data[dataIndex];
+						if (isNaN(value) || !isFinite(value)) {
+							r = nanColor.r; g = nanColor.g; b = nanColor.b;
+						} else {
+							// Normalize and clamp
+							const normalized = (value - min) / range;
+							const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+							r = g = b = intensity;
+						}
+					} else if (channels === 3) {
+						const rVal = data[dataIndex];
+						const gVal = data[dataIndex + 1];
+						const bVal = data[dataIndex + 2];
+
+						if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
+							r = nanColor.r; g = nanColor.g; b = nanColor.b;
+						} else {
+							r = Math.round(Math.max(0, Math.min(1, (rVal - min) / range)) * 255);
+							g = Math.round(Math.max(0, Math.min(1, (gVal - min) / range)) * 255);
+							b = Math.round(Math.max(0, Math.min(1, (bVal - min) / range)) * 255);
+						}
+					} else if (channels === 4) {
+						const rVal = data[dataIndex];
+						const gVal = data[dataIndex + 1];
+						const bVal = data[dataIndex + 2];
+						const aVal = data[dataIndex + 3];
+
+						if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
+							r = nanColor.r; g = nanColor.g; b = nanColor.b; a = 255;
+						} else {
+							r = Math.round(Math.max(0, Math.min(1, (rVal - min) / range)) * 255);
+							g = Math.round(Math.max(0, Math.min(1, (gVal - min) / range)) * 255);
+							b = Math.round(Math.max(0, Math.min(1, (bVal - min) / range)) * 255);
+							a = Math.round(this.clamp(aVal, 0, 1) * 255);
+						}
+					}
+
+					pixels[pixelIndex] = r;
+					pixels[pixelIndex + 1] = g;
+					pixels[pixelIndex + 2] = b;
+					pixels[pixelIndex + 3] = a;
+				}
+			}
+			ctx.putImageData(imageData, 0, 0);
+			return imageData;
+		}
+
 		// Render pixels
 		// Note: EXR images are typically stored with origin at bottom-left, so flip vertically
 		for (let y = 0; y < height; y++) {

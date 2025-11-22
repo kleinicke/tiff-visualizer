@@ -331,6 +331,51 @@ export class NpyProcessor {
             normMax = dataMax;
         }
 
+        // Optimization: Check for identity transform
+        const gammaIn = settings.gamma?.in ?? 1.0;
+        const gammaOut = settings.gamma?.out ?? 1.0;
+        const exposureStops = settings.brightness?.offset ?? 0;
+        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+
+        // Check if we have uint8 data and full range normalization
+        // NPY dtypes: '|u1' is uint8
+        const isUint8 = this._lastRaw && (this._lastRaw.dtype === '|u1' || this._lastRaw.dtype === 'u1');
+        const isFullRange = normMin === 0 && normMax === 255;
+
+        if (isIdentityGamma && isFullRange && isUint8 && !rgbAs24BitMode) {
+            console.log('NPY: Identity transform detected (uint8), using fast loop');
+            const out = new Uint8ClampedArray(width * height * 4);
+
+            if (channels === 3) {
+                // RGB -> RGBA
+                for (let i = 0; i < width * height; i++) {
+                    const srcIdx = i * 3;
+                    const outIdx = i * 4;
+                    out[outIdx] = data[srcIdx];
+                    out[outIdx + 1] = data[srcIdx + 1];
+                    out[outIdx + 2] = data[srcIdx + 2];
+                    out[outIdx + 3] = 255;
+                }
+            } else if (channels === 4) {
+                // RGBA -> RGBA (Copy)
+                // data is Uint8Array, we can just copy it to Uint8ClampedArray
+                // Ensure we use the correct length
+                const length = width * height * 4;
+                return new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, length), width, height);
+            } else {
+                // Gray -> RGBA
+                for (let i = 0; i < width * height; i++) {
+                    const val = data[i];
+                    const outIdx = i * 4;
+                    out[outIdx] = val;
+                    out[outIdx + 1] = val;
+                    out[outIdx + 2] = val;
+                    out[outIdx + 3] = 255;
+                }
+            }
+            return new ImageData(out, width, height);
+        }
+
         const range = normMax - normMin || 1;
         const out = new Uint8ClampedArray(width * height * 4);
 

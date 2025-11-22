@@ -700,6 +700,61 @@ export class TiffProcessor {
 		// Use normalization settings (normMin/normMax are already calculated based on mode)
 		const range = normMax - normMin;
 
+		// Optimization: Check for identity transform
+		const gammaIn = settings.gamma?.in ?? 1.0;
+		const gammaOut = settings.gamma?.out ?? 1.0;
+		const exposureStops = settings.brightness?.offset ?? 0;
+		const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+		const isFullRange = normMin === 0 && normMax === 255; // Assuming 8-bit target for "full range" check in this context
+
+		// Fast path for 8-bit integer data (common case)
+		// We check if rasters are Uint8Array to ensure no NaNs and 0-255 range
+		if (isIdentityGamma && isFullRange && !settings.rgbAs24BitGrayscale && rasters[0] instanceof Uint8Array) {
+			console.log('TIFF: Identity transform detected (8-bit), using fast interleave loop');
+			const out = new Uint8ClampedArray(width * height * 4);
+
+			if (numBands >= 3) {
+				// RGB(A) -> RGBA
+				const rBand = rasters[0];
+				const gBand = rasters[1];
+				const bBand = rasters[2];
+				const aBand = numBands > 3 ? rasters[3] : null;
+
+				for (let i = 0; i < width * height; i++) {
+					const outIdx = i * 4;
+					out[outIdx] = rBand[i];
+					out[outIdx + 1] = gBand[i];
+					out[outIdx + 2] = bBand[i];
+					out[outIdx + 3] = aBand ? aBand[i] : 255;
+				}
+			} else if (numBands === 1) {
+				// Gray -> RGBA
+				const grayBand = rasters[0];
+				for (let i = 0; i < width * height; i++) {
+					const val = grayBand[i];
+					const outIdx = i * 4;
+					out[outIdx] = val;
+					out[outIdx + 1] = val;
+					out[outIdx + 2] = val;
+					out[outIdx + 3] = 255;
+				}
+			} else if (numBands === 2) {
+				// Gray + Alpha -> RGBA
+				const grayBand = rasters[0];
+				const alphaBand = rasters[1];
+				for (let i = 0; i < width * height; i++) {
+					const val = grayBand[i];
+					const outIdx = i * 4;
+					out[outIdx] = val;
+					out[outIdx + 1] = val;
+					out[outIdx + 2] = val;
+					out[outIdx + 3] = alphaBand[i];
+				}
+			}
+
+			return new ImageData(out, width, height);
+		}
+
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
 

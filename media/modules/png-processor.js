@@ -271,7 +271,34 @@ export class PngProcessor {
                 if (combined24bit > max) max = combined24bit;
             }
         } else {
-            // Normal mode: calculate stats from individual channels
+            // Optimization: Fast paths for stats calculation
+            if ((channels === 1 || channels === 3) && !isRgbaFormat) {
+                // Contiguous data (Gray or RGB), no alpha to skip
+                // We can iterate the array directly
+                const len = data.length;
+                for (let i = 0; i < len; i++) {
+                    const value = data[i];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
+            } else if (channels === 4 || isRgbaFormat) {
+                // RGBA data, need to skip alpha (every 4th byte)
+                // Unrolled loop for performance
+                const len = width * height * 4;
+                for (let i = 0; i < len; i += 4) {
+                    const r = data[i];
+                    const g = data[i + 1];
+                    const b = data[i + 2];
+
+                    if (r < min) min = r;
+                    if (r > max) max = r;
+                    if (g < min) min = g;
+                    if (g > max) max = g;
+                    if (b < min) min = b;
+                    if (b > max) max = b;
+                }
+            } else {
+                // Fallback for other cases (e.g. Gray+Alpha)
             for (let i = 0; i < width * height; i++) {
                 const srcIdx = i * stride;
                 for (let c = 0; c < Math.min(3, channels); c++) {
@@ -321,6 +348,59 @@ export class PngProcessor {
             normMin = 0;
             normMax = maxValue;
         }
+
+        // Optimization: Check for identity transform
+        const gammaIn = settings.gamma?.in ?? 1.0;
+        const gammaOut = settings.gamma?.out ?? 1.0;
+        const exposureStops = settings.brightness?.offset ?? 0;
+        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+        const isFullRange = normMin === 0 && normMax === maxValue;
+
+        if (isIdentityGamma && isFullRange) {
+            // Fast path for 8-bit RGBA (already in correct format)
+            if (bitDepth === 8 && channels === 4 && !isRgbaFormat) {
+                console.time('PNG: Identity Path');
+                console.log('PNG: Identity transform detected (8-bit RGBA), skipping pixel loop');
+                // Ensure we use the correct length, as UPNG buffer might be larger
+                const length = width * height * 4;
+                // Create a view of the exact required size
+                const result = new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, length), width, height);
+                console.timeEnd('PNG: Identity Path');
+                return result;
+            }
+            // Fast path for 8-bit RGB (add alpha)
+            if (bitDepth === 8 && channels === 3 && !isRgbaFormat) {
+                console.time('PNG: Identity Path');
+                console.log('PNG: Identity transform detected (8-bit RGB), using fast loop');
+                const out = new Uint8ClampedArray(width * height * 4);
+                for (let i = 0; i < width * height; i++) {
+                    const srcIdx = i * 3;
+                    const outIdx = i * 4;
+                    out[outIdx] = data[srcIdx];
+                    out[outIdx + 1] = data[srcIdx + 1];
+                    out[outIdx + 2] = data[srcIdx + 2];
+                    out[outIdx + 3] = 255;
+                }
+                console.timeEnd('PNG: Identity Path');
+                return new ImageData(out, width, height);
+            }
+            // Fast path for 8-bit Grayscale (expand to RGB)
+            if (bitDepth === 8 && channels === 1 && !isRgbaFormat) {
+                console.time('PNG: Identity Path');
+                console.log('PNG: Identity transform detected (8-bit Gray), using fast loop');
+                const out = new Uint8ClampedArray(width * height * 4);
+                for (let i = 0; i < width * height; i++) {
+                    const val = data[i];
+                    const outIdx = i * 4;
+                    out[outIdx] = val;
+                    out[outIdx + 1] = val;
+                    out[outIdx + 2] = val;
+                    out[outIdx + 3] = 255;
+                }
+                console.timeEnd('PNG: Identity Path');
+                return new ImageData(out, width, height);
+                }
+                }
 
         // Render pixels
         for (let i = 0; i < width * height; i++) {
@@ -456,6 +536,21 @@ export class PngProcessor {
         } else {
             normMin = 0;
             normMax = 255;
+        }
+
+        // Optimization: Check for identity transform
+        // If normalization is full range (0-255) AND gamma/brightness are identity
+        // We can skip the entire pixel loop
+        const gammaIn = settings.gamma?.in ?? 1.0;
+        const gammaOut = settings.gamma?.out ?? 1.0;
+        const exposureStops = settings.brightness?.offset ?? 0;
+        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+        const isFullRange = normMin === 0 && normMax === 255;
+
+        if (isIdentityGamma && isFullRange) {
+            console.log('PNG: Identity transform detected, skipping pixel loop');
+            // data is already RGBA and Uint8ClampedArray (or compatible)
+            return new ImageData(new Uint8ClampedArray(data), width, height);
         }
 
         // data is RGBA format [R,G,B,A,R,G,B,A,...]
