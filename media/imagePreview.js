@@ -590,7 +590,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					}
 
 					if (deferredImageData) {
-						const ctx = canvas.getContext('2d');
+						const ctx = canvas.getContext('2d', { willReadFrequently: true });
 						if (ctx) {
 							ctx.putImageData(deferredImageData, 0, 0);
 							primaryImageData = deferredImageData;
@@ -716,8 +716,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			return;
 		}
 
-		try {
-			const ctx = canvas.getContext('2d');
+		// Only update histogram if it's visible - this is expensive (~300-500ms for large images)
+		if (!histogramOverlay.getVisibility()) {
+
+
+			return;
+		}
+			const ctx = canvas.getContext('2d', { willReadFrequently: true });
 			if (!ctx) return;
 
 			// Get current image data from canvas
@@ -745,7 +750,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		}
 
 		try {
-			const ctx = canvas.getContext('2d');
+			const ctx = canvas.getContext('2d', { willReadFrequently: true });
 			if (!ctx) {
 				console.error('Could not get canvas context');
 				return;
