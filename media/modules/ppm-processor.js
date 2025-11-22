@@ -13,6 +13,7 @@ export class PpmProcessor {
         this._lastRaw = null; // { width, height, data: Uint8Array|Uint16Array, maxval, channels }
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
     async processPpm(src) {
@@ -25,6 +26,9 @@ export class PpmProcessor {
 
         // PPM stores pixels from top-to-bottom, which is the correct orientation for canvas
         // No flipping needed unless specifically required by the format
+
+        // Invalidate stats cache for new image
+        this._cachedStats = undefined;
 
         this._lastRaw = { width, height, data: displayData, maxval, channels };
 
@@ -255,13 +259,27 @@ export class PpmProcessor {
             out[p + 3] = 255;        // A
         }
 
-        // Send stats to VS Code
+        // Send stats to VS Code  
         if (this.vscode) {
-            let min = Infinity, max = -Infinity;
-            for (let i = 0; i < data.length; i++) {
-                const value = data[i];
-                if (value < min) min = value;
-                if (value > max) max = value;
+            let min, max;
+            // Use cached stats or compute if needed (gamma mode)
+            if (settings.normalization?.gammaMode === true) {
+                // Gamma mode: use fixed range
+                min = 0;
+                max = maxval;
+            } else if (this._cachedStats !== undefined) {
+                min = this._cachedStats.min;
+                max = this._cachedStats.max;
+            } else {
+                // Compute and cache
+                min = Infinity;
+                max = -Infinity;
+                for (let i = 0; i < data.length; i++) {
+                    const value = data[i];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
+                this._cachedStats = { min, max };
             }
             this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
@@ -273,27 +291,41 @@ export class PpmProcessor {
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
 
-        // Calculate min/max for auto-normalization
-        let min = Infinity, max = -Infinity;
-
-        if (rgbAs24BitMode) {
-            // For 24-bit mode, compute stats from combined 24-bit values
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * 3;
-                const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
-                const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
-                const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
-                const combined24bit = (r << 16) | (g << 8) | b;
-                min = Math.min(min, combined24bit);
-                max = Math.max(max, combined24bit);
-            }
+        // Lazy stats calculation
+        let min, max;
+        if (settings.normalization?.gammaMode === true) {
+            // Gamma mode: use fixed range based on format
+            min = 0;
+            max = rgbAs24BitMode ? 16777215 : maxval;
+        } else if (this._cachedStats !== undefined) {
+            // Reuse cached stats
+            min = this._cachedStats.min;
+            max = this._cachedStats.max;
         } else {
-            // Normal mode: use individual channel values
-            for (let i = 0; i < data.length; i++) {
-                const value = data[i];
-                if (value < min) min = value;
-                if (value > max) max = value;
+            // Compute stats for first time
+            min = Infinity;
+            max = -Infinity;
+            if (rgbAs24BitMode) {
+                // For 24-bit mode, compute stats from combined 24-bit values
+                for (let i = 0; i < width * height; i++) {
+                    const srcIdx = i * 3;
+                    const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+                    const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+                    const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                    const combined24bit = (r << 16) | (g << 8) | b;
+                    min = Math.min(min, combined24bit);
+                    max = Math.max(max, combined24bit);
+                }
+            } else {
+                // Normal mode: use individual channel values
+                for (let i = 0; i < data.length; i++) {
+                    const value = data[i];
+                    if (value < min) min = value;
+                    if (value > max) max = value;
+                }
             }
+            // Cache the results
+            this._cachedStats = { min, max };
         }
 
         let normMin, normMax;

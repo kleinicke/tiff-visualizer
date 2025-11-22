@@ -207,52 +207,65 @@ export class TiffProcessor {
 		const sampleFormat = image.getSampleFormat();
 		const bitsPerSample = image.getBitsPerSample();
 
-		let min = Infinity;
-		let max = -Infinity;
+		let min, max;
 
-		let imageDataArray;
-
-		// Calculate min/max from the first 3 channels only (like original code)
-		const displayRasters = [];
-		for (let i = 0; i < rastersCopy.length; i++) {
-			displayRasters.push(new Float32Array(rastersCopy[i]));
-		}
-
-		// Use the first 3 channels to determine the image stats
-		// For RGB-as-24bit mode, calculate stats from combined 24-bit values
-		if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
-			// Calculate min/max of combined 24-bit values
-			for (let j = 0; j < rastersCopy[0].length; j++) {
-				// Get RGB values and normalize to 0-255 range
-				const values = [];
-				for (let i = 0; i < 3; i++) {
-					const value = rastersCopy[i][j];
-					if (!isNaN(value) && isFinite(value)) {
-						values.push(Math.round(Math.max(0, Math.min(255, value))));
-					} else {
-						values.push(0);
-					}
-				}
-				// Combine into 24-bit value
-				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-				min = Math.min(min, combined24bit);
-				max = Math.max(max, combined24bit);
+		// Lazy stats calculation: skip in gamma mode, use cache or compute
+		if (settings.normalization.gammaMode === true) {
+			// Gamma mode: use fixed range based on bit depth
+			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+			min = 0;
+			if (showNorm) {
+				max = 1.0; // Float TIFFs
+			} else if (bitsPerSample === 16) {
+				max = 65535;
+			} else {
+				max = 255;
 			}
+		} else if (this._lastStatistics) {
+			// Reuse cached statistics if available
+			min = this._lastStatistics.min;
+			max = this._lastStatistics.max;
 		} else {
-			// Normal mode: use individual channel values
-			for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-				for (let j = 0; j < rastersCopy[i].length; j++) {
-					const value = rastersCopy[i][j];
-					if (!isNaN(value) && isFinite(value)) {
-						min = Math.min(min, value);
-						max = Math.max(max, value);
+			// Compute min/max for the first time
+			min = Infinity;
+			max = -Infinity;
+
+			// Use the first 3 channels to determine the image stats
+			// For RGB-as-24bit mode, calculate stats from combined 24-bit values
+			if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
+				// Calculate min/max of combined 24-bit values
+				for (let j = 0; j < rastersCopy[0].length; j++) {
+					// Get RGB values and normalize to 0-255 range
+					const values = [];
+					for (let i = 0; i < 3; i++) {
+						const value = rastersCopy[i][j];
+						if (!isNaN(value) && isFinite(value)) {
+							values.push(Math.round(Math.max(0, Math.min(255, value))));
+						} else {
+							values.push(0);
+						}
+					}
+					// Combine into 24-bit value
+					const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+					min = Math.min(min, combined24bit);
+					max = Math.max(max, combined24bit);
+				}
+			} else {
+				// Normal mode: use individual channel values
+				for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
+					for (let j = 0; j < rastersCopy[i].length; j++) {
+						const value = rastersCopy[i][j];
+						if (!isNaN(value) && isFinite(value)) {
+							min = Math.min(min, value);
+							max = Math.max(max, value);
+						}
 					}
 				}
 			}
-		}
 
-		// Cache the statistics
-		this._lastStatistics = { min, max };
+			// Cache the statistics
+			this._lastStatistics = { min, max };
+		}
 
 		// Send stats to VS Code
 		if (this.vscode) {

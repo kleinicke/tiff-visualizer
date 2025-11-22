@@ -38,9 +38,13 @@ export class NpyProcessor {
         this._lastRaw = null; // { width, height, data: Float32Array, dtype: string, showNorm: boolean }
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
     async processNpy(src) {
+        // Invalidate stats cache for new image
+        this._cachedStats = undefined;
+
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
         const view = new DataView(buffer);
@@ -231,30 +235,46 @@ export class NpyProcessor {
         // Check if RGB as 24-bit mode is enabled
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
 
-        // Compute min/max for normalization
-        let dataMin = Infinity, dataMax = -Infinity;
+        // Lazy stats calculation
+        let dataMin, dataMax;
 
-        if (rgbAs24BitMode) {
-            // For 24-bit mode, compute stats from combined 24-bit values
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * 3;
-                // Get RGB values and clamp to 0-255 range
-                const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
-                const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
-                const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
-                // Combine into 24-bit value
-                const combined24bit = (r << 16) | (g << 8) | b;
-                dataMin = Math.min(dataMin, combined24bit);
-                dataMax = Math.max(dataMax, combined24bit);
-            }
+        if (settings.normalization?.gammaMode === true) {
+            // Gamma mode: use fixed range
+            dataMin = 0;
+            dataMax = rgbAs24BitMode ? 16777215 : 1.0;
+        } else if (this._cachedStats !== undefined) {
+            // Reuse cached stats
+            dataMin = this._cachedStats.min;
+            dataMax = this._cachedStats.max;
         } else {
-            // Normal mode: use individual channel values
-            for (let i = 0; i < data.length; i++) {
-                const v = data[i];
-                if (!Number.isFinite(v)) continue;
-                if (v < dataMin) dataMin = v;
-                if (v > dataMax) dataMax = v;
+            // Compute min/max for normalization
+            dataMin = Infinity;
+            dataMax = -Infinity;
+
+            if (rgbAs24BitMode) {
+                // For 24-bit mode, compute stats from combined 24-bit values
+                for (let i = 0; i < width * height; i++) {
+                    const srcIdx = i * 3;
+                    // Get RGB values and clamp to 0-255 range
+                    const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+                    const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+                    const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                    // Combine into 24-bit value
+                    const combined24bit = (r << 16) | (g << 8) | b;
+                    dataMin = Math.min(dataMin, combined24bit);
+                    dataMax = Math.max(dataMax, combined24bit);
+                }
+            } else {
+                // Normal mode: use individual channel values
+                for (let i = 0; i < data.length; i++) {
+                    const v = data[i];
+                    if (!Number.isFinite(v)) continue;
+                    if (v < dataMin) dataMin = v;
+                    if (v > dataMax) dataMax = v;
+                }
             }
+            // Cache the results
+            this._cachedStats = { min: dataMin, max: dataMax };
         }
 
         let normMin, normMax;

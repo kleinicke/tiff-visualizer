@@ -12,6 +12,7 @@ export class PfmProcessor {
         this._lastRaw = null; // { width, height, data: Float32Array }
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
     async processPfm(src) {
@@ -23,6 +24,9 @@ export class PfmProcessor {
 
         // PFM format stores rows from bottom to top, so we need to flip vertically
         displayData = this._flipImageVertically(displayData, width, height, channels);
+
+        // Invalidate stats cache for new image
+        this._cachedStats = undefined;
 
         this._lastRaw = { width, height, data: displayData, channels };
 
@@ -80,14 +84,34 @@ export class PfmProcessor {
     }
 
     _toImageDataFloat(data, width, height, channels = 1) {
-        let min = Infinity, max = -Infinity;
-        for (let i = 0; i < data.length; i++) {
-            const v = data[i];
-            if (!Number.isFinite(v)) continue;
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
         const settings = this.settingsManager.settings;
+        let min, max;
+
+        // Lazy stats calculation: skip in gamma mode or autoNormalize, cache in stats mode
+        if (settings.normalization?.gammaMode === true || settings.normalization?.autoNormalize === true) {
+            // Gamma mode or auto: need to compute stats
+            if (this._cachedStats !== undefined) {
+                // Reuse cached stats
+                min = this._cachedStats.min;
+                max = this._cachedStats.max;
+            } else {
+                // Compute stats for the first time
+                min = Infinity;
+                max = -Infinity;
+                for (let i = 0; i < data.length; i++) {
+                    const v = data[i];
+                    if (!Number.isFinite(v)) continue;
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+                // Cache the results
+                this._cachedStats = { min, max };
+            }
+        } else {
+            // Stats mode with manual min/max: skip computation entirely for float (0.0-1.0 range assumed)
+            min = 0;
+            max = 1;
+        }
         let normMin, normMax;
         if (settings.normalization && settings.normalization.autoNormalize) {
             normMin = min; normMax = max;

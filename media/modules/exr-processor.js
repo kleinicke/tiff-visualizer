@@ -20,9 +20,10 @@ export class ExrProcessor {
 	constructor(settingsManager, vscode) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
-		this.rawExrData = null;
+		this._lastRaw = null; // { width, height, data: Float32Array }
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
+		this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
 	}
 
 	/**
@@ -93,6 +94,9 @@ export class ExrProcessor {
 
 			const response = await fetch(src);
 			const buffer = await response.arrayBuffer();
+
+			// Invalidate stats cache for new image
+			this._cachedStats = undefined;
 
 			// Parse EXR using parse-exr library
 			// Use FloatType (1015) to get Float32Array with decoded float values
@@ -201,18 +205,29 @@ export class ExrProcessor {
 		const nanColor = this._getNanColor(settings);
 
 		// Auto-detect normalization range if needed
-		let min = normalization.min;
-		let max = normalization.max;
+		let min, max;
 
-		if (normalization.autoNormalize) {
-			min = Infinity;
-			max = -Infinity;
-			for (let i = 0; i < data.length; i++) {
-				const value = data[i];
-				if (!isNaN(value) && isFinite(value)) {
-					if (value < min) min = value;
-					if (value > max) max = value;
+		if (normalization.gammaMode === true) {
+			// Gamma mode: use fixed float range
+			min = 0.0;
+			max = 1.0;
+		} else if (normalization.autoNormalize) {
+			// Auto normalize: compute or use cached stats
+			if (this._cachedStats !== undefined) {
+				min = this._cachedStats.min;
+				max = this._cachedStats.max;
+			} else {
+				min = Infinity;
+				max = -Infinity;
+				for (let i = 0; i < data.length; i++) {
+					const value = data[i];
+					if (!isNaN(value) && isFinite(value)) {
+						if (value < min) min = value;
+						if (value > max) max = value;
+					}
 				}
+				// Cache the results
+				this._cachedStats = { min, max };
 			}
 
 			// Update settings manager with detected range so UI reflects it

@@ -28,6 +28,7 @@ export class PngProcessor {
         this._lastRaw = null;
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
     /**
@@ -51,6 +52,8 @@ export class PngProcessor {
         }
 
         try {
+            // Invalidate stats cache for new image
+            this._cachedStats = undefined;
             // Fetch PNG file as ArrayBuffer
             const response = await fetch(src);
             const arrayBuffer = await response.arrayBuffer();
@@ -250,6 +253,17 @@ export class PngProcessor {
         // Calculate stats for normalization status bar
         let min = Infinity, max = -Infinity;
 
+        // Lazy stats calculation: skip in gamma mode, cache in stats mode
+        if (settings.normalization?.gammaMode === true) {
+            // Gamma mode: use fixed normalization based on bit depth
+            min = 0;
+            max = maxValue; // 255 for 8-bit, 65535 for 16-bit
+        } else if (this._cachedStats !== undefined) {
+            // Stats mode: reuse cached stats if available
+            min = this._cachedStats.min;
+            max = this._cachedStats.max;
+        } else {
+            // Stats mode: compute stats for the first time
         if (settings.rgbAs24BitGrayscale && channels >= 3) {
             // For 24-bit mode, calculate stats from combined 24-bit values
             for (let i = 0; i < width * height; i++) {
@@ -307,6 +321,11 @@ export class PngProcessor {
                     if (value > max) max = value;
                 }
             }
+                }
+            }
+
+            // Cache the computed stats for reuse
+            this._cachedStats = { min, max };
         }
 
         // Send stats to VS Code for status bar
