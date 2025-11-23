@@ -141,6 +141,40 @@ Commands work via:
 3. AppStateManager fires change event → status bar updates
 4. Extension sends message to webview → webview re-renders
 
+### Centralized Rendering Pipeline
+Major refactoring centralizes all image rendering logic in [media/modules/normalization-helper.js](media/modules/normalization-helper.js):
+
+**ImageRenderer class** handles all rendering with unified approach:
+- **Single entry point**: `ImageRenderer.render()` for all formats and data types
+- **Unified normalization**: `NormalizationHelper.getNormalizationRange()` determines min/max based on mode
+  - **Auto-normalize mode**: Uses actual data statistics
+  - **Gamma mode**: Uses full type range (0-255, 0-65535, or 0-1 for floats)
+  - **Manual mode**: User-specified range with optional normalized-float scaling
+- **Type-aware rendering**: Separate optimized paths for Uint8Array, Uint16Array, and Float32Array
+- **Identity transform optimization**: Skips expensive gamma/brightness calculations when not needed
+- **LUT acceleration**: Generates lookup tables for gamma/brightness in gamma mode
+
+**Key insight**: All format processors now:
+1. Load raw data and convert to Float32Array (if needed)
+2. Send format info with `typeMax` in options
+3. Call `ImageRenderer.render()` with appropriate parameters
+4. Let central pipeline handle normalization, gamma, brightness, NaN colors
+
+This eliminates duplication - each processor (TIFF, EXR, NPY, PNG, etc.) only handles:
+- Format-specific loading
+- Type detection (bit depth, channels, float vs integer)
+- Raw data extraction
+
+**Rendering modes and logic**:
+- `NormalizationHelper.getNormalizationRange()` - Calculates effective min/max based on mode and typeMax
+- `NormalizationHelper.applyGammaAndBrightness()` - Applies gamma in/out and exposure adjustments
+- `NormalizationHelper.generateLut()` - Creates 8-bit or 16-bit lookup tables for fast gamma/brightness
+- `NormalizationHelper.getEffectiveVisualizationRange()` - Determines visible input range for clipping optimization
+
+**ImageStatsCalculator** provides unified statistics:
+- `calculateFloatStats()` - Min/max for float data
+- `calculateIntegerStats()` - Min/max for integer data (uint8, uint16, etc.)
+
 ### Float Image Handling
 Sophisticated normalization system for float images:
 - **Auto normalization**: Calculates min/max from actual data
@@ -293,29 +327,100 @@ example/
 - **Message passing**: Add `console.log` in both extension host and webview to trace messages
 
 ### Working with Format Processors
-When modifying or debugging format processors (TIFF, EXR, NPY, etc.):
-- **Initial load pattern**: Format processors should send `formatInfo` message BEFORE first render
-  - This allows AppStateManager to load per-format default settings
-  - Store pending render data and wait for settings update callback
-  - Example: See ExrProcessor._pendingRenderData and _isInitialLoad pattern
-- **Re-rendering**: Implement `updateSettings(settings)` method for real-time updates
-- **Raw data storage**: Keep raw data (Float32Array, etc.) for pixel inspection and re-renders
+Format processors follow a standardized pattern with the centralized rendering pipeline:
+
+**Processor responsibilities** (keep minimal):
+1. **Load format data**: Read file bytes and parse format-specific structures
+2. **Type detection**: Determine bit depth (8, 16, 32, 64), channels (1, 3, 4), float vs integer
+3. **Raw data extraction**: Convert to Float32Array (unified internal format)
+4. **Send formatInfo**: Post message with format details before first render
+   - Includes `typeMax` (e.g., 255, 65535, or 1.0) in format info
+   - Allows AppStateManager to apply per-format default settings
+5. **Delegate rendering**: Call `ImageRenderer.render()` with:
+   - Raw data (Float32Array)
+   - Width, height, channels
+   - `isFloat` flag (based on original dtype, not array type)
+   - Statistics (min/max)
+   - Settings (normalization, gamma, brightness)
+   - Options object with `typeMax` (critical for proper range handling)
+
+**Implementation pattern**:
+```javascript
+// In processor:
+const typeMax = (dtype === 'uint16') ? 65535 : (dtype === 'uint8') ? 255 : 1.0;
+const options = { typeMax, nanColor, flipY, rgbAs24BitGrayscale };
+
+// Delegate all rendering to central pipeline
+return ImageRenderer.render(
+    data,           // Float32Array (always)
+    width,
+    height,
+    channels,
+    isFloat,        // Original dtype flag (affects stat calculation)
+    stats,          // {min, max} from actual data
+    settings,       // From AppStateManager
+    options         // Contains typeMax and other rendering hints
+);
+```
+
+**Deferred rendering pattern** (for per-format settings):
+- Send `formatInfo` message BEFORE first render (lines 64-70 in npy-processor.js)
+- Store pending data in `_pendingRenderData`
+- Return placeholder ImageData
+- Extension applies per-format settings in AppStateManager
+- When settings update fires, perform actual render in `performDeferredRender()`
+- Example: See ExrProcessor._pendingRenderData and _isInitialLoad pattern
+
+**Re-rendering on settings change**:
+- Implement `renderXyzWithSettings()` method that:
+  - Retrieves stored raw data
+  - Calls `ImageRenderer.render()` with updated settings
+  - Returns new ImageData for webview to display
+
+**Important considerations**:
+- **Raw data storage**: Keep original Float32Array for re-renders and pixel inspection
 - **Coordinate systems**: Handle origin differences (EXR: bottom-left, Canvas: top-left)
-- **Type detection**: Auto-detect bit depth, channels, and data type, send via `formatInfo`
+- **Statistics caching**: Cache min/max stats if expensive to recalculate
+- **Always pass typeMax in options**: Critical for gamma mode normalization with integer types
+- **Type detection accuracy**: Auto-detect bit depth, channels, float vs integer correctly
 
 ## Important Notes
 
 ### Multi-Format Support
-The extension handles diverse image formats with format-specific logic:
-- **TIFF**: via geotiff.js, supports LZW/Deflate compression, predictors, multi-channel
-- **OpenEXR**: via parse-exr, supports HDR, float16/float32, with special handling:
-  - Uses FloatType (1015) for Float32Array with decoded values
-  - Automatically flips Y-axis (EXR uses bottom-left origin)
+The extension handles diverse image formats with minimal processor code. Each format processor converts to Float32Array and delegates rendering to the central pipeline:
+
+- **TIFF** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)):
+  - Uses geotiff.js library for decoding
+  - Supports LZW/Deflate compression, predictors, multi-channel
+  - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
+  - Sets `typeMax` based on bit depth for proper gamma mode normalization
+
+- **OpenEXR** ([media/modules/exr-processor.js](media/modules/exr-processor.js)):
+  - Via parse-exr, supports HDR, float16/float32
+  - Automatically flips Y-axis (EXR uses bottom-left origin vs canvas top-left)
+  - Uses deferred rendering pattern for per-format settings
   - Stores raw float data for pixel inspection and re-rendering
-  - Initial load sends format info before rendering for correct per-format settings
-- **NPY/NPZ**: Native NumPy array parsing, supports float and uint types
-- **PFM/PPM/PGM/PBM**: NetPBM formats, both binary and ASCII
-- **PNG/JPG**: Standard formats with uint8/16 and float16/32 extensions
+  - `typeMax=1.0` for float data in gamma mode
+
+- **NPY/NPZ** ([media/modules/npy-processor.js](media/modules/npy-processor.js)):
+  - Native NumPy array parsing
+  - Supports float (f2, f4, f8) and integer (u1, u2, u4, u8, i1, i2, i4, i8) types
+  - Converts all integer types to Float32Array for unified rendering
+  - Uses deferred rendering for per-format settings
+  - Sets `typeMax` from dtype (e.g., 65535 for uint16)
+  - Always passes `isFloat=true` since data is Float32Array, but uses `typeMax` in options
+
+- **PFM/PPM/PGM/PBM** ([media/modules/ppm-processor.js](media/modules/ppm-processor.js) and [media/modules/pfm-processor.js](media/modules/pfm-processor.js)):
+  - NetPBM formats (both binary and ASCII variants)
+  - Converts to Float32Array for unified rendering
+  - PFM: float32 values, set `typeMax=1.0` for gamma mode
+  - PPM/PGM/PBM: uint8 values, set `typeMax=255`
+
+- **PNG/JPG** ([media/modules/png-processor.js](media/modules/png-processor.js)):
+  - PNG: Supports uint8, uint16, and float16/float32 via upng.js
+  - JPG: Standard uint8 JPEG decoding
+  - Detects actual bit depth and converts to Float32Array
+  - Uses LUT optimization for gamma/brightness in 8-bit mode
 
 ### Library Integration
 - **geotiff.min.js**: Browser build automatically copied from node_modules during build
