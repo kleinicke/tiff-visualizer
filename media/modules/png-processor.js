@@ -1,5 +1,6 @@
 // @ts-check
 "use strict";
+import { LutHelper } from './lut-helper.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -426,17 +427,14 @@ export class PngProcessor {
             if (channels === 1) {
                 // Grayscale
                 const rawValue = data[srcIdx];
-                const normalized = (rawValue - normMin) / (normMax - normMin);
-                const clamped = Math.max(0, Math.min(1, normalized));
-                const corrected = this._applyGammaAndBrightness(clamped, settings);
-                r = g = b = Math.round(corrected * 255);
+                // Use LUT directly on raw value
+                const corrected = lut[rawValue];
+                r = g = b = corrected;
             } else if (channels === 2) {
                 // Grayscale + Alpha
                 const rawValue = data[srcIdx];
-                const normalized = (rawValue - normMin) / (normMax - normMin);
-                const clamped = Math.max(0, Math.min(1, normalized));
-                const corrected = this._applyGammaAndBrightness(clamped, settings);
-                r = g = b = Math.round(corrected * 255);
+                const corrected = lut[rawValue];
+                r = g = b = corrected;
                 a = Math.round((data[srcIdx + 1] / maxValue) * 255);
             } else if (settings.rgbAs24BitGrayscale && channels >= 3) {
                 // RGB as 24-bit grayscale mode
@@ -452,6 +450,9 @@ export class PngProcessor {
 
                 // Combine into 24-bit value: (R << 16) | (G << 8) | B
                 const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
+
+                // For 24-bit mode, we can't easily use a LUT (too big), so we fallback to calculation
+                // Or we could normalize first then use a smaller LUT, but let's stick to calculation for this special mode
                 // Max value is 16777215 (0xFFFFFF)
 
                 // Now normalize the combined 24-bit value using normMin/normMax
@@ -465,7 +466,16 @@ export class PngProcessor {
                 normalized24 = Math.max(0, Math.min(1, normalized24));
 
                 // Apply gamma/brightness to the combined value
-                normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+                // Note: We still use the helper method for this special case if we keep it, 
+                // or inline the logic. Since we are removing _applyGammaAndBrightness, we inline it here.
+
+                const gammaIn = settings.gamma?.in ?? 1.0;
+                const gammaOut = settings.gamma?.out ?? 1.0;
+                const exposureStops = settings.brightness?.offset ?? 0;
+
+                let linear = Math.pow(normalized24, gammaIn);
+                linear = linear * Math.pow(2, exposureStops);
+                normalized24 = Math.pow(linear, 1.0 / gammaOut);
 
                 // Display as grayscale
                 r = g = b = Math.round(normalized24 * 255);
@@ -476,26 +486,14 @@ export class PngProcessor {
                 }
             } else if (channels === 3) {
                 // RGB (normal mode)
-                const rNorm = Math.max(0, Math.min(1, (data[srcIdx] - normMin) / (normMax - normMin)));
-                const gNorm = Math.max(0, Math.min(1, (data[srcIdx + 1] - normMin) / (normMax - normMin)));
-                const bNorm = Math.max(0, Math.min(1, (data[srcIdx + 2] - normMin) / (normMax - normMin)));
-                const rVal = this._applyGammaAndBrightness(rNorm, settings);
-                const gVal = this._applyGammaAndBrightness(gNorm, settings);
-                const bVal = this._applyGammaAndBrightness(bNorm, settings);
-                r = Math.round(rVal * 255);
-                g = Math.round(gVal * 255);
-                b = Math.round(bVal * 255);
+                r = lut[data[srcIdx]];
+                g = lut[data[srcIdx + 1]];
+                b = lut[data[srcIdx + 2]];
             } else {
                 // RGBA (normal mode)
-                const rNorm = Math.max(0, Math.min(1, (data[srcIdx] - normMin) / (normMax - normMin)));
-                const gNorm = Math.max(0, Math.min(1, (data[srcIdx + 1] - normMin) / (normMax - normMin)));
-                const bNorm = Math.max(0, Math.min(1, (data[srcIdx + 2] - normMin) / (normMax - normMin)));
-                const rVal = this._applyGammaAndBrightness(rNorm, settings);
-                const gVal = this._applyGammaAndBrightness(gNorm, settings);
-                const bVal = this._applyGammaAndBrightness(bNorm, settings);
-                r = Math.round(rVal * 255);
-                g = Math.round(gVal * 255);
-                b = Math.round(bVal * 255);
+                r = lut[data[srcIdx]];
+                g = lut[data[srcIdx + 1]];
+                b = lut[data[srcIdx + 2]];
                 a = Math.round((data[srcIdx + 3] / maxValue) * 255);
             }
 
@@ -537,7 +535,6 @@ export class PngProcessor {
                 normSettings?.max === 255);
 
         if (isIdentityGamma && willBeFullRange) {
-        // Calculate stats for normalization
             // Send fixed stats for 8-bit images
             if (this.vscode) {
                 this.vscode.postMessage({ type: 'stats', value: { min: 0, max: 255 } });
@@ -558,16 +555,16 @@ export class PngProcessor {
             // Compute stats for the first time
             min = Infinity;
             max = -Infinity;
-        for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            if (r < min) min = r;
-            if (r > max) max = r;
-            if (g < min) min = g;
-            if (g > max) max = g;
-            if (b < min) min = b;
-            if (b > max) max = b;
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                if (r < min) min = r;
+                if (r > max) max = r;
+                if (g < min) min = g;
+                if (g > max) max = g;
+                if (b < min) min = b;
+                if (b > max) max = b;
             }
 
             // Cache the computed stats for reuse
@@ -605,70 +602,25 @@ export class PngProcessor {
             return new ImageData(new Uint8ClampedArray(data), width, height);
         }
 
+        // Generate LUT for current settings
+        // For native path, data is always 8-bit (0-255)
+        const lut = LutHelper.generateLut(settings, 8, 255);
+
         // data is RGBA format [R,G,B,A,R,G,B,A,...]
         for (let i = 0; i < width * height; i++) {
             const srcIdx = i * 4;
-            let r = data[srcIdx + 0];
-            let g = data[srcIdx + 1];
-            let b = data[srcIdx + 2];
-            const a = data[srcIdx + 3];
-
-            // Apply normalization first, then gamma and brightness
-            // Normalize each channel
-            r = Math.max(0, Math.min(1, (r - normMin) / (normMax - normMin)));
-            g = Math.max(0, Math.min(1, (g - normMin) / (normMax - normMin)));
-            b = Math.max(0, Math.min(1, (b - normMin) / (normMax - normMin)));
-
-            // Apply gamma and brightness corrections
-            r = this._applyGammaAndBrightness(r, settings);
-            g = this._applyGammaAndBrightness(g, settings);
-            b = this._applyGammaAndBrightness(b, settings);
-
-            // Convert back to 0-255
-            r = Math.round(r * 255);
-            g = Math.round(g * 255);
-            b = Math.round(b * 255);
-
             const outIdx = i * 4;
-            out[outIdx + 0] = r;
-            out[outIdx + 1] = g;
-            out[outIdx + 2] = b;
-            out[outIdx + 3] = a;
+
+            // Use LUT for direct lookup
+            out[outIdx + 0] = lut[data[srcIdx + 0]];
+            out[outIdx + 1] = lut[data[srcIdx + 1]];
+            out[outIdx + 2] = lut[data[srcIdx + 2]];
+            out[outIdx + 3] = data[srcIdx + 3]; // Alpha unchanged
         }
 
         return new ImageData(out, width, height);
     }
 
-    /**
-     * Apply gamma and brightness corrections
-     * Order: remove source gamma → apply brightness → apply target gamma
-     * @param {number} normalizedValue - Value in 0-1 range
-     * @param {any} settings - Settings object with gamma and brightness
-     * @returns {number} Corrected value (may be outside 0-1 range for float images)
-     */
-    _applyGammaAndBrightness(normalizedValue, settings) {
-        const gammaIn = settings.gamma?.in ?? 1.0;   // Source/input gamma (to remove)
-        const gammaOut = settings.gamma?.out ?? 1.0; // Target/output gamma (to apply)
-        const exposureStops = settings.brightness?.offset ?? 0;
-
-        // Optimization: Skip if no changes (gamma is identity and brightness is 0)
-        if (Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001) {
-            return normalizedValue;
-        }
-
-        // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-        let linear = Math.pow(normalizedValue, gammaIn);
-
-        // Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
-        linear = linear * Math.pow(2, exposureStops);
-
-        // Step 3: Apply output gamma - raise to 1/gammaOut power
-        normalizedValue = Math.pow(linear, 1.0 / gammaOut);
-
-        // Note: Do NOT clamp here - allow values outside [0,1] for float images
-        // Clamping will happen when converting to display pixels (0-255)
-        return normalizedValue;
-    }
 
     /**
      * Re-render PNG with current settings (for real-time updates)

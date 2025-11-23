@@ -182,10 +182,10 @@ export function registerImagePreviewCommands(
 		quickPick.title = 'Image Normalization Settings';
 		quickPick.canSelectMany = false;
 		quickPick.ignoreFocusOut = false;
-		
+
 		// Disable the input box by making it non-interactive
 		quickPick.value = '';
-		
+
 		const selected = await new Promise<typeof options[0] | undefined>((resolve) => {
 			quickPick.onDidChangeSelection(selection => {
 				if (selection.length > 0) {
@@ -193,17 +193,17 @@ export function registerImagePreviewCommands(
 					quickPick.hide();
 				}
 			});
-			
+
 			quickPick.onDidHide(() => {
 				resolve(undefined);
 				quickPick.dispose();
 			});
-			
+
 			// Prevent typing by immediately clearing any input
 			quickPick.onDidChangeValue(() => {
 				quickPick.value = '';
 			});
-			
+
 			quickPick.show();
 		});
 
@@ -214,14 +214,12 @@ export function registerImagePreviewCommands(
 
 		if (selected.action === 'auto') {
 			previewManager.setAutoNormalize(true);
-			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
 			logCommand('setNormalizationRange', 'success', 'Auto-normalize enabled');
 		} else if (selected.action === 'gamma') {
 			previewManager.setGammaMode(true);
-			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
@@ -256,7 +254,6 @@ export function registerImagePreviewCommands(
 				logCommand('setNormalizationRange', 'success', 'RGB 24-bit mode disabled');
 			}
 
-			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
@@ -264,7 +261,6 @@ export function registerImagePreviewCommands(
 			// Toggle normalized float mode
 			const newState = !previewManager.appStateManager.imageSettings.normalizedFloatMode;
 			previewManager.appStateManager.setNormalizedFloatMode(newState);
-			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
@@ -293,7 +289,7 @@ export function registerImagePreviewCommands(
 				validateInput: text => {
 					const num = parseFloat(text);
 					return isNaN(num) ? 'Please enter a valid number.' :
-						   num <= parseFloat(minValue) ? 'Maximum must be greater than minimum.' : null;
+						num <= parseFloat(minValue) ? 'Maximum must be greater than minimum.' : null;
 				}
 			});
 
@@ -306,7 +302,6 @@ export function registerImagePreviewCommands(
 			const max = parseFloat(maxValue);
 
 			previewManager.setTempNormalization(min, max);
-			previewManager.updateAllPreviews();
 			if (activePreview) {
 				activePreview.updateStatusBar();
 			}
@@ -349,7 +344,7 @@ export function registerImagePreviewCommands(
 			gammaQuickPick.canSelectMany = false;
 			gammaQuickPick.ignoreFocusOut = false;
 			gammaQuickPick.value = '';
-			
+
 			const choice = await new Promise<typeof gammaOptions[0] | undefined>((resolve) => {
 				gammaQuickPick.onDidChangeSelection(selection => {
 					if (selection.length > 0) {
@@ -357,17 +352,17 @@ export function registerImagePreviewCommands(
 						gammaQuickPick.hide();
 					}
 				});
-				
+
 				gammaQuickPick.onDidHide(() => {
 					resolve(undefined);
 					gammaQuickPick.dispose();
 				});
-				
+
 				// Prevent typing by immediately clearing any input
 				gammaQuickPick.onDidChangeValue(() => {
 					gammaQuickPick.value = '';
 				});
-				
+
 				gammaQuickPick.show();
 			});
 
@@ -378,7 +373,6 @@ export function registerImagePreviewCommands(
 
 			if (choice.action === 'switch') {
 				previewManager.setGammaMode(true);
-				previewManager.updateAllPreviews();
 				if (currentPreview) {
 					currentPreview.updateStatusBar();
 				}
@@ -419,7 +413,6 @@ export function registerImagePreviewCommands(
 		const gammaOutValue = parseFloat(gammaOut);
 
 		previewManager.setTempGamma(gammaInValue, gammaOutValue);
-		previewManager.updateAllPreviews();
 		if (currentPreview) {
 			currentPreview.updateStatusBar();
 		}
@@ -447,7 +440,6 @@ export function registerImagePreviewCommands(
 
 		const brightnessValue = parseFloat(brightness);
 		previewManager.setTempBrightness(brightnessValue);
-		previewManager.updateAllPreviews();
 		if (currentPreview) {
 			currentPreview.updateStatusBar();
 		}
@@ -463,7 +455,7 @@ export function registerImagePreviewCommands(
 		}
 
 		const currentBase = previewManager.getComparisonBase();
-		
+
 		if (currentBase) {
 			// Already has a comparison base, offer to clear it
 			const comparisonOptions = [
@@ -487,7 +479,7 @@ export function registerImagePreviewCommands(
 			comparisonQuickPick.canSelectMany = false;
 			comparisonQuickPick.ignoreFocusOut = false;
 			comparisonQuickPick.value = '';
-			
+
 			const choice = await new Promise<typeof comparisonOptions[0] | undefined>((resolve) => {
 				comparisonQuickPick.onDidChangeSelection(selection => {
 					if (selection.length > 0) {
@@ -495,17 +487,17 @@ export function registerImagePreviewCommands(
 						comparisonQuickPick.hide();
 					}
 				});
-				
+
 				comparisonQuickPick.onDidHide(() => {
 					resolve(undefined);
 					comparisonQuickPick.dispose();
 				});
-				
+
 				// Prevent typing by immediately clearing any input
 				comparisonQuickPick.onDidChangeValue(() => {
 					comparisonQuickPick.value = '';
 				});
-				
+
 				comparisonQuickPick.show();
 			});
 
@@ -555,7 +547,7 @@ export function registerImagePreviewCommands(
 
 		const imageUri = activePreview.resource.toString();
 		const currentMasks = previewManager.settingsManager.getMaskFilterSettings(imageUri);
-		
+
 		// Build mask management options
 		const maskOptions: Array<{
 			label: string;
@@ -570,7 +562,7 @@ export function registerImagePreviewCommands(
 			const fileName = mask.maskUri.split('/').pop() || mask.maskUri.split('\\').pop() || 'Unknown';
 			const status = mask.enabled ? '$(check)' : '$(x)';
 			const direction = mask.filterHigher ? 'Higher' : 'Lower';
-			
+
 			maskOptions.push({
 				label: `${status} Mask ${index + 1}: ${fileName}`,
 				description: `Threshold: ${mask.threshold}, Filter: ${direction}`,
@@ -605,7 +597,7 @@ export function registerImagePreviewCommands(
 		maskQuickPick.canSelectMany = false;
 		maskQuickPick.ignoreFocusOut = false;
 		maskQuickPick.value = '';
-		
+
 		const choice = await new Promise<typeof maskOptions[0] | undefined>((resolve) => {
 			maskQuickPick.onDidChangeSelection(selection => {
 				if (selection.length > 0) {
@@ -613,16 +605,16 @@ export function registerImagePreviewCommands(
 					maskQuickPick.hide();
 				}
 			});
-			
+
 			maskQuickPick.onDidHide(() => {
 				resolve(undefined);
 				maskQuickPick.dispose();
 			});
-			
+
 			maskQuickPick.onDidChangeValue(() => {
 				maskQuickPick.value = '';
 			});
-			
+
 			maskQuickPick.show();
 		});
 
@@ -715,7 +707,7 @@ export function registerImagePreviewCommands(
 		directionQuickPick.canSelectMany = false;
 		directionQuickPick.ignoreFocusOut = false;
 		directionQuickPick.value = '';
-		
+
 		const directionChoice = await new Promise<typeof directionOptions[0] | undefined>((resolve) => {
 			directionQuickPick.onDidChangeSelection(selection => {
 				if (selection.length > 0) {
@@ -723,16 +715,16 @@ export function registerImagePreviewCommands(
 					directionQuickPick.hide();
 				}
 			});
-			
+
 			directionQuickPick.onDidHide(() => {
 				resolve(undefined);
 				directionQuickPick.dispose();
 			});
-			
+
 			directionQuickPick.onDidChangeValue(() => {
 				directionQuickPick.value = '';
 			});
-			
+
 			directionQuickPick.show();
 		});
 
@@ -795,7 +787,7 @@ export function registerImagePreviewCommands(
 		editQuickPick.canSelectMany = false;
 		editQuickPick.ignoreFocusOut = false;
 		editQuickPick.value = '';
-		
+
 		const editChoice = await new Promise<typeof editOptions[0] | undefined>((resolve) => {
 			editQuickPick.onDidChangeSelection(selection => {
 				if (selection.length > 0) {
@@ -803,16 +795,16 @@ export function registerImagePreviewCommands(
 					editQuickPick.hide();
 				}
 			});
-			
+
 			editQuickPick.onDidHide(() => {
 				resolve(undefined);
 				editQuickPick.dispose();
 			});
-			
+
 			editQuickPick.onDidChangeValue(() => {
 				editQuickPick.value = '';
 			});
-			
+
 			editQuickPick.show();
 		});
 
@@ -869,10 +861,10 @@ export function registerImagePreviewCommands(
 			directionQuickPick.canSelectMany = false;
 			directionQuickPick.ignoreFocusOut = false;
 			directionQuickPick.value = '';
-			
+
 			// Pre-select current direction
 			directionQuickPick.activeItems = [directionOptions[mask.filterHigher ? 0 : 1]];
-			
+
 			const directionChoice = await new Promise<typeof directionOptions[0] | undefined>((resolve) => {
 				directionQuickPick.onDidChangeSelection(selection => {
 					if (selection.length > 0) {
@@ -880,16 +872,16 @@ export function registerImagePreviewCommands(
 						directionQuickPick.hide();
 					}
 				});
-				
+
 				directionQuickPick.onDidHide(() => {
 					resolve(undefined);
 					directionQuickPick.dispose();
 				});
-				
+
 				directionQuickPick.onDidChangeValue(() => {
 					directionQuickPick.value = '';
 				});
-				
+
 				directionQuickPick.show();
 			});
 
@@ -1210,7 +1202,7 @@ export function registerImagePreviewCommands(
 			validateInput: text => {
 				const num = parseFloat(text);
 				return isNaN(num) ? 'Please enter a valid number.' :
-					   num <= parseFloat(minValue) ? 'Maximum must be greater than minimum.' : null;
+					num <= parseFloat(minValue) ? 'Maximum must be greater than minimum.' : null;
 			}
 		});
 
