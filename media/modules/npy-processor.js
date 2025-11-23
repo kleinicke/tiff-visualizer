@@ -1,5 +1,6 @@
 // @ts-check
 "use strict";
+import { NormalizationHelper } from './normalization-helper.js';
 
 /**
  * Convert IEEE 754 half-precision (float16) to single-precision (float32)
@@ -38,6 +39,7 @@ export class NpyProcessor {
         this._lastRaw = null; // { width, height, data: Float32Array, dtype: string, showNorm: boolean }
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
@@ -229,43 +231,52 @@ export class NpyProcessor {
 
     _toImageDataFloat(data, width, height) {
         const channels = this._lastRaw?.channels || 1;
-
         const settings = this.settingsManager.settings;
-
-        // Check if RGB as 24-bit mode is enabled
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const dtype = this._lastRaw?.dtype || 'f4';
+        const isFloat = dtype.includes('f');
 
-        // Lazy stats calculation
-        let dataMin, dataMax;
+        // Calculate typeMax based on dtype
+        let typeMax = 1.0;
+        if (!isFloat) {
+            if (dtype.includes('u1') || dtype.includes('i1')) {
+                typeMax = dtype.includes('u') ? 255 : 127;
+            } else if (dtype.includes('u2') || dtype.includes('i2')) {
+                typeMax = dtype.includes('u') ? 65535 : 32767;
+            } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                typeMax = dtype.includes('u') ? 4294967295 : 2147483647;
+            }
+        }
+        if (rgbAs24BitMode) {
+            typeMax = 16777215;
+        }
 
-        if (settings.normalization?.gammaMode === true) {
-            // Gamma mode: use fixed range
-            dataMin = 0;
-            dataMax = rgbAs24BitMode ? 16777215 : 1.0;
-        } else if (this._cachedStats !== undefined) {
-            // Reuse cached stats
-            dataMin = this._cachedStats.min;
-            dataMax = this._cachedStats.max;
-        } else {
-            // Compute min/max for normalization
-            dataMin = Infinity;
-            dataMax = -Infinity;
+        // Use NormalizationHelper to calculate range
+        // We need to pass stats if auto-normalize is on
+        // But we might need to calculate stats first if not cached
+
+        /** @type {{min: number, max: number} | undefined} */
+        let stats = this._cachedStats;
+        // If auto-normalize is on OR we need stats for default range (e.g. for float data where we might want data range if not 0-1?)
+        // Actually, for float data, default is 0-1.
+        // But if we want to support auto-normalize, we need stats.
+
+        if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
+            let dataMin = Infinity;
+            let dataMax = -Infinity;
 
             if (rgbAs24BitMode) {
                 // For 24-bit mode, compute stats from combined 24-bit values
                 for (let i = 0; i < width * height; i++) {
                     const srcIdx = i * 3;
-                    // Get RGB values and clamp to 0-255 range
                     const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
                     const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
                     const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
-                    // Combine into 24-bit value
                     const combined24bit = (r << 16) | (g << 8) | b;
-                    dataMin = Math.min(dataMin, combined24bit);
-                    dataMax = Math.max(dataMax, combined24bit);
+                    if (combined24bit < dataMin) dataMin = combined24bit;
+                    if (combined24bit > dataMax) dataMax = combined24bit;
                 }
             } else {
-                // Normal mode: use individual channel values
                 for (let i = 0; i < data.length; i++) {
                     const v = data[i];
                     if (!Number.isFinite(v)) continue;
@@ -273,98 +284,34 @@ export class NpyProcessor {
                     if (v > dataMax) dataMax = v;
                 }
             }
-            // Cache the results
-            this._cachedStats = { min: dataMin, max: dataMax };
-        }
+            stats = { min: dataMin, max: dataMax };
+            this._cachedStats = stats;
 
-        let normMin, normMax;
-
-        // Normalization application
-        // Priority order: autoNormalize > gammaMode > manual min/max
-
-        // Step 1: Check if auto-normalize is enabled (highest priority)
-        if (settings.normalization?.autoNormalize === true) {
-            normMin = dataMin;
-            normMax = dataMax;
-        }
-
-        // Step 2: Check if gamma mode is enabled (second priority)
-        // MUST check this BEFORE manual range, because gamma mode has default min/max too
-        else if (settings.normalization?.gammaMode === true) {
-            normMin = 0;
-
-            // For 24-bit RGB mode, use full 24-bit range
-            if (rgbAs24BitMode) {
-                normMax = 16777215; // 2^24 - 1
-            }
-            // Determine normMax based on data type
-            else if (this._lastRaw && this._lastRaw.dtype) {
-                const dtype = this._lastRaw.dtype;
-
-                // Integer types: use type-specific max
-                if (dtype.includes('u1') || dtype.includes('i1')) {
-                    normMax = dtype.includes('u') ? 255 : 127;
-                } else if (dtype.includes('u2') || dtype.includes('i2')) {
-                    normMax = dtype.includes('u') ? 65535 : 32767;
-                } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                    normMax = dtype.includes('u') ? 4294967295 : 2147483647;
-                }
-                // Float types: use 0-1 range
-                else if (dtype.includes('f')) {
-                    normMax = 1;
-                } else {
-                    normMax = 1;
-                }
-            } else {
-                normMax = 1;
+            if (this.vscode) {
+                this.vscode.postMessage({ type: 'stats', value: stats });
             }
         }
 
-        // Step 3: Manual normalization (user-specified range, only if both flags are false)
-        // This handles the case where user explicitly sets a custom range
-        else if (settings.normalization &&
-            settings.normalization.autoNormalize === false &&
-            settings.normalization.gammaMode === false &&
-            settings.normalization.min !== undefined &&
-            settings.normalization.max !== undefined) {
-            normMin = settings.normalization.min;
-            normMax = settings.normalization.max;
+        const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
+            settings,
+            stats || { min: 0, max: 1 },
+            typeMax,
+            isFloat && !rgbAs24BitMode // Treat 24-bit mode as integer for normalization purposes (range 0-16M)
+        );
 
-            // If normalized float mode is enabled for uint images, interpret the range as 0-1
-            if (settings.normalizedFloatMode && this._lastRaw && this._lastRaw.dtype && !this._lastRaw.dtype.includes('f')) {
-                // Multiply by type's maximum value
-                const dtype = this._lastRaw.dtype;
-                let typeMax = 255;
-                if (dtype.includes('u2') || dtype.includes('i2')) {
-                    typeMax = dtype.includes('u') ? 65535 : 32767;
-                } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                    typeMax = dtype.includes('u') ? 4294967295 : 2147483647;
-                }
-                normMin = normMin * typeMax;
-                normMax = normMax * typeMax;
-            }
-        }
-
-        // Step 4: Fallback - shouldn't happen with proper defaults
-        else {
-            normMin = dataMin;
-            normMax = dataMax;
-        }
+        const range = normMax - normMin || 1;
+        const invRange = range > 0 ? 1.0 / range : 0;
+        const out = new Uint8ClampedArray(width * height * 4);
 
         // Optimization: Check for identity transform
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
-        const exposureStops = settings.brightness?.offset ?? 0;
-        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+        const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
 
         // Check if we have uint8 data and full range normalization
-        // NPY dtypes: '|u1' is uint8
         const isUint8 = this._lastRaw && (this._lastRaw.dtype === '|u1' || this._lastRaw.dtype === 'u1');
         const isFullRange = normMin === 0 && normMax === 255;
 
         if (isIdentityGamma && isFullRange && isUint8 && !rgbAs24BitMode) {
             console.log('NPY: Identity transform detected (uint8), using fast loop');
-            const out = new Uint8ClampedArray(width * height * 4);
 
             if (channels === 3) {
                 // RGB -> RGBA
@@ -378,10 +325,14 @@ export class NpyProcessor {
                 }
             } else if (channels === 4) {
                 // RGBA -> RGBA (Copy)
-                // data is Uint8Array, we can just copy it to Uint8ClampedArray
-                // Ensure we use the correct length
                 const length = width * height * 4;
-                return new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, length), width, height);
+                // data is Float32Array, need to cast/copy to Uint8ClampedArray
+                // Wait, if isUint8 is true, data should be values 0-255.
+                // But data is Float32Array.
+                // So we can't just use buffer.
+                for (let i = 0; i < length; i++) {
+                    out[i] = data[i];
+                }
             } else {
                 // Gray -> RGBA
                 for (let i = 0; i < width * height; i++) {
@@ -396,14 +347,6 @@ export class NpyProcessor {
             return new ImageData(out, width, height);
         }
 
-        const range = normMax - normMin || 1;
-        const out = new Uint8ClampedArray(width * height * 4);
-
-        // Apply gamma correction only in gamma mode, NOT in auto-normalize mode
-        // Auto-normalize mode should NOT apply gamma/brightness corrections
-        const applyGamma = settings.normalization?.gammaMode === true &&
-            settings.normalization?.autoNormalize !== true;
-
         for (let i = 0; i < width * height; i++) {
             let r, g, b, a = 255;
 
@@ -416,63 +359,53 @@ export class NpyProcessor {
                 const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
 
                 // Normalize the 24-bit value
-                const normalized = (combined24bit - normMin) / range;
-                r = g = b = Math.max(0, Math.min(1, normalized));
+                let normalized = (combined24bit - normMin) * invRange;
+
+                // Apply gamma/brightness
+                normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
+
+                r = g = b = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
             } else if (channels === 3) {
                 // RGB data
                 const srcIdx = i * 3;
-                r = (data[srcIdx + 0] - normMin) / range;
-                g = (data[srcIdx + 1] - normMin) / range;
-                b = (data[srcIdx + 2] - normMin) / range;
+                let rNorm = (data[srcIdx + 0] - normMin) * invRange;
+                let gNorm = (data[srcIdx + 1] - normMin) * invRange;
+                let bNorm = (data[srcIdx + 2] - normMin) * invRange;
+
+                rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
+                gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
+                bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
+
+                r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
+                g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
+                b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
             } else if (channels === 4) {
                 // RGBA data
                 const srcIdx = i * 4;
-                r = (data[srcIdx + 0] - normMin) / range;
-                g = (data[srcIdx + 1] - normMin) / range;
-                b = (data[srcIdx + 2] - normMin) / range;
+                let rNorm = (data[srcIdx + 0] - normMin) * invRange;
+                let gNorm = (data[srcIdx + 1] - normMin) * invRange;
+                let bNorm = (data[srcIdx + 2] - normMin) * invRange;
+
+                rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
+                gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
+                bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
+
+                r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
+                g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
+                b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
                 a = Math.round(Math.max(0, Math.min(1, data[srcIdx + 3] / normMax)) * 255);
             } else {
                 // Grayscale data
-                let n = (data[i] - normMin) / range;
-                r = g = b = n;
+                let n = (data[i] - normMin) * invRange;
+                n = NormalizationHelper.applyGammaAndBrightness(n, settings);
+                r = g = b = Math.round(Math.max(0, Math.min(1, n)) * 255);
             }
 
-            // Apply gamma and brightness correction
-            // Correct order: remove input gamma → apply brightness → apply output gamma
-            if (applyGamma) {
-                const gammaIn = settings.gamma?.in ?? 1.0;
-                const gammaOut = settings.gamma?.out ?? 1.0;
-                const exposureStops = settings.brightness?.offset ?? 0;
-
-                // Optimization: Skip if no changes (gamma is identity and brightness is 0)
-                if (Math.abs(gammaIn - gammaOut) >= 0.001 || Math.abs(exposureStops) >= 0.001) {
-                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                    r = Math.pow(r, gammaIn);
-                    g = Math.pow(g, gammaIn);
-                    b = Math.pow(b, gammaIn);
-
-                    // Step 2: Apply brightness in linear space (no clamping)
-                    const brightnessFactor = Math.pow(2, exposureStops);
-                    r = r * brightnessFactor;
-                    g = g * brightnessFactor;
-                    b = b * brightnessFactor;
-
-                    // Step 3: Apply output gamma - raise to 1/gammaOut power
-                    r = Math.pow(r, 1.0 / gammaOut);
-                    g = Math.pow(g, 1.0 / gammaOut);
-                    b = Math.pow(b, 1.0 / gammaOut);
-                }
-            }
-
-            // Clamp only for display conversion to 0-255 range
             const p = i * 4;
-            out[p] = Math.round(Math.max(0, Math.min(1, r)) * 255);
-            out[p + 1] = Math.round(Math.max(0, Math.min(1, g)) * 255);
-            out[p + 2] = Math.round(Math.max(0, Math.min(1, b)) * 255);
+            out[p] = r;
+            out[p + 1] = g;
+            out[p + 2] = b;
             out[p + 3] = a;
-        }
-        if (this.vscode) {
-            this.vscode.postMessage({ type: 'stats', value: { min: dataMin, max: dataMax } });
         }
         return new ImageData(out, width, height);
     }
@@ -565,6 +498,12 @@ export class NpyProcessor {
         return '';
     }
 
+    /**
+     * Send format info to VS Code
+     * @param {number} width - Image width
+     * @param {number} height - Image height
+     * @param {string} formatLabel - Format label
+     */
     _postFormatInfo(width, height, formatLabel) {
         if (!this.vscode) return;
 

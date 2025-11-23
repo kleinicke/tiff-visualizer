@@ -1,5 +1,6 @@
 // @ts-check
 "use strict";
+import { NormalizationHelper } from './normalization-helper.js';
 
 /**
  * @typedef {Object} ExrImageData
@@ -50,34 +51,7 @@ export class ExrProcessor {
 		}
 	}
 
-	/**
-	 * Apply gamma and brightness corrections in the correct order
-	 * The correct order is: remove input gamma → apply brightness → apply output gamma
-	 * @param {number} normalizedValue - Value in 0-1 range
-	 * @param {Object} gamma - Gamma settings {in, out}
-	 * @param {Object} brightness - Brightness settings {offset}
-	 * @returns {number} - Corrected value
-	 */
-	_applyGammaAndBrightness(normalizedValue, gamma, brightness) {
-		// Optimization: Skip if no changes (gamma is identity and brightness is 0)
-		if (Math.abs(gamma.in - gamma.out) < 0.001 && Math.abs(brightness.offset) < 0.001) {
-			return normalizedValue;
-		}
 
-		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
-		let linear = Math.pow(normalizedValue, gamma.in);
-
-		// Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
-		const exposureStops = brightness.offset;
-		linear = linear * Math.pow(2, exposureStops);
-
-		// Step 3: Apply output gamma - raise to 1/gammaOut power
-		let corrected = Math.pow(linear, 1.0 / gamma.out);
-
-		// Note: Do NOT clamp here - allow values outside [0,1] for float images
-		// Clamping will happen at display conversion time
-		return corrected;
-	}
 
 	/**
 	 * Process EXR file from URL
@@ -204,62 +178,49 @@ export class ExrProcessor {
 		const brightness = settings.brightness || { offset: 0 };
 		const nanColor = this._getNanColor(settings);
 
-		// Auto-detect normalization range if needed
-		let min, max;
+		// Calculate stats if needed (for auto-normalize or just to have them)
+		/** @type {{min: number, max: number} | undefined} */
+		let stats = this._cachedStats;
+		if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
+			let minVal = Infinity;
+			let maxVal = -Infinity;
 
-		if (normalization.gammaMode === true) {
-			// Gamma mode: use fixed float range
-			min = 0.0;
-			max = 1.0;
-		} else if (normalization.autoNormalize) {
-			// Auto normalize: compute or use cached stats
-			if (this._cachedStats !== undefined) {
-				min = this._cachedStats.min;
-				max = this._cachedStats.max;
-			} else {
-				min = Infinity;
-				max = -Infinity;
-				for (let i = 0; i < data.length; i++) {
-					const value = data[i];
-					if (!isNaN(value) && isFinite(value)) {
-						if (value < min) min = value;
-						if (value > max) max = value;
+			// Re-implementing stats calculation loop correctly based on raw data
+			const len = width * height;
+			for (let i = 0; i < len; i++) {
+				for (let c = 0; c < Math.min(channels, 3); c++) { // Only consider RGB channels for min/max
+					const val = data[i * channels + c];
+					if (Number.isFinite(val)) {
+						if (val < minVal) minVal = val;
+						if (val > maxVal) maxVal = val;
 					}
 				}
-				// Cache the results
-				this._cachedStats = { min, max };
 			}
+			stats = { min: minVal, max: maxVal };
+			this._cachedStats = stats;
 
-			// Update settings manager with detected range so UI reflects it
+			// Update settings manager and VS Code
 			if (this.settingsManager && this.settingsManager.settings.normalization) {
-				this.settingsManager.settings.normalization.min = min;
-				this.settingsManager.settings.normalization.max = max;
-			}
-
-			// Send detected range back to VS Code for status bar update
-			if (this.vscode) {
-				this.vscode.postMessage({
-					type: 'stats',
-					value: {
-						min: min,
-						max: max
-					}
-				});
+				this.settingsManager.settings.normalization.min = minVal;
+				this.settingsManager.settings.normalization.max = maxVal;
 			}
 		}
+
+
+		// Auto-detect normalization range if needed
+		// Use NormalizationHelper to calculate range
+		const { min, max } = NormalizationHelper.getNormalizationRange(
+			settings,
+			stats || { min: 0, max: 1 },
+			1.0,
+			true // isFloat
+		);
 
 		const range = max - min;
-		if (range === 0) {
-			// Avoid division by zero
-			min = 0;
-			max = 1;
-		}
+		const invRange = range > 0 ? 1.0 / range : 0;
 
 		// Optimization: Check for identity transform
-		const gammaIn = gamma.in ?? 1.0;
-		const gammaOut = gamma.out ?? 1.0;
-		const exposureStops = brightness.offset ?? 0;
-		const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
+		const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
 
 		if (isIdentityGamma) {
 			console.log('EXR: Identity transform detected, using fast loop');
@@ -278,7 +239,7 @@ export class ExrProcessor {
 							r = nanColor.r; g = nanColor.g; b = nanColor.b;
 						} else {
 							// Normalize and clamp
-							const normalized = (value - min) / range;
+							const normalized = (value - min) * invRange;
 							const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
 							r = g = b = intensity;
 						}
@@ -290,9 +251,9 @@ export class ExrProcessor {
 						if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
 							r = nanColor.r; g = nanColor.g; b = nanColor.b;
 						} else {
-							r = Math.round(Math.max(0, Math.min(1, (rVal - min) / range)) * 255);
-							g = Math.round(Math.max(0, Math.min(1, (gVal - min) / range)) * 255);
-							b = Math.round(Math.max(0, Math.min(1, (bVal - min) / range)) * 255);
+							r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
+							g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
+							b = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
 						}
 					} else if (channels === 4) {
 						const rVal = data[dataIndex];
@@ -303,9 +264,9 @@ export class ExrProcessor {
 						if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
 							r = nanColor.r; g = nanColor.g; b = nanColor.b; a = 255;
 						} else {
-							r = Math.round(Math.max(0, Math.min(1, (rVal - min) / range)) * 255);
-							g = Math.round(Math.max(0, Math.min(1, (gVal - min) / range)) * 255);
-							b = Math.round(Math.max(0, Math.min(1, (bVal - min) / range)) * 255);
+							r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
+							g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
+							b = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
 							a = Math.round(this.clamp(aVal, 0, 1) * 255);
 						}
 					}
@@ -340,10 +301,10 @@ export class ExrProcessor {
 						b = nanColor.b;
 					} else {
 						// Normalize and apply tone mapping
-						let normalized = (value - min) / (max - min);
+						let normalized = (value - min) * invRange;
 
 						// Apply gamma and brightness corrections using the correct order
-						normalized = this._applyGammaAndBrightness(normalized, gamma, brightness);
+						normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
 
 						// Clamp only for display conversion to 0-255 range
 						const displayValue = Math.max(0, Math.min(1, normalized));
@@ -362,19 +323,19 @@ export class ExrProcessor {
 						b = nanColor.b;
 					} else {
 						// Normalize each channel
-						r = (rVal - min) / (max - min);
-						g = (gVal - min) / (max - min);
-						b = (bVal - min) / (max - min);
+						let rNorm = (rVal - min) * invRange;
+						let gNorm = (gVal - min) * invRange;
+						let bNorm = (bVal - min) * invRange;
 
 						// Apply gamma and brightness corrections using the correct order
-						r = this._applyGammaAndBrightness(r, gamma, brightness);
-						g = this._applyGammaAndBrightness(g, gamma, brightness);
-						b = this._applyGammaAndBrightness(b, gamma, brightness);
+						rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
+						gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
+						bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
 
 						// Clamp only for display conversion to 0-255 range
-						r = Math.round(Math.max(0, Math.min(1, r)) * 255);
-						g = Math.round(Math.max(0, Math.min(1, g)) * 255);
-						b = Math.round(Math.max(0, Math.min(1, b)) * 255);
+						r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
+						g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
+						b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
 					}
 				} else if (channels === 4) {
 					// RGBA
@@ -390,19 +351,19 @@ export class ExrProcessor {
 						a = 255;
 					} else {
 						// Normalize RGB channels
-						r = (rVal - min) / (max - min);
-						g = (gVal - min) / (max - min);
-						b = (bVal - min) / (max - min);
+						let rNorm = (rVal - min) * invRange;
+						let gNorm = (gVal - min) * invRange;
+						let bNorm = (bVal - min) * invRange;
 
 						// Apply gamma and brightness corrections using the correct order
-						r = this._applyGammaAndBrightness(r, gamma, brightness);
-						g = this._applyGammaAndBrightness(g, gamma, brightness);
-						b = this._applyGammaAndBrightness(b, gamma, brightness);
+						rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
+						gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
+						bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
 
 						// Clamp only for display conversion to 0-255 range
-						r = Math.round(Math.max(0, Math.min(1, r)) * 255);
-						g = Math.round(Math.max(0, Math.min(1, g)) * 255);
-						b = Math.round(Math.max(0, Math.min(1, b)) * 255);
+						r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
+						g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
+						b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
 
 						// Alpha channel - normalize to 0-1 range and clamp for display
 						// Do NOT apply gamma/brightness to alpha as it represents opacity

@@ -1,5 +1,6 @@
 // @ts-check
 "use strict";
+import { NormalizationHelper } from './normalization-helper.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -26,6 +27,8 @@ export class TiffProcessor {
 		this._maskCache = new Map(); // Cache loaded mask images by URI
 		this._lastImageData = null; // Store the last rendered image data for fast parameter updates
 		this._lastStatistics = null; // Cache min/max statistics
+		/** @type {{ floatData: Float32Array } | null} */
+		this._convertedFloatData = null; // Cache converted float data for analysis
 	}
 
 	/**
@@ -43,6 +46,11 @@ export class TiffProcessor {
 	 * Get NaN color based on settings
 	 * @param {Object} settings - Current settings
 	 * @returns {Object} - RGB values for NaN color
+	 */
+	/**
+	 * Get NaN color from settings
+	 * @param {any} settings - Settings object
+	 * @returns {{r: number, g: number, b: number}}
 	 */
 	_getNanColor(settings) {
 		if (settings.nanColor === 'fuchsia') {
@@ -272,52 +280,25 @@ export class TiffProcessor {
 			this.vscode.postMessage({ type: 'stats', value: { min, max } });
 		}
 
-		// Get normalization settings
-		let normMin, normMax;
+		// Get normalization settings using NormalizationHelper
+		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		const typeMax = showNorm ? 1.0 : (bitsPerSample === 16 ? 65535 : 255);
 
-		if (settings.normalization.autoNormalize) {
-			// Auto-normalize: use actual image min/max
-			normMin = min;
-			normMax = max;
-		} else if (settings.normalization.gammaMode) {
-			// Gamma mode normalization range depends on data type
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (showNorm) {
-				// Float TIFFs: normalize to 0-1 range (floats are typically already in 0-1 range)
-				normMin = 0;
-				normMax = 1;
-			} else {
-				// Integer TIFFs: normalize to type's maximum value
-				normMin = 0;
-				if (bitsPerSample === 16) {
-					normMax = 65535;
-				} else {
-					normMax = 255;
-				}
-			}
-		} else {
-			// Manual mode: use user-specified range
-			normMin = settings.normalization.min;
-			normMax = settings.normalization.max;
-
-			// If normalized float mode is enabled for uint images, interpret the range as 0-1
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (settings.normalizedFloatMode && !showNorm) {
-				// Multiply by type's maximum value
-				const typeMax = bitsPerSample === 16 ? 65535 : 255;
-				normMin = normMin * typeMax;
-				normMax = normMax * typeMax;
-			}
-		}
+		const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
+			settings,
+			{ min, max },
+			typeMax,
+			showNorm
+		);
 
 		// Normalize and create image data
-		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		let imageDataArray;
 
 		if (showNorm) { // Float data
-			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
+			imageDataArray = this._processFloatTiff(rastersCopy, width, height, normMin, normMax, settings);
 		} else {
 			// Pass normalization parameters to integer TIFF processing too
-			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
+			imageDataArray = this._processIntegerTiff(rastersCopy, width, height, normMin, normMax, settings, bitsPerSample);
 		}
 
 		return new ImageData(imageDataArray, width, height);
@@ -538,45 +519,20 @@ export class TiffProcessor {
 		}
 
 		// Get normalization settings (settings already declared above)
-		let normMin, normMax;
+		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		const typeMax = bitsPerSample === 16 ? 65535 : 255;
 
-		if (settings.normalization.autoNormalize) {
-			// Auto-normalize: use actual image min/max
-			normMin = min;
-			normMax = max;
-		} else if (settings.normalization.gammaMode) {
-			// Gamma mode normalization range depends on data type
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (showNorm) {
-				// Float TIFFs: normalize to 0-1 range (floats are typically already in 0-1 range)
-				normMin = 0;
-				normMax = 1;
-			} else {
-				// Integer TIFFs: normalize to type's maximum value
-				normMin = 0;
-				if (bitsPerSample === 16) {
-					normMax = 65535;
-				} else {
-					normMax = 255;
-				}
-			}
-		} else {
-			// Manual mode: use user-specified range
-			normMin = settings.normalization.min;
-			normMax = settings.normalization.max;
-
-			// If normalized float mode is enabled for uint images, interpret the range as 0-1
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (settings.normalizedFloatMode && !showNorm) {
-				// Multiply by type's maximum value
-				const typeMax = bitsPerSample === 16 ? 65535 : 255;
-				normMin = normMin * typeMax;
-				normMax = normMax * typeMax;
-			}
-		}
+		// Use NormalizationHelper to calculate range
+		// For float images (showNorm=true), typeMax is 1.0
+		const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
+			settings,
+			{ min, max },
+			showNorm ? 1.0 : typeMax,
+			showNorm
+		);
 
 		// Normalize and create image data
-		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		// showNorm is already defined above
 
 		if (showNorm) { // Float data
 			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
@@ -588,9 +544,16 @@ export class TiffProcessor {
 		return new ImageData(imageDataArray, width, height);
 	}
 
+
 	/**
 	 * Process float TIFF data
-	 * @private
+	 * @param {any[]} rasters - Raster data
+	 * @param {number} width - Image width
+	 * @param {number} height - Image height
+	 * @param {number} normMin - Normalization minimum
+	 * @param {number} normMax - Normalization maximum
+	 * @param {any} settings - Settings object
+	 * @returns {Uint8ClampedArray}
 	 */
 	_processFloatTiff(rasters, width, height, normMin, normMax, settings) {
 		const imageDataArray = new Uint8ClampedArray(width * height * 4);
@@ -627,7 +590,7 @@ export class TiffProcessor {
 
 				// Apply gamma and brightness corrections (may result in values outside [0,1])
 				if (settings.normalization.gammaMode) {
-					normalized = this._applyGammaAndBrightness(normalized, settings);
+					normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
 				}
 
 				// Clamp only for display conversion to 0-255 range
@@ -659,7 +622,7 @@ export class TiffProcessor {
 
 				// Apply gamma and brightness to the combined value (may result in values outside [0,1])
 				if (settings.normalization.gammaMode) {
-					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+					normalized24 = NormalizationHelper.applyGammaAndBrightness(normalized24, settings);
 				}
 
 				// Display as grayscale (clamp only for display conversion)
@@ -678,8 +641,13 @@ export class TiffProcessor {
 					}
 
 					// Apply gamma and brightness corrections (may result in values outside [0,1])
+					// Only if gamma mode is enabled (and not auto-normalize, though helper handles that check if we pass settings correctly)
+					// Actually, NormalizationHelper.applyGammaAndBrightness just applies the math.
+					// We need to check if we SHOULD apply it.
+					// In the previous code: if (settings.normalization.gammaMode)
+
 					if (settings.normalization.gammaMode) {
-						normalized = this._applyGammaAndBrightness(normalized, settings);
+						normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
 					}
 
 					// Clamp only for display conversion to 0-255 range
@@ -704,27 +672,31 @@ export class TiffProcessor {
 	/**
 	 * Process integer TIFF data
 	 * @private
+	 * @param {any[]} rasters - Raster data
+	 * @param {number} width - Image width
+	 * @param {number} height - Image height
+	 * @param {number} normMin - Normalization minimum
+	 * @param {number} normMax - Normalization maximum
+	 * @param {any} settings - Settings object
+	 * @param {number} bitsPerSample - Bits per sample
+	 * @returns {Uint8ClampedArray}
 	 */
 	_processIntegerTiff(rasters, width, height, normMin, normMax, settings, bitsPerSample) {
 		const imageDataArray = new Uint8ClampedArray(width * height * 4);
 		const numBands = rasters.length;
-		const nanColor = this._getNanColor(settings);
+		const typeMax = bitsPerSample === 16 ? 65535 : 255;
 
-		// Use normalization settings (normMin/normMax are already calculated based on mode)
-		const range = normMax - normMin;
+		// Generate LUT using NormalizationHelper
+		const lut = NormalizationHelper.generateLut(settings, bitsPerSample, typeMax, normMin, normMax);
 
 		// Optimization: Check for identity transform
-		const gammaIn = settings.gamma?.in ?? 1.0;
-		const gammaOut = settings.gamma?.out ?? 1.0;
-		const exposureStops = settings.brightness?.offset ?? 0;
-		const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
-		const isFullRange = normMin === 0 && normMax === 255; // Assuming 8-bit target for "full range" check in this context
+		// If LUT is identity (0->0, 255->255 etc) and we have 8-bit data, we can use fast path
+		const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
+		const isFullRange = normMin === 0 && normMax === typeMax;
 
-		// Fast path for 8-bit integer data (common case)
-		// We check if rasters are Uint8Array to ensure no NaNs and 0-255 range
-		if (isIdentityGamma && isFullRange && !settings.rgbAs24BitGrayscale && rasters[0] instanceof Uint8Array) {
+		// Fast path for 8-bit integer data with identity transform
+		if (isIdentityGamma && isFullRange && !settings.rgbAs24BitGrayscale && bitsPerSample === 8 && rasters[0] instanceof Uint8Array) {
 			console.log('TIFF: Identity transform detected (8-bit), using fast interleave loop');
-			const out = new Uint8ClampedArray(width * height * 4);
 
 			if (numBands >= 3) {
 				// RGB(A) -> RGBA
@@ -735,10 +707,10 @@ export class TiffProcessor {
 
 				for (let i = 0; i < width * height; i++) {
 					const outIdx = i * 4;
-					out[outIdx] = rBand[i];
-					out[outIdx + 1] = gBand[i];
-					out[outIdx + 2] = bBand[i];
-					out[outIdx + 3] = aBand ? aBand[i] : 255;
+					imageDataArray[outIdx] = rBand[i];
+					imageDataArray[outIdx + 1] = gBand[i];
+					imageDataArray[outIdx + 2] = bBand[i];
+					imageDataArray[outIdx + 3] = aBand ? aBand[i] : 255;
 				}
 			} else if (numBands === 1) {
 				// Gray -> RGBA
@@ -746,10 +718,10 @@ export class TiffProcessor {
 				for (let i = 0; i < width * height; i++) {
 					const val = grayBand[i];
 					const outIdx = i * 4;
-					out[outIdx] = val;
-					out[outIdx + 1] = val;
-					out[outIdx + 2] = val;
-					out[outIdx + 3] = 255;
+					imageDataArray[outIdx] = val;
+					imageDataArray[outIdx + 1] = val;
+					imageDataArray[outIdx + 2] = val;
+					imageDataArray[outIdx + 3] = 255;
 				}
 			} else if (numBands === 2) {
 				// Gray + Alpha -> RGBA
@@ -758,68 +730,64 @@ export class TiffProcessor {
 				for (let i = 0; i < width * height; i++) {
 					const val = grayBand[i];
 					const outIdx = i * 4;
-					out[outIdx] = val;
-					out[outIdx + 1] = val;
-					out[outIdx + 2] = val;
-					out[outIdx + 3] = alphaBand[i];
+					imageDataArray[outIdx] = val;
+					imageDataArray[outIdx + 1] = val;
+					imageDataArray[outIdx + 2] = val;
+					imageDataArray[outIdx + 3] = alphaBand[i];
 				}
 			}
-
-			return new ImageData(out, width, height);
+			return imageDataArray;
 		}
+
+		// LUT-based processing
+		const nanColor = this._getNanColor(settings);
 
 		for (let i = 0; i < width * height; i++) {
 			let r, g, b;
 
-			// Check if any band has NaN values
+			// Check if any band has NaN values (unlikely for integer, but possible if converted)
 			let hasNaN = false;
+			// Only check first 3 bands for NaN
 			for (let band = 0; band < Math.min(3, numBands); band++) {
-				if (isNaN(rasters[band][i])) {
+				// For integer arrays, isNaN check might be redundant but safe
+				if (Number.isNaN(rasters[band][i])) {
 					hasNaN = true;
 					break;
 				}
 			}
 
 			if (hasNaN) {
-				// Use NaN color for this pixel
 				r = nanColor.r;
 				g = nanColor.g;
 				b = nanColor.b;
 			} else if (numBands === 1) {
-				let value = rasters[0][i];
-
-				// Apply normalization based on settings (auto/gamma/manual)
-				let normalized;
-				if (range > 0) {
-					normalized = (value - normMin) / range;
-				} else {
-					normalized = 0; // Handle case where min === max
-				}
-
-				// Apply gamma and brightness corrections (may result in values outside [0,1])
-				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
-					normalized = this._applyGammaAndBrightness(normalized, settings);
-				}
-
-				// Clamp only for display conversion to 0-255 range
-				value = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-				r = g = b = value;
+				// Grayscale
+				const val = rasters[0][i];
+				// Clamp to LUT size
+				const lutIdx = Math.min(Math.max(0, Math.round(val)), typeMax);
+				const displayVal = lut[lutIdx];
+				r = g = b = displayVal;
 			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
-				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
-				// Get raw RGB values (these are already in their native type range, e.g., 0-255 for uint8)
-				const values = [];
-				for (let band = 0; band < 3; band++) {
-					let value = rasters[band][i];
-					// Clamp to valid 8-bit range (rasters should already be in native range)
-					values.push(this.clamp(Math.round(value), 0, 255));
-				}
+				// RGB as 24-bit grayscale
+				// This is a special case where we combine 3 channels into one value
+				// LUT approach is tricky here because the value range is huge (24-bit)
+				// So we might need to stick to manual calculation or use a different approach
+				// But wait, the previous logic normalized each channel then combined? 
+				// No, previous logic:
+				// 1. Get RGB values (clamped 0-255)
+				// 2. Combine to 24-bit
+				// 3. Normalize 24-bit value using normMin/normMax
+				// 4. Apply gamma
 
-				// Combine into 24-bit value: (R << 16) | (G << 8) | B
-				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-				// Max value is 16777215 (0xFFFFFF)
+				// Since 24-bit LUT is too big, we'll do manual calculation for this specific mode
+				// Re-implementing the manual logic from before, but using NormalizationHelper for gamma
 
-				// Now normalize the combined 24-bit value using the normalization settings
-				// For 24-bit mode, normMin/normMax should be in the range [0, 16777215]
+				const v0 = Math.min(255, Math.max(0, rasters[0][i]));
+				const v1 = Math.min(255, Math.max(0, rasters[1][i]));
+				const v2 = Math.min(255, Math.max(0, rasters[2][i]));
+
+				const combined24bit = (v0 << 16) | (v1 << 8) | v2;
+
 				let normalized24;
 				const norm24Range = normMax - normMin;
 				if (norm24Range > 0) {
@@ -828,106 +796,34 @@ export class TiffProcessor {
 					normalized24 = 0;
 				}
 
-				// Apply gamma/brightness to the combined value (may result in values outside [0,1])
-				if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
-					normalized24 = this._applyGammaAndBrightness(normalized24, settings);
+				if (settings.normalization.gammaMode) {
+					normalized24 = NormalizationHelper.applyGammaAndBrightness(normalized24, settings);
 				}
 
-				// Display as grayscale (clamp only for display conversion)
-				const displayValue = Math.round(Math.max(0, Math.min(1, normalized24)) * 255);
+				const displayVal = Math.round(Math.max(0, Math.min(1, normalized24)) * 255);
+				r = g = b = displayVal;
 
-				r = g = b = displayValue;
 			} else {
-				const values = [];
+				// RGB
+				const vals = [];
 				for (let band = 0; band < Math.min(3, numBands); band++) {
-					let value = rasters[band][i];
-
-					// Apply normalization based on settings
-					let normalized;
-					if (range > 0) {
-						normalized = (value - normMin) / range;
-					} else {
-						normalized = 0;
-					}
-
-					// Apply gamma/brightness (may result in values outside [0,1])
-					if (settings.normalization.gammaMode || this._shouldApplyGammaBrightnessToUint(settings)) {
-						normalized = this._applyGammaAndBrightness(normalized, settings);
-					}
-
-					// Clamp only for display conversion to 0-255 range
-					value = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-					values.push(value);
+					const val = rasters[band][i];
+					const lutIdx = Math.min(Math.max(0, Math.round(val)), typeMax);
+					vals.push(lut[lutIdx]);
 				}
-
-				r = values[0] ?? 0;
-				g = values[1] ?? 0;
-				b = values[2] ?? 0;
+				r = vals[0];
+				g = vals[1];
+				b = vals[2];
 			}
 
-			const pixelIndex = i * 4;
-			imageDataArray[pixelIndex] = r;
-			imageDataArray[pixelIndex + 1] = g;
-			imageDataArray[pixelIndex + 2] = b;
-			imageDataArray[pixelIndex + 3] = 255; // Alpha
+			const outIdx = i * 4;
+			imageDataArray[outIdx] = r;
+			imageDataArray[outIdx + 1] = g;
+			imageDataArray[outIdx + 2] = b;
+			imageDataArray[outIdx + 3] = 255;
 		}
 
 		return imageDataArray;
-	}
-
-	/**
-	 * Apply gamma and brightness corrections
-	 * The correct order is: remove input gamma → apply brightness → apply output gamma
-	 * @private
-	 */
-	_applyGammaAndBrightness(normalizedValue, settings) {
-		const gammaIn = settings.gamma.in;
-		const gammaOut = settings.gamma.out;
-		const exposureStops = settings.brightness.offset;
-
-		// Optimization: Skip if no changes (gamma is identity and brightness is 0)
-		if (Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001) {
-			return normalizedValue;
-		}
-
-		// Step 1: Remove input gamma (linearize) - raise to gammaIn power
-		let linear = Math.pow(normalizedValue, gammaIn);
-
-		// Step 2: Apply brightness (exposure compensation) in linear space (no clamping)
-		linear = linear * Math.pow(2, exposureStops);
-
-		// Step 3: Apply output gamma - raise to 1/gammaOut power
-		let corrected = Math.pow(linear, 1.0 / gammaOut);
-
-		// Note: Do NOT clamp here - allow values outside [0,1] for float images
-		// Clamping will happen at display conversion time
-		return corrected;
-	}
-
-	/**
-	 * Check if gamma/brightness should be applied to uint images
-	 * Only apply if gamma mode is enabled OR values are significantly different from defaults
-	 * @private
-	 */
-	_shouldApplyGammaBrightnessToUint(settings) {
-		// If gamma mode is explicitly enabled, always apply gamma/brightness
-		if (settings.normalization && settings.normalization.gammaMode) {
-			return true;
-		}
-
-		// Do NOT apply gamma/brightness in auto-normalize mode
-		if (settings.normalization && settings.normalization.autoNormalize) {
-			return false;
-		}
-
-		// Check if gamma is significantly different from 1.0 (no correction)
-		const gammaRatio = settings.gamma.in / settings.gamma.out;
-		const hasGammaCorrection = Math.abs(gammaRatio - 1.0) > 0.01;
-
-		// Check if brightness is significantly different from 0 (no adjustment)
-		const hasBrightnessCorrection = Math.abs(settings.brightness.offset) > 0.01;
-
-		return hasGammaCorrection || hasBrightnessCorrection;
 	}
 
 	/**

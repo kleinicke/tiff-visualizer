@@ -198,6 +198,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		primaryImageData = null;
 		peerImageData = null;
 
+		// Clear stats in UI to prevent stale values
+		vscode.postMessage({ type: 'stats', value: null });
+
 		// Clear the container
 		container.className = 'container image';
 

@@ -1,5 +1,6 @@
 // @ts-check
 "use strict";
+import { NormalizationHelper } from './normalization-helper.js';
 
 /**
  * PFM Processor for TIFF Visualizer
@@ -12,6 +13,7 @@ export class PfmProcessor {
         this._lastRaw = null; // { width, height, data: Float32Array }
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
@@ -85,68 +87,63 @@ export class PfmProcessor {
 
     _toImageDataFloat(data, width, height, channels = 1) {
         const settings = this.settingsManager.settings;
-        let min, max;
 
-        // Lazy stats calculation: skip in gamma mode or autoNormalize, cache in stats mode
-        if (settings.normalization?.gammaMode === true || settings.normalization?.autoNormalize === true) {
-            // Gamma mode or auto: need to compute stats
-            if (this._cachedStats !== undefined) {
-                // Reuse cached stats
-                min = this._cachedStats.min;
-                max = this._cachedStats.max;
-            } else {
-                // Compute stats for the first time
-                min = Infinity;
-                max = -Infinity;
-                for (let i = 0; i < data.length; i++) {
-                    const v = data[i];
-                    if (!Number.isFinite(v)) continue;
-                    if (v < min) min = v;
-                    if (v > max) max = v;
+        // Calculate stats if needed (for auto-normalize or just to have them)
+        /** @type {{min: number, max: number} | undefined} */
+        let stats = this._cachedStats;
+        if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
+            let minVal = Infinity;
+            let maxVal = -Infinity;
+
+            // Re-implementing stats calculation loop correctly based on raw data
+            const len = width * height;
+            for (let i = 0; i < len; i++) {
+                for (let c = 0; c < Math.min(channels, 3); c++) {
+                    const val = data[i * channels + c];
+                    if (Number.isFinite(val)) {
+                        if (val < minVal) minVal = val;
+                        if (val > maxVal) maxVal = val;
+                    }
                 }
-                // Cache the results
-                this._cachedStats = { min, max };
             }
-        } else {
-            // Stats mode with manual min/max: skip computation entirely for float (0.0-1.0 range assumed)
-            min = 0;
-            max = 1;
-        }
-        let normMin, normMax;
-        if (settings.normalization && settings.normalization.autoNormalize) {
-            normMin = min; normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode) {
-            normMin = 0; normMax = 1;
-        } else if (settings.normalization) {
-            if (settings.normalization.min === 0 && settings.normalization.max === 1 && (min < 0 || max > 1)) {
-                normMin = min; normMax = max;
-            } else {
-                normMin = settings.normalization.min; normMax = settings.normalization.max;
+            stats = { min: minVal, max: maxVal };
+            this._cachedStats = stats;
+
+            if (this.vscode) {
+                this.vscode.postMessage({ type: 'stats', value: stats });
             }
-        } else {
-            normMin = min; normMax = max;
         }
-        const range = normMax - normMin || 1;
+
+        // Use NormalizationHelper to calculate range
+        // PFM is always float, so typeMax is 1.0
+        const { min, max } = NormalizationHelper.getNormalizationRange(
+            settings,
+            stats || { min: 0, max: 1 },
+            1.0,
+            true // isFloat
+        );
+
+        const range = max - min;
+        const invRange = range > 0 ? 1.0 / range : 0;
+
         const out = new Uint8ClampedArray(width * height * 4);
+
+        // Optimization: Check for identity transform
+        const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
+
         for (let i = 0; i < width * height; i++) {
             let r, g, b;
 
             if (channels === 3) {
                 // RGB data
-                r = (data[i * 3 + 0] - normMin) / range;
-                g = (data[i * 3 + 1] - normMin) / range;
-                b = (data[i * 3 + 2] - normMin) / range;
+                r = (data[i * 3 + 0] - min) * invRange;
+                g = (data[i * 3 + 1] - min) * invRange;
+                b = (data[i * 3 + 2] - min) * invRange;
             } else {
                 // Grayscale data
-                const n = (data[i] - normMin) / range;
+                const n = (data[i] - min) * invRange;
                 r = g = b = n;
             }
-
-            // Optimization: Check for identity transform
-            const gammaIn = settings.gamma?.in ?? 1.0;
-            const gammaOut = settings.gamma?.out ?? 1.0;
-            const exposureStops = settings.brightness?.offset ?? 0;
-            const isIdentityGamma = Math.abs(gammaIn - 1.0) < 0.001 && Math.abs(gammaOut - 1.0) < 0.001 && Math.abs(exposureStops) < 0.001;
 
             if (isIdentityGamma) {
                 // Fast path: just clamp and assign
@@ -158,31 +155,10 @@ export class PfmProcessor {
                 continue;
             }
 
-            if (settings.normalization && settings.normalization.gammaMode) {
-                const gammaIn = settings.gamma?.in ?? 1.0;
-                const gammaOut = settings.gamma?.out ?? 1.0;
-                const exposureStops = settings.brightness?.offset ?? 0;
-
-                // Optimization: Skip if no changes (gamma is identity and brightness is 0)
-                if (Math.abs(gammaIn - 1.0) >= 0.001 || Math.abs(gammaOut - 1.0) >= 0.001 || Math.abs(exposureStops) >= 0.001) {
-                    // Correct order: remove input gamma → apply brightness → apply output gamma
-                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                    r = Math.pow(r, gammaIn);
-                    g = Math.pow(g, gammaIn);
-                    b = Math.pow(b, gammaIn);
-
-                    // Step 2: Apply brightness in linear space (no clamping)
-                    const brightnessFactor = Math.pow(2, exposureStops);
-                    r = r * brightnessFactor;
-                    g = g * brightnessFactor;
-                    b = b * brightnessFactor;
-
-                    // Step 3: Apply output gamma - raise to 1/gammaOut power
-                    r = Math.pow(r, 1.0 / gammaOut);
-                    g = Math.pow(g, 1.0 / gammaOut);
-                    b = Math.pow(b, 1.0 / gammaOut);
-                }
-            }
+            // Apply gamma and brightness corrections using the correct order
+            r = NormalizationHelper.applyGammaAndBrightness(r, settings);
+            g = NormalizationHelper.applyGammaAndBrightness(g, settings);
+            b = NormalizationHelper.applyGammaAndBrightness(b, settings);
 
             // Clamp only for display conversion to 0-255 range
             const p = i * 4;
@@ -190,9 +166,6 @@ export class PfmProcessor {
             out[p + 1] = Math.round(Math.max(0, Math.min(1, g)) * 255); // G
             out[p + 2] = Math.round(Math.max(0, Math.min(1, b)) * 255); // B
             out[p + 3] = 255;                 // A
-        }
-        if (this.vscode) {
-            this.vscode.postMessage({ type: 'stats', value: { min, max } });
         }
         return new ImageData(out, width, height);
     }

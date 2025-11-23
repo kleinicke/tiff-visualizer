@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { LutHelper } from './lut-helper.js';
+import { NormalizationHelper } from './normalization-helper.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -331,45 +331,23 @@ export class PngProcessor {
         });
 
         // Calculate normalization range based on settings
-        let normMin, normMax;
+        const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
+            settings,
+            { min, max },
+            maxValue,
+            false // PNG is integer
+        );
 
-        if (settings.normalization && settings.normalization.autoNormalize) {
-            // Auto-normalize: use actual image min/max
-            normMin = min;
-            normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode) {
-            // Gamma mode: normalize to appropriate range
-            normMin = 0;
-            if (settings.rgbAs24BitGrayscale && channels >= 3) {
-                // For 24-bit mode, use full 24-bit range
-                normMax = 16777215; // 0xFFFFFF
-            } else {
-                // For normal mode, use bit-depth range
-                normMax = maxValue;
-            }
-        } else if (settings.normalization) {
-            // Manual mode: use user-specified range
-            normMin = settings.normalization.min;
-            normMax = settings.normalization.max;
+        // Generate LUT using NormalizationHelper
+        const lut = NormalizationHelper.generateLut(settings, bitDepth, maxValue, normMin, normMax);
 
-            // If normalized float mode is enabled, interpret the range as 0-1
-            if (settings.normalizedFloatMode && channels === 1) {
-                // Multiply by maxValue
-                normMin = normMin * maxValue;
-                normMax = normMax * maxValue;
-            }
-        } else {
-            // Fallback: use bit-depth range
-            normMin = 0;
-            normMax = maxValue;
-        }
-
-        // Optimization: Check for identity transform
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
-        const exposureStops = settings.brightness?.offset ?? 0;
-        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
-        const isFullRange = normMin === 0 && normMax === maxValue;
+        // Check for identity transform
+        // Identity means:
+        // 1. Gamma in/out are 1.0
+        // 2. Brightness offset is 0
+        // 3. Normalization range matches full range (0-255 or 0-65535)
+        const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
+        const isFullRange = min === 0 && max === maxValue;
 
         if (isIdentityGamma && isFullRange) {
             // Fast path for 8-bit RGBA (already in correct format)
@@ -466,16 +444,7 @@ export class PngProcessor {
                 normalized24 = Math.max(0, Math.min(1, normalized24));
 
                 // Apply gamma/brightness to the combined value
-                // Note: We still use the helper method for this special case if we keep it, 
-                // or inline the logic. Since we are removing _applyGammaAndBrightness, we inline it here.
-
-                const gammaIn = settings.gamma?.in ?? 1.0;
-                const gammaOut = settings.gamma?.out ?? 1.0;
-                const exposureStops = settings.brightness?.offset ?? 0;
-
-                let linear = Math.pow(normalized24, gammaIn);
-                linear = linear * Math.pow(2, exposureStops);
-                normalized24 = Math.pow(linear, 1.0 / gammaOut);
+                normalized24 = NormalizationHelper.applyGammaAndBrightness(normalized24, settings);
 
                 // Display as grayscale
                 r = g = b = Math.round(normalized24 * 255);
@@ -509,13 +478,15 @@ export class PngProcessor {
     /**
      * Fallback gamma rendering for browser Image API path
      * @param {Uint8Array | Uint8ClampedArray} data
-```
+    ```
      * @param {number} width
      * @param {number} height
      * @returns {ImageData}
      */
     _toImageDataWithGamma(data, width, height) {
-        const { maxValue } = this._lastRaw;
+        if (!this._lastRaw) return new ImageData(width, height);
+        const { bitDepth } = this._lastRaw;
+        const maxValue = (1 << bitDepth) - 1;
         const settings = this.settingsManager.settings;
         const out = new Uint8ClampedArray(width * height * 4);
 
@@ -604,7 +575,7 @@ export class PngProcessor {
 
         // Generate LUT for current settings
         // For native path, data is always 8-bit (0-255)
-        const lut = LutHelper.generateLut(settings, 8, 255);
+        const lut = NormalizationHelper.generateLut(settings, 8, 255);
 
         // data is RGBA format [R,G,B,A,R,G,B,A,...]
         for (let i = 0; i < width * height; i++) {

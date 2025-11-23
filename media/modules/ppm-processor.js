@@ -1,5 +1,6 @@
 // @ts-check
 "use strict";
+import { NormalizationHelper } from './normalization-helper.js';
 
 /**
  * PPM/PGM Processor for TIFF Visualizer
@@ -196,96 +197,7 @@ export class PpmProcessor {
         return { width, height, channels, data, maxval, format };
     }
 
-    _toImageData(data, width, height, maxval, channels = 1) {
-        const settings = this.settingsManager.settings;
-        const out = new Uint8ClampedArray(width * height * 4);
 
-        // Normalize to 0-255 range
-        const scale = 255 / maxval;
-
-        for (let i = 0; i < width * height; i++) {
-            let r, g, b;
-
-            if (channels === 3) {
-                // RGB data
-                r = data[i * 3 + 0] * scale;
-                g = data[i * 3 + 1] * scale;
-                b = data[i * 3 + 2] * scale;
-            } else {
-                // Grayscale data
-                const value = data[i] * scale;
-                r = g = b = value;
-            }
-
-            // Apply gamma and brightness corrections
-            // Correct order: remove input gamma → apply brightness → apply output gamma
-            if (settings.gamma || settings.brightness) {
-                const gammaIn = settings.gamma?.in ?? 1.0;
-                const gammaOut = settings.gamma?.out ?? 1.0;
-                const exposureStops = settings.brightness?.offset ?? 0;
-
-                // Normalize to 0-1 range first
-                r = r / 255;
-                g = g / 255;
-                b = b / 255;
-
-                // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                r = Math.pow(r, gammaIn);
-                g = Math.pow(g, gammaIn);
-                b = Math.pow(b, gammaIn);
-
-                // Step 2: Apply brightness in linear space (no clamping)
-                const brightnessFactor = Math.pow(2, exposureStops);
-                r = r * brightnessFactor;
-                g = g * brightnessFactor;
-                b = b * brightnessFactor;
-
-                // Step 3: Apply output gamma - raise to 1/gammaOut power
-                r = Math.pow(r, 1.0 / gammaOut);
-                g = Math.pow(g, 1.0 / gammaOut);
-                b = Math.pow(b, 1.0 / gammaOut);
-
-                // Convert back to 0-255 range (without clamping - allows values outside range)
-                r = r * 255;
-                g = g * 255;
-                b = b * 255;
-            }
-
-            const p = i * 4;
-            // Clamp only for display conversion to valid byte range
-            out[p] = Math.round(Math.max(0, Math.min(255, r)));     // R
-            out[p + 1] = Math.round(Math.max(0, Math.min(255, g))); // G
-            out[p + 2] = Math.round(Math.max(0, Math.min(255, b))); // B
-            out[p + 3] = 255;        // A
-        }
-
-        // Send stats to VS Code  
-        if (this.vscode) {
-            let min, max;
-            // Use cached stats or compute if needed (gamma mode)
-            if (settings.normalization?.gammaMode === true) {
-                // Gamma mode: use fixed range
-                min = 0;
-                max = maxval;
-            } else if (this._cachedStats !== undefined) {
-                min = this._cachedStats.min;
-                max = this._cachedStats.max;
-            } else {
-                // Compute and cache
-                min = Infinity;
-                max = -Infinity;
-                for (let i = 0; i < data.length; i++) {
-                    const value = data[i];
-                    if (value < min) min = value;
-                    if (value > max) max = value;
-                }
-                this._cachedStats = { min, max };
-            }
-            this.vscode.postMessage({ type: 'stats', value: { min, max } });
-        }
-
-        return new ImageData(out, width, height);
-    }
 
     _toImageDataWithNormalization(data, width, height, maxval, channels = 1) {
         const settings = this.settingsManager.settings;
@@ -328,178 +240,83 @@ export class PpmProcessor {
             this._cachedStats = { min, max };
         }
 
-        let normMin, normMax;
+        // Use NormalizationHelper to generate LUT
+        // PPM maxval can be anything, but usually 255 or 65535
+        // If maxval > 65535, the LUT might be too big, but standard PPM is usually up to 16-bit
+        // For safety, if maxval is huge, we might want to fallback (but standard says < 65536 usually)
 
-        // PPM/PGM files are always uint, so default to gamma mode (0-maxval range)
-        // unless user explicitly requests auto-normalization or custom range
-        if (settings.normalization && settings.normalization.autoNormalize) {
-            // User explicitly requested auto-normalize
-            normMin = min;
-            normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode) {
-            // Gamma mode: use type-appropriate range
-            normMin = 0;
-            if (rgbAs24BitMode) {
-                normMax = 16777215; // 24-bit max
-            } else {
-                normMax = maxval; // Use file's maxval
-            }
-        } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
-            // Manual mode: user-specified range
-            normMin = settings.normalization.min;
-            normMax = settings.normalization.max;
+        // Determine bits per sample for LUT generation
+        const bitsPerSample = maxval > 255 ? 16 : 8;
+        const lut = NormalizationHelper.generateLut(settings, bitsPerSample, maxval, min, max);
 
-            // If normalized float mode is enabled, interpret the range as 0-1
-            if (settings.normalizedFloatMode) {
-                // Multiply by maxval
-                normMin = normMin * maxval;
-                normMax = normMax * maxval;
-                console.log(`[PpmProcessor] Manual with normalized float mode: [${settings.normalization.min}, ${settings.normalization.max}] → [${normMin}, ${normMax}]`);
-            }
-        } else {
-            // Default for all PPM/PGM: use gamma mode with 0-maxval range
-            normMin = 0;
-            normMax = maxval;
-        }
-
-        // Optimization: Check for identity transform
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
-        const exposureStops = settings.brightness?.offset ?? 0;
-        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
-        const isFullRange = normMin === 0 && normMax === maxval;
-
-        if (isIdentityGamma && isFullRange && !rgbAs24BitMode) {
-            // Fast path for 8-bit (maxval <= 255)
-            if (maxval <= 255) {
-                console.log('PPM: Identity transform detected (8-bit), using fast loop');
-                const out = new Uint8ClampedArray(width * height * 4);
-
-                if (channels === 3) {
-                    // RGB -> RGBA
-                    for (let i = 0; i < width * height; i++) {
-                        const srcIdx = i * 3;
-                        const outIdx = i * 4;
-                        out[outIdx] = data[srcIdx];
-                        out[outIdx + 1] = data[srcIdx + 1];
-                        out[outIdx + 2] = data[srcIdx + 2];
-                        out[outIdx + 3] = 255;
-                    }
-                } else {
-                    // Gray -> RGBA
-                    for (let i = 0; i < width * height; i++) {
-                        const val = data[i];
-                        const outIdx = i * 4;
-                        out[outIdx] = val;
-                        out[outIdx + 1] = val;
-                        out[outIdx + 2] = val;
-                        out[outIdx + 3] = 255;
-                    }
-                }
-                return new ImageData(out, width, height);
-            }
-
-            // Fast path for 16-bit (maxval > 255) - just scaling, no gamma
-            if (maxval > 255) {
-                console.log('PPM: Identity transform detected (16-bit), using fast scaling loop');
-                const out = new Uint8ClampedArray(width * height * 4);
-                const scale = 255 / maxval;
-
-                if (channels === 3) {
-                    for (let i = 0; i < width * height; i++) {
-                        const srcIdx = i * 3;
-                        const outIdx = i * 4;
-                        // Simple scaling
-                        out[outIdx] = data[srcIdx] * scale;
-                        out[outIdx + 1] = data[srcIdx + 1] * scale;
-                        out[outIdx + 2] = data[srcIdx + 2] * scale;
-                        out[outIdx + 3] = 255;
-                    }
-                } else {
-                    for (let i = 0; i < width * height; i++) {
-                        const val = data[i] * scale;
-                        const outIdx = i * 4;
-                        out[outIdx] = val;
-                        out[outIdx + 1] = val;
-                        out[outIdx + 2] = val;
-                        out[outIdx + 3] = 255;
-                    }
-                }
-                return new ImageData(out, width, height);
-            }
-        }
-
-        const range = normMax - normMin || 1;
+        // Render pixels using LUT
         const out = new Uint8ClampedArray(width * height * 4);
 
-        for (let i = 0; i < width * height; i++) {
-            let r, g, b;
+        if (rgbAs24BitMode) {
+            // RGB as 24-bit grayscale
+            // Calculate normalization range using helper
+            const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
+                settings,
+                { min, max },
+                16777215, // 24-bit max value
+                false // Integer
+            );
 
-            if (rgbAs24BitMode) {
-                // RGB as 24-bit grayscale
+            const range = (normMax - normMin) || 1;
+
+            for (let i = 0; i < width * height; i++) {
                 const srcIdx = i * 3;
                 const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
                 const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
                 const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+
+                // Combine to 24-bit value
                 const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
-                const normalized = (combined24bit - normMin) / range;
-                r = g = b = Math.max(0, Math.min(1, normalized));
-            } else if (channels === 3) {
-                // RGB data (PPM)
-                const srcIdx = i * 3;
-                r = (data[srcIdx + 0] - normMin) / range;
-                g = (data[srcIdx + 1] - normMin) / range;
-                b = (data[srcIdx + 2] - normMin) / range;
 
-                // Clamp to 0-1 range
-                r = Math.max(0, Math.min(1, r));
-                g = Math.max(0, Math.min(1, g));
-                b = Math.max(0, Math.min(1, b));
-            } else {
-                // Grayscale data (PGM)
-                let normalizedValue = (data[i] - normMin) / range;
-                normalizedValue = Math.max(0, Math.min(1, normalizedValue));
-                r = g = b = normalizedValue;
+                // Normalize using calculated range
+                let normalized = (combined24bit - normMin) / range;
+
+                // Apply gamma and brightness
+                normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
+
+                // Scale to 0-255
+                const val = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+
+                const p = i * 4;
+                out[p] = val;     // R
+                out[p + 1] = val; // G
+                out[p + 2] = val; // B
+                out[p + 3] = 255; // A
             }
+        } else {
+            // Normal mode (RGB or Grayscale) using LUT
+            const numChannels = channels;
 
-            // Apply gamma and brightness only in gamma mode, NOT in auto-normalize mode
-            const applyGamma = settings.normalization?.gammaMode === true &&
-                settings.normalization?.autoNormalize !== true;
-            if (applyGamma) {
-                const gammaIn = settings.gamma?.in ?? 1.0;
-                const gammaOut = settings.gamma?.out ?? 1.0;
-                const exposureStops = settings.brightness?.offset ?? 0;
+            for (let i = 0; i < width * height; i++) {
+                const p = i * 4;
 
-                // Optimization: Skip if no changes (gamma is identity and brightness is 0)
-                if (Math.abs(gammaIn - gammaOut) >= 0.001 || Math.abs(exposureStops) >= 0.001) {
-                    // Step 1: Remove input gamma (linearize) - raise to gammaIn power
-                    r = Math.pow(r, gammaIn);
-                    g = Math.pow(g, gammaIn);
-                    b = Math.pow(b, gammaIn);
+                if (numChannels === 1) {
+                    // Grayscale
+                    const val = data[i];
+                    // LUT lookup
+                    const displayVal = lut[val] !== undefined ? lut[val] : lut[lut.length - 1];
+                    out[p] = displayVal;
+                    out[p + 1] = displayVal;
+                    out[p + 2] = displayVal;
+                    out[p + 3] = 255;
+                } else {
+                    // RGB
+                    const srcIdx = i * 3;
+                    const r = data[srcIdx];
+                    const g = data[srcIdx + 1];
+                    const b = data[srcIdx + 2];
 
-                    // Step 2: Apply brightness in linear space
-                    const brightnessFactor = Math.pow(2, exposureStops);
-                    r = r * brightnessFactor;
-                    g = g * brightnessFactor;
-                    b = b * brightnessFactor;
-
-                    // Step 3: Apply output gamma - raise to 1/gammaOut power
-                    r = Math.pow(r, 1.0 / gammaOut);
-                    g = Math.pow(g, 1.0 / gammaOut);
-                    b = Math.pow(b, 1.0 / gammaOut);
-
-                    // Clamp after gamma correction
-                    r = Math.max(0, Math.min(1, r));
-                    g = Math.max(0, Math.min(1, g));
-                    b = Math.max(0, Math.min(1, b));
+                    out[p] = lut[r] !== undefined ? lut[r] : lut[lut.length - 1];
+                    out[p + 1] = lut[g] !== undefined ? lut[g] : lut[lut.length - 1];
+                    out[p + 2] = lut[b] !== undefined ? lut[b] : lut[lut.length - 1];
+                    out[p + 3] = 255;
                 }
             }
-
-            const p = i * 4;
-            out[p] = Math.round(r * 255);     // R
-            out[p + 1] = Math.round(g * 255); // G
-            out[p + 2] = Math.round(b * 255); // B
-            out[p + 3] = 255;                 // A
         }
 
         // Send stats to VS Code
@@ -519,6 +336,14 @@ export class PpmProcessor {
         return this._toImageDataWithNormalization(data, width, height, maxval, channels);
     }
 
+    /**
+     * Get color at specific pixel
+     * @param {number} x - X coordinate
+     * @param {number} y - Y coordinate
+     * @param {number} naturalWidth - Image natural width
+     * @param {number} naturalHeight - Image natural height
+     * @returns {string} Color string
+     */
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
         const { width, height, data, channels, maxval } = this._lastRaw;
@@ -582,6 +407,14 @@ export class PpmProcessor {
         return flipped;
     }
 
+    /**
+     * Send format info to VS Code
+     * @param {number} width - Image width
+     * @param {number} height - Image height
+     * @param {number} channels - Number of channels
+     * @param {string} formatLabel - Format label
+     * @param {number} maxval - Maximum value
+     */
     _postFormatInfo(width, height, channels, formatLabel, maxval) {
         if (!this.vscode) return;
         this.vscode.postMessage({
@@ -608,6 +441,10 @@ export class PpmProcessor {
      * Perform the initial render if it was deferred
      * Called when format-specific settings have been applied
      * @returns {ImageData|null} - The rendered image data, or null if no pending render
+     */
+    /**
+     * Perform deferred rendering using stored data and current settings
+     * @returns {ImageData|null} Rendered image data or null
      */
     performDeferredRender() {
         if (!this._pendingRenderData) {
