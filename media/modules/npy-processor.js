@@ -235,12 +235,13 @@ export class NpyProcessor {
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
         const dtype = this._lastRaw?.dtype || 'f4';
         const isFloat = dtype.includes('f');
+        const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Calculate stats if needed (for auto-normalize or just to have them)
         /** @type {{min: number, max: number} | undefined} */
         let stats = this._cachedStats;
 
-        if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
+        if (!stats && !isGammaMode) {
             if (isFloat) {
                 stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             } else {

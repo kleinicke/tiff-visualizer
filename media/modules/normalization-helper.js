@@ -277,15 +277,25 @@ export class ImageRenderer {
         // Check mode first
         const isGammaMode = settings.normalization?.gammaMode || false;
 
-        // Get normalization range based on mode
-        const { min, max } = NormalizationHelper.getNormalizationRange(
-            settings, stats, typeMax, isFloat
-        );
+        // Early optimization: In gamma mode with identity transform, skip stats calculation
+        // and use full type range directly (no need for actual data min/max)
+        const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
+
+        let min, max;
+        if (isGammaMode && isIdentity) {
+            // Gamma mode + identity: use full type range, no stats needed
+            min = 0;
+            max = typeMax;
+        } else {
+            // Other modes: need to calculate proper normalization range from stats
+            const range = NormalizationHelper.getNormalizationRange(
+                settings, stats, typeMax, isFloat
+            );
+            min = range.min;
+            max = range.max;
+        }
 
         if (isGammaMode) {
-            // Gamma mode: check if we can skip gamma processing (identity transform)
-            const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
-
             if (isIdentity) {
                 // Identity in gamma mode: just normalize, no LUT needed
                 if (isFloat) {

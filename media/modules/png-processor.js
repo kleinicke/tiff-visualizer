@@ -242,12 +242,14 @@ export class PngProcessor {
         const { width, height, data, channels, bitDepth, maxValue } = this._lastRaw;
         const settings = this.settingsManager.settings;
         const isFloat = false; // PNG is always integer
+        const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Calculate stats if needed
         let stats = this._cachedStats;
-        if (!stats) {
+        if (!stats && !isGammaMode) {
             stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
             this._cachedStats = stats;
+
         }
 
         // Create options object

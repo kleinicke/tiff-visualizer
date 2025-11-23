@@ -220,16 +220,10 @@ export class TiffProcessor {
 		const isFloat = showNorm;
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
-		// Lazy stats calculation: skip in gamma mode, use cache or compute
 		let stats = this._lastStatistics;
+		const isGammaMode = settings.normalization?.gammaMode || false;
 
-		// We need stats if:
-		// 1. Auto-normalize is enabled
-		// 2. OR we are NOT in gamma mode (manual mode needs stats for UI feedback, though rendering might not strictly need it if min/max provided)
-		// 3. OR stats are missing
-		const needsStats = !stats && (settings.normalization?.autoNormalize || !settings.normalization?.gammaMode);
-
-		if (needsStats) {
+		if (!stats && !isGammaMode) {
 			if (isFloat) {
 				// Use centralized float stats calculator
 				// We need to interleave data for the calculator if it's planar

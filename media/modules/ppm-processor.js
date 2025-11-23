@@ -202,10 +202,11 @@ export class PpmProcessor {
     _toImageDataWithNormalization(data, width, height, maxval, channels = 1) {
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Calculate stats if needed
         let stats = this._cachedStats;
-        if (!stats) {
+        if (!stats && !isGammaMode) {
             if (rgbAs24BitMode) {
                 // For 24-bit mode, compute stats from combined 24-bit values
                 let min = Infinity;

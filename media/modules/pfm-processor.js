@@ -87,11 +87,12 @@ export class PfmProcessor {
 
     _toImageDataFloat(data, width, height, channels = 1) {
         const settings = this.settingsManager.settings;
+        const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Calculate stats if needed (for auto-normalize or just to have them)
         /** @type {{min: number, max: number} | undefined} */
         let stats = this._cachedStats;
-        if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
+        if (!stats && !isGammaMode) {
             stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             this._cachedStats = stats;
 
