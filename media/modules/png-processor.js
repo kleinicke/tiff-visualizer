@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { NormalizationHelper } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -201,7 +201,7 @@ export class PngProcessor {
                         width: canvas.width,
                         height: canvas.height,
                         data: rawData,
-                        channels: hasAlpha ? 4 : 3,
+                        channels: 4, // Native API always returns RGBA (4 channels)
                         bitDepth: 8,
                         maxValue: 255,
                         isRgbaFormat: true  // Fallback path stores RGBA format from getImageData
@@ -237,363 +237,38 @@ export class PngProcessor {
      * @returns {ImageData}
      */
     _renderToImageData() {
-        if (!this._lastRaw) {
-            throw new Error('No raw image data available');
-        }
-        const { width, height, data, channels, bitDepth, maxValue, isRgbaFormat } = this._lastRaw;
+        if (!this._lastRaw) return new ImageData(1, 1);
+
+        const { width, height, data, channels, bitDepth, maxValue } = this._lastRaw;
         const settings = this.settingsManager.settings;
-        const out = new Uint8ClampedArray(width * height * 4);
+        const isFloat = false; // PNG is always integer
 
-        // Determine the correct stride based on data format
-        const stride = isRgbaFormat ? 4 : channels;
-        // Calculate stats for normalization status bar
-        let min = Infinity, max = -Infinity;
-
-        // Lazy stats calculation: skip in gamma mode, cache in stats mode
-        if (settings.normalization?.gammaMode === true) {
-            // Gamma mode: use fixed normalization based on bit depth
-            min = 0;
-            max = maxValue; // 255 for 8-bit, 65535 for 16-bit
-        } else if (this._cachedStats !== undefined) {
-            // Stats mode: reuse cached stats if available
-            min = this._cachedStats.min;
-            max = this._cachedStats.max;
-        } else {
-            // Stats mode: compute stats for the first time
-            if (settings.rgbAs24BitGrayscale && channels >= 3) {
-                // For 24-bit mode, calculate stats from combined 24-bit values
-                for (let i = 0; i < width * height; i++) {
-                    const srcIdx = i * stride;
-                    // Get RGB values
-                    const rVal = data[srcIdx];
-                    const gVal = data[srcIdx + 1];
-                    const bVal = data[srcIdx + 2];
-
-                    // Scale to 8-bit if needed (for 16-bit images)
-                    const rByte = maxValue === 65535 ? Math.round(rVal / 257) : rVal;
-                    const gByte = maxValue === 65535 ? Math.round(gVal / 257) : gVal;
-                    const bByte = maxValue === 65535 ? Math.round(bVal / 257) : bVal;
-
-                    // Combine into 24-bit value
-                    const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
-
-                    if (combined24bit < min) min = combined24bit;
-                    if (combined24bit > max) max = combined24bit;
-                }
-            } else {
-                // Optimization: Fast paths for stats calculation
-                if ((channels === 1 || channels === 3) && !isRgbaFormat) {
-                    // Contiguous data (Gray or RGB), no alpha to skip
-                    // We can iterate the array directly
-                    const len = data.length;
-                    for (let i = 0; i < len; i++) {
-                        const value = data[i];
-                        if (value < min) min = value;
-                        if (value > max) max = value;
-                    }
-                } else if (channels === 4 || isRgbaFormat) {
-                    // RGBA data, need to skip alpha (every 4th byte)
-                    // Unrolled loop for performance
-                    const len = width * height * 4;
-                    for (let i = 0; i < len; i += 4) {
-                        const r = data[i];
-                        const g = data[i + 1];
-                        const b = data[i + 2];
-
-                        if (r < min) min = r;
-                        if (r > max) max = r;
-                        if (g < min) min = g;
-                        if (g > max) max = g;
-                        if (b < min) min = b;
-                        if (b > max) max = b;
-                    }
-                } else {
-                    // Fallback for other cases (e.g. Gray+Alpha)
-                    for (let i = 0; i < width * height; i++) {
-                        const srcIdx = i * stride;
-                        for (let c = 0; c < Math.min(3, channels); c++) {
-                            const value = data[srcIdx + c];
-                            if (value < min) min = value;
-                            if (value > max) max = value;
-                        }
-                    }
-                }
-            }
-
-            // Cache the computed stats for reuse
-            this._cachedStats = { min, max };
+        // Calculate stats if needed
+        let stats = this._cachedStats;
+        if (!stats) {
+            stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
+            this._cachedStats = stats;
         }
 
-        // Send stats to VS Code for status bar
-        this.vscode.postMessage({
-            type: 'stats',
-            value: { min, max }
-        });
+        // Create options object
+        const options = {
+            rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale && channels >= 3,
+            typeMax: maxValue
+        };
 
-        // Calculate normalization range based on settings
-        const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
+        return ImageRenderer.render(
+            data,
+            width,
+            height,
+            channels,
+            isFloat,
+            stats,
             settings,
-            { min, max },
-            maxValue,
-            false // PNG is integer
+            options
         );
-
-        // Generate LUT using NormalizationHelper
-        const lut = NormalizationHelper.generateLut(settings, bitDepth, maxValue, normMin, normMax);
-
-        // Check for identity transform
-        // Identity means:
-        // 1. Gamma in/out are 1.0
-        // 2. Brightness offset is 0
-        // 3. Normalization range matches full range (0-255 or 0-65535)
-        const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
-        const isFullRange = min === 0 && max === maxValue;
-
-        if (isIdentityGamma && isFullRange) {
-            // Fast path for 8-bit RGBA (already in correct format)
-            if (bitDepth === 8 && channels === 4 && !isRgbaFormat) {
-                console.time('PNG: Identity Path');
-                console.log('PNG: Identity transform detected (8-bit RGBA), skipping pixel loop');
-                // Ensure we use the correct length, as UPNG buffer might be larger
-                const length = width * height * 4;
-                // Create a view of the exact required size
-                const result = new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, length), width, height);
-                console.timeEnd('PNG: Identity Path');
-                return result;
-            }
-            // Fast path for 8-bit RGB (add alpha)
-            if (bitDepth === 8 && channels === 3 && !isRgbaFormat) {
-                console.time('PNG: Identity Path');
-                console.log('PNG: Identity transform detected (8-bit RGB), using fast loop');
-                const out = new Uint8ClampedArray(width * height * 4);
-                for (let i = 0; i < width * height; i++) {
-                    const srcIdx = i * 3;
-                    const outIdx = i * 4;
-                    out[outIdx] = data[srcIdx];
-                    out[outIdx + 1] = data[srcIdx + 1];
-                    out[outIdx + 2] = data[srcIdx + 2];
-                    out[outIdx + 3] = 255;
-                }
-                console.timeEnd('PNG: Identity Path');
-                return new ImageData(out, width, height);
-            }
-            // Fast path for 8-bit Grayscale (expand to RGB)
-            if (bitDepth === 8 && channels === 1 && !isRgbaFormat) {
-                console.time('PNG: Identity Path');
-                console.log('PNG: Identity transform detected (8-bit Gray), using fast loop');
-                const out = new Uint8ClampedArray(width * height * 4);
-                for (let i = 0; i < width * height; i++) {
-                    const val = data[i];
-                    const outIdx = i * 4;
-                    out[outIdx] = val;
-                    out[outIdx + 1] = val;
-                    out[outIdx + 2] = val;
-                    out[outIdx + 3] = 255;
-                }
-                console.timeEnd('PNG: Identity Path');
-                return new ImageData(out, width, height);
-            }
-        }
-
-        // Render pixels
-        for (let i = 0; i < width * height; i++) {
-            const srcIdx = i * stride;  // Use stride instead of channels
-            const outIdx = i * 4;
-
-            let r, g, b, a = 255;
-
-            if (channels === 1) {
-                // Grayscale
-                const rawValue = data[srcIdx];
-                // Use LUT directly on raw value
-                const corrected = lut[rawValue];
-                r = g = b = corrected;
-            } else if (channels === 2) {
-                // Grayscale + Alpha
-                const rawValue = data[srcIdx];
-                const corrected = lut[rawValue];
-                r = g = b = corrected;
-                a = Math.round((data[srcIdx + 1] / maxValue) * 255);
-            } else if (settings.rgbAs24BitGrayscale && channels >= 3) {
-                // RGB as 24-bit grayscale mode
-                // Get raw RGB values (PNG stores as 0-255 for 8-bit, 0-65535 for 16-bit)
-                const rVal = Math.round(Math.max(0, Math.min(maxValue, data[srcIdx])));
-                const gVal = Math.round(Math.max(0, Math.min(maxValue, data[srcIdx + 1])));
-                const bVal = Math.round(Math.max(0, Math.min(maxValue, data[srcIdx + 2])));
-
-                // For 16-bit images, scale down to 8-bit for combining
-                const rByte = maxValue === 65535 ? Math.round(rVal / 257) : rVal;
-                const gByte = maxValue === 65535 ? Math.round(gVal / 257) : gVal;
-                const bByte = maxValue === 65535 ? Math.round(bVal / 257) : bVal;
-
-                // Combine into 24-bit value: (R << 16) | (G << 8) | B
-                const combined24bit = (rByte << 16) | (gByte << 8) | bByte;
-
-                // For 24-bit mode, we can't easily use a LUT (too big), so we fallback to calculation
-                // Or we could normalize first then use a smaller LUT, but let's stick to calculation for this special mode
-                // Max value is 16777215 (0xFFFFFF)
-
-                // Now normalize the combined 24-bit value using normMin/normMax
-                const norm24Range = normMax - normMin;
-                let normalized24;
-                if (norm24Range > 0) {
-                    normalized24 = (combined24bit - normMin) / norm24Range;
-                } else {
-                    normalized24 = 0;
-                }
-                normalized24 = Math.max(0, Math.min(1, normalized24));
-
-                // Apply gamma/brightness to the combined value
-                normalized24 = NormalizationHelper.applyGammaAndBrightness(normalized24, settings);
-
-                // Display as grayscale
-                r = g = b = Math.round(normalized24 * 255);
-
-                // Handle alpha channel if present (RGBA)
-                if (channels === 4) {
-                    a = Math.round((data[srcIdx + 3] / maxValue) * 255);
-                }
-            } else if (channels === 3) {
-                // RGB (normal mode)
-                r = lut[data[srcIdx]];
-                g = lut[data[srcIdx + 1]];
-                b = lut[data[srcIdx + 2]];
-            } else {
-                // RGBA (normal mode)
-                r = lut[data[srcIdx]];
-                g = lut[data[srcIdx + 1]];
-                b = lut[data[srcIdx + 2]];
-                a = Math.round((data[srcIdx + 3] / maxValue) * 255);
-            }
-
-            out[outIdx] = Math.max(0, Math.min(255, r));
-            out[outIdx + 1] = Math.max(0, Math.min(255, g));
-            out[outIdx + 2] = Math.max(0, Math.min(255, b));
-            out[outIdx + 3] = a;
-        }
-
-        return new ImageData(out, width, height);
     }
-
     /**
      * Fallback gamma rendering for browser Image API path
-     * @param {Uint8Array | Uint8ClampedArray} data
-    ```
-     * @param {number} width
-     * @param {number} height
-     * @returns {ImageData}
-     */
-    _toImageDataWithGamma(data, width, height) {
-        if (!this._lastRaw) return new ImageData(width, height);
-        const { bitDepth } = this._lastRaw;
-        const maxValue = (1 << bitDepth) - 1;
-        const settings = this.settingsManager.settings;
-        const out = new Uint8ClampedArray(width * height * 4);
-
-        // Early check for identity transform (before expensive stats calculation)
-        // If normalization is full range AND gamma/brightness are identity, we can skip everything
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
-        const exposureStops = settings.brightness?.offset ?? 0;
-        const isIdentityGamma = Math.abs(gammaIn - gammaOut) < 0.001 && Math.abs(exposureStops) < 0.001;
-
-        // Check if normalization will be full range (0-255 for 8-bit)
-        // Handle undefined/null settings gracefully - default to gammaMode behavior (0-255)
-        const normSettings = settings.normalization;
-        const willBeFullRange = (normSettings === undefined || normSettings === null || normSettings.gammaMode === true) ||
-            (!normSettings?.autoNormalize &&
-                normSettings?.min === 0 &&
-                normSettings?.max === 255);
-
-        if (isIdentityGamma && willBeFullRange) {
-            // Send fixed stats for 8-bit images
-            if (this.vscode) {
-                this.vscode.postMessage({ type: 'stats', value: { min: 0, max: 255 } });
-            }
-            return new ImageData(new Uint8ClampedArray(data), width, height);
-        }
-
-        // Calculate min/max for status bar (only if needed for non-identity transforms)
-        // Use caching to avoid recomputation when toggling settings
-        let min, max;
-
-        if (this._cachedStats !== undefined) {
-            // Reuse cached stats
-            console.log('PNG (native): Using cached stats');
-            min = this._cachedStats.min;
-            max = this._cachedStats.max;
-        } else {
-            // Compute stats for the first time
-            min = Infinity;
-            max = -Infinity;
-            for (let i = 0; i < data.length; i += 4) {
-                const r = data[i];
-                const g = data[i + 1];
-                const b = data[i + 2];
-                if (r < min) min = r;
-                if (r > max) max = r;
-                if (g < min) min = g;
-                if (g > max) max = g;
-                if (b < min) min = b;
-                if (b > max) max = b;
-            }
-
-            // Cache the computed stats for reuse
-            this._cachedStats = { min, max };
-        }
-
-        // Send stats to VS Code
-        if (this.vscode) {
-            this.vscode.postMessage({ type: 'stats', value: { min, max } });
-        }
-
-        // Calculate normalization range (data is already 0-255, so maxValue = 255)
-        let normMin, normMax;
-
-        if (settings.normalization && settings.normalization.autoNormalize) {
-            normMin = min;
-            normMax = max;
-        } else if (settings.normalization && settings.normalization.gammaMode) {
-            normMin = 0;
-            normMax = 255;
-        } else if (settings.normalization) {
-            normMin = settings.normalization.min;
-            normMax = settings.normalization.max;
-        } else {
-            normMin = 0;
-            normMax = 255;
-        }
-
-        // Second check for identity transform (after normalization is determined)
-        // This catches cases where autoNormalize resulted in full range
-        const isFullRange = normMin === 0 && normMax === 255;
-
-        if (isIdentityGamma && isFullRange) {
-            console.log('PNG: Identity transform detected, skipping pixel loop');
-            return new ImageData(new Uint8ClampedArray(data), width, height);
-        }
-
-        // Generate LUT for current settings
-        // For native path, data is always 8-bit (0-255)
-        const lut = NormalizationHelper.generateLut(settings, 8, 255);
-
-        // data is RGBA format [R,G,B,A,R,G,B,A,...]
-        for (let i = 0; i < width * height; i++) {
-            const srcIdx = i * 4;
-            const outIdx = i * 4;
-
-            // Use LUT for direct lookup
-            out[outIdx + 0] = lut[data[srcIdx + 0]];
-            out[outIdx + 1] = lut[data[srcIdx + 1]];
-            out[outIdx + 2] = lut[data[srcIdx + 2]];
-            out[outIdx + 3] = data[srcIdx + 3]; // Alpha unchanged
-        }
-
-        return new ImageData(out, width, height);
-    }
-
-
-    /**
      * Re-render PNG with current settings (for real-time updates)
      * @returns {ImageData | null}
      */
@@ -733,19 +408,7 @@ export class PngProcessor {
         this._isInitialLoad = false;
 
         // Render with the correct format-specific settings
-        let imageData;
-        if (this._lastRaw.isRgbaFormat) {
-            // Fallback path - data is already RGBA format (Uint8ClampedArray)
-            // Type assertion is safe because fallback path always creates Uint8ClampedArray
-            imageData = this._toImageDataWithGamma(
-                /** @type {Uint8Array | Uint8ClampedArray} */(this._lastRaw.data),
-                this._lastRaw.width,
-                this._lastRaw.height
-            );
-        } else {
-            // UPNG path - data is in raw channel format
-            imageData = this._renderToImageData();
-        }
+        const imageData = this._renderToImageData();
 
         // Force status refresh
         this.vscode.postMessage({ type: 'refresh-status' });

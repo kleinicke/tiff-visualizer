@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { NormalizationHelper } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
  * @typedef {Object} ExrImageData
@@ -169,214 +169,40 @@ export class ExrProcessor {
 
 		const { width, height, data, channels } = this.rawExrData;
 		const ctx = canvas.getContext('2d');
-		const imageData = ctx.createImageData(width, height);
-		const pixels = imageData.data;
-
-		// Get settings
-		const normalization = settings.normalization || { min: 0, max: 1, autoNormalize: true };
-		const gamma = settings.gamma || { in: 1.0, out: 1.0 };
-		const brightness = settings.brightness || { offset: 0 };
-		const nanColor = this._getNanColor(settings);
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
 		/** @type {{min: number, max: number} | undefined} */
 		let stats = this._cachedStats;
 		if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
-			let minVal = Infinity;
-			let maxVal = -Infinity;
-
-			// Re-implementing stats calculation loop correctly based on raw data
-			const len = width * height;
-			for (let i = 0; i < len; i++) {
-				for (let c = 0; c < Math.min(channels, 3); c++) { // Only consider RGB channels for min/max
-					const val = data[i * channels + c];
-					if (Number.isFinite(val)) {
-						if (val < minVal) minVal = val;
-						if (val > maxVal) maxVal = val;
-					}
-				}
-			}
-			stats = { min: minVal, max: maxVal };
+			stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
 			this._cachedStats = stats;
 
 			// Update settings manager and VS Code
 			if (this.settingsManager && this.settingsManager.settings.normalization) {
-				this.settingsManager.settings.normalization.min = minVal;
-				this.settingsManager.settings.normalization.max = maxVal;
+				this.settingsManager.settings.normalization.min = stats.min;
+				this.settingsManager.settings.normalization.max = stats.max;
 			}
 		}
 
+		const nanColor = this._getNanColor(settings);
 
-		// Auto-detect normalization range if needed
-		// Use NormalizationHelper to calculate range
-		const { min, max } = NormalizationHelper.getNormalizationRange(
-			settings,
+		// Create options object
+		const options = {
+			nanColor: nanColor,
+			// EXR data is typically bottom-up, so we need to flip it for display
+			flipY: true
+		};
+
+		const imageData = ImageRenderer.render(
+			data,
+			width,
+			height,
+			channels,
+			true, // isFloat
 			stats || { min: 0, max: 1 },
-			1.0,
-			true // isFloat
+			settings,
+			options
 		);
-
-		const range = max - min;
-		const invRange = range > 0 ? 1.0 / range : 0;
-
-		// Optimization: Check for identity transform
-		const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
-
-		if (isIdentityGamma) {
-			console.log('EXR: Identity transform detected, using fast loop');
-			// Fast path loop: just normalize and clamp, no gamma math
-			for (let y = 0; y < height; y++) {
-				for (let x = 0; x < width; x++) {
-					const flippedY = height - 1 - y;
-					const pixelIndex = (y * width + x) * 4;
-					const dataIndex = (flippedY * width + x) * channels;
-
-					let r, g, b, a = 255;
-
-					if (channels === 1) {
-						const value = data[dataIndex];
-						if (isNaN(value) || !isFinite(value)) {
-							r = nanColor.r; g = nanColor.g; b = nanColor.b;
-						} else {
-							// Normalize and clamp
-							const normalized = (value - min) * invRange;
-							const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-							r = g = b = intensity;
-						}
-					} else if (channels === 3) {
-						const rVal = data[dataIndex];
-						const gVal = data[dataIndex + 1];
-						const bVal = data[dataIndex + 2];
-
-						if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
-							r = nanColor.r; g = nanColor.g; b = nanColor.b;
-						} else {
-							r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
-							g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
-							b = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
-						}
-					} else if (channels === 4) {
-						const rVal = data[dataIndex];
-						const gVal = data[dataIndex + 1];
-						const bVal = data[dataIndex + 2];
-						const aVal = data[dataIndex + 3];
-
-						if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
-							r = nanColor.r; g = nanColor.g; b = nanColor.b; a = 255;
-						} else {
-							r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
-							g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
-							b = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
-							a = Math.round(this.clamp(aVal, 0, 1) * 255);
-						}
-					}
-
-					pixels[pixelIndex] = r;
-					pixels[pixelIndex + 1] = g;
-					pixels[pixelIndex + 2] = b;
-					pixels[pixelIndex + 3] = a;
-				}
-			}
-			ctx.putImageData(imageData, 0, 0);
-			return imageData;
-		}
-
-		// Render pixels
-		// Note: EXR images are typically stored with origin at bottom-left, so flip vertically
-		for (let y = 0; y < height; y++) {
-			for (let x = 0; x < width; x++) {
-				// Flip Y coordinate for display (EXR uses bottom-left origin, canvas uses top-left)
-				const flippedY = height - 1 - y;
-				const pixelIndex = (y * width + x) * 4;
-				const dataIndex = (flippedY * width + x) * channels;
-
-				let r, g, b, a = 255;
-
-				if (channels === 1) {
-					// Grayscale (depth map, single channel)
-					const value = data[dataIndex];
-					if (isNaN(value) || !isFinite(value)) {
-						r = nanColor.r;
-						g = nanColor.g;
-						b = nanColor.b;
-					} else {
-						// Normalize and apply tone mapping
-						let normalized = (value - min) * invRange;
-
-						// Apply gamma and brightness corrections using the correct order
-						normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-
-						// Clamp only for display conversion to 0-255 range
-						const displayValue = Math.max(0, Math.min(1, normalized));
-						const intensity = Math.round(displayValue * 255);
-						r = g = b = intensity;
-					}
-				} else if (channels === 3) {
-					// RGB
-					const rVal = data[dataIndex];
-					const gVal = data[dataIndex + 1];
-					const bVal = data[dataIndex + 2];
-
-					if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
-						r = nanColor.r;
-						g = nanColor.g;
-						b = nanColor.b;
-					} else {
-						// Normalize each channel
-						let rNorm = (rVal - min) * invRange;
-						let gNorm = (gVal - min) * invRange;
-						let bNorm = (bVal - min) * invRange;
-
-						// Apply gamma and brightness corrections using the correct order
-						rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
-						gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
-						bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
-
-						// Clamp only for display conversion to 0-255 range
-						r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
-						g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
-						b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
-					}
-				} else if (channels === 4) {
-					// RGBA
-					const rVal = data[dataIndex];
-					const gVal = data[dataIndex + 1];
-					const bVal = data[dataIndex + 2];
-					const aVal = data[dataIndex + 3];
-
-					if (isNaN(rVal) || isNaN(gVal) || isNaN(bVal)) {
-						r = nanColor.r;
-						g = nanColor.g;
-						b = nanColor.b;
-						a = 255;
-					} else {
-						// Normalize RGB channels
-						let rNorm = (rVal - min) * invRange;
-						let gNorm = (gVal - min) * invRange;
-						let bNorm = (bVal - min) * invRange;
-
-						// Apply gamma and brightness corrections using the correct order
-						rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
-						gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
-						bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
-
-						// Clamp only for display conversion to 0-255 range
-						r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
-						g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
-						b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
-
-						// Alpha channel - normalize to 0-1 range and clamp for display
-						// Do NOT apply gamma/brightness to alpha as it represents opacity
-						a = Math.round(this.clamp(aVal, 0, 1) * 255);
-					}
-				}
-
-				pixels[pixelIndex] = r;
-				pixels[pixelIndex + 1] = g;
-				pixels[pixelIndex + 2] = b;
-				pixels[pixelIndex + 3] = a;
-			}
-		}
 
 		ctx.putImageData(imageData, 0, 0);
 		return imageData;

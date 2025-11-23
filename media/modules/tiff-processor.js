@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { NormalizationHelper } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -214,94 +214,159 @@ export class TiffProcessor {
 		const height = image.getHeight();
 		const sampleFormat = image.getSampleFormat();
 		const bitsPerSample = image.getBitsPerSample();
+		const channels = rastersCopy.length;
 
-		let min, max;
+		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		const isFloat = showNorm;
 
+		// Calculate stats if needed (for auto-normalize or just to have them)
 		// Lazy stats calculation: skip in gamma mode, use cache or compute
-		if (settings.normalization.gammaMode === true) {
-			// Gamma mode: use fixed range based on bit depth
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			min = 0;
-			if (showNorm) {
-				max = 1.0; // Float TIFFs
-			} else if (bitsPerSample === 16) {
-				max = 65535;
-			} else {
-				max = 255;
-			}
-		} else if (this._lastStatistics) {
-			// Reuse cached statistics if available
-			min = this._lastStatistics.min;
-			max = this._lastStatistics.max;
-		} else {
-			// Compute min/max for the first time
-			min = Infinity;
-			max = -Infinity;
+		let stats = this._lastStatistics;
 
-			// Use the first 3 channels to determine the image stats
-			// For RGB-as-24bit mode, calculate stats from combined 24-bit values
-			if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
-				// Calculate min/max of combined 24-bit values
-				for (let j = 0; j < rastersCopy[0].length; j++) {
-					// Get RGB values and normalize to 0-255 range
-					const values = [];
-					for (let i = 0; i < 3; i++) {
-						const value = rastersCopy[i][j];
-						if (!isNaN(value) && isFinite(value)) {
-							values.push(Math.round(Math.max(0, Math.min(255, value))));
-						} else {
-							values.push(0);
+		// We need stats if:
+		// 1. Auto-normalize is enabled
+		// 2. OR we are NOT in gamma mode (manual mode needs stats for UI feedback, though rendering might not strictly need it if min/max provided)
+		// 3. OR stats are missing
+		const needsStats = !stats && (settings.normalization?.autoNormalize || !settings.normalization?.gammaMode);
+
+		if (needsStats) {
+			if (isFloat) {
+				// Use centralized float stats calculator
+				// We need to interleave data for the calculator if it's planar
+				// But ImageStatsCalculator expects interleaved data or we can pass rasters?
+				// ImageStatsCalculator expects a single data array (interleaved).
+				// TIFF rasters are separate arrays (planar).
+				// We need to combine them or update ImageStatsCalculator to handle planar.
+				// Actually, let's just use the existing logic for now but simplified, OR
+				// create a temporary interleaved buffer? That's expensive.
+				// Better: Use a helper that handles planar data or just loop here.
+
+				// Wait, ImageStatsCalculator.calculateFloatStats takes (data, width, height, channels).
+				// If data is planar (array of arrays), it won't work.
+				// Let's check ImageStatsCalculator implementation.
+
+				// It assumes interleaved.
+				// For TIFF, we might want to keep the local stats calculation for now to avoid copying data,
+				// OR update ImageStatsCalculator to support planar data.
+				// Given the performance focus, let's keep local stats calculation for TIFF planar data
+				// but use the same logic structure.
+
+				let min = Infinity;
+				let max = -Infinity;
+
+				// Use the first 3 channels to determine the image stats
+				if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
+					// Calculate min/max of combined 24-bit values
+					for (let j = 0; j < rastersCopy[0].length; j++) {
+						const values = [];
+						for (let i = 0; i < 3; i++) {
+							const value = rastersCopy[i][j];
+							if (!isNaN(value) && isFinite(value)) {
+								values.push(Math.round(Math.max(0, Math.min(255, value))));
+							} else {
+								values.push(0);
+							}
+						}
+						const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+						min = Math.min(min, combined24bit);
+						max = Math.max(max, combined24bit);
+					}
+				} else {
+					// Normal mode: use individual channel values
+					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
+						for (let j = 0; j < rastersCopy[i].length; j++) {
+							const value = rastersCopy[i][j];
+							if (!isNaN(value) && isFinite(value)) {
+								min = Math.min(min, value);
+								max = Math.max(max, value);
+							}
 						}
 					}
-					// Combine into 24-bit value
-					const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-					min = Math.min(min, combined24bit);
-					max = Math.max(max, combined24bit);
 				}
+				stats = { min, max };
 			} else {
-				// Normal mode: use individual channel values
-				for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-					for (let j = 0; j < rastersCopy[i].length; j++) {
-						const value = rastersCopy[i][j];
-						if (!isNaN(value) && isFinite(value)) {
+				// Integer stats
+				// Similar logic for integer
+				let min = Infinity;
+				let max = -Infinity;
+
+				if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
+					// Same 24-bit logic
+					for (let j = 0; j < rastersCopy[0].length; j++) {
+						const values = [];
+						for (let i = 0; i < 3; i++) {
+							const value = rastersCopy[i][j];
+							values.push(Math.round(Math.max(0, Math.min(255, value))));
+						}
+						const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
+						min = Math.min(min, combined24bit);
+						max = Math.max(max, combined24bit);
+					}
+				} else {
+					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
+						for (let j = 0; j < rastersCopy[i].length; j++) {
+							const value = rastersCopy[i][j];
 							min = Math.min(min, value);
 							max = Math.max(max, value);
 						}
 					}
 				}
+				stats = { min, max };
 			}
 
-			// Cache the statistics
-			this._lastStatistics = { min, max };
+			this._lastStatistics = stats;
 		}
 
 		// Send stats to VS Code
-		if (this.vscode) {
-			this.vscode.postMessage({ type: 'stats', value: { min, max } });
+		if (this.vscode && stats) {
+			this.vscode.postMessage({ type: 'stats', value: stats });
 		}
 
-		// Get normalization settings using NormalizationHelper
-		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		const typeMax = showNorm ? 1.0 : (bitsPerSample === 16 ? 65535 : 255);
+		const nanColor = this._getNanColor(settings);
 
-		const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
-			settings,
-			{ min, max },
-			typeMax,
-			showNorm
-		);
+		// Prepare data for ImageRenderer
+		// ImageRenderer expects interleaved data. TIFF rasters are planar.
+		// We MUST interleave the data before passing to ImageRenderer.
+		// This is a necessary step for centralization.
 
-		// Normalize and create image data
-		let imageDataArray;
+		let interleavedData;
+		const len = width * height;
 
-		if (showNorm) { // Float data
-			imageDataArray = this._processFloatTiff(rastersCopy, width, height, normMin, normMax, settings);
+		if (isFloat) {
+			interleavedData = new Float32Array(len * channels);
+		} else if (bitsPerSample === 16) {
+			interleavedData = new Uint16Array(len * channels);
 		} else {
-			// Pass normalization parameters to integer TIFF processing too
-			imageDataArray = this._processIntegerTiff(rastersCopy, width, height, normMin, normMax, settings, bitsPerSample);
+			interleavedData = new Uint8Array(len * channels);
 		}
 
-		return new ImageData(imageDataArray, width, height);
+		// Interleave
+		if (channels === 1) {
+			interleavedData.set(rastersCopy[0]);
+		} else {
+			for (let i = 0; i < len; i++) {
+				for (let c = 0; c < channels; c++) {
+					interleavedData[i * channels + c] = rastersCopy[c][i];
+				}
+			}
+		}
+
+		// Create options object
+		const options = {
+			nanColor: nanColor,
+			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale
+		};
+
+		return ImageRenderer.render(
+			interleavedData,
+			width,
+			height,
+			channels,
+			isFloat,
+			stats || { min: 0, max: 1 },
+			settings,
+			options
+		);
 	}
 
 	/**
@@ -312,518 +377,13 @@ export class TiffProcessor {
 	 * @returns {Promise<ImageData>}
 	 */
 	async renderTiffWithSettingsFast(image, rasters, skipMasks = true) {
-		// Create copies of rasters to avoid modifying the original data
-		const rastersCopy = [];
-		for (let i = 0; i < rasters.length; i++) {
-			rastersCopy.push(new Float32Array(rasters[i]));
-		}
-
-		const settings = this.settingsManager.settings;
-		const width = image.getWidth();
-		const height = image.getHeight();
-		const sampleFormat = image.getSampleFormat();
-		const bitsPerSample = image.getBitsPerSample();
-
-		let min, max;
-
-		// Use cached statistics if available, otherwise recalculate
-		if (this._lastStatistics && !settings.normalization.autoNormalize) {
-			min = this._lastStatistics.min;
-			max = this._lastStatistics.max;
-		} else {
-			// Recalculate statistics (needed for auto-normalize)
-			min = Infinity;
-			max = -Infinity;
-
-			const displayRasters = [];
-			for (let i = 0; i < rastersCopy.length; i++) {
-				displayRasters.push(new Float32Array(rastersCopy[i]));
-			}
-
-			// Calculate min/max from the first 3 channels only
-			if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
-				for (let j = 0; j < rastersCopy[0].length; j++) {
-					const values = [];
-					for (let i = 0; i < 3; i++) {
-						const value = rastersCopy[i][j];
-						if (!isNaN(value) && isFinite(value)) {
-							values.push(Math.round(Math.max(0, Math.min(255, value))));
-						} else {
-							values.push(0);
-						}
-					}
-					const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-					min = Math.min(min, combined24bit);
-					max = Math.max(max, combined24bit);
-				}
-			} else {
-				for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-					for (let j = 0; j < rastersCopy[i].length; j++) {
-						const value = rastersCopy[i][j];
-						if (!isNaN(value) && isFinite(value)) {
-							min = Math.min(min, value);
-							max = Math.max(max, value);
-						}
-					}
-				}
-			}
-
-			// Cache the statistics
-			this._lastStatistics = { min, max };
-
-			// Send stats to VS Code
-			if (this.vscode) {
-				this.vscode.postMessage({ type: 'stats', value: { min, max } });
-			}
-		}
-
-		// Get normalization settings
-		let normMin, normMax;
-
-		if (settings.normalization.autoNormalize) {
-			normMin = min;
-			normMax = max;
-		} else if (settings.normalization.gammaMode) {
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (showNorm) {
-				normMin = 0;
-				normMax = 1;
-			} else {
-				normMin = 0;
-				if (bitsPerSample === 16) {
-					normMax = 65535;
-				} else {
-					normMax = 255;
-				}
-			}
-		} else {
-			normMin = settings.normalization.min;
-			normMax = settings.normalization.max;
-
-			const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (settings.normalizedFloatMode && !showNorm) {
-				const typeMax = bitsPerSample === 16 ? 65535 : 255;
-				normMin = normMin * typeMax;
-				normMax = normMax * typeMax;
-			}
-		}
-
-		// Create display rasters
-		const displayRasters = [];
-		for (let i = 0; i < rastersCopy.length; i++) {
-			displayRasters.push(new Float32Array(rastersCopy[i]));
-		}
-
-		// Normalize and create image data
-		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-
-		let imageDataArray;
-		if (showNorm) {
-			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
-		} else {
-			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
-		}
-
-		return new ImageData(imageDataArray, width, height);
+		// Redirect to main render method for now to ensure correctness and use centralized ImageRenderer
+		// TODO: Re-implement optimization for skipMasks if needed
+		return this.renderTiffWithSettings(image, rasters);
 	}
 
-	/**
-	 * Render TIFF data to ImageData
-	 * @param {*} image - GeoTIFF image object
-	 * @param {*} rasters - Raster data
-	 * @returns {Promise<ImageData>}
-	 */
 	async renderTiff(image, rasters) {
-		// Apply mask filtering if enabled
-		const settings = this.settingsManager.settings;
-		if (settings.maskFilters && settings.maskFilters.length > 0) {
-			try {
-				// Apply all enabled masks in sequence
-				for (const maskFilter of settings.maskFilters) {
-					if (maskFilter.enabled && maskFilter.maskUri) {
-						const maskData = await this.loadMaskImage(maskFilter.maskUri);
-						const maskWidth = image.getWidth();
-						const maskHeight = image.getHeight();
-
-						// Apply mask filter to each band
-						for (let band = 0; band < rasters.length; band++) {
-							const originalData = new Float32Array(rasters[band]);
-							const filteredData = this.applyMaskFilter(
-								originalData,
-								maskData,
-								maskFilter.threshold,
-								maskFilter.filterHigher
-							);
-							rasters[band] = filteredData;
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error applying mask filters:', error);
-				// Continue without mask filtering if there's an error
-			}
-		}
-
-		const width = image.getWidth();
-		const height = image.getHeight();
-		const sampleFormat = image.getSampleFormat();
-		const bitsPerSample = image.getBitsPerSample();
-
-		let min = Infinity;
-		let max = -Infinity;
-
-		let imageDataArray;
-
-		// Calculate min/max from the first 3 channels only (like original code)
-		const displayRasters = [];
-		for (let i = 0; i < rasters.length; i++) {
-			displayRasters.push(new Float32Array(rasters[i]));
-		}
-
-		// Use the first 3 channels to determine the image stats
-		// For RGB-as-24bit mode, calculate stats from combined 24-bit values
-		if (settings.rgbAs24BitGrayscale && rasters.length >= 3) {
-			// Calculate min/max of combined 24-bit values
-			for (let j = 0; j < rasters[0].length; j++) {
-				// Get RGB values and normalize to 0-255 range
-				const values = [];
-				for (let i = 0; i < 3; i++) {
-					const value = rasters[i][j];
-					if (!isNaN(value) && isFinite(value)) {
-						values.push(Math.round(Math.max(0, Math.min(255, value))));
-					} else {
-						values.push(0);
-					}
-				}
-				// Combine into 24-bit value
-				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-				min = Math.min(min, combined24bit);
-				max = Math.max(max, combined24bit);
-			}
-		} else {
-			// Normal mode: use individual channel values
-			for (let i = 0; i < Math.min(rasters.length, 3); i++) {
-				for (let j = 0; j < rasters[i].length; j++) {
-					const value = rasters[i][j];
-					if (!isNaN(value) && isFinite(value)) {
-						min = Math.min(min, value);
-						max = Math.max(max, value);
-					}
-				}
-			}
-		}
-
-		// Send stats to VS Code
-		if (this.vscode) {
-			this.vscode.postMessage({ type: 'stats', value: { min, max } });
-		}
-
-		// Get normalization settings (settings already declared above)
-		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		const typeMax = bitsPerSample === 16 ? 65535 : 255;
-
-		// Use NormalizationHelper to calculate range
-		// For float images (showNorm=true), typeMax is 1.0
-		const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
-			settings,
-			{ min, max },
-			showNorm ? 1.0 : typeMax,
-			showNorm
-		);
-
-		// Normalize and create image data
-		// showNorm is already defined above
-
-		if (showNorm) { // Float data
-			imageDataArray = this._processFloatTiff(displayRasters, width, height, normMin, normMax, settings);
-		} else {
-			// Pass normalization parameters to integer TIFF processing too
-			imageDataArray = this._processIntegerTiff(displayRasters, width, height, normMin, normMax, settings, bitsPerSample);
-		}
-
-		return new ImageData(imageDataArray, width, height);
-	}
-
-
-	/**
-	 * Process float TIFF data
-	 * @param {any[]} rasters - Raster data
-	 * @param {number} width - Image width
-	 * @param {number} height - Image height
-	 * @param {number} normMin - Normalization minimum
-	 * @param {number} normMax - Normalization maximum
-	 * @param {any} settings - Settings object
-	 * @returns {Uint8ClampedArray}
-	 */
-	_processFloatTiff(rasters, width, height, normMin, normMax, settings) {
-		const imageDataArray = new Uint8ClampedArray(width * height * 4);
-		const numBands = rasters.length;
-		const range = normMax - normMin;
-		const nanColor = this._getNanColor(settings);
-
-		for (let i = 0; i < width * height; i++) {
-			let r, g, b;
-
-			// Check if any band has NaN values
-			let hasNaN = false;
-			for (let band = 0; band < Math.min(3, numBands); band++) {
-				if (isNaN(rasters[band][i])) {
-					hasNaN = true;
-					break;
-				}
-			}
-
-			if (hasNaN) {
-				// Use NaN color for this pixel
-				r = nanColor.r;
-				g = nanColor.g;
-				b = nanColor.b;
-			} else if (numBands === 1) {
-				// Grayscale
-				const value = rasters[0][i];
-				let normalized;
-				if (range > 0) {
-					normalized = (value - normMin) / range;
-				} else {
-					normalized = 0; // Handle case where min === max
-				}
-
-				// Apply gamma and brightness corrections (may result in values outside [0,1])
-				if (settings.normalization.gammaMode) {
-					normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-				}
-
-				// Clamp only for display conversion to 0-255 range
-				const displayValue = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-				r = g = b = displayValue;
-			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
-				// RGB as 24-bit grayscale: Combine RGB channels into single 24-bit value
-				// First normalize each channel to 0-255 range, then combine
-				const values = [];
-				for (let band = 0; band < 3; band++) {
-					let value = rasters[band][i];
-					let normalized;
-					if (range > 0) {
-						normalized = (value - normMin) / range;
-					} else {
-						normalized = 0;
-					}
-					values.push(Math.round(Math.max(0, Math.min(1, normalized)) * 255));
-				}
-
-				// Combine into 24-bit value: (R << 16) | (G << 8) | B
-				const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-				// Max value is 16777215 (0xFFFFFF)
-
-				// Normalize 24-bit value to 0-1 range for display
-				// NOTE: For gamma mode, this should use 0-16777215 as the expected range
-				// For auto-normalize, it should use the actual min/max of combined values
-				let normalized24 = combined24bit / 16777215.0;
-
-				// Apply gamma and brightness to the combined value (may result in values outside [0,1])
-				if (settings.normalization.gammaMode) {
-					normalized24 = NormalizationHelper.applyGammaAndBrightness(normalized24, settings);
-				}
-
-				// Display as grayscale (clamp only for display conversion)
-				const displayValue = Math.round(Math.max(0, Math.min(1, normalized24)) * 255);
-				r = g = b = displayValue;
-			} else {
-				// RGB or multi-band (normal mode)
-				const values = [];
-				for (let band = 0; band < Math.min(3, numBands); band++) {
-					let value = rasters[band][i];
-					let normalized;
-					if (range > 0) {
-						normalized = (value - normMin) / range;
-					} else {
-						normalized = 0; // Handle case where min === max
-					}
-
-					// Apply gamma and brightness corrections (may result in values outside [0,1])
-					// Only if gamma mode is enabled (and not auto-normalize, though helper handles that check if we pass settings correctly)
-					// Actually, NormalizationHelper.applyGammaAndBrightness just applies the math.
-					// We need to check if we SHOULD apply it.
-					// In the previous code: if (settings.normalization.gammaMode)
-
-					if (settings.normalization.gammaMode) {
-						normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-					}
-
-					// Clamp only for display conversion to 0-255 range
-					values.push(Math.round(Math.max(0, Math.min(1, normalized)) * 255));
-				}
-
-				r = values[0] ?? 0;
-				g = values[1] ?? 0;
-				b = values[2] ?? 0;
-			}
-
-			const pixelIndex = i * 4;
-			imageDataArray[pixelIndex] = r;
-			imageDataArray[pixelIndex + 1] = g;
-			imageDataArray[pixelIndex + 2] = b;
-			imageDataArray[pixelIndex + 3] = 255; // Alpha
-		}
-
-		return imageDataArray;
-	}
-
-	/**
-	 * Process integer TIFF data
-	 * @private
-	 * @param {any[]} rasters - Raster data
-	 * @param {number} width - Image width
-	 * @param {number} height - Image height
-	 * @param {number} normMin - Normalization minimum
-	 * @param {number} normMax - Normalization maximum
-	 * @param {any} settings - Settings object
-	 * @param {number} bitsPerSample - Bits per sample
-	 * @returns {Uint8ClampedArray}
-	 */
-	_processIntegerTiff(rasters, width, height, normMin, normMax, settings, bitsPerSample) {
-		const imageDataArray = new Uint8ClampedArray(width * height * 4);
-		const numBands = rasters.length;
-		const typeMax = bitsPerSample === 16 ? 65535 : 255;
-
-		// Generate LUT using NormalizationHelper
-		const lut = NormalizationHelper.generateLut(settings, bitsPerSample, typeMax, normMin, normMax);
-
-		// Optimization: Check for identity transform
-		// If LUT is identity (0->0, 255->255 etc) and we have 8-bit data, we can use fast path
-		const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
-		const isFullRange = normMin === 0 && normMax === typeMax;
-
-		// Fast path for 8-bit integer data with identity transform
-		if (isIdentityGamma && isFullRange && !settings.rgbAs24BitGrayscale && bitsPerSample === 8 && rasters[0] instanceof Uint8Array) {
-			console.log('TIFF: Identity transform detected (8-bit), using fast interleave loop');
-
-			if (numBands >= 3) {
-				// RGB(A) -> RGBA
-				const rBand = rasters[0];
-				const gBand = rasters[1];
-				const bBand = rasters[2];
-				const aBand = numBands > 3 ? rasters[3] : null;
-
-				for (let i = 0; i < width * height; i++) {
-					const outIdx = i * 4;
-					imageDataArray[outIdx] = rBand[i];
-					imageDataArray[outIdx + 1] = gBand[i];
-					imageDataArray[outIdx + 2] = bBand[i];
-					imageDataArray[outIdx + 3] = aBand ? aBand[i] : 255;
-				}
-			} else if (numBands === 1) {
-				// Gray -> RGBA
-				const grayBand = rasters[0];
-				for (let i = 0; i < width * height; i++) {
-					const val = grayBand[i];
-					const outIdx = i * 4;
-					imageDataArray[outIdx] = val;
-					imageDataArray[outIdx + 1] = val;
-					imageDataArray[outIdx + 2] = val;
-					imageDataArray[outIdx + 3] = 255;
-				}
-			} else if (numBands === 2) {
-				// Gray + Alpha -> RGBA
-				const grayBand = rasters[0];
-				const alphaBand = rasters[1];
-				for (let i = 0; i < width * height; i++) {
-					const val = grayBand[i];
-					const outIdx = i * 4;
-					imageDataArray[outIdx] = val;
-					imageDataArray[outIdx + 1] = val;
-					imageDataArray[outIdx + 2] = val;
-					imageDataArray[outIdx + 3] = alphaBand[i];
-				}
-			}
-			return imageDataArray;
-		}
-
-		// LUT-based processing
-		const nanColor = this._getNanColor(settings);
-
-		for (let i = 0; i < width * height; i++) {
-			let r, g, b;
-
-			// Check if any band has NaN values (unlikely for integer, but possible if converted)
-			let hasNaN = false;
-			// Only check first 3 bands for NaN
-			for (let band = 0; band < Math.min(3, numBands); band++) {
-				// For integer arrays, isNaN check might be redundant but safe
-				if (Number.isNaN(rasters[band][i])) {
-					hasNaN = true;
-					break;
-				}
-			}
-
-			if (hasNaN) {
-				r = nanColor.r;
-				g = nanColor.g;
-				b = nanColor.b;
-			} else if (numBands === 1) {
-				// Grayscale
-				const val = rasters[0][i];
-				// Clamp to LUT size
-				const lutIdx = Math.min(Math.max(0, Math.round(val)), typeMax);
-				const displayVal = lut[lutIdx];
-				r = g = b = displayVal;
-			} else if (settings.rgbAs24BitGrayscale && numBands >= 3) {
-				// RGB as 24-bit grayscale
-				// This is a special case where we combine 3 channels into one value
-				// LUT approach is tricky here because the value range is huge (24-bit)
-				// So we might need to stick to manual calculation or use a different approach
-				// But wait, the previous logic normalized each channel then combined? 
-				// No, previous logic:
-				// 1. Get RGB values (clamped 0-255)
-				// 2. Combine to 24-bit
-				// 3. Normalize 24-bit value using normMin/normMax
-				// 4. Apply gamma
-
-				// Since 24-bit LUT is too big, we'll do manual calculation for this specific mode
-				// Re-implementing the manual logic from before, but using NormalizationHelper for gamma
-
-				const v0 = Math.min(255, Math.max(0, rasters[0][i]));
-				const v1 = Math.min(255, Math.max(0, rasters[1][i]));
-				const v2 = Math.min(255, Math.max(0, rasters[2][i]));
-
-				const combined24bit = (v0 << 16) | (v1 << 8) | v2;
-
-				let normalized24;
-				const norm24Range = normMax - normMin;
-				if (norm24Range > 0) {
-					normalized24 = (combined24bit - normMin) / norm24Range;
-				} else {
-					normalized24 = 0;
-				}
-
-				if (settings.normalization.gammaMode) {
-					normalized24 = NormalizationHelper.applyGammaAndBrightness(normalized24, settings);
-				}
-
-				const displayVal = Math.round(Math.max(0, Math.min(1, normalized24)) * 255);
-				r = g = b = displayVal;
-
-			} else {
-				// RGB
-				const vals = [];
-				for (let band = 0; band < Math.min(3, numBands); band++) {
-					const val = rasters[band][i];
-					const lutIdx = Math.min(Math.max(0, Math.round(val)), typeMax);
-					vals.push(lut[lutIdx]);
-				}
-				r = vals[0];
-				g = vals[1];
-				b = vals[2];
-			}
-
-			const outIdx = i * 4;
-			imageDataArray[outIdx] = r;
-			imageDataArray[outIdx + 1] = g;
-			imageDataArray[outIdx + 2] = b;
-			imageDataArray[outIdx + 3] = 255;
-		}
-
-		return imageDataArray;
+		return this.renderTiffWithSettings(image, rasters);
 	}
 
 	/**

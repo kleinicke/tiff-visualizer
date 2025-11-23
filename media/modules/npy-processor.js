@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { NormalizationHelper } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
  * Convert IEEE 754 half-precision (float16) to single-precision (float32)
@@ -236,55 +236,16 @@ export class NpyProcessor {
         const dtype = this._lastRaw?.dtype || 'f4';
         const isFloat = dtype.includes('f');
 
-        // Calculate typeMax based on dtype
-        let typeMax = 1.0;
-        if (!isFloat) {
-            if (dtype.includes('u1') || dtype.includes('i1')) {
-                typeMax = dtype.includes('u') ? 255 : 127;
-            } else if (dtype.includes('u2') || dtype.includes('i2')) {
-                typeMax = dtype.includes('u') ? 65535 : 32767;
-            } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                typeMax = dtype.includes('u') ? 4294967295 : 2147483647;
-            }
-        }
-        if (rgbAs24BitMode) {
-            typeMax = 16777215;
-        }
-
-        // Use NormalizationHelper to calculate range
-        // We need to pass stats if auto-normalize is on
-        // But we might need to calculate stats first if not cached
-
+        // Calculate stats if needed (for auto-normalize or just to have them)
         /** @type {{min: number, max: number} | undefined} */
         let stats = this._cachedStats;
-        // If auto-normalize is on OR we need stats for default range (e.g. for float data where we might want data range if not 0-1?)
-        // Actually, for float data, default is 0-1.
-        // But if we want to support auto-normalize, we need stats.
 
         if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
-            let dataMin = Infinity;
-            let dataMax = -Infinity;
-
-            if (rgbAs24BitMode) {
-                // For 24-bit mode, compute stats from combined 24-bit values
-                for (let i = 0; i < width * height; i++) {
-                    const srcIdx = i * 3;
-                    const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
-                    const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
-                    const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
-                    const combined24bit = (r << 16) | (g << 8) | b;
-                    if (combined24bit < dataMin) dataMin = combined24bit;
-                    if (combined24bit > dataMax) dataMax = combined24bit;
-                }
+            if (isFloat) {
+                stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             } else {
-                for (let i = 0; i < data.length; i++) {
-                    const v = data[i];
-                    if (!Number.isFinite(v)) continue;
-                    if (v < dataMin) dataMin = v;
-                    if (v > dataMax) dataMax = v;
-                }
+                stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, rgbAs24BitMode);
             }
-            stats = { min: dataMin, max: dataMax };
             this._cachedStats = stats;
 
             if (this.vscode) {
@@ -292,123 +253,36 @@ export class NpyProcessor {
             }
         }
 
-        const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
-            settings,
+        const nanColor = this._getNanColor(settings);
+
+        // Determine typeMax for integer types
+        let typeMax;
+        if (!isFloat) {
+            if (dtype.includes('1')) typeMax = 255;
+            else if (dtype.includes('2')) typeMax = 65535;
+            else if (dtype.includes('4')) typeMax = 4294967295; // 32-bit
+        }
+
+        // Create options object
+        const options = {
+            nanColor: nanColor,
+            rgbAs24BitGrayscale: rgbAs24BitMode,
+            flipY: false, // NPY is usually top-down
+            typeMax: typeMax
+        };
+
+        return ImageRenderer.render(
+            data,
+            width,
+            height,
+            channels,
+            true, // Always true since NPY stores everything as Float32Array
             stats || { min: 0, max: 1 },
-            typeMax,
-            isFloat && !rgbAs24BitMode // Treat 24-bit mode as integer for normalization purposes (range 0-16M)
+            settings,
+            options
         );
-
-        const range = normMax - normMin || 1;
-        const invRange = range > 0 ? 1.0 / range : 0;
-        const out = new Uint8ClampedArray(width * height * 4);
-
-        // Optimization: Check for identity transform
-        const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
-
-        // Check if we have uint8 data and full range normalization
-        const isUint8 = this._lastRaw && (this._lastRaw.dtype === '|u1' || this._lastRaw.dtype === 'u1');
-        const isFullRange = normMin === 0 && normMax === 255;
-
-        if (isIdentityGamma && isFullRange && isUint8 && !rgbAs24BitMode) {
-            console.log('NPY: Identity transform detected (uint8), using fast loop');
-
-            if (channels === 3) {
-                // RGB -> RGBA
-                for (let i = 0; i < width * height; i++) {
-                    const srcIdx = i * 3;
-                    const outIdx = i * 4;
-                    out[outIdx] = data[srcIdx];
-                    out[outIdx + 1] = data[srcIdx + 1];
-                    out[outIdx + 2] = data[srcIdx + 2];
-                    out[outIdx + 3] = 255;
-                }
-            } else if (channels === 4) {
-                // RGBA -> RGBA (Copy)
-                const length = width * height * 4;
-                // data is Float32Array, need to cast/copy to Uint8ClampedArray
-                // Wait, if isUint8 is true, data should be values 0-255.
-                // But data is Float32Array.
-                // So we can't just use buffer.
-                for (let i = 0; i < length; i++) {
-                    out[i] = data[i];
-                }
-            } else {
-                // Gray -> RGBA
-                for (let i = 0; i < width * height; i++) {
-                    const val = data[i];
-                    const outIdx = i * 4;
-                    out[outIdx] = val;
-                    out[outIdx + 1] = val;
-                    out[outIdx + 2] = val;
-                    out[outIdx + 3] = 255;
-                }
-            }
-            return new ImageData(out, width, height);
-        }
-
-        for (let i = 0; i < width * height; i++) {
-            let r, g, b, a = 255;
-
-            if (rgbAs24BitMode) {
-                // RGB as 24-bit grayscale: combine RGB into single 24-bit value
-                const srcIdx = i * 3;
-                const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
-                const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
-                const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
-                const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
-
-                // Normalize the 24-bit value
-                let normalized = (combined24bit - normMin) * invRange;
-
-                // Apply gamma/brightness
-                normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-
-                r = g = b = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-            } else if (channels === 3) {
-                // RGB data
-                const srcIdx = i * 3;
-                let rNorm = (data[srcIdx + 0] - normMin) * invRange;
-                let gNorm = (data[srcIdx + 1] - normMin) * invRange;
-                let bNorm = (data[srcIdx + 2] - normMin) * invRange;
-
-                rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
-                gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
-                bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
-
-                r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
-                g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
-                b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
-            } else if (channels === 4) {
-                // RGBA data
-                const srcIdx = i * 4;
-                let rNorm = (data[srcIdx + 0] - normMin) * invRange;
-                let gNorm = (data[srcIdx + 1] - normMin) * invRange;
-                let bNorm = (data[srcIdx + 2] - normMin) * invRange;
-
-                rNorm = NormalizationHelper.applyGammaAndBrightness(rNorm, settings);
-                gNorm = NormalizationHelper.applyGammaAndBrightness(gNorm, settings);
-                bNorm = NormalizationHelper.applyGammaAndBrightness(bNorm, settings);
-
-                r = Math.round(Math.max(0, Math.min(1, rNorm)) * 255);
-                g = Math.round(Math.max(0, Math.min(1, gNorm)) * 255);
-                b = Math.round(Math.max(0, Math.min(1, bNorm)) * 255);
-                a = Math.round(Math.max(0, Math.min(1, data[srcIdx + 3] / normMax)) * 255);
-            } else {
-                // Grayscale data
-                let n = (data[i] - normMin) * invRange;
-                n = NormalizationHelper.applyGammaAndBrightness(n, settings);
-                r = g = b = Math.round(Math.max(0, Math.min(1, n)) * 255);
-            }
-
-            const p = i * 4;
-            out[p] = r;
-            out[p + 1] = g;
-            out[p + 2] = b;
-            out[p + 3] = a;
-        }
-        return new ImageData(out, width, height);
     }
+
 
     /**
      * Re-render NPY with current settings (for real-time updates)
@@ -585,6 +459,28 @@ export class NpyProcessor {
         this.vscode.postMessage({ type: 'refresh-status' });
 
         return imageData;
+    }
+
+    /**
+     * Get NaN color from settings
+     * @param {Object} settings
+     * @returns {{r: number, g: number, b: number}}
+     */
+    _getNanColor(settings) {
+        if (settings.nanColor) {
+            // Handle hex string
+            if (typeof settings.nanColor === 'string') {
+                const hex = settings.nanColor.replace('#', '');
+                return {
+                    r: parseInt(hex.substring(0, 2), 16),
+                    g: parseInt(hex.substring(2, 4), 16),
+                    b: parseInt(hex.substring(4, 6), 16)
+                };
+            }
+            // Handle object
+            return settings.nanColor;
+        }
+        return { r: 255, g: 0, b: 0 }; // Default red
     }
 }
 

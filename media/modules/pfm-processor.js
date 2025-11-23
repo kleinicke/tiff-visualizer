@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { NormalizationHelper } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
  * PFM Processor for TIFF Visualizer
@@ -92,21 +92,7 @@ export class PfmProcessor {
         /** @type {{min: number, max: number} | undefined} */
         let stats = this._cachedStats;
         if (!stats && (settings.normalization?.autoNormalize || !settings.normalization)) {
-            let minVal = Infinity;
-            let maxVal = -Infinity;
-
-            // Re-implementing stats calculation loop correctly based on raw data
-            const len = width * height;
-            for (let i = 0; i < len; i++) {
-                for (let c = 0; c < Math.min(channels, 3); c++) {
-                    const val = data[i * channels + c];
-                    if (Number.isFinite(val)) {
-                        if (val < minVal) minVal = val;
-                        if (val > maxVal) maxVal = val;
-                    }
-                }
-            }
-            stats = { min: minVal, max: maxVal };
+            stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             this._cachedStats = stats;
 
             if (this.vscode) {
@@ -114,60 +100,17 @@ export class PfmProcessor {
             }
         }
 
-        // Use NormalizationHelper to calculate range
-        // PFM is always float, so typeMax is 1.0
-        const { min, max } = NormalizationHelper.getNormalizationRange(
-            settings,
+        // Use centralized ImageRenderer
+        return ImageRenderer.render(
+            data,
+            width,
+            height,
+            channels,
+            true, // isFloat (float32)
             stats || { min: 0, max: 1 },
-            1.0,
-            true // isFloat
+            settings,
+            {} // No special options for PFM
         );
-
-        const range = max - min;
-        const invRange = range > 0 ? 1.0 / range : 0;
-
-        const out = new Uint8ClampedArray(width * height * 4);
-
-        // Optimization: Check for identity transform
-        const isIdentityGamma = NormalizationHelper.isIdentityTransformation(settings);
-
-        for (let i = 0; i < width * height; i++) {
-            let r, g, b;
-
-            if (channels === 3) {
-                // RGB data
-                r = (data[i * 3 + 0] - min) * invRange;
-                g = (data[i * 3 + 1] - min) * invRange;
-                b = (data[i * 3 + 2] - min) * invRange;
-            } else {
-                // Grayscale data
-                const n = (data[i] - min) * invRange;
-                r = g = b = n;
-            }
-
-            if (isIdentityGamma) {
-                // Fast path: just clamp and assign
-                const p = i * 4;
-                out[p] = Math.round(Math.max(0, Math.min(1, r)) * 255);     // R
-                out[p + 1] = Math.round(Math.max(0, Math.min(1, g)) * 255); // G
-                out[p + 2] = Math.round(Math.max(0, Math.min(1, b)) * 255); // B
-                out[p + 3] = 255;                 // A
-                continue;
-            }
-
-            // Apply gamma and brightness corrections using the correct order
-            r = NormalizationHelper.applyGammaAndBrightness(r, settings);
-            g = NormalizationHelper.applyGammaAndBrightness(g, settings);
-            b = NormalizationHelper.applyGammaAndBrightness(b, settings);
-
-            // Clamp only for display conversion to 0-255 range
-            const p = i * 4;
-            out[p] = Math.round(Math.max(0, Math.min(1, r)) * 255);     // R
-            out[p + 1] = Math.round(Math.max(0, Math.min(1, g)) * 255); // G
-            out[p + 2] = Math.round(Math.max(0, Math.min(1, b)) * 255); // B
-            out[p + 3] = 255;                 // A
-        }
-        return new ImageData(out, width, height);
     }
 
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
@@ -246,6 +189,22 @@ export class PfmProcessor {
         this.vscode.postMessage({ type: 'refresh-status' });
 
         return imageData;
+    }
+
+    /**
+     * Update settings and trigger re-render
+     * @param {Object} settings - New settings
+     */
+    updateSettings(settings) {
+        this.settingsManager.updateSettings(settings);
+        // Invalidate cached stats when settings change (especially for auto-normalize)
+        if (settings.normalization?.autoNormalize !== this.settingsManager.settings.normalization?.autoNormalize) {
+            this._cachedStats = null;
+        }
+        // Post message to trigger re-render in main code
+        if (this.vscode) {
+            this.vscode.postMessage({ type: 'settings-updated' });
+        }
     }
 
     _flipImageVertically(data, width, height, channels = 1) {

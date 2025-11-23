@@ -1,6 +1,6 @@
 // @ts-check
 "use strict";
-import { NormalizationHelper } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
  * PPM/PGM Processor for TIFF Visualizer
@@ -203,129 +203,61 @@ export class PpmProcessor {
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
 
-        // Lazy stats calculation
-        let min, max;
-        if (settings.normalization?.gammaMode === true) {
-            // Gamma mode: use fixed range based on format
-            min = 0;
-            max = rgbAs24BitMode ? 16777215 : maxval;
-        } else if (this._cachedStats !== undefined) {
-            // Reuse cached stats
-            min = this._cachedStats.min;
-            max = this._cachedStats.max;
-        } else {
-            // Compute stats for first time
-            min = Infinity;
-            max = -Infinity;
+        // Calculate stats if needed
+        let stats = this._cachedStats;
+        if (!stats) {
             if (rgbAs24BitMode) {
                 // For 24-bit mode, compute stats from combined 24-bit values
-                for (let i = 0; i < width * height; i++) {
+                let min = Infinity;
+                let max = -Infinity;
+                const len = width * height;
+
+                // Check if data is 16-bit to handle scaling correctly
+                const is16Bit = data instanceof Uint16Array;
+
+                for (let i = 0; i < len; i++) {
                     const srcIdx = i * 3;
-                    const r = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
-                    const g = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
-                    const b = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+                    let r, g, b;
+
+                    if (is16Bit) {
+                        r = Math.round(data[srcIdx] / 257);
+                        g = Math.round(data[srcIdx + 1] / 257);
+                        b = Math.round(data[srcIdx + 2] / 257);
+                    } else {
+                        r = data[srcIdx];
+                        g = data[srcIdx + 1];
+                        b = data[srcIdx + 2];
+                    }
+
                     const combined24bit = (r << 16) | (g << 8) | b;
-                    min = Math.min(min, combined24bit);
-                    max = Math.max(max, combined24bit);
+                    if (combined24bit < min) min = combined24bit;
+                    if (combined24bit > max) max = combined24bit;
                 }
+                stats = { min, max };
             } else {
-                // Normal mode: use individual channel values
-                for (let i = 0; i < data.length; i++) {
-                    const value = data[i];
-                    if (value < min) min = value;
-                    if (value > max) max = value;
-                }
+                stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
             }
-            // Cache the results
-            this._cachedStats = { min, max };
+            this._cachedStats = stats;
         }
 
-        // Use NormalizationHelper to generate LUT
-        // PPM maxval can be anything, but usually 255 or 65535
-        // If maxval > 65535, the LUT might be too big, but standard PPM is usually up to 16-bit
-        // For safety, if maxval is huge, we might want to fallback (but standard says < 65536 usually)
+        // Create options object
+        const options = {
+            rgbAs24BitGrayscale: rgbAs24BitMode,
+            typeMax: rgbAs24BitMode ? 16777215 : maxval
+        };
 
-        // Determine bits per sample for LUT generation
-        const bitsPerSample = maxval > 255 ? 16 : 8;
-        const lut = NormalizationHelper.generateLut(settings, bitsPerSample, maxval, min, max);
-
-        // Render pixels using LUT
-        const out = new Uint8ClampedArray(width * height * 4);
-
-        if (rgbAs24BitMode) {
-            // RGB as 24-bit grayscale
-            // Calculate normalization range using helper
-            const { min: normMin, max: normMax } = NormalizationHelper.getNormalizationRange(
-                settings,
-                { min, max },
-                16777215, // 24-bit max value
-                false // Integer
-            );
-
-            const range = (normMax - normMin) || 1;
-
-            for (let i = 0; i < width * height; i++) {
-                const srcIdx = i * 3;
-                const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
-                const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
-                const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
-
-                // Combine to 24-bit value
-                const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
-
-                // Normalize using calculated range
-                let normalized = (combined24bit - normMin) / range;
-
-                // Apply gamma and brightness
-                normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-
-                // Scale to 0-255
-                const val = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-
-                const p = i * 4;
-                out[p] = val;     // R
-                out[p + 1] = val; // G
-                out[p + 2] = val; // B
-                out[p + 3] = 255; // A
-            }
-        } else {
-            // Normal mode (RGB or Grayscale) using LUT
-            const numChannels = channels;
-
-            for (let i = 0; i < width * height; i++) {
-                const p = i * 4;
-
-                if (numChannels === 1) {
-                    // Grayscale
-                    const val = data[i];
-                    // LUT lookup
-                    const displayVal = lut[val] !== undefined ? lut[val] : lut[lut.length - 1];
-                    out[p] = displayVal;
-                    out[p + 1] = displayVal;
-                    out[p + 2] = displayVal;
-                    out[p + 3] = 255;
-                } else {
-                    // RGB
-                    const srcIdx = i * 3;
-                    const r = data[srcIdx];
-                    const g = data[srcIdx + 1];
-                    const b = data[srcIdx + 2];
-
-                    out[p] = lut[r] !== undefined ? lut[r] : lut[lut.length - 1];
-                    out[p + 1] = lut[g] !== undefined ? lut[g] : lut[lut.length - 1];
-                    out[p + 2] = lut[b] !== undefined ? lut[b] : lut[lut.length - 1];
-                    out[p + 3] = 255;
-                }
-            }
-        }
-
-        // Send stats to VS Code
-        if (this.vscode) {
-            this.vscode.postMessage({ type: 'stats', value: { min, max } });
-        }
-
-        return new ImageData(out, width, height);
+        return ImageRenderer.render(
+            data,
+            width,
+            height,
+            channels,
+            false, // isFloat
+            stats,
+            settings,
+            options
+        );
     }
+
 
     /**
      * Re-render PPM/PGM with current settings (for real-time updates)
