@@ -1161,8 +1161,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// Create custom context menu
 			const menu = document.createElement('div');
 			menu.className = 'custom-context-menu';
-			menu.style.left = `${e.pageX}px`;
-			menu.style.top = `${e.pageY}px`;
+			menu.style.left = `${e.clientX}px`;
+			menu.style.top = `${e.clientY}px`;
 
 			// Helper function to create menu items
 			const createMenuItem = (text, action) => {
