@@ -90,7 +90,7 @@ export class ImagePreview extends MediaPreview {
 
 		this._register(webviewEditor.onDidChangeViewState(() => {
 			this.updateStatusBar();
-			
+
 			// Also update the global state
 			this.updateState();
 		}));
@@ -157,7 +157,7 @@ export class ImagePreview extends MediaPreview {
 
 		// Initialize the image collection with the current image
 		this._imageCollection = [this.resource];
-		
+
 		// Add the first image to preloaded data tracking
 		const webviewUri = this._webviewEditor.webview.asWebviewUri(this.resource);
 		this._preloadedImageData.set(this.resource.toString(), {
@@ -165,10 +165,10 @@ export class ImagePreview extends MediaPreview {
 			webviewUri: webviewUri.toString(),
 			loaded: false
 		});
-		
+
 		// Initialize the preview
 		this.render();
-		
+
 		// Update binary size and ensure proper state initialization
 		this.updateBinarySize().then(() => {
 			this.updateState();
@@ -239,7 +239,7 @@ export class ImagePreview extends MediaPreview {
 			if (!this._currentComparisonState.peerUris.includes(peerUri.toString())) {
 				this._currentComparisonState.peerUris.push(peerUri.toString());
 			}
-			
+
 			this._webviewEditor.webview.postMessage({ type: 'start-comparison', peerUri: peerUri.toString() });
 		}
 	}
@@ -344,13 +344,13 @@ export class ImagePreview extends MediaPreview {
 		if (this._imageCollection.length <= 1) {
 			return; // No other images to toggle to
 		}
-		
+
 		// Save current zoom/position state
 		this.saveCurrentZoomState();
-		
+
 		// Move to next image (cycle back to 0 if at end)
 		this._currentImageIndex = (this._currentImageIndex + 1) % this._imageCollection.length;
-		
+
 		// Update current resource and reload
 		this.switchToImageAtIndex(this._currentImageIndex);
 	}
@@ -359,13 +359,13 @@ export class ImagePreview extends MediaPreview {
 		if (this._imageCollection.length <= 1) {
 			return; // No other images to toggle to
 		}
-		
+
 		// Save current zoom/position state
 		this.saveCurrentZoomState();
-		
+
 		// Move to previous image (cycle to end if at beginning)
 		this._currentImageIndex = (this._currentImageIndex - 1 + this._imageCollection.length) % this._imageCollection.length;
-		
+
 		// Update current resource and reload
 		this.switchToImageAtIndex(this._currentImageIndex);
 	}
@@ -393,34 +393,34 @@ export class ImagePreview extends MediaPreview {
 		if (index < 0 || index >= this._imageCollection.length) {
 			return;
 		}
-		
+
 		this._currentImageIndex = index;
 		const newResource = this._imageCollection[index];
 		const cacheKey = newResource.toString();
 		const cachedData = this._preloadedImageData.get(cacheKey);
-		
+
 		// Send switch request to webview
 		this._webviewEditor.webview.postMessage({
 			type: 'switchToImage',
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
 			resourceUri: newResource.toString()
 		});
-		
+
 		// Update overlay
 		this.updateImageCollectionOverlay();
-		
+
 		// Restore zoom and comparison state after a brief delay
 		setTimeout(() => {
 			if (this._currentZoomState) {
-				this._webviewEditor.webview.postMessage({ 
-					type: 'restoreZoomState', 
-					state: this._currentZoomState 
+				this._webviewEditor.webview.postMessage({
+					type: 'restoreZoomState',
+					state: this._currentZoomState
 				});
 			}
 			if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
-				this._webviewEditor.webview.postMessage({ 
-					type: 'restoreComparisonState', 
-					state: this._currentComparisonState 
+				this._webviewEditor.webview.postMessage({
+					type: 'restoreComparisonState',
+					state: this._currentComparisonState
 				});
 			}
 		}, 150);
@@ -433,10 +433,10 @@ export class ImagePreview extends MediaPreview {
 				currentIndex: this._currentImageIndex,
 				show: this._imageCollection.length > 1
 			};
-			
-			this._webviewEditor.webview.postMessage({ 
-				type: 'updateImageCollectionOverlay', 
-				data: overlayData 
+
+			this._webviewEditor.webview.postMessage({
+				type: 'updateImageCollectionOverlay',
+				data: overlayData
 			});
 		}
 	}
@@ -513,24 +513,18 @@ export class ImagePreview extends MediaPreview {
 
 			// Show gamma/brightness controls when in gamma mode
 			if (normSettings.gammaMode) {
+				this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
+				this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
 				this._gammaStatusBarEntry.show();
 				this._brightnessStatusBarEntry.show();
 			} else {
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
 			}
-
-			// Always show histogram button
-			this._histogramStatusBarEntry.show();
-		} else {
-			this._sizeStatusBarEntry.hide(this);
-			this._zoomStatusBarEntry.hide(this);
-			this._normalizationStatusBarEntry.forceHide();
-			this._gammaStatusBarEntry.hide();
-			this._brightnessStatusBarEntry.hide();
-			this._maskFilterStatusBarEntry.hide();
-			this._histogramStatusBarEntry.hide();
 		}
+
+		// Always show histogram button
+		this._histogramStatusBarEntry.show();
 	}
 
 	protected override async getWebviewContents(): Promise<string> {
@@ -629,18 +623,18 @@ export class ImagePreview extends MediaPreview {
 	</script>
 	
 	${isTiff ?
-		`<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>` :
-		''
-	}
+				`<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>` :
+				''
+			}
 	${isPng ?
-		`<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
+				`<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
 	<script src="${escapeAttribute(upngUri.toString())}" nonce="${nonce}"></script>` :
-		''
-	}
+				''
+			}
 	${isExr ?
-		`<script src="${escapeAttribute(parseExrUri.toString())}" nonce="${nonce}"></script>` :
-		''
-	}
+				`<script src="${escapeAttribute(parseExrUri.toString())}" nonce="${nonce}"></script>` :
+				''
+			}
 	<script type="module" src="${escapeAttribute(jsUri.toString())}" nonce="${nonce}"></script>
 </body>
 </html>`;

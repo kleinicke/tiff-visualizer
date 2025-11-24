@@ -178,8 +178,9 @@ export class ExrProcessor {
 			stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
 			this._cachedStats = stats;
 
-			// Update settings manager and VS Code
-			if (this.settingsManager && this.settingsManager.settings.normalization) {
+			// Only update settings if auto-normalize is enabled (don't overwrite manual values!)
+			const isAutoNormalize = settings.normalization?.autoNormalize !== false;
+			if (isAutoNormalize && this.settingsManager && this.settingsManager.settings.normalization) {
 				this.settingsManager.settings.normalization.min = stats.min;
 				this.settingsManager.settings.normalization.max = stats.max;
 			}

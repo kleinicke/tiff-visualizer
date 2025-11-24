@@ -397,6 +397,10 @@ export class PngProcessor {
      */
     _postFormatInfo(width, height, channels, bitDepth, formatLabel) {
         if (!this.vscode) return;
+
+        // Determine format type: 'png' or 'jpg' based on format label
+        const formatType = formatLabel === 'JPEG' ? 'jpg' : 'png';
+
         this.vscode.postMessage({
             type: 'formatInfo',
             value: {
@@ -410,7 +414,7 @@ export class PngProcessor {
                 bitsPerSample: bitDepth,
                 sampleFormat: 1, // Unsigned integer
                 formatLabel: `${formatLabel} (${bitDepth}-bit)`,
-                formatType: 'png',
+                formatType: formatType, // 'png' or 'jpg' for independent settings
                 isInitialLoad: this._isInitialLoad // Signal that this is the first load
             }
         });
