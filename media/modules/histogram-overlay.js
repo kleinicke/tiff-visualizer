@@ -24,6 +24,7 @@ export class HistogramOverlay {
 		// UI state
 		this.isDragging = false;
 		this.dragOffset = { x: 0, y: 0 };
+		this.hoveredBin = -1;
 
 		this.createOverlay();
 	}
@@ -47,17 +48,9 @@ export class HistogramOverlay {
 		// Scale mode toggle
 		const scaleToggle = document.createElement('button');
 		scaleToggle.className = 'histogram-button';
-		scaleToggle.textContent = 'Lin';
+		scaleToggle.textContent = 'Linear Mode';
 		scaleToggle.title = 'Toggle Linear/Log scale';
 		scaleToggle.onclick = () => this.toggleScaleMode(scaleToggle);
-
-		// Channel mode toggle (for RGB images)
-		const channelToggle = document.createElement('button');
-		channelToggle.className = 'histogram-button';
-		channelToggle.id = 'histogram-channel-toggle';
-		channelToggle.textContent = 'All';
-		channelToggle.title = 'Toggle channel display mode';
-		channelToggle.onclick = () => this.toggleChannelMode(channelToggle);
 
 		// Close button
 		const closeBtn = document.createElement('button');
@@ -68,7 +61,6 @@ export class HistogramOverlay {
 
 		header.appendChild(title);
 		header.appendChild(scaleToggle);
-		header.appendChild(channelToggle);
 		header.appendChild(closeBtn);
 
 		// Canvas for histogram
@@ -78,20 +70,130 @@ export class HistogramOverlay {
 		this.canvas.height = 150;
 		this.ctx = this.canvas.getContext('2d');
 
+		// Add mouse event listeners for hover effect
+		this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+		this.canvas.addEventListener('mouseleave', () => this.handleMouseLeave());
+
+		// Min/Max labels container
+		const labels = document.createElement('div');
+		labels.className = 'histogram-labels';
+		labels.style.display = 'flex';
+		labels.style.justifyContent = 'space-between';
+		labels.style.padding = '0 5px';
+		labels.style.fontSize = '10px';
+		labels.style.color = '#cccccc';
+		labels.style.marginTop = '2px';
+
+		this.minLabel = document.createElement('span');
+		this.minLabel.textContent = '0';
+		this.maxLabel = document.createElement('span');
+		this.maxLabel.textContent = '255';
+
+		labels.appendChild(this.minLabel);
+		labels.appendChild(this.maxLabel);
+
 		// Stats display
 		const stats = document.createElement('div');
 		stats.className = 'histogram-stats';
 		stats.id = 'histogram-stats';
 
+		// Tooltip
+		this.tooltip = document.createElement('div');
+		this.tooltip.className = 'histogram-tooltip';
+		this.tooltip.style.position = 'absolute';
+		this.tooltip.style.display = 'none';
+		this.tooltip.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+		this.tooltip.style.color = 'white';
+		this.tooltip.style.padding = '4px 8px';
+		this.tooltip.style.borderRadius = '4px';
+		this.tooltip.style.fontSize = '11px';
+		this.tooltip.style.pointerEvents = 'none';
+		this.tooltip.style.zIndex = '1000';
+
 		this.overlay.appendChild(header);
 		this.overlay.appendChild(this.canvas);
+		this.overlay.appendChild(labels);
 		this.overlay.appendChild(stats);
+		this.overlay.appendChild(this.tooltip);
 
 		// Make draggable
 		header.style.cursor = 'move';
 		header.onmousedown = (e) => this.startDrag(e);
 
 		document.body.appendChild(this.overlay);
+	}
+
+	/**
+	 * Handle mouse move over canvas
+	 */
+	handleMouseMove(e) {
+		if (!this.histogramData) return;
+
+		const rect = this.canvas.getBoundingClientRect();
+		const scaleX = this.canvas.width / rect.width;
+		const x = (e.clientX - rect.left) * scaleX;
+		const width = this.canvas.width;
+		const padding = 5;
+		const graphWidth = width - 2 * padding;
+
+		// Calculate bin index
+		// x = padding + binIndex * binWidth
+		// binIndex = (x - padding) / binWidth
+		const binWidth = graphWidth / this.numBins;
+		let binIndex = Math.floor((x - padding) / binWidth);
+
+		// Clamp bin index
+		binIndex = Math.max(0, Math.min(binIndex, this.numBins - 1));
+
+		if (this.hoveredBin !== binIndex) {
+			this.hoveredBin = binIndex;
+			this.render();
+		}
+
+		// Update tooltip
+		this.updateTooltip(e.clientX, e.clientY, binIndex);
+	}
+
+	/**
+	 * Handle mouse leave canvas
+	 */
+	handleMouseLeave() {
+		this.hoveredBin = -1;
+		this.tooltip.style.display = 'none';
+		this.render();
+	}
+
+	/**
+	 * Update tooltip content and position
+	 */
+	updateTooltip(clientX, clientY, binIndex) {
+		if (!this.histogramData || binIndex < 0) return;
+
+		const rCount = this.histogramData.r[binIndex];
+		const gCount = this.histogramData.g[binIndex];
+		const bCount = this.histogramData.b[binIndex];
+		const lumCount = this.histogramData.luminance[binIndex];
+
+		let content = `<strong>Value: ${binIndex}</strong><br>`;
+
+		if (this.channelMode === 'combined' || this.channelMode === 'separate') {
+			content += `<span style="color: #ff8888">R: ${rCount.toLocaleString()}</span><br>`;
+			content += `<span style="color: #88ff88">G: ${gCount.toLocaleString()}</span><br>`;
+			content += `<span style="color: #8888ff">B: ${bCount.toLocaleString()}</span>`;
+		} else {
+			content += `Count: ${lumCount.toLocaleString()}`;
+		}
+
+		this.tooltip.innerHTML = content;
+		this.tooltip.style.display = 'block';
+
+		// Position tooltip near mouse but keep within viewport
+		const overlayRect = this.overlay.getBoundingClientRect();
+		const tooltipX = clientX - overlayRect.left + 10;
+		const tooltipY = clientY - overlayRect.top + 10;
+
+		this.tooltip.style.left = `${tooltipX}px`;
+		this.tooltip.style.top = `${tooltipY}px`;
 	}
 
 	/**
@@ -129,22 +231,7 @@ export class HistogramOverlay {
 	 */
 	toggleScaleMode(button) {
 		this.scaleMode = this.scaleMode === 'linear' ? 'log' : 'linear';
-		button.textContent = this.scaleMode === 'linear' ? 'Lin' : 'Log';
-		this.render();
-	}
-
-	/**
-	 * Toggle between channel display modes
-	 */
-	toggleChannelMode(button) {
-		const modes = ['combined', 'separate', 'luminance'];
-		const currentIndex = modes.indexOf(this.channelMode);
-		const nextIndex = (currentIndex + 1) % modes.length;
-		this.channelMode = modes[nextIndex];
-
-		const labels = { 'combined': 'All', 'separate': 'RGB', 'luminance': 'Lum' };
-		button.textContent = labels[this.channelMode];
-
+		button.textContent = this.scaleMode === 'linear' ? 'Linear Mode' : 'Log Mode';
 		this.render();
 	}
 
@@ -319,6 +406,23 @@ export class HistogramOverlay {
 			}
 		}
 
+		// Highlight hovered bin
+		if (this.hoveredBin >= 0 && this.hoveredBin < this.numBins) {
+			const x = padding + this.hoveredBin * binWidth;
+
+			// Draw a brighter highlight over the hovered bin
+			this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+			this.ctx.fillRect(x, padding, Math.max(1, binWidth - 0.5), graphHeight);
+
+			// Draw a vertical line indicator
+			this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+			this.ctx.lineWidth = 1;
+			this.ctx.beginPath();
+			this.ctx.moveTo(x + binWidth / 2, padding);
+			this.ctx.lineTo(x + binWidth / 2, height - padding);
+			this.ctx.stroke();
+		}
+
 		// Draw border
 		this.ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--vscode-panel-border') || '#454545';
 		this.ctx.lineWidth = 1;
@@ -341,7 +445,7 @@ export class HistogramOverlay {
 
 		// Check if image is grayscale (all channels equal)
 		const isGrayscale = stats.r.min === stats.g.min && stats.g.min === stats.b.min &&
-		                    stats.r.max === stats.g.max && stats.g.max === stats.b.max;
+			stats.r.max === stats.g.max && stats.g.max === stats.b.max;
 
 		if (isGrayscale || this.channelMode === 'luminance') {
 			// Show single channel stats
