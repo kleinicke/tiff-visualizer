@@ -267,9 +267,6 @@ export function registerImagePreviewCommands(
 			logCommand('setNormalizationRange', 'success', `Normalized float mode ${newState ? 'enabled' : 'disabled'}`);
 		} else {
 			// Manual range setting
-			previewManager.setAutoNormalize(false);
-			previewManager.setGammaMode(false);
-
 			const minValue = await vscode.window.showInputBox({
 				prompt: '↓ Enter the minimum value for normalization',
 				value: currentConfig.min.toString(),
@@ -297,6 +294,10 @@ export function registerImagePreviewCommands(
 				logCommand('setNormalizationRange', 'error', 'User cancelled max value input');
 				return;
 			}
+
+			// Only switch mode AFTER successful input
+			previewManager.setAutoNormalize(false);
+			previewManager.setGammaMode(false);
 
 			const min = parseFloat(minValue);
 			const max = parseFloat(maxValue);
