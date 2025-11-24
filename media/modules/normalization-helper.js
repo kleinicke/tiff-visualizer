@@ -101,7 +101,9 @@ export class NormalizationHelper {
     }
 
     /**
-     * Check if the transformation is identity (no gamma/brightness changes).
+     * Check if the transformation is identity (no effective gamma/brightness changes).
+     * Identity occurs when gammaIn === gammaOut (they cancel out) and brightness is 0.
+     * This is because (value^gammaIn)^(1/gammaOut) = value when gammaIn === gammaOut.
      * @param {Object} settings - Settings object
      * @returns {boolean} True if identity transformation
      */
@@ -110,8 +112,8 @@ export class NormalizationHelper {
         const gammaOut = settings.gamma?.out ?? 1.0;
         const exposureStops = settings.brightness?.offset ?? 0;
 
-        return Math.abs(gammaIn - 1.0) < 0.001 &&
-            Math.abs(gammaOut - 1.0) < 0.001 &&
+        // Identity when gammaIn equals gammaOut (they cancel) and no brightness adjustment
+        return Math.abs(gammaIn - gammaOut) < 0.001 &&
             Math.abs(exposureStops) < 0.001;
     }
 

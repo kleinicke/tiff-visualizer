@@ -11,6 +11,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
  * @property {number} bitDepth
  * @property {number} maxValue
  * @property {boolean} isRgbaFormat - If true, data is RGBA format; if false, data is raw channel format
+ * @property {ImageData} [originalImageData] - Original ImageData from getImageData for zero-copy fast path
  */
 
 /**
@@ -204,7 +205,8 @@ export class PngProcessor {
                         channels: 4, // Native API always returns RGBA (4 channels)
                         bitDepth: 8,
                         maxValue: 255,
-                        isRgbaFormat: true  // Fallback path stores RGBA format from getImageData
+                        isRgbaFormat: true,  // Fallback path stores RGBA format from getImageData
+                        originalImageData: imageData // Store for zero-copy fast path
                     };
 
                     const format = src.toLowerCase().includes('.png') ? 'PNG' :
@@ -239,17 +241,35 @@ export class PngProcessor {
     _renderToImageData() {
         if (!this._lastRaw) return new ImageData(1, 1);
 
-        const { width, height, data, channels, bitDepth, maxValue } = this._lastRaw;
+        const { width, height, data, channels, bitDepth, maxValue, originalImageData } = this._lastRaw;
         const settings = this.settingsManager.settings;
         const isFloat = false; // PNG is always integer
+
+        // Ultra-fast path: If we have the original ImageData from getImageData and no processing is needed, return it directly
+        // This is a zero-copy optimization for the common case: 8-bit PNG/JPEG with no normalization or effects
+        const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
         const isGammaMode = settings.normalization?.gammaMode || false;
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels >= 3;
+
+        if (originalImageData &&
+            isGammaMode &&
+            isIdentity &&
+            !rgbAs24BitMode &&
+            bitDepth === 8) {
+            // Can use original ImageData directly - no processing needed
+            return originalImageData;
+        }
 
         // Calculate stats if needed
         let stats = this._cachedStats;
         if (!stats && !isGammaMode) {
             stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
             this._cachedStats = stats;
+        }
 
+        // For gamma mode, provide dummy stats (renderer uses full type range)
+        if (isGammaMode && !stats) {
+            stats = { min: 0, max: maxValue };
         }
 
         // Create options object
