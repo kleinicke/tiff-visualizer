@@ -26,3 +26,10 @@ yarn.lock
 *.tif
 *.jpg
 *.ply
+
+# Rust/WASM source and build artifacts (keep only compiled .wasm and .js)
+wasm/tiff-decoder/src/**
+wasm/tiff-decoder/target/**
+wasm/tiff-decoder/Cargo.toml
+wasm/tiff-decoder/Cargo.lock
+scripts/build-wasm.sh

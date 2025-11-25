@@ -22,3 +22,6 @@ package-lock.json
 *.zip
 *.tar.gz
 *.tgz
+
+# Rust/WASM build artifacts
+wasm/tiff-decoder/target/

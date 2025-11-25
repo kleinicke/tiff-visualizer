@@ -1,6 +1,7 @@
 // @ts-check
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -29,6 +30,21 @@ export class TiffProcessor {
 		this._lastStatistics = null; // Cache min/max statistics
 		/** @type {{ floatData: Float32Array } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
+
+		// WASM decoder
+		this._wasmProcessor = new TiffWasmProcessor();
+		this._wasmAvailable = false;
+		this._wasmProcessor.init().then(available => {
+			this._wasmAvailable = available;
+			if (available) {
+				console.log('[TiffProcessor] WASM decoder initialized successfully');
+			} else {
+				console.log('[TiffProcessor] Using geotiff.js fallback');
+			}
+		}).catch(err => {
+			console.warn('[TiffProcessor] WASM initialization failed:', err);
+			this._wasmAvailable = false;
+		});
 	}
 
 	/**
@@ -66,10 +82,130 @@ export class TiffProcessor {
 	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, tiffData: Object}>}
 	 */
 	async processTiff(src) {
+		const startTime = performance.now();
 		try {
 			const response = await fetch(src);
 			const buffer = await response.arrayBuffer();
+			const fetchTime = performance.now() - startTime;
+			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
 
+			// Wait for WASM initialization if it's in progress
+			if (!this._wasmAvailable && this._wasmProcessor) {
+				await this._wasmProcessor.init();
+				this._wasmAvailable = this._wasmProcessor.isAvailable();
+			}
+
+			// Check if we should use WASM decoder
+			const settings = this.settingsManager.settings;
+			const use24BitMode = settings.rgbAs24BitGrayscale || false;
+
+			let useWasm = this._wasmAvailable && !use24BitMode;
+			console.log(`[TiffProcessor] Decode decision: wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
+
+			// Try WASM decoding first if available
+			if (useWasm) {
+				try {
+					const decodeStart = performance.now();
+					const wasmResult = await this._wasmProcessor.decode(buffer);
+					const decodeTime = performance.now() - decodeStart;
+					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
+
+					// Convert WASM result to format compatible with existing code
+					const width = wasmResult.width;
+					const height = wasmResult.height;
+					const samplesPerPixel = wasmResult.channels;
+					const bitsPerSample = wasmResult.bitsPerSample;
+					const sampleFormat = wasmResult.sampleFormat;
+
+					// Create rasters from WASM data (deinterleave if needed)
+					const rasters = [];
+					if (samplesPerPixel === 1) {
+						rasters.push(wasmResult.data);
+					} else {
+						// Deinterleave for compatibility with existing rendering code
+						for (let c = 0; c < samplesPerPixel; c++) {
+							const channel = new Float32Array(width * height);
+							for (let i = 0; i < width * height; i++) {
+								channel[i] = wasmResult.data[i * samplesPerPixel + c];
+							}
+							rasters.push(channel);
+						}
+					}
+
+					// Store interleaved data
+					const data = wasmResult.data;
+
+					// For metadata, we need to load via geotiff.js (faster than full decode)
+					const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+					const image = await tiff.getImage();
+					const fileDir = image.fileDirectory || {};
+					const compression = fileDir.Compression || 'Unknown';
+					const predictor = fileDir.Predictor;
+					const photometricInterpretation = fileDir.PhotometricInterpretation;
+					const planarConfig = fileDir.PlanarConfiguration;
+
+					// Store TIFF data for pixel inspection and re-rendering
+					this.rawTiffData = {
+						image: image,
+						rasters: rasters,
+						ifd: {
+							width,
+							height,
+							t339: sampleFormat,
+							t277: samplesPerPixel,
+							t284: 1, // Planar config (chunky)
+							t258: bitsPerSample
+						},
+						data: data
+					};
+
+					// Send format information to VS Code
+					if (this.vscode && this._isInitialLoad) {
+						const showNormTiff = sampleFormat === 3;
+						const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
+
+						this.vscode.postMessage({
+							type: 'formatInfo',
+							value: {
+								width,
+								height,
+								sampleFormat,
+								compression,
+								predictor,
+								photometricInterpretation,
+								planarConfig,
+								samplesPerPixel,
+								bitsPerSample,
+								formatType,
+								isInitialLoad: true,
+								decodedWith: 'wasm'
+							}
+						});
+
+						this._pendingRenderData = { image, rasters };
+
+						const canvas = document.createElement('canvas');
+						canvas.width = width;
+						canvas.height = height;
+						const placeholderImageData = new ImageData(width, height);
+						return { canvas, imageData: placeholderImageData, tiffData: this.rawTiffData };
+					}
+
+					const canvas = document.createElement('canvas');
+					canvas.width = width;
+					canvas.height = height;
+					const imageData = await this.renderTiff(image, rasters);
+					const totalTime = performance.now() - startTime;
+					console.log(`[TiffProcessor] Total WASM processing time: ${totalTime.toFixed(2)}ms`);
+					return { canvas, imageData, tiffData: this.rawTiffData };
+				} catch (wasmError) {
+					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
+					// Fall through to geotiff.js implementation below
+				}
+			}
+
+			// Fallback to geotiff.js (or if WASM not available/failed)
+			const decodeStart = performance.now();
 			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
 			const image = await tiff.getImage();
 			const sampleFormat = image.getSampleFormat();
@@ -89,6 +225,9 @@ export class TiffProcessor {
 			canvas.height = height;
 
 			const rasters = await image.readRasters();
+			const decodeTime = performance.now() - decodeStart;
+			console.log(`[TiffProcessor] geotiff.js decode time: ${decodeTime.toFixed(2)}ms`);
+
 			const samplesPerPixel = image.getSamplesPerPixel();
 			const bitsPerSample = image.getBitsPerSample();
 
@@ -150,7 +289,8 @@ export class TiffProcessor {
 						samplesPerPixel: image.getSamplesPerPixel(),
 						bitsPerSample: image.getBitsPerSample(),
 						formatType: formatType, // For per-format settings
-						isInitialLoad: true // Signal that this is the first load
+						isInitialLoad: true, // Signal that this is the first load
+						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js'
 					}
 				});
 
@@ -164,6 +304,8 @@ export class TiffProcessor {
 
 			// Non-initial loads or if no vscode (render immediately)
 			const imageData = await this.renderTiff(image, rasters);
+			const totalTime = performance.now() - startTime;
+			console.log(`[TiffProcessor] Total geotiff.js processing time: ${totalTime.toFixed(2)}ms`);
 			return { canvas, imageData, tiffData: this.rawTiffData };
 		} catch (error) {
 			console.error('Error processing TIFF:', error);
