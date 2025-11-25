@@ -51,6 +51,10 @@ async function initWasm() {
  * @property {number} channels
  * @property {number} bitsPerSample
  * @property {number} sampleFormat - 1=uint, 2=int, 3=float
+ * @property {number} compression - TIFF compression type
+ * @property {number} predictor - TIFF predictor value
+ * @property {number} photometricInterpretation - TIFF photometric interpretation
+ * @property {number} planarConfiguration - TIFF planar configuration
  * @property {Float32Array} data - Pixel data as floats
  * @property {number} min - Minimum value
  * @property {number} max - Maximum value
@@ -101,6 +105,10 @@ export class TiffWasmProcessor {
             channels: result.channels,
             bitsPerSample: result.bits_per_sample,
             sampleFormat: result.sample_format,
+            compression: result.compression,
+            predictor: result.predictor,
+            photometricInterpretation: result.photometric_interpretation,
+            planarConfiguration: result.planar_configuration,
             data: new Float32Array(result.get_data_as_f32()),
             min: result.min_value,
             max: result.max_value

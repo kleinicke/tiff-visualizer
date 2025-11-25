@@ -135,16 +135,23 @@ export class TiffProcessor {
 					// Store interleaved data
 					const data = wasmResult.data;
 
-					// For metadata, we need to load via geotiff.js (faster than full decode)
-					const tiff = await GeoTIFF.fromArrayBuffer(buffer);
-					const image = await tiff.getImage();
-					const fileDir = image.fileDirectory || {};
-					const compression = fileDir.Compression || 'Unknown';
-					const predictor = fileDir.Predictor;
-					const photometricInterpretation = fileDir.PhotometricInterpretation;
-					const planarConfig = fileDir.PlanarConfiguration;
+					// Use metadata from WASM (no need to parse again with geotiff.js!)
+					const compression = wasmResult.compression;
+					const predictor = wasmResult.predictor;
+					const photometricInterpretation = wasmResult.photometricInterpretation;
+					const planarConfig = wasmResult.planarConfiguration;
+					console.log(`[TiffProcessor] Using metadata from WASM: compression=${compression}, predictor=${predictor}`);
 
 					// Store TIFF data for pixel inspection and re-rendering
+					// Create a minimal image-like object for compatibility
+					const image = {
+						getWidth: () => width,
+						getHeight: () => height,
+						getSamplesPerPixel: () => samplesPerPixel,
+						getBitsPerSample: () => bitsPerSample,
+						getSampleFormat: () => sampleFormat
+					};
+
 					this.rawTiffData = {
 						image: image,
 						rasters: rasters,

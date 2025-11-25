@@ -19,6 +19,11 @@ pub struct TiffResult {
     channels: u32,
     bits_per_sample: u32,
     sample_format: u32, // 1=uint, 2=int, 3=float
+    // Metadata fields
+    compression: u32,
+    predictor: u32,
+    photometric_interpretation: u32,
+    planar_configuration: u32,
     // Data stored as bytes, interpreted based on sample_format
     data: Vec<u8>,
     // Computed statistics
@@ -61,6 +66,26 @@ impl TiffResult {
     #[wasm_bindgen(getter)]
     pub fn max_value(&self) -> f64 {
         self.max_value
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn compression(&self) -> u32 {
+        self.compression
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn predictor(&self) -> u32 {
+        self.predictor
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn photometric_interpretation(&self) -> u32 {
+        self.photometric_interpretation
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn planar_configuration(&self) -> u32 {
+        self.planar_configuration
     }
 
     /// Get raw data as bytes (for transferring to JS)
@@ -136,6 +161,23 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         tiff::ColorType::CMYK(bits) => *bits as u32,
         _ => 8,
     };
+
+    // Extract metadata from decoder
+    // Get compression method (default to 1 = None if not found)
+    let compression = decoder.get_tag_u32(tiff::tags::Tag::Compression)
+        .unwrap_or(1);
+    
+    // Get predictor (default to 1 = None if not found)
+    let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor)
+        .unwrap_or(1);
+    
+    // Get photometric interpretation (default to 1 = BlackIsZero if not found)
+    let photometric_interpretation = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
+        .unwrap_or(1);
+    
+    // Get planar configuration (default to 1 = Chunky if not found)
+    let planar_configuration = decoder.get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
+        .unwrap_or(1);
 
     // Read image data
     let decode_result = decoder.read_image()
@@ -227,6 +269,10 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         channels,
         bits_per_sample,
         sample_format,
+        compression,
+        predictor,
+        photometric_interpretation,
+        planar_configuration,
         data: data_bytes,
         min_value: min_val,
         max_value: max_val,
