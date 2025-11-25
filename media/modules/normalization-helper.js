@@ -79,6 +79,7 @@ export class NormalizationHelper {
      * @returns {Uint8Array} LUT array mapping input values to output 0-255
      */
     static generateLut(settings, bitDepth, maxValue, normMin, normMax) {
+        const perfStart = performance.now();
         const lutSize = maxValue + 1;
         const lut = new Uint8Array(lutSize);
         const range = normMax - normMin;
@@ -97,6 +98,7 @@ export class NormalizationHelper {
             lut[i] = output;
         }
 
+        console.log(`[LUT] ${bitDepth}-bit LUT generation took ${(performance.now() - perfStart).toFixed(2)}ms`);
         return lut;
     }
 
@@ -195,6 +197,7 @@ export class ImageStatsCalculator {
      * @returns {{min: number, max: number}} Statistics
      */
     static calculateFloatStats(data, width, height, channels) {
+        const perfStart = performance.now();
         let minVal = Infinity;
         let maxVal = -Infinity;
 
@@ -209,6 +212,7 @@ export class ImageStatsCalculator {
             }
         }
 
+        console.log(`[Stats] Float stats calculation took ${(performance.now() - perfStart).toFixed(2)}ms`);
         return { min: minVal, max: maxVal };
     }
 
@@ -255,11 +259,15 @@ export class ImageRenderer {
      * @returns {ImageData} Rendered image data
      */
     static render(data, width, height, channels, isFloat, stats, settings, options = {}) {
+        const perfStart = performance.now();
         const result = this._renderInternal(data, width, height, channels, isFloat, stats, settings, options);
 
         if (options.flipY) {
-            return this._flipY(result);
+            const flipped = this._flipY(result);
+            console.log(`[Render] Total render time: ${(performance.now() - perfStart).toFixed(2)}ms (with flip)`);
+            return flipped;
         }
+        console.log(`[Render] Total render time: ${(performance.now() - perfStart).toFixed(2)}ms`);
         return result;
     }
 

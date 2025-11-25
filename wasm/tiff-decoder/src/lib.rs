@@ -132,6 +132,8 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
+    let start_time = js_sys::Date::now();
+
     let cursor = Cursor::new(data);
     let mut decoder = Decoder::new(cursor)
         .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
@@ -179,6 +181,8 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     let planar_configuration = decoder.get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1);
 
+    let decode_start = js_sys::Date::now();
+    
     // Read image data
     let decode_result = decoder.read_image()
         .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?;
@@ -238,32 +242,39 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         }
         DecodingResult::F32(data) => {
             let (min, max) = compute_stats_f32(&data);
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            // Pre-allocate for better performance
+            let mut bytes = Vec::with_capacity(data.len() * 4);
+            for &val in &data {
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
             (bytes, 3u32, min as f64, max as f64)
         }
         DecodingResult::F64(data) => {
             let (min, max) = compute_stats_f64(&data);
-            // Convert to f32 for consistency
-            let f32_data: Vec<f32> = data.iter().map(|&v| v as f32).collect();
-            let bytes: Vec<u8> = f32_data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            // Convert to f32 for consistency and pre-allocate
+            let mut bytes = Vec::with_capacity(data.len() * 4);
+            for &val in &data {
+                bytes.extend_from_slice(&(val as f32).to_le_bytes());
+            }
             (bytes, 3u32, min, max)
         }
         DecodingResult::F16(data) => {
-            // Convert f16 to f32 for processing
-            let f32_data: Vec<f32> = data.iter().map(|&v| v.to_f32()).collect();
-            let (min, max) = compute_stats_f32(&f32_data);
-            let bytes: Vec<u8> = f32_data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
-            (bytes, 3u32, min as f64, max as f64)
+            // Convert f16 to f32 for processing and pre-allocate
+            let mut bytes = Vec::with_capacity(data.len() * 4);
+            let mut min_val = f32::INFINITY;
+            let mut max_val = f32::NEG_INFINITY;
+            
+            for &val in &data {
+                let f32_val = val.to_f32();
+                if f32_val < min_val { min_val = f32_val; }
+                if f32_val > max_val { max_val = f32_val; }
+                bytes.extend_from_slice(&f32_val.to_le_bytes());
+            }
+            (bytes, 3u32, min_val as f64, max_val as f64)
         }
     };
 
-    Ok(TiffResult {
+    let result = Ok(TiffResult {
         width,
         height,
         channels,
@@ -276,7 +287,14 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         data: data_bytes,
         min_value: min_val,
         max_value: max_val,
-    })
+    });
+    
+    let total_time = js_sys::Date::now() - start_time;
+    let actual_decode_time = js_sys::Date::now() - decode_start;
+    web_sys::console::log_1(&format!("[Rust] Total time: {:.2}ms (metadata: {:.2}ms, decode+convert: {:.2}ms)", 
+        total_time, total_time - actual_decode_time, actual_decode_time).into());
+    
+    result
 }
 
 // Statistics computation functions

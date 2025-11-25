@@ -15,11 +15,14 @@ default = ["console_error_panic_hook"]
 wasm-bindgen = "0.2"
 tiff = "0.10.3"
 console_error_panic_hook = { version = "0.1.6", optional = true }
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 
 [profile.release]
-# Tell `rustc` to optimize for small code size.
-opt-level = "s"
+# Optimize for speed, not size
+opt-level = 3
 lto = true
+codegen-units = 1
