@@ -700,6 +700,7 @@ export class TiffProcessor {
 	 * @returns {Promise<ImageData|null>} - The rendered image data, or null if no pending render
 	 */
 	async performDeferredRender() {
+		const perfStart = performance.now();
 		if (!this._pendingRenderData) {
 			return null;
 		}
@@ -710,6 +711,7 @@ export class TiffProcessor {
 
 		// Now render with the correct format-specific settings
 		const imageData = await this.renderTiff(image, rasters);
+		console.log(`[TiffProcessor] Deferred render took ${(performance.now() - perfStart).toFixed(2)}ms`);
 		return imageData;
 	}
 } 

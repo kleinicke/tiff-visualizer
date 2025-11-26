@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.5.0 (2025-11-??)
+
+- Use a centralized rendering pipeline
+- Use Rust decoding for tiff and npy files
+- Use native png and jpg decoding
+
 ## 1.4.0 (2025-11-12)
 
 - Add support for OpenEXR (.exr) HDR image files

@@ -183,9 +183,12 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
 
     let decode_start = js_sys::Date::now();
     
-    // Read image data
+    // Read image data (decompression happens here)
     let decode_result = decoder.read_image()
         .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?;
+    
+    let decompress_time = js_sys::Date::now() - decode_start;
+    let convert_start = js_sys::Date::now();
 
     // Determine sample format and convert data to bytes
     let (data_bytes, sample_format, min_val, max_val) = match decode_result {
@@ -289,10 +292,14 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         max_value: max_val,
     });
     
+    let convert_time = js_sys::Date::now() - convert_start;
     let total_time = js_sys::Date::now() - start_time;
-    let actual_decode_time = js_sys::Date::now() - decode_start;
-    web_sys::console::log_1(&format!("[Rust] Total time: {:.2}ms (metadata: {:.2}ms, decode+convert: {:.2}ms)", 
-        total_time, total_time - actual_decode_time, actual_decode_time).into());
+    let metadata_time = total_time - decompress_time - convert_time;
+    
+    web_sys::console::log_1(&format!(
+        "[Rust] Total: {:.2}ms (metadata: {:.2}ms, decompress: {:.2}ms, convert: {:.2}ms)", 
+        total_time, metadata_time, decompress_time, convert_time
+    ).into());
     
     result
 }
