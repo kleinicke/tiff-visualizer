@@ -198,9 +198,8 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         }
         DecodingResult::U16(data) => {
             let (min, max) = compute_stats_u16(&data);
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
+            // SIMD-optimized byte conversion
+            let bytes = convert_u16_to_bytes_simd(&data);
             (bytes, 1u32, min as f64, max as f64)
         }
         DecodingResult::U32(data) => {
@@ -245,11 +244,8 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         }
         DecodingResult::F32(data) => {
             let (min, max) = compute_stats_f32(&data);
-            // Pre-allocate for better performance
-            let mut bytes = Vec::with_capacity(data.len() * 4);
-            for &val in &data {
-                bytes.extend_from_slice(&val.to_le_bytes());
-            }
+            // SIMD-optimized byte conversion
+            let bytes = convert_f32_to_bytes_simd(&data);
             (bytes, 3u32, min as f64, max as f64)
         }
         DecodingResult::F64(data) => {
@@ -302,6 +298,69 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     ).into());
     
     result
+}
+
+// SIMD-optimized conversion functions
+
+/// Convert f32 slice to little-endian bytes using SIMD
+#[inline]
+fn convert_f32_to_bytes_simd(data: &[f32]) -> Vec<u8> {
+    use wide::*;
+    
+    let mut bytes = Vec::with_capacity(data.len() * 4);
+    
+    // Process 4 f32s at a time (128-bit SIMD)
+    let chunks = data.chunks_exact(4);
+    let remainder = chunks.remainder();
+    
+    for chunk in chunks {
+        // Load 4 f32 values into SIMD register
+        let simd = f32x4::new([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        
+        // Convert each to bytes and append
+        let arr = simd.to_array();
+        for val in arr {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+    }
+    
+    // Handle remaining values (0-3) with scalar code
+    for &val in remainder {
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    
+    bytes
+}
+
+/// Convert u16 slice to little-endian bytes using SIMD
+#[inline]
+fn convert_u16_to_bytes_simd(data: &[u16]) -> Vec<u8> {
+    use wide::*;
+    
+    let mut bytes = Vec::with_capacity(data.len() * 2);
+    
+    // Process 8 u16s at a time (128-bit SIMD)
+    let chunks = data.chunks_exact(8);
+    let remainder = chunks.remainder();
+    
+    for chunk in chunks {
+        let simd = u16x8::new([
+            chunk[0], chunk[1], chunk[2], chunk[3],
+            chunk[4], chunk[5], chunk[6], chunk[7]
+        ]);
+        
+        let arr = simd.to_array();
+        for val in arr {
+            bytes.extend_from_slice(&val.to_le_bytes());
+        }
+    }
+    
+    // Handle remainder
+    for &val in remainder {
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    
+    bytes
 }
 
 // Statistics computation functions
