@@ -33,3 +33,7 @@ wasm/tiff-decoder/target/**
 wasm/tiff-decoder/Cargo.toml
 wasm/tiff-decoder/Cargo.lock
 scripts/build-wasm.sh
+
+# Exclude source files for webview (using bundle instead)
+media/modules/**
+media/imagePreview.js

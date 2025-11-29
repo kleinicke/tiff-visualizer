@@ -4986,10 +4986,13 @@ var ColormapConverter = class {
         } else if (oldResourceUri !== newResourceUri) {
           reloadImage();
         } else {
-          const startTime = performance.now();
-          updateImageWithNewSettings(changes);
-          const endTime = performance.now();
-          logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+          const hasPendingRender = tiffProcessor._pendingRenderData || npyProcessor && npyProcessor._pendingRenderData || pngProcessor && pngProcessor._pendingRenderData || ppmProcessor && ppmProcessor._pendingRenderData || pfmProcessor && pfmProcessor._pendingRenderData || exrProcessor && exrProcessor._pendingRenderData;
+          if (hasLoadedImage && !hasPendingRender) {
+            const startTime = performance.now();
+            updateImageWithNewSettings(changes);
+            const endTime = performance.now();
+            logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+          }
         }
         break;
       case "mask-filter-settings":

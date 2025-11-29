@@ -53,6 +53,14 @@ export class ImagePreview extends MediaPreview {
 
 	private _openTimestamp: number = 0;
 
+	public setOpenTimestamp(timestamp: number) {
+		this._openTimestamp = timestamp;
+		this._webviewEditor.webview.postMessage({
+			type: 'updateLoadStartTime',
+			timestamp: timestamp
+		});
+	}
+
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
 		resource: vscode.Uri,

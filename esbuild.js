@@ -121,6 +121,16 @@ if (isWatch) {
       },
     };
   }
+
+  webviewBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('webview watch build failed:', error);
+      } else {
+        console.log('webview watch build succeeded');
+      }
+    },
+  };
 }
 
 async function buildAll() {

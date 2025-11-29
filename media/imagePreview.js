@@ -631,11 +631,25 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					reloadImage();
 				} else {
 					// Update rendering with new settings, using optimization hints
-					const startTime = performance.now();
-					updateImageWithNewSettings(changes);
-					const endTime = performance.now();
-					logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+					// Only re-render if we have an image loaded AND it's not waiting for a deferred render
+					const hasPendingRender = tiffProcessor._pendingRenderData ||
+						(npyProcessor && npyProcessor._pendingRenderData) ||
+						(pngProcessor && pngProcessor._pendingRenderData) ||
+						(ppmProcessor && ppmProcessor._pendingRenderData) ||
+						(pfmProcessor && pfmProcessor._pendingRenderData) ||
+						(exrProcessor && exrProcessor._pendingRenderData);
+
+					if (hasLoadedImage && !hasPendingRender) {
+						const startTime = performance.now();
+						updateImageWithNewSettings(changes);
+						const endTime = performance.now();
+						logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+					}
 				}
+				break;
+
+			case 'updateLoadStartTime':
+				extensionLoadStartTime = message.timestamp;
 				break;
 
 			case 'mask-filter-settings':

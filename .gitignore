@@ -25,3 +25,6 @@ package-lock.json
 
 # Rust/WASM build artifacts
 wasm/tiff-decoder/target/
+
+# Generated bundles
+media/imagePreview.bundle.js

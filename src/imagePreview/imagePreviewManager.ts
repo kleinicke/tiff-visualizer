@@ -17,7 +17,7 @@ import { getOutputChannel } from '../extension';
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
-	
+
 	// Export the viewType to ensure it's preserved in the build
 	public static getViewType() {
 		return this.viewType;
@@ -179,10 +179,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	): Promise<void> {
 		// Capture timestamp immediately when file is opened
 		const openTimestamp = Date.now();
-		
+
 		// Log when opening a new file
 		const fileName = document.uri.path.split('/').pop() || document.uri.path;
-		getOutputChannel().appendLine(`📂 Opened: ${fileName}`);
+		getOutputChannel().appendLine(`📂 Opened 1: ${fileName}`);
 
 		this.createPreview(ImagePreview, this.extensionRoot, document, webviewEditor, openTimestamp);
 	}
@@ -231,6 +231,11 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		if (value && 'getCurrentFormat' in value) {
 			const format = (value as any).getCurrentFormat();
 			if (format) {
+				// Update the open timestamp to now when the preview becomes active
+				if (value && 'setOpenTimestamp' in value) {
+					(value as any).setOpenTimestamp(Date.now());
+				}
+
 				// Log format switch for debugging
 				getOutputChannel().appendLine(`→ Switched to format: ${format}`);
 
