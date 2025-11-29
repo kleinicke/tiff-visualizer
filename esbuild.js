@@ -40,6 +40,17 @@ const appStateManagerBuildOptions = {
   format: 'cjs'
 };
 
+// Build webview scripts
+const webviewBuildOptions = {
+  entryPoints: ['media/imagePreview.js'],
+  bundle: true,
+  outfile: 'media/imagePreview.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 // Build tests if they exist
 const testBuildOptions = {
   entryPoints: [],
@@ -48,10 +59,10 @@ const testBuildOptions = {
   platform: 'node',
   target: 'node16',
   external: [
-    'vscode', 
-    'assert', 
-    'mocha', 
-    'chai', 
+    'vscode',
+    'assert',
+    'mocha',
+    'chai',
     'vscode-extension-tester',
     'selenium-webdriver',
     'keytar',
@@ -98,7 +109,7 @@ if (isWatch) {
       }
     },
   };
-  
+
   if (testBuildOptions.entryPoints.length > 0) {
     testBuildOptions.watch = {
       onRebuild(error) {
@@ -117,15 +128,19 @@ async function buildAll() {
     // Build extension for Node.js
     await build(extensionBuildOptions);
     console.log('Extension (Node.js) built successfully');
-    
+
     // Build extension for browser
     await build(extensionWebBuildOptions);
     console.log('Extension (Web) built successfully');
-    
+
     // Build AppStateManager separately for testing
     await build(appStateManagerBuildOptions);
     console.log('AppStateManager built successfully');
-    
+
+    // Build webview scripts
+    await build(webviewBuildOptions);
+    console.log('Webview scripts built successfully');
+
     // Build tests if they exist
     if (testBuildOptions.entryPoints.length > 0) {
       await build(testBuildOptions);
