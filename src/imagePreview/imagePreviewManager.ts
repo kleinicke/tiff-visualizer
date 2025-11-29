@@ -236,8 +236,12 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 					(value as any).setOpenTimestamp(Date.now());
 				}
 
-				// Log format switch for debugging
-				getOutputChannel().appendLine(`→ Switched to format: ${format}`);
+				// Log when opening a new file (or switching back to it)
+				const resource = (value as any).resource;
+				if (resource) {
+					const fileName = resource.path.split('/').pop() || resource.path;
+					getOutputChannel().appendLine(`📂 Reopened: ${fileName}`);
+				}
 
 				// Switch AppStateManager to this preview's format
 				// This will load the cached settings for this format

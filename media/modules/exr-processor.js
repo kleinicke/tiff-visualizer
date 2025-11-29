@@ -142,7 +142,7 @@ export class ExrProcessor {
 			}
 
 			// If not initial load, render immediately with current settings
-			const imageData = this.renderExrToCanvas(canvas, this.settingsManager.settings);
+			const imageData = this.renderExrToCanvas(this.settingsManager.settings);
 
 			return {
 				canvas: canvas,
@@ -162,13 +162,12 @@ export class ExrProcessor {
 	 * @param {Object} settings - Current rendering settings
 	 * @returns {ImageData} - Rendered image data
 	 */
-	renderExrToCanvas(canvas, settings) {
+	renderExrToCanvas(settings) {
 		if (!this.rawExrData) {
 			throw new Error('No EXR data loaded');
 		}
 
 		const { width, height, data, channels } = this.rawExrData;
-		const ctx = canvas.getContext('2d');
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
@@ -206,7 +205,6 @@ export class ExrProcessor {
 			options
 		);
 
-		ctx.putImageData(imageData, 0, 0);
 		return imageData;
 	}
 
@@ -241,11 +239,7 @@ export class ExrProcessor {
 		if (this._pendingRenderData && this._isInitialLoad) {
 			// First render after initial load - use pending data
 			const { width, height } = this._pendingRenderData;
-			const canvas = document.createElement('canvas');
-			canvas.width = width;
-			canvas.height = height;
-
-			const imageData = this.renderExrToCanvas(canvas, settings);
+			const imageData = this.renderExrToCanvas(settings);
 			this._isInitialLoad = false;
 			this._pendingRenderData = null;
 
@@ -253,11 +247,7 @@ export class ExrProcessor {
 		} else if (this.rawExrData) {
 			// Re-render with new settings
 			const { width, height } = this.rawExrData;
-			const canvas = document.createElement('canvas');
-			canvas.width = width;
-			canvas.height = height;
-
-			return this.renderExrToCanvas(canvas, settings);
+			return this.renderExrToCanvas(settings);
 		}
 		return null;
 	}
