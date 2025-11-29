@@ -51,6 +51,8 @@ export class ImagePreview extends MediaPreview {
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
 	public readonly onDidExport = this._onDidExport.event;
 
+	private _openTimestamp: number = 0;
+
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
 		resource: vscode.Uri,
@@ -64,9 +66,11 @@ export class ImagePreview extends MediaPreview {
 		maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
 		histogramStatusBarEntry: HistogramStatusBarEntry,
 		colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
-		private readonly _manager: IImagePreviewManager
+		private readonly _manager: IImagePreviewManager,
+		openTimestamp?: number
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
+		this._openTimestamp = openTimestamp || Date.now();
 
 		this._sizeStatusBarEntry = sizeStatusBarEntry;
 		this._zoomStatusBarEntry = zoomStatusBarEntry;
@@ -578,7 +582,8 @@ export class ImagePreview extends MediaPreview {
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
 			folder: folderUri.toString(),
-			version: version
+			version: version,
+			loadStartTime: this._openTimestamp // For total elapsed time measurement (captured when file was opened)
 		};
 
 		const cssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.css'));

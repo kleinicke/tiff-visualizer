@@ -222,7 +222,9 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "clean": "rimraf out",
-    "compile": "npm run clean && node ./esbuild.js",
+    "build:wasm": "cd wasm/tiff-decoder && wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && sed -i '' 's/tiff_wasm_bg\\.wasm/tiff-wasm.wasm/g' media/wasm/tiff-wasm.js",
+    "compile": "npm run clean && npm run build:wasm && node ./esbuild.js",
+    "compile:quick": "npm run clean && node ./esbuild.js",
     "watch": "npm run clean && node ./esbuild.js --watch",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",

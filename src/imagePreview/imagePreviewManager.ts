@@ -177,20 +177,24 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
 	): Promise<void> {
+		// Capture timestamp immediately when file is opened
+		const openTimestamp = Date.now();
+		
 		// Log when opening a new file
 		const fileName = document.uri.path.split('/').pop() || document.uri.path;
 		getOutputChannel().appendLine(`📂 Opened: ${fileName}`);
 
-		this.createPreview(ImagePreview, this.extensionRoot, document, webviewEditor);
+		this.createPreview(ImagePreview, this.extensionRoot, document, webviewEditor, openTimestamp);
 	}
 
 	public createPreview(
 		PreviewClass: any,
 		extensionRoot: vscode.Uri,
 		document: vscode.CustomDocument,
-		webviewEditor: vscode.WebviewPanel
+		webviewEditor: vscode.WebviewPanel,
+		openTimestamp?: number
 	): void {
-		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.maskFilterStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this);
+		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.maskFilterStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 

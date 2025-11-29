@@ -64,6 +64,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let peerImageUris = []; // Track peer URIs for comparison state
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
+	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
 
 	// Colormap conversion state
@@ -113,6 +114,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 */
 	function initialize() {
 		initialLoadStartTime = performance.now();
+		// Get the extension start time from settings (for total elapsed measurement)
+		extensionLoadStartTime = settingsManager.settings.loadStartTime || 0;
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
@@ -335,7 +338,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			if (!tiffProcessor._pendingRenderData) {
 				const endTime = performance.now();
-				logToOutput(`[Perf] TIFF Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
 
 		} catch (error) {
@@ -367,7 +372,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			if (!exrProcessor._pendingRenderData) {
 				const endTime = performance.now();
-				logToOutput(`[Perf] EXR Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] EXR Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
 
 		} catch (error) {
@@ -395,7 +402,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			if (!pfmProcessor._pendingRenderData) {
 				const endTime = performance.now();
-				logToOutput(`[Perf] PFM Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] PFM Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
 		} catch (error) {
 			console.error('Error handling PFM:', error);
@@ -422,7 +431,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			if (!ppmProcessor._pendingRenderData) {
 				const endTime = performance.now();
-				logToOutput(`[Perf] PPM/PGM Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] PPM/PGM Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
 		} catch (error) {
 			console.error('Error handling PPM/PGM:', error);
@@ -449,7 +460,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			if (!pngProcessor._pendingRenderData) {
 				const endTime = performance.now();
-				logToOutput(`[Perf] PNG/JPEG Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] PNG/JPEG Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
 		} catch (error) {
 			console.error('Error handling PNG/JPEG:', error);
@@ -476,7 +489,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			if (!npyProcessor._pendingRenderData) {
 				const endTime = performance.now();
-				logToOutput(`[Perf] NPY/NPZ Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] NPY/NPZ Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
 		} catch (error) {
 			console.error('Error handling NPY/NPZ:', error);
@@ -603,7 +618,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						// Log deferred render completion (only if we actually rendered deferred data)
 						if (initialLoadStartTime > 0) {
 							const endTime = performance.now();
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${(endTime - initialLoadStartTime).toFixed(2)}ms`);
+							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 							initialLoadStartTime = 0; // Reset
 						}
 					}
