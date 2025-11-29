@@ -28,3 +28,4 @@ wasm/tiff-decoder/target/
 
 # Generated bundles
 media/imagePreview.bundle.js
+media/imagePreview.bundle.js.map
