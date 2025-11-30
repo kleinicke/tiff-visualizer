@@ -73,6 +73,21 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.pastePosition', async () => {
+		logCommand('pastePosition', 'start');
+		try {
+			const activePreview = previewManager.activePreview;
+			if (activePreview) {
+				activePreview.pastePosition();
+				logCommand('pastePosition', 'success');
+			} else {
+				logCommand('pastePosition', 'error', 'No active preview');
+			}
+		} catch (error) {
+			logCommand('pastePosition', 'error', String(error));
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsPng', async () => {
 		logCommand('exportAsPng', 'start');
 		const activePreview = previewManager.activePreview;

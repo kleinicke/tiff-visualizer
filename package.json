@@ -99,6 +99,11 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.pastePosition",
+        "title": "Paste Position",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.resetZoom",
         "title": "Reset Zoom",
         "category": "TIFF Visualizer"

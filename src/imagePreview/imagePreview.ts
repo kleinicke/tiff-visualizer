@@ -223,6 +223,27 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
+	public pastePosition() {
+		if (this.previewState === PreviewState.Active) {
+			// Get the stored position from the manager (shared across all webviews)
+			const manager = this._manager as any;
+			if (manager.getCopiedPosition) {
+				const positionState = manager.getCopiedPosition();
+				if (positionState) {
+					this._webviewEditor.webview.postMessage({ 
+						type: 'pastePosition',
+						state: positionState
+					});
+				} else {
+					// No position copied - let webview show error
+					this._webviewEditor.webview.postMessage({ type: 'pastePosition' });
+				}
+			} else {
+				this._webviewEditor.webview.postMessage({ type: 'pastePosition' });
+			}
+		}
+	}
+
 	public resetZoom() {
 		if (this.previewState === PreviewState.Active) {
 			this._webviewEditor.webview.postMessage({ type: 'resetZoom' });

@@ -74,6 +74,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let originalImageData = null;
 	let hasAppliedConversion = false;
 
+	// Copied position state (for paste position feature)
+	// Stores position as relative coordinates (0-1) for cross-resolution compatibility
+	let copiedPositionState = null;
+
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
 	let shouldRestoreHistogram = false;
@@ -606,6 +610,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			case 'copyImage':
 				copyImage();
+				break;
+
+			case 'pastePosition':
+				// Pass the state from the extension (for cross-webview paste)
+				pastePosition(message.state);
 				break;
 
 			case 'updateSettings':
@@ -1245,6 +1254,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.copyImage' });
 			}));
 
+			// Add Paste Position option (uses extension command for cross-webview support)
+			menu.appendChild(createMenuItem('Paste Position', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
+			}));
+
 			// Add Export as PNG option (triggers command via extension)
 			menu.appendChild(createMenuItem('Export as PNG', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' });
@@ -1327,13 +1341,17 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}, 0);
 		});
 
-		// Prevent cut and paste operations (only copy makes sense for image viewer)
+		// Prevent cut operation (only copy makes sense for image viewer)
 		document.addEventListener('cut', (e) => {
 			e.preventDefault();
 		});
 
+		// Handle paste for position pasting (Ctrl+V / Cmd+V)
+		// Uses extension command for cross-webview support
 		document.addEventListener('paste', (e) => {
 			e.preventDefault();
+			// Use extension command for cross-webview paste support
+			vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
 		});
 
 		// Comparison toggle
@@ -1561,7 +1579,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
-	 * Copy image to clipboard
+	 * Copy image to clipboard and store position/zoom state
 	 */
 	async function copyImage() {
 		if (!canvas) return;
@@ -1578,6 +1596,62 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			showNotification('No image loaded to copy', 'error');
 			console.error('Copy failed: No image available');
 			return;
+		}
+
+		// Store the current position and zoom state for paste position feature
+		// Position is stored as relative coordinates (0-1) for cross-resolution compatibility
+		if (canvas && imageElement) {
+			const zoomState = zoomController.getCurrentState();
+			const imageWidth = canvas.width;
+			const imageHeight = canvas.height;
+			
+			// Calculate the center point of the viewport in image coordinates
+			// This is what the user is looking at
+			let centerXImage, centerYImage;
+			
+			if (zoomState.scale === 'fit') {
+				// In fit mode, the center is simply the image center
+				centerXImage = imageWidth / 2;
+				centerYImage = imageHeight / 2;
+			} else {
+				// In zoomed mode, calculate the visible center point
+				const displayedWidth = imageWidth * zoomState.scale;
+				const displayedHeight = imageHeight * zoomState.scale;
+				
+				// Get the element's position
+				const rect = imageElement.getBoundingClientRect();
+				const elemLeftDoc = window.scrollX + rect.left;
+				const elemTopDoc = window.scrollY + rect.top;
+				
+				// Viewport center in document coordinates
+				const viewportCenterX = window.scrollX + container.clientWidth / 2;
+				const viewportCenterY = window.scrollY + container.clientHeight / 2;
+				
+				// Convert to image coordinates
+				centerXImage = (viewportCenterX - elemLeftDoc) / zoomState.scale;
+				centerYImage = (viewportCenterY - elemTopDoc) / zoomState.scale;
+				
+				// Clamp to valid image bounds
+				centerXImage = Math.max(0, Math.min(imageWidth, centerXImage));
+				centerYImage = Math.max(0, Math.min(imageHeight, centerYImage));
+			}
+			
+			// Store as relative position (0-1) for cross-resolution compatibility
+			copiedPositionState = {
+				relativeX: centerXImage / imageWidth,
+				relativeY: centerYImage / imageHeight,
+				scale: zoomState.scale,
+				sourceWidth: imageWidth,
+				sourceHeight: imageHeight
+			};
+			
+			// Send position to extension for cross-webview paste support
+			vscode.postMessage({
+				type: 'positionCopied',
+				state: copiedPositionState
+			});
+			
+			console.log('Position copied:', copiedPositionState);
 		}
 
 		try {
@@ -1610,12 +1684,120 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				})
 			})]);
 
-			// Show success notification
-			showNotification('Image copied to clipboard', 'success');
+			// Show success notification - include position info
+			const positionInfo = copiedPositionState ? ' + position' : '';
+			showNotification(`Image${positionInfo} copied to clipboard`, 'success');
 		} catch (e) {
 			console.error('Copy failed:', e);
 			showNotification(`Failed to copy image: ${e.message}`, 'error');
 		}
+	}
+
+	/**
+	 * Paste position from previously copied state
+	 * Scales the position for images of different sizes
+	 * @param {Object} positionState - Position state (from extension for cross-webview, or local)
+	 */
+	function pastePosition(positionState) {
+		// Use provided state (from extension) or fall back to local state
+		const state = positionState || copiedPositionState;
+		
+		if (!state) {
+			showNotification('No position copied. Copy an image first (Ctrl+C)', 'error');
+			return;
+		}
+
+		if (!canvas || !imageElement || !hasLoadedImage) {
+			showNotification('No image loaded to apply position to', 'error');
+			return;
+		}
+
+		const targetWidth = canvas.width;
+		const targetHeight = canvas.height;
+		const sourceWidth = state.sourceWidth;
+		const sourceHeight = state.sourceHeight;
+
+		// Calculate the target position using relative coordinates
+		const targetCenterX = state.relativeX * targetWidth;
+		const targetCenterY = state.relativeY * targetHeight;
+
+		// Calculate the new zoom level
+		// For same-size images, use the same zoom
+		// For different sizes, scale the zoom proportionally based on the geometric mean
+		// This ensures that the "visual coverage" is similar
+		let targetScale = state.scale;
+		
+		if (targetScale !== 'fit') {
+			// Scale factor based on the geometric mean of width and height ratios
+			// This gives balanced scaling for images with different aspect ratios
+			const widthRatio = targetWidth / sourceWidth;
+			const heightRatio = targetHeight / sourceHeight;
+			const scaleRatio = Math.sqrt(widthRatio * heightRatio);
+			
+			targetScale = state.scale * scaleRatio;
+			
+			// Clamp to valid zoom range
+			const constants = settingsManager.constants;
+			targetScale = Math.max(constants.MIN_SCALE, Math.min(constants.MAX_SCALE, targetScale));
+		}
+
+		// Apply the zoom and position
+		if (targetScale === 'fit') {
+			zoomController.updateScale('fit');
+		} else {
+			// First set the scale (this will center on current view)
+			zoomController.updateScale(targetScale);
+			
+			// Then scroll to center on the target point
+			// We need to wait a tick for the scale to be applied
+			setTimeout(() => {
+				const rect = imageElement.getBoundingClientRect();
+				const elemLeftDoc = window.scrollX + rect.left;
+				const elemTopDoc = window.scrollY + rect.top;
+				
+				// Calculate where the target center should be in document coordinates
+				const targetDocX = elemLeftDoc + targetCenterX * targetScale;
+				const targetDocY = elemTopDoc + targetCenterY * targetScale;
+				
+				// Scroll to center this point in the viewport
+				const newScrollX = targetDocX - container.clientWidth / 2;
+				const newScrollY = targetDocY - container.clientHeight / 2;
+				
+				// Clamp to valid scroll range
+				const maxScrollX = Math.max(0, document.documentElement.scrollWidth - container.clientWidth);
+				const maxScrollY = Math.max(0, document.documentElement.scrollHeight - container.clientHeight);
+				
+				window.scrollTo(
+					Math.max(0, Math.min(maxScrollX, newScrollX)),
+					Math.max(0, Math.min(maxScrollY, newScrollY))
+				);
+			}, 50);
+		}
+
+		// Show success notification with info about any scaling applied
+		const sameSize = sourceWidth === targetWidth && sourceHeight === targetHeight;
+		if (sameSize) {
+			showNotification('Position applied', 'success');
+		} else {
+			const scalePercent = Math.round((targetWidth / sourceWidth) * 100);
+			showNotification(`Position applied (scaled to ${scalePercent}% size)`, 'success');
+		}
+
+		console.log('Position pasted:', {
+			targetCenter: { x: targetCenterX, y: targetCenterY },
+			targetScale,
+			sameSize,
+			sourceSize: { w: sourceWidth, h: sourceHeight },
+			targetSize: { w: targetWidth, h: targetHeight }
+		});
+	}
+
+	/**
+	 * Check if a position has been copied (local state only - for context menu)
+	 * Note: Cross-webview paste uses extension-stored state
+	 */
+	function hasPositionCopied() {
+		return copiedPositionState !== null;
 	}
 
 	/**

@@ -38,6 +38,7 @@ export class MessageRouter {
 		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
+		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -247,6 +248,18 @@ class LogMessageHandler implements MessageHandler {
 		if (message.value) {
 			const output = require('../extension').getOutputChannel();
 			output.appendLine(message.value);
+		}
+	}
+}
+
+class PositionCopiedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Store the copied position in the manager for cross-webview paste
+		if (message.state) {
+			const manager = preview.getManager();
+			if ('setCopiedPosition' in manager) {
+				(manager as any).setCopiedPosition(message.state);
+			}
 		}
 	}
 }

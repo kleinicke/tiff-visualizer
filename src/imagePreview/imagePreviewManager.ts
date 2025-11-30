@@ -14,6 +14,15 @@ import { ImagePreview } from './imagePreview';
 import type { IImagePreview, IImagePreviewManager } from './types';
 import { getOutputChannel } from '../extension';
 
+// Stored position state for cross-webview paste position feature
+export interface CopiedPositionState {
+	relativeX: number;  // 0-1, center point as fraction of image width
+	relativeY: number;  // 0-1, center point as fraction of image height
+	scale: number | 'fit';
+	sourceWidth: number;
+	sourceHeight: number;
+}
+
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
@@ -27,6 +36,9 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	private _activePreview: IImagePreview | undefined;
 	private readonly _settingsManager = new ImageSettingsManager();
 	private readonly _appStateManager = new AppStateManager();
+	
+	// Stored position for cross-webview paste position feature
+	private _copiedPositionState: CopiedPositionState | undefined;
 
 	constructor(
 		private readonly extensionRoot: vscode.Uri,
@@ -149,6 +161,28 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 
 	public getComparisonBase(): vscode.Uri | undefined {
 		return this._settingsManager.comparisonBaseUri;
+	}
+
+	/**
+	 * Store copied position state for cross-webview paste position feature
+	 */
+	public setCopiedPosition(state: CopiedPositionState): void {
+		this._copiedPositionState = state;
+		getOutputChannel().appendLine(`Position copied: (${(state.relativeX * 100).toFixed(1)}%, ${(state.relativeY * 100).toFixed(1)}%) at ${state.scale === 'fit' ? 'fit' : (state.scale * 100).toFixed(0) + '%'} zoom from ${state.sourceWidth}×${state.sourceHeight} image`);
+	}
+
+	/**
+	 * Get the stored position state for pasting
+	 */
+	public getCopiedPosition(): CopiedPositionState | undefined {
+		return this._copiedPositionState;
+	}
+
+	/**
+	 * Check if a position has been copied
+	 */
+	public hasPositionCopied(): boolean {
+		return this._copiedPositionState !== undefined;
 	}
 
 	public updateAllPreviews() {
