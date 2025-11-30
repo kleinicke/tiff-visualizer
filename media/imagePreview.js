@@ -76,10 +76,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
+	let shouldRestoreHistogram = false;
 	if (persistedState) {
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
+		shouldRestoreHistogram = persistedState.isHistogramVisible || false;
 	}
 
 	// Image collection state
@@ -100,6 +102,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			isShowingPeer: isShowingPeer,
 			currentResourceUri: settingsManager.settings.resourceUri,
 			colormapConversionState: colormapConversionState,
+			isHistogramVisible: histogramOverlay.getVisibility(),
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
@@ -541,6 +544,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		zoomController.applyInitialZoom();
 		mouseHandler.addMouseListeners(imageElement);
 
+		// Restore histogram visibility if it was previously open
+		if (shouldRestoreHistogram && !histogramOverlay.getVisibility()) {
+			histogramOverlay.show();
+			shouldRestoreHistogram = false; // Only restore once
+		}
+
 		// Update histogram if visible
 		updateHistogramData();
 	}
@@ -769,8 +778,6 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Only update histogram if it's visible - this is expensive (~300-500ms for large images)
 		if (!histogramOverlay.getVisibility()) {
-
-
 			return;
 		}
 		try {
@@ -780,7 +787,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// Get current image data from canvas
 			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-			// Update histogram overlay
+			// Update histogram overlay with just canvas data
 			histogramOverlay.update(imageData);
 		} catch (error) {
 			console.error('Error updating histogram:', error);
@@ -1246,7 +1253,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			menu.appendChild(createSeparator());
 
 			// Add Toggle Histogram option (triggers command via extension for logging)
-			menu.appendChild(createMenuItem('Toggle Histogram (beta)', () => {
+			menu.appendChild(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
 
@@ -1294,12 +1301,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
 			}));
 
-			// Add Toggle Color Picker Mode option
-			const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
-			const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
-			menu.appendChild(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
-			}));
+			// Add Toggle Color Picker Mode option - ONLY in Gamma Mode
+			// In other modes, we always show original values
+			const isGammaMode = settingsManager.settings.normalization && settingsManager.settings.normalization.gammaMode;
+			if (isGammaMode) {
+				const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
+				const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
+				menu.appendChild(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
+					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
+				}));
+			}
 			document.body.appendChild(menu);
 
 			// Remove menu when clicking outside

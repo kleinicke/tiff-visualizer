@@ -141,6 +141,8 @@ export class SettingsManager {
     const floatModeChanged = oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
     const nanColorChanged = (oldSettings.nanColor ?? 'black') !== (newSettings.nanColor ?? 'black');
 
+    const colorPickerModeChanged = oldSettings.colorPickerShowModified !== newSettings.colorPickerShowModified;
+
     // Determine change type
     if (masksChanged) {
       changes.changedMasks = true;
@@ -153,12 +155,12 @@ export class SettingsManager {
     // Determine if anything changed at all
     const somethingChanged = gammaChanged || brightnessChanged || normRangeChanged ||
       normAutoChanged || normGammaModeChanged || masksChanged ||
-      rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged;
+      rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged || colorPickerModeChanged;
 
-    // If only gamma, brightness, normalization ranges, or nanColor changed, it's parameters-only
+    // If only gamma, brightness, normalization ranges, nanColor, or colorPickerMode changed, it's parameters-only
     // Also treat "no changes" as parameters-only to avoid unnecessary slow path
     if (!somethingChanged ||
-      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged) &&
+      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || colorPickerModeChanged) &&
         !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
       changes.parametersOnly = true;
     } else {

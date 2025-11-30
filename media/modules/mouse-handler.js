@@ -15,17 +15,17 @@ export class MouseHandler {
 		this.pfmProcessor = null;
 		this.ppmProcessor = null;
 		this.pngProcessor = null;
-		
+
 		// State
 		this.ctrlPressed = false;
 		this.altPressed = false;
 		this.isActive = false;
 		this.consumeClick = true;
-		
+
 		// DOM elements
 		this.container = document.body;
 		this.imageElement = null;
-		
+
 		this._setupKeyboardListeners();
 	}
 
@@ -119,7 +119,7 @@ export class MouseHandler {
 	 */
 	_getPixelInfo(e) {
 		if (!this.imageElement) return '';
-		
+
 		const rect = this.imageElement.getBoundingClientRect();
 		const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
 		const naturalWidth = canvas.width;
@@ -140,7 +140,7 @@ export class MouseHandler {
 		x = Math.min(Math.max(0, x), Math.max(0, naturalWidth - 1));
 		y = Math.min(Math.max(0, y), Math.max(0, naturalHeight - 1));
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
-		
+
 		return `${x}x${y} ${color}`;
 	}
 
@@ -175,7 +175,9 @@ export class MouseHandler {
 	 */
 	_getColorAtPixel(x, y, naturalWidth, naturalHeight) {
 		// Check if we should show modified values
-		const showModified = this.settingsManager.settings.colorPickerShowModified || false;
+		// ONLY allow showing modified values if we are in Gamma Mode
+		const isGammaMode = this.settingsManager.settings.normalization && this.settingsManager.settings.normalization.gammaMode;
+		const showModified = isGammaMode && (this.settingsManager.settings.colorPickerShowModified || false);
 
 		// Try TIFF processor first
 		if (this.tiffProcessor) {
