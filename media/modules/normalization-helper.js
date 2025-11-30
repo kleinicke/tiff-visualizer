@@ -450,8 +450,18 @@ export class ImageRenderer {
 
         // Generate 16-bit LUT for gamma/brightness
         const { min: vMin, max: vMax } = NormalizationHelper.getEffectiveVisualizationRange(settings, min, max);
-        // For float, we map the quantized 0-65535 range to the LUT, not the float values directly
-        const lut = NormalizationHelper.generateLut(settings, 16, 65535, 0, 65535);
+
+        // For float, we map the quantized 0-65535 range to the LUT.
+        // Since we already accounted for brightness/exposure in getEffectiveVisualizationRange (by expanding/shrinking vMin/vMax),
+        // we must NOT apply it again in the LUT. The LUT should only handle gamma.
+        const lutSettings = {
+            ...settings,
+            brightness: {
+                ...settings.brightness,
+                offset: 0
+            }
+        };
+        const lut = NormalizationHelper.generateLut(lutSettings, 16, 65535, 0, 65535);
         const vRange = vMax - vMin;
         const invVRange = vRange > 0 ? 65535 / vRange : 0;
 
