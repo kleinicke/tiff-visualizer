@@ -46,6 +46,12 @@ export interface StatusBarState {
 	visibleEntries: Set<string>;
 }
 
+export interface HistogramState {
+	isVisible: boolean;
+	position?: { top: number; left: number };
+	scaleMode: 'linear' | 'sqrt';
+}
+
 // Events emitted by the state manager
 export interface AppStateEvents {
 	'settings:changed': ImageSettings;
@@ -65,6 +71,7 @@ export class AppStateManager {
 	private readonly _onDidChangeStats = new vscode.EventEmitter<ImageStats>();
 	private readonly _onDidActivatePreview = new vscode.EventEmitter<any>();
 	private readonly _onDidDeactivatePreview = new vscode.EventEmitter<any>();
+	private readonly _onDidChangeHistogramState = new vscode.EventEmitter<HistogramState>();
 
 	// Public event emitters
 	public readonly onDidChangeSettings = this._onDidChangeSettings.event;
@@ -72,6 +79,7 @@ export class AppStateManager {
 	public readonly onDidChangeStats = this._onDidChangeStats.event;
 	public readonly onDidActivatePreview = this._onDidActivatePreview.event;
 	public readonly onDidDeactivatePreview = this._onDidDeactivatePreview.event;
+	public readonly onDidChangeHistogramState = this._onDidChangeHistogramState.event;
 
 	// State storage
 	private _imageSettings: ImageSettings = {
@@ -107,6 +115,13 @@ export class AppStateManager {
 		visibleEntries: new Set()
 	};
 
+	// Global histogram state (persists across all images)
+	private _histogramState: HistogramState = {
+		isVisible: false,
+		position: undefined,
+		scaleMode: 'sqrt'
+	};
+
 	// Per-format settings cache
 	private _formatSettingsCache: Map<ImageFormatType, ImageSettings> = new Map();
 	private _currentFormat: ImageFormatType | undefined;
@@ -134,6 +149,30 @@ export class AppStateManager {
 
 	public get currentFormat(): ImageFormatType | undefined {
 		return this._currentFormat;
+	}
+
+	public get histogramState(): Readonly<HistogramState> {
+		return this._histogramState;
+	}
+
+	// Histogram State Management
+	public setHistogramVisible(isVisible: boolean): void {
+		if (this._histogramState.isVisible !== isVisible) {
+			this._histogramState.isVisible = isVisible;
+			this._onDidChangeHistogramState.fire(this._histogramState);
+		}
+	}
+
+	public setHistogramPosition(position: { top: number; left: number } | undefined): void {
+		this._histogramState.position = position;
+		this._onDidChangeHistogramState.fire(this._histogramState);
+	}
+
+	public setHistogramScaleMode(mode: 'linear' | 'sqrt'): void {
+		if (this._histogramState.scaleMode !== mode) {
+			this._histogramState.scaleMode = mode;
+			this._onDidChangeHistogramState.fire(this._histogramState);
+		}
 	}
 
 	// Image Settings Management
@@ -428,5 +467,6 @@ export class AppStateManager {
 		this._onDidChangeStats.dispose();
 		this._onDidActivatePreview.dispose();
 		this._onDidDeactivatePreview.dispose();
+		this._onDidChangeHistogramState.dispose();
 	}
 } 

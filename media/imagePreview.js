@@ -80,12 +80,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
-	let shouldRestoreHistogram = false;
 	if (persistedState) {
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
-		shouldRestoreHistogram = persistedState.isHistogramVisible || false;
+		// Note: Histogram visibility is now managed globally by the extension
+		// and restored via restoreHistogramState message when webview becomes active
 	}
 
 	// Image collection state
@@ -548,11 +548,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		zoomController.applyInitialZoom();
 		mouseHandler.addMouseListeners(imageElement);
 
-		// Restore histogram visibility if it was previously open
-		if (shouldRestoreHistogram && !histogramOverlay.getVisibility()) {
-			histogramOverlay.show();
-			shouldRestoreHistogram = false; // Only restore once
-		}
+		// Note: Histogram visibility is restored via restoreHistogramState message
+		// when webview becomes active (sent from ImagePreview.sendHistogramState)
 
 		// Update histogram if visible
 		updateHistogramData();
@@ -752,6 +749,25 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					type: 'histogramVisibilityChanged',
 					isVisible: histogramOverlay.getVisibility()
 				});
+				break;
+
+			case 'restoreHistogramState':
+				// Restore histogram state from extension (global state)
+				// Skip notification since extension already knows the state
+				if (message.isVisible && !histogramOverlay.getVisibility()) {
+					histogramOverlay.show(true); // Skip notification
+					updateHistogramData();
+				} else if (!message.isVisible && histogramOverlay.getVisibility()) {
+					histogramOverlay.hide(true); // Skip notification
+				}
+				// Restore position if provided
+				if (message.position) {
+					histogramOverlay.setPosition(message.position.left, message.position.top);
+				}
+				// Restore scale mode if provided
+				if (message.scaleMode) {
+					histogramOverlay.setScaleMode(message.scaleMode);
+				}
 				break;
 
 			case 'requestHistogram':

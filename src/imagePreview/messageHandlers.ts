@@ -36,6 +36,8 @@ export class MessageRouter {
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
+		this.handlers.set('histogramPositionChanged', new HistogramPositionChangedMessageHandler());
+		this.handlers.set('histogramScaleModeChanged', new HistogramScaleModeChangedMessageHandler());
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
@@ -169,6 +171,17 @@ class InitialDataMessageHandler implements MessageHandler {
 				isTiff: preview.isTiff
 			}
 		});
+		
+		// Send global histogram state to new webview
+		const histogramState = preview.getManager().appStateManager.histogramState;
+		preview.getWebview().postMessage({
+			type: 'restoreHistogramState',
+			isVisible: histogramState.isVisible,
+			position: histogramState.position,
+			scaleMode: histogramState.scaleMode
+		});
+		// Sync status bar to reflect current global histogram visibility
+		preview.syncHistogramStatusBar(histogramState.isVisible);
 	}
 }
 
@@ -232,6 +245,22 @@ class HistogramVisibilityChangedMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		const isVisible = message.isVisible;
 		preview.updateHistogramVisibility(isVisible);
+	}
+}
+
+class HistogramPositionChangedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (message.position) {
+			preview.getManager().appStateManager.setHistogramPosition(message.position);
+		}
+	}
+}
+
+class HistogramScaleModeChangedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (message.mode) {
+			preview.getManager().appStateManager.setHistogramScaleMode(message.mode);
+		}
 	}
 }
 

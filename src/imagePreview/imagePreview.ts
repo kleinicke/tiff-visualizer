@@ -105,6 +105,11 @@ export class ImagePreview extends MediaPreview {
 
 			// Also update the global state
 			this.updateState();
+
+			// Restore histogram state when webview becomes active
+			if (webviewEditor.active && webviewEditor.visible) {
+				this.sendHistogramState();
+			}
 		}));
 
 		// Single unified settings update handler
@@ -354,12 +359,38 @@ export class ImagePreview extends MediaPreview {
 
 	public updateHistogramVisibility(isVisible: boolean): void {
 		this._histogramStatusBarEntry.updateVisibility(isVisible);
+		// Update global histogram state
+		this._manager.appStateManager.setHistogramVisible(isVisible);
+	}
+
+	/**
+	 * Sync the histogram status bar entry with the current visibility state.
+	 * Unlike updateHistogramVisibility, this doesn't update the global state.
+	 */
+	public syncHistogramStatusBar(isVisible: boolean): void {
+		this._histogramStatusBarEntry.updateVisibility(isVisible);
 	}
 
 	public toggleHistogram(): void {
 		if (this.previewState === PreviewState.Active) {
 			this._webviewEditor.webview.postMessage({ type: 'toggleHistogram' });
 		}
+	}
+
+	/**
+	 * Send the global histogram state to the webview.
+	 * Called when the webview becomes active to restore histogram visibility.
+	 */
+	private sendHistogramState(): void {
+		const histogramState = this._manager.appStateManager.histogramState;
+		this._webviewEditor.webview.postMessage({
+			type: 'restoreHistogramState',
+			isVisible: histogramState.isVisible,
+			position: histogramState.position,
+			scaleMode: histogramState.scaleMode
+		});
+		// Also update the status bar to reflect the current state
+		this._histogramStatusBarEntry.updateVisibility(histogramState.isVisible);
 	}
 
 	// Image collection management methods

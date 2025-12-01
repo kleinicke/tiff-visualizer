@@ -215,21 +215,28 @@ export class HistogramOverlay {
 
 	/**
 	 * Show the histogram overlay
+	 * @param {boolean} [skipNotification=false] - Skip sending visibility notification (used when restoring state)
 	 */
-	show() {
+	show(skipNotification = false) {
 		this.isVisible = true;
 		this.overlay.style.display = 'flex';
 		// Trigger computation if we have image data
 		this.vscode.postMessage({ type: 'requestHistogram' });
+		if (!skipNotification) {
+			this.vscode.postMessage({ type: 'histogramVisibilityChanged', isVisible: true });
+		}
 	}
 
 	/**
 	 * Hide the histogram overlay
+	 * @param {boolean} [skipNotification=false] - Skip sending visibility notification (used when restoring state)
 	 */
-	hide() {
+	hide(skipNotification = false) {
 		this.isVisible = false;
 		this.overlay.style.display = 'none';
-		this.vscode.postMessage({ type: 'histogramClosed' });
+		if (!skipNotification) {
+			this.vscode.postMessage({ type: 'histogramVisibilityChanged', isVisible: false });
+		}
 	}
 
 	/**
@@ -256,6 +263,12 @@ export class HistogramOverlay {
 
 		button.textContent = `${label} Mode`;
 		this.render();
+		
+		// Notify extension of scale mode change for global persistence
+		this.vscode.postMessage({
+			type: 'histogramScaleModeChanged',
+			mode: this.scaleMode
+		});
 	}
 
 	/**
@@ -699,6 +712,15 @@ export class HistogramOverlay {
 			this.isDragging = false;
 			document.removeEventListener('mousemove', onMouseMove);
 			document.removeEventListener('mouseup', onMouseUp);
+			
+			// Notify extension of position change for global persistence
+			const position = this.getPosition();
+			if (position) {
+				this.vscode.postMessage({
+					type: 'histogramPositionChanged',
+					position: position
+				});
+			}
 		};
 
 		document.addEventListener('mousemove', onMouseMove);
@@ -712,5 +734,55 @@ export class HistogramOverlay {
 	 */
 	getVisibility() {
 		return this.isVisible;
+	}
+
+	/**
+	 * Set the position of the histogram overlay
+	 * @param {number} left - Left position in pixels
+	 * @param {number} top - Top position in pixels
+	 */
+	setPosition(left, top) {
+		if (this.overlay) {
+			this.overlay.style.left = `${left}px`;
+			this.overlay.style.top = `${top}px`;
+			this.overlay.style.right = 'auto';
+			this.overlay.style.bottom = 'auto';
+		}
+	}
+
+	/**
+	 * Get the current position of the histogram overlay
+	 * @returns {{left: number, top: number} | null}
+	 */
+	getPosition() {
+		if (this.overlay) {
+			const rect = this.overlay.getBoundingClientRect();
+			return { left: rect.left, top: rect.top };
+		}
+		return null;
+	}
+
+	/**
+	 * Set the scale mode (linear or sqrt)
+	 * @param {'linear' | 'sqrt'} mode
+	 */
+	setScaleMode(mode) {
+		if (mode === 'linear' || mode === 'sqrt') {
+			this.scaleMode = mode;
+			// Update button text
+			const button = this.overlay?.querySelector('.histogram-button');
+			if (button) {
+				button.textContent = mode === 'sqrt' ? 'Sqrt Mode' : 'Linear Mode';
+			}
+			this.render();
+		}
+	}
+
+	/**
+	 * Get the current scale mode
+	 * @returns {'linear' | 'sqrt'}
+	 */
+	getScaleMode() {
+		return this.scaleMode;
 	}
 }
