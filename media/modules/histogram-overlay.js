@@ -262,9 +262,9 @@ export class HistogramOverlay {
 			this.tooltip.appendChild(createRow('Count', rCount, null));
 		} else {
 			// RGB: show separate channel counts
-			this.tooltip.appendChild(createRow('R', rCount, '#ff8888'));
-			this.tooltip.appendChild(createRow('G', gCount, '#88ff88'));
-			this.tooltip.appendChild(createRow('B', bCount, '#8888ff'));
+		this.tooltip.appendChild(createRow('R', rCount, '#ff8888'));
+		this.tooltip.appendChild(createRow('G', gCount, '#88ff88'));
+		this.tooltip.appendChild(createRow('B', bCount, '#8888ff'));
 		}
 
 		this.tooltip.style.display = 'block';
@@ -337,238 +337,383 @@ export class HistogramOverlay {
 	}
 
 	/**
-	 * Apply gamma and brightness transformation to a normalized value (0-1).
-	 * This matches the transformation used in NormalizationHelper.
-	 * @param {number} normalized - Value in range 0-1
-	 * @param {Object} settings - Settings object with gamma and brightness
-	 * @returns {number} Transformed value (may be outside [0,1])
+	 * Generate a Look-Up Table for gamma/brightness transformation.
+	 * Maps input values (0-inputMax) to output bins (0-255).
+	 * This is the same transformation as NormalizationHelper.generateLut.
+	 * @param {Object} settings - Settings with gamma and brightness
+	 * @param {number} inputMax - Maximum input value (255, 65535)
+	 * @returns {Uint8Array} LUT mapping input -> output bin
 	 */
-	applyGammaAndBrightness(normalized, settings) {
+	generateTransformLUT(settings, inputMax) {
+		const lutSize = inputMax + 1;
+		const lut = new Uint8Array(lutSize);
+		
 		const gammaIn = settings.gamma?.in ?? 1.0;
 		const gammaOut = settings.gamma?.out ?? 1.0;
-		const exposureStops = settings.brightness?.offset ?? 0;
+		const exposureMultiplier = Math.pow(2, settings.brightness?.offset ?? 0);
+		const invGammaOut = 1.0 / gammaOut;
+		
+		for (let i = 0; i < lutSize; i++) {
+			const normalized = i / inputMax;
+			let linear = Math.pow(normalized, gammaIn);
+			linear *= exposureMultiplier;
+			const output = Math.pow(Math.max(0, linear), invGammaOut);
+			lut[i] = Math.max(0, Math.min(255, (output * 255) | 0));
+		}
+		
+		return lut;
+	}
 
-		// Apply input gamma (linearize)
-		let linear = Math.pow(Math.max(0, normalized), gammaIn);
-
-		// Apply exposure (brightness) in stops
-		linear *= Math.pow(2, exposureStops);
-
-		// Apply output gamma (encode)
-		const output = Math.pow(Math.max(0, linear), 1.0 / gammaOut);
-
-		return output;
+	/**
+	 * Generate a 16-bit LUT for float data.
+	 * Quantizes float range to 65536 steps and applies gamma/brightness.
+	 * @param {Object} settings - Settings with gamma and brightness  
+	 * @returns {Uint8Array} LUT mapping quantized float (0-65535) -> output bin (0-255)
+	 */
+	generateFloatLUT(settings) {
+		const lut = new Uint8Array(65536);
+		
+		const gammaIn = settings.gamma?.in ?? 1.0;
+		const gammaOut = settings.gamma?.out ?? 1.0;
+		const exposureMultiplier = Math.pow(2, settings.brightness?.offset ?? 0);
+		const invGammaOut = 1.0 / gammaOut;
+		
+		for (let i = 0; i < 65536; i++) {
+			const normalized = i / 65535;
+			let linear = Math.pow(normalized, gammaIn);
+			linear *= exposureMultiplier;
+			const output = Math.pow(Math.max(0, linear), invGammaOut);
+			lut[i] = Math.max(0, Math.min(255, (output * 255) | 0));
+		}
+		
+		return lut;
 	}
 
 	/**
 	 * Compute histogram from raw image data.
-	 * Uses original values, applies gamma/brightness transformation for binning,
-	 * and calculates statistics in original value units.
+	 * OPTIMIZED: Uses LUT for integers, TypedArrays, and inlined processing.
+	 * Processes ALL pixels (no sampling) for exact results.
 	 * 
 	 * @param {ImageData} imageData - Canvas ImageData (fallback if no raw data)
-	 * @param {Object} options - Raw data and settings:
-	 *   - rawData: TypedArray (interleaved) or null
-	 *   - planarData: Array of TypedArrays (planar) or null
-	 *   - channels: Number of channels (1, 3, 4)
-	 *   - isFloat: Whether data is floating point
-	 *   - typeMax: Maximum value for the data type (255, 65535, or 1.0)
-	 *   - settings: Current visualization settings (normalization, gamma, brightness)
+	 * @param {Object} options - Raw data and settings
 	 */
 	computeHistogram(imageData, options = {}) {
 		if (!imageData && !options.rawData && !options.planarData) return null;
 
-		// Initialize bins
-		const histR = new Array(this.numBins).fill(0);
-		const histG = new Array(this.numBins).fill(0);
-		const histB = new Array(this.numBins).fill(0);
-		const histLum = new Array(this.numBins).fill(0);
-		let nanCount = 0;
+		const startTime = performance.now();
 
-		// Track original value statistics
-		let origMinR = Infinity, origMaxR = -Infinity, origSumR = 0, origCountR = 0;
-		let origMinG = Infinity, origMaxG = -Infinity, origSumG = 0, origCountG = 0;
-		let origMinB = Infinity, origMaxB = -Infinity, origSumB = 0, origCountB = 0;
+		// Use TypedArrays for bins (much faster than regular arrays)
+		const histR = new Uint32Array(256);
+		const histG = new Uint32Array(256);
+		const histB = new Uint32Array(256);
+		const histLum = new Uint32Array(256);
+		let nanCount = 0;
 
 		const settings = options.settings || this.settingsManager.settings;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 		const isAutoNormalize = settings.normalization?.autoNormalize || false;
 		const isFloat = options.isFloat || false;
+		const typeMax = options.typeMax ?? (isFloat ? 1.0 : 255);
 
 		// Determine the value range for binning
 		let normMin, normMax;
 		if (isAutoNormalize && options.stats) {
-			// Auto-normalize: use actual data range
 			normMin = options.stats.min;
 			normMax = options.stats.max;
 		} else if (isGammaMode) {
-			// Gamma mode: use type-specific range
 			normMin = 0;
-			normMax = options.typeMax ?? (isFloat ? 1.0 : 255);
+			normMax = typeMax;
 		} else if (settings.normalization?.min !== undefined && settings.normalization?.max !== undefined) {
-			// Manual range
 			normMin = settings.normalization.min;
 			normMax = settings.normalization.max;
 		} else {
-			// Default: use typeMax
 			normMin = 0;
-			normMax = options.typeMax ?? 255;
+			normMax = typeMax;
 		}
 
-		// Store the value range for bin labeling
-		this.valueRange = {
-			min: normMin,
-			max: normMax,
-			isFloat: isFloat
-		};
+		this.valueRange = { min: normMin, max: normMax, isFloat: isFloat };
 
 		const range = normMax - normMin;
 		const invRange = range > 0 ? 1.0 / range : 0;
 
-		// Flag to track if we're using raw data (need transformation) or canvas data (already transformed)
-		let usingRawData = !!(options.rawData || options.planarData);
+		const hasRawData = !!(options.rawData || options.planarData);
+		let totalPixels = 0;
+		if (options.planarData) {
+			totalPixels = options.planarData[0].length;
+		} else if (options.rawData) {
+			totalPixels = options.rawData.length / (options.channels || 3);
+		} else if (imageData) {
+			totalPixels = imageData.width * imageData.height;
+		}
 
-		// Helper to process a single pixel value
-		const processValue = (value, skipTransform = false) => {
-			if (!Number.isFinite(value)) {
-				return { isNaN: true, bin: -1, origValue: value };
-			}
+		// Track stats
+		let origMinR = Infinity, origMaxR = -Infinity, origSumR = 0, origCountR = 0;
+		let origMinG = Infinity, origMaxG = -Infinity, origSumG = 0, origCountG = 0;
+		let origMinB = Infinity, origMaxB = -Infinity, origSumB = 0, origCountB = 0;
 
-			// Normalize to 0-1 based on the range
-			let normalized = (value - normMin) * invRange;
-
-			// Apply gamma and brightness transformation if in gamma mode
-			// Only apply if we're using raw data (canvas data is already transformed)
-			if (isGammaMode && !skipTransform) {
-				normalized = this.applyGammaAndBrightness(normalized, settings);
-			}
-
-			// Map to bin (0-255)
-			const bin = Math.max(0, Math.min(255, Math.floor(normalized * 255)));
-
-			return { isNaN: false, bin, origValue: value };
-		};
-
-		// Helper to add a pixel to histograms and track stats
-		// skipTransform: true when using canvas data (already transformed)
-		const addToHist = (r, g, b, skipTransform = false) => {
-			const rResult = processValue(r, skipTransform);
-			const gResult = processValue(g, skipTransform);
-			const bResult = processValue(b, skipTransform);
-
-			// Check for NaN
-			if (rResult.isNaN || gResult.isNaN || bResult.isNaN) {
-				nanCount++;
-				return;
-			}
-
-			// Add to histogram bins
-			histR[rResult.bin]++;
-			histG[gResult.bin]++;
-			histB[bResult.bin]++;
-
-			// Luminance bin (from normalized values)
-			const lumBin = Math.max(0, Math.min(255, Math.floor(
-				0.299 * rResult.bin + 0.587 * gResult.bin + 0.114 * bResult.bin
-			)));
-			histLum[lumBin]++;
-
-			// Track original value statistics
-			if (rResult.origValue < origMinR) origMinR = rResult.origValue;
-			if (rResult.origValue > origMaxR) origMaxR = rResult.origValue;
-			origSumR += rResult.origValue;
-			origCountR++;
-
-			if (gResult.origValue < origMinG) origMinG = gResult.origValue;
-			if (gResult.origValue > origMaxG) origMaxG = gResult.origValue;
-			origSumG += gResult.origValue;
-			origCountG++;
-
-			if (bResult.origValue < origMinB) origMinB = bResult.origValue;
-			if (bResult.origValue > origMaxB) origMaxB = bResult.origValue;
-			origSumB += bResult.origValue;
-			origCountB++;
-		};
+		// For gamma mode, use LUT for speed (both integer and float)
+		let lut = options.lut || null;
+		const intTypeMax = typeMax | 0;
+		const useIntegerLUT = isGammaMode && !isFloat && hasRawData && (intTypeMax === 255 || intTypeMax === 65535);
+		const useFloatLUT = isGammaMode && isFloat && hasRawData;
+		
+		if (useIntegerLUT && !lut) {
+			lut = this.generateTransformLUT(settings, intTypeMax);
+		} else if (useFloatLUT && !lut) {
+			// For float, use 16-bit quantization LUT (same as image rendering)
+			lut = this.generateFloatLUT(settings);
+		}
+		
+		// For float LUT, precompute the quantization scale
+		const floatToLutScale = useFloatLUT ? (65535 / range) : 0;
 
 		// Process raw data if available
 		if (options.rawData || options.planarData) {
 			const { rawData, planarData } = options;
 			const channels = options.channels || 3;
+			const isGrayscale = channels === 1 || (planarData && planarData.length === 1);
 
 			if (planarData) {
-				// Planar data (e.g. from TIFF rasters: [R[], G[], B[]])
 				const len = planarData[0].length;
 				const rCh = planarData[0];
-				const gCh = planarData.length > 1 ? planarData[1] : planarData[0];
-				const bCh = planarData.length > 2 ? planarData[2] : planarData[0];
+				const gCh = planarData.length > 1 ? planarData[1] : rCh;
+				const bCh = planarData.length > 2 ? planarData[2] : rCh;
 
+				if (useIntegerLUT) {
+					// Fast path: integer data with LUT - process ALL pixels
 				for (let i = 0; i < len; i++) {
-					addToHist(rCh[i], gCh[i], bCh[i]);
+						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
+						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						
+						histR[lut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
+						histG[lut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
+						histB[lut[Math.max(0, Math.min(intTypeMax, bv | 0))]]++;
+						
+						if (rv < origMinR) origMinR = rv;
+						if (rv > origMaxR) origMaxR = rv;
+						origSumR += rv; origCountR++;
+						if (!isGrayscale) {
+							if (gv < origMinG) origMinG = gv;
+							if (gv > origMaxG) origMaxG = gv;
+							origSumG += gv; origCountG++;
+							if (bv < origMinB) origMinB = bv;
+							if (bv > origMaxB) origMaxB = bv;
+							origSumB += bv; origCountB++;
+						}
+					}
+				} else if (useFloatLUT) {
+					// Float data with LUT - quantize to 16-bit and lookup
+					for (let i = 0; i < len; i++) {
+						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
+						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						
+						// Quantize to 0-65535 and lookup in LUT
+						const rIdx = Math.max(0, Math.min(65535, ((rv - normMin) * floatToLutScale) | 0));
+						const gIdx = Math.max(0, Math.min(65535, ((gv - normMin) * floatToLutScale) | 0));
+						const bIdx = Math.max(0, Math.min(65535, ((bv - normMin) * floatToLutScale) | 0));
+						
+						histR[lut[rIdx]]++;
+						histG[lut[gIdx]]++;
+						histB[lut[bIdx]]++;
+						
+						if (rv < origMinR) origMinR = rv;
+						if (rv > origMaxR) origMaxR = rv;
+						origSumR += rv; origCountR++;
+						if (!isGrayscale) {
+							if (gv < origMinG) origMinG = gv;
+							if (gv > origMaxG) origMaxG = gv;
+							origSumG += gv; origCountG++;
+							if (bv < origMinB) origMinB = bv;
+							if (bv > origMaxB) origMaxB = bv;
+							origSumB += bv; origCountB++;
+						}
+				}
+			} else {
+					// Non-gamma mode (no transformation needed) - process ALL pixels
+					for (let i = 0; i < len; i++) {
+						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
+						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						
+						// Just normalize to 0-255 bins
+						const rBin = Math.max(0, Math.min(255, ((rv - normMin) * invRange * 255) | 0));
+						const gBin = Math.max(0, Math.min(255, ((gv - normMin) * invRange * 255) | 0));
+						const bBin = Math.max(0, Math.min(255, ((bv - normMin) * invRange * 255) | 0));
+						
+						histR[rBin]++;
+						histG[gBin]++;
+						histB[bBin]++;
+						
+						if (rv < origMinR) origMinR = rv;
+						if (rv > origMaxR) origMaxR = rv;
+						origSumR += rv; origCountR++;
+						if (!isGrayscale) {
+							if (gv < origMinG) origMinG = gv;
+							if (gv > origMaxG) origMaxG = gv;
+							origSumG += gv; origCountG++;
+							if (bv < origMinB) origMinB = bv;
+							if (bv > origMaxB) origMaxB = bv;
+							origSumB += bv; origCountB++;
+						}
+					}
 				}
 			} else if (rawData) {
-				// Interleaved raw data
 				const len = rawData.length;
+
+				if (useIntegerLUT) {
+					// Fast path with LUT - process ALL pixels
 				for (let i = 0; i < len; i += channels) {
-					const r = rawData[i];
-					const g = channels > 1 ? rawData[i + 1] : r;
-					const b = channels > 2 ? rawData[i + 2] : r;
-					addToHist(r, g, b);
+						const rv = rawData[i];
+						const gv = channels > 1 ? rawData[i + 1] : rv;
+						const bv = channels > 2 ? rawData[i + 2] : rv;
+						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						
+						histR[lut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
+						histG[lut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
+						histB[lut[Math.max(0, Math.min(intTypeMax, bv | 0))]]++;
+						
+						if (rv < origMinR) origMinR = rv;
+						if (rv > origMaxR) origMaxR = rv;
+						origSumR += rv; origCountR++;
+						if (channels > 1) {
+							if (gv < origMinG) origMinG = gv;
+							if (gv > origMaxG) origMaxG = gv;
+							origSumG += gv; origCountG++;
+							if (channels > 2) {
+								if (bv < origMinB) origMinB = bv;
+								if (bv > origMaxB) origMaxB = bv;
+								origSumB += bv; origCountB++;
+							}
 				}
 			}
+				} else if (useFloatLUT) {
+					// Float data with LUT - quantize and lookup
+					for (let i = 0; i < len; i += channels) {
+						const rv = rawData[i];
+						const gv = channels > 1 ? rawData[i + 1] : rv;
+						const bv = channels > 2 ? rawData[i + 2] : rv;
+						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						
+						const rIdx = Math.max(0, Math.min(65535, ((rv - normMin) * floatToLutScale) | 0));
+						const gIdx = Math.max(0, Math.min(65535, ((gv - normMin) * floatToLutScale) | 0));
+						const bIdx = Math.max(0, Math.min(65535, ((bv - normMin) * floatToLutScale) | 0));
+						
+						histR[lut[rIdx]]++;
+						histG[lut[gIdx]]++;
+						histB[lut[bIdx]]++;
+						
+						if (rv < origMinR) origMinR = rv;
+						if (rv > origMaxR) origMaxR = rv;
+						origSumR += rv; origCountR++;
+						if (channels > 1) {
+							if (gv < origMinG) origMinG = gv;
+							if (gv > origMaxG) origMaxG = gv;
+							origSumG += gv; origCountG++;
+							if (channels > 2) {
+								if (bv < origMinB) origMinB = bv;
+								if (bv > origMaxB) origMaxB = bv;
+								origSumB += bv; origCountB++;
+							}
+						}
+					}
+				} else {
+					// Non-gamma mode - just normalize to bins
+					for (let i = 0; i < len; i += channels) {
+						const rv = rawData[i];
+						const gv = channels > 1 ? rawData[i + 1] : rv;
+						const bv = channels > 2 ? rawData[i + 2] : rv;
+						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						
+						const rBin = Math.max(0, Math.min(255, ((rv - normMin) * invRange * 255) | 0));
+						const gBin = Math.max(0, Math.min(255, ((gv - normMin) * invRange * 255) | 0));
+						const bBin = Math.max(0, Math.min(255, ((bv - normMin) * invRange * 255) | 0));
+						
+						histR[rBin]++;
+						histG[gBin]++;
+						histB[bBin]++;
+						
+						if (rv < origMinR) origMinR = rv;
+						if (rv > origMaxR) origMaxR = rv;
+						origSumR += rv; origCountR++;
+						if (channels > 1) {
+							if (gv < origMinG) origMinG = gv;
+							if (gv > origMaxG) origMaxG = gv;
+							origSumG += gv; origCountG++;
+							if (channels > 2) {
+								if (bv < origMinB) origMinB = bv;
+								if (bv > origMaxB) origMaxB = bv;
+								origSumB += bv; origCountB++;
+							}
+						}
+					}
+				}
+			}
+
+			// For grayscale, copy R stats to G and B
+			if (isGrayscale) {
+				origMinG = origMinB = origMinR;
+				origMaxG = origMaxB = origMaxR;
+				origSumG = origSumB = origSumR;
+				origCountG = origCountB = origCountR;
+			}
 		} else {
-			// Fallback: use 8-bit Canvas ImageData
-			// Canvas data is ALREADY gamma/brightness transformed, so skip transformation
-			// Stats are in canvas value range (0-255)
+			// Fallback: use 8-bit Canvas ImageData (already transformed)
 			this.valueRange = { min: 0, max: 255, isFloat: false };
 			const data = imageData.data;
-			for (let i = 0; i < data.length; i += 4) {
-				if (data[i + 3] === 0) continue; // Skip transparent
-				// skipTransform=true because canvas already has transformation applied
-				addToHist(data[i], data[i + 1], data[i + 2], true);
+			const len = data.length;
+			
+			// Process ALL pixels
+			for (let i = 0; i < len; i += 4) {
+				if (data[i + 3] === 0) continue;
+				const rv = data[i], gv = data[i + 1], bv = data[i + 2];
+				histR[rv]++; histG[gv]++; histB[bv]++;
+				
+				if (rv < origMinR) origMinR = rv;
+				if (rv > origMaxR) origMaxR = rv;
+				origSumR += rv; origCountR++;
+				if (gv < origMinG) origMinG = gv;
+				if (gv > origMaxG) origMaxG = gv;
+				origSumG += gv; origCountG++;
+				if (bv < origMinB) origMinB = bv;
+				if (bv > origMaxB) origMaxB = bv;
+				origSumB += bv; origCountB++;
 			}
 		}
 
-		// Calculate bin-based stats (which bin has values)
+		// Calculate bin-based stats
 		const calculateBinStats = (hist) => {
-			let minBin = 0, maxBin = 255;
-			let sum = 0, count = 0;
-
-			for (let i = 0; i < this.numBins; i++) {
-				if (hist[i] > 0 && minBin === 0) minBin = i;
-				if (hist[i] > 0) maxBin = i;
+			let minBin = 0, maxBin = 255, sum = 0, count = 0;
+			for (let i = 0; i < 256; i++) {
+				if (hist[i] > 0) {
+					if (count === 0) minBin = i;
+					maxBin = i;
 				sum += i * hist[i];
 				count += hist[i];
 			}
-
+			}
 			return { minBin, maxBin, meanBin: count > 0 ? sum / count : 0, total: count };
 		};
 
 		// Store original value statistics
 		this.originalStats = {
-			r: {
-				min: origCountR > 0 ? origMinR : 0,
-				max: origCountR > 0 ? origMaxR : 0,
-				mean: origCountR > 0 ? origSumR / origCountR : 0,
-				total: origCountR
-			},
-			g: {
-				min: origCountG > 0 ? origMinG : 0,
-				max: origCountG > 0 ? origMaxG : 0,
-				mean: origCountG > 0 ? origSumG / origCountG : 0,
-				total: origCountG
-			},
-			b: {
-				min: origCountB > 0 ? origMinB : 0,
-				max: origCountB > 0 ? origMaxB : 0,
-				mean: origCountB > 0 ? origSumB / origCountB : 0,
-				total: origCountB
-			}
+			r: { min: origCountR > 0 ? origMinR : 0, max: origCountR > 0 ? origMaxR : 0, mean: origCountR > 0 ? origSumR / origCountR : 0, total: origCountR },
+			g: { min: origCountG > 0 ? origMinG : 0, max: origCountG > 0 ? origMaxG : 0, mean: origCountG > 0 ? origSumG / origCountG : 0, total: origCountG },
+			b: { min: origCountB > 0 ? origMinB : 0, max: origCountB > 0 ? origMaxB : 0, mean: origCountB > 0 ? origSumB / origCountB : 0, total: origCountB }
 		};
 
+		// Luminance histogram
+		const isGrayscale = histR.every((v, i) => v === histG[i] && v === histB[i]);
+		if (isGrayscale) {
+			histLum.set(histR);
+		} else {
+			for (let i = 0; i < 256; i++) {
+				histLum[i] = Math.round(0.299 * histR[i] + 0.587 * histG[i] + 0.114 * histB[i]);
+			}
+		}
+
+		console.log(`[Histogram] ${(performance.now() - startTime).toFixed(1)}ms (${totalPixels} pixels)`);
+
 		return {
-			r: histR,
-			g: histG,
-			b: histB,
-			luminance: histLum,
+			r: histR, g: histG, b: histB, luminance: histLum,
 			nanCount,
 			stats: {
 				r: calculateBinStats(histR),
