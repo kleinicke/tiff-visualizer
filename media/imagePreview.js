@@ -794,26 +794,139 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
-	 * Update histogram with current image data
+	 * Update histogram with current image data.
+	 * Uses raw image data when available for accurate value representation.
 	 */
 	function updateHistogramData() {
 		if (!canvas || !hasLoadedImage) {
 			return;
 		}
 
-		// Only update histogram if it's visible - this is expensive (~300-500ms for large images)
+		// Only update histogram if it's visible - this is expensive
 		if (!histogramOverlay.getVisibility()) {
 			return;
 		}
 		try {
+			const settings = settingsManager.settings;
+			let histogramOptions = {
+				settings: settings
+			};
+
+			// Try to get raw data from the appropriate processor
+			if (tiffProcessor.rawTiffData) {
+				// TIFF raw data
+				const ifd = tiffProcessor.rawTiffData.ifd;
+				const rasters = tiffProcessor.rawTiffData.rasters;
+				const format = ifd.t339; // SampleFormat: 1=uint, 2=int, 3=float
+				const bitsPerSample = ifd.t258 || 8;
+				const samples = ifd.t277 || 1;
+				const isFloat = format === 3;
+				
+				// Determine typeMax based on format
+				let typeMax;
+				if (isFloat) {
+					typeMax = 1.0;
+				} else if (bitsPerSample === 16) {
+					typeMax = 65535;
+				} else {
+					typeMax = 255;
+				}
+
+				// Get stats if available
+				const stats = tiffProcessor._lastStatistics || null;
+
+				histogramOptions = {
+					...histogramOptions,
+					planarData: rasters,
+					channels: samples,
+					isFloat: isFloat,
+					typeMax: typeMax,
+					stats: stats
+				};
+			} else if (exrProcessor && exrProcessor.rawExrData) {
+				// EXR raw data (always float)
+				const { width, height, data, channels } = exrProcessor.rawExrData;
+				const stats = exrProcessor._cachedStats || null;
+
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels: channels,
+					isFloat: true,
+					typeMax: 1.0,
+					stats: stats
+				};
+			} else if (npyProcessor && npyProcessor._lastRaw) {
+				// NPY raw data
+				const { width, height, data, dtype, channels } = npyProcessor._lastRaw;
+				const isFloat = dtype.includes('f');
+				const stats = npyProcessor._cachedStats || null;
+
+				let typeMax;
+				if (isFloat) {
+					typeMax = 1.0;
+				} else if (dtype.includes('16') || dtype.includes('u2') || dtype.includes('i2')) {
+					typeMax = 65535;
+				} else {
+					typeMax = 255;
+				}
+
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels: channels,
+					isFloat: isFloat,
+					typeMax: typeMax,
+					stats: stats
+				};
+			} else if (pfmProcessor && pfmProcessor._lastRaw) {
+				// PFM raw data (always float)
+				const { width, height, data, channels } = pfmProcessor._lastRaw;
+				const stats = pfmProcessor._cachedStats || null;
+
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels: channels,
+					isFloat: true,
+					typeMax: 1.0,
+					stats: stats
+				};
+			} else if (ppmProcessor && ppmProcessor._lastRaw) {
+				// PPM/PGM raw data
+				const { width, height, data, maxval, channels } = ppmProcessor._lastRaw;
+				const stats = ppmProcessor._cachedStats || null;
+
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels: channels,
+					isFloat: false,
+					typeMax: maxval,
+					stats: stats
+				};
+			} else if (pngProcessor && pngProcessor._lastRaw) {
+				// PNG raw data
+				const { width, height, data, channels, bitDepth, maxValue } = pngProcessor._lastRaw;
+				const stats = pngProcessor._cachedStats || null;
+
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels: channels,
+					isFloat: false,
+					typeMax: maxValue || 255,
+					stats: stats
+				};
+			}
+
+			// Get canvas image data as fallback
 			const ctx = canvas.getContext('2d', { willReadFrequently: true });
 			if (!ctx) return;
-
-			// Get current image data from canvas
 			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-			// Update histogram overlay with just canvas data
-			histogramOverlay.update(imageData);
+			// Update histogram overlay
+			histogramOverlay.update(imageData, histogramOptions);
 		} catch (error) {
 			console.error('Error updating histogram:', error);
 		}
@@ -1147,6 +1260,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					if (ctx) {
 						await renderImageDataToCanvas(newImageData, ctx);
 						primaryImageData = newImageData;
+						updateHistogramData();
 					}
 				}
 			} catch (error) {

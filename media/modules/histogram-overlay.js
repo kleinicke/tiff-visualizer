@@ -18,6 +18,10 @@ export class HistogramOverlay {
 		this.numBins = 256;
 		this.scaleMode = 'sqrt'; // 'linear', 'sqrt'
 
+		// Value range for bin labeling (set during computation)
+		this.valueRange = { min: 0, max: 255, isFloat: false };
+		// Original value stats (before gamma/brightness transformation)
+		this.originalStats = null;
 
 		// UI state
 		this.isDragging = false;
@@ -169,6 +173,33 @@ export class HistogramOverlay {
 	}
 
 	/**
+	 * Format a value for display based on whether it's float or integer
+	 * @param {number} value - The value to format
+	 * @param {boolean} isFloat - Whether to format as float
+	 * @returns {string} Formatted value
+	 */
+	formatValue(value, isFloat) {
+		if (isFloat) {
+			// For float values, use appropriate precision
+			if (Math.abs(value) < 0.001 || Math.abs(value) >= 1000) {
+				return value.toExponential(2);
+			}
+			return value.toPrecision(4);
+		}
+		return Math.round(value).toString();
+	}
+
+	/**
+	 * Convert bin index to original value
+	 * @param {number} binIndex - Bin index (0-255)
+	 * @returns {number} Original value
+	 */
+	binToValue(binIndex) {
+		const { min, max } = this.valueRange;
+		return min + (binIndex / 255) * (max - min);
+	}
+
+	/**
 	 * Update tooltip content and position
 	 */
 	updateTooltip(clientX, clientY, binIndex) {
@@ -177,30 +208,64 @@ export class HistogramOverlay {
 		const rCount = this.histogramData.r[binIndex];
 		const gCount = this.histogramData.g[binIndex];
 		const bCount = this.histogramData.b[binIndex];
-		const lumCount = this.histogramData.luminance[binIndex];
 
 		// Clear existing content
 		this.tooltip.innerHTML = '';
 
+		// Calculate the value range for this bin
+		const { min, max, isFloat } = this.valueRange;
+		const totalRange = max - min;
+		const binWidth = totalRange / 256;
+		const binStart = min + binIndex * binWidth;
+		const binEnd = binStart + binWidth;
+
 		const valueDiv = document.createElement('div');
 		const valueStrong = document.createElement('strong');
-		valueStrong.textContent = `Value: ${binIndex}`;
+		
+		// Check if we have a 1:1 mapping (256 integer values for 256 bins)
+		// This is true when: range is 255 (0-255) or 65535 (0-65535) and not float
+		const isOneToOne = !isFloat && (totalRange === 255 || totalRange === 256);
+		
+		if (isFloat) {
+			// Float: always show range
+			valueStrong.textContent = `Value: ${this.formatValue(binStart, true)} - ${this.formatValue(binEnd, true)}`;
+		} else if (isOneToOne) {
+			// 1:1 mapping (e.g., uint8 0-255): show single value
+			valueStrong.textContent = `Value: ${binIndex + Math.round(min)}`;
+		} else {
+			// Integer with range mapping: show range
+			const startInt = Math.floor(binStart);
+			const endInt = Math.floor(binEnd);
+			if (startInt === endInt) {
+				valueStrong.textContent = `Value: ${startInt}`;
+			} else {
+				valueStrong.textContent = `Value: ${startInt} - ${endInt}`;
+			}
+		}
 		valueDiv.appendChild(valueStrong);
 		this.tooltip.appendChild(valueDiv);
 
-		// Always show RGB channels
+		// Check if image is grayscale (all channels have same count for this bin)
+		const isGrayscale = rCount === gCount && gCount === bCount;
+
 		const createRow = (label, count, color) => {
 			const div = document.createElement('div');
 			const span = document.createElement('span');
-			span.style.color = color;
+			if (color) span.style.color = color;
 			span.textContent = `${label}: ${count.toLocaleString()}`;
 			div.appendChild(span);
 			return div;
 		};
 
-		this.tooltip.appendChild(createRow('R', rCount, '#ff8888'));
-		this.tooltip.appendChild(createRow('G', gCount, '#88ff88'));
-		this.tooltip.appendChild(createRow('B', bCount, '#8888ff'));
+		if (isGrayscale) {
+			// Grayscale: show single count
+			this.tooltip.appendChild(createRow('Count', rCount, null));
+		} else {
+			// RGB: show separate channel counts
+			this.tooltip.appendChild(createRow('R', rCount, '#ff8888'));
+			this.tooltip.appendChild(createRow('G', gCount, '#88ff88'));
+			this.tooltip.appendChild(createRow('B', bCount, '#8888ff'));
+		}
 
 		this.tooltip.style.display = 'block';
 
@@ -272,12 +337,45 @@ export class HistogramOverlay {
 	}
 
 	/**
-	 * Compute histogram from image data or raw data
-	 * @param {ImageData} imageData - Canvas ImageData object
-	 * @param {Object} options - Optional settings (rawData, format, normalization)
+	 * Apply gamma and brightness transformation to a normalized value (0-1).
+	 * This matches the transformation used in NormalizationHelper.
+	 * @param {number} normalized - Value in range 0-1
+	 * @param {Object} settings - Settings object with gamma and brightness
+	 * @returns {number} Transformed value (may be outside [0,1])
+	 */
+	applyGammaAndBrightness(normalized, settings) {
+		const gammaIn = settings.gamma?.in ?? 1.0;
+		const gammaOut = settings.gamma?.out ?? 1.0;
+		const exposureStops = settings.brightness?.offset ?? 0;
+
+		// Apply input gamma (linearize)
+		let linear = Math.pow(Math.max(0, normalized), gammaIn);
+
+		// Apply exposure (brightness) in stops
+		linear *= Math.pow(2, exposureStops);
+
+		// Apply output gamma (encode)
+		const output = Math.pow(Math.max(0, linear), 1.0 / gammaOut);
+
+		return output;
+	}
+
+	/**
+	 * Compute histogram from raw image data.
+	 * Uses original values, applies gamma/brightness transformation for binning,
+	 * and calculates statistics in original value units.
+	 * 
+	 * @param {ImageData} imageData - Canvas ImageData (fallback if no raw data)
+	 * @param {Object} options - Raw data and settings:
+	 *   - rawData: TypedArray (interleaved) or null
+	 *   - planarData: Array of TypedArrays (planar) or null
+	 *   - channels: Number of channels (1, 3, 4)
+	 *   - isFloat: Whether data is floating point
+	 *   - typeMax: Maximum value for the data type (255, 65535, or 1.0)
+	 *   - settings: Current visualization settings (normalization, gamma, brightness)
 	 */
 	computeHistogram(imageData, options = {}) {
-		if (!imageData && !options.rawData) return null;
+		if (!imageData && !options.rawData && !options.planarData) return null;
 
 		// Initialize bins
 		const histR = new Array(this.numBins).fill(0);
@@ -286,120 +384,184 @@ export class HistogramOverlay {
 		const histLum = new Array(this.numBins).fill(0);
 		let nanCount = 0;
 
-		// Helper to add value to histogram
-		const addToHist = (r, g, b) => {
+		// Track original value statistics
+		let origMinR = Infinity, origMaxR = -Infinity, origSumR = 0, origCountR = 0;
+		let origMinG = Infinity, origMaxG = -Infinity, origSumG = 0, origCountG = 0;
+		let origMinB = Infinity, origMaxB = -Infinity, origSumB = 0, origCountB = 0;
+
+		const settings = options.settings || this.settingsManager.settings;
+		const isGammaMode = settings.normalization?.gammaMode || false;
+		const isAutoNormalize = settings.normalization?.autoNormalize || false;
+		const isFloat = options.isFloat || false;
+
+		// Determine the value range for binning
+		let normMin, normMax;
+		if (isAutoNormalize && options.stats) {
+			// Auto-normalize: use actual data range
+			normMin = options.stats.min;
+			normMax = options.stats.max;
+		} else if (isGammaMode) {
+			// Gamma mode: use type-specific range
+			normMin = 0;
+			normMax = options.typeMax ?? (isFloat ? 1.0 : 255);
+		} else if (settings.normalization?.min !== undefined && settings.normalization?.max !== undefined) {
+			// Manual range
+			normMin = settings.normalization.min;
+			normMax = settings.normalization.max;
+		} else {
+			// Default: use typeMax
+			normMin = 0;
+			normMax = options.typeMax ?? 255;
+		}
+
+		// Store the value range for bin labeling
+		this.valueRange = {
+			min: normMin,
+			max: normMax,
+			isFloat: isFloat
+		};
+
+		const range = normMax - normMin;
+		const invRange = range > 0 ? 1.0 / range : 0;
+
+		// Flag to track if we're using raw data (need transformation) or canvas data (already transformed)
+		let usingRawData = !!(options.rawData || options.planarData);
+
+		// Helper to process a single pixel value
+		const processValue = (value, skipTransform = false) => {
+			if (!Number.isFinite(value)) {
+				return { isNaN: true, bin: -1, origValue: value };
+			}
+
+			// Normalize to 0-1 based on the range
+			let normalized = (value - normMin) * invRange;
+
+			// Apply gamma and brightness transformation if in gamma mode
+			// Only apply if we're using raw data (canvas data is already transformed)
+			if (isGammaMode && !skipTransform) {
+				normalized = this.applyGammaAndBrightness(normalized, settings);
+			}
+
+			// Map to bin (0-255)
+			const bin = Math.max(0, Math.min(255, Math.floor(normalized * 255)));
+
+			return { isNaN: false, bin, origValue: value };
+		};
+
+		// Helper to add a pixel to histograms and track stats
+		// skipTransform: true when using canvas data (already transformed)
+		const addToHist = (r, g, b, skipTransform = false) => {
+			const rResult = processValue(r, skipTransform);
+			const gResult = processValue(g, skipTransform);
+			const bResult = processValue(b, skipTransform);
+
 			// Check for NaN
-			if (isNaN(r) || isNaN(g) || isNaN(b)) {
+			if (rResult.isNaN || gResult.isNaN || bResult.isNaN) {
 				nanCount++;
 				return;
 			}
 
-			// Clamp to 0-255 for binning
-			const binR = Math.max(0, Math.min(255, Math.floor(r)));
-			const binG = Math.max(0, Math.min(255, Math.floor(g)));
-			const binB = Math.max(0, Math.min(255, Math.floor(b)));
+			// Add to histogram bins
+			histR[rResult.bin]++;
+			histG[gResult.bin]++;
+			histB[bResult.bin]++;
 
-			histR[binR]++;
-			histG[binG]++;
-			histB[binB]++;
+			// Luminance bin (from normalized values)
+			const lumBin = Math.max(0, Math.min(255, Math.floor(
+				0.299 * rResult.bin + 0.587 * gResult.bin + 0.114 * bResult.bin
+			)));
+			histLum[lumBin]++;
 
-			const lum = Math.floor(0.299 * r + 0.587 * g + 0.114 * b);
-			const binLum = Math.max(0, Math.min(255, lum));
-			histLum[binLum]++;
+			// Track original value statistics
+			if (rResult.origValue < origMinR) origMinR = rResult.origValue;
+			if (rResult.origValue > origMaxR) origMaxR = rResult.origValue;
+			origSumR += rResult.origValue;
+			origCountR++;
+
+			if (gResult.origValue < origMinG) origMinG = gResult.origValue;
+			if (gResult.origValue > origMaxG) origMaxG = gResult.origValue;
+			origSumG += gResult.origValue;
+			origCountG++;
+
+			if (bResult.origValue < origMinB) origMinB = bResult.origValue;
+			if (bResult.origValue > origMaxB) origMaxB = bResult.origValue;
+			origSumB += bResult.origValue;
+			origCountB++;
 		};
 
+		// Process raw data if available
 		if (options.rawData || options.planarData) {
-			// Use raw data (interleaved or planar)
-			const { rawData, planarData, format, normalization } = options;
+			const { rawData, planarData } = options;
 			const channels = options.channels || 3;
-
-			// If we have normalization, use it to map values to 0-255
-			const min = normalization?.min ?? 0;
-			const max = normalization?.max ?? (format === 'uint16' ? 65535 : (format === 'uint8' ? 255 : 1));
-			const range = max - min;
-			const scale = range > 0 ? 255 / range : 0;
 
 			if (planarData) {
 				// Planar data (e.g. from TIFF rasters: [R[], G[], B[]])
 				const len = planarData[0].length;
-				// Ensure we have enough channels
 				const rCh = planarData[0];
 				const gCh = planarData.length > 1 ? planarData[1] : planarData[0];
 				const bCh = planarData.length > 2 ? planarData[2] : planarData[0];
 
 				for (let i = 0; i < len; i++) {
-					let r = rCh[i];
-					let g = gCh[i];
-					let b = bCh[i];
-
-					// Apply normalization
-					r = (r - min) * scale;
-					g = (g - min) * scale;
-					b = (b - min) * scale;
-
-					addToHist(r, g, b);
+					addToHist(rCh[i], gCh[i], bCh[i]);
 				}
-			} else {
+			} else if (rawData) {
 				// Interleaved raw data
 				const len = rawData.length;
 				for (let i = 0; i < len; i += channels) {
-					let r = rawData[i];
-					let g = channels > 1 ? rawData[i + 1] : r;
-					let b = channels > 2 ? rawData[i + 2] : r;
-
-					// Apply normalization
-					r = (r - min) * scale;
-					g = (g - min) * scale;
-					b = (b - min) * scale;
-
+					const r = rawData[i];
+					const g = channels > 1 ? rawData[i + 1] : r;
+					const b = channels > 2 ? rawData[i + 2] : r;
 					addToHist(r, g, b);
 				}
 			}
 		} else {
-			// Use 8-bit Canvas ImageData
+			// Fallback: use 8-bit Canvas ImageData
+			// Canvas data is ALREADY gamma/brightness transformed, so skip transformation
+			// Stats are in canvas value range (0-255)
+			this.valueRange = { min: 0, max: 255, isFloat: false };
 			const data = imageData.data;
 			for (let i = 0; i < data.length; i += 4) {
-				// Skip fully transparent pixels
-				if (data[i + 3] === 0) continue;
-				addToHist(data[i], data[i + 1], data[i + 2]);
+				if (data[i + 3] === 0) continue; // Skip transparent
+				// skipTransform=true because canvas already has transformation applied
+				addToHist(data[i], data[i + 1], data[i + 2], true);
 			}
 		}
 
-		// Calculate stats
-		const calculateStats = (hist) => {
-			let min = 0;
-			let max = 255;
-			let sum = 0;
-			let count = 0;
+		// Calculate bin-based stats (which bin has values)
+		const calculateBinStats = (hist) => {
+			let minBin = 0, maxBin = 255;
+			let sum = 0, count = 0;
 
-			// Find min
 			for (let i = 0; i < this.numBins; i++) {
-				if (hist[i] > 0) {
-					min = i;
-					break;
-				}
-			}
-
-			// Find max
-			for (let i = this.numBins - 1; i >= 0; i--) {
-				if (hist[i] > 0) {
-					max = i;
-					break;
-				}
-			}
-
-			// Calculate mean
-			for (let i = 0; i < this.numBins; i++) {
+				if (hist[i] > 0 && minBin === 0) minBin = i;
+				if (hist[i] > 0) maxBin = i;
 				sum += i * hist[i];
 				count += hist[i];
 			}
 
-			return {
-				min,
-				max,
-				mean: count > 0 ? sum / count : 0,
-				total: count
-			};
+			return { minBin, maxBin, meanBin: count > 0 ? sum / count : 0, total: count };
+		};
+
+		// Store original value statistics
+		this.originalStats = {
+			r: {
+				min: origCountR > 0 ? origMinR : 0,
+				max: origCountR > 0 ? origMaxR : 0,
+				mean: origCountR > 0 ? origSumR / origCountR : 0,
+				total: origCountR
+			},
+			g: {
+				min: origCountG > 0 ? origMinG : 0,
+				max: origCountG > 0 ? origMaxG : 0,
+				mean: origCountG > 0 ? origSumG / origCountG : 0,
+				total: origCountG
+			},
+			b: {
+				min: origCountB > 0 ? origMinB : 0,
+				max: origCountB > 0 ? origMaxB : 0,
+				mean: origCountB > 0 ? origSumB / origCountB : 0,
+				total: origCountB
+			}
 		};
 
 		return {
@@ -409,10 +571,10 @@ export class HistogramOverlay {
 			luminance: histLum,
 			nanCount,
 			stats: {
-				r: calculateStats(histR),
-				g: calculateStats(histG),
-				b: calculateStats(histB),
-				luminance: calculateStats(histLum)
+				r: calculateBinStats(histR),
+				g: calculateBinStats(histG),
+				b: calculateBinStats(histB),
+				luminance: calculateBinStats(histLum)
 			}
 		};
 	}
@@ -590,7 +752,7 @@ export class HistogramOverlay {
 	}
 
 	/**
-	 * Update statistics display
+	 * Update statistics display - shows stats in original value units
 	 */
 	updateStatsDisplay() {
 		if (!this.histogramData) return;
@@ -598,19 +760,34 @@ export class HistogramOverlay {
 		const statsEl = document.getElementById('histogram-stats');
 		if (!statsEl) return;
 
-		const stats = this.histogramData.stats;
+		// Use original value stats if available, otherwise fall back to bin stats
+		const origStats = this.originalStats;
+		const { isFloat } = this.valueRange;
 
-		// Check if image is grayscale (all channels equal)
-		const isGrayscale = stats.r.min === stats.g.min && stats.g.min === stats.b.min &&
-			stats.r.max === stats.g.max && stats.g.max === stats.b.max;
+		// Check if image is grayscale (all channels have same stats)
+		const isGrayscale = origStats && 
+			Math.abs(origStats.r.min - origStats.g.min) < 0.001 && 
+			Math.abs(origStats.g.min - origStats.b.min) < 0.001 &&
+			Math.abs(origStats.r.max - origStats.g.max) < 0.001 && 
+			Math.abs(origStats.g.max - origStats.b.max) < 0.001;
 
 		// Clear existing content
 		statsEl.innerHTML = '';
 
+		// Helper to format stat values
+		const formatStat = (value) => {
+			if (isFloat) {
+				if (Math.abs(value) < 0.001 || Math.abs(value) >= 10000) {
+					return value.toExponential(2);
+				}
+				return value.toPrecision(4);
+			}
+			return Math.round(value).toString();
+		};
+
 		// For grayscale images, show single channel stats, otherwise show RGB
-		if (isGrayscale) {
-			// Show single channel stats
-			const s = stats.r;
+		if (isGrayscale && origStats) {
+			const s = origStats.r;
 
 			const createSpan = (text) => {
 				const span = document.createElement('span');
@@ -618,15 +795,28 @@ export class HistogramOverlay {
 				return span;
 			};
 
-			statsEl.appendChild(createSpan(`Min: ${s.min}`));
-			statsEl.appendChild(createSpan(`Max: ${s.max}`));
-			statsEl.appendChild(createSpan(`Mean: ${s.mean.toFixed(1)}`));
-		} else {
-			// Show RGB stats
+			statsEl.appendChild(createSpan(`Min: ${formatStat(s.min)}`));
+			statsEl.appendChild(createSpan(`Max: ${formatStat(s.max)}`));
+			statsEl.appendChild(createSpan(`Mean: ${formatStat(s.mean)}`));
+		} else if (origStats) {
+			// Show RGB stats in original values
 			const createStatSpan = (label, stat, color) => {
 				const span = document.createElement('span');
 				span.style.color = color;
-				span.textContent = `${label}: ${stat.min}-${stat.max} (${stat.mean.toFixed(0)})`;
+				span.textContent = `${label}: ${formatStat(stat.min)}-${formatStat(stat.max)} (μ=${formatStat(stat.mean)})`;
+				return span;
+			};
+
+			statsEl.appendChild(createStatSpan('R', origStats.r, '#ff6666'));
+			statsEl.appendChild(createStatSpan('G', origStats.g, '#66ff66'));
+			statsEl.appendChild(createStatSpan('B', origStats.b, '#6666ff'));
+		} else {
+			// Fallback to bin-based stats (when no raw data available)
+			const stats = this.histogramData.stats;
+			const createStatSpan = (label, stat, color) => {
+				const span = document.createElement('span');
+				span.style.color = color;
+				span.textContent = `${label}: ${stat.minBin}-${stat.maxBin}`;
 				return span;
 			};
 
@@ -640,7 +830,7 @@ export class HistogramOverlay {
 			const nanSpan = document.createElement('span');
 			nanSpan.style.color = '#ffcc00';
 			nanSpan.style.marginLeft = '10px';
-			nanSpan.textContent = `NaN: ${this.histogramData.nanCount}`;
+			nanSpan.textContent = `NaN: ${this.histogramData.nanCount.toLocaleString()}`;
 			statsEl.appendChild(nanSpan);
 		}
 
@@ -678,6 +868,36 @@ export class HistogramOverlay {
 			statsEl.style.left = '100%';
 			statsEl.style.marginLeft = '10px';
 			statsEl.style.marginRight = '0';
+		}
+
+		// Update min/max labels at bottom of histogram
+		this.updateRangeLabels();
+	}
+
+	/**
+	 * Update the min/max labels below the histogram to show actual value range
+	 */
+	updateRangeLabels() {
+		if (!this.minLabel || !this.maxLabel) return;
+
+		const { min, max, isFloat } = this.valueRange;
+
+		if (isFloat) {
+			// For float, show with appropriate precision
+			if (Math.abs(min) < 0.001 && Math.abs(max) < 10) {
+				this.minLabel.textContent = min.toPrecision(3);
+				this.maxLabel.textContent = max.toPrecision(3);
+			} else if (Math.abs(max) >= 10000 || Math.abs(min) >= 10000) {
+				this.minLabel.textContent = min.toExponential(1);
+				this.maxLabel.textContent = max.toExponential(1);
+			} else {
+				this.minLabel.textContent = min.toPrecision(4);
+				this.maxLabel.textContent = max.toPrecision(4);
+			}
+		} else {
+			// For integers, show as integers
+			this.minLabel.textContent = Math.round(min).toString();
+			this.maxLabel.textContent = Math.round(max).toString();
 		}
 	}
 
