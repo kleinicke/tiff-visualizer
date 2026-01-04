@@ -383,7 +383,9 @@ export class ImageRenderer {
             if (channels === 1) {
                 const value = data[i];
                 if (!Number.isFinite(value)) {
-                    r = g = b = nanColor.r;
+                    r = nanColor.r;
+                    g = nanColor.g;
+                    b = nanColor.b;
                 } else {
                     const normalized = (value - min) * invRange;
                     const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
@@ -471,7 +473,9 @@ export class ImageRenderer {
             if (channels === 1) {
                 const value = data[i];
                 if (!Number.isFinite(value)) {
-                    r = g = b = nanColor.r;
+                    r = nanColor.r;
+                    g = nanColor.g;
+                    b = nanColor.b;
                 } else {
                     const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
                     r = g = b = lut[lutIdx];
