@@ -1211,7 +1211,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			return;
 		}
 		// For PGM images, re-render with new settings
-		else if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
+		if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
 			try {
 				// Re-render the PGM with current settings
 				const newImageData = ppmProcessor.renderPgmWithSettings();
@@ -1228,9 +1228,32 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			} catch (error) {
 				console.error('Error updating PGM image with new settings:', error);
 			}
+			return;
 		}
+
+		// For PFM images, re-render with new settings
+		if (primaryImageData && pfmProcessor && pfmProcessor._lastRaw) {
+			try {
+				// Re-render the PFM with current settings
+				const newImageData = pfmProcessor.renderPfmWithSettings();
+
+				if (newImageData) {
+					// Update the canvas with new image data
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating PFM image with new settings:', error);
+			}
+			return;
+		}
+
 		// For NPY images, re-render with new settings
-		else if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
+		if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
 			try {
 				// Re-render the NPY with current settings
 				const newImageData = npyProcessor.renderNpyWithSettings();
@@ -1247,9 +1270,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			} catch (error) {
 				console.error('Error updating NPY image with new settings:', error);
 			}
+			return;
 		}
+
 		// For PNG/JPEG images, re-render with new settings
-		else if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
+		if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
 			try {
 				// Re-render the PNG with current settings
 				const newImageData = pngProcessor.renderPngWithSettings();
@@ -1266,6 +1291,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			} catch (error) {
 				console.error('Error updating PNG/JPEG image with new settings:', error);
 			}
+			return;
 		}
 	}
 

@@ -441,7 +441,7 @@ export function registerImagePreviewCommands(
 		const currentPreview = previewManager.activePreview;
 
 		const brightness = await vscode.window.showInputBox({
-			prompt: 'Enter brightness offset in exposure stops (applied in linear space (2^Exposure) after removing gamma, then gamma is reapplied)',
+			prompt: 'Enter brightness offset in exposure stops (applied in linear space (2^Exposure) after removing gamma, afterwards gamma is reapplied)',
 			placeHolder: '0 = no change, +1 = 2× brighter, -1 = 2× darker in linear space',
 			value: currentConfig.offset.toString(),
 			validateInput: text => {

@@ -193,6 +193,16 @@ export class PfmProcessor {
     }
 
     /**
+     * Re-render PFM with current settings (for real-time updates)
+     * @returns {ImageData | null}
+     */
+    renderPfmWithSettings() {
+        if (!this._lastRaw) return null;
+        const { width, height, data, channels } = this._lastRaw;
+        return this._toImageDataFloat(data, width, height, channels);
+    }
+
+    /**
      * Update settings and trigger re-render
      * @param {Object} settings - New settings
      */
