@@ -80,7 +80,7 @@ export class ExrProcessor {
 			// @ts-ignore
 			const exrResult = parseExr(buffer, FloatType);
 
-			const { width, height, data, format, type } = exrResult;
+			const { width, height, data, format, type, channelNames } = exrResult;
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028
@@ -109,7 +109,8 @@ export class ExrProcessor {
 				channels,
 				type, // 1015 = Float32, 1016 = HalfFloat
 				format,
-				isFloat: true // EXR is always floating point
+				isFloat: true, // EXR is always floating point
+				channelNames: channelNames || [] // Original EXR channel names
 			};
 
 			// Send format information to VS Code BEFORE rendering
@@ -125,7 +126,8 @@ export class ExrProcessor {
 						isHdr: true,
 						formatLabel: 'EXR',
 						formatType: 'exr-float', // For per-format settings
-						isInitialLoad: true // Signal that this is the first load
+						isInitialLoad: true, // Signal that this is the first load
+						channelNames: channelNames || [] // Pass original channel names to extension
 					}
 				});
 

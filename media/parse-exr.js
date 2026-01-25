@@ -4735,7 +4735,9 @@ function parseExr(buffer, type = HalfFloatType) {
         ) {
           const name = EXRHeader.channels[channelID].name;
           const lOff = EXRDecoder.channelByteOffsets[name] * EXRDecoder.columns;
-          const cOff = EXRDecoder.decodeChannels[name];
+          // Map original channel name to base name for decoding
+          const baseName = EXRDecoder.channelMapping[name];
+          const cOff = baseName ? EXRDecoder.decodeChannels[baseName] : undefined;
 
           if (cOff === undefined) continue;
 
@@ -4797,7 +4799,9 @@ function parseExr(buffer, type = HalfFloatType) {
         ) {
           const name = EXRHeader.channels[channelID].name;
           const lOff = EXRDecoder.channelByteOffsets[name] * EXRDecoder.columns;
-          const cOff = EXRDecoder.decodeChannels[name];
+          // Map original channel name to base name for decoding
+          const baseName = EXRDecoder.channelMapping[name];
+          const cOff = baseName ? EXRDecoder.decodeChannels[baseName] : undefined;
 
           if (cOff === undefined) continue;
 
@@ -4890,6 +4894,7 @@ function parseExr(buffer, type = HalfFloatType) {
       height: EXRHeader.dataWindow.yMax - EXRHeader.dataWindow.yMin + 1,
       inputChannels: EXRHeader.channels,
       channelByteOffsets: {},
+      channelMapping: {}, // Map original EXR channel names to base names
       scanOrder: null,
       totalBytes: null,
       columns: null,
@@ -4948,16 +4953,38 @@ function parseExr(buffer, type = HalfFloatType) {
         );
     }
 
+    // Helper function to extract base channel name from layered names
+    // e.g., "ViewLayer.Combined.R" -> "R", "layer.depth" -> "depth"
+    function getBaseChannelName(name) {
+      const parts = name.split('.');
+      return parts[parts.length - 1];
+    }
+
     const channels = {};
+
     for (const channel of EXRHeader.channels) {
-      switch (channel.name) {
-        case "Y":
-        case "R":
-        case "G":
-        case "B":
-        case "A":
-          channels[channel.name] = true;
-          EXRDecoder.type = channel.pixelType;
+      const baseName = getBaseChannelName(channel.name);
+
+      // Standard color/luminance channels
+      if (baseName === "Y" || baseName === "R" || baseName === "G" ||
+          baseName === "B" || baseName === "A") {
+        channels[baseName] = true;
+        EXRDecoder.channelMapping[channel.name] = baseName;
+        EXRDecoder.type = channel.pixelType;
+      }
+      // Depth/Z-buffer channels - treat as grayscale
+      else if (baseName === "Z" || baseName === "z" ||
+               baseName === "depth" || baseName === "Depth" ||
+               baseName === "DEPTH") {
+        channels["Y"] = true;
+        EXRDecoder.channelMapping[channel.name] = "Y";
+        EXRDecoder.type = channel.pixelType;
+      }
+      // Fallback: For single-channel files with custom names, treat as grayscale
+      else if (EXRHeader.channels.length === 1) {
+        channels["Y"] = true;
+        EXRDecoder.channelMapping[channel.name] = "Y";
+        EXRDecoder.type = channel.pixelType;
       }
     }
 
@@ -4965,12 +4992,28 @@ function parseExr(buffer, type = HalfFloatType) {
     let fillAlpha = false;
 
     if (channels.R && channels.G && channels.B) {
+      // Standard RGB or RGBA
       fillAlpha = !channels.A;
       EXRDecoder.outputChannels = 4;
       EXRDecoder.decodeChannels = { R: 0, G: 1, B: 2, A: 3 };
     } else if (channels.Y) {
+      // Grayscale (Y channel or depth/Z channels mapped to Y)
       EXRDecoder.outputChannels = 1;
       EXRDecoder.decodeChannels = { Y: 0 };
+    } else if (channels.R || channels.G || channels.B) {
+      // Single R, G, or B channel - treat as grayscale
+      // Map whichever channel exists to Y output
+      EXRDecoder.outputChannels = 1;
+      EXRDecoder.decodeChannels = { Y: 0 };
+
+      // Remap the existing channel to Y in channelMapping
+      for (const channel of EXRHeader.channels) {
+        const baseName = getBaseChannelName(channel.name);
+        if (baseName === "R" || baseName === "G" || baseName === "B") {
+          EXRDecoder.channelMapping[channel.name] = "Y";
+          break;
+        }
+      }
     } else {
       throw new Error(
         "EXRLoader.parse: file contains unsupported data channels.",
@@ -5035,7 +5078,9 @@ function parseExr(buffer, type = HalfFloatType) {
 
     let byteOffset = 0;
     for (const channel of EXRHeader.channels) {
-      if (EXRDecoder.decodeChannels[channel.name] !== undefined) {
+      // Map the original channel name to the base name for decoding
+      const baseName = EXRDecoder.channelMapping[channel.name];
+      if (baseName && EXRDecoder.decodeChannels[baseName] !== undefined) {
         EXRDecoder.channelByteOffsets[channel.name] = byteOffset;
       }
 
@@ -5129,6 +5174,8 @@ function parseExr(buffer, type = HalfFloatType) {
     data: EXRDecoder.byteArray,
     format: EXRDecoder.format,
     colorSpace: EXRDecoder.colorSpace,
+    type: EXRDecoder.type, // Pixel type (1015 = Float32, 1016 = Float16)
+    channelNames: EXRHeader.channels.map(ch => ch.name), // Original channel names
   };
 }
 

@@ -15,6 +15,7 @@ interface FormatInfo {
 	dataType?: string; // e.g., 'float16', 'float32' for EXR
 	isHdr?: boolean; // For EXR/HDR files
 	channels?: number; // Alternative to samplesPerPixel
+	channelNames?: string[]; // Original channel names (e.g., for EXR: ['R', 'G', 'B', 'A'] or ['ViewLayer.Combined.R', ...])
 }
 
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
@@ -24,6 +25,7 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
 		super('status.tiffVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 102 /* to the right of zoom (110) */);
+		this.entry.command = 'tiffVisualizer.showImageInfo';
 		this.updateTooltip();
 	}
 
@@ -88,6 +90,12 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			}
 
 			tooltip.appendMarkdown(`**Samples per Pixel:** ${info.channels ?? info.samplesPerPixel}\n\n`);
+
+			// Show channel names if available (for EXR and other formats with named channels)
+			if (info.channelNames && info.channelNames.length > 0) {
+				const channelList = info.channelNames.join(', ');
+				tooltip.appendMarkdown(`**Channel Names:** ${channelList}\n\n`);
+			}
 
 			if (info.isHdr) {
 				tooltip.appendMarkdown(`**HDR:** Yes\n\n`);
