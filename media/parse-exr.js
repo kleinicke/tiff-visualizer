@@ -5167,6 +5167,15 @@ function parseExr(buffer, type = HalfFloatType) {
   // parse input data
   EXRDecoder.decode(EXRDecoder);
 
+  // Determine which channels are actually being displayed
+  const displayedChannels = [];
+  for (const channel of EXRHeader.channels) {
+    const baseName = EXRDecoder.channelMapping[channel.name];
+    if (baseName && EXRDecoder.decodeChannels[baseName] !== undefined) {
+      displayedChannels.push(channel.name);
+    }
+  }
+
   return {
     header: EXRHeader,
     width: EXRDecoder.width,
@@ -5175,7 +5184,8 @@ function parseExr(buffer, type = HalfFloatType) {
     format: EXRDecoder.format,
     colorSpace: EXRDecoder.colorSpace,
     type: EXRDecoder.type, // Pixel type (1015 = Float32, 1016 = Float16)
-    channelNames: EXRHeader.channels.map(ch => ch.name), // Original channel names
+    channelNames: EXRHeader.channels.map(ch => ch.name), // All channel names in file
+    displayedChannels: displayedChannels, // Channels actually being displayed
   };
 }
 

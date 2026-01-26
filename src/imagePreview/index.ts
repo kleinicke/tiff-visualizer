@@ -68,7 +68,7 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	}));
 
 	// Register commands
-	disposables.push(registerImagePreviewCommands(context, previewManager, binarySizeStatusBarEntry));
+	disposables.push(registerImagePreviewCommands(context, previewManager, sizeStatusBarEntry, binarySizeStatusBarEntry));
 
 	// Register comparison panel support
 	disposables.push(registerComparisonPanelSupport(context));

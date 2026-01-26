@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
+import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
 import { getOutputChannel } from '../extension';
@@ -24,9 +25,29 @@ function logCommand(commandName: string, status: 'start' | 'success' | 'error', 
 export function registerImagePreviewCommands(
 	context: vscode.ExtensionContext,
 	previewManager: ImagePreviewManager,
+	sizeStatusBarEntry: SizeStatusBarEntry,
 	binarySizeStatusBarEntry: BinarySizeStatusBarEntry
 ): vscode.Disposable {
 	const disposables: vscode.Disposable[] = [];
+
+	// Copy image information to clipboard (triggered by keyboard shortcut)
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.copyImageInfo', async () => {
+		logCommand('copyImageInfo', 'start');
+		try {
+			const info = sizeStatusBarEntry.getFormattedInfo();
+			// Remove markdown formatting for clean clipboard text
+			const plainText = info.replace(/\*\*/g, '');
+			await vscode.env.clipboard.writeText(plainText);
+
+			// Show brief notification
+			await vscode.window.showInformationMessage('Image information copied to clipboard');
+
+			logCommand('copyImageInfo', 'success');
+		} catch (error) {
+			logCommand('copyImageInfo', 'error', String(error));
+			await vscode.window.showErrorMessage('Failed to copy image information');
+		}
+	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomIn', () => {
 		logCommand('zoomIn', 'start');

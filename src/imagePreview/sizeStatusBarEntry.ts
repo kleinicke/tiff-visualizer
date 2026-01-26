@@ -15,7 +15,8 @@ interface FormatInfo {
 	dataType?: string; // e.g., 'float16', 'float32' for EXR
 	isHdr?: boolean; // For EXR/HDR files
 	channels?: number; // Alternative to samplesPerPixel
-	channelNames?: string[]; // Original channel names (e.g., for EXR: ['R', 'G', 'B', 'A'] or ['ViewLayer.Combined.R', ...])
+	channelNames?: string[]; // All channel names in file (e.g., for EXR: ['R', 'G', 'B', 'A'] or ['ViewLayer.Combined.R', ...])
+	displayedChannels?: string[]; // Channels actually being displayed (subset of channelNames for multi-layer EXR)
 }
 
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
@@ -25,7 +26,6 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
 		super('status.tiffVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 102 /* to the right of zoom (110) */);
-		this.entry.command = 'tiffVisualizer.showImageInfo';
 		this.updateTooltip();
 	}
 
@@ -58,12 +58,89 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 		this.updateTooltip();
 	}
 
+	public getFormattedInfo(): string {
+		let info = '**Image Information**\n\n';
+
+		if (this._formatInfo) {
+			const formatInfo = this._formatInfo;
+			info += `**Dimensions:** ${formatInfo.width} × ${formatInfo.height}\n\n`;
+			info += `**Format:** ${formatInfo.formatLabel ?? 'TIFF'}\n\n`;
+
+			if (formatInfo.compression) {
+				info += `**Compression:** ${this.getCompressionName(formatInfo.compression)}\n\n`;
+			}
+
+			if (formatInfo.dataType) {
+				info += `**Data Type:** ${formatInfo.dataType}\n\n`;
+			}
+
+			if (formatInfo.predictor && formatInfo.predictor !== 1) {
+				info += `**Predictor:** ${this.getPredictorName(formatInfo.predictor)}\n\n`;
+			}
+
+			if (formatInfo.sampleFormat !== undefined) {
+				info += `**Sample Format:** ${this.getSampleFormatName(formatInfo.sampleFormat)}\n\n`;
+			}
+
+			if (formatInfo.bitsPerSample !== undefined) {
+				info += `**Bits per Sample:** ${formatInfo.bitsPerSample}\n\n`;
+			}
+
+			info += `**Samples per Pixel:** ${formatInfo.channels ?? formatInfo.samplesPerPixel}\n\n`;
+
+			// Show channel names if available (for EXR and other formats with named channels)
+			if (formatInfo.channelNames && formatInfo.channelNames.length > 0) {
+				// Show which channels are displayed vs. available
+				if (formatInfo.displayedChannels && formatInfo.displayedChannels.length > 0 &&
+				    formatInfo.displayedChannels.length < formatInfo.channelNames.length) {
+					// Multi-layer EXR: show displayed vs. all channels
+					const displayedList = formatInfo.displayedChannels.join(', ');
+					info += `**Displayed Channels:** ${displayedList}\n\n`;
+
+					const hiddenChannels = formatInfo.channelNames.filter(
+						ch => !formatInfo.displayedChannels!.includes(ch)
+					);
+					const hiddenList = hiddenChannels.join(', ');
+					info += `**Hidden Channels:** ${hiddenList}\n\n`;
+				} else {
+					// Single layer or all channels displayed
+					const channelList = formatInfo.channelNames.join(', ');
+					info += `**Channel Names:** ${channelList}\n\n`;
+				}
+			}
+
+			if (formatInfo.isHdr) {
+				info += `**HDR:** Yes\n\n`;
+			}
+
+			if (formatInfo.photometricInterpretation !== undefined) {
+				info += `**Color Space:** ${this.getPhotometricName(formatInfo.photometricInterpretation)}\n\n`;
+			}
+
+			if (formatInfo.planarConfig !== undefined) {
+				info += `**Planar Config:** ${formatInfo.planarConfig === 1 ? 'Chunky' : 'Planar'}\n\n`;
+			}
+		}
+
+		// Add color picker mode info
+		info += `**Color Picker:** ${this._colorPickerShowModified ? 'Modified (gamma + exposure)' : 'Original'}\n\n`;
+		info += 'Right-click on the image to toggle between original and modified values\n\n';
+
+		if (this._pixelPosition) {
+			info += `**Pixel Info:** ${this._pixelPosition}`;
+		} else {
+			info += 'Hover over the image to see pixel coordinates and values';
+		}
+
+		return info;
+	}
+
 	private updateTooltip() {
 		const tooltip = new vscode.MarkdownString();
 		tooltip.isTrusted = true;
-		
+
 		tooltip.appendMarkdown('**Image Information**\n\n');
-		
+
 		if (this._formatInfo) {
 			const info = this._formatInfo;
 			tooltip.appendMarkdown(`**Dimensions:** ${info.width} × ${info.height}\n\n`);
@@ -93,8 +170,23 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 
 			// Show channel names if available (for EXR and other formats with named channels)
 			if (info.channelNames && info.channelNames.length > 0) {
-				const channelList = info.channelNames.join(', ');
-				tooltip.appendMarkdown(`**Channel Names:** ${channelList}\n\n`);
+				// Show which channels are displayed vs. available
+				if (info.displayedChannels && info.displayedChannels.length > 0 &&
+				    info.displayedChannels.length < info.channelNames.length) {
+					// Multi-layer EXR: show displayed vs. all channels
+					const displayedList = info.displayedChannels.join(', ');
+					tooltip.appendMarkdown(`**Displayed Channels:** ${displayedList}\n\n`);
+
+					const hiddenChannels = info.channelNames.filter(
+						ch => !info.displayedChannels!.includes(ch)
+					);
+					const hiddenList = hiddenChannels.join(', ');
+					tooltip.appendMarkdown(`**Hidden Channels:** ${hiddenList}\n\n`);
+				} else {
+					// Single layer or all channels displayed
+					const channelList = info.channelNames.join(', ');
+					tooltip.appendMarkdown(`**Channel Names:** ${channelList}\n\n`);
+				}
 			}
 
 			if (info.isHdr) {
@@ -115,10 +207,14 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 		tooltip.appendMarkdown('Right-click on the image to toggle between original and modified values\n\n');
 
 		if (this._pixelPosition) {
-			tooltip.appendMarkdown(`**Pixel Info:** ${this._pixelPosition}`);
+			tooltip.appendMarkdown(`**Pixel Info:** ${this._pixelPosition}\n\n`);
 		} else {
-			tooltip.appendMarkdown('Hover over the image to see pixel coordinates and values');
+			tooltip.appendMarkdown('Hover over the image to see pixel coordinates and values\n\n');
 		}
+
+		// Add hint about copying
+		tooltip.appendMarkdown('---\n\n');
+		tooltip.appendMarkdown('*Press **Ctrl+Shift+I** (Cmd+Shift+I on Mac) to copy this information to clipboard*');
 
 		this.entry.tooltip = tooltip;
 	}

@@ -187,6 +187,11 @@
         "command": "tiffVisualizer.toggleColorPickerMode",
         "title": "Toggle Color Picker: Show Modified Values",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.copyImageInfo",
+        "title": "Copy Image Information to Clipboard",
+        "category": "TIFF Visualizer"
       }
     ],
     "keybindings": [
@@ -194,6 +199,12 @@
         "command": "tiffVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+      },
+      {
+        "command": "tiffVisualizer.copyImageInfo",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
         "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       }
     ],

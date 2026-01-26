@@ -80,7 +80,7 @@ export class ExrProcessor {
 			// @ts-ignore
 			const exrResult = parseExr(buffer, FloatType);
 
-			const { width, height, data, format, type, channelNames } = exrResult;
+			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028
@@ -127,7 +127,8 @@ export class ExrProcessor {
 						formatLabel: 'EXR',
 						formatType: 'exr-float', // For per-format settings
 						isInitialLoad: true, // Signal that this is the first load
-						channelNames: channelNames || [] // Pass original channel names to extension
+						channelNames: channelNames || [], // All channel names in file
+						displayedChannels: displayedChannels || [] // Channels actually being displayed
 					}
 				});
 
@@ -178,6 +179,11 @@ export class ExrProcessor {
 		if (!stats && !isGammaMode) {
 			stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
 			this._cachedStats = stats;
+
+			// Send stats to VS Code for status bar display
+			if (this.vscode && stats) {
+				this.vscode.postMessage({ type: 'stats', value: stats });
+			}
 
 			// Only update settings if auto-normalize is enabled (don't overwrite manual values!)
 			const isAutoNormalize = settings.normalization?.autoNormalize !== false;
