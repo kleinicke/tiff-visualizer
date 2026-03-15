@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import { TiffVisualizerTestUtils } from './utils/testUtils';
 import * as path from 'path';
 
-describe('TIFF Visualizer - Comprehensive Functionality Tests', () => {
+describe('Image Visualizer - Comprehensive Functionality Tests', () => {
     let workbench: Workbench;
     let testUtils: TiffVisualizerTestUtils;
     let editorView: EditorView;
@@ -108,7 +108,7 @@ describe('TIFF Visualizer - Comprehensive Functionality Tests', () => {
     });
 
     describe('Command Execution', () => {
-        it('should execute TIFF Visualizer commands', async function() {
+        it('should execute Image Visualizer commands', async function() {
             this.timeout(15000);
             
             const commands = [
@@ -163,7 +163,7 @@ describe('TIFF Visualizer - Comprehensive Functionality Tests', () => {
             // Test that the extension doesn't crash with invalid operations
             try {
                 // Try to execute commands without a file open
-                await workbench.executeCommand('TIFF Visualizer: Export as PNG');
+                await workbench.executeCommand('Image Visualizer: Export as PNG');
                 console.log('✅ Command executed without error');
             } catch (error) {
                 // Expected behavior - command should either work or fail gracefully

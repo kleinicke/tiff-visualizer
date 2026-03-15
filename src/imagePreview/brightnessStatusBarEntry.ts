@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const BRIGHTNESS_COMMAND_ID = 'tiffVisualizer.setBrightness';
+const BRIGHTNESS_COMMAND_ID = 'imageVisualizer.setBrightness';
 
 export class BrightnessStatusBarEntry extends PreviewStatusBarEntry {
 	private _brightness: number | undefined;
 
 	constructor() {
 		super(
-			'tiffVisualizer.brightness',
+			'imageVisualizer.brightness',
 			'Image Brightness',
 			vscode.StatusBarAlignment.Right,
 			99 // To appear next to gamma

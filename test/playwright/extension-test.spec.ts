@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
-test.describe('TIFF Visualizer Extension Test', () => {
+test.describe('Image Visualizer Extension Test', () => {
   let uintImagePath: string;
   let floatImagePath: string;
 
@@ -25,7 +25,7 @@ test.describe('TIFF Visualizer Extension Test', () => {
     console.log(`✅ Float test image: ${floatImagePath}`);
   });
 
-  test('should load VS Code Web with TIFF Visualizer extension', async ({ page }) => {
+  test('should load VS Code Web with Image Visualizer extension', async ({ page }) => {
     // Navigate to VS Code Web
     await page.goto('/');
     
@@ -57,7 +57,7 @@ test.describe('TIFF Visualizer Extension Test', () => {
     }
   });
 
-  test('should have TIFF Visualizer commands available', async ({ page }) => {
+  test('should have Image Visualizer commands available', async ({ page }) => {
     await page.goto('/');
     await page.waitForSelector('.monaco-workbench', { timeout: 30000 });
     await page.waitForTimeout(5000);
@@ -73,25 +73,25 @@ test.describe('TIFF Visualizer Extension Test', () => {
     await page.keyboard.press('Ctrl+Shift+P');
     console.log('✅ Command palette opened');
     
-    // Search for TIFF Visualizer commands
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer');
+    // Search for Image Visualizer commands
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer');
     await page.waitForTimeout(1000);
     
     // Wait for commands to appear
     await page.waitForSelector('.monaco-list-row', { timeout: 5000 });
     
-    // Check that TIFF Visualizer commands are available
+    // Check that Image Visualizer commands are available
     const commands = await page.locator('.monaco-list-row');
     const commandTexts = await commands.allTextContents();
     
-    // Should find TIFF Visualizer commands
+    // Should find Image Visualizer commands
     const hasTiffCommands = commandTexts.some(text => 
-      text.includes('TIFF Visualizer')
+      text.includes('Image Visualizer')
     );
     
     expect(hasTiffCommands).toBe(true);
-    console.log('✅ TIFF Visualizer commands found in command palette');
-    console.log('Available commands:', commandTexts.filter(text => text.includes('TIFF Visualizer')));
+    console.log('✅ Image Visualizer commands found in command palette');
+    console.log('Available commands:', commandTexts.filter(text => text.includes('Image Visualizer')));
   });
 
   test('should open and display UINT8 TIFF image', async ({ page }) => {
@@ -168,13 +168,13 @@ test.describe('TIFF Visualizer Extension Test', () => {
       await page.waitForTimeout(2000);
     }
     
-    // Test various TIFF Visualizer commands
+    // Test various Image Visualizer commands
     const commandsToTest = [
-      'TIFF Visualizer: Zoom In',
-      'TIFF Visualizer: Zoom Out',
-      'TIFF Visualizer: Set Gamma',
-      'TIFF Visualizer: Set Brightness',
-      'TIFF Visualizer: Set Normalization Range'
+      'Image Visualizer: Zoom In',
+      'Image Visualizer: Zoom Out',
+      'Image Visualizer: Set Gamma',
+      'Image Visualizer: Set Brightness',
+      'Image Visualizer: Set Normalization Range'
     ];
     
     for (const command of commandsToTest) {
@@ -224,11 +224,11 @@ test.describe('TIFF Visualizer Extension Test', () => {
     await expect(statusBar).toBeVisible();
     console.log('✅ Status bar is visible');
     
-    // Check for any TIFF Visualizer specific elements
+    // Check for any Image Visualizer specific elements
     // These might appear when a TIFF file is opened
     const tiffElements = await page.locator('[class*="tiff"], [class*="visualizer"]');
     const tiffCount = await tiffElements.count();
-    console.log(`Found ${tiffCount} potential TIFF Visualizer elements`);
+    console.log(`Found ${tiffCount} potential Image Visualizer elements`);
     
     // Check that VS Code is working properly
     const titleBar = await page.locator('.titlebar');

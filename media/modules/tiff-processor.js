@@ -530,6 +530,35 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * Process TIFF file from raw bytes (for layer loading — skips fetch and deferred render).
+	 * Uses GeoTIFF.js directly (no WASM path for simplicity).
+	 * @param {number[]} data - Raw file bytes as plain Array
+	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
+	 */
+	async processTiffFromBuffer(data) {
+		const buffer = new Uint8Array(data).buffer;
+		const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+		const image = await tiff.getImage();
+		const width = image.getWidth();
+		const height = image.getHeight();
+		const rasters = await image.readRasters();
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+
+		// Temporarily clear _lastStatistics so stats are recalculated for this layer
+		const savedStats = this._lastStatistics;
+		this._lastStatistics = null;
+
+		const imageData = await this.renderTiff(image, rasters);
+
+		this._lastStatistics = savedStats;
+
+		return { canvas, imageData };
+	}
+
+	/**
 	 * Load mask image for filtering
 	 * @param {string} maskSrc - Mask TIFF file URL
 	 * @returns {Promise<Float32Array>}

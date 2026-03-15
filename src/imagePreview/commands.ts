@@ -31,7 +31,7 @@ export function registerImagePreviewCommands(
 	const disposables: vscode.Disposable[] = [];
 
 	// Copy image information to clipboard (triggered by keyboard shortcut)
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.copyImageInfo', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.copyImageInfo', async () => {
 		logCommand('copyImageInfo', 'start');
 		try {
 			const info = sizeStatusBarEntry.getFormattedInfo();
@@ -49,7 +49,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomIn', () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.zoomIn', () => {
 		logCommand('zoomIn', 'start');
 		try {
 			previewManager.activePreview?.zoomIn();
@@ -59,7 +59,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.zoomOut', () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.zoomOut', () => {
 		logCommand('zoomOut', 'start');
 		try {
 			previewManager.activePreview?.zoomOut();
@@ -69,7 +69,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetZoom', () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.resetZoom', () => {
 		logCommand('resetZoom', 'start');
 		try {
 			previewManager.activePreview?.resetZoom();
@@ -79,7 +79,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.copyImage', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.copyImage', async () => {
 		logCommand('copyImage', 'start');
 		try {
 			const activePreview = previewManager.activePreview;
@@ -94,7 +94,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.pastePosition', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.pastePosition', async () => {
 		logCommand('pastePosition', 'start');
 		try {
 			const activePreview = previewManager.activePreview;
@@ -109,7 +109,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsPng', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.exportAsPng', async () => {
 		logCommand('exportAsPng', 'start');
 		const activePreview = previewManager.activePreview;
 		if (activePreview) {
@@ -141,7 +141,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.setNormalizationRange', async () => {
 		logCommand('setNormalizationRange', 'start');
 		const currentConfig = previewManager.getNormalizationConfig();
 		const activePreview = previewManager.activePreview;
@@ -346,7 +346,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setGamma', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.setGamma', async () => {
 		logCommand('setGamma', 'start');
 		const currentPreview = previewManager.activePreview;
 		const normConfig = previewManager.getNormalizationConfig();
@@ -456,7 +456,7 @@ export function registerImagePreviewCommands(
 		logCommand('setGamma', 'success', `Gamma set: in=${gammaInValue}, out=${gammaOutValue}`);
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setBrightness', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.setBrightness', async () => {
 		logCommand('setBrightness', 'start');
 		const currentConfig = previewManager.getBrightnessConfig();
 		const currentPreview = previewManager.activePreview;
@@ -483,7 +483,7 @@ export function registerImagePreviewCommands(
 		logCommand('setBrightness', 'success', `Brightness set: ${brightnessValue}`);
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setComparisonBase', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.setComparisonBase', async () => {
 		logCommand('setComparisonBase', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -573,7 +573,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.filterByMask', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.filterByMask', async () => {
 		logCommand('filterByMask', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -942,7 +942,7 @@ export function registerImagePreviewCommands(
 		return null;
 	}
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleNanColor', () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.toggleNanColor', () => {
 		logCommand('toggleNanColor', 'start');
 		try {
 			const currentColor = previewManager.settingsManager.getNanColor();
@@ -957,7 +957,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openWith', async (resource?: vscode.Uri) => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.openWith', async (resource?: vscode.Uri) => {
 		logCommand('openWith', 'start');
 		if (!resource) {
 			// Try to get the resource from the active editor
@@ -968,22 +968,22 @@ export function registerImagePreviewCommands(
 		}
 
 		if (!resource) {
-			vscode.window.showErrorMessage('No file selected to open with TIFF Visualizer.');
+			vscode.window.showErrorMessage('No file selected to open with Image Visualizer.');
 			logCommand('openWith', 'error', 'No file selected');
 			return;
 		}
 
-		// Open the file with the TIFF Visualizer custom editor
+		// Open the file with the Image Visualizer custom editor
 		try {
-			await vscode.commands.executeCommand('vscode.openWith', resource, 'tiffVisualizer.previewEditor');
+			await vscode.commands.executeCommand('vscode.openWith', resource, 'imageVisualizer.previewEditor');
 			logCommand('openWith', 'success', resource.fsPath);
 		} catch (error) {
-			vscode.window.showErrorMessage(`Failed to open with TIFF Visualizer: ${error}`);
+			vscode.window.showErrorMessage(`Failed to open with Image Visualizer: ${error}`);
 			logCommand('openWith', 'error', String(error));
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openNextToCurrent', async (resource?: vscode.Uri) => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.openNextToCurrent', async (resource?: vscode.Uri) => {
 		logCommand('openNextToCurrent', 'start');
 		if (!resource) {
 			vscode.window.showErrorMessage('No file selected to open next to current image.');
@@ -993,7 +993,7 @@ export function registerImagePreviewCommands(
 
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open a TIFF image first.');
+			vscode.window.showErrorMessage('No active Image Visualizer preview found. Please open a TIFF image first.');
 			logCommand('openNextToCurrent', 'error', 'No active preview');
 			return;
 		}
@@ -1010,11 +1010,11 @@ export function registerImagePreviewCommands(
 	}));
 
 	// Comparison Panel Commands
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.selectForCompare', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.selectForCompare', async () => {
 		logCommand('selectForCompare', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF Visualizer preview found.');
+			vscode.window.showErrorMessage('No active Image Visualizer preview found.');
 			logCommand('selectForCompare', 'error', 'No active preview');
 			return;
 		}
@@ -1027,18 +1027,18 @@ export function registerImagePreviewCommands(
 			vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
 
 			// Set context to show that we have a comparison image
-			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', true);
+			vscode.commands.executeCommand('setContext', 'imageVisualizer.hasComparisonImage', true);
 			logCommand('selectForCompare', 'success', activePreview.resource.fsPath);
 		} catch (error) {
 			logCommand('selectForCompare', 'error', String(error));
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.compareWithSelected', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.compareWithSelected', async () => {
 		logCommand('compareWithSelected', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF Visualizer preview found.');
+			vscode.window.showErrorMessage('No active Image Visualizer preview found.');
 			logCommand('compareWithSelected', 'error', 'No active preview');
 			return;
 		}
@@ -1055,10 +1055,10 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.resetAllSettings', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.resetAllSettings', async () => {
 		logCommand('resetAllSettings', 'start');
 		const choice = await vscode.window.showWarningMessage(
-			'Reset all TIFF Visualizer settings to defaults? This will clear all cached normalization, gamma, and brightness settings for all image formats.',
+			'Reset all Image Visualizer settings to defaults? This will clear all cached normalization, gamma, and brightness settings for all image formats.',
 			{ modal: true },
 			'Reset All',
 			'Cancel'
@@ -1072,7 +1072,7 @@ export function registerImagePreviewCommands(
 				// Refresh all open previews to apply default settings
 				previewManager.updateAllPreviews();
 
-				vscode.window.showInformationMessage('All TIFF Visualizer settings have been reset to defaults.');
+				vscode.window.showInformationMessage('All Image Visualizer settings have been reset to defaults.');
 				logCommand('resetAllSettings', 'success');
 			} catch (error) {
 				logCommand('resetAllSettings', 'error', String(error));
@@ -1082,7 +1082,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleHistogram', () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.toggleHistogram', () => {
 		logCommand('toggleHistogram', 'start');
 		try {
 			previewManager.activePreview?.toggleHistogram();
@@ -1092,7 +1092,7 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.convertColormapToFloat', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.convertColormapToFloat', async () => {
 		logCommand('convertColormapToFloat', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -1276,7 +1276,7 @@ export function registerImagePreviewCommands(
 			logCommand('convertColormapToFloat', 'error', 'No webview available');
 		}
 	}));
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.revertToOriginal', async () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.revertToOriginal', async () => {
 		logCommand('revertToOriginal', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -1304,7 +1304,7 @@ export function registerImagePreviewCommands(
 		logCommand('revertToOriginal', 'success', 'Reverted to original image');
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleColorPickerMode', () => {
+	disposables.push(vscode.commands.registerCommand('imageVisualizer.toggleColorPickerMode', () => {
 		logCommand('toggleColorPickerMode', 'start');
 		try {
 			previewManager.settingsManager.toggleColorPickerShowModified();

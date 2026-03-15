@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('VS Code Web with TIFF Visualizer Extension', () => {
+test.describe('VS Code Web with Image Visualizer Extension', () => {
   test.skip('should load VS Code Web interface', async ({ page }) => {
     // Skip this test when VS Code Web server is not running
     // To run this test, start VS Code Web server first:
@@ -30,19 +30,19 @@ test.describe('VS Code Web with TIFF Visualizer Extension', () => {
     // Open command palette
     await page.keyboard.press('Ctrl+Shift+P');
     
-    // Search for TIFF Visualizer commands
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer');
+    // Search for Image Visualizer commands
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer');
     
     // Wait for commands to appear
     await page.waitForSelector('.monaco-list-row', { timeout: 5000 });
     
-    // Check that TIFF Visualizer commands are available
+    // Check that Image Visualizer commands are available
     const commands = await page.locator('.monaco-list-row');
     const commandTexts = await commands.allTextContents();
     
-    // Should find TIFF Visualizer commands
+    // Should find Image Visualizer commands
     const hasTiffCommands = commandTexts.some(text => 
-      text.includes('TIFF Visualizer')
+      text.includes('Image Visualizer')
     );
     
     expect(hasTiffCommands).toBe(true);

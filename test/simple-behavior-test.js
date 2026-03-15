@@ -1,5 +1,5 @@
 /**
- * Simple behavioral tests for TIFF Visualizer extension
+ * Simple behavioral tests for Image Visualizer extension
  * Tests core functionality without requiring VS Code test framework
  */
 
@@ -7,7 +7,7 @@ const assert = require('assert');
 const path = require('path');
 const fs = require('fs');
 
-console.log('🧪 Running Simple Behavioral Tests for TIFF Visualizer...\n');
+console.log('🧪 Running Simple Behavioral Tests for Image Visualizer...\n');
 
 // Mock vscode module for testing
 const mockVscode = {

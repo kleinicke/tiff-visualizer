@@ -4,7 +4,7 @@ import { TiffVisualizerTestUtils } from './utils/testUtils';
 import * as path from 'path';
 import * as fs from 'fs';
 
-describe('TIFF Visualizer - Diagnostic Tests', () => {
+describe('Image Visualizer - Diagnostic Tests', () => {
     let workbench: Workbench;
     let testUtils: TiffVisualizerTestUtils;
 
@@ -115,7 +115,7 @@ describe('TIFF Visualizer - Diagnostic Tests', () => {
                                 await webview.switchBack();
                                 
                                 if (canvas.length > 0) {
-                                    console.log('✅ TIFF Visualizer appears to be working!');
+                                    console.log('✅ Image Visualizer appears to be working!');
                                     expect(canvas.length).to.be.greaterThan(0);
                                 }
                                 
@@ -161,12 +161,12 @@ describe('TIFF Visualizer - Diagnostic Tests', () => {
     it('should test basic extension commands', async function() {
         this.timeout(15000);
         
-        console.log('🎮 Testing basic TIFF Visualizer commands...');
+        console.log('🎮 Testing basic Image Visualizer commands...');
         
         const commands = [
-            'TIFF Visualizer: Zoom In',
-            'TIFF Visualizer: Zoom Out',
-            'TIFF Visualizer: Reset Zoom'
+            'Image Visualizer: Zoom In',
+            'Image Visualizer: Zoom Out',
+            'Image Visualizer: Reset Zoom'
         ];
         
         for (const command of commands) {

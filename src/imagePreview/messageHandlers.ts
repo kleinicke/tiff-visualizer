@@ -41,6 +41,9 @@ export class MessageRouter {
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
+		this.handlers.set('requestAddLayer', new RequestAddLayerMessageHandler());
+		this.handlers.set('removeLayer', new RemoveLayerMessageHandler());
+		this.handlers.set('layerSettingsChanged', new LayerSettingsChangedMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -289,6 +292,49 @@ class PositionCopiedMessageHandler implements MessageHandler {
 			if ('setCopiedPosition' in manager) {
 				(manager as any).setCopiedPosition(message.state);
 			}
+		}
+	}
+}
+
+class RequestAddLayerMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.handleAddLayerRequest();
+	}
+}
+
+class RemoveLayerMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Just track removal if needed
+		if (message.layerId) {
+			(preview as any)._activeLayers = ((preview as any)._activeLayers || [])
+				.filter((id: string) => id !== message.layerId);
+		}
+	}
+}
+
+class LayerSettingsChangedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Update AppStateManager with changed settings from webview panel sliders
+		const mgr = preview.getManager().appStateManager;
+		if (message.colormap !== undefined) {
+			mgr.setColormap(message.colormap);
+		}
+		if (message.normMin !== undefined || message.normMax !== undefined) {
+			const current = mgr.imageSettings.normalization;
+			mgr.updateNormalization(
+				message.normMin !== undefined ? message.normMin : current.min,
+				message.normMax !== undefined ? message.normMax : current.max
+			);
+		}
+		if (message.gammaIn !== undefined || message.gammaOut !== undefined) {
+			const current = mgr.imageSettings.gamma;
+			mgr.updateGamma(
+				message.gammaIn !== undefined ? message.gammaIn : current.in,
+				message.gammaOut !== undefined ? message.gammaOut : current.out
+			);
+		}
+		if (message.brightness !== undefined) {
+			mgr.updateBrightness(message.brightness);
 		}
 	}
 }

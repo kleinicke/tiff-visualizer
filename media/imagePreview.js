@@ -11,7 +11,7 @@ import { PngProcessor } from './modules/png-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
-import { ColormapConverter } from './modules/colormap-converter.js';
+import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.js';
 
 /**
  * Main Image Preview Application
@@ -66,6 +66,17 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
+
+	// Layer system
+	let layers = []; // Array of layer objects
+	let activeLayerIndex = 0;
+
+	// Control panel state
+	let panelCollapsed = false;
+	let currentChannels = 1; // Track channels of base image for colormap enable/disable
+	let currentImageStats = { min: 0, max: 1 }; // Stats of the most recently loaded image
+	let currentTypeMax = 1.0; // Type max of the most recently loaded image
+	let currentIsFloat = true; // Whether the most recently loaded image is float
 
 	// Colormap conversion state
 	let colormapConversionState = null;
@@ -127,6 +138,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
+		createControlPanel();
 
 		// Save state when webview might be disposed
 		window.addEventListener('beforeunload', saveState);
@@ -527,6 +539,37 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Finalize image setup after loading
 	 */
 	function finalizeImageSetup() {
+		// Detect channels, typeMax and float flag from whichever processor was used
+		currentChannels = 1;
+		currentTypeMax = 1.0;
+		currentIsFloat = true;
+		if (tiffProcessor.rawTiffData) {
+			currentChannels = tiffProcessor.rawTiffData.ifd.t277 || 1;
+			const _bps = tiffProcessor.rawTiffData.ifd.t258 || 8;
+			const _sf = tiffProcessor.rawTiffData.ifd.t339 || 1; // 1=uint, 2=int, 3=float
+			currentIsFloat = _sf === 3;
+			currentTypeMax = currentIsFloat ? 1.0 : (_bps >= 16 ? 65535 : 255);
+		} else if (exrProcessor && exrProcessor.rawExrData) {
+			currentChannels = exrProcessor.rawExrData.channels || 1;
+			currentIsFloat = true;
+			currentTypeMax = 1.0;
+		} else if (npyProcessor && npyProcessor._lastRaw) {
+			currentChannels = npyProcessor._lastRaw.channels || 1;
+			currentIsFloat = npyProcessor._lastRaw.isFloat !== false;
+			currentTypeMax = npyProcessor._lastRaw.typeMax || (currentIsFloat ? 1.0 : 255);
+		} else if (pfmProcessor && pfmProcessor._lastRaw) {
+			currentChannels = pfmProcessor._lastRaw.channels || 1;
+			currentIsFloat = true;
+			currentTypeMax = 1.0;
+		} else if (ppmProcessor && ppmProcessor._lastRaw) {
+			currentChannels = ppmProcessor._lastRaw.channels || 1;
+			currentIsFloat = false;
+			currentTypeMax = 255;
+		}
+		// Update colormap select disabled state
+		const cmSelect = document.getElementById('iv-colormap-select');
+		if (cmSelect) cmSelect.disabled = currentChannels !== 1;
+
 		// Update all controllers with references
 		zoomController.setImageElement(imageElement);
 		zoomController.setCanvas(canvas);
@@ -553,6 +596,53 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Update histogram if visible
 		updateHistogramData();
+
+		// Collect stats from whichever processor was used
+		const _activeProcessorStats =
+			(tiffProcessor && tiffProcessor._cachedStats) ||
+			(exrProcessor && exrProcessor._cachedStats) ||
+			(npyProcessor && npyProcessor._cachedStats) ||
+			(pfmProcessor && pfmProcessor._cachedStats) ||
+			null;
+		if (_activeProcessorStats) {
+			currentImageStats = _activeProcessorStats;
+		}
+
+		// Initialize base layer
+		const _baseLayerSettings = {
+			normalization: { ...settingsManager.settings.normalization },
+			gamma: { ...settingsManager.settings.gamma },
+			brightness: { ...settingsManager.settings.brightness }
+		};
+		if (layers.length === 0) {
+			layers.push({
+				id: settingsManager.settings.resourceUri || 'base',
+				name: (settingsManager.settings.resourceUri || 'base').split('/').pop() || 'Base',
+				visible: true,
+				opacity: 1.0,
+				imageData: primaryImageData,
+				rawData: null,
+				settings: _baseLayerSettings,
+				stats: currentImageStats,
+				typeMax: currentTypeMax,
+				isFloat: currentIsFloat,
+				channels: currentChannels,
+				colormap: settingsManager.settings.colormap || null
+			});
+		} else {
+			layers[0].imageData = primaryImageData;
+			layers[0].settings = _baseLayerSettings;
+			layers[0].stats = currentImageStats;
+			layers[0].typeMax = currentTypeMax;
+			layers[0].isFloat = currentIsFloat;
+			layers[0].channels = currentChannels;
+			layers[0].colormap = settingsManager.settings.colormap || null;
+		}
+
+		// Set slider bounds to match the loaded image data range
+		updateRangeSliderBounds(currentImageStats.min, currentImageStats.max, currentTypeMax, currentIsFloat);
+		syncPanelToSettings(layers[0].settings, layers[0].colormap);
+		updateLayerListUI();
 	}
 
 	/**
@@ -618,6 +708,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				// Handle real-time settings updates
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const changes = settingsManager.updateSettings(message.settings);
+				syncPanelToSettings(settingsManager.settings);
 				const newResourceUri = settingsManager.settings.resourceUri;
 
 				// Check if this is a deferred render trigger (initial load)
@@ -676,6 +767,24 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						await updateImageWithNewSettings(changes);
 						const endTime = performance.now();
 						logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+						// Update base layer imageData and settings snapshot for compositing
+						if (layers.length > 0) {
+							layers[0].imageData = primaryImageData;
+							// Keep base layer settings in sync with global settings (from status bar etc.)
+							if (layers[0].settings) {
+								Object.assign(layers[0].settings.normalization, settingsManager.settings.normalization);
+								layers[0].settings.gamma.in = settingsManager.settings.gamma.in;
+								layers[0].settings.gamma.out = settingsManager.settings.gamma.out;
+								layers[0].settings.brightness.offset = settingsManager.settings.brightness.offset;
+								layers[0].colormap = settingsManager.settings.colormap || null;
+							}
+							if (layers.length > 1) {
+								compositeLayers();
+							}
+						}
+						// Sync panel to active layer's settings
+						const _aLayer = layers[activeLayerIndex];
+						syncPanelToSettings((_aLayer && _aLayer.settings) ? _aLayer.settings : settingsManager.settings);
 					}
 				}
 				break;
@@ -790,6 +899,74 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				// Revert to the original image
 				handleRevertToOriginal();
 				break;
+
+			case 'addLayerData': {
+				// Load and add a new layer from file data sent by extension
+				const { layerId, filename, fileData, formatHint } = message;
+				try {
+					const ext = (formatHint || filename || '').toLowerCase();
+					let layerResult = null;
+
+					if (ext.endsWith('.tif') || ext.endsWith('.tiff')) {
+						layerResult = await tiffProcessor.processTiffFromBuffer(fileData);
+					} else if (ext.endsWith('.exr')) {
+						layerResult = exrProcessor.processExrFromBuffer(fileData);
+					} else if (ext.endsWith('.npy') || ext.endsWith('.npz')) {
+						layerResult = npyProcessor.processNpyFromBuffer(fileData);
+					} else if (ext.endsWith('.pfm')) {
+						layerResult = pfmProcessor.processPfmFromBuffer(fileData);
+					} else if (ext.endsWith('.ppm') || ext.endsWith('.pgm') || ext.endsWith('.pbm')) {
+						layerResult = ppmProcessor.processPpmFromBuffer(fileData);
+					} else if (ext.endsWith('.png') || ext.endsWith('.jpg') || ext.endsWith('.jpeg')) {
+						layerResult = await pngProcessor.processPngFromBuffer(fileData, filename || '');
+					}
+
+					if (layerResult && layerResult.imageData) {
+						let layerImageData = layerResult.imageData;
+						if (layers.length > 0 && canvas) {
+							if (layerImageData.width !== canvas.width || layerImageData.height !== canvas.height) {
+								const tmpCanvas = document.createElement('canvas');
+								tmpCanvas.width = canvas.width;
+								tmpCanvas.height = canvas.height;
+								const tmpCtx = tmpCanvas.getContext('2d');
+								const srcCanvas = document.createElement('canvas');
+								srcCanvas.width = layerImageData.width;
+								srcCanvas.height = layerImageData.height;
+								srcCanvas.getContext('2d').putImageData(layerImageData, 0, 0);
+								tmpCtx.drawImage(srcCanvas, 0, 0, canvas.width, canvas.height);
+								layerImageData = tmpCtx.getImageData(0, 0, canvas.width, canvas.height);
+							}
+						}
+						const _layerStats = layerResult.stats || { min: 0, max: 1 };
+						const _layerIsFloat = layerResult.isFloat !== false;
+						const _layerTypeMax = layerResult.typeMax || (_layerIsFloat ? 1.0 : 255);
+						const _layerChannels = layerResult.channels || 1;
+						layers.push({
+							id: layerId,
+							name: filename || 'Layer ' + layers.length,
+							visible: true,
+							opacity: 1.0,
+							imageData: layerImageData,
+							rawData: layerResult.rawData || null,
+							settings: {
+								normalization: { min: _layerStats.min, max: _layerStats.max, autoNormalize: false, gammaMode: false },
+								gamma: { in: 1.0, out: 1.0 },
+								brightness: { offset: 0 }
+							},
+							stats: _layerStats,
+							typeMax: _layerTypeMax,
+							isFloat: _layerIsFloat,
+							channels: _layerChannels,
+							colormap: null
+						});
+						updateLayerListUI();
+						compositeLayers();
+					}
+				} catch (err) {
+					console.error('Failed to load layer:', err);
+				}
+				break;
+			}
 		}
 	}
 
@@ -1037,6 +1214,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				type: 'stats',
 				value: { min: minValue, max: maxValue }
 			});
+			updateRangeSliderBounds(minValue, maxValue, 1.0, true);
 
 			// Send format info
 			sendFormatInfo({
@@ -1407,24 +1585,24 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Add Copy option (triggers command via extension for logging)
 			menu.appendChild(createMenuItem('Copy', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.copyImage' });
+				vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.copyImage' });
 			}));
 
 			// Add Paste Position option (uses extension command for cross-webview support)
 			menu.appendChild(createMenuItem('Paste Position', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
+				vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.pastePosition' });
 			}));
 
 			// Add Export as PNG option (triggers command via extension)
 			menu.appendChild(createMenuItem('Export as PNG', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' });
+				vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.exportAsPng' });
 			}));
 
 			menu.appendChild(createSeparator());
 
 			// Add Toggle Histogram option (triggers command via extension for logging)
 			menu.appendChild(createMenuItem('Toggle Histogram', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
+				vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.toggleHistogram' });
 			}));
 
 			// Check if image is RGB (3+ channels) for RGB-specific options
@@ -1436,7 +1614,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 				// Add Convert Colormap to Float option (uses command - needs user input)
 				menu.appendChild(createMenuItem('Convert Colormap to Float', () => {
-					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.convertColormapToFloat' });
+					vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.convertColormapToFloat' });
 				}));
 			}
 
@@ -1445,7 +1623,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				menu.appendChild(createSeparator());
 
 				menu.appendChild(createMenuItem('Revert to Original', () => {
-					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.revertToOriginal' });
+					vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.revertToOriginal' });
 				}));
 			}
 
@@ -1453,7 +1631,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Add Filter by Mask option (uses command - needs user input)
 			menu.appendChild(createMenuItem('Filter by Mask (beta)', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
+				vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.filterByMask' });
 			}));
 
 
@@ -1461,14 +1639,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Add Open Comparison Panel option
 			// menu.appendChild(createMenuItem('Open Comparison Panel', () => {
-			// 	vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openComparisonPanel' });
+			// 	vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.openComparisonPanel' });
 			// }));
 
 			// Add Toggle NaN Color option
 			const currentNanColor = settingsManager.settings.nanColor || 'black';
 			const nextNanColor = currentNanColor === 'black' ? 'fuchsia' : 'black';
 			menu.appendChild(createMenuItem(`Show NaN Color as ${nextNanColor}`, () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
+				vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.toggleNanColor' });
 			}));
 
 			// Add Toggle Color Picker Mode option - ONLY in Gamma Mode
@@ -1478,7 +1656,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
 				const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
 				menu.appendChild(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
-					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
+					vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.toggleColorPickerMode' });
 				}));
 			}
 			document.body.appendChild(menu);
@@ -1507,7 +1685,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		document.addEventListener('paste', (e) => {
 			e.preventDefault();
 			// Use extension command for cross-webview paste support
-			vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
+			vscode.postMessage({ type: 'executeCommand', command: 'imageVisualizer.pastePosition' });
 		});
 
 		// Comparison toggle
@@ -1569,6 +1747,470 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		`;
 
 		document.body.appendChild(overlayElement);
+	}
+
+	/**
+	 * Create the in-webview control panel
+	 */
+	function createControlPanel() {
+		const panel = document.createElement('div');
+		panel.className = 'iv-panel';
+		panel.id = 'iv-control-panel';
+
+		// Header
+		const header = document.createElement('div');
+		header.className = 'iv-panel-header';
+		header.innerHTML = `<span class="iv-panel-title">&#9776; Controls</span>`;
+		const toggleBtn = document.createElement('button');
+		toggleBtn.className = 'iv-panel-toggle';
+		toggleBtn.textContent = '−';
+		toggleBtn.title = 'Collapse panel';
+		header.appendChild(toggleBtn);
+		panel.appendChild(header);
+
+		// Body
+		const body = document.createElement('div');
+		body.className = 'iv-panel-body';
+		body.id = 'iv-panel-body';
+		panel.appendChild(body);
+
+		// Toggle collapse
+		header.addEventListener('click', () => {
+			panelCollapsed = !panelCollapsed;
+			body.classList.toggle('iv-collapsed', panelCollapsed);
+			toggleBtn.textContent = panelCollapsed ? '+' : '−';
+		});
+
+		// --- LAYERS section ---
+		const layerSectionLabel = document.createElement('div');
+		layerSectionLabel.className = 'iv-section-label';
+		layerSectionLabel.textContent = 'Layers';
+		body.appendChild(layerSectionLabel);
+
+		const layerList = document.createElement('div');
+		layerList.className = 'iv-layer-list';
+		layerList.id = 'iv-layer-list';
+		body.appendChild(layerList);
+
+		const addLayerBtn = document.createElement('button');
+		addLayerBtn.className = 'iv-add-layer-btn';
+		addLayerBtn.textContent = '+ Add Layer';
+		addLayerBtn.addEventListener('click', () => {
+			vscode.postMessage({ type: 'requestAddLayer' });
+		});
+		body.appendChild(addLayerBtn);
+
+		// --- ADJUSTMENTS section ---
+		const adjSectionLabel = document.createElement('div');
+		adjSectionLabel.className = 'iv-section-label';
+		adjSectionLabel.textContent = 'Adjustments';
+		body.appendChild(adjSectionLabel);
+
+		// Colormap row
+		const cmRow = createControlRow('Colormap', null);
+		const cmSelect = document.createElement('select');
+		cmSelect.className = 'iv-select';
+		cmSelect.id = 'iv-colormap-select';
+		// Add "None" option
+		const noneOpt = document.createElement('option');
+		noneOpt.value = '';
+		noneOpt.textContent = 'None (gray)';
+		cmSelect.appendChild(noneOpt);
+		// Add colormap options
+		for (const name of COLORMAP_NAMES) {
+			if (name === 'gray') continue; // Skip gray, covered by None
+			const opt = document.createElement('option');
+			opt.value = name;
+			opt.textContent = name.charAt(0).toUpperCase() + name.slice(1);
+			cmSelect.appendChild(opt);
+		}
+		cmSelect.addEventListener('change', () => {
+			const colormap = cmSelect.value || null;
+			const layer = layers[activeLayerIndex];
+			if (!layer) return;
+			layer.colormap = colormap;
+			applyLayerSettings(activeLayerIndex);
+			vscode.postMessage({ type: 'layerSettingsChanged', colormap: colormap });
+		});
+		cmRow.querySelector('.iv-control-label').after(cmSelect);
+		body.appendChild(cmRow);
+
+		// Norm Min row
+		const minRow = createSliderRow('Range Min', 'iv-norm-min', 0, 1, 0, 0.001, (val) => {
+			const layer = layers[activeLayerIndex];
+			if (!layer) return;
+			// Switch to manual range mode so min/max values are actually used
+			layer.settings.normalization.gammaMode = false;
+			layer.settings.normalization.autoNormalize = false;
+			layer.settings.normalization.min = parseFloat(val);
+			applyLayerSettings(activeLayerIndex);
+			vscode.postMessage({ type: 'layerSettingsChanged', normMin: parseFloat(val) });
+		});
+		body.appendChild(minRow);
+
+		// Norm Max row
+		const maxRow = createSliderRow('Range Max', 'iv-norm-max', 0, 1, 1, 0.001, (val) => {
+			const layer = layers[activeLayerIndex];
+			if (!layer) return;
+			// Switch to manual range mode so min/max values are actually used
+			layer.settings.normalization.gammaMode = false;
+			layer.settings.normalization.autoNormalize = false;
+			layer.settings.normalization.max = parseFloat(val);
+			applyLayerSettings(activeLayerIndex);
+			vscode.postMessage({ type: 'layerSettingsChanged', normMax: parseFloat(val) });
+		});
+		body.appendChild(maxRow);
+
+		// Gamma row (single slider — sets gamma.out; gamma.in is always 1.0)
+		const gammaRow = createSliderRow('Gamma', 'iv-gamma', 0.1, 5.0, 1.0, 0.01, (val) => {
+			const layer = layers[activeLayerIndex];
+			if (!layer) return;
+			layer.settings.gamma.in = 1.0;
+			layer.settings.gamma.out = parseFloat(val);
+			applyLayerSettings(activeLayerIndex);
+			vscode.postMessage({ type: 'layerSettingsChanged', gammaOut: parseFloat(val) });
+		});
+		const gammaDesc = document.createElement('div');
+		gammaDesc.className = 'iv-control-desc';
+		gammaDesc.textContent = 'output = input^\u03b3 \u2014 \u03b3<1 brighter, \u03b3>1 darker. Applied after range, before colormap.';
+		const gammaGroup = document.createElement('div');
+		gammaGroup.appendChild(gammaRow);
+		gammaGroup.appendChild(gammaDesc);
+		body.appendChild(gammaGroup);
+
+		// Brightness row
+		const brightnessRow = createSliderRow('Brightness', 'iv-brightness', -5.0, 5.0, 0, 0.1, (val) => {
+			const layer = layers[activeLayerIndex];
+			if (!layer) return;
+			layer.settings.brightness.offset = parseFloat(val);
+			applyLayerSettings(activeLayerIndex);
+			vscode.postMessage({ type: 'layerSettingsChanged', brightness: parseFloat(val) });
+		});
+		body.appendChild(brightnessRow);
+
+		document.body.appendChild(panel);
+		return panel;
+	}
+
+	/**
+	 * Create a control row with a label placeholder (for select/custom controls)
+	 */
+	function createControlRow(label, _unused) {
+		const row = document.createElement('div');
+		row.className = 'iv-control-row';
+		const labelEl = document.createElement('span');
+		labelEl.className = 'iv-control-label';
+		labelEl.textContent = label;
+		row.appendChild(labelEl);
+		return row;
+	}
+
+	/**
+	 * Create a slider control row
+	 */
+	function createSliderRow(label, id, min, max, value, step, onChange) {
+		const row = document.createElement('div');
+		row.className = 'iv-control-row';
+
+		const labelEl = document.createElement('span');
+		labelEl.className = 'iv-control-label';
+		labelEl.textContent = label;
+		row.appendChild(labelEl);
+
+		const slider = document.createElement('input');
+		slider.type = 'range';
+		slider.className = 'iv-slider';
+		slider.id = id;
+		slider.min = min;
+		slider.max = max;
+		slider.value = value;
+		slider.step = step;
+		row.appendChild(slider);
+
+		const valueEl = document.createElement('span');
+		valueEl.className = 'iv-control-value';
+		valueEl.id = id + '-val';
+		valueEl.textContent = value.toFixed(step < 0.1 ? 3 : 1);
+		row.appendChild(valueEl);
+
+		slider.addEventListener('input', () => {
+			const v = slider.value;
+			valueEl.textContent = parseFloat(v).toFixed(step < 0.1 ? 3 : 1);
+			onChange(v);
+		});
+
+		return row;
+	}
+
+	/**
+	 * Update range slider bounds to match the loaded image's data range.
+	 * For float images: slider spans [statsMin, statsMax].
+	 * For integer images: slider spans [0, typeMax].
+	 * Also initialises the slider values to show the full range (no clipping by default).
+	 * @param {number} statsMin - Minimum value in image data
+	 * @param {number} statsMax - Maximum value in image data
+	 * @param {number} typeMax - Maximum for data type (255, 65535, or 1.0 for float)
+	 * @param {boolean} isFloat - Whether the image is floating-point
+	 */
+	function updateRangeSliderBounds(statsMin, statsMax, typeMax, isFloat) {
+		const lo = isFloat ? statsMin : 0;
+		const hi = isFloat ? statsMax : typeMax;
+		const range = hi - lo;
+		const step = range > 0 ? range / 1000 : 0.001;
+		const decimals = isFloat ? 4 : 0;
+
+		const minSlider = document.getElementById('iv-norm-min');
+		const maxSlider = document.getElementById('iv-norm-max');
+		const minVal = document.getElementById('iv-norm-min-val');
+		const maxVal = document.getElementById('iv-norm-max-val');
+
+		if (minSlider) {
+			minSlider.min = lo;
+			minSlider.max = hi;
+			minSlider.step = step;
+			minSlider.value = lo;
+			if (minVal) minVal.textContent = isFloat ? lo.toFixed(decimals) : String(Math.round(lo));
+		}
+		if (maxSlider) {
+			maxSlider.min = lo;
+			maxSlider.max = hi;
+			maxSlider.step = step;
+			maxSlider.value = hi;
+			if (maxVal) maxVal.textContent = isFloat ? hi.toFixed(decimals) : String(Math.round(hi));
+		}
+	}
+
+	/**
+	 * Apply the active layer's settings to the rendered output.
+	 * For layer 0 (base): syncs settings to AppStateManager and triggers re-render via existing path.
+	 * For additional layers: re-renders from stored raw data directly.
+	 * @param {number} layerIndex - Index into the layers array
+	 */
+	function applyLayerSettings(layerIndex) {
+		if (!hasLoadedImage) return;
+
+		const hasPendingRender = tiffProcessor._pendingRenderData ||
+			(npyProcessor && npyProcessor._pendingRenderData) ||
+			(pngProcessor && pngProcessor._pendingRenderData) ||
+			(ppmProcessor && ppmProcessor._pendingRenderData) ||
+			(pfmProcessor && pfmProcessor._pendingRenderData) ||
+			(exrProcessor && exrProcessor._pendingRenderData);
+		if (hasPendingRender) return;
+
+		if (layerIndex === 0) {
+			// Base layer: sync per-layer settings to global settingsManager so processors pick them up
+			const layer = layers[0];
+			if (layer && layer.settings) {
+				Object.assign(settingsManager.settings.normalization, layer.settings.normalization);
+				settingsManager.settings.gamma.in = layer.settings.gamma.in;
+				settingsManager.settings.gamma.out = layer.settings.gamma.out;
+				settingsManager.settings.brightness.offset = layer.settings.brightness.offset;
+				settingsManager.settings.colormap = layer.colormap || null;
+			}
+			updateImageWithNewSettings({ parametersOnly: true, changedMasks: false, changedStructure: false })
+				.then(() => {
+					if (layers[0]) layers[0].imageData = primaryImageData;
+					if (layers.length > 1) compositeLayers();
+				});
+		} else {
+			// Additional layer: re-render from stored raw data
+			rerenderAdditionalLayer(layerIndex);
+			compositeLayers();
+		}
+	}
+
+	/**
+	 * Re-render an additional layer (index > 0) from its stored raw data using its per-layer settings.
+	 * @param {number} i - Layer index (must be > 0)
+	 */
+	function rerenderAdditionalLayer(i) {
+		const layer = layers[i];
+		if (!layer || !layer.rawData) return;
+		layer.imageData = ImageRenderer.render(
+			layer.rawData, layer.width, layer.height, layer.channels,
+			layer.isFloat, layer.stats, layer.settings,
+			{ typeMax: layer.typeMax, colormap: layer.colormap }
+		);
+	}
+
+	/**
+	 * Update the control panel sliders/selects to match current settings
+	 */
+	function syncPanelToSettings(settings, colormap) {
+		if (!settings) return;
+
+		// Colormap — use explicit colormap arg when provided (layer.colormap lives outside layer.settings)
+		const cmSelect = document.getElementById('iv-colormap-select');
+		if (cmSelect) {
+			cmSelect.value = (colormap !== undefined ? colormap : settings.colormap) || '';
+			// Enable only for single-channel images
+			cmSelect.disabled = currentChannels !== 1;
+		}
+
+		// Norm min/max
+		if (settings.normalization) {
+			const minSlider = document.getElementById('iv-norm-min');
+			const maxSlider = document.getElementById('iv-norm-max');
+			const minVal = document.getElementById('iv-norm-min-val');
+			const maxVal = document.getElementById('iv-norm-max-val');
+
+			if (!settings.normalization.autoNormalize) {
+				if (minSlider) {
+					const v = parseFloat(settings.normalization.min) || 0;
+					if (v < parseFloat(minSlider.min)) minSlider.min = v;
+					if (v > parseFloat(minSlider.max)) minSlider.max = v;
+					minSlider.value = v;
+					if (minVal) minVal.textContent = v.toFixed(3);
+				}
+				if (maxSlider) {
+					const v = parseFloat(settings.normalization.max) || 1;
+					if (v < parseFloat(maxSlider.min)) maxSlider.min = v;
+					if (v > parseFloat(maxSlider.max)) maxSlider.max = v;
+					maxSlider.value = v;
+					if (maxVal) maxVal.textContent = v.toFixed(3);
+				}
+			}
+		}
+
+		// Gamma (single slider — reflects gamma.out)
+		if (settings.gamma) {
+			const gammaSlider = document.getElementById('iv-gamma');
+			const gammaVal = document.getElementById('iv-gamma-val');
+			if (gammaSlider) {
+				gammaSlider.value = settings.gamma.out;
+				if (gammaVal) gammaVal.textContent = parseFloat(settings.gamma.out).toFixed(2);
+			}
+		}
+
+		// Brightness
+		if (settings.brightness !== undefined) {
+			const bSlider = document.getElementById('iv-brightness');
+			const bVal = document.getElementById('iv-brightness-val');
+			if (bSlider) {
+				bSlider.value = settings.brightness.offset || 0;
+				if (bVal) bVal.textContent = parseFloat(settings.brightness.offset || 0).toFixed(1);
+			}
+		}
+	}
+
+	/**
+	 * Update the layer list UI
+	 */
+	function updateLayerListUI() {
+		const layerList = document.getElementById('iv-layer-list');
+		if (!layerList) return;
+		layerList.innerHTML = '';
+
+		layers.forEach((layer, i) => {
+			const entry = document.createElement('div');
+			entry.className = 'iv-layer-entry' + (i === activeLayerIndex ? ' iv-layer-active' : '');
+
+			// Visibility checkbox
+			const visCheck = document.createElement('input');
+			visCheck.type = 'checkbox';
+			visCheck.className = 'iv-layer-vis';
+			visCheck.checked = layer.visible;
+			visCheck.title = 'Toggle visibility';
+			visCheck.addEventListener('change', () => {
+				layers[i].visible = visCheck.checked;
+				compositeLayers();
+			});
+			entry.appendChild(visCheck);
+
+			// Name
+			const nameEl = document.createElement('span');
+			nameEl.className = 'iv-layer-name';
+			nameEl.textContent = layer.name;
+			nameEl.title = layer.name;
+			nameEl.addEventListener('click', () => {
+				activeLayerIndex = i;
+				updateLayerListUI();
+				// Sync panel controls to the newly selected layer's settings
+				if (layers[i] && layers[i].settings) {
+					syncPanelToSettings(layers[i].settings);
+					const cmSelect = document.getElementById('iv-colormap-select');
+					if (cmSelect) {
+						cmSelect.value = layers[i].colormap || '';
+						cmSelect.disabled = (layers[i].channels || 1) !== 1;
+					}
+					if (layers[i].stats) {
+						updateRangeSliderBounds(
+							layers[i].stats.min, layers[i].stats.max,
+							layers[i].typeMax || 1.0, layers[i].isFloat !== false
+						);
+					}
+				}
+			});
+			entry.appendChild(nameEl);
+
+			// Opacity slider
+			const opSlider = document.createElement('input');
+			opSlider.type = 'range';
+			opSlider.className = 'iv-layer-opacity';
+			opSlider.min = 0;
+			opSlider.max = 1;
+			opSlider.step = 0.05;
+			opSlider.value = layer.opacity;
+			opSlider.title = `Opacity: ${Math.round(layer.opacity * 100)}%`;
+			opSlider.addEventListener('input', () => {
+				layers[i].opacity = parseFloat(opSlider.value);
+				opSlider.title = `Opacity: ${Math.round(layers[i].opacity * 100)}%`;
+				compositeLayers();
+			});
+			entry.appendChild(opSlider);
+
+			// Delete button (not for base layer)
+			if (i > 0) {
+				const delBtn = document.createElement('button');
+				delBtn.className = 'iv-layer-delete';
+				delBtn.textContent = '×';
+				delBtn.title = 'Remove layer';
+				delBtn.addEventListener('click', () => {
+					const removedId = layers[i].id;
+					layers.splice(i, 1);
+					if (activeLayerIndex >= layers.length) activeLayerIndex = layers.length - 1;
+					updateLayerListUI();
+					compositeLayers();
+					vscode.postMessage({ type: 'removeLayer', layerId: removedId });
+				});
+				entry.appendChild(delBtn);
+			}
+
+			layerList.appendChild(entry);
+		});
+	}
+
+	/**
+	 * Composite all visible layers onto the canvas
+	 */
+	async function compositeLayers() {
+		if (!canvas || layers.length === 0) return;
+
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (!ctx) return;
+
+		// Clear canvas
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+		for (const layer of layers) {
+			if (!layer.visible || !layer.imageData) continue;
+
+			// Use OffscreenCanvas if available, else fallback to ImageData
+			try {
+				const offscreen = new OffscreenCanvas(layer.imageData.width, layer.imageData.height);
+				const offCtx = offscreen.getContext('2d');
+				offCtx.putImageData(layer.imageData, 0, 0);
+				ctx.globalAlpha = layer.opacity;
+				ctx.drawImage(offscreen, 0, 0);
+			} catch (e) {
+				// Fallback: just put image data (no opacity blending)
+				ctx.putImageData(layer.imageData, 0, 0);
+			}
+		}
+		ctx.globalAlpha = 1.0;
+
+		// Update histogram
+		updateHistogramData();
 	}
 
 	/**

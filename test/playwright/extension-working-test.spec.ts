@@ -94,7 +94,7 @@ test.describe('TIFF Extension Working Test', () => {
         // Wait for either the custom editor or a message about opening with extension
         try {
           // First, try to wait for the custom editor
-          await page.waitForSelector('.webview-container, .custom-editor-container, [data-view-type="tiffVisualizer.previewEditor"]', { timeout: 5000 });
+          await page.waitForSelector('.webview-container, .custom-editor-container, [data-view-type="imageVisualizer.previewEditor"]', { timeout: 5000 });
           console.log('✅ Custom editor opened successfully!');
           
           // Check for canvas or image elements
@@ -106,7 +106,7 @@ test.describe('TIFF Extension Working Test', () => {
           console.log('Custom editor not found, checking for extension message...');
           
           // Look for a message about opening with the extension
-          const extensionMessage = await page.locator('text=Open With, text=TIFF Visualizer, text=extension').first();
+          const extensionMessage = await page.locator('text=Open With, text=Image Visualizer, text=extension').first();
           if (await extensionMessage.isVisible()) {
             console.log('✅ Extension is recognized but needs manual activation');
             console.log('This means the extension is loaded but the custom editor needs to be manually selected');
@@ -119,17 +119,17 @@ test.describe('TIFF Extension Working Test', () => {
               await openWithButton.click();
               await page.waitForTimeout(2000);
               
-              // Look for TIFF Visualizer option
-              const tiffVisualizerOption = await page.locator('text=TIFF Visualizer').first();
-              if (await tiffVisualizerOption.isVisible()) {
-                console.log('✅ Found TIFF Visualizer option!');
-                await tiffVisualizerOption.click();
+              // Look for Image Visualizer option
+              const imageVisualizerOption = await page.locator('text=Image Visualizer').first();
+              if (await imageVisualizerOption.isVisible()) {
+                console.log('✅ Found Image Visualizer option!');
+                await imageVisualizerOption.click();
                 await page.waitForTimeout(3000);
                 
                 // Check if custom editor opened
                 const customEditor = await page.locator('.webview-container, .custom-editor-container').first();
                 if (await customEditor.isVisible()) {
-                  console.log('✅ Custom editor opened after selecting TIFF Visualizer!');
+                  console.log('✅ Custom editor opened after selecting Image Visualizer!');
                 }
               }
             }
@@ -159,7 +159,7 @@ test.describe('TIFF Extension Working Test', () => {
       // Wait for either the custom editor or a message about opening with extension
       try {
         // First, try to wait for the custom editor
-        await page.waitForSelector('.webview-container, .custom-editor-container, [data-view-type="tiffVisualizer.previewEditor"]', { timeout: 5000 });
+        await page.waitForSelector('.webview-container, .custom-editor-container, [data-view-type="imageVisualizer.previewEditor"]', { timeout: 5000 });
         console.log('✅ Custom editor opened successfully!');
         
         // Check for canvas or image elements
@@ -171,7 +171,7 @@ test.describe('TIFF Extension Working Test', () => {
         console.log('Custom editor not found, checking for extension message...');
         
         // Look for a message about opening with the extension
-        const extensionMessage = await page.locator('text=Open With, text=TIFF Visualizer, text=extension').first();
+        const extensionMessage = await page.locator('text=Open With, text=Image Visualizer, text=extension').first();
         if (await extensionMessage.isVisible()) {
           console.log('✅ Extension is recognized but needs manual activation');
           console.log('This means the extension is loaded but the custom editor needs to be manually selected');

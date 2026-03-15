@@ -20,7 +20,7 @@ test('open TIFF file by clicking in explorer', async ({ page }) => {
   await fileNode.click();
 
   // Wait for your custom editor to appear
-  await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 20000 });
+  await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 20000 });
 
   // Assert the canvas is visible
   await expect(page.locator('canvas')).toBeVisible();

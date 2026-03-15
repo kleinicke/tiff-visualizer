@@ -25,7 +25,7 @@ export interface CopiedPositionState {
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
-	public static readonly viewType = 'tiffVisualizer.previewEditor';
+	public static readonly viewType = 'imageVisualizer.previewEditor';
 
 	// Export the viewType to ensure it's preserved in the build
 	public static getViewType() {
@@ -289,6 +289,6 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		}
 
 		// Update context for menu visibility
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', !!value);
+		vscode.commands.executeCommand('setContext', 'imageVisualizer.hasActivePreview', !!value);
 	}
 } 

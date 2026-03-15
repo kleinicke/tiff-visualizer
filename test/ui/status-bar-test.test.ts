@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import { TiffVisualizerTestUtils } from './utils/testUtils';
 import * as path from 'path';
 
-describe('TIFF Visualizer - Status Bar Monitoring', () => {
+describe('Image Visualizer - Status Bar Monitoring', () => {
     let workbench: Workbench;
     let testUtils: TiffVisualizerTestUtils;
 
@@ -71,7 +71,7 @@ describe('TIFF Visualizer - Status Bar Monitoring', () => {
         // Step 4: Test normalization command and monitor status changes
         console.log('\n🎛️  Step 4: Testing normalization command impact on status bar...');
         
-        await workbench.executeCommand('TIFF Visualizer: Set Normalization Range');
+        await workbench.executeCommand('Image Visualizer: Set Normalization Range');
         await testUtils.getDriver().sleep(3000); // Wait for potential status update
         
         statusEntries = await testUtils.getStatusBarEntries();
@@ -81,7 +81,7 @@ describe('TIFF Visualizer - Status Bar Monitoring', () => {
         // Step 5: Test gamma correction impact
         console.log('\n⚡ Step 5: Testing gamma correction impact on status bar...');
         
-        await workbench.executeCommand('TIFF Visualizer: Set Gamma');
+        await workbench.executeCommand('Image Visualizer: Set Gamma');
         await testUtils.getDriver().sleep(3000);
         
         statusEntries = await testUtils.getStatusBarEntries();
@@ -91,7 +91,7 @@ describe('TIFF Visualizer - Status Bar Monitoring', () => {
         // Step 6: Test zoom impact
         console.log('\n🔍 Step 6: Testing zoom impact on status bar...');
         
-        await workbench.executeCommand('TIFF Visualizer: Zoom In');
+        await workbench.executeCommand('Image Visualizer: Zoom In');
         await testUtils.getDriver().sleep(1000);
         
         statusEntries = await testUtils.getStatusBarEntries();

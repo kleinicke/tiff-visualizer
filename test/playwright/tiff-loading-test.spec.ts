@@ -24,13 +24,13 @@ test.describe('TIFF File Loading in VS Code Web', () => {
     await page.waitForTimeout(1000);
     
     // Navigate to the test file
-    await page.keyboard.type('/Users/florian/Projects/cursor/tiff-visualizer/example/imgs/imagecodecs/img_deflate_uint8_pred2.tif');
+    await page.keyboard.type('/Users/florian/Projects/cursor/image-visualizer/example/imgs/imagecodecs/img_deflate_uint8_pred2.tif');
     await page.keyboard.press('Enter');
     
     // Wait for the file to open
     await page.waitForTimeout(3000);
     
-    // Check if the TIFF Visualizer editor is active
+    // Check if the Image Visualizer editor is active
     const editorTitle = await page.locator('.tabs-container .tab.active .tab-label').textContent();
     console.log('Active editor:', editorTitle);
     
@@ -69,13 +69,13 @@ test.describe('TIFF File Loading in VS Code Web', () => {
     await page.waitForTimeout(1000);
     
     // Navigate to the test file
-    await page.keyboard.type('/Users/florian/Projects/cursor/tiff-visualizer/example/imgs/imagecodecs/depth_deflate_32_pred3.tif');
+    await page.keyboard.type('/Users/florian/Projects/cursor/image-visualizer/example/imgs/imagecodecs/depth_deflate_32_pred3.tif');
     await page.keyboard.press('Enter');
     
     // Wait for the file to open
     await page.waitForTimeout(3000);
     
-    // Check if the TIFF Visualizer editor is active
+    // Check if the Image Visualizer editor is active
     const editorTitle = await page.locator('.tabs-container .tab.active .tab-label').textContent();
     console.log('Active editor:', editorTitle);
     

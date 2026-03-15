@@ -1,6 +1,8 @@
 // @ts-check
 "use strict";
 
+import { COLORMAP_TABLES } from './colormap-converter.js';
+
 /**
  * Helper class for normalization, gamma, and brightness corrections.
  * Centralizes logic for range calculation and LUT generation.
@@ -47,26 +49,36 @@ export class NormalizationHelper {
     }
 
     /**
-     * Apply gamma and brightness corrections to a normalized value (0-1).
-     * @param {number} normalized - Value in range 0-1
-     * @param {Object} settings - Settings object with gamma and brightness
-     * @returns {number} Corrected value (may be outside [0,1])
+     * Apply gamma (power-law) and brightness corrections to a normalized value (0-1).
+     *
+     * Uses the standard napari-style power-law transform:
+     *   output = clamp(normalized, 0, 1) ^ gamma   *   2^exposure
+     *
+     * where `gamma` is settings.gamma.out (gamma.in is unused and kept at 1.0).
+     *
+     * Behaviour:
+     *   gamma = 1.0  → no change (identity)
+     *   gamma < 1.0  → brighter midtones (e.g. 0.5 → sqrt, lifts shadows)
+     *   gamma > 1.0  → darker midtones  (e.g. 2.0 → square, crushes shadows)
+     *
+     * Applied AFTER range normalization, so it never affects the min/max settings.
+     *
+     * @param {number} normalized - Value already mapped to [0, 1] by the range step
+     * @param {Object} settings   - Settings object with gamma and brightness
+     * @returns {number} Corrected value (may be outside [0,1] due to brightness)
      */
     static applyGammaAndBrightness(normalized, settings) {
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
+        const gamma = settings.gamma?.out ?? 1.0;
         const exposureStops = settings.brightness?.offset ?? 0;
 
-        // Apply input gamma (linearize)
-        let linear = Math.pow(normalized, gammaIn);
+        // Clamp to [0,1] before power — pow(negative, fractional) is NaN
+        const clamped = Math.max(0, Math.min(1, normalized));
 
-        // Apply exposure (brightness)
-        linear *= Math.pow(2, exposureStops);
+        // Power-law transform (napari convention): output = input ^ gamma
+        const powered = gamma !== 1.0 ? Math.pow(clamped, gamma) : clamped;
 
-        // Apply output gamma (encode)
-        const output = Math.pow(linear, 1.0 / gammaOut);
-
-        return output;
+        // Exposure (brightness): multiply by 2^stops in linear space
+        return powered * Math.pow(2, exposureStops);
     }
 
     /**
@@ -103,19 +115,16 @@ export class NormalizationHelper {
     }
 
     /**
-     * Check if the transformation is identity (no effective gamma/brightness changes).
-     * Identity occurs when gammaIn === gammaOut (they cancel out) and brightness is 0.
-     * This is because (value^gammaIn)^(1/gammaOut) = value when gammaIn === gammaOut.
+     * Check if the transformation is identity (gamma=1, brightness=0).
+     * Identity means the output equals the normalised input with no adjustment.
      * @param {Object} settings - Settings object
      * @returns {boolean} True if identity transformation
      */
     static isIdentityTransformation(settings) {
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
+        const gamma = settings.gamma?.out ?? 1.0;
         const exposureStops = settings.brightness?.offset ?? 0;
 
-        // Identity when gammaIn equals gammaOut (they cancel) and no brightness adjustment
-        return Math.abs(gammaIn - gammaOut) < 0.001 &&
+        return Math.abs(gamma - 1.0) < 0.001 &&
             Math.abs(exposureStops) < 0.001;
     }
 
@@ -130,8 +139,7 @@ export class NormalizationHelper {
      * @returns {{min: number, max: number}} Effective input range
      */
     static getEffectiveVisualizationRange(settings, normMin, normMax) {
-        const gammaIn = settings.gamma?.in ?? 1.0;
-        const gammaOut = settings.gamma?.out ?? 1.0;
+        const gamma = settings.gamma?.out ?? 1.0;
         const exposureStops = settings.brightness?.offset ?? 0;
         const range = normMax - normMin;
 
@@ -140,43 +148,19 @@ export class NormalizationHelper {
             return { min: normMin, max: normMax };
         }
 
-        // We want to find input values V such that:
-        // Output(V) = 0  =>  V_min
-        // Output(V) = 1  =>  V_max
-
-        // The forward transform is:
-        // 1. normalized = (V - normMin) / range
-        // 2. linear = normalized ^ gammaIn
-        // 3. exposed = linear * 2^exposure
-        // 4. output = exposed ^ (1/gammaOut)
-
-        // Reversing for Output = 0:
-        // 0 = exposed ^ (1/gammaOut) => exposed = 0
-        // 0 = linear * 2^exposure => linear = 0
-        // 0 = normalized ^ gammaIn => normalized = 0
-        // 0 = (V - normMin) / range => V = normMin
-        // So V_min is always normMin (unless we have negative exposure/gamma weirdness, but usually 0 maps to 0)
+        // Forward transform (napari power-law):
+        //   1. normalized = (V - normMin) / range
+        //   2. powered    = clamp(normalized, 0, 1) ^ gamma
+        //   3. output     = powered * 2^exposure
+        //
+        // Reversing for output = 0:  V = normMin  (0^gamma * anything = 0)
         const vMin = normMin;
 
-        // Reversing for Output = 1:
-        // 1 = exposed ^ (1/gammaOut) => exposed = 1
-        // 1 = linear * 2^exposure => linear = 1 / 2^exposure = 2^(-exposure)
-        // linear = normalized ^ gammaIn => normalized = linear ^ (1/gammaIn)
-        // normalized = (2^(-exposure)) ^ (1/gammaIn)
-        // V = normalized * range + normMin
-
-        const exposureFactor = Math.pow(2, exposureStops);
-        // If exposure is very high, we see very dark things. If exposure is low, we only see bright things.
-
-        // Let's trace back from Output=1
-        // exposed = 1
-        // linear = 1 / exposureFactor
-        const linearThreshold = 1.0 / exposureFactor;
-
-        // normalized = linearThreshold ^ (1/gammaIn)
-        const normalizedThreshold = Math.pow(linearThreshold, 1.0 / gammaIn);
-
-        // V = normalizedThreshold * range + normMin
+        // Reversing for output = 1:
+        //   powered * 2^exposure = 1  =>  powered = 2^(-exposure)
+        //   normalized^gamma = 2^(-exposure)  =>  normalized = 2^(-exposure/gamma)
+        //   V = normalized * range + normMin
+        const normalizedThreshold = Math.pow(2, -exposureStops / (gamma > 0 ? gamma : 1.0));
         const vMax = normalizedThreshold * range + normMin;
 
         return { min: vMin, max: vMax };
@@ -272,6 +256,11 @@ export class ImageRenderer {
     }
 
     static _renderInternal(data, width, height, channels, isFloat, stats, settings, options = {}) {
+        // Include colormap from settings if not in options
+        if (options.colormap === undefined && settings.colormap) {
+            options = { ...options, colormap: settings.colormap };
+        }
+
         // Determine typeMax based on data type
         let typeMax;
         if (options.typeMax !== undefined) {
@@ -305,28 +294,27 @@ export class ImageRenderer {
             max = range.max;
         }
 
-        if (isGammaMode) {
-            if (isIdentity) {
-                // Identity in gamma mode: just normalize, no LUT needed
-                if (isFloat) {
-                    return this._renderFloatDirect(data, width, height, channels, min, max, options);
-                } else if (data instanceof Uint16Array) {
-                    return this._renderUint16Direct(data, width, height, channels, min, max);
-                } else {
-                    return this._renderUint8Direct(data, width, height, channels, min, max);
-                }
+        if (isGammaMode && isIdentity) {
+            // Fast path: gamma mode with no actual gamma/brightness correction — just normalize
+            if (isFloat) {
+                return this._renderFloatDirect(data, width, height, channels, min, max, options);
+            } else if (data instanceof Uint16Array) {
+                return this._renderUint16Direct(data, width, height, channels, min, max);
             } else {
-                // Non-identity in gamma mode: use LUT
-                if (isFloat) {
-                    return this._renderFloatWithLUT(data, width, height, channels, min, max, settings, options);
-                } else if (data instanceof Uint16Array) {
-                    return this._renderUint16WithLUT(data, width, height, channels, min, max, settings, options);
-                } else {
-                    return this._renderUint8WithLUT(data, width, height, channels, min, max, settings, options);
-                }
+                return this._renderUint8Direct(data, width, height, channels, min, max);
+            }
+        } else if (!isIdentity) {
+            // Non-identity gamma/brightness: apply LUT regardless of range mode
+            // This ensures gamma works even when the user sets a manual min/max range
+            if (isFloat) {
+                return this._renderFloatWithLUT(data, width, height, channels, min, max, settings, options);
+            } else if (data instanceof Uint16Array) {
+                return this._renderUint16WithLUT(data, width, height, channels, min, max, settings, options);
+            } else {
+                return this._renderUint8WithLUT(data, width, height, channels, min, max, settings, options);
             }
         } else {
-            // Not in gamma mode: direct normalization only (no gamma/brightness, no LUT)
+            // Manual range, identity transform: direct normalization only
             if (isFloat) {
                 return this._renderFloatDirect(data, width, height, channels, min, max, options);
             } else if (data instanceof Uint16Array) {
@@ -389,7 +377,12 @@ export class ImageRenderer {
                 } else {
                     const normalized = (value - min) * invRange;
                     const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-                    r = g = b = intensity;
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][intensity];
+                        r = entry[0]; g = entry[1]; b = entry[2];
+                    } else {
+                        r = g = b = intensity;
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
@@ -479,6 +472,10 @@ export class ImageRenderer {
                 } else {
                     const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
                     r = g = b = lut[lutIdx];
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][r];
+                        r = entry[0]; g = entry[1]; b = entry[2];
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
@@ -576,6 +573,10 @@ export class ImageRenderer {
             if (channels === 1) {
                 const value = Math.max(min, Math.min(max, data[i]));
                 r = g = b = Math.round((value - min) * invRange);
+                if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                    const entry = COLORMAP_TABLES[options.colormap][r];
+                    r = entry[0]; g = entry[1]; b = entry[2];
+                }
             } else if (channels === 3) {
                 const idx = i * 3;
                 r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
@@ -649,6 +650,10 @@ export class ImageRenderer {
             if (channels === 1) {
                 const value = Math.min(65535, data[i]);
                 r = g = b = lut[value];
+                if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                    const entry = COLORMAP_TABLES[options.colormap][r];
+                    r = entry[0]; g = entry[1]; b = entry[2];
+                }
             } else if (channels === 3) {
                 const idx = i * 3;
                 r = lut[Math.min(65535, data[idx])];
@@ -714,7 +719,12 @@ export class ImageRenderer {
                 const p = i * 4;
                 if (channels === 1) {
                     const value = data[i];
-                    out[p] = out[p + 1] = out[p + 2] = value;
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][value];
+                        out[p] = entry[0]; out[p + 1] = entry[1]; out[p + 2] = entry[2];
+                    } else {
+                        out[p] = out[p + 1] = out[p + 2] = value;
+                    }
                 } else if (channels === 3) {
                     const idx = i * 3;
                     out[p] = data[idx];
@@ -741,6 +751,10 @@ export class ImageRenderer {
                 if (channels === 1) {
                     const value = Math.max(min, Math.min(max, data[i]));
                     r = g = b = Math.round((value - min) * invRange);
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][r];
+                        r = entry[0]; g = entry[1]; b = entry[2];
+                    }
                 } else if (channels === 3) {
                     const idx = i * 3;
                     r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
@@ -812,6 +826,10 @@ export class ImageRenderer {
 
             if (channels === 1) {
                 r = g = b = lut[data[i]];
+                if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                    const entry = COLORMAP_TABLES[options.colormap][r];
+                    r = entry[0]; g = entry[1]; b = entry[2];
+                }
             } else if (channels === 3) {
                 const idx = i * 3;
                 r = lut[data[idx]];

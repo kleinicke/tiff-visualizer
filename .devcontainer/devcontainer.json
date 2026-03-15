@@ -1,0 +1,28 @@
+{
+  "name": "image-visualizer",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "rust-lang.rust-analyzer",
+        "ms-vscode.vscode-typescript-next"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "typescript.tsdk": "node_modules/typescript/lib"
+      }
+    }
+  },
+  "postCreateCommand": "npm install",
+  "remoteUser": "root",
+  "mounts": [
+    "source=image-visualizer-cargo-registry,target=/root/.cargo/registry,type=volume",
+    "source=image-visualizer-cargo-git,target=/root/.cargo/git,type=volume",
+    "source=image-visualizer-wasm-target,target=${containerWorkspaceFolder}/wasm/tiff-decoder/target,type=volume"
+  ]
+}

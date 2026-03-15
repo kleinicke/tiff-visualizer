@@ -3,7 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
- * PFM Processor for TIFF Visualizer
+ * PFM Processor for Image Visualizer
  * Supports grayscale (Pf) and RGB (PF) portable float map files
  */
 export class PfmProcessor {
@@ -49,6 +49,29 @@ export class PfmProcessor {
         this._postFormatInfo(width, height, channels, 'PFM');
         const imageData = this._toImageDataFloat(displayData, width, height, channels);
         this.vscode.postMessage({ type: 'refresh-status' });
+        return { canvas, imageData };
+    }
+
+    /**
+     * Process PFM file from raw bytes (for layer loading — skips fetch and deferred render).
+     * @param {number[]} data - Raw file bytes as plain Array
+     * @returns {{canvas: HTMLCanvasElement, imageData: ImageData}}
+     */
+    processPfmFromBuffer(data) {
+        const buffer = new Uint8Array(data).buffer;
+        const { width, height, channels, data: pfmData } = this._parsePfm(buffer);
+        const displayData = this._flipImageVertically(pfmData, width, height, channels);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        // _toImageDataFloat uses settingsManager.settings directly — no state swap needed
+        const savedStats = this._cachedStats;
+        this._cachedStats = undefined;
+        const imageData = this._toImageDataFloat(displayData, width, height, channels);
+        this._cachedStats = savedStats;
+
         return { canvas, imageData };
     }
 

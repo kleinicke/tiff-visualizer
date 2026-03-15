@@ -2,10 +2,10 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('TIFF Visualizer extension is now active in VS Code Web!');
+    console.log('Image Visualizer extension is now active in VS Code Web!');
     
     // Register a command to open test files
-    let openTestFileCommand = vscode.commands.registerCommand('tiffVisualizer.openTestFile', async (filePath: string) => {
+    let openTestFileCommand = vscode.commands.registerCommand('imageVisualizer.openTestFile', async (filePath: string) => {
         console.log('Opening test file:', filePath);
         
         try {
@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
     
     // Register a command to get workspace information
-    let getWorkspaceInfoCommand = vscode.commands.registerCommand('tiffVisualizer.getWorkspaceInfo', () => {
+    let getWorkspaceInfoCommand = vscode.commands.registerCommand('imageVisualizer.getWorkspaceInfo', () => {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         const info = {
             workspaceFolders: workspaceFolders?.map(folder => ({
@@ -37,7 +37,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
     
     // Register a command to list available test images
-    let listTestImagesCommand = vscode.commands.registerCommand('tiffVisualizer.listTestImages', () => {
+    let listTestImagesCommand = vscode.commands.registerCommand('imageVisualizer.listTestImages', () => {
         const testImages = [
             'img_deflate_uint8_pred2.tif',
             'depth_deflate_32_pred3.tif',
@@ -49,8 +49,8 @@ export function activate(context: vscode.ExtensionContext) {
     });
     
     // Register a simple test command
-    let testCommand = vscode.commands.registerCommand('tiffVisualizer.test', () => {
-        vscode.window.showInformationMessage('TIFF Visualizer test command executed!');
+    let testCommand = vscode.commands.registerCommand('imageVisualizer.test', () => {
+        vscode.window.showInformationMessage('Image Visualizer test command executed!');
         console.log('Test command executed');
     });
     
@@ -62,9 +62,9 @@ export function activate(context: vscode.ExtensionContext) {
     );
     
     // Log when the extension is ready
-    console.log('TIFF Visualizer test runner is ready!');
+    console.log('Image Visualizer test runner is ready!');
 }
 
 export function deactivate() {
-    console.log('TIFF Visualizer extension deactivated');
+    console.log('Image Visualizer extension deactivated');
 } 

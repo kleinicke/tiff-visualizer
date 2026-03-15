@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import { AppStateManager } from '../src/imagePreview/appStateManager';
 
 /**
- * Behavioral tests for TIFF Visualizer extension
+ * Behavioral tests for Image Visualizer extension
  * Tests the specific requirements:
  * 1. Loading different image formats (uint8, uint16, float16, float32)
  * 2. Float image normalization modes working independently 
@@ -16,14 +16,14 @@ import { AppStateManager } from '../src/imagePreview/appStateManager';
  * - float16: depth_deflate_16.tif (and other depth_* files) 
  * - float32: img_to_float_*.tif files
  */
-suite('TIFF Visualizer Behavioral Tests', () => {
+suite('Image Visualizer Behavioral Tests', () => {
     let extension: vscode.Extension<any>;
     let testImagesPath: string;
     let imageFiles: string[];
 
     suiteSetup(async () => {
         // Get and activate extension
-        extension = vscode.extensions.getExtension('tiff-visualizer')!;
+        extension = vscode.extensions.getExtension('image-visualizer')!;
         if (!extension.isActive) {
             await extension.activate();
         }

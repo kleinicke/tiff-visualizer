@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const GAMMA_COMMAND_ID = 'tiffVisualizer.setGamma';
+const GAMMA_COMMAND_ID = 'imageVisualizer.setGamma';
 
 export class GammaStatusBarEntry extends PreviewStatusBarEntry {
 	private _gammaIn: number | undefined;
@@ -9,7 +9,7 @@ export class GammaStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
 		super(
-			'tiffVisualizer.gamma',
+			'imageVisualizer.gamma',
 			'Image Gamma',
 			vscode.StatusBarAlignment.Right,
 			100

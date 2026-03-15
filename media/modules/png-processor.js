@@ -15,7 +15,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
  */
 
 /**
- * PNG Processor for TIFF Visualizer using UPNG.js
+ * PNG Processor for Image Visualizer using UPNG.js
  * Supports proper uint16 PNG handling and grayscale/RGB channel detection
  */
 export class PngProcessor {
@@ -163,6 +163,86 @@ export class PngProcessor {
             console.error('UPNG.js processing failed, falling back to browser Image API:', error);
             return this._processWithNativeAPI(src);
         }
+    }
+
+    /**
+     * Process PNG/JPEG file from raw bytes (for layer loading — skips fetch and deferred render).
+     * Handles 8-bit and 16-bit PNGs via UPNG. For JPEG layers, renders via OffscreenCanvas.
+     * @param {number[]} data - Raw file bytes as plain Array
+     * @param {string} [filename] - Optional filename hint (to detect JPEG)
+     * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
+     */
+    async processPngFromBuffer(data, filename = '') {
+        const buffer = new Uint8Array(data).buffer;
+        const isJpeg = filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg');
+
+        // For JPEG or 8-bit PNG, use createImageBitmap (browser handles decoding)
+        const bitDepth = isJpeg ? 8 : this._detectPngBitDepth(buffer);
+        if (bitDepth === 8 || bitDepth === null || isJpeg) {
+            const blob = new Blob([buffer], { type: isJpeg ? 'image/jpeg' : 'image/png' });
+            const bitmap = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(bitmap, 0, 0);
+            bitmap.close();
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            return { canvas, imageData };
+        }
+
+        // 16-bit PNG: decode with UPNG
+        // @ts-ignore
+        const png = UPNG.decode(buffer);
+        const { width, height, depth: pngBitDepth, ctype: colorType } = png;
+
+        let channels;
+        switch (colorType) {
+            case 0: channels = 1; break;
+            case 2: channels = 3; break;
+            case 3: channels = 3; break;
+            case 4: channels = 2; break;
+            case 6: channels = 4; break;
+            default: channels = 3;
+        }
+
+        let rawData;
+        if (colorType === 3) {
+            // @ts-ignore
+            const rgba = UPNG.toRGBA8(png);
+            rawData = new Uint8Array(rgba[0]);
+            channels = 4;
+        } else if (pngBitDepth === 16) {
+            const uint8Data = new Uint8Array(png.data);
+            const uint16Data = new Uint16Array(uint8Data.length / 2);
+            for (let i = 0; i < uint16Data.length; i++) {
+                const byteIdx = i * 2;
+                uint16Data[i] = (uint8Data[byteIdx] << 8) | uint8Data[byteIdx + 1];
+            }
+            rawData = uint16Data;
+        } else {
+            rawData = new Uint8Array(png.data);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        // Temporarily set _lastRaw so _renderToImageData can use it
+        const savedRaw = this._lastRaw;
+        const savedStats = this._cachedStats;
+        this._lastRaw = {
+            width, height, data: rawData, channels,
+            bitDepth: pngBitDepth,
+            maxValue: pngBitDepth === 16 ? 65535 : 255,
+            isRgbaFormat: false
+        };
+        this._cachedStats = undefined;
+        const imageData = this._renderToImageData();
+        this._lastRaw = savedRaw;
+        this._cachedStats = savedStats;
+
+        return { canvas, imageData };
     }
 
     /**

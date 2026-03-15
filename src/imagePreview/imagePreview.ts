@@ -28,6 +28,7 @@ export class ImagePreview extends MediaPreview {
 	private _imageZoom: Scale | undefined;
 	private _isTiff: boolean = false;
 	private _currentFormat: import('./appStateManager').ImageFormatType | undefined;
+	private _activeLayers: string[] = [];
 
 	// Image collection management
 	private _imageCollection: vscode.Uri[] = [];
@@ -138,6 +139,7 @@ export class ImagePreview extends MediaPreview {
 				rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
+				colormap: this._manager.appStateManager.imageSettings.colormap,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 				maskFilters: maskFilters,
 				nanColor: this._manager.settingsManager.getNanColor()
@@ -300,6 +302,7 @@ export class ImagePreview extends MediaPreview {
 			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
+			colormap: this._manager.appStateManager.imageSettings.colormap,
 			maskFilters: maskFilters,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified()
@@ -391,6 +394,36 @@ export class ImagePreview extends MediaPreview {
 		});
 		// Also update the status bar to reflect the current state
 		this._histogramStatusBarEntry.updateVisibility(histogramState.isVisible);
+	}
+
+	public async handleAddLayerRequest(): Promise<void> {
+		const uris = await vscode.window.showOpenDialog({
+			canSelectMany: false,
+			openLabel: 'Add Layer',
+			filters: {
+				'Images': ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg']
+			}
+		});
+		if (!uris || uris.length === 0) return;
+
+		const uri = uris[0];
+		try {
+			const fileData = await vscode.workspace.fs.readFile(uri);
+			const filename = uri.path.split('/').pop() || uri.path;
+			const layerId = uri.toString();
+
+			this._activeLayers.push(layerId);
+
+			this._webviewEditor.webview.postMessage({
+				type: 'addLayerData',
+				layerId: layerId,
+				filename: filename,
+				fileData: Array.from(fileData), // Serialize Uint8Array for postMessage
+				formatHint: filename
+			});
+		} catch (err) {
+			vscode.window.showErrorMessage(`Failed to load layer: ${err}`);
+		}
 	}
 
 	// Image collection management methods
@@ -678,11 +711,11 @@ export class ImagePreview extends MediaPreview {
 	<script nonce="${nonce}">
 		// Add error handler for module loading
 		window.addEventListener('error', function(e) {
-			console.error('TIFF Visualizer: Script error:', e.error, e.filename, e.lineno, e.colno);
+			console.error('Image Visualizer: Script error:', e.error, e.filename, e.lineno, e.colno);
 		});
 
 		window.addEventListener('unhandledrejection', function(e) {
-			console.error('TIFF Visualizer: Unhandled promise rejection:', e.reason);
+			console.error('Image Visualizer: Unhandled promise rejection:', e.reason);
 		});
 	</script>
 	
@@ -710,7 +743,7 @@ export class ImagePreview extends MediaPreview {
 			this._webviewEditor.webview.html = content;
 			this.updateStatusBar();
 		} catch (error) {
-			console.error('TIFF Visualizer render error:', error);
+			console.error('Image Visualizer render error:', error);
 		}
 	}
 

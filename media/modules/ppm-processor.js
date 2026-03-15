@@ -3,7 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
 /**
- * PPM/PGM Processor for TIFF Visualizer
+ * PPM/PGM Processor for Image Visualizer
  * Supports PGM (grayscale) and PPM (RGB) portable pixmap files
  * Both ASCII (P2/P3) and binary (P5/P6) formats
  */
@@ -50,6 +50,28 @@ export class PpmProcessor {
         this._postFormatInfo(width, height, channels, format, maxval);
         const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels);
         this.vscode.postMessage({ type: 'refresh-status' });
+        return { canvas, imageData };
+    }
+
+    /**
+     * Process PPM/PGM file from raw bytes (for layer loading — skips fetch and deferred render).
+     * @param {number[]} data - Raw file bytes as plain Array
+     * @returns {{canvas: HTMLCanvasElement, imageData: ImageData}}
+     */
+    processPpmFromBuffer(data) {
+        const buffer = new Uint8Array(data).buffer;
+        const { width, height, channels, data: ppmData, maxval } = this._parsePpm(buffer);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        // _toImageDataWithNormalization uses settingsManager.settings directly
+        const savedStats = this._cachedStats;
+        this._cachedStats = undefined;
+        const imageData = this._toImageDataWithNormalization(ppmData, width, height, maxval, channels);
+        this._cachedStats = savedStats;
+
         return { canvas, imageData };
     }
 

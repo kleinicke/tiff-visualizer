@@ -35,7 +35,7 @@ test.describe('Simple Extension Test', () => {
       
       // Check if we get a custom editor or an "Open With" message
       const customEditor = await page.locator('.webview-container, .custom-editor-container').first();
-      const openWithMessage = await page.locator('text=Open With, text=TIFF Visualizer').first();
+      const openWithMessage = await page.locator('text=Open With, text=Image Visualizer').first();
       
       if (await customEditor.isVisible()) {
         console.log('✅ Custom editor opened successfully!');

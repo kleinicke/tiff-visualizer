@@ -41,6 +41,7 @@
  * @property {boolean} [colorPickerShowModified]
  * @property {string} [resourceUri]
  * @property {string} [src]
+ * @property {string|null} [colormap]
  */
 
 /**

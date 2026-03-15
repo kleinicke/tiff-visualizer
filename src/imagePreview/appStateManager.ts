@@ -24,6 +24,7 @@ export interface ImageSettings {
 	rgbAs24BitGrayscale: boolean;
 	scale24BitFactor: number; // Divide 24-bit values by this for display (default 1000)
 	normalizedFloatMode: boolean; // Convert uint images to normalized float (0-1 range)
+	colormap: string | null;
 }
 
 // Image format types for per-format settings
@@ -62,7 +63,7 @@ export interface AppStateEvents {
 }
 
 /**
- * Centralized state manager for the TIFF Visualizer extension.
+ * Centralized state manager for the Image Visualizer extension.
  * Handles all application state including image settings, UI state, and coordination.
  */
 export class AppStateManager {
@@ -90,15 +91,16 @@ export class AppStateManager {
 			gammaMode: false
 		},
 		gamma: {
-			in: 2.2,
-			out: 2.2
+			in: 1.0,
+			out: 1.0
 		},
 		brightness: {
 			offset: 0
 		},
 		rgbAs24BitGrayscale: false,
 		scale24BitFactor: 1000,
-		normalizedFloatMode: false
+		normalizedFloatMode: false,
+		colormap: null
 	};
 
 	private _uiState: UIState = {
@@ -264,6 +266,13 @@ export class AppStateManager {
 		}
 	}
 
+	public setColormap(colormap: string | null): void {
+		if (this._imageSettings.colormap !== colormap) {
+			this._imageSettings.colormap = colormap;
+			this._emitSettingsChanged();
+		}
+	}
+
 	// Per-format Settings Management
 	public setImageFormat(format: ImageFormatType): void {
 		// Save current settings for the previous format
@@ -293,7 +302,8 @@ export class AppStateManager {
 			brightness: { ...settings.brightness },
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
 			scale24BitFactor: settings.scale24BitFactor,
-			normalizedFloatMode: settings.normalizedFloatMode
+			normalizedFloatMode: settings.normalizedFloatMode,
+			colormap: settings.colormap
 		};
 	}
 
@@ -315,7 +325,8 @@ export class AppStateManager {
 			},
 			rgbAs24BitGrayscale: false,
 			scale24BitFactor: 1000,
-			normalizedFloatMode: false
+			normalizedFloatMode: false,
+			colormap: null
 		};
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
@@ -389,7 +400,7 @@ export class AppStateManager {
 	// Comparison Management
 	public setComparisonBase(uri: vscode.Uri | undefined): void {
 		this._comparisonBaseUri = uri;
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', !!uri);
+		vscode.commands.executeCommand('setContext', 'imageVisualizer.hasComparisonImage', !!uri);
 	}
 
 	// Preview Management
