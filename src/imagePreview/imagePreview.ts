@@ -106,9 +106,10 @@ export class ImagePreview extends MediaPreview {
 			// Also update the global state
 			this.updateState();
 
-			// Restore histogram state when webview becomes active
+			// Restore histogram state and image collection overlay when webview becomes active
 			if (webviewEditor.active && webviewEditor.visible) {
 				this.sendHistogramState();
+				this.updateImageCollectionOverlay();
 			}
 		}));
 
@@ -514,12 +515,17 @@ export class ImagePreview extends MediaPreview {
 				maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
 			}));
 
-			// Include resourceUri so webview can detect file changes
-			const uri = this._webviewEditor.webview.asWebviewUri(this.resource);
+			// Use the currently displayed image URI (not always the original resource when
+			// using the image collection). This prevents settings updates from triggering
+			// a full reload when the webview is showing a different image in the collection.
+			const currentResource = this._imageCollection.length > 0
+				? this._imageCollection[this._currentImageIndex]
+				: this.resource;
+			const uri = this._webviewEditor.webview.asWebviewUri(currentResource);
 			const webviewSafeSettings = {
 				...settings,
 				maskFilters: webviewSafeMasks,
-				resourceUri: this.resource.toString(),
+				resourceUri: currentResource.toString(),
 				src: uri.toString()
 			};
 
