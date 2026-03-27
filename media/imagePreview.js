@@ -545,6 +545,15 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			value: `${imageElement.width}x${imageElement.height}`,
 		});
 
+		// Remove any previous image/canvas elements now that the new one is ready,
+		// but preserve the histogram overlay canvas
+		const existingImages = container.querySelectorAll('img, canvas');
+		existingImages.forEach(el => {
+			if (!el.closest('.histogram-overlay')) {
+				el.remove();
+			}
+		});
+
 		// Update UI
 		container.classList.remove('loading');
 		container.classList.add('ready');
@@ -1614,26 +1623,21 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
 
+		// Reset zoom to fit so applyInitialZoom uses a clean state while the
+		// correct zoom is restored via restoreZoomState once the image is ready.
+		// Also reset initialState so applyInitialZoom doesn't scroll to stale offsets.
+		zoomController.scale = 'fit';
+		zoomController.initialState = { scale: 'fit', offsetX: 0, offsetY: 0 };
+
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
 
-		// Clear the container
-		const container = document.body;
-		container.className = 'container';
-
-		// Remove any existing image/canvas elements, but NOT the histogram overlay canvas
-		const existingImages = container.querySelectorAll('img, canvas');
-		existingImages.forEach(el => {
-			if (!el.closest('.histogram-overlay')) {
-				el.remove();
-			}
-		});
-
-		// Show loading state
-		container.classList.add('loading');
+		// Keep existing image/canvas visible while the new image loads to avoid
+		// a black flash. They will be removed in finalizeImageSetup once the new
+		// image is ready to be shown.
 
 		// Load the new image based on file type
 		loadImageByType(uri, resourceUri);

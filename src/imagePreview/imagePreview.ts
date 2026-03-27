@@ -35,6 +35,7 @@ export class ImagePreview extends MediaPreview {
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentZoomState: { scale: Scale; x: number; y: number } | undefined;
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
+	private _pendingZoomRestore: boolean = false;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -106,10 +107,16 @@ export class ImagePreview extends MediaPreview {
 			// Also update the global state
 			this.updateState();
 
-			// Restore histogram state and image collection overlay when webview becomes active
+			// Restore histogram state and image collection when webview becomes active
 			if (webviewEditor.active && webviewEditor.visible) {
 				this.sendHistogramState();
-				this.updateImageCollectionOverlay();
+				// If the collection has multiple images and we weren't on the first one,
+				// the webview reloaded image 1 — re-navigate to the correct image.
+				if (this._currentImageIndex > 0 && this._imageCollection.length > 1) {
+					this.switchToImageAtIndex(this._currentImageIndex);
+				} else {
+					this.updateImageCollectionOverlay();
+				}
 			}
 		}));
 
@@ -474,21 +481,34 @@ export class ImagePreview extends MediaPreview {
 		// Update overlay
 		this.updateImageCollectionOverlay();
 
-		// Restore zoom and comparison state after a brief delay
+		// Mark that zoom/comparison state should be restored once the image signals it's ready
+		// (via the 'size' message from finalizeImageSetup). A fallback timer handles the case
+		// where 'size' is not received (e.g., deferred render).
+		this._pendingZoomRestore = true;
 		setTimeout(() => {
-			if (this._currentZoomState) {
-				this._webviewEditor.webview.postMessage({
-					type: 'restoreZoomState',
-					state: this._currentZoomState
-				});
+			if (this._pendingZoomRestore) {
+				this.restoreZoomIfPending();
 			}
-			if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
-				this._webviewEditor.webview.postMessage({
-					type: 'restoreComparisonState',
-					state: this._currentComparisonState
-				});
-			}
-		}, 150);
+		}, 300);
+	}
+
+	public restoreZoomIfPending(): void {
+		if (!this._pendingZoomRestore) {
+			return;
+		}
+		this._pendingZoomRestore = false;
+		if (this._currentZoomState) {
+			this._webviewEditor.webview.postMessage({
+				type: 'restoreZoomState',
+				state: this._currentZoomState
+			});
+		}
+		if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
+			this._webviewEditor.webview.postMessage({
+				type: 'restoreComparisonState',
+				state: this._currentComparisonState
+			});
+		}
 	}
 
 	private updateImageCollectionOverlay(): void {

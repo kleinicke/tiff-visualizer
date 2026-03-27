@@ -268,10 +268,11 @@ export class ZoomController {
 		if (state && state.scale !== undefined) {
 			this.updateScale(state.scale);
 			if (state.x !== undefined && state.y !== undefined) {
-				// Use setTimeout to ensure the new image is fully rendered
-				setTimeout(() => {
+				// Use requestAnimationFrame so the scroll fires after the browser
+				// has reflowed the new element dimensions, without a visible delay
+				requestAnimationFrame(() => {
 					window.scrollTo(state.x, state.y);
-				}, 50);
+				});
 			}
 		}
 	}

@@ -55,6 +55,8 @@ class SizeMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.setImageSize(message.value);
 		preview.updateStatusBar();
+		// Image is ready — restore zoom/comparison state if a collection switch is pending
+		preview.restoreZoomIfPending();
 	}
 }
 
