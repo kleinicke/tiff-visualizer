@@ -61,6 +61,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let imageElement = null;
 	let primaryImageData = null;
 	let peerImageData = null;
+	let peerRawTiffData = null;      // Raw TIFF data for peer image (kept separate from primary)
+	let peerLastStatistics = null;   // Statistics for peer image
 	let peerImageUris = []; // Track peer URIs for comparison state
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
@@ -214,9 +216,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Clear the container
 		container.className = 'container image';
 
-		// Remove any existing image/canvas elements
+		// Remove any existing image/canvas elements, but NOT the histogram overlay canvas
 		const existingImages = container.querySelectorAll('img, canvas');
-		existingImages.forEach(el => el.remove());
+		existingImages.forEach(el => {
+			if (!el.closest('.histogram-overlay')) {
+				el.remove();
+			}
+		});
 
 		// Remove loading indicator if present
 		const loadingIndicator = container.querySelector('.loading-indicator');
@@ -1514,10 +1520,20 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		document.addEventListener('keydown', async (e) => {
 			if (e.key === 'c' && peerImageData) {
 				isShowingPeer = !isShowingPeer;
+
+				// Swap raw data so histogram and re-renders use the correct image's data
+				const tempRawTiffData = tiffProcessor.rawTiffData;
+				const tempLastStatistics = tiffProcessor._lastStatistics;
+				tiffProcessor.rawTiffData = peerRawTiffData;
+				tiffProcessor._lastStatistics = peerLastStatistics;
+				peerRawTiffData = tempRawTiffData;
+				peerLastStatistics = tempLastStatistics;
+
 				const imageData = isShowingPeer ? peerImageData : primaryImageData;
 				const ctx = canvas.getContext('2d');
 				if (ctx && imageData) {
 					await renderImageDataToCanvas(imageData, ctx);
+					updateHistogramData();
 				}
 
 				// Save state after toggling comparison
@@ -1608,9 +1624,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		const container = document.body;
 		container.className = 'container';
 
-		// Remove any existing image/canvas elements
+		// Remove any existing image/canvas elements, but NOT the histogram overlay canvas
 		const existingImages = container.querySelectorAll('img, canvas');
-		existingImages.forEach(el => el.remove());
+		existingImages.forEach(el => {
+			if (!el.closest('.histogram-overlay')) {
+				el.remove();
+			}
+		});
 
 		// Show loading state
 		container.classList.add('loading');
@@ -1969,8 +1989,18 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				peerImageUris.push(peerUri);
 			}
 
+			// Save primary raw data before processTiff overwrites it
+			const savedRawTiffData = tiffProcessor.rawTiffData;
+			const savedLastStatistics = tiffProcessor._lastStatistics;
+
 			const result = await tiffProcessor.processTiff(peerUri);
 			peerImageData = result.imageData;
+
+			// Store peer's raw data separately, then restore primary's
+			peerRawTiffData = tiffProcessor.rawTiffData;
+			peerLastStatistics = tiffProcessor._lastStatistics;
+			tiffProcessor.rawTiffData = savedRawTiffData;
+			tiffProcessor._lastStatistics = savedLastStatistics;
 
 			// Save state after adding peer image
 			saveState();
