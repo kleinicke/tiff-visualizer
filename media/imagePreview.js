@@ -1665,7 +1665,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			document.body.appendChild(tooltipEl);
 			const rect = badge.getBoundingClientRect();
 			tooltipEl.style.left = rect.left + 'px';
-			tooltipEl.style.top = (rect.top - tooltipEl.offsetHeight - 6) + 'px';
+			// Use bottom so we don't need to know tooltip height (offsetHeight may be 0 immediately after append)
+			tooltipEl.style.bottom = (window.innerHeight - rect.top + 6) + 'px';
 		});
 
 		badge.addEventListener('mouseleave', () => {
@@ -1756,6 +1757,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		const lower = resourceUri.toLowerCase();
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
 			handleTiff(uri, gen);
+		} else if (lower.endsWith('.exr')) {
+			handleExr(uri, gen);
 		} else if (lower.endsWith('.pfm')) {
 			handlePfm(uri, gen);
 		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
