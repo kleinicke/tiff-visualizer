@@ -64,6 +64,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let peerRawTiffData = null;      // Raw TIFF data for peer image (kept separate from primary)
 	let peerLastStatistics = null;   // Statistics for peer image
 	let peerImageUris = []; // Track peer URIs for comparison state
+	let _pendingZoomState = null; // Zoom state to restore after next image load
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
@@ -559,8 +560,20 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		container.classList.add('ready');
 		container.append(imageElement);
 
-		// Apply initial zoom and setup mouse handling
-		zoomController.applyInitialZoom();
+		// Apply zoom: restore saved state from before the switch, or fit if none
+		if (_pendingZoomState && _pendingZoomState.scale !== 'fit') {
+			zoomController.restoreState(_pendingZoomState);
+		} else {
+			zoomController.applyInitialZoom();
+		}
+		_pendingZoomState = null;
+
+		// Restore overlay counter from loading state
+		if (overlayElement && imageCollection.show) {
+			const counter = overlayElement.querySelector('.image-counter');
+			if (counter) counter.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+		}
+
 		mouseHandler.addMouseListeners(imageElement);
 
 		// Note: Histogram visibility is restored via restoreHistogramState message
@@ -751,7 +764,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				break;
 
 			case 'switchToImage':
-				// Switch to a different image
+				// Capture current zoom before the switch so finalizeImageSetup can
+				// restore it without a roundtrip through the extension
+				_pendingZoomState = zoomController.getCurrentState();
 				switchToNewImage(message.uri, message.resourceUri);
 				break;
 
@@ -1628,6 +1643,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Also reset initialState so applyInitialZoom doesn't scroll to stale offsets.
 		zoomController.scale = 'fit';
 		zoomController.initialState = { scale: 'fit', offsetX: 0, offsetY: 0 };
+
+		// Show loading indicator in the overlay badge (dot before counter text)
+		if (overlayElement && imageCollection.show) {
+			const counter = overlayElement.querySelector('.image-counter');
+			if (counter) counter.innerHTML = `<span class="collection-loading-dot"></span>${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+		}
 
 		// Reset the state
 		hasLoadedImage = false;

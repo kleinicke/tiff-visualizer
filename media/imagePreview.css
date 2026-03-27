@@ -153,6 +153,23 @@ body img {
 	color: var(--vscode-descriptionForeground, #cccccc99);
 }
 
+/* Loading dot inside overlay badge (shown before counter text while switching) */
+.collection-loading-dot {
+	display: inline-block;
+	width: 7px;
+	height: 7px;
+	background: var(--vscode-textLink-foreground, #3794ff);
+	border-radius: 50%;
+	margin-right: 5px;
+	vertical-align: middle;
+	animation: collection-dot-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes collection-dot-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.4; transform: scale(0.7); }
+}
+
 /* Light theme adjustments */
 .vscode-light .image-collection-overlay {
 	background: var(--vscode-editor-background, #ffffff);

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { MediaPreview, PreviewState } from '../mediaPreview';
 import { escapeAttribute, getNonce } from '../util/dom';
@@ -33,9 +34,7 @@ export class ImagePreview extends MediaPreview {
 	private _imageCollection: vscode.Uri[] = [];
 	private _currentImageIndex: number = 0;
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
-	private _currentZoomState: { scale: Scale; x: number; y: number } | undefined;
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
-	private _pendingZoomRestore: boolean = false;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -405,6 +404,18 @@ export class ImagePreview extends MediaPreview {
 	public async addToImageCollection(uri: vscode.Uri): Promise<void> {
 		if (!this._imageCollection.some(img => img.toString() === uri.toString())) {
 			this._imageCollection.push(uri);
+
+			// Expand localResourceRoots to include the new image's directory so
+			// the webview fetch() can access files outside the initial file's folder.
+			const newDir = Utils.dirname(uri);
+			const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
+			if (!currentRoots.some(r => r.toString() === newDir.toString())) {
+				this._webviewEditor.webview.options = {
+					...this._webviewEditor.webview.options,
+					localResourceRoots: [...currentRoots, newDir],
+				};
+			}
+
 			// Start preloading the image data (async, don't wait)
 			this.preloadImageData(uri);
 			// Update overlay immediately
@@ -481,34 +492,15 @@ export class ImagePreview extends MediaPreview {
 		// Update overlay
 		this.updateImageCollectionOverlay();
 
-		// Mark that zoom/comparison state should be restored once the image signals it's ready
-		// (via the 'size' message from finalizeImageSetup). A fallback timer handles the case
-		// where 'size' is not received (e.g., deferred render).
-		this._pendingZoomRestore = true;
+		// Restore comparison state after the image loads (zoom is handled webview-side)
 		setTimeout(() => {
-			if (this._pendingZoomRestore) {
-				this.restoreZoomIfPending();
+			if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
+				this._webviewEditor.webview.postMessage({
+					type: 'restoreComparisonState',
+					state: this._currentComparisonState
+				});
 			}
 		}, 300);
-	}
-
-	public restoreZoomIfPending(): void {
-		if (!this._pendingZoomRestore) {
-			return;
-		}
-		this._pendingZoomRestore = false;
-		if (this._currentZoomState) {
-			this._webviewEditor.webview.postMessage({
-				type: 'restoreZoomState',
-				state: this._currentZoomState
-			});
-		}
-		if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
-			this._webviewEditor.webview.postMessage({
-				type: 'restoreComparisonState',
-				state: this._currentComparisonState
-			});
-		}
 	}
 
 	private updateImageCollectionOverlay(): void {
