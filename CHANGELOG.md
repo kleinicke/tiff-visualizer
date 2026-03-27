@@ -1,11 +1,18 @@
 # Change Log
 
+## 1.6.0
+
+- Add option to add multiple files to collection
+- Stabilize quick switching between images
+-
+
 ## 1.5.0 (2025-12-01)
 
 - Use a centralized rendering pipeline
 - Use Rust decoding for tiff and npy files
 - Use native png and jpg decoding
-- speedup webview creation time
+- Speedup webview creation time
+- Improve Histogram appearance
 
 ## 1.4.0 (2025-11-12)
 

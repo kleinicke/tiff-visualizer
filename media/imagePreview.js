@@ -62,7 +62,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let primaryImageData = null;
 	let peerImageData = null;
 	let peerRawTiffData = null;      // Raw TIFF data for peer image (kept separate from primary)
-	let peerLastStatistics = null;   // Statistics for peer image
+	let peerLastStatistics = null;   // Statistics for peer TIFF image
+	let peerRawExrData = null;       // Raw EXR data for peer image
+	let peerExrStats = null;         // Cached stats for peer EXR image
 	let peerImageUris = []; // Track peer URIs for comparison state
 	let _pendingZoomState = null; // Zoom state to restore after next image load
 	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
@@ -99,6 +101,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		show: false
 	};
 	let overlayElement = null;
+	/** @type {HTMLElement | null} */
+	let filenameBadge = null;
 
 	/**
 	 * Save current state to VS Code webview state for persistence across tab switches
@@ -131,6 +135,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
+	createFilenameBadge();
 
 		// Save state when webview might be disposed
 		window.addEventListener('beforeunload', saveState);
@@ -1498,6 +1503,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			menu.appendChild(createSeparator());
 
+			// Add Image to Collection option
+			menu.appendChild(createMenuItem('Add Image to Collection...', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
+			}));
+
+			menu.appendChild(createSeparator());
+
 			// Add Open Comparison Panel option
 			// menu.appendChild(createMenuItem('Open Comparison Panel', () => {
 			// 	vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openComparisonPanel' });
@@ -1554,13 +1566,22 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			if (e.key === 'c' && peerImageData) {
 				isShowingPeer = !isShowingPeer;
 
-				// Swap raw data so histogram and re-renders use the correct image's data
+				// Swap raw data so histogram and re-renders use the correct image's data.
+				// Both TIFF and EXR slots are swapped — whichever is non-null will be
+				// picked up by updateHistogramData for the currently shown image.
 				const tempRawTiffData = tiffProcessor.rawTiffData;
 				const tempLastStatistics = tiffProcessor._lastStatistics;
 				tiffProcessor.rawTiffData = peerRawTiffData;
 				tiffProcessor._lastStatistics = peerLastStatistics;
 				peerRawTiffData = tempRawTiffData;
 				peerLastStatistics = tempLastStatistics;
+
+				const tempRawExrData = exrProcessor.rawExrData;
+				const tempExrStats = exrProcessor._cachedStats;
+				exrProcessor.rawExrData = peerRawExrData;
+				exrProcessor._cachedStats = peerExrStats;
+				peerRawExrData = tempRawExrData;
+				peerExrStats = tempExrStats;
 
 				const imageData = isShowingPeer ? peerImageData : primaryImageData;
 				const ctx = canvas.getContext('2d');
@@ -1621,6 +1642,54 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
+	 * Create filename badge (bottom-left, hidden until collection has >1 image)
+	 */
+	function createFilenameBadge() {
+		filenameBadge = document.createElement('div');
+		filenameBadge.classList.add('filename-badge');
+		filenameBadge.style.display = 'none';
+		document.body.appendChild(filenameBadge);
+		updateFilenameBadge(settingsManager.settings.resourceUri || '');
+
+		// JS tooltip — appended to body to avoid overflow clipping
+		/** @type {HTMLElement | null} */
+		let tooltipEl = null;
+
+		const badge = filenameBadge;
+		badge.addEventListener('mouseenter', () => {
+			const fullPath = badge.dataset.tooltip;
+			if (!fullPath) return;
+			tooltipEl = document.createElement('div');
+			tooltipEl.className = 'filename-tooltip';
+			tooltipEl.textContent = fullPath;
+			document.body.appendChild(tooltipEl);
+			const rect = badge.getBoundingClientRect();
+			tooltipEl.style.left = rect.left + 'px';
+			tooltipEl.style.top = (rect.top - tooltipEl.offsetHeight - 6) + 'px';
+		});
+
+		badge.addEventListener('mouseleave', () => {
+			tooltipEl?.remove();
+			tooltipEl = null;
+		});
+	}
+
+	/**
+	 * @param {string} resourceUri
+	 */
+	function updateFilenameBadge(resourceUri) {
+		if (!filenameBadge || !resourceUri) return;
+		// Extract filename from URI or path (handles file:// URIs, vscode-resource URIs and plain paths)
+		const decoded = decodeURIComponent(resourceUri);
+		const filename = decoded.split(/[/\\]/).filter(Boolean).pop() || decoded;
+		// Strip any query string that vscode-resource URIs may append
+		const cleanFilename = filename.split('?')[0];
+		const fullPath = decoded.replace(/^[a-z-]+:\/\/[^/]*/i, '').split('?')[0];
+		filenameBadge.textContent = cleanFilename;
+		filenameBadge.dataset.tooltip = fullPath;
+	}
+
+	/**
 	 * Update image collection overlay
 	 */
 	function updateImageCollectionOverlay(data) {
@@ -1634,8 +1703,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				counter.textContent = `${data.currentIndex + 1} of ${data.totalImages}`;
 			}
 			overlayElement.style.display = 'block';
+			if (filenameBadge) filenameBadge.style.display = 'block';
 		} else {
 			overlayElement.style.display = 'none';
+			if (filenameBadge) filenameBadge.style.display = 'none';
 		}
 	}
 
@@ -1650,6 +1721,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
+		updateFilenameBadge(resourceUri);
 
 		// Reset zoom to fit so applyInitialZoom uses a clean state while the
 		// correct zoom is restored via restoreZoomState once the image is ready.
@@ -2021,24 +2093,39 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		try {
 			vscode.postMessage({ type: 'show-loading' });
 
-
 			// Track peer URI for state persistence
 			if (!peerImageUris.includes(peerUri)) {
 				peerImageUris.push(peerUri);
 			}
 
-			// Save primary raw data before processTiff overwrites it
-			const savedRawTiffData = tiffProcessor.rawTiffData;
-			const savedLastStatistics = tiffProcessor._lastStatistics;
+			const lower = peerUri.toLowerCase();
+			let result;
 
-			const result = await tiffProcessor.processTiff(peerUri);
-			peerImageData = result.imageData;
+			if (lower.includes('.exr')) {
+				// EXR peer — use exrProcessor, preserve primary's raw data
+				const savedExrData = exrProcessor.rawExrData;
+				const savedExrStats = exrProcessor._cachedStats;
 
-			// Store peer's raw data separately, then restore primary's
-			peerRawTiffData = tiffProcessor.rawTiffData;
-			peerLastStatistics = tiffProcessor._lastStatistics;
-			tiffProcessor.rawTiffData = savedRawTiffData;
-			tiffProcessor._lastStatistics = savedLastStatistics;
+				result = await exrProcessor.processExr(peerUri);
+				peerImageData = result.imageData;
+
+				peerRawExrData = exrProcessor.rawExrData;
+				peerExrStats = exrProcessor._cachedStats;
+				exrProcessor.rawExrData = savedExrData;
+				exrProcessor._cachedStats = savedExrStats;
+			} else {
+				// TIFF / other — use tiffProcessor, preserve primary's raw data
+				const savedRawTiffData = tiffProcessor.rawTiffData;
+				const savedLastStatistics = tiffProcessor._lastStatistics;
+
+				result = await tiffProcessor.processTiff(peerUri);
+				peerImageData = result.imageData;
+
+				peerRawTiffData = tiffProcessor.rawTiffData;
+				peerLastStatistics = tiffProcessor._lastStatistics;
+				tiffProcessor.rawTiffData = savedRawTiffData;
+				tiffProcessor._lastStatistics = savedLastStatistics;
+			}
 
 			// Save state after adding peer image
 			saveState();

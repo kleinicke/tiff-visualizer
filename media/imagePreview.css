@@ -142,6 +142,50 @@ body img {
 	gap: 4px;
 }
 
+/* Filename badge — bottom-left, always visible */
+.filename-badge {
+	position: fixed;
+	bottom: 10px;
+	left: 10px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 4px;
+	padding: 3px 8px;
+	z-index: 1000;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: 11px;
+	color: var(--vscode-descriptionForeground, #cccccc99);
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+	cursor: default;
+	user-select: none;
+	max-width: 50vw;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.vscode-light .filename-badge {
+	background: var(--vscode-editor-background, #ffffff);
+	border: 1px solid var(--vscode-panel-border, #e5e5e5);
+	color: var(--vscode-descriptionForeground, #666666);
+	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* Tooltip for filename badge — appended to body by JS to avoid overflow clipping */
+.filename-tooltip {
+	position: fixed;
+	background: var(--vscode-editorHoverWidget-background, #252526);
+	border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+	color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+	border-radius: 3px;
+	padding: 4px 8px;
+	font-size: 11px;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	white-space: pre;
+	pointer-events: none;
+	z-index: 2000;
+}
+
 .image-collection-overlay .image-counter {
 	font-weight: 600;
 	color: var(--vscode-textLink-foreground, #3794ff);

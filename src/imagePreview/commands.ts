@@ -1,9 +1,53 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
 import { getOutputChannel } from '../extension';
+
+const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg'];
+
+/**
+ * Expand a file path that may contain * and ? wildcards into a list of URIs.
+ * Only the basename portion may contain wildcards; the directory must be literal.
+ */
+function expandGlobPattern(pattern: string): vscode.Uri[] {
+	if (!pattern.includes('*') && !pattern.includes('?')) {
+		return fs.existsSync(pattern) ? [vscode.Uri.file(pattern)] : [];
+	}
+
+	// Find the first wildcard character and split there
+	const firstWild = pattern.search(/[*?]/);
+	const beforeWild = pattern.substring(0, firstWild);
+	const dir = path.dirname(beforeWild.endsWith(path.sep) ? beforeWild + '_' : beforeWild);
+	const filePattern = pattern.substring(dir.length + 1); // basename pattern
+
+	// Convert glob pattern to regex (support * and ?)
+	const regexStr = filePattern
+		.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+		.replace(/\*/g, '.*')
+		.replace(/\?/g, '.');
+	const regex = new RegExp('^' + regexStr + '$', 'i');
+
+	try {
+		const entries = fs.readdirSync(dir);
+		return entries
+			.filter(entry => {
+				if (!regex.test(entry)) return false;
+				const ext = entry.split('.').pop()?.toLowerCase() ?? '';
+				return IMAGE_EXTENSIONS.includes(ext);
+			})
+			.map(entry => vscode.Uri.file(path.join(dir, entry)))
+			.filter(uri => {
+				try { return fs.statSync(uri.fsPath).isFile(); } catch { return false; }
+			})
+			.sort((a, b) => a.fsPath.localeCompare(b.fsPath, undefined, { numeric: true }));
+	} catch {
+		return [];
+	}
+}
 
 /**
  * Logs command execution to the output channel
@@ -1006,6 +1050,74 @@ export function registerImagePreviewCommands(
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
 			logCommand('openNextToCurrent', 'error', String(error));
+		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async () => {
+		logCommand('browseAndAddToCollection', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
+			logCommand('browseAndAddToCollection', 'error', 'No active preview');
+			return;
+		}
+
+		const choice = await vscode.window.showQuickPick(
+			[
+				{ label: '$(folder-opened) Browse for file(s)...', value: 'browse' },
+				{ label: '$(filter) Enter path or wildcard pattern...', value: 'wildcard' }
+			],
+			{ placeHolder: 'How would you like to select images?' }
+		);
+		if (!choice) return;
+
+		let filesToAdd: vscode.Uri[] = [];
+
+		if (choice.value === 'browse') {
+			const currentDir = vscode.Uri.file(path.dirname(activePreview.resource.fsPath));
+			const result = await vscode.window.showOpenDialog({
+				defaultUri: currentDir,
+				canSelectMany: true,
+				canSelectFiles: true,
+				canSelectFolders: false,
+				filters: { 'Images': IMAGE_EXTENSIONS }
+			});
+			if (!result || result.length === 0) return;
+			filesToAdd = result;
+		} else {
+			const currentDir = path.dirname(activePreview.resource.fsPath);
+			const pattern = await vscode.window.showInputBox({
+				prompt: 'Enter a file path or wildcard pattern',
+				placeHolder: `e.g. ${currentDir}${path.sep}*.tiff`,
+				value: currentDir + path.sep,
+				valueSelection: [currentDir.length + 1, currentDir.length + 1]
+			});
+			if (!pattern) return;
+
+			filesToAdd = expandGlobPattern(pattern);
+			if (filesToAdd.length === 0) {
+				vscode.window.showWarningMessage(`No image files found matching: ${pattern}`);
+				logCommand('browseAndAddToCollection', 'error', `No files matching: ${pattern}`);
+				return;
+			}
+		}
+
+		let added = 0;
+		for (const uri of filesToAdd) {
+			try {
+				await activePreview.addToImageCollection(uri);
+				added++;
+			} catch (error) {
+				logCommand('browseAndAddToCollection', 'error', `Failed to add ${uri.fsPath}: ${error}`);
+			}
+		}
+
+		if (added > 0) {
+			const msg = added === 1
+				? `Added ${filesToAdd[0].fsPath.split(path.sep).pop()} to image collection. Press 't'/'r' to navigate.`
+				: `Added ${added} images to collection. Press 't'/'r' to navigate.`;
+			vscode.window.showInformationMessage(msg);
+			logCommand('browseAndAddToCollection', 'success', `Added ${added} images`);
 		}
 	}));
 

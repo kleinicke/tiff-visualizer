@@ -22,7 +22,6 @@ export class MessageRouter {
 		this.handlers.set('zoom', new ZoomMessageHandler());
 		this.handlers.set('pixelFocus', new PixelFocusMessageHandler(this.sizeStatusBarEntry));
 		this.handlers.set('pixelBlur', new PixelBlurMessageHandler(this.sizeStatusBarEntry));
-		this.handlers.set('showNorm', new showNormMessageHandler());
 		this.handlers.set('stats', new StatsMessageHandler());
 		this.handlers.set('formatInfo', new FormatInfoMessageHandler());
 		this.handlers.set('ready', new ReadyMessageHandler());
@@ -55,8 +54,6 @@ class SizeMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.setImageSize(message.value);
 		preview.updateStatusBar();
-		// Image is ready — restore zoom/comparison state if a collection switch is pending
-		preview.restoreZoomIfPending();
 	}
 }
 
@@ -88,14 +85,6 @@ class PixelBlurMessageHandler implements MessageHandler {
 	}
 }
 
-class showNormMessageHandler implements MessageHandler {
-	handle(message: any, preview: ImagePreview): void {
-		if (message.value !== undefined) {
-			preview.setshowNorm(message.value);
-			preview.updateStatusBar();
-		}
-	}
-}
 
 class StatsMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {

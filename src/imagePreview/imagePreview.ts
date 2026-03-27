@@ -467,7 +467,6 @@ export class ImagePreview extends MediaPreview {
 
 	private saveCurrentZoomState(): void {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'getZoomState' });
 			this._webviewEditor.webview.postMessage({ type: 'getComparisonState' });
 		}
 	}

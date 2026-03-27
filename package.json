@@ -159,6 +159,11 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.browseAndAddToCollection",
+        "title": "Add Image to Collection...",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.openComparisonPanel",
         "title": "Open Image Comparison Panel",
         "category": "TIFF Visualizer"

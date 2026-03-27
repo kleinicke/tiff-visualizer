@@ -22,7 +22,7 @@ const extensionWebBuildOptions = {
   outfile: 'out/extension.web.js',
   platform: 'browser',
   target: 'es2020',
-  external: ['vscode'],
+  external: ['vscode', 'path', 'fs'],
   sourcemap: true,
   format: 'iife',
   globalName: 'TIFFVisualizerExtension'
