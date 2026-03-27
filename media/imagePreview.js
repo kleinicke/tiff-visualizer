@@ -65,6 +65,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let peerLastStatistics = null;   // Statistics for peer image
 	let peerImageUris = []; // Track peer URIs for comparison state
 	let _pendingZoomState = null; // Zoom state to restore after next image load
+	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
@@ -349,10 +350,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/**
 	 * Handle TIFF file loading
 	 */
-	async function handleTiff(src) {
+	async function handleTiff(src, gen = _loadGeneration) {
 		currentLoadFormat = 'TIFF';
 		try {
 			const result = await tiffProcessor.processTiff(src);
+			if (gen !== _loadGeneration) { return; }
 
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
@@ -383,10 +385,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/**
 	 * Handle EXR file loading
 	 */
-	async function handleExr(src) {
+	async function handleExr(src, gen = _loadGeneration) {
 		currentLoadFormat = 'EXR';
 		try {
 			const result = await exrProcessor.processExr(src);
+			if (gen !== _loadGeneration) { return; }
 
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
@@ -417,10 +420,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/**
 	 * Handle PFM file loading
 	 */
-	async function handlePfm(src) {
+	async function handlePfm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PFM';
 		try {
 			const result = await pfmProcessor.processPfm(src);
+			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
@@ -446,10 +450,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/**
 	 * Handle PPM/PGM file loading
 	 */
-	async function handlePpm(src) {
+	async function handlePpm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PPM/PGM';
 		try {
 			const result = await ppmProcessor.processPpm(src);
+			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
@@ -475,10 +480,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/**
 	 * Handle PNG/JPEG file loading
 	 */
-	async function handlePng(src) {
+	async function handlePng(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PNG/JPEG';
 		try {
 			const result = await pngProcessor.processPng(src);
+			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
@@ -504,10 +510,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/**
 	 * Handle NPY/NPZ file loading
 	 */
-	async function handleNpy(src) {
+	async function handleNpy(src, gen = _loadGeneration) {
 		currentLoadFormat = 'NPY/NPZ';
 		try {
 			const result = await npyProcessor.processNpy(src);
+			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
@@ -764,9 +771,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				break;
 
 			case 'switchToImage':
-				// Capture current zoom before the switch so finalizeImageSetup can
-				// restore it without a roundtrip through the extension
-				_pendingZoomState = zoomController.getCurrentState();
+				// Capture zoom only on the first switch in a rapid burst —
+				// subsequent ones already see the reset 'fit' state.
+				if (_pendingZoomState === null) {
+					_pendingZoomState = zoomController.getCurrentState();
+				}
 				switchToNewImage(message.uri, message.resourceUri);
 				break;
 
@@ -1634,6 +1643,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
 	function switchToNewImage(uri, resourceUri) {
+		// Every switch gets a new generation so any in-flight load from a
+		// previous rapid press can detect it is stale and bail out.
+		const gen = ++_loadGeneration;
+
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
@@ -1661,24 +1674,24 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// image is ready to be shown.
 
 		// Load the new image based on file type
-		loadImageByType(uri, resourceUri);
+		loadImageByType(uri, resourceUri, gen);
 	}
 
 	/**
 	 * Load image by type (wrapper function)
 	 */
-	function loadImageByType(uri, resourceUri) {
+	function loadImageByType(uri, resourceUri, gen) {
 		const lower = resourceUri.toLowerCase();
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
-			handleTiff(uri);
+			handleTiff(uri, gen);
 		} else if (lower.endsWith('.pfm')) {
-			handlePfm(uri);
+			handlePfm(uri, gen);
 		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
-			handlePpm(uri);
+			handlePpm(uri, gen);
 		} else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-			handlePng(uri);
+			handlePng(uri, gen);
 		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {
-			handleNpy(uri);
+			handleNpy(uri, gen);
 		} else {
 			// Fallback to regular image loading
 			const newImage = document.createElement('img');
@@ -1686,7 +1699,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			newImage.src = uri;
 
 			newImage.addEventListener('load', () => {
-				if (hasLoadedImage) return;
+				if (gen !== _loadGeneration) return;
 
 				// Create canvas and draw image
 				canvas = document.createElement('canvas');
@@ -1704,7 +1717,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			});
 
 			newImage.addEventListener('error', () => {
-				if (hasLoadedImage) return;
+				if (gen !== _loadGeneration) return;
 				onImageError();
 			});
 		}

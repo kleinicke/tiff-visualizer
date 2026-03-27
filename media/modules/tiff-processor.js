@@ -106,7 +106,9 @@ export class TiffProcessor {
 			if (useWasm) {
 				try {
 					const decodeStart = performance.now();
-					const wasmResult = await this._wasmProcessor.decode(buffer);
+					// Use a copy so a WASM failure/memory-growth cannot invalidate the
+					// original buffer that the geotiff.js fallback path needs below.
+					const wasmResult = await this._wasmProcessor.decode(buffer.slice(0));
 					const decodeTime = performance.now() - decodeStart;
 					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
 
@@ -207,6 +209,9 @@ export class TiffProcessor {
 					return { canvas, imageData, tiffData: this.rawTiffData };
 				} catch (wasmError) {
 					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
+					// Disable WASM for the rest of the session — a failure can leave
+					// the module in an indeterminate state after a panic.
+					this._wasmAvailable = false;
 					// Fall through to geotiff.js implementation below
 				}
 			}
