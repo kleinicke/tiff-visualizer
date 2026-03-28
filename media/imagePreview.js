@@ -237,8 +237,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			loadingIndicator.remove();
 		}
 
-		// Show loading state
+		// Show loading state (clear any previous error)
 		container.classList.add('loading');
+		container.classList.remove('error');
 
 		// Load the image based on file type
 		const settings = settingsManager.settings;
@@ -346,12 +347,22 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	}
 
 	/**
-	 * Handle image loading error
+	 * Handle image loading error, with optional specific message.
 	 */
-	function onImageError() {
+	function onImageError(/** @type {string} */ message = '') {
 		hasLoadedImage = true;
+		// Remove previous image/canvas so the error message shows on a clean background
+		container.querySelectorAll('img, canvas').forEach(el => {
+			if (!el.closest('.histogram-overlay')) {
+				el.remove();
+			}
+		});
 		container.classList.add('error');
 		container.classList.remove('loading');
+		const errorEl = container.querySelector('.image-load-error p');
+		if (errorEl) {
+			errorEl.textContent = message || 'An error occurred while loading the image.';
+		}
 	}
 
 	/**
@@ -385,7 +396,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		} catch (error) {
 			console.error('Error handling TIFF:', error);
-			onImageError();
+			const msg = String(error instanceof Error ? error.message : error);
+			if (msg.includes('50000') || msg.toLowerCase().includes('zstd')) {
+				onImageError('ZSTD compression (method 50000) is not supported. Re-save the TIFF with LZW, Deflate, or no compression.');
+			} else if (msg.toLowerCase().includes('compression')) {
+				onImageError(`Unsupported TIFF compression: ${msg}`);
+			} else {
+				onImageError(`Failed to load TIFF: ${msg}`);
+			}
 		}
 	}
 
@@ -571,6 +589,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Update UI
 		container.classList.remove('loading');
+		container.classList.remove('error');
 		container.classList.add('ready');
 		container.append(imageElement);
 

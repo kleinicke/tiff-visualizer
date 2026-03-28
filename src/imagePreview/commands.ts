@@ -191,7 +191,9 @@ function resolveWildcardDirs(dirPath: string): string[] {
 
 function expandGlobPattern(pattern: string): vscode.Uri[] {
 	if (!pattern.includes('*') && !pattern.includes('?')) {
-		return fs.existsSync(pattern) ? [vscode.Uri.file(pattern)] : [];
+		try {
+			return fs.statSync(pattern).isFile() ? [vscode.Uri.file(pattern)] : [];
+		} catch { return []; }
 	}
 
 	// Find the last literal directory before the first wildcard
@@ -1220,106 +1222,150 @@ export function registerImagePreviewCommands(
 			qp.matchOnDescription = false;
 			qp.matchOnDetail = false;
 
-			function getSuggestions(typed: string): vscode.QuickPickItem[] {
-				const items: vscode.QuickPickItem[] = [];
+			// Version counter — incremented on each keystroke to cancel stale searches
+			let searchVersion = 0;
 
-				// Always offer "use exactly what was typed"
-				items.push({
-					label: '$(check) Use: ' + (typed || '(empty)'),
-					description: 'Press Enter to use this pattern as-is',
-					alwaysShow: true,
-				} as vscode.QuickPickItem & { _useRaw?: boolean });
-				(items[0] as any)._useRaw = true;
+			const LOADING_ITEM: vscode.QuickPickItem = {
+				label: '$(loading~spin) Searching...',
+				description: 'Please wait',
+				alwaysShow: true,
+			};
+			(LOADING_ITEM as any)._useRaw = true;
 
-				try {
-					// Determine the directory to list from the typed value
-					let dirToList: string;
-					let prefix: string; // what we filter entries by
+			async function updateSuggestions(typed: string): Promise<void> {
+				const version = ++searchVersion;
 
-					if (!typed) {
-						return items;
-					}
+				// Show loading state immediately
+				const useItem: vscode.QuickPickItem = { label: '$(check) Use this pattern', description: 'Press Enter to confirm', alwaysShow: true };
+				(useItem as any)._useRaw = true;
+				qp.items = [useItem, LOADING_ITEM];
 
-					const trailingSlash = typed.endsWith(path.sep) || typed.endsWith('/');
-					if (trailingSlash) {
-						dirToList = typed.replace(/[/\\]+$/, '') || path.sep;
-						prefix = '';
-					} else {
-						dirToList = path.dirname(typed);
-						prefix = path.basename(typed).toLowerCase();
-					}
+				// Debounce: wait before starting the actual search
+				await new Promise(r => setTimeout(r, 200));
+				if (searchVersion !== version) return;
 
-					const imageExts = new Set(IMAGE_EXTENSIONS);
+				const contentItems: vscode.QuickPickItem[] = [];
 
-					// Resolve directories to list — handles wildcards in any segment
-					const dirsToList: string[] = resolveWildcardDirs(dirToList);
+				if (typed) {
+					try {
+						const trailingSlash = typed.endsWith(path.sep) || typed.endsWith('/');
+						let dirToList: string;
+						let prefix: string;
+						if (trailingSlash) {
+							dirToList = typed.replace(/[/\\]+$/, '') || path.sep;
+							prefix = '';
+						} else {
+							dirToList = path.dirname(typed);
+							prefix = path.basename(typed).toLowerCase();
+						}
 
-					if (dirsToList.length === 0) {
-						return items;
-					}
+						const prefixHasWild = /[*?]/.test(prefix);
+						const prefixRegex = prefixHasWild ? segmentToRegex(prefix) : null;
+						const matchesPrefix = (name: string) =>
+							prefixHasWild ? prefixRegex!.test(name) : name.startsWith(prefix);
 
-					for (const dir of dirsToList) {
-						let entries: fs.Dirent[];
-						try {
-							entries = fs.readdirSync(dir, { withFileTypes: true });
-						} catch { continue; }
+						const imageExts = new Set(IMAGE_EXTENSIONS);
+						const dirsToList = resolveWildcardDirs(dirToList);
 
-						for (const entry of entries) {
-							const name = entry.name;
-							if (!name.toLowerCase().startsWith(prefix)) continue;
+						if (searchVersion !== version) return;
 
-							const fullPath = path.join(dir, name);
+						for (const dir of dirsToList) {
+							if (searchVersion !== version) return;
 
-							if (entry.isDirectory()) {
-								items.push({
-									label: '$(folder) ' + name,
-									description: fullPath,
-									detail: 'Directory — select to navigate into it',
-									alwaysShow: true,
-								} as vscode.QuickPickItem & { _dirPath?: string });
-								(items[items.length - 1] as any)._dirPath = fullPath;
-							} else {
-								const ext = name.split('.').pop()?.toLowerCase() ?? '';
-								if (imageExts.has(ext)) {
-									items.push({
-										label: '$(file-media) ' + name,
+							let entries: fs.Dirent[];
+							try {
+								entries = await fs.promises.readdir(dir, { withFileTypes: true });
+							} catch { continue; }
+
+							if (searchVersion !== version) return;
+
+							for (const entry of entries) {
+								const name = entry.name;
+								if (!matchesPrefix(name.toLowerCase())) continue;
+
+								const fullPath = path.join(dir, name);
+								let isDir = entry.isDirectory();
+								if (!isDir && entry.isSymbolicLink()) {
+									try {
+										const st = await fs.promises.stat(fullPath);
+										isDir = st.isDirectory();
+									} catch { isDir = false; }
+								}
+
+								if (isDir) {
+									contentItems.push({
+										label: '$(folder) ' + name,
 										description: fullPath,
+										detail: 'Directory — select to navigate into it',
 										alwaysShow: true,
-									} as vscode.QuickPickItem & { _filePath?: string });
-									(items[items.length - 1] as any)._filePath = fullPath;
+									} as vscode.QuickPickItem & { _dirPath?: string });
+									(contentItems[contentItems.length - 1] as any)._dirPath = fullPath;
+								} else {
+									const ext = name.split('.').pop()?.toLowerCase() ?? '';
+									if (imageExts.has(ext)) {
+										contentItems.push({
+											label: '$(file-media) ' + name,
+											description: fullPath,
+											alwaysShow: true,
+										} as vscode.QuickPickItem & { _filePath?: string });
+										(contentItems[contentItems.length - 1] as any)._filePath = fullPath;
+									}
 								}
 							}
 						}
-					}
-				} catch {
-					// ignore fs errors
+					} catch { /* ignore fs errors */ }
 				}
 
-				return items;
+				if (searchVersion !== version) return;
+
+				// Detect if the typed path is a plain directory (no wildcards)
+				let isDirectoryPath = false;
+				if (typed && !typed.includes('*') && !typed.includes('?')) {
+					try { isDirectoryPath = fs.statSync(typed.replace(/[/\\]+$/, '') || path.sep).isDirectory(); } catch { /* ignore */ }
+				}
+
+				let finalUseItem: vscode.QuickPickItem;
+				if (isDirectoryPath) {
+					finalUseItem = {
+						label: '$(warning) This is a folder, not a file',
+						description: 'Add * or *.ext at the end to match images inside',
+						alwaysShow: true,
+					};
+					(finalUseItem as any)._useRaw = false; // not selectable as a pattern
+				} else {
+					const fileCount = expandGlobPattern(typed).length;
+					const useLabel = fileCount > 0
+						? `$(check) Add ${fileCount} image${fileCount === 1 ? '' : 's'}`
+						: '$(check) Use this pattern';
+					finalUseItem = { label: useLabel, description: 'Press Enter to confirm', alwaysShow: true };
+					(finalUseItem as any)._useRaw = true;
+				}
+				qp.items = [finalUseItem, ...contentItems];
 			}
 
 			// Initial populate
-			qp.items = getSuggestions(qp.value);
+			updateSuggestions(qp.value);
 
 			qp.onDidChangeValue(value => {
-				qp.items = getSuggestions(value);
+				updateSuggestions(value);
 			});
 
 			qp.onDidAccept(() => {
 				const selected = qp.selectedItems[0] as any;
 				if (!selected) {
-					// Enter with nothing selected — use typed value
 					resolve(qp.value || undefined);
 					qp.dispose();
 					return;
 				}
-				if (selected._useRaw) {
+				if (selected._useRaw === true) {
 					resolve(qp.value || undefined);
 					qp.dispose();
+				} else if (selected._useRaw === false) {
+					// Warning item (folder path) — ignore, let user keep typing
 				} else if (selected._dirPath) {
 					// Navigate into directory
 					qp.value = selected._dirPath + path.sep;
-					qp.items = getSuggestions(qp.value);
+					updateSuggestions(qp.value);
 				} else if (selected._filePath) {
 					resolve(selected._filePath);
 					qp.dispose();
@@ -1330,6 +1376,7 @@ export function registerImagePreviewCommands(
 			});
 
 			qp.onDidHide(() => {
+				++searchVersion; // cancel any in-flight search
 				resolve(undefined);
 				qp.dispose();
 			});
