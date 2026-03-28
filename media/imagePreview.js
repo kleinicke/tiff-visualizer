@@ -252,6 +252,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Load image based on file extension
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
 			handleTiff(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.exr')) {
+			handleExr(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
 			handlePfm(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
@@ -697,9 +699,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						}
 					}
 				}
-				// If resource URI changed, reload the entire image
-				else if (oldResourceUri !== newResourceUri) {
-					// Reload the image - zoom will be reset to 'fit' to handle dimension changes
+				// If resource URI changed, reload the entire image.
+				// Guard with hasLoadedImage: if a collection switch is already in flight
+				// (hasLoadedImage=false), a stale sendSettingsUpdate from the extension
+				// can carry a different resourceUri — don't let it hijack the in-progress load.
+				else if (oldResourceUri !== newResourceUri && hasLoadedImage) {
 					reloadImage();
 				} else {
 					// Update rendering with new settings, using optimization hints
@@ -1741,6 +1745,32 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
+
+		// Reset each processor's initial-load flag so they re-send formatInfo and
+		// trigger the extension to apply the correct per-format settings for the
+		// new image (e.g. switching from TIFF-int to EXR-float needs different
+		// normalization defaults). The AppStateManager caches settings per-format
+		// so any user adjustments are preserved when switching back.
+		tiffProcessor._isInitialLoad = true;
+		exrProcessor._isInitialLoad = true;
+		npyProcessor._isInitialLoad = true;
+		pfmProcessor._isInitialLoad = true;
+		ppmProcessor._isInitialLoad = true;
+		pngProcessor._isInitialLoad = true;
+
+		// Clear each processor's stale raw data so the mouse handler and histogram
+		// don't read pixels from the previous image. Without this, the TIFF-first
+		// checks in mouse-handler.js and updateHistogramData() would return values
+		// from the old image while the new one is loading/rendering.
+		tiffProcessor.rawTiffData = null;
+		tiffProcessor._lastStatistics = null;
+		tiffProcessor._convertedFloatData = null;
+		exrProcessor.rawExrData = undefined;
+		exrProcessor._cachedStats = undefined;
+		npyProcessor._lastRaw = null;
+		pfmProcessor._lastRaw = null;
+		ppmProcessor._lastRaw = null;
+		pngProcessor._lastRaw = null;
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new

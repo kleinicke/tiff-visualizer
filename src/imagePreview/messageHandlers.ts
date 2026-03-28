@@ -88,6 +88,7 @@ class PixelBlurMessageHandler implements MessageHandler {
 
 class StatsMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
+		if (!message.value) { return; }
 		// Update stats for any image sending stats (TIFF and non-TIFF float sources)
 		preview.getManager().settingsManager.updateImageStats(message.value.min, message.value.max);
 		preview.getNormalizationStatusBarEntry().updateImageStats(message.value.min, message.value.max);

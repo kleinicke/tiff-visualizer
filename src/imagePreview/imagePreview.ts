@@ -703,19 +703,10 @@ export class ImagePreview extends MediaPreview {
 		});
 	</script>
 	
-	${isTiff ?
-				`<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>` :
-				''
-			}
-	${isPng ?
-				`<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(upngUri.toString())}" nonce="${nonce}"></script>` :
-				''
-			}
-	${isExr ?
-				`<script src="${escapeAttribute(parseExrUri.toString())}" nonce="${nonce}"></script>` :
-				''
-			}
+	<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>
+	<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
+	<script src="${escapeAttribute(upngUri.toString())}" nonce="${nonce}"></script>
+	<script src="${escapeAttribute(parseExrUri.toString())}" nonce="${nonce}"></script>
 	<script type="module" src="${escapeAttribute(jsUri.toString())}" nonce="${nonce}"></script>
 </body>
 </html>`;
