@@ -483,7 +483,7 @@ export class HistogramOverlay {
 					// Fast path: integer data with LUT - process ALL pixels
 				for (let i = 0; i < len; i++) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
-						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
 						histR[lut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
 						histG[lut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
@@ -505,7 +505,7 @@ export class HistogramOverlay {
 					// Float data with LUT - quantize to 16-bit and lookup
 					for (let i = 0; i < len; i++) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
-						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
 						// Quantize to 0-65535 and lookup in LUT
 						const rIdx = Math.max(0, Math.min(65535, ((rv - normMin) * floatToLutScale) | 0));
@@ -532,7 +532,7 @@ export class HistogramOverlay {
 					// Non-gamma mode (no transformation needed) - process ALL pixels
 					for (let i = 0; i < len; i++) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
-						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
 						// Just normalize to 0-255 bins
 						const rBin = Math.max(0, Math.min(255, ((rv - normMin) * invRange * 255) | 0));
@@ -565,7 +565,7 @@ export class HistogramOverlay {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
-						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
 						histR[lut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
 						histG[lut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
@@ -591,7 +591,7 @@ export class HistogramOverlay {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
-						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
 						const rIdx = Math.max(0, Math.min(65535, ((rv - normMin) * floatToLutScale) | 0));
 						const gIdx = Math.max(0, Math.min(65535, ((gv - normMin) * floatToLutScale) | 0));
@@ -621,7 +621,7 @@ export class HistogramOverlay {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
-						if (rv !== rv || gv !== gv || bv !== bv) { nanCount++; continue; }
+						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
 						const rBin = Math.max(0, Math.min(255, ((rv - normMin) * invRange * 255) | 0));
 						const gBin = Math.max(0, Math.min(255, ((gv - normMin) * invRange * 255) | 0));
@@ -975,7 +975,7 @@ export class HistogramOverlay {
 			const nanSpan = document.createElement('span');
 			nanSpan.style.color = '#ffcc00';
 			nanSpan.style.marginLeft = '10px';
-			nanSpan.textContent = `NaN: ${this.histogramData.nanCount.toLocaleString()}`;
+			nanSpan.textContent = `NaN/Inf: ${this.histogramData.nanCount.toLocaleString()}`;
 			statsEl.appendChild(nanSpan);
 		}
 

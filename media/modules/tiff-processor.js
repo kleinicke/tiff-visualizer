@@ -371,7 +371,21 @@ export class TiffProcessor {
 		const channels = rastersCopy.length;
 
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		const isFloat = showNorm;
+		let isFloat = showNorm;
+
+		// Check if non-float data contains non-finite values (Infinity/-Infinity).
+		// If so, force float rendering path which handles them correctly with nanColor.
+		if (!isFloat) {
+			outer:
+			for (let i = 0; i < rastersCopy.length; i++) {
+				for (let j = 0; j < rastersCopy[i].length; j++) {
+					if (!Number.isFinite(rastersCopy[i][j])) {
+						isFloat = true;
+						break outer;
+					}
+				}
+			}
+		}
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
 		let stats = this._lastStatistics;
@@ -454,8 +468,10 @@ export class TiffProcessor {
 					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
 						for (let j = 0; j < rastersCopy[i].length; j++) {
 							const value = rastersCopy[i][j];
-							min = Math.min(min, value);
-							max = Math.max(max, value);
+							if (!isNaN(value) && isFinite(value)) {
+								min = Math.min(min, value);
+								max = Math.max(max, value);
+							}
 						}
 					}
 				}

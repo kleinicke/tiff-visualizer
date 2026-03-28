@@ -311,9 +311,9 @@ export class ImageRenderer {
                 if (isFloat) {
                     return this._renderFloatDirect(data, width, height, channels, min, max, options);
                 } else if (data instanceof Uint16Array) {
-                    return this._renderUint16Direct(data, width, height, channels, min, max);
+                    return this._renderUint16Direct(data, width, height, channels, min, max, options);
                 } else {
-                    return this._renderUint8Direct(data, width, height, channels, min, max);
+                    return this._renderUint8Direct(data, width, height, channels, min, max, options);
                 }
             } else {
                 // Non-identity in gamma mode: use LUT
@@ -542,6 +542,7 @@ export class ImageRenderer {
      */
     static _renderUint16Direct(data, width, height, channels, min, max, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
+        const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             // Scale 16-bit down to 8-bit for 24-bit display
@@ -550,16 +551,22 @@ export class ImageRenderer {
 
             for (let i = 0; i < width * height; i++) {
                 const idx = i * channels;
-                // Scale 16-bit (0-65535) to 8-bit (0-255)
-                const r = Math.round(data[idx] / 257);
-                const g = Math.round(data[idx + 1] / 257);
-                const b = Math.round(data[idx + 2] / 257);
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                const p = i * 4;
+
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+
+                const r = Math.round(rVal / 257);
+                const g = Math.round(gVal / 257);
+                const b = Math.round(bVal / 257);
                 const val24 = (r << 16) | (g << 8) | b;
 
                 const normalized = (val24 - min) * invRange;
                 const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
 
-                const p = i * 4;
                 out[p] = val8;
                 out[p + 1] = val8;
                 out[p + 2] = val8;
@@ -574,18 +581,35 @@ export class ImageRenderer {
             let r, g, b;
 
             if (channels === 1) {
-                const value = Math.max(min, Math.min(max, data[i]));
-                r = g = b = Math.round((value - min) * invRange);
+                const value = data[i];
+                if (!Number.isFinite(value)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = g = b = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
             } else if (channels === 3) {
                 const idx = i * 3;
-                r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
+                g = Math.round((Math.max(min, Math.min(max, gVal)) - min) * invRange);
+                b = Math.round((Math.max(min, Math.min(max, bVal)) - min) * invRange);
             } else if (channels === 4) {
                 const idx = i * 4;
-                r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
+                g = Math.round((Math.max(min, Math.min(max, gVal)) - min) * invRange);
+                b = Math.round((Math.max(min, Math.min(max, bVal)) - min) * invRange);
 
                 const p = i * 4;
                 out[p] = r;
@@ -611,6 +635,7 @@ export class ImageRenderer {
      */
     static _renderUint16WithLUT(data, width, height, channels, min, max, settings, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
+        const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             // Scale 16-bit down to 8-bit for 24-bit display
@@ -619,17 +644,23 @@ export class ImageRenderer {
 
             for (let i = 0; i < width * height; i++) {
                 const idx = i * channels;
-                // Scale 16-bit (0-65535) to 8-bit (0-255)
-                const r = Math.round(data[idx] / 257);
-                const g = Math.round(data[idx + 1] / 257);
-                const b = Math.round(data[idx + 2] / 257);
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                const p = i * 4;
+
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+
+                const r = Math.round(rVal / 257);
+                const g = Math.round(gVal / 257);
+                const b = Math.round(bVal / 257);
                 const val24 = (r << 16) | (g << 8) | b;
 
                 let normalized = (val24 - min) * invRange;
                 normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
                 const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
 
-                const p = i * 4;
                 out[p] = val8;
                 out[p + 1] = val8;
                 out[p + 2] = val8;
@@ -647,18 +678,35 @@ export class ImageRenderer {
             let r, g, b;
 
             if (channels === 1) {
-                const value = Math.min(65535, data[i]);
-                r = g = b = lut[value];
+                const value = data[i];
+                if (!Number.isFinite(value)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = g = b = lut[Math.min(65535, value)];
             } else if (channels === 3) {
                 const idx = i * 3;
-                r = lut[Math.min(65535, data[idx])];
-                g = lut[Math.min(65535, data[idx + 1])];
-                b = lut[Math.min(65535, data[idx + 2])];
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = lut[Math.min(65535, rVal)];
+                g = lut[Math.min(65535, gVal)];
+                b = lut[Math.min(65535, bVal)];
             } else if (channels === 4) {
                 const idx = i * 4;
-                r = lut[Math.min(65535, data[idx])];
-                g = lut[Math.min(65535, data[idx + 1])];
-                b = lut[Math.min(65535, data[idx + 2])];
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = lut[Math.min(65535, rVal)];
+                g = lut[Math.min(65535, gVal)];
+                b = lut[Math.min(65535, bVal)];
 
                 const p = i * 4;
                 out[p] = r;
@@ -684,6 +732,7 @@ export class ImageRenderer {
      */
     static _renderUint8Direct(data, width, height, channels, min, max, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
+        const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             const range = max - min;
@@ -691,15 +740,18 @@ export class ImageRenderer {
 
             for (let i = 0; i < width * height; i++) {
                 const idx = i * channels;
-                const r = data[idx];
-                const g = data[idx + 1];
-                const b = data[idx + 2];
-                const val24 = (r << 16) | (g << 8) | b;
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                const p = i * 4;
 
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+
+                const val24 = (rVal << 16) | (gVal << 8) | bVal;
                 const normalized = (val24 - min) * invRange;
                 const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
 
-                const p = i * 4;
                 out[p] = val8;
                 out[p + 1] = val8;
                 out[p + 2] = val8;
@@ -714,17 +766,31 @@ export class ImageRenderer {
                 const p = i * 4;
                 if (channels === 1) {
                     const value = data[i];
+                    if (!Number.isFinite(value)) {
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
                     out[p] = out[p + 1] = out[p + 2] = value;
                 } else if (channels === 3) {
                     const idx = i * 3;
-                    out[p] = data[idx];
-                    out[p + 1] = data[idx + 1];
-                    out[p + 2] = data[idx + 2];
+                    const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    out[p] = rVal;
+                    out[p + 1] = gVal;
+                    out[p + 2] = bVal;
                 } else if (channels === 4) {
                     const idx = i * 4;
-                    out[p] = data[idx];
-                    out[p + 1] = data[idx + 1];
-                    out[p + 2] = data[idx + 2];
+                    const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    out[p] = rVal;
+                    out[p + 1] = gVal;
+                    out[p + 2] = bVal;
                     out[p + 3] = data[idx + 3];
                     continue;
                 }
@@ -739,18 +805,35 @@ export class ImageRenderer {
                 let r, g, b;
 
                 if (channels === 1) {
-                    const value = Math.max(min, Math.min(max, data[i]));
-                    r = g = b = Math.round((value - min) * invRange);
+                    const value = data[i];
+                    if (!Number.isFinite(value)) {
+                        const p = i * 4;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    r = g = b = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
                 } else if (channels === 3) {
                     const idx = i * 3;
-                    r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                    g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                    b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                    const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                        const p = i * 4;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
+                    g = Math.round((Math.max(min, Math.min(max, gVal)) - min) * invRange);
+                    b = Math.round((Math.max(min, Math.min(max, bVal)) - min) * invRange);
                 } else if (channels === 4) {
                     const idx = i * 4;
-                    r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                    g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                    b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                    const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                        const p = i * 4;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
+                    g = Math.round((Math.max(min, Math.min(max, gVal)) - min) * invRange);
+                    b = Math.round((Math.max(min, Math.min(max, bVal)) - min) * invRange);
 
                     const p = i * 4;
                     out[p] = r;
@@ -777,6 +860,7 @@ export class ImageRenderer {
      */
     static _renderUint8WithLUT(data, width, height, channels, min, max, settings, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
+        const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             const range = max - min;
@@ -784,16 +868,19 @@ export class ImageRenderer {
 
             for (let i = 0; i < width * height; i++) {
                 const idx = i * channels;
-                const r = data[idx];
-                const g = data[idx + 1];
-                const b = data[idx + 2];
-                const val24 = (r << 16) | (g << 8) | b;
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                const p = i * 4;
 
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+
+                const val24 = (rVal << 16) | (gVal << 8) | bVal;
                 let normalized = (val24 - min) * invRange;
                 normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
                 const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
 
-                const p = i * 4;
                 out[p] = val8;
                 out[p + 1] = val8;
                 out[p + 2] = val8;
@@ -811,17 +898,35 @@ export class ImageRenderer {
             let r, g, b;
 
             if (channels === 1) {
-                r = g = b = lut[data[i]];
+                const value = data[i];
+                if (!Number.isFinite(value)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = g = b = lut[value];
             } else if (channels === 3) {
                 const idx = i * 3;
-                r = lut[data[idx]];
-                g = lut[data[idx + 1]];
-                b = lut[data[idx + 2]];
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = lut[rVal];
+                g = lut[gVal];
+                b = lut[bVal];
             } else if (channels === 4) {
                 const idx = i * 4;
-                r = lut[data[idx]];
-                g = lut[data[idx + 1]];
-                b = lut[data[idx + 2]];
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = lut[rVal];
+                g = lut[gVal];
+                b = lut[bVal];
 
                 const p = i * 4;
                 out[p] = r;
