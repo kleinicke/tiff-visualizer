@@ -37,6 +37,7 @@ export interface IImagePreview {
 	readonly imageCollection: readonly vscode.Uri[];
 	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
 	pastePosition(): void;
+	jumpToCollectionIndex(index: number): void;
 	removeCurrentFromCollection(): void;
 	getManager(): IImagePreviewManager;
 	toggleHistogram(): void;

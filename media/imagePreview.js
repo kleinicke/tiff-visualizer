@@ -104,6 +104,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let overlayElement = null;
 	/** @type {HTMLElement | null} */
 	let filenameBadge = null;
+	/** @type {HTMLInputElement | null} */
+	let activeCounterInput = null;
 
 	/**
 	 * Save current state to VS Code webview state for persistence across tab switches
@@ -1697,15 +1699,70 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		overlayElement.innerHTML = `
 			<div class="overlay-content">
 				<div class="overlay-controls">
-					<span class="image-counter">1 of 1</span>
+					<span class="image-counter" title="Click to jump to image">1 of 1</span>
 					<button class="collection-remove-btn" title="Remove from collection">&#x2715;</button>
 				</div>
 				<span class="toggle-hint">← → to navigate</span>
 			</div>
 		`;
 
+		// Click on counter → inline number input to jump to any image
+		const counterEl = /** @type {HTMLElement} */ (overlayElement.querySelector('.image-counter'));
+
+		counterEl.addEventListener('click', () => {
+			const total = imageCollection.totalImages;
+
+			const input = document.createElement('input');
+			input.type = 'number';
+			input.min = '1';
+			input.max = String(total);
+			input.value = String(imageCollection.currentIndex + 1);
+			input.className = 'image-counter-input';
+			input.title = `1 – ${total}`;
+
+			activeCounterInput = input;
+			counterEl.replaceWith(input);
+			input.select();
+
+			const close = () => {
+				if (!input.isConnected) return;
+				activeCounterInput = null;
+				input.replaceWith(counterEl);
+			};
+
+			input.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter') {
+					e.stopPropagation();
+					close();
+				} else if (e.key === 'Escape') {
+					activeCounterInput = null;
+					input.replaceWith(counterEl);
+				} else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+					e.preventDefault();
+					e.stopPropagation();
+					const cur = parseInt(input.value, 10);
+					const base = isNaN(cur) ? imageCollection.currentIndex + 1 : cur;
+					const total = imageCollection.totalImages;
+					const next = e.key === 'ArrowRight'
+						? (base >= total ? 1 : base + 1)
+						: (base <= 1 ? total : base - 1);
+					input.value = String(next);
+					input.select();
+					vscode.postMessage({ type: 'jumpToCollectionIndex', index: next - 1 });
+				}
+			});
+
+			input.addEventListener('blur', close);
+		});
+
 		/** @type {ReturnType<typeof setTimeout> | null} */
 		let removeConfirmTimer = null;
+
+		overlayElement.addEventListener('mousedown', (e) => {
+			if (/** @type {HTMLElement} */ (e.target).classList.contains('collection-remove-btn')) {
+				e.preventDefault(); // prevent text selection on repeated clicks
+			}
+		});
 
 		overlayElement.addEventListener('click', (e) => {
 			const target = /** @type {HTMLButtonElement} */ (e.target);
@@ -1800,9 +1857,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		imageCollection = data;
 
 		if (data.show && data.totalImages > 1) {
-			const counter = overlayElement.querySelector('.image-counter');
-			if (counter) {
-				counter.textContent = `${data.currentIndex + 1} of ${data.totalImages}`;
+			if (activeCounterInput) {
+				activeCounterInput.value = String(data.currentIndex + 1);
+				activeCounterInput.select();
+			} else {
+				const counter = overlayElement.querySelector('.image-counter');
+				if (counter) {
+					counter.textContent = `${data.currentIndex + 1} of ${data.totalImages}`;
+				}
 			}
 			overlayElement.style.display = 'block';
 			if (filenameBadge) filenameBadge.style.display = 'block';

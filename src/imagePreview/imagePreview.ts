@@ -431,6 +431,14 @@ export class ImagePreview extends MediaPreview {
 		return true;
 	}
 
+	public jumpToCollectionIndex(index: number): void {
+		if (index < 0 || index >= this._imageCollection.length || index === this._currentImageIndex) {
+			return;
+		}
+		this.saveCurrentZoomState();
+		this.switchToImageAtIndex(index);
+	}
+
 	public removeCurrentFromCollection(): void {
 		if (this._imageCollection.length <= 1) {
 			return; // Can't remove the only image

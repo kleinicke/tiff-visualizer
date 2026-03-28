@@ -209,6 +209,30 @@ body img {
 	color: var(--vscode-textLink-foreground, #3794ff);
 	min-width: 3em;
 	text-align: center;
+	cursor: pointer;
+}
+
+.image-collection-overlay .image-counter:hover {
+	text-decoration: underline;
+}
+
+.image-counter-input {
+	width: 3em;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #cccccc);
+	border: 1px solid var(--vscode-focusBorder, #3794ff);
+	border-radius: 3px;
+	font-size: inherit;
+	font-weight: 600;
+	text-align: center;
+	padding: 0 2px;
+	/* hide spinner arrows */
+	-moz-appearance: textfield;
+}
+
+.image-counter-input::-webkit-outer-spin-button,
+.image-counter-input::-webkit-inner-spin-button {
+	-webkit-appearance: none;
 }
 
 .image-collection-overlay .toggle-hint {
