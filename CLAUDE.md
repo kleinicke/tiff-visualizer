@@ -129,7 +129,7 @@ All commands registered with `tiffVisualizer.` prefix ([src/imagePreview/command
 - **Zoom**: `zoomIn`, `zoomOut`, `resetZoom`
 - **Image adjustments**: `setGamma`, `setBrightness`, `setNormalizationRange`
 - **Export**: `exportAsPng`, `copyImage`
-- **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`, `openNextToCurrent`
+- **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`, `browseAndAddToCollection`
 - **Filters**: `filterByMask`, `toggleNanColor`
 - **Colormap conversion**: `convertColormapToFloat` - converts colormap images to float values
 - **Reset**: `resetAllSettings`
@@ -151,6 +151,7 @@ Major refactoring centralizes all image rendering logic in [media/modules/normal
   - **Gamma mode**: Uses full type range (0-255, 0-65535, or 0-1 for floats)
   - **Manual mode**: User-specified range with optional normalized-float scaling
 - **Type-aware rendering**: Separate optimized paths for Uint8Array, Uint16Array, and Float32Array
+- **Non-finite pixel handling**: Float paths use `!Number.isFinite()` to detect NaN/Infinity and render with nanColor. Integer (Uint8/Uint16) paths also check this defensively. Histogram pixel loops in `histogram-overlay.js` must use the same guard — NOT `value !== value` (NaN-only).
 - **Identity transform optimization**: Skips expensive gamma/brightness calculations when not needed
 - **LUT acceleration**: Generates lookup tables for gamma/brightness in gamma mode
 
@@ -394,6 +395,7 @@ The extension handles diverse image formats with minimal processor code. Each fo
   - Supports LZW/Deflate compression, predictors, multi-channel
   - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
   - Sets `typeMax` based on bit depth for proper gamma mode normalization
+  - Rasters are always copied into Float32Array internally (even for integer TIFFs) before interleaving — relevant when tracking how special float values (NaN, Infinity) propagate
 
 - **OpenEXR** ([media/modules/exr-processor.js](media/modules/exr-processor.js)):
   - Via parse-exr, supports HDR, float16/float32

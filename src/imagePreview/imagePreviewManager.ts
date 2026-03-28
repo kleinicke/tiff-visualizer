@@ -232,14 +232,20 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
-		webviewEditor.onDidDispose(() => { this._previews.delete(preview); });
+		webviewEditor.onDidDispose(() => {
+			this._previews.delete(preview);
+			if (this._activePreview === preview) {
+				this.setActivePreview(undefined);
+			}
+		});
 
 		webviewEditor.onDidChangeViewState(() => {
 			if (webviewEditor.active) {
 				this.setActivePreview(preview);
-			} else if (this._activePreview === preview && !webviewEditor.active) {
-				this.setActivePreview(undefined);
 			}
+			// Do NOT clear activePreview on focus loss — QuickPicks, permission dialogs,
+			// and other transient UI steal focus temporarily. Keep the last-known active
+			// preview so commands still work when focus returns.
 		});
 	}
 

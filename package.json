@@ -154,11 +154,6 @@
         "category": "TIFF Visualizer"
       },
       {
-        "command": "tiffVisualizer.openNextToCurrent",
-        "title": "Open Next to Current Image",
-        "category": "TIFF Visualizer"
-      },
-      {
         "command": "tiffVisualizer.browseAndAddToCollection",
         "title": "Add Image to Collection...",
         "category": "TIFF Visualizer"
@@ -221,7 +216,7 @@
           "group": "navigation@0"
         },
         {
-          "command": "tiffVisualizer.openNextToCurrent",
+          "command": "tiffVisualizer.browseAndAddToCollection",
           "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
           "group": "navigation@1"
         }

@@ -90,69 +90,17 @@ function segmentToRegex(segment: string): RegExp {
 	return new RegExp('^' + result + '$', 'i');
 }
 
-/**
- * Recursively expand a multi-segment glob pattern starting from baseDir.
- * segments: the remaining path segments to match (may contain wildcards).
- * isLast: true when processing the final segment (must be an image file).
- */
-function expandGlobSegments(baseDir: string, segments: string[]): vscode.Uri[] {
-	if (segments.length === 0) return [];
 
-	const [head, ...tail] = segments;
-	const isLast = tail.length === 0;
-
-	if (!head.includes('*') && !head.includes('?')) {
-		// Literal segment — no expansion needed
-		const fullPath = path.join(baseDir, head);
-		if (isLast) {
-			try {
-				if (fs.statSync(fullPath).isFile()) {
-					const ext = head.split('.').pop()?.toLowerCase() ?? '';
-					return IMAGE_EXTENSIONS.includes(ext) ? [vscode.Uri.file(fullPath)] : [];
-				}
-			} catch { /* not found */ }
-			return [];
-		}
-		return expandGlobSegments(fullPath, tail);
-	}
-
-	// Wildcard segment — list entries and filter
-	const regex = segmentToRegex(head);
-	try {
-		const entries = fs.readdirSync(baseDir);
-		const results: vscode.Uri[] = [];
-		for (const entry of entries) {
-			if (!regex.test(entry)) continue;
-			const fullPath = path.join(baseDir, entry);
-			try {
-				const stat = fs.statSync(fullPath);
-				if (isLast) {
-					if (stat.isFile()) {
-						const ext = entry.split('.').pop()?.toLowerCase() ?? '';
-						if (IMAGE_EXTENSIONS.includes(ext)) results.push(vscode.Uri.file(fullPath));
-					}
-				} else {
-					if (stat.isDirectory()) {
-						results.push(...expandGlobSegments(fullPath, tail));
-					}
-				}
-			} catch { /* skip inaccessible entries */ }
-		}
-		return results.sort((a, b) => a.fsPath.localeCompare(b.fsPath, undefined, { numeric: true }));
-	} catch {
-		return [];
-	}
-}
+const MAX_GLOB_RESULTS = 2000;
 
 /**
- * Resolve a directory path that may contain wildcards in any segment.
- * Returns all real directory paths that match.
+ * Async resolveWildcardDirs — same logic as the sync version but uses fs.promises.
+ * Accepts an isCancelled callback so in-flight scans abort as soon as the QuickPick closes.
  */
-function resolveWildcardDirs(dirPath: string): string[] {
+async function resolveWildcardDirsAsync(dirPath: string, isCancelled: () => boolean): Promise<string[]> {
 	if (!dirPath.includes('*') && !dirPath.includes('?')) {
-		return fs.existsSync(dirPath) ? [dirPath] : [];
+		try { await fs.promises.access(dirPath); return [dirPath]; } catch { return []; }
 	}
-	// Split into segments, find where wildcards start
 	const segments = dirPath.split(/[/\\]/);
 	const baseSegs: string[] = [];
 	for (const seg of segments) {
@@ -162,24 +110,26 @@ function resolveWildcardDirs(dirPath: string): string[] {
 	const wildcardSegs = segments.slice(baseSegs.length);
 	const baseDir = baseSegs.join(path.sep) || path.sep;
 
-	function walkDirs(dir: string, segs: string[]): string[] {
+	async function walkDirs(dir: string, segs: string[]): Promise<string[]> {
+		if (isCancelled()) return [];
 		if (segs.length === 0) return [dir];
 		const [head, ...rest] = segs;
-		if (!head) return walkDirs(dir, rest); // skip empty segment
+		if (!head) return walkDirs(dir, rest);
 		if (!/[*?]/.test(head)) {
 			const next = path.join(dir, head);
-			return fs.existsSync(next) ? walkDirs(next, rest) : [];
+			try { await fs.promises.access(next); return walkDirs(next, rest); } catch { return []; }
 		}
 		const regex = segmentToRegex(head);
 		let names: string[];
-		try { names = fs.readdirSync(dir); } catch { return []; }
+		try { names = await fs.promises.readdir(dir); } catch { return []; }
 		const out: string[] = [];
 		for (const name of names) {
+			if (isCancelled()) return out;
 			if (!regex.test(name)) continue;
 			const fullPath = path.join(dir, name);
 			try {
-				if (fs.statSync(fullPath).isDirectory()) {
-					out.push(...walkDirs(fullPath, rest));
+				if ((await fs.promises.stat(fullPath)).isDirectory()) {
+					out.push(...await walkDirs(fullPath, rest));
 				}
 			} catch { /* skip inaccessible */ }
 		}
@@ -189,21 +139,78 @@ function resolveWildcardDirs(dirPath: string): string[] {
 	return walkDirs(baseDir, wildcardSegs);
 }
 
-function expandGlobPattern(pattern: string): vscode.Uri[] {
+/**
+ * Async glob expansion — uses fs.promises and supports cancellation + a hard result cap.
+ * Mutates the shared `results` array so the cap is enforced across recursive calls.
+ */
+async function expandGlobSegmentsAsync(
+	baseDir: string,
+	segments: string[],
+	results: vscode.Uri[],
+	isCancelled: () => boolean,
+): Promise<void> {
+	if (isCancelled() || results.length >= MAX_GLOB_RESULTS || segments.length === 0) return;
+
+	const [head, ...tail] = segments;
+	const isLast = tail.length === 0;
+
+	if (!head.includes('*') && !head.includes('?')) {
+		const fullPath = path.join(baseDir, head);
+		if (isLast) {
+			try {
+				const st = await fs.promises.stat(fullPath);
+				if (st.isFile()) {
+					const ext = head.split('.').pop()?.toLowerCase() ?? '';
+					if (IMAGE_EXTENSIONS.includes(ext)) results.push(vscode.Uri.file(fullPath));
+				}
+			} catch { /* not found */ }
+		} else {
+			await expandGlobSegmentsAsync(fullPath, tail, results, isCancelled);
+		}
+		return;
+	}
+
+	const regex = segmentToRegex(head);
+	try {
+		const entries = await fs.promises.readdir(baseDir);
+		for (const entry of entries) {
+			if (isCancelled() || results.length >= MAX_GLOB_RESULTS) return;
+			if (!regex.test(entry)) continue;
+			const fullPath = path.join(baseDir, entry);
+			try {
+				const stat = await fs.promises.stat(fullPath);
+				if (isLast) {
+					if (stat.isFile()) {
+						const ext = entry.split('.').pop()?.toLowerCase() ?? '';
+						if (IMAGE_EXTENSIONS.includes(ext)) results.push(vscode.Uri.file(fullPath));
+					}
+				} else {
+					if (stat.isDirectory()) {
+						await expandGlobSegmentsAsync(fullPath, tail, results, isCancelled);
+					}
+				}
+			} catch { /* skip inaccessible entries */ }
+		}
+	} catch { /* unreadable directory */ }
+}
+
+async function expandGlobPatternAsync(pattern: string, isCancelled: () => boolean): Promise<vscode.Uri[]> {
 	if (!pattern.includes('*') && !pattern.includes('?')) {
 		try {
-			return fs.statSync(pattern).isFile() ? [vscode.Uri.file(pattern)] : [];
+			const st = await fs.promises.stat(pattern);
+			return st.isFile() ? [vscode.Uri.file(pattern)] : [];
 		} catch { return []; }
 	}
 
-	// Find the last literal directory before the first wildcard
 	const firstWild = pattern.search(/[*?]/);
 	const beforeWild = pattern.substring(0, firstWild);
 	const baseDir = path.dirname(beforeWild.endsWith(path.sep) ? beforeWild + '_' : beforeWild);
-	const remainder = pattern.substring(baseDir.length + 1); // everything after baseDir/
-
+	const remainder = pattern.substring(baseDir.length + 1);
 	const segments = remainder.split(/[/\\]/);
-	return expandGlobSegments(baseDir, segments);
+
+	const results: vscode.Uri[] = [];
+	await expandGlobSegmentsAsync(baseDir, segments, results, isCancelled);
+	return results.sort((a, b) => a.fsPath.localeCompare(b.fsPath, undefined, { numeric: true }));
 }
 
 /**
@@ -1184,31 +1191,6 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openNextToCurrent', async (resource?: vscode.Uri) => {
-		logCommand('openNextToCurrent', 'start');
-		if (!resource) {
-			vscode.window.showErrorMessage('No file selected to open next to current image.');
-			logCommand('openNextToCurrent', 'error', 'No file selected');
-			return;
-		}
-
-		const activePreview = previewManager.activePreview;
-		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open a TIFF image first.');
-			logCommand('openNextToCurrent', 'error', 'No active preview');
-			return;
-		}
-
-		// Add the image to the current preview's collection
-		try {
-			await activePreview.addToImageCollection(resource);
-			vscode.window.showInformationMessage(`Added ${resource.fsPath.split('/').pop()} to image collection. Press 't' to toggle between images.`);
-			logCommand('openNextToCurrent', 'success', resource.fsPath);
-		} catch (error) {
-			vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
-			logCommand('openNextToCurrent', 'error', String(error));
-		}
-	}));
 
 	/**
 	 * Show a QuickPick-based path picker with filesystem autocomplete.
@@ -1234,6 +1216,7 @@ export function registerImagePreviewCommands(
 
 			async function updateSuggestions(typed: string): Promise<void> {
 				const version = ++searchVersion;
+				const isCancelled = () => searchVersion !== version;
 
 				// Show loading state immediately
 				const useItem: vscode.QuickPickItem = { label: '$(check) Use this pattern', description: 'Press Enter to confirm', alwaysShow: true };
@@ -1265,7 +1248,7 @@ export function registerImagePreviewCommands(
 							prefixHasWild ? prefixRegex!.test(name) : name.startsWith(prefix);
 
 						const imageExts = new Set(IMAGE_EXTENSIONS);
-						const dirsToList = resolveWildcardDirs(dirToList);
+						const dirsToList = await resolveWildcardDirsAsync(dirToList, isCancelled);
 
 						if (searchVersion !== version) return;
 
@@ -1321,7 +1304,8 @@ export function registerImagePreviewCommands(
 				// Detect if the typed path is a plain directory (no wildcards)
 				let isDirectoryPath = false;
 				if (typed && !typed.includes('*') && !typed.includes('?')) {
-					try { isDirectoryPath = fs.statSync(typed.replace(/[/\\]+$/, '') || path.sep).isDirectory(); } catch { /* ignore */ }
+					try { isDirectoryPath = (await fs.promises.stat(typed.replace(/[/\\]+$/, '') || path.sep)).isDirectory(); } catch { /* ignore */ }
+					if (searchVersion !== version) return;
 				}
 
 				let finalUseItem: vscode.QuickPickItem;
@@ -1333,7 +1317,8 @@ export function registerImagePreviewCommands(
 					};
 					(finalUseItem as any)._useRaw = false; // not selectable as a pattern
 				} else {
-					const fileCount = expandGlobPattern(typed).length;
+					const fileCount = (await expandGlobPatternAsync(typed, isCancelled)).length;
+					if (searchVersion !== version) return;
 					const useLabel = fileCount > 0
 						? `$(check) Add ${fileCount} image${fileCount === 1 ? '' : 's'}`
 						: '$(check) Use this pattern';
@@ -1385,7 +1370,7 @@ export function registerImagePreviewCommands(
 		});
 	}
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async (resource?: vscode.Uri) => {
 		logCommand('browseAndAddToCollection', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -1394,34 +1379,60 @@ export function registerImagePreviewCommands(
 			return;
 		}
 
+		// When invoked from the Explorer context menu, resource is the right-clicked file — add it directly.
+		if (resource) {
+			try {
+				await activePreview.addToImageCollection(resource);
+				vscode.window.showInformationMessage(`Added ${resource.fsPath.split(path.sep).pop()} to image collection. Press 't'/'r' to navigate.`);
+				logCommand('browseAndAddToCollection', 'success', resource.fsPath);
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
+				logCommand('browseAndAddToCollection', 'error', String(error));
+			}
+			return;
+		}
+
 		const currentDir = path.dirname(activePreview.resource.fsPath);
 		const pattern = await pickPathWithAutocomplete(currentDir);
 		if (!pattern) return;
 
-		let filesToAdd: vscode.Uri[] = expandGlobPattern(pattern);
-		if (filesToAdd.length === 0) {
-			vscode.window.showWarningMessage(`No image files found matching: ${pattern}`);
-			logCommand('browseAndAddToCollection', 'error', `No files matching: ${pattern}`);
-			return;
-		}
+		await vscode.window.withProgress(
+			{ location: vscode.ProgressLocation.Notification, title: 'Adding to collection…', cancellable: true },
+			async (progress, token) => {
+				const isCancelled = () => token.isCancellationRequested;
 
-		let added = 0;
-		for (const uri of filesToAdd) {
-			try {
-				await activePreview.addToImageCollection(uri);
-				added++;
-			} catch (error) {
-				logCommand('browseAndAddToCollection', 'error', `Failed to add ${uri.fsPath}: ${error}`);
+				progress.report({ message: 'Scanning files…' });
+				const filesToAdd = await expandGlobPatternAsync(pattern, isCancelled);
+
+				if (isCancelled()) return;
+
+				if (filesToAdd.length === 0) {
+					vscode.window.showWarningMessage(`No image files found matching: ${pattern}`);
+					logCommand('browseAndAddToCollection', 'error', `No files matching: ${pattern}`);
+					return;
+				}
+
+				let added = 0;
+				for (const uri of filesToAdd) {
+					if (isCancelled()) break;
+					progress.report({ message: `Adding ${added + 1} / ${filesToAdd.length}…`, increment: 100 / filesToAdd.length });
+					try {
+						await activePreview.addToImageCollection(uri);
+						added++;
+					} catch (error) {
+						logCommand('browseAndAddToCollection', 'error', `Failed to add ${uri.fsPath}: ${error}`);
+					}
+				}
+
+				if (added > 0) {
+					const msg = added === 1
+						? `Added ${filesToAdd[0].fsPath.split(path.sep).pop()} to image collection. Press 't'/'r' to navigate.`
+						: `Added ${added} images to collection. Press 't'/'r' to navigate.`;
+					vscode.window.showInformationMessage(msg);
+					logCommand('browseAndAddToCollection', 'success', `Added ${added} images`);
+				}
 			}
-		}
-
-		if (added > 0) {
-			const msg = added === 1
-				? `Added ${filesToAdd[0].fsPath.split(path.sep).pop()} to image collection. Press 't'/'r' to navigate.`
-				: `Added ${added} images to collection. Press 't'/'r' to navigate.`;
-			vscode.window.showInformationMessage(msg);
-			logCommand('browseAndAddToCollection', 'success', `Added ${added} images`);
-		}
+		);
 	}));
 
 	// Comparison Panel Commands
