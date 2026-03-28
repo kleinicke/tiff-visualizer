@@ -665,6 +665,7 @@ export class ImagePreview extends MediaPreview {
 		};
 
 		const cssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.css'));
+		const overlayPanelCssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'overlay-panel.css'));
 		const jsUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.bundle.js'));
 		const geotiffUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'geotiff.min.js'));
 		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
@@ -678,11 +679,12 @@ export class ImagePreview extends MediaPreview {
 
 	<!-- Disable pinch zooming -->
 	<meta name="viewport"
-		content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+	content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
 
 	<title>Image Preview</title>
 
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
+	<link rel="stylesheet" href="${escapeAttribute(overlayPanelCssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
 	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">

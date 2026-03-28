@@ -1,0 +1,283 @@
+/* Overlay Panel */
+.overlay-panel {
+	position: fixed;
+	top: 10px;
+	right: 10px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px;
+	z-index: 1001;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: var(--vscode-editor-font-size, 12px);
+	color: var(--vscode-editor-foreground, #cccccc);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	min-width: 220px;
+	max-width: 300px;
+	user-select: none;
+}
+
+.overlay-panel-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 8px 12px;
+	background: var(--vscode-sideBarSectionHeader-background, #252526);
+	border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px 6px 0 0;
+}
+
+.overlay-panel-title {
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.overlay-panel-close {
+	background: transparent;
+	border: none;
+	color: var(--vscode-icon-foreground, #cccccc);
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+	padding: 0;
+	width: 20px;
+	height: 20px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 3px;
+}
+
+.overlay-panel-close:hover {
+	background: var(--vscode-toolbar-hoverBackground, #3a3a3a);
+}
+
+.overlay-panel-body {
+	padding: 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* Mode and Colormap rows */
+.overlay-mode-row,
+.overlay-colormap-row,
+.overlay-mask-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.overlay-mode-row label,
+.overlay-colormap-row label,
+.overlay-mask-row label {
+	font-size: 11px;
+	white-space: nowrap;
+	min-width: 60px;
+}
+
+.overlay-mode-select,
+.overlay-colormap-select,
+.overlay-mask-filter-select {
+	flex: 1;
+	background: var(--vscode-dropdown-background, #3c3c3c);
+	color: var(--vscode-dropdown-foreground, #cccccc);
+	border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 3px 6px;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.overlay-mask-threshold {
+	width: 70px;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #cccccc);
+	border: 1px solid var(--vscode-input-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 3px 6px;
+	font-size: 11px;
+}
+
+/* Image list */
+.overlay-image-list {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	max-height: 150px;
+	overflow-y: auto;
+}
+
+.overlay-image-entry {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 6px;
+	background: var(--vscode-list-inactiveSelectionBackground, #2a2a2a);
+	border-radius: 3px;
+	cursor: default;
+}
+
+.overlay-image-entry.dragging {
+	opacity: 0.5;
+}
+
+.overlay-image-entry.drag-over {
+	border-top: 2px solid var(--vscode-textLink-foreground, #3794ff);
+}
+
+.overlay-image-checkbox {
+	cursor: pointer;
+}
+
+.overlay-image-filename {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+}
+
+.overlay-drag-handle {
+	cursor: grab;
+	opacity: 0.5;
+	font-size: 12px;
+	padding: 0 2px;
+}
+
+.overlay-drag-handle:hover {
+	opacity: 1;
+}
+
+.overlay-remove-btn {
+	background: transparent;
+	border: none;
+	color: var(--vscode-icon-foreground, #cccccc);
+	font-size: 14px;
+	cursor: pointer;
+	padding: 0 2px;
+	opacity: 0.5;
+	border-radius: 2px;
+}
+
+.overlay-remove-btn:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground, #3a3a3a);
+}
+
+/* Add button */
+.overlay-add-btn {
+	background: var(--vscode-button-secondaryBackground, #3a3a3a);
+	color: var(--vscode-button-secondaryForeground, #cccccc);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 4px 8px;
+	font-size: 11px;
+	cursor: pointer;
+	text-align: center;
+}
+
+.overlay-add-btn:hover {
+	background: var(--vscode-button-secondaryHoverBackground, #454545);
+}
+
+/* Checkboxes */
+.overlay-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.overlay-checkbox input[type="checkbox"] {
+	cursor: pointer;
+}
+
+/* Separator */
+.overlay-separator {
+	height: 1px;
+	background: var(--vscode-panel-border, #3c3c3c);
+	margin: 4px 0;
+}
+
+/* Mask options */
+.overlay-mask-options {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* Colormap Legend */
+.colormap-legend {
+	position: fixed;
+	top: 50%;
+	right: 10px;
+	transform: translateY(-50%);
+	display: flex;
+	gap: 6px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px;
+	padding: 12px 10px;
+	z-index: 999;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.colormap-legend-canvas {
+	border-radius: 2px;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.colormap-legend-labels {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	font-size: 10px;
+	color: var(--vscode-editor-foreground, #cccccc);
+	min-width: 40px;
+}
+
+.colormap-legend-label {
+	white-space: nowrap;
+}
+
+/* Light theme */
+.vscode-light .overlay-panel {
+	background: var(--vscode-editor-background, #ffffff);
+	border: 1px solid var(--vscode-panel-border, #e5e5e5);
+	color: var(--vscode-editor-foreground, #333333);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .overlay-panel-header {
+	background: var(--vscode-sideBarSectionHeader-background, #f3f3f3);
+	border-color: var(--vscode-panel-border, #e5e5e5);
+}
+
+.vscode-light .overlay-panel-close:hover {
+	background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
+}
+
+.vscode-light .overlay-image-entry {
+	background: var(--vscode-list-inactiveSelectionBackground, #f0f0f0);
+}
+
+.vscode-light .overlay-add-btn {
+	background: var(--vscode-button-secondaryBackground, #e8e8e8);
+	color: var(--vscode-button-secondaryForeground, #333333);
+	border-color: var(--vscode-panel-border, #d0d0d0);
+}
+
+.vscode-light .overlay-add-btn:hover {
+	background: var(--vscode-button-secondaryHoverBackground, #d8d8d8);
+}
+
+.vscode-light .overlay-remove-btn:hover {
+	background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
+}
+
+.vscode-light .colormap-legend {
+	background: var(--vscode-editor-background, #ffffff);
+	border: 1px solid var(--vscode-panel-border, #e5e5e5);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}

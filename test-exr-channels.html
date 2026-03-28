@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>EXR Channel Name Test</title>
+    <script src="media/parse-exr.js"></script>
+</head>
+<body>
+    <h1>EXR Channel Name Support Test</h1>
+    <div id="results"></div>
+
+    <script>
+        async function testExrFile(path) {
+            const resultsDiv = document.getElementById('results');
+            const testDiv = document.createElement('div');
+            testDiv.innerHTML = `<h3>Testing: ${path}</h3>`;
+            resultsDiv.appendChild(testDiv);
+
+            try {
+                const response = await fetch(path);
+                const buffer = await response.arrayBuffer();
+
+                // Parse with Float32 type
+                const FloatType = 1015;
+                const result = parseExr(buffer, FloatType);
+
+                testDiv.innerHTML += `<p style="color: green;">✓ SUCCESS</p>`;
+                testDiv.innerHTML += `<p>Width: ${result.width}, Height: ${result.height}</p>`;
+                testDiv.innerHTML += `<p>Channels: ${result.data.length / (result.width * result.height)}</p>`;
+                testDiv.innerHTML += `<p>Format: ${result.format}</p>`;
+
+                console.log('Success:', path, result);
+            } catch (error) {
+                testDiv.innerHTML += `<p style="color: red;">✗ FAILED: ${error.message}</p>`;
+                console.error('Failed:', path, error);
+            }
+        }
+
+        // Test the files
+        Promise.all([
+            testExrFile('/Users/florian/Projects/cursor/test_data/testfiles/exr/test_zbuffer.exr'),
+            testExrFile('/Users/florian/Projects/cursor/test_data/testfiles/exr/unsupported_naming.exr'),
+            testExrFile('/Users/florian/Projects/cursor/test_data/testfiles/exr/z_00_depth_002.exr')
+        ]).then(() => {
+            console.log('All tests completed');
+        });
+    </script>
+</body>
+</html>

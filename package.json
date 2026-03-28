@@ -192,6 +192,16 @@
         "command": "tiffVisualizer.copyImageInfo",
         "title": "Copy Image Information to Clipboard",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.overlayImage",
+        "title": "Overlay Image",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.overlayAddImage",
+        "title": "Add Overlay Image",
+        "category": "TIFF Visualizer"
       }
     ],
     "keybindings": [

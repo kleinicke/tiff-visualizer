@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
@@ -1315,6 +1316,79 @@ export function registerImagePreviewCommands(
 		} catch (error) {
 			logCommand('toggleColorPickerMode', 'error', String(error));
 		}
+	}));
+
+	// Overlay Image commands
+	async function pickOverlayImage(): Promise<vscode.Uri | undefined> {
+		const uris = await vscode.window.showOpenDialog({
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: false,
+			filters: {
+				'Images': ['tif', 'tiff', 'exr', 'pfm', 'ppm', 'pgm', 'pbm', 'npy', 'npz', 'png', 'jpg', 'jpeg']
+			},
+			title: 'Select Overlay Image',
+			openLabel: 'Select'
+		});
+
+		if (!uris || uris.length === 0) {
+			return undefined;
+		}
+		return uris[0];
+	}
+
+	async function sendOverlayImageToWebview(previewManager: ImagePreviewManager, overlayUri: vscode.Uri) {
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active image preview found.');
+			return;
+		}
+
+		const preview = activePreview as any;
+		if (preview.getWebview) {
+			// Convert to webview URI
+			const webviewUri = preview.getWebview().asWebviewUri(overlayUri);
+
+			// Expand localResourceRoots to include the overlay image's directory
+			const newDir = Utils.dirname(overlayUri);
+			const currentRoots = preview.getWebview().options.localResourceRoots ?? [];
+			if (!currentRoots.some((r: vscode.Uri) => r.toString() === newDir.toString())) {
+				preview.getWebview().options = {
+					...preview.getWebview().options,
+					localResourceRoots: [...currentRoots, newDir],
+				};
+			}
+
+			preview.getWebview().postMessage({
+				type: 'overlay-add-image',
+				uri: webviewUri.toString(),
+				filename: overlayUri.path.split('/').pop() || 'overlay'
+			});
+		}
+	}
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.overlayImage', async () => {
+		logCommand('overlayImage', 'start');
+		const overlayUri = await pickOverlayImage();
+		if (!overlayUri) {
+			logCommand('overlayImage', 'error', 'No file selected');
+			return;
+		}
+
+		await sendOverlayImageToWebview(previewManager, overlayUri);
+		logCommand('overlayImage', 'success', overlayUri.fsPath);
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.overlayAddImage', async () => {
+		logCommand('overlayAddImage', 'start');
+		const overlayUri = await pickOverlayImage();
+		if (!overlayUri) {
+			logCommand('overlayAddImage', 'error', 'No file selected');
+			return;
+		}
+
+		await sendOverlayImageToWebview(previewManager, overlayUri);
+		logCommand('overlayAddImage', 'success', overlayUri.fsPath);
 	}));
 
 	return vscode.Disposable.from(...disposables);

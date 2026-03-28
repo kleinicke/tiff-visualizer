@@ -44,6 +44,18 @@ export class MouseHandler {
 	setPngProcessor(proc) { this.pngProcessor = proc; }
 
 	/**
+	 * Set blended overlay data
+	 * @param {Float32Array|null} data 
+	 * @param {number|null} width 
+	 * @param {number|null} height 
+	 */
+	setBlendedData(data, width, height) {
+		this.blendedData = data;
+		this.blendedWidth = width;
+		this.blendedHeight = height;
+	}
+
+	/**
 	 * Set active state
 	 * @param {boolean} value
 	 */
@@ -178,6 +190,17 @@ export class MouseHandler {
 		// ONLY allow showing modified values if we are in Gamma Mode
 		const isGammaMode = this.settingsManager.settings.normalization && this.settingsManager.settings.normalization.gammaMode;
 		const showModified = isGammaMode && (this.settingsManager.settings.colorPickerShowModified || false);
+
+		// If we have blended overlay data, show that instead of the base image
+		if (this.blendedData && this.blendedWidth && this.blendedHeight) {
+			if (x >= 0 && x < this.blendedWidth && y >= 0 && y < this.blendedHeight) {
+				const value = this.blendedData[y * this.blendedWidth + x];
+				if (showModified) {
+					return this._applyGammaBrightness(value).toFixed(6);
+				}
+				return value.toFixed(6);
+			}
+		}
 
 		// Try TIFF processor first
 		if (this.tiffProcessor) {

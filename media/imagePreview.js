@@ -12,6 +12,9 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
+import { ImageBlender } from './modules/image-blender.js';
+import { OverlayPanel } from './modules/overlay-panel.js';
+import { ColormapLegend } from './modules/colormap-legend.js';
 
 /**
  * Main Image Preview Application
@@ -74,6 +77,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	// Colormap conversion state
 	let colormapConversionState = null;
 
+	// Overlay image state
+	let overlayPanel = null;
+	let colormapLegend = null;
+	let overlayRawDataCache = {}; // uri -> Float32Array
+
 	// Original image state (for reverting from conversions)
 	let originalImageData = null;
 	let hasAppliedConversion = false;
@@ -131,6 +139,17 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
+		
+		// Initialize overlay modules
+		overlayPanel = new OverlayPanel(container, vscode);
+		colormapLegend = new ColormapLegend(container);
+		
+		// Re-render when overlay state changes
+		overlayPanel.onStateChange(() => {
+			if (hasLoadedImage && canvas) {
+				updateImageWithNewSettings({ parametersOnly: true });
+			}
+		});
 
 		// Save state when webview might be disposed
 		window.addEventListener('beforeunload', saveState);
@@ -638,6 +657,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			case 'start-comparison':
 				handleStartComparison(message.peerUri);
+				break;
+
+			case 'overlay-add-image':
+				handleOverlayAddImage(message.uri, message.filename);
 				break;
 
 			case 'copyImage':
@@ -1168,6 +1191,69 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			return;
 		}
 
+		// OVERLAY INTERCEPT
+		const overlayState = overlayPanel ? overlayPanel.getState() : { images: [] };
+		const isOverlayActive = overlayPanel && overlayPanel.isVisible();
+
+		if (isOverlayActive) {
+			const primary = getPrimaryRawDataFloat();
+			if (primary && primary.data) {
+				// Keep primary cache up to date (in case they navigated)
+				overlayRawDataCache['#primary#'] = primary.data;
+
+				const overlaysToBlend = overlayState.images.map(img => ({
+					data: overlayRawDataCache[img.uri],
+					enabled: img.enabled
+				}));
+
+				const enabledOverlays = overlaysToBlend.filter(img => img.enabled);
+
+				let blendedData;
+				if (enabledOverlays.length === 0) {
+					// Everything disabled, use primary data so panel's colormap applies correctly
+					blendedData = new Float32Array(primary.data);
+				} else if (enabledOverlays.length === 1) {
+					// One image enabled, use that
+					blendedData = new Float32Array(enabledOverlays[0].data);
+				} else {
+					// Blend base with the rest
+					const baseData = enabledOverlays[0].data;
+					const restOverlays = enabledOverlays.slice(1);
+					blendedData = ImageBlender.blendMultiple(baseData, restOverlays, overlayState.mode, overlayState.maskOptions);
+				}
+				
+				const newImageData = ImageBlender.renderToImageData(blendedData, primary.width, primary.height, {
+					colormap: overlayState.colormap,
+					includeNegative: overlayState.includeNegative,
+					colormapConverter: colormapConverter
+				});
+				
+				if (overlayState.showLegend && colormapLegend) {
+					const stats = ImageBlender.calculateStats(blendedData);
+					colormapLegend.show(overlayState.colormap, stats.min, stats.max, overlayState.includeNegative, colormapConverter);
+				} else if (colormapLegend) {
+					colormapLegend.hide();
+				}
+				
+				// Expose blended data to color picker
+				mouseHandler.setBlendedData(blendedData, primary.width, primary.height);
+
+				const ctx = canvas.getContext('2d');
+				if (ctx) {
+					await renderImageDataToCanvas(newImageData, ctx);
+					// NOTE: We don't overwrite primaryImageData here to preserve the base image state!
+					updateHistogramData();
+				}
+				return;
+			}
+		} else {
+			if (colormapLegend && colormapLegend.isVisible()) {
+				colormapLegend.hide();
+			}
+			// Clear blended data from color picker when overlays are disabled
+			mouseHandler.setBlendedData(null, null, null);
+		}
+
 		// Default to full update if no change info provided
 		if (!changes) {
 			changes = { parametersOnly: false, changedMasks: false, changedStructure: false };
@@ -1452,6 +1538,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// Add Paste Position option (uses extension command for cross-webview support)
 			menu.appendChild(createMenuItem('Paste Position', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
+			}));
+
+			// Add Overlay Image option
+			menu.appendChild(createMenuItem('Overlay Image', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.overlayImage' });
 			}));
 
 			// Add Export as PNG option (triggers command via extension)
@@ -2047,6 +2138,158 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		} catch (error) {
 			console.error('Failed to load peer image for comparison:', error);
 			vscode.postMessage({ type: 'show-error', message: 'Failed to load comparison image.' });
+		}
+	}
+
+	/**
+	 * Extract primary raw float data and dimensions from active processor
+	 */
+	function getPrimaryRawDataFloat() {
+		let rawData = null;
+		let width = 0, height = 0;
+
+		if (primaryImageData && tiffProcessor.rawTiffData && tiffProcessor.rawTiffData.rasters) {
+			rawData = tiffProcessor.rawTiffData.rasters[0];
+			width = tiffProcessor.rawTiffData.image.getWidth();
+			height = tiffProcessor.rawTiffData.image.getHeight();
+		} else if (primaryImageData && exrProcessor && exrProcessor.rawExrData && exrProcessor.rawExrData.channels) {
+			const channels = exrProcessor.rawExrData.channels;
+			const mainChannelName = Object.keys(channels).find(k => k === 'Y' || k === 'R' || k.toLowerCase().includes('gray')) || Object.keys(channels)[0];
+			rawData = channels[mainChannelName];
+			width = exrProcessor.rawExrData.width;
+			height = exrProcessor.rawExrData.height;
+		} else if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
+			rawData = npyProcessor._lastRaw;
+			width = npyProcessor._width;
+			height = npyProcessor._height;
+		} else if (primaryImageData && pfmProcessor && pfmProcessor._lastRaw) {
+			rawData = pfmProcessor._lastRaw;
+			width = pfmProcessor._width;
+			height = pfmProcessor._height;
+		} else if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
+			rawData = ppmProcessor._lastRaw;
+			width = ppmProcessor._width;
+			height = ppmProcessor._height;
+		} else if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
+			rawData = pngProcessor._lastRaw;
+			width = pngProcessor._width;
+			height = pngProcessor._height;
+		}
+
+		return { data: rawData, width, height };
+	}
+
+	/**
+	 * Fetch overlay image, parse it, and cache its raw float data
+	 */
+	async function handleOverlayAddImage(uri, filename) {
+		// Verify there is a primary image loaded before adding an overlay
+		const primary = getPrimaryRawDataFloat();
+		if (!primary || !primary.data) {
+			vscode.postMessage({ type: 'error', message: 'Wait for primary image to load completely before adding overlays.' });
+			return;
+		}
+
+		vscode.postMessage({ type: 'show-loading' });
+		try {
+			// If panel is empty, add the primary image first to support reordering & toggling
+			if (overlayPanel && overlayPanel.getState().images.length === 0) {
+				const primaryDisplay = document.querySelector('.current-image-name');
+				const primaryFilename = primaryDisplay && primaryDisplay.textContent ? primaryDisplay.textContent : 'Original Image';
+				const primaryUri = '#primary#';
+				
+				overlayRawDataCache[primaryUri] = primary.data;
+				overlayPanel.addImage(primaryFilename, primaryUri);
+			}
+
+			let rawData = null;
+			let overlayWidth = 0;
+			let overlayHeight = 0;
+
+			const uriLower = uri.toLowerCase();
+			if (uriLower.endsWith('.tif') || uriLower.endsWith('.tiff')) {
+				const savedRawTiffData = tiffProcessor.rawTiffData;
+				const savedStats = tiffProcessor._lastStatistics;
+				const result = await tiffProcessor.processTiff(uri);
+				if (tiffProcessor.rawTiffData && tiffProcessor.rawTiffData.rasters) {
+					rawData = tiffProcessor.rawTiffData.rasters[0];
+					overlayWidth = tiffProcessor.rawTiffData.image.getWidth();
+					overlayHeight = tiffProcessor.rawTiffData.image.getHeight();
+				}
+				tiffProcessor.rawTiffData = savedRawTiffData;
+				tiffProcessor._lastStatistics = savedStats;
+			} else if (uriLower.endsWith('.exr')) {
+				const savedData = exrProcessor.rawExrData;
+				const savedSettings = exrProcessor.lastSettings;
+				await exrProcessor.processExr(uri);
+				if (exrProcessor.rawExrData && exrProcessor.rawExrData.channels) {
+					const channels = exrProcessor.rawExrData.channels;
+					const mainChannelName = Object.keys(channels).find(k => k === 'Y' || k === 'R' || k.toLowerCase().includes('gray')) || Object.keys(channels)[0];
+					rawData = channels[mainChannelName];
+					overlayWidth = exrProcessor.rawExrData.width;
+					overlayHeight = exrProcessor.rawExrData.height;
+				}
+				exrProcessor.rawExrData = savedData;
+				exrProcessor.lastSettings = savedSettings;
+			} else if (uriLower.endsWith('.npy') || uriLower.endsWith('.npz')) {
+				const response = await fetch(uri);
+				const buffer = await response.arrayBuffer();
+				const result = npyProcessor.parseNpyData(buffer);
+				rawData = result.data;
+				overlayWidth = result.width;
+				overlayHeight = result.height;
+			} else if (uriLower.endsWith('.pfm')) {
+				const savedRaw = pfmProcessor._lastRaw;
+				const savedW = pfmProcessor._width;
+				const savedH = pfmProcessor._height;
+				await pfmProcessor.processPfm(uri);
+				rawData = pfmProcessor._lastRaw;
+				overlayWidth = pfmProcessor._width;
+				overlayHeight = pfmProcessor._height;
+				pfmProcessor._lastRaw = savedRaw;
+				pfmProcessor._width = savedW;
+				pfmProcessor._height = savedH;
+			} else if (uriLower.endsWith('.ppm') || uriLower.endsWith('.pgm') || uriLower.endsWith('.pbm')) {
+				const savedRaw = ppmProcessor._lastRaw;
+				const savedW = ppmProcessor._width;
+				const savedH = pfmProcessor._height;
+				await ppmProcessor.processPpm(uri);
+				rawData = ppmProcessor._lastRaw;
+				overlayWidth = ppmProcessor._width;
+				overlayHeight = ppmProcessor._height;
+				ppmProcessor._lastRaw = savedRaw;
+				ppmProcessor._width = savedW;
+				ppmProcessor._height = savedH;
+			} else if (uriLower.endsWith('.png') || uriLower.endsWith('.jpg') || uriLower.endsWith('.jpeg')) {
+				const savedRaw = pngProcessor._lastRaw;
+				const savedW = pngProcessor._width;
+				const savedH = pngProcessor._height;
+				await pngProcessor.processPng(uri);
+				rawData = pngProcessor._lastRaw;
+				overlayWidth = pngProcessor._width;
+				overlayHeight = pngProcessor._height;
+				pngProcessor._lastRaw = savedRaw;
+				pngProcessor._width = savedW;
+				pngProcessor._height = savedH;
+			}
+
+			if (rawData) {
+				// Must match size of primary
+				if (overlayWidth !== primary.width || overlayHeight !== primary.height) {
+					throw new Error(`Dimension mismatch: Image is ${overlayWidth}x${overlayHeight}, but base is ${primary.width}x${primary.height}`);
+				}
+				
+				overlayRawDataCache[uri] = rawData;
+				overlayPanel.addImage(filename, uri); // Triggers re-render via its callback
+				vscode.postMessage({ type: 'hide-loading' });
+			} else {
+				throw new Error('Unsupported overlay format or failed to extract float data');
+			}
+		} catch (error) {
+			console.error('Failed to load overlay image:', error);
+			vscode.postMessage({ type: 'hide-loading' });
+			// Use showErrorMessage for explicit UI alert for dimension mismatch
+			vscode.postMessage({ type: 'error', message: `Overlay failed: ${error.message}` });
 		}
 	}
 
