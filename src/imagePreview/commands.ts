@@ -1196,7 +1196,7 @@ export function registerImagePreviewCommands(
 	 * Show a QuickPick-based path picker with filesystem autocomplete.
 	 * Returns the final typed/selected pattern, or undefined if cancelled.
 	 */
-	async function pickPathWithAutocomplete(initialDir: string): Promise<string | undefined> {
+	async function pickPathWithAutocomplete(initialDir: string, existingCollection: readonly vscode.Uri[] = []): Promise<string | undefined> {
 		return new Promise<string | undefined>((resolve) => {
 			const qp = vscode.window.createQuickPick();
 			qp.placeholder = 'Type a path or wildcard pattern (e.g. *.tiff)';
@@ -1317,13 +1317,24 @@ export function registerImagePreviewCommands(
 					};
 					(finalUseItem as any)._useRaw = false; // not selectable as a pattern
 				} else {
-					const fileCount = (await expandGlobPatternAsync(typed, isCancelled)).length;
+					const files = await expandGlobPatternAsync(typed, isCancelled);
 					if (searchVersion !== version) return;
-					const useLabel = fileCount > 0
-						? `$(check) Add ${fileCount} image${fileCount === 1 ? '' : 's'}`
-						: '$(check) Use this pattern';
-					finalUseItem = { label: useLabel, description: 'Press Enter to confirm', alwaysShow: true };
-					(finalUseItem as any)._useRaw = true;
+					const existingSet = new Set(existingCollection.map(u => u.toString()));
+					const newCount = files.filter(u => !existingSet.has(u.toString())).length;
+					const alreadyCount = files.length - newCount;
+					let useLabel: string;
+					if (files.length === 0) {
+						useLabel = '$(check) Use this pattern';
+					} else if (alreadyCount === 0) {
+						useLabel = `$(check) Add ${newCount} image${newCount === 1 ? '' : 's'}`;
+					} else if (newCount === 0) {
+						useLabel = `$(warning) All ${alreadyCount} image${alreadyCount === 1 ? '' : 's'} already in collection`;
+					} else {
+						useLabel = `$(check) Add ${newCount} new image${newCount === 1 ? '' : 's'} (${alreadyCount} already in collection)`;
+					}
+					const canConfirm = newCount > 0;
+					finalUseItem = { label: useLabel, description: canConfirm ? 'Press Enter to confirm' : undefined, alwaysShow: true };
+					(finalUseItem as any)._useRaw = canConfirm;
 				}
 				qp.items = [finalUseItem, ...contentItems];
 			}
@@ -1382,9 +1393,15 @@ export function registerImagePreviewCommands(
 		// When invoked from the Explorer context menu, resource is the right-clicked file — add it directly.
 		if (resource) {
 			try {
-				await activePreview.addToImageCollection(resource);
-				vscode.window.showInformationMessage(`Added ${resource.fsPath.split(path.sep).pop()} to image collection. Press 't'/'r' to navigate.`);
-				logCommand('browseAndAddToCollection', 'success', resource.fsPath);
+				const filename = resource.fsPath.split(path.sep).pop() ?? resource.fsPath;
+				const wasAdded = await activePreview.addToImageCollection(resource);
+				if (wasAdded) {
+					vscode.window.showInformationMessage(`Added ${filename} to image collection. Press 't'/'r' to navigate.`);
+					logCommand('browseAndAddToCollection', 'success', resource.fsPath);
+				} else {
+					vscode.window.showWarningMessage(`${filename} is already in the collection.`);
+					logCommand('browseAndAddToCollection', 'success', `duplicate: ${resource.fsPath}`);
+				}
 			} catch (error) {
 				vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
 				logCommand('browseAndAddToCollection', 'error', String(error));
@@ -1393,7 +1410,7 @@ export function registerImagePreviewCommands(
 		}
 
 		const currentDir = path.dirname(activePreview.resource.fsPath);
-		const pattern = await pickPathWithAutocomplete(currentDir);
+		const pattern = await pickPathWithAutocomplete(currentDir, activePreview.imageCollection);
 		if (!pattern) return;
 
 		await vscode.window.withProgress(
@@ -1413,23 +1430,34 @@ export function registerImagePreviewCommands(
 				}
 
 				let added = 0;
+				let skipped = 0;
+				let firstAdded: vscode.Uri | undefined;
 				for (const uri of filesToAdd) {
 					if (isCancelled()) break;
-					progress.report({ message: `Adding ${added + 1} / ${filesToAdd.length}…`, increment: 100 / filesToAdd.length });
+					progress.report({ message: `Adding ${added + skipped + 1} / ${filesToAdd.length}…`, increment: 100 / filesToAdd.length });
 					try {
-						await activePreview.addToImageCollection(uri);
-						added++;
+						const wasAdded = await activePreview.addToImageCollection(uri);
+						if (wasAdded) { if (!firstAdded) { firstAdded = uri; } added++; } else { skipped++; }
 					} catch (error) {
 						logCommand('browseAndAddToCollection', 'error', `Failed to add ${uri.fsPath}: ${error}`);
 					}
 				}
 
-				if (added > 0) {
-					const msg = added === 1
-						? `Added ${filesToAdd[0].fsPath.split(path.sep).pop()} to image collection. Press 't'/'r' to navigate.`
-						: `Added ${added} images to collection. Press 't'/'r' to navigate.`;
-					vscode.window.showInformationMessage(msg);
-					logCommand('browseAndAddToCollection', 'success', `Added ${added} images`);
+				if (added > 0 || skipped > 0) {
+					let msg: string;
+					if (added === 0) {
+						msg = skipped === 1
+							? `${filesToAdd[0].fsPath.split(path.sep).pop()} is already in the collection.`
+							: `All ${skipped} images are already in the collection.`;
+						vscode.window.showWarningMessage(msg);
+					} else {
+						const base = added === 1
+							? `Added ${firstAdded!.fsPath.split(path.sep).pop()} to image collection.`
+							: `Added ${added} images to collection.`;
+						msg = skipped > 0 ? `${base} (${skipped} already in collection, skipped) Press 't'/'r' to navigate.` : `${base} Press 't'/'r' to navigate.`;
+						vscode.window.showInformationMessage(msg);
+					}
+					logCommand('browseAndAddToCollection', 'success', `Added ${added}, skipped ${skipped}`);
 				}
 			}
 		);

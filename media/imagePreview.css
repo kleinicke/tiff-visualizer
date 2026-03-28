@@ -198,15 +198,72 @@ body img {
 	z-index: 2000;
 }
 
+.image-collection-overlay .overlay-controls {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
 .image-collection-overlay .image-counter {
 	font-weight: 600;
 	color: var(--vscode-textLink-foreground, #3794ff);
+	min-width: 3em;
+	text-align: center;
 }
 
 .image-collection-overlay .toggle-hint {
 	font-size: 10px;
 	opacity: 0.7;
 	color: var(--vscode-descriptionForeground, #cccccc99);
+}
+
+.collection-remove-btn {
+	background: none;
+	border: none;
+	cursor: pointer;
+	color: var(--vscode-editor-foreground, #cccccc);
+	opacity: 0.5;
+	padding: 1px 3px;
+	border-radius: 3px;
+	font-size: 10px;
+	line-height: 1;
+	transition: opacity 0.15s, background 0.15s;
+}
+
+.collection-remove-btn:hover {
+	opacity: 1;
+	background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+}
+
+.collection-remove-btn--confirm {
+	opacity: 1;
+	color: var(--vscode-charts-red, #f48771);
+	position: relative;
+	overflow: hidden;
+}
+
+.collection-remove-btn--confirm::after {
+	content: '';
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	height: 2px;
+	width: 100%;
+	background: var(--vscode-charts-red, #f48771);
+	animation: remove-countdown 1.5s linear forwards;
+}
+
+@keyframes remove-countdown {
+	from { width: 100%; }
+	to { width: 0%; }
+}
+
+.vscode-light .collection-remove-btn {
+	color: var(--vscode-editor-foreground, #333333);
+}
+
+.vscode-light .collection-remove-btn:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(0,0,0,0.07));
 }
 
 /* Loading dot inside overlay badge (shown before counter text while switching) */

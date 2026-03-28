@@ -33,6 +33,7 @@ export class MessageRouter {
 		this.handlers.set('comparisonStateResponse', new ComparisonStateResponseMessageHandler());
 		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
+		this.handlers.set('removeFromCollection', new RemoveFromCollectionMessageHandler());
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
 		this.handlers.set('histogramPositionChanged', new HistogramPositionChangedMessageHandler());
@@ -214,6 +215,13 @@ class ToggleImageReverseMessageHandler implements MessageHandler {
 		preview.toggleToPreviousImage();
 	}
 }
+
+class RemoveFromCollectionMessageHandler implements MessageHandler {
+	handle(_message: any, preview: ImagePreview): void {
+		preview.removeCurrentFromCollection();
+	}
+}
+
 
 class ComparisonStateResponseMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {

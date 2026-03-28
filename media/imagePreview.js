@@ -1653,13 +1653,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// Keyboard handling for image toggling
 		window.addEventListener('keydown', (e) => {
 			if (imageCollection.totalImages > 1) {
-				// 't' key to toggle forward through images
-				if (e.key.toLowerCase() === 't') {
+				if (e.code === 'ArrowRight') {
 					e.preventDefault();
 					vscode.postMessage({ type: 'toggleImage' });
-				}
-				// 'r' key to toggle backward through images
-				else if (e.key.toLowerCase() === 'r') {
+				} else if (e.code === 'ArrowLeft') {
 					e.preventDefault();
 					vscode.postMessage({ type: 'toggleImageReverse' });
 				}
@@ -1682,10 +1679,43 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		overlayElement.innerHTML = `
 			<div class="overlay-content">
-				<span class="image-counter">1 of 1</span>
-				<span class="toggle-hint">Press 't'/'r' to navigate</span>
+				<div class="overlay-controls">
+					<span class="image-counter">1 of 1</span>
+					<button class="collection-remove-btn" title="Remove from collection">&#x2715;</button>
+				</div>
+				<span class="toggle-hint">← → to navigate</span>
 			</div>
 		`;
+
+		/** @type {ReturnType<typeof setTimeout> | null} */
+		let removeConfirmTimer = null;
+
+		overlayElement.addEventListener('click', (e) => {
+			const target = /** @type {HTMLButtonElement} */ (e.target);
+			if (!target.classList.contains('collection-remove-btn')) return;
+			e.stopPropagation();
+
+			if (target.classList.contains('collection-remove-btn--confirm')) {
+				// Second click — confirmed
+				if (removeConfirmTimer !== null) clearTimeout(removeConfirmTimer);
+				removeConfirmTimer = null;
+				target.classList.remove('collection-remove-btn--confirm');
+				target.textContent = '\u2715';
+				target.title = 'Remove from collection';
+				vscode.postMessage({ type: 'removeFromCollection' });
+			} else {
+				// First click — enter confirm state
+				target.classList.add('collection-remove-btn--confirm');
+				target.textContent = '\u2713';
+				target.title = 'Click to confirm removal';
+				removeConfirmTimer = setTimeout(() => {
+					target.classList.remove('collection-remove-btn--confirm');
+					target.textContent = '\u2715';
+					target.title = 'Remove from collection';
+					removeConfirmTimer = null;
+				}, 1500);
+			}
+		});
 
 		document.body.appendChild(overlayElement);
 	}

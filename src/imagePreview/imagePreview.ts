@@ -401,27 +401,53 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	// Image collection management methods
-	public async addToImageCollection(uri: vscode.Uri): Promise<void> {
-		if (!this._imageCollection.some(img => img.toString() === uri.toString())) {
-			this._imageCollection.push(uri);
-
-			// Expand localResourceRoots to include the new image's directory so
-			// the webview fetch() can access files outside the initial file's folder.
-			const newDir = Utils.dirname(uri);
-			const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
-			if (!currentRoots.some(r => r.toString() === newDir.toString())) {
-				this._webviewEditor.webview.options = {
-					...this._webviewEditor.webview.options,
-					localResourceRoots: [...currentRoots, newDir],
-				};
-			}
-
-			// Start preloading the image data (async, don't wait)
-			this.preloadImageData(uri);
-			// Update overlay immediately
-			this.updateImageCollectionOverlay();
-		}
+	public get imageCollection(): readonly vscode.Uri[] {
+		return this._imageCollection;
 	}
+
+	/** Returns true if the image was added, false if it was already in the collection. */
+	public async addToImageCollection(uri: vscode.Uri): Promise<boolean> {
+		if (this._imageCollection.some(img => img.toString() === uri.toString())) {
+			return false;
+		}
+
+		this._imageCollection.push(uri);
+
+		// Expand localResourceRoots to include the new image's directory so
+		// the webview fetch() can access files outside the initial file's folder.
+		const newDir = Utils.dirname(uri);
+		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
+		if (!currentRoots.some(r => r.toString() === newDir.toString())) {
+			this._webviewEditor.webview.options = {
+				...this._webviewEditor.webview.options,
+				localResourceRoots: [...currentRoots, newDir],
+			};
+		}
+
+		// Start preloading the image data (async, don't wait)
+		this.preloadImageData(uri);
+		// Update overlay immediately
+		this.updateImageCollectionOverlay();
+		return true;
+	}
+
+	public removeCurrentFromCollection(): void {
+		if (this._imageCollection.length <= 1) {
+			return; // Can't remove the only image
+		}
+
+		const removedKey = this._imageCollection[this._currentImageIndex].toString();
+		this._imageCollection.splice(this._currentImageIndex, 1);
+		this._preloadedImageData.delete(removedKey);
+
+		// If we removed the last item, step back one index
+		if (this._currentImageIndex >= this._imageCollection.length) {
+			this._currentImageIndex = this._imageCollection.length - 1;
+		}
+
+		this.switchToImageAtIndex(this._currentImageIndex);
+	}
+
 
 	public toggleToNextImage(): void {
 		if (this._imageCollection.length <= 1) {
