@@ -110,12 +110,17 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 */
 	function saveState() {
 		// Only save serializable state (no ImageData/Canvas objects)
+		const zoomState = zoomController.getCurrentState();
 		const state = {
 			peerImageUris: peerImageUris,
 			isShowingPeer: isShowingPeer,
 			currentResourceUri: settingsManager.settings.resourceUri,
 			colormapConversionState: colormapConversionState,
 			isHistogramVisible: histogramOverlay.getVisibility(),
+			// Include zoom so it isn't erased when the app-level state is written
+			scale: zoomState.scale,
+			offsetX: zoomState.x,
+			offsetY: zoomState.y,
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
@@ -825,10 +830,22 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				break;
 
 			case 'switchToImage':
-				// Capture zoom only on the first switch in a rapid burst —
-				// subsequent ones already see the reset 'fit' state.
+				// Prefer zoom state injected by the extension (set before the webview
+				// reloaded, so it's always accurate). Fall back to live state on the
+				// first switch in a rapid in-session burst.
 				if (_pendingZoomState === null) {
-					_pendingZoomState = zoomController.getCurrentState();
+					const liveZoom = zoomController.getCurrentState();
+					// After a webview reload the page hasn't scrolled yet so x/y are 0,
+					// but vscode.getState() still holds the offsets saved before unload.
+					// Prefer those persisted offsets so the position is fully restored.
+					if (liveZoom.scale !== 'fit' && liveZoom.x === 0 && liveZoom.y === 0) {
+						const saved = vscode.getState();
+						if (saved && saved.scale === liveZoom.scale) {
+							liveZoom.x = saved.offsetX || 0;
+							liveZoom.y = saved.offsetY || 0;
+						}
+					}
+					_pendingZoomState = message.zoomState || liveZoom;
 				}
 				switchToNewImage(message.uri, message.resourceUri);
 				break;
@@ -1452,7 +1469,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			const entry = vscode.getState();
 			if (entry) {
-				vscode.setState({ scale: entry.scale, offsetX: window.scrollX, offsetY: window.scrollY });
+				vscode.setState({ ...entry, offsetX: window.scrollX, offsetY: window.scrollY });
 			}
 		}, { passive: true });
 

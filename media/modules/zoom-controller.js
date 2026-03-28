@@ -67,7 +67,9 @@ export class ZoomController {
 			this.imageElement.style.width = '';
 			this.imageElement.style.height = '';
 			this.imageElement.style.margin = '';
-			this.vscode.setState(undefined);
+			// Clear zoom fields but keep other state (peerImageUris, etc.)
+			const existing = this.vscode.getState() || {};
+			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
 		} else {
 			const oldScale = this.scale;
 			this.scale = this._clamp(newScale, constants.MIN_SCALE, constants.MAX_SCALE);
@@ -128,7 +130,9 @@ export class ZoomController {
 
 			window.scrollTo(newScrollX, newScrollY);
 
-			this.vscode.setState({ scale: this.scale, offsetX: newScrollX, offsetY: newScrollY });
+			// Merge zoom fields into existing state to avoid erasing app-level fields
+			const existing = this.vscode.getState() || {};
+			this.vscode.setState({ ...existing, scale: this.scale, offsetX: newScrollX, offsetY: newScrollY });
 		}
 
 		this.vscode.postMessage({
@@ -244,10 +248,13 @@ export class ZoomController {
 	 * Save current state
 	 */
 	saveState() {
-		const entry = this.vscode.getState();
-		if (entry) {
-			this.vscode.setState(entry);
-		}
+		const existing = this.vscode.getState() || {};
+		this.vscode.setState({
+			...existing,
+			scale: this.scale,
+			offsetX: window.scrollX,
+			offsetY: window.scrollY
+		});
 	}
 
 	/**

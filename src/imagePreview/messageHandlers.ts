@@ -198,9 +198,9 @@ class RefreshStatusMessageHandler implements MessageHandler {
 }
 
 class ZoomStateResponseMessageHandler implements MessageHandler {
-	handle(message: any, preview: ImagePreview): void {
-		// Store the zoom state for later restoration
-		(preview as any)._currentZoomState = message.state;
+	handle(_message: any, _preview: ImagePreview): void {
+		// No-op: zoom state is persisted via vscode.setState in the webview and
+		// recovered from there on reload, so no extension-side storage is needed.
 	}
 }
 
