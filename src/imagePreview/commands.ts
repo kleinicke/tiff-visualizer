@@ -13,40 +13,150 @@ const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm
  * Expand a file path that may contain * and ? wildcards into a list of URIs.
  * Only the basename portion may contain wildcards; the directory must be literal.
  */
+/**
+ * Convert a single glob segment (no path separators) to a RegExp.
+ * Supports: * ? [abc] [a-z] [!abc] {a,b,c}
+ */
+function segmentToRegex(segment: string): RegExp {
+	let result = '';
+	let i = 0;
+
+	while (i < segment.length) {
+		const ch = segment[i];
+
+		if (ch === '*') {
+			result += '.*';
+			i++;
+		} else if (ch === '?') {
+			result += '.';
+			i++;
+		} else if (ch === '[') {
+			// Character class: [abc] [a-z] [!abc] [^abc]
+			let cls = '[';
+			i++;
+			// [! or [^ both mean negation in glob
+			if (i < segment.length && (segment[i] === '!' || segment[i] === '^')) {
+				cls += '^';
+				i++;
+			}
+			// A ] immediately after [ (or [^) is treated as a literal ]
+			if (i < segment.length && segment[i] === ']') {
+				cls += '\\]';
+				i++;
+			}
+			// Consume until closing ]
+			while (i < segment.length && segment[i] !== ']') {
+				// Escape regex metacharacters inside class except - and ^
+				const c = segment[i];
+				if (c === '\\' && i + 1 < segment.length) {
+					cls += '\\' + segment[i + 1];
+					i += 2;
+				} else {
+					cls += c;
+					i++;
+				}
+			}
+			cls += ']';
+			i++; // consume ']'
+			result += cls;
+		} else if (ch === '{') {
+			// Brace expansion: {a,b,c} → (?:a|b|c)
+			// Each alternative is treated as a mini-pattern (supports * ? inside)
+			const alternatives: string[] = [];
+			let current = '';
+			let depth = 0;
+			i++; // skip '{'
+			while (i < segment.length) {
+				const c = segment[i];
+				if (c === '{') { depth++; current += c; i++; }
+				else if (c === '}') {
+					if (depth === 0) { alternatives.push(current); current = ''; i++; break; }
+					depth--; current += c; i++;
+				} else if (c === ',' && depth === 0) {
+					alternatives.push(current); current = ''; i++;
+				} else { current += c; i++; }
+			}
+			if (current) alternatives.push(current); // unterminated brace fallback
+			// Recursively convert each alternative (supports * and ? inside braces)
+			const altRegexes = alternatives.map(alt => segmentToRegex(alt).source.slice(1, -1));
+			result += '(?:' + altRegexes.join('|') + ')';
+		} else {
+			// Literal character — escape regex metacharacters
+			result += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+			i++;
+		}
+	}
+
+	return new RegExp('^' + result + '$', 'i');
+}
+
+/**
+ * Recursively expand a multi-segment glob pattern starting from baseDir.
+ * segments: the remaining path segments to match (may contain wildcards).
+ * isLast: true when processing the final segment (must be an image file).
+ */
+function expandGlobSegments(baseDir: string, segments: string[]): vscode.Uri[] {
+	if (segments.length === 0) return [];
+
+	const [head, ...tail] = segments;
+	const isLast = tail.length === 0;
+
+	if (!head.includes('*') && !head.includes('?')) {
+		// Literal segment — no expansion needed
+		const fullPath = path.join(baseDir, head);
+		if (isLast) {
+			try {
+				if (fs.statSync(fullPath).isFile()) {
+					const ext = head.split('.').pop()?.toLowerCase() ?? '';
+					return IMAGE_EXTENSIONS.includes(ext) ? [vscode.Uri.file(fullPath)] : [];
+				}
+			} catch { /* not found */ }
+			return [];
+		}
+		return expandGlobSegments(fullPath, tail);
+	}
+
+	// Wildcard segment — list entries and filter
+	const regex = segmentToRegex(head);
+	try {
+		const entries = fs.readdirSync(baseDir);
+		const results: vscode.Uri[] = [];
+		for (const entry of entries) {
+			if (!regex.test(entry)) continue;
+			const fullPath = path.join(baseDir, entry);
+			try {
+				const stat = fs.statSync(fullPath);
+				if (isLast) {
+					if (stat.isFile()) {
+						const ext = entry.split('.').pop()?.toLowerCase() ?? '';
+						if (IMAGE_EXTENSIONS.includes(ext)) results.push(vscode.Uri.file(fullPath));
+					}
+				} else {
+					if (stat.isDirectory()) {
+						results.push(...expandGlobSegments(fullPath, tail));
+					}
+				}
+			} catch { /* skip inaccessible entries */ }
+		}
+		return results.sort((a, b) => a.fsPath.localeCompare(b.fsPath, undefined, { numeric: true }));
+	} catch {
+		return [];
+	}
+}
+
 function expandGlobPattern(pattern: string): vscode.Uri[] {
 	if (!pattern.includes('*') && !pattern.includes('?')) {
 		return fs.existsSync(pattern) ? [vscode.Uri.file(pattern)] : [];
 	}
 
-	// Find the first wildcard character and split there
+	// Find the last literal directory before the first wildcard
 	const firstWild = pattern.search(/[*?]/);
 	const beforeWild = pattern.substring(0, firstWild);
-	const dir = path.dirname(beforeWild.endsWith(path.sep) ? beforeWild + '_' : beforeWild);
-	const filePattern = pattern.substring(dir.length + 1); // basename pattern
+	const baseDir = path.dirname(beforeWild.endsWith(path.sep) ? beforeWild + '_' : beforeWild);
+	const remainder = pattern.substring(baseDir.length + 1); // everything after baseDir/
 
-	// Convert glob pattern to regex (support * and ?)
-	const regexStr = filePattern
-		.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-		.replace(/\*/g, '.*')
-		.replace(/\?/g, '.');
-	const regex = new RegExp('^' + regexStr + '$', 'i');
-
-	try {
-		const entries = fs.readdirSync(dir);
-		return entries
-			.filter(entry => {
-				if (!regex.test(entry)) return false;
-				const ext = entry.split('.').pop()?.toLowerCase() ?? '';
-				return IMAGE_EXTENSIONS.includes(ext);
-			})
-			.map(entry => vscode.Uri.file(path.join(dir, entry)))
-			.filter(uri => {
-				try { return fs.statSync(uri.fsPath).isFile(); } catch { return false; }
-			})
-			.sort((a, b) => a.fsPath.localeCompare(b.fsPath, undefined, { numeric: true }));
-	} catch {
-		return [];
-	}
+	const segments = remainder.split(/[/\\]/);
+	return expandGlobSegments(baseDir, segments);
 }
 
 /**
