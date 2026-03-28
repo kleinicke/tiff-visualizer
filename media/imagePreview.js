@@ -100,6 +100,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		currentIndex: 0,
 		show: false
 	};
+	/** @type {HTMLElement | null} */
 	let overlayElement = null;
 	/** @type {HTMLElement | null} */
 	let filenameBadge = null;
@@ -385,14 +386,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 
 			hasLoadedImage = true;
-			finalizeImageSetup();
-
 			if (!tiffProcessor._pendingRenderData) {
+				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
+			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
 		} catch (error) {
 			console.error('Error handling TIFF:', error);
@@ -427,14 +428,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 
 			hasLoadedImage = true;
-			finalizeImageSetup();
-
 			if (!exrProcessor._pendingRenderData) {
+				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 				logToOutput(`[Perf] EXR Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
+			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
 		} catch (error) {
 			console.error('Error handling EXR:', error);
@@ -458,14 +459,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
-			finalizeImageSetup();
-
 			if (!pfmProcessor._pendingRenderData) {
+				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 				logToOutput(`[Perf] PFM Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
+			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
 			console.error('Error handling PFM:', error);
 			onImageError();
@@ -488,14 +489,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
-			finalizeImageSetup();
-
 			if (!ppmProcessor._pendingRenderData) {
+				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 				logToOutput(`[Perf] PPM/PGM Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
+			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
 			console.error('Error handling PPM/PGM:', error);
 			onImageError();
@@ -518,14 +519,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
-			finalizeImageSetup();
-
 			if (!pngProcessor._pendingRenderData) {
+				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 				logToOutput(`[Perf] PNG/JPEG Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
+			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
 			console.error('Error handling PNG/JPEG:', error);
 			onImageError();
@@ -548,14 +549,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
-			finalizeImageSetup();
-
 			if (!npyProcessor._pendingRenderData) {
+				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 				logToOutput(`[Perf] NPY/NPZ Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 			}
+			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
 			console.error('Error handling NPY/NPZ:', error);
 			onImageError();
@@ -601,10 +602,18 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		}
 		_pendingZoomState = null;
 
-		// Restore overlay counter from loading state
-		if (overlayElement && imageCollection.show) {
-			const counter = overlayElement.querySelector('.image-counter');
-			if (counter) counter.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+		// Restore overlay counter from loading state — but only if no deferred render is still pending.
+		// Deferred renders (EXR, NPY, TIFF with per-format settings, etc.) call finalizeImageSetup
+		// with a placeholder canvas; the real render happens later in the updateSettings handler.
+		// Clearing the loading indicator here would make it disappear before the actual image shows.
+		const hasPendingDeferred = tiffProcessor._pendingRenderData ||
+			npyProcessor._pendingRenderData ||
+			pngProcessor._pendingRenderData ||
+			ppmProcessor._pendingRenderData ||
+			pfmProcessor._pendingRenderData ||
+			exrProcessor._pendingRenderData;
+		if (!hasPendingDeferred) {
+			clearCollectionLoadingState();
 		}
 
 		mouseHandler.addMouseListeners(imageElement);
@@ -614,6 +623,19 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Update histogram if visible
 		updateHistogramData();
+	}
+
+	/**
+	 * Clear the collection loading indicators (overlay dot + badge highlight).
+	 * Called once the final image pixels are rendered — either directly in
+	 * finalizeImageSetup (no deferred render) or after performDeferredRender completes.
+	 */
+	function clearCollectionLoadingState() {
+		if (overlayElement && imageCollection.show) {
+			const counter = overlayElement.querySelector('.image-counter');
+			if (counter) counter.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+		}
+		if (filenameBadge) filenameBadge.classList.remove('filename-badge--loading');
 	}
 
 	/**
@@ -705,8 +727,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						if (ctx) {
 							await renderImageDataToCanvas(deferredImageData, ctx);
 							primaryImageData = deferredImageData;
-							updateHistogramData();
 						}
+
+						// Canvas now has real pixels — swap out old canvas and finalize
+						finalizeImageSetup();
+						// Deferred render is done — clear loading indicators now
+						clearCollectionLoadingState();
 
 						// Log deferred render completion (only if we actually rendered deferred data)
 						if (initialLoadStartTime > 0) {
@@ -1711,6 +1737,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		const fullPath = decoded.replace(/^[a-z-]+:\/\/[^/]*/i, '').split('?')[0];
 		filenameBadge.textContent = cleanFilename;
 		filenameBadge.dataset.tooltip = fullPath;
+		// If a tooltip is currently visible (mouse is hovering), update it live
+		const liveTooltip = document.querySelector('.filename-tooltip');
+		if (liveTooltip) {
+			liveTooltip.textContent = fullPath;
+		}
 	}
 
 	/**
@@ -1753,11 +1784,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		zoomController.scale = 'fit';
 		zoomController.initialState = { scale: 'fit', offsetX: 0, offsetY: 0 };
 
-		// Show loading indicator in the overlay badge (dot before counter text)
+		// Show loading indicator in the overlay badge (dot before counter text) and badge
 		if (overlayElement && imageCollection.show) {
 			const counter = overlayElement.querySelector('.image-counter');
 			if (counter) counter.innerHTML = `<span class="collection-loading-dot"></span>${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
 		}
+		if (filenameBadge) filenameBadge.classList.add('filename-badge--loading');
 
 		// Reset the state
 		hasLoadedImage = false;

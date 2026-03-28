@@ -171,6 +171,18 @@ body img {
 	box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
+.filename-badge--loading::after {
+	content: '';
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	background: var(--vscode-textLink-foreground, #3794ff);
+	border-radius: 50%;
+	margin-left: 5px;
+	vertical-align: middle;
+	flex-shrink: 0;
+}
+
 /* Tooltip for filename badge — appended to body by JS to avoid overflow clipping */
 .filename-tooltip {
 	position: fixed;

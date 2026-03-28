@@ -76,7 +76,8 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
 
 - **SettingsManager** ([media/modules/settings-manager.js](media/modules/settings-manager.js)): Global settings and state management
 - **Format Processors**: Separate modules for each format
-  - **TiffProcessor**: TIFF using geotiff.js library
+  - **TiffProcessor** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)): TIFF using geotiff.js, with optional/preferred WASM fast path via TiffWasmWrapper
+  - **TiffWasmWrapper** ([media/modules/tiff-wasm-wrapper.js](media/modules/tiff-wasm-wrapper.js)): High-performance Rust/WASM TIFF decoder, used as drop-in replacement for geotiff.js
   - **ExrProcessor**: OpenEXR using parse-exr library
   - **NpyProcessor**: NumPy arrays (.npy)
   - **PfmProcessor**: Portable Float Map
@@ -84,11 +85,11 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
   - **PngProcessor**: PNG with uint8/16 and float16/32 support
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
-- **HistogramOverlay**: Histogram visualization (experimental)
+- **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
 - **ColormapConverter**: Converts colormap images to float values using various colormaps (viridis, plasma, jet, etc.)
 
 ### Status Bar Integration
-Comprehensive status bar system with 8+ specialized entries:
+Comprehensive status bar system with specialized entries:
 - **Size** ([sizeStatusBarEntry.ts](src/imagePreview/sizeStatusBarEntry.ts)): Image dimensions, pixel position on hover
 - **Zoom** ([zoomStatusBarEntry.ts](src/imagePreview/zoomStatusBarEntry.ts)): Current zoom level with click to reset
 - **Normalization** ([normalizationStatusBarEntry.ts](src/imagePreview/normalizationStatusBarEntry.ts)): Float range controls (for float images)
@@ -97,8 +98,18 @@ Comprehensive status bar system with 8+ specialized entries:
 - **Binary Size** ([binarySizeStatusBarEntry.ts](src/binarySizeStatusBarEntry.ts)): File size information
 - **Mask Filter** ([maskFilterStatusBarEntry.ts](src/imagePreview/maskFilterStatusBarEntry.ts)): Pixel filtering by mask
 - **Histogram** ([histogramStatusBarEntry.ts](src/imagePreview/histogramStatusBarEntry.ts)): Toggle histogram overlay
+- **Color Picker Mode** ([colorPickerModeStatusBarEntry.ts](src/imagePreview/colorPickerModeStatusBarEntry.ts)): Toggle whether pixel inspector shows original or gamma/exposure-modified values
 
 Each status bar entry implements `StatusBarEntryInterface` and registers with `ImagePreviewManager`.
+
+### Image Collection Feature
+Each preview instance maintains an ordered collection of images ([src/imagePreview/imagePreview.ts](src/imagePreview/imagePreview.ts)):
+- Starts with the opened file as the single entry
+- Additional images added via `browseAndAddToCollection` (glob/path prompt or Explorer context menu)
+- Navigate forward/backward with `t`/`r` keys
+- An overlay indicator shows current position (e.g. "2 / 5") when the collection has more than one image
+- Webview state is preserved across tab switches; if the webview reloads it re-navigates to the correct collection index
+- Preloads image data for smooth switching
 
 ### Comparison Panel Feature
 Side-by-side image comparison ([src/comparisonPanel/comparisonPanel.ts](src/comparisonPanel/comparisonPanel.ts)):
@@ -129,11 +140,13 @@ All commands registered with `tiffVisualizer.` prefix ([src/imagePreview/command
 - **Zoom**: `zoomIn`, `zoomOut`, `resetZoom`
 - **Image adjustments**: `setGamma`, `setBrightness`, `setNormalizationRange`
 - **Export**: `exportAsPng`, `copyImage`
-- **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`, `browseAndAddToCollection`
+- **Collection**: `browseAndAddToCollection` — adds a file to the active preview's image collection; accepts an optional URI (Explorer context menu) or prompts with a glob/path picker (command palette)
+- **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`
 - **Filters**: `filterByMask`, `toggleNanColor`
 - **Colormap conversion**: `convertColormapToFloat` - converts colormap images to float values
 - **Reset**: `resetAllSettings`
 - **Histogram**: `toggleHistogram` (Ctrl+H / Cmd+H)
+- **Color picker mode**: `toggleColorPickerMode` — switches pixel inspector between original and modified (gamma/exposure) values
 
 Commands work via:
 1. User invokes command → registered handler in extension host
@@ -256,7 +269,8 @@ src/
 │   ├── messageHandlerSystem.ts       # Message handler interface definitions
 │   ├── commands.ts                   # Command implementations
 │   ├── types.ts                      # TypeScript interfaces
-│   └── *StatusBarEntry.ts            # Individual status bar components (8+ files)
+│   ├── colorPickerModeStatusBarEntry.ts  # Toggle original vs modified pixel values
+│   └── *StatusBarEntry.ts            # Other status bar components
 ├── comparisonPanel/                  # Side-by-side comparison feature
 │   ├── index.ts                      # Comparison panel registration
 │   └── comparisonPanel.ts            # Comparison webview panel implementation
@@ -269,7 +283,8 @@ media/
 ├── imagePreview.js                   # Main webview application (orchestrates modules)
 ├── modules/                          # Modular webview components
 │   ├── settings-manager.js           # Webview-side settings management
-│   ├── tiff-processor.js             # TIFF loading/processing
+│   ├── tiff-processor.js             # TIFF loading/processing (uses geotiff.js + optional WASM)
+│   ├── tiff-wasm-wrapper.js          # Rust/WASM fast TIFF decoder (drop-in replacement for geotiff.js)
 │   ├── exr-processor.js              # OpenEXR support
 │   ├── npy-processor.js              # NumPy array support
 │   ├── pfm-processor.js              # Portable Float Map
@@ -365,7 +380,7 @@ return ImageRenderer.render(
 ```
 
 **Deferred rendering pattern** (for per-format settings):
-- Send `formatInfo` message BEFORE first render (lines 64-70 in npy-processor.js)
+- Send `formatInfo` message BEFORE first render
 - Store pending data in `_pendingRenderData`
 - Return placeholder ImageData
 - Extension applies per-format settings in AppStateManager
