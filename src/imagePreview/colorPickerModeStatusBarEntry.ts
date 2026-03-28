@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
-import { StatusBarEntryInterface } from './statusBarEntryInterface';
 
-export class ColorPickerModeStatusBarEntry implements StatusBarEntryInterface {
+export class ColorPickerModeStatusBarEntry {
 	private readonly _statusBarEntry: vscode.StatusBarItem;
 	private _showModified: boolean = false;
 

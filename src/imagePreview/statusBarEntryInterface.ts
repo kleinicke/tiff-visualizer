@@ -107,6 +107,9 @@ export abstract class BaseStatusBarEntry implements IStatusBarEntry {
  * Enhanced base class for status bar entries that need more complex ownership
  * and state management, including integration with the AppStateManager.
  */
+/** @deprecated Use IStatusBarEntry */
+export type StatusBarEntryInterface = IStatusBarEntry;
+
 export abstract class ManagedStatusBarEntry extends BaseStatusBarEntry {
 	private _registeredWithStateManager: boolean = false;
 

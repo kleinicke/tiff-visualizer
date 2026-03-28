@@ -34,7 +34,10 @@ export interface IImagePreview {
 	exportAsPng(): Promise<string | undefined>;
 	startComparison(peerUri: vscode.Uri): void;
 	updateStatusBar(): void;
-	addToImageCollection(uri: vscode.Uri): Promise<void>;
+	readonly imageCollection: readonly vscode.Uri[];
+	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
+	pastePosition(): void;
+	removeCurrentFromCollection(): void;
 	getManager(): IImagePreviewManager;
 	toggleHistogram(): void;
 } 

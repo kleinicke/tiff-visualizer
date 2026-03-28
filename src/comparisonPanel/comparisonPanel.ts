@@ -9,7 +9,6 @@ export class ComparisonPanel extends Disposable {
 	private readonly _panel: vscode.WebviewPanel;
 	private _extensionRoot: vscode.Uri;
 	private _images: vscode.Uri[] = [];
-	private _isDisposed = false;
 
 	public static create(extensionRoot: vscode.Uri): ComparisonPanel {
 		const column = vscode.window.activeTextEditor
@@ -109,13 +108,12 @@ export class ComparisonPanel extends Disposable {
 
 	public override dispose(): void {
 		ComparisonPanel.currentPanel = undefined;
-		this._isDisposed = true;
 		this._panel.dispose();
 		super.dispose();
 	}
 
 	private _update(): void {
-		if (this._isDisposed) {
+		if (this.isDisposed) {
 			return;
 		}
 

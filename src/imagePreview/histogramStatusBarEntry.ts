@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
-import { StatusBarEntryInterface } from './statusBarEntryInterface';
 
-export class HistogramStatusBarEntry implements StatusBarEntryInterface {
+export class HistogramStatusBarEntry {
 	private readonly _statusBarEntry: vscode.StatusBarItem;
 	private _isVisible: boolean = false;
 
