@@ -9,6 +9,11 @@ export function getOutputChannel(): vscode.OutputChannel {
 	return outputChannel;
 }
 
+function updatePlyVisualizerContext() {
+	const installed = !!vscode.extensions.getExtension('kleinicke.ply-visualizer');
+	vscode.commands.executeCommand('setContext', 'tiffVisualizer.plyVisualizerInstalled', installed);
+}
+
 export function activate(context: vscode.ExtensionContext) {
 	// Create output channel for debugging (without showing it to avoid focus stealing)
 	outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
@@ -17,6 +22,9 @@ export function activate(context: vscode.ExtensionContext) {
 	outputChannel.appendLine('='.repeat(50));
 	outputChannel.appendLine('Extension activated');
 	outputChannel.appendLine('='.repeat(50));
+
+	updatePlyVisualizerContext();
+	context.subscriptions.push(vscode.extensions.onDidChange(updatePlyVisualizerContext));
 
 	const binarySizeStatusBarEntry = new BinarySizeStatusBarEntry();
 	context.subscriptions.push(binarySizeStatusBarEntry);

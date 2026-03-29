@@ -150,7 +150,7 @@
       },
       {
         "command": "tiffVisualizer.browseAndAddToCollection",
-        "title": "Add Image to Collection...",
+        "title": "Add Image to Visualizer Collection",
         "category": "TIFF Visualizer"
       },
       {
@@ -219,11 +219,6 @@
           "command": "tiffVisualizer.browseAndAddToCollection",
           "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
           "group": "navigation@1"
-        },
-        {
-          "command": "tiffVisualizer.openAsPointCloud",
-          "when": "resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .png",
-          "group": "navigation@2"
         }
       ],
       "editor/context": [
@@ -239,7 +234,7 @@
         },
         {
           "command": "tiffVisualizer.openAsPointCloud",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.plyVisualizerInstalled && (resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .png)",
           "group": "navigation@1"
         }
       ]

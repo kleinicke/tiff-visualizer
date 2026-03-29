@@ -243,9 +243,11 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			if (webviewEditor.active) {
 				this.setActivePreview(preview);
 			}
-			// Do NOT clear activePreview on focus loss — QuickPicks, permission dialogs,
+			// Do NOT clear _activePreview on focus loss — QuickPicks, permission dialogs,
 			// and other transient UI steal focus temporarily. Keep the last-known active
 			// preview so commands still work when focus returns.
+			// Menu visibility is tracked separately and reflects actual focus state.
+			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', webviewEditor.active);
 		});
 	}
 
@@ -294,7 +296,8 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			}
 		}
 
-		// Update context for menu visibility
+		// Update context for menu visibility based on actual active state.
+		// This is also updated in onDidChangeViewState for real-time accuracy.
 		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', !!value);
 	}
 } 
