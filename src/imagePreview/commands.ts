@@ -1121,33 +1121,6 @@ export function registerImagePreviewCommands(
 		logCommand('toggleRgb24Mode', 'success', `RGB 24-bit mode ${newState ? 'enabled' : 'disabled'}`);
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openWith', async (resource?: vscode.Uri) => {
-		logCommand('openWith', 'start');
-		if (!resource) {
-			// Try to get the resource from the active editor
-			const activeEditor = vscode.window.activeTextEditor;
-			if (activeEditor) {
-				resource = activeEditor.document.uri;
-			}
-		}
-
-		if (!resource) {
-			vscode.window.showErrorMessage('No file selected to open with TIFF Visualizer.');
-			logCommand('openWith', 'error', 'No file selected');
-			return;
-		}
-
-		// Open the file with the TIFF Visualizer custom editor
-		try {
-			await vscode.commands.executeCommand('vscode.openWith', resource, 'tiffVisualizer.previewEditor');
-			logCommand('openWith', 'success', resource.fsPath);
-		} catch (error) {
-			vscode.window.showErrorMessage(`Failed to open with TIFF Visualizer: ${error}`);
-			logCommand('openWith', 'error', String(error));
-		}
-	}));
-
-
 	/**
 	 * Show a QuickPick-based path picker with filesystem autocomplete.
 	 * Returns the final typed/selected pattern, or undefined if cancelled.

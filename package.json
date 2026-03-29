@@ -149,11 +149,6 @@
         "category": "TIFF Visualizer"
       },
       {
-        "command": "tiffVisualizer.openWith",
-        "title": "Open with TIFF Visualizer",
-        "category": "TIFF Visualizer"
-      },
-      {
         "command": "tiffVisualizer.browseAndAddToCollection",
         "title": "Add Image to Collection...",
         "category": "TIFF Visualizer"
@@ -215,11 +210,6 @@
     ],
     "menus": {
       "explorer/context": [
-        {
-          "command": "tiffVisualizer.openWith",
-          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm",
-          "group": "navigation@0"
-        },
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
