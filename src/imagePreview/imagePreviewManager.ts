@@ -36,6 +36,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	private _activePreview: IImagePreview | undefined;
 	private readonly _settingsManager = new ImageSettingsManager();
 	private readonly _appStateManager = new AppStateManager();
+	private _hasActivePreviewClearTimer: ReturnType<typeof setTimeout> | undefined;
 	
 	// Stored position for cross-webview paste position feature
 	private _copiedPositionState: CopiedPositionState | undefined;
@@ -242,12 +243,15 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		webviewEditor.onDidChangeViewState(() => {
 			if (webviewEditor.active) {
 				this.setActivePreview(preview);
+				this.setMenuVisibility(true);
+			} else {
+				// Do NOT clear _activePreview on focus loss — QuickPicks, permission dialogs,
+				// and other transient UI steal focus temporarily. Keep the last-known active
+				// preview so commands still work when focus returns.
+				// Menu visibility is cleared with a short delay so the Explorer context menu
+				// has time to evaluate before the context key goes false.
+				this.scheduleMenuVisibilityClear();
 			}
-			// Do NOT clear _activePreview on focus loss — QuickPicks, permission dialogs,
-			// and other transient UI steal focus temporarily. Keep the last-known active
-			// preview so commands still work when focus returns.
-			// Menu visibility is tracked separately and reflects actual focus state.
-			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', webviewEditor.active);
 		});
 	}
 
@@ -296,8 +300,29 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			}
 		}
 
-		// Update context for menu visibility based on actual active state.
-		// This is also updated in onDidChangeViewState for real-time accuracy.
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', !!value);
+		if (value) {
+			this.setMenuVisibility(true);
+		} else {
+			this.setMenuVisibility(this._previews.size > 0);
+		}
+	}
+
+	private setMenuVisibility(visible: boolean): void {
+		if (this._hasActivePreviewClearTimer) {
+			clearTimeout(this._hasActivePreviewClearTimer);
+			this._hasActivePreviewClearTimer = undefined;
+		}
+		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', visible);
+	}
+
+	private scheduleMenuVisibilityClear(): void {
+		if (this._hasActivePreviewClearTimer) {
+			clearTimeout(this._hasActivePreviewClearTimer);
+		}
+		this._hasActivePreviewClearTimer = setTimeout(() => {
+			this._hasActivePreviewClearTimer = undefined;
+			const anyActive = Array.from(this._previews).some(p => p.isPreviewActive());
+			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', anyActive);
+		}, 300);
 	}
 } 

@@ -1325,6 +1325,7 @@ export function registerImagePreviewCommands(
 				const filename = resource.fsPath.split(path.sep).pop() ?? resource.fsPath;
 				const wasAdded = await activePreview.addToImageCollection(resource);
 				if (wasAdded) {
+					vscode.commands.executeCommand('workbench.action.keepEditor');
 					vscode.window.showInformationMessage(`Added ${filename} to image collection. Press 't'/'r' to navigate.`);
 					logCommand('browseAndAddToCollection', 'success', resource.fsPath);
 				} else {
@@ -1380,6 +1381,7 @@ export function registerImagePreviewCommands(
 							: `All ${skipped} images are already in the collection.`;
 						vscode.window.showWarningMessage(msg);
 					} else {
+						vscode.commands.executeCommand('workbench.action.keepEditor');
 						const base = added === 1
 							? `Added ${firstAdded!.fsPath.split(path.sep).pop()} to image collection.`
 							: `Added ${added} images to collection.`;
