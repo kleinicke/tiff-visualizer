@@ -247,6 +247,9 @@ export class PpmProcessor {
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
+            if (this.vscode) {
+                this.vscode.postMessage({ type: 'stats', value: stats });
+            }
         }
 
         // Create options object

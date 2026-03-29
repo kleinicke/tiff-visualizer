@@ -192,6 +192,11 @@
         "command": "tiffVisualizer.toggleRgb24Mode",
         "title": "Toggle RGB as 24-bit Grayscale",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.openAsPointCloud",
+        "title": "Open as Point Cloud",
+        "category": "TIFF Visualizer"
       }
     ],
     "keybindings": [
@@ -214,6 +219,11 @@
           "command": "tiffVisualizer.browseAndAddToCollection",
           "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
           "group": "navigation@1"
+        },
+        {
+          "command": "tiffVisualizer.openAsPointCloud",
+          "when": "resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .png",
+          "group": "navigation@2"
         }
       ],
       "editor/context": [
@@ -226,6 +236,11 @@
           "command": "tiffVisualizer.compareWithSelected",
           "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
           "group": "comparison@1"
+        },
+        {
+          "command": "tiffVisualizer.openAsPointCloud",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "group": "navigation@1"
         }
       ]
     }

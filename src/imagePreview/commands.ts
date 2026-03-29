@@ -1700,5 +1700,41 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openAsPointCloud', async (resource?: vscode.Uri) => {
+		logCommand('openAsPointCloud', 'start');
+		const uri = resource ?? previewManager.activePreview?.resource;
+		if (!uri) {
+			vscode.window.showErrorMessage('No image file to open as point cloud.');
+			return;
+		}
+
+		const ext = path.extname(uri.fsPath).toLowerCase();
+		const extToCommand: Record<string, string> = {
+			'.tif':  'plyViewer.convertTifToPointCloud',
+			'.tiff': 'plyViewer.convertTifToPointCloud',
+			'.exr':  'plyViewer.convertExrToPointCloud',
+			'.pfm':  'plyViewer.convertDepthToPointCloud',
+			'.npy':  'plyViewer.convertNpyToPointCloud',
+			'.npz':  'plyViewer.convertNpyToPointCloud',
+			'.png':  'plyViewer.convertPngToPointCloud',
+		};
+
+		const plyCommand = extToCommand[ext];
+		if (!plyCommand) {
+			vscode.window.showErrorMessage(`"${ext}" files are not supported for point cloud conversion.`);
+			return;
+		}
+
+		try {
+			await vscode.commands.executeCommand(plyCommand, uri);
+			logCommand('openAsPointCloud', 'success', `Executed ${plyCommand} for ${uri.fsPath}`);
+		} catch {
+			vscode.window.showErrorMessage(
+				'Could not open as point cloud. Make sure the "3D Point Cloud and Mesh Visualizer" extension (kleinicke.ply-visualizer) is installed.'
+			);
+			logCommand('openAsPointCloud', 'error', 'ply-visualizer command failed');
+		}
+	}));
+
 	return vscode.Disposable.from(...disposables);
-} 
+}

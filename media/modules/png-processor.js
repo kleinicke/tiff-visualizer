@@ -271,6 +271,9 @@ export class PngProcessor {
             stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, rgbAs24BitMode);
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
+            if (this.vscode) {
+                this.vscode.postMessage({ type: 'stats', value: stats });
+            }
         }
 
         // For gamma mode, provide dummy stats (renderer uses full type range)
