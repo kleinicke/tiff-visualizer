@@ -670,7 +670,8 @@ export class ImagePreview extends MediaPreview {
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			maskFilters: maskFilters,
 			nanColor: this._manager.settingsManager.getNanColor(),
-			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified()
+			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
+			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer')
 		};
 
 		const nonce = getNonce();

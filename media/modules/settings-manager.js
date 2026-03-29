@@ -39,6 +39,7 @@
  * @property {number} [scale24BitFactor]
  * @property {boolean} [normalizedFloatMode]
  * @property {boolean} [colorPickerShowModified]
+ * @property {boolean} [plyVisualizerInstalled]
  * @property {string} [resourceUri]
  * @property {string} [src]
  */

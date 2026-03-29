@@ -1614,6 +1614,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
 				}));
 			}
+
+			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
+			const plyFormats = ['tiff-float', 'tiff-int', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
+			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType)) {
+				menu.appendChild(createSeparator());
+				menu.appendChild(createMenuItem('Open as Point Cloud', () => {
+					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openAsPointCloud' });
+				}));
+			}
+
 			document.body.appendChild(menu);
 
 			// Remove menu when clicking outside

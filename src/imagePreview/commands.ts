@@ -1712,7 +1712,6 @@ export function registerImagePreviewCommands(
 		const extToCommand: Record<string, string> = {
 			'.tif':  'plyViewer.convertTifToPointCloud',
 			'.tiff': 'plyViewer.convertTifToPointCloud',
-			'.exr':  'plyViewer.convertExrToPointCloud',
 			'.pfm':  'plyViewer.convertDepthToPointCloud',
 			'.npy':  'plyViewer.convertNpyToPointCloud',
 			'.npz':  'plyViewer.convertNpyToPointCloud',

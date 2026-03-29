@@ -231,11 +231,6 @@
           "command": "tiffVisualizer.compareWithSelected",
           "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
           "group": "comparison@1"
-        },
-        {
-          "command": "tiffVisualizer.openAsPointCloud",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.plyVisualizerInstalled && (resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .png)",
-          "group": "navigation@1"
         }
       ]
     }
