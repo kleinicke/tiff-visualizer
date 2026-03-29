@@ -356,13 +356,7 @@ export function registerImagePreviewCommands(
 
 		// Check if we have an RGB image (3 or more channels)
 		const formatInfo = activePreview?.getManager().appStateManager.uiState.formatInfo;
-		// 24-bit mode only for 8-bit uint RGB images
-		const isRgb8BitUint = formatInfo &&
-			formatInfo.samplesPerPixel >= 3 &&
-			formatInfo.bitsPerSample === 8 &&
-			formatInfo.sampleFormat !== 3; // Not float
 		const isSingleChannelUint = formatInfo && formatInfo.samplesPerPixel === 1 && formatInfo.sampleFormat !== 3; // Not float
-		const rgbModeEnabled = previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
 		const normalizedFloatModeEnabled = previewManager.appStateManager.imageSettings.normalizedFloatMode;
 
 		// First show a QuickPick with options
@@ -386,22 +380,6 @@ export function registerImagePreviewCommands(
 				action: 'gamma'
 			}
 		];
-
-		// Add RGB 24-bit mode option only for 8-bit uint RGB images
-		if (isRgb8BitUint) {
-			options.push(
-				{
-					label: '',
-					kind: vscode.QuickPickItemKind.Separator
-				},
-				{
-					label: rgbModeEnabled ? '$(check) RGB as 24-bit Grayscale' : '$(square) RGB as 24-bit Grayscale',
-					description: 'Interpret RGB channels as single 24-bit value',
-					detail: 'Combines R, G, B into one 24-bit integer: (R<<16)|(G<<8)|B (0-16777215)',
-					action: 'rgb24bit'
-				}
-			);
-		}
 
 		// Add normalized float mode option for single-channel uint images
 		if (isSingleChannelUint) {
@@ -468,39 +446,6 @@ export function registerImagePreviewCommands(
 				activePreview.updateStatusBar();
 			}
 			logCommand('setNormalizationRange', 'success', 'Gamma/brightness mode enabled');
-		} else if (selected.action === 'rgb24bit') {
-			// Toggle RGB as 24-bit grayscale mode
-			const newState = !previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
-
-			if (newState) {
-				// Enabling 24-bit mode - ask for scale factor
-				const scaleFactorInput = await vscode.window.showInputBox({
-					prompt: 'Enter scale factor for 24-bit values (divides values for display in color picker)',
-					value: previewManager.appStateManager.imageSettings.scale24BitFactor.toString(),
-					placeHolder: '1000',
-					validateInput: text => {
-						const num = parseFloat(text);
-						return isNaN(num) || num <= 0 ? 'Please enter a positive number.' : null;
-					}
-				});
-
-				if (scaleFactorInput === undefined) {
-					logCommand('setNormalizationRange', 'error', 'User cancelled 24-bit scale factor input');
-					return; // User cancelled
-				}
-
-				const scaleFactor = parseFloat(scaleFactorInput);
-				previewManager.appStateManager.setRgbAs24BitGrayscale(true, scaleFactor);
-				logCommand('setNormalizationRange', 'success', `RGB 24-bit mode enabled with scale factor: ${scaleFactor}`);
-			} else {
-				// Disabling 24-bit mode
-				previewManager.appStateManager.setRgbAs24BitGrayscale(false);
-				logCommand('setNormalizationRange', 'success', 'RGB 24-bit mode disabled');
-			}
-
-			if (activePreview) {
-				activePreview.updateStatusBar();
-			}
 		} else if (selected.action === 'normalizedFloat') {
 			// Toggle normalized float mode
 			const newState = !previewManager.appStateManager.imageSettings.normalizedFloatMode;
@@ -1163,6 +1108,17 @@ export function registerImagePreviewCommands(
 		} catch (error) {
 			logCommand('toggleNanColor', 'error', String(error));
 		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleRgb24Mode', () => {
+		logCommand('toggleRgb24Mode', 'start');
+		const newState = !previewManager.appStateManager.imageSettings.rgbAs24BitGrayscale;
+		previewManager.appStateManager.setRgbAs24BitGrayscale(newState);
+		const activePreview = previewManager.activePreview;
+		if (activePreview) {
+			activePreview.updateStatusBar();
+		}
+		logCommand('toggleRgb24Mode', 'success', `RGB 24-bit mode ${newState ? 'enabled' : 'disabled'}`);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openWith', async (resource?: vscode.Uri) => {

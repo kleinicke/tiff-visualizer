@@ -31,6 +31,7 @@ export class PngProcessor {
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+        this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
     }
 
     /**
@@ -51,6 +52,7 @@ export class PngProcessor {
         try {
             // Invalidate stats cache for new image
             this._cachedStats = undefined;
+            this._cachedStatsRgb24Mode = false;
 
             const response = await fetch(src);
             const arrayBuffer = await response.arrayBuffer();
@@ -261,10 +263,14 @@ export class PngProcessor {
         }
 
         // Calculate stats if needed
+        if (this._cachedStatsRgb24Mode !== rgbAs24BitMode) {
+            this._cachedStats = undefined;
+        }
         let stats = this._cachedStats;
         if (!stats && !isGammaMode) {
-            stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
+            stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, rgbAs24BitMode);
             this._cachedStats = stats;
+            this._cachedStatsRgb24Mode = rgbAs24BitMode;
         }
 
         // For gamma mode, provide dummy stats (renderer uses full type range)

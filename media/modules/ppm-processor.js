@@ -15,6 +15,7 @@ export class PpmProcessor {
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+        this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
     }
 
     async processPpm(src) {
@@ -30,6 +31,7 @@ export class PpmProcessor {
 
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
+        this._cachedStatsRgb24Mode = false;
 
         this._lastRaw = { width, height, data: displayData, maxval, channels };
 
@@ -204,6 +206,11 @@ export class PpmProcessor {
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
         const isGammaMode = settings.normalization?.gammaMode || false;
 
+        // Invalidate cached stats if rgb24 mode changed
+        if (this._cachedStatsRgb24Mode !== rgbAs24BitMode) {
+            this._cachedStats = undefined;
+        }
+
         // Calculate stats if needed
         let stats = this._cachedStats;
         if (!stats && !isGammaMode) {
@@ -239,6 +246,7 @@ export class PpmProcessor {
                 stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
             }
             this._cachedStats = stats;
+            this._cachedStatsRgb24Mode = rgbAs24BitMode;
         }
 
         // Create options object

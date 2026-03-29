@@ -1518,7 +1518,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			};
 
 			// Add Copy option (triggers command via extension for logging)
-			menu.appendChild(createMenuItem('Copy', () => {
+			menu.appendChild(createMenuItem('Copy Image and Position', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.copyImage' });
 			}));
 
@@ -1539,12 +1539,26 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
 
-			// Check if image is RGB (3+ channels) for RGB-specific options
-			// Only show for images that we know are RGB (need formatInfo)
+			// Check if image is 8-bit uint RGB for interpretation options
+			const isRgb8BitUint = currentFormatInfo &&
+				currentFormatInfo.samplesPerPixel >= 3 &&
+				currentFormatInfo.bitsPerSample === 8 &&
+				currentFormatInfo.sampleFormat !== 3; // Not float
 			const isRgbImage = currentFormatInfo && currentFormatInfo.samplesPerPixel >= 3;
 
-			if (isRgbImage) {
+			if (isRgb8BitUint) {
 				menu.appendChild(createSeparator());
+
+				const rgb24Active = settingsManager.settings.rgbAs24BitGrayscale || false;
+				menu.appendChild(createMenuItem(rgb24Active ? '✓ Interpret as 24-bit Grayscale' : 'Interpret as 24-bit Grayscale', () => {
+					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleRgb24Mode' });
+				}));
+			}
+
+			if (isRgbImage) {
+				if (!isRgb8BitUint) {
+					menu.appendChild(createSeparator());
+				}
 
 				// Add Convert Colormap to Float option (uses command - needs user input)
 				menu.appendChild(createMenuItem('Convert Colormap to Float', () => {

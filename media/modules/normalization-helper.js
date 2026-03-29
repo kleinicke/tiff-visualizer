@@ -224,16 +224,25 @@ export class ImageStatsCalculator {
      * @param {number} channels - Number of channels
      * @returns {{min: number, max: number}} Statistics
      */
-    static calculateIntegerStats(data, width, height, channels) {
+    static calculateIntegerStats(data, width, height, channels, rgbAs24Bit = false) {
         let minVal = Infinity;
         let maxVal = -Infinity;
 
         const len = width * height;
-        for (let i = 0; i < len; i++) {
-            for (let c = 0; c < Math.min(channels, 3); c++) {
-                const val = data[i * channels + c];
-                if (val < minVal) minVal = val;
-                if (val > maxVal) maxVal = val;
+        if (rgbAs24Bit && channels >= 3) {
+            for (let i = 0; i < len; i++) {
+                const idx = i * channels;
+                const val24 = (data[idx] << 16) | (data[idx + 1] << 8) | data[idx + 2];
+                if (val24 < minVal) minVal = val24;
+                if (val24 > maxVal) maxVal = val24;
+            }
+        } else {
+            for (let i = 0; i < len; i++) {
+                for (let c = 0; c < Math.min(channels, 3); c++) {
+                    const val = data[i * channels + c];
+                    if (val < minVal) minVal = val;
+                    if (val > maxVal) maxVal = val;
+                }
             }
         }
 

@@ -192,6 +192,11 @@
         "command": "tiffVisualizer.copyImageInfo",
         "title": "Copy Image Information to Clipboard",
         "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.toggleRgb24Mode",
+        "title": "Toggle RGB as 24-bit Grayscale",
+        "category": "TIFF Visualizer"
       }
     ],
     "keybindings": [

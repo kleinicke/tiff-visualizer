@@ -41,11 +41,13 @@ export class NpyProcessor {
         this._isInitialLoad = true; // Track if this is the first render
         /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+        this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
     }
 
     async processNpy(src) {
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
+        this._cachedStatsRgb24Mode = false;
 
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
@@ -239,6 +241,9 @@ export class NpyProcessor {
 
         // Calculate stats if needed (for auto-normalize or just to have them)
         /** @type {{min: number, max: number} | undefined} */
+        if (this._cachedStatsRgb24Mode !== rgbAs24BitMode) {
+            this._cachedStats = undefined;
+        }
         let stats = this._cachedStats;
 
         if (!stats && !isGammaMode) {
@@ -248,6 +253,7 @@ export class NpyProcessor {
                 stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, rgbAs24BitMode);
             }
             this._cachedStats = stats;
+            this._cachedStatsRgb24Mode = rgbAs24BitMode;
 
             if (this.vscode) {
                 this.vscode.postMessage({ type: 'stats', value: stats });

@@ -28,6 +28,7 @@ export class TiffProcessor {
 		this._maskCache = new Map(); // Cache loaded mask images by URI
 		this._lastImageData = null; // Store the last rendered image data for fast parameter updates
 		this._lastStatistics = null; // Cache min/max statistics
+		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
 		/** @type {{ floatData: Float32Array } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
 
@@ -388,6 +389,11 @@ export class TiffProcessor {
 		}
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
+		const currentRgb24Mode = settings.rgbAs24BitGrayscale || false;
+		// Invalidate cached stats if rgb24 mode changed (stats are computed differently per mode)
+		if (this._lastStatisticsRgb24Mode !== currentRgb24Mode) {
+			this._lastStatistics = null;
+		}
 		let stats = this._lastStatistics;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
@@ -479,6 +485,7 @@ export class TiffProcessor {
 			}
 
 			this._lastStatistics = stats;
+			this._lastStatisticsRgb24Mode = currentRgb24Mode;
 		}
 
 		// Send stats to VS Code
