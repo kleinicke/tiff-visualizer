@@ -34,7 +34,7 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
     
     // Check extension configuration
     expect(packageJson.name).toBe('tiff-visualizer');
-    expect(packageJson.displayName).toBe('TIFF Visualizer');
+    expect(packageJson.displayName).toBe('Float and TIFF Visualizer');
     expect(packageJson.main).toBe('./out/extension.js');
     
     // Check custom editor configuration

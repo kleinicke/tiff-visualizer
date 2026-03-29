@@ -252,6 +252,7 @@
     "test:ui": "npm run compile && extest setup-and-run out/test/ui/**/*.js",
     "test:ui-setup": "extest setup-tests",
     "test:ui-run": "extest run-tests out/test/ui/**/*.js",
+    "test:playwright": "playwright test test/playwright/extension-core.spec.ts",
     "build": "webpack"
   },
   "dependencies": {
@@ -263,6 +264,7 @@
     "vscode-uri": "^3.0.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/chai": "^4.3.0",
     "@types/mocha": "^10.0.6",
     "@types/node": "^16.11.7",
