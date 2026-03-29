@@ -1,6 +1,12 @@
 // @ts-check
 "use strict";
 
+/** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
+
+/**
+ * @typedef {{nanColor?: {r:number,g:number,b:number}, flipY?: boolean, typeMax?: number, rgbAs24BitGrayscale?: boolean, planarData?: any}} RenderOptions
+ */
+
 /**
  * Helper class for normalization, gamma, and brightness corrections.
  * Centralizes logic for range calculation and LUT generation.
@@ -8,8 +14,8 @@
 export class NormalizationHelper {
     /**
      * Calculate the normalization range (min/max) based on settings and stats.
-     * @param {Object} settings - Image settings
-     * @param {Object} stats - Image statistics {min, max}
+     * @param {ImageSettings} settings - Image settings
+     * @param {{min: number, max: number}|null|undefined} stats - Image statistics {min, max}
      * @param {number} typeMax - Maximum value for the data type (e.g., 255, 65535, or 1.0 for float)
      * @param {boolean} isFloat - Whether the image data is floating point
      * @returns {{min: number, max: number}} Calculated min/max range
@@ -49,7 +55,7 @@ export class NormalizationHelper {
     /**
      * Apply gamma and brightness corrections to a normalized value (0-1).
      * @param {number} normalized - Value in range 0-1
-     * @param {Object} settings - Settings object with gamma and brightness
+     * @param {ImageSettings} settings - Settings object with gamma and brightness
      * @returns {number} Corrected value (may be outside [0,1])
      */
     static applyGammaAndBrightness(normalized, settings) {
@@ -71,7 +77,7 @@ export class NormalizationHelper {
 
     /**
      * Generate a lookup table for gamma and brightness corrections.
-     * @param {Object} settings - Settings object
+     * @param {ImageSettings} settings - Settings object
      * @param {number} bitDepth - Bit depth (8 or 16)
      * @param {number} maxValue - Maximum input value (255 or 65535)
      * @param {number} normMin - Normalization minimum
@@ -106,7 +112,7 @@ export class NormalizationHelper {
      * Check if the transformation is identity (no effective gamma/brightness changes).
      * Identity occurs when gammaIn === gammaOut (they cancel out) and brightness is 0.
      * This is because (value^gammaIn)^(1/gammaOut) = value when gammaIn === gammaOut.
-     * @param {Object} settings - Settings object
+     * @param {ImageSettings} settings - Settings object
      * @returns {boolean} True if identity transformation
      */
     static isIdentityTransformation(settings) {
@@ -124,7 +130,7 @@ export class NormalizationHelper {
      * Values outside this range will be clipped to 0 or 1.
      * This allows skipping expensive calculations for clipped pixels.
      * 
-     * @param {Object} settings - Image settings
+     * @param {ImageSettings} settings - Image settings
      * @param {number} normMin - Normalization minimum
      * @param {number} normMax - Normalization maximum
      * @returns {{min: number, max: number}} Effective input range
@@ -257,14 +263,14 @@ export class ImageStatsCalculator {
 export class ImageRenderer {
     /**
      * Render typed array to ImageData with normalization and corrections.
-     * @param {Uint8Array|Uint16Array|Float32Array|Float16Array} data - Image data
+     * @param {Uint8Array|Uint16Array|Float32Array|ArrayLike<number>} data - Image data
      * @param {number} width - Image width
      * @param {number} height - Image height
      * @param {number} channels - Number of channels (1, 3, or 4)
      * @param {boolean} isFloat - Whether data is floating point (float16 or float32)
-     * @param {{min: number, max: number}} stats - Image statistics
-     * @param {Object} settings - Normalization/gamma/brightness settings
-     * @param {Object} [options={}] - Additional options { nanColor }
+     * @param {{min: number, max: number}|null|undefined} stats - Image statistics
+     * @param {ImageSettings} settings - Normalization/gamma/brightness settings
+     * @param {RenderOptions} [options={}] - Additional options
      * @returns {ImageData} Rendered image data
      */
     static render(data, width, height, channels, isFloat, stats, settings, options = {}) {
@@ -280,6 +286,16 @@ export class ImageRenderer {
         return result;
     }
 
+    /**
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {boolean} isFloat
+     * @param {{min:number,max:number}|null|undefined} stats
+     * @param {ImageSettings} settings
+     * @param {RenderOptions} [options]
+     */
     static _renderInternal(data, width, height, channels, isFloat, stats, settings, options = {}) {
         // Determine typeMax based on data type
         let typeMax;
@@ -379,6 +395,13 @@ export class ImageRenderer {
      * Render float32 data directly (no gamma/brightness, just normalization).
      * Used in non-gamma mode or identity transform in gamma mode.
      * @private
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} min
+     * @param {number} max
+     * @param {RenderOptions} options
      */
     static _renderFloatDirect(data, width, height, channels, min, max, options) {
         const out = new Uint8ClampedArray(width * height * 4);
@@ -387,7 +410,7 @@ export class ImageRenderer {
         const invRange = range > 0 ? 1.0 / range : 0;
 
         for (let i = 0; i < width * height; i++) {
-            let r, g, b;
+            let r = 0, g = 0, b = 0;
 
             if (channels === 1) {
                 const value = data[i];
@@ -454,6 +477,14 @@ export class ImageRenderer {
      * Render float32 data with gamma/brightness using 16-bit LUT.
      * Used in gamma mode with non-identity transform.
      * @private
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} min
+     * @param {number} max
+     * @param {ImageSettings} settings
+     * @param {RenderOptions} options
      */
     static _renderFloatWithLUT(data, width, height, channels, min, max, settings, options) {
         const out = new Uint8ClampedArray(width * height * 4);
@@ -477,7 +508,7 @@ export class ImageRenderer {
         const invVRange = vRange > 0 ? 65535 / vRange : 0;
 
         for (let i = 0; i < width * height; i++) {
-            let r, g, b;
+            let r = 0, g = 0, b = 0;
 
             if (channels === 1) {
                 const value = data[i];
@@ -548,6 +579,13 @@ export class ImageRenderer {
     /**
      * Render uint16 data directly (no gamma, just normalization).
      * @private
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} min
+     * @param {number} max
+     * @param {RenderOptions} [options]
      */
     static _renderUint16Direct(data, width, height, channels, min, max, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
@@ -587,7 +625,7 @@ export class ImageRenderer {
         const invRange = range > 0 ? 255.0 / range : 0;
 
         for (let i = 0; i < width * height; i++) {
-            let r, g, b;
+            let r = 0, g = 0, b = 0;
 
             if (channels === 1) {
                 const value = data[i];
@@ -641,6 +679,14 @@ export class ImageRenderer {
     /**
      * Render uint16 data with gamma/brightness using LUT.
      * @private
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} min
+     * @param {number} max
+     * @param {ImageSettings} settings
+     * @param {RenderOptions} [options]
      */
     static _renderUint16WithLUT(data, width, height, channels, min, max, settings, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
@@ -684,7 +730,7 @@ export class ImageRenderer {
         const lut = NormalizationHelper.generateLut(settings, 16, 65535, normMin, normMax);
 
         for (let i = 0; i < width * height; i++) {
-            let r, g, b;
+            let r = 0, g = 0, b = 0;
 
             if (channels === 1) {
                 const value = data[i];
@@ -738,6 +784,13 @@ export class ImageRenderer {
     /**
      * Render uint8 data directly (no gamma, just normalization).
      * @private
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} min
+     * @param {number} max
+     * @param {RenderOptions} [options]
      */
     static _renderUint8Direct(data, width, height, channels, min, max, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
@@ -811,7 +864,7 @@ export class ImageRenderer {
             const invRange = range > 0 ? 255.0 / range : 0;
 
             for (let i = 0; i < width * height; i++) {
-                let r, g, b;
+                let r = 0, g = 0, b = 0;
 
                 if (channels === 1) {
                     const value = data[i];
@@ -866,6 +919,14 @@ export class ImageRenderer {
     /**
      * Render uint8 data with gamma/brightness using LUT.
      * @private
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} min
+     * @param {number} max
+     * @param {ImageSettings} settings
+     * @param {RenderOptions} [options]
      */
     static _renderUint8WithLUT(data, width, height, channels, min, max, settings, options = {}) {
         const out = new Uint8ClampedArray(width * height * 4);
@@ -904,7 +965,7 @@ export class ImageRenderer {
         const lut = NormalizationHelper.generateLut(settings, 8, 255, normMin, normMax);
 
         for (let i = 0; i < width * height; i++) {
-            let r, g, b;
+            let r = 0, g = 0, b = 0;
 
             if (channels === 1) {
                 const value = data[i];

@@ -2,6 +2,10 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
+/** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
 /**
  * @typedef {Object} ExrImageData
  * @property {number} width
@@ -18,6 +22,10 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
  * Uses parse-exr library for EXR file parsing
  */
 export class ExrProcessor {
+	/**
+	 * @param {SettingsManager} settingsManager
+	 * @param {VsCodeApi} vscode
+	 */
 	constructor(settingsManager, vscode) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
@@ -40,8 +48,8 @@ export class ExrProcessor {
 
 	/**
 	 * Get NaN color based on settings
-	 * @param {Object} settings - Current settings
-	 * @returns {Object} - RGB values for NaN color
+	 * @param {ImageSettings} settings - Current settings
+	 * @returns {{r: number, g: number, b: number}} - RGB values for NaN color
 	 */
 	_getNanColor(settings) {
 		if (settings.nanColor === 'fuchsia') {
@@ -161,8 +169,7 @@ export class ExrProcessor {
 
 	/**
 	 * Render EXR data to canvas with current settings
-	 * @param {HTMLCanvasElement} canvas - Target canvas
-	 * @param {Object} settings - Current rendering settings
+	 * @param {ImageSettings} settings - Current rendering settings
 	 * @returns {ImageData} - Rendered image data
 	 */
 	renderExrToCanvas(settings) {
@@ -220,7 +227,7 @@ export class ExrProcessor {
 	 * Get pixel value at coordinates for inspection
 	 * @param {number} x - X coordinate
 	 * @param {number} y - Y coordinate
-	 * @returns {Array<number>} - Pixel values (raw HDR values)
+	 * @returns {number[]|null} - Pixel values (raw HDR values)
 	 */
 	getPixelValue(x, y) {
 		if (!this.rawExrData) return null;
@@ -240,7 +247,7 @@ export class ExrProcessor {
 
 	/**
 	 * Update rendering with new settings (called when settings change)
-	 * @param {Object} settings - New settings
+	 * @param {ImageSettings} settings - New settings
 	 * @returns {ImageData|null} - Updated image data
 	 */
 	updateSettings(settings) {

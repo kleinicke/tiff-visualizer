@@ -3,8 +3,13 @@
 (function() {
     'use strict';
 
-    const vscode = acquireVsCodeApi();
+    const vscode = /** @type {{ postMessage(msg: unknown): void }} */ (
+        /** @type {any} */ (globalThis).acquireVsCodeApi()
+    );
 
+    /**
+     * @param {{ webviewUri: string, filename: string, uri: string }} imageInfo
+     */
     function createImageItem(imageInfo) {
         const item = document.createElement('div');
         item.className = 'image-item';
@@ -22,6 +27,7 @@
 
         // Add click handler for image preview
         const imageElement = item.querySelector('.image-preview');
+        if (!imageElement) return item;
         imageElement.addEventListener('click', () => {
             vscode.postMessage({
                 type: 'openImageInMainEditor',
@@ -35,9 +41,9 @@
             button.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                
-                const action = button.dataset.action;
-                const uri = button.dataset.uri;
+
+                const action = /** @type {HTMLElement} */ (button).dataset.action;
+                const uri = /** @type {HTMLElement} */ (button).dataset.uri;
                 
                 if (action === 'open') {
                     vscode.postMessage({
@@ -63,13 +69,14 @@
         // Clear existing content
         grid.innerHTML = '';
 
-        if (!window.imageData || window.imageData.length === 0) {
+        const imageData = /** @type {any[]} */ (/** @type {any} */ (window).imageData);
+        if (!imageData || imageData.length === 0) {
             grid.innerHTML = '<div class="empty-state">No images to compare. Use "Select for Compare" from the context menu in an image editor.</div>';
             return;
         }
 
         // Add image items
-        window.imageData.forEach(imageInfo => {
+        imageData.forEach(imageInfo => {
             const item = createImageItem(imageInfo);
             grid.appendChild(item);
         });

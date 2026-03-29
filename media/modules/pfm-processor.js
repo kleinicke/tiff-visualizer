@@ -2,11 +2,19 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
 /**
  * PFM Processor for TIFF Visualizer
  * Supports grayscale (Pf) and RGB (PF) portable float map files
  */
 export class PfmProcessor {
+    /**
+     * @param {SettingsManager} settingsManager
+     * @param {VsCodeApi} vscode
+     */
     constructor(settingsManager, vscode) {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
@@ -17,6 +25,7 @@ export class PfmProcessor {
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
+    /** @param {string} src */
     async processPfm(src) {
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
@@ -52,6 +61,7 @@ export class PfmProcessor {
         return { canvas, imageData };
     }
 
+    /** @param {ArrayBuffer} arrayBuffer */
     _parsePfm(arrayBuffer) {
         const text = new TextDecoder('ascii').decode(arrayBuffer);
         // Read header lines
@@ -85,6 +95,12 @@ export class PfmProcessor {
         return { width, height, channels, data: out };
     }
 
+    /**
+     * @param {Float32Array} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} [channels]
+     */
     _toImageDataFloat(data, width, height, channels = 1) {
         const settings = this.settingsManager.settings;
         const isGammaMode = settings.normalization?.gammaMode || false;
@@ -114,6 +130,12 @@ export class PfmProcessor {
         );
     }
 
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {number} naturalWidth
+     * @param {number} naturalHeight
+     */
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
         const { width, height, data, channels } = this._lastRaw;
@@ -122,7 +144,7 @@ export class PfmProcessor {
         const idx = y * width + x;
 
         // Helper to format individual values (avoid scientific notation)
-        const formatValue = (v) => {
+        const formatValue = (/** @type {number} */ v) => {
             if (Number.isNaN(v)) return 'NaN';
             if (v === Infinity) return 'Inf';
             if (v === -Infinity) return '-Inf';
@@ -148,6 +170,12 @@ export class PfmProcessor {
         return '';
     }
 
+    /**
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {string} formatLabel
+     */
     _postFormatInfo(width, height, channels, formatLabel) {
         if (!this.vscode) return;
         this.vscode.postMessage({
@@ -204,13 +232,13 @@ export class PfmProcessor {
 
     /**
      * Update settings and trigger re-render
-     * @param {Object} settings - New settings
+     * @param {ImageSettings} settings - New settings
      */
     updateSettings(settings) {
         this.settingsManager.updateSettings(settings);
         // Invalidate cached stats when settings change (especially for auto-normalize)
         if (settings.normalization?.autoNormalize !== this.settingsManager.settings.normalization?.autoNormalize) {
-            this._cachedStats = null;
+            this._cachedStats = undefined;
         }
         // Post message to trigger re-render in main code
         if (this.vscode) {
@@ -218,6 +246,12 @@ export class PfmProcessor {
         }
     }
 
+    /**
+     * @param {Float32Array} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} [channels]
+     */
     _flipImageVertically(data, width, height, channels = 1) {
         const flipped = new Float32Array(data.length);
         for (let y = 0; y < height; y++) {

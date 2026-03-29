@@ -228,6 +228,7 @@ body img {
 	padding: 0 2px;
 	/* hide spinner arrows */
 	-moz-appearance: textfield;
+	appearance: textfield;
 }
 
 .image-counter-input::-webkit-outer-spin-button,

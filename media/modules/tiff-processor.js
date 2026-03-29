@@ -14,11 +14,19 @@ import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
 // @ts-ignore - GeoTIFF is loaded globally via script tag
 const GeoTIFF = window.GeoTIFF;
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
 /**
  * TIFF Processor Module
  * Handles TIFF image processing, normalization, and data extraction
  */
 export class TiffProcessor {
+	/**
+	 * @param {SettingsManager} settingsManager
+	 * @param {VsCodeApi} vscode
+	 */
 	constructor(settingsManager, vscode) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
@@ -27,9 +35,10 @@ export class TiffProcessor {
 		this._isInitialLoad = true; // Track if this is the first render
 		this._maskCache = new Map(); // Cache loaded mask images by URI
 		this._lastImageData = null; // Store the last rendered image data for fast parameter updates
+		/** @type {{min:number,max:number}|null} */
 		this._lastStatistics = null; // Cache min/max statistics
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
-		/** @type {{ floatData: Float32Array } | null} */
+		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
 
 		// WASM decoder
@@ -394,6 +403,7 @@ export class TiffProcessor {
 		if (this._lastStatisticsRgb24Mode !== currentRgb24Mode) {
 			this._lastStatistics = null;
 		}
+		/** @type {{min:number,max:number}|null} */
 		let stats = this._lastStatistics;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
@@ -544,16 +554,16 @@ export class TiffProcessor {
 	 * Fast render TIFF data with current settings (skips mask loading and uses cached statistics)
 	 * @param {*} image - GeoTIFF image object
 	 * @param {*} rasters - Raster data
-	 * @param {boolean} skipMasks - Whether to skip mask filtering
+	 * @param {boolean} _skipMasks - Whether to skip mask filtering
 	 * @returns {Promise<ImageData>}
 	 */
-	async renderTiffWithSettingsFast(image, rasters, skipMasks = true) {
+	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, _skipMasks = true) {
 		// Redirect to main render method for now to ensure correctness and use centralized ImageRenderer
 		// TODO: Re-implement optimization for skipMasks if needed
 		return this.renderTiffWithSettings(image, rasters);
 	}
 
-	async renderTiff(image, rasters) {
+	async renderTiff(/** @type {any} */ image, /** @type {any} */ rasters) {
 		return this.renderTiffWithSettings(image, rasters);
 	}
 

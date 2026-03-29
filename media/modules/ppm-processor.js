@@ -2,22 +2,31 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
 /**
  * PPM/PGM Processor for TIFF Visualizer
  * Supports PGM (grayscale) and PPM (RGB) portable pixmap files
  * Both ASCII (P2/P3) and binary (P5/P6) formats
  */
 export class PpmProcessor {
+    /**
+     * @param {SettingsManager} settingsManager
+     * @param {VsCodeApi} vscode
+     */
     constructor(settingsManager, vscode) {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
         this._lastRaw = null; // { width, height, data: Uint8Array|Uint16Array, maxval, channels }
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
     }
 
+    /** @param {string} src */
     async processPpm(src) {
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
@@ -55,6 +64,7 @@ export class PpmProcessor {
         return { canvas, imageData };
     }
 
+    /** @param {ArrayBuffer} arrayBuffer */
     _parsePpm(arrayBuffer) {
         const uint8Array = new Uint8Array(arrayBuffer);
         let offset = 0;
@@ -201,9 +211,16 @@ export class PpmProcessor {
 
 
 
+    /**
+     * @param {Uint8Array|Uint16Array} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} maxval
+     * @param {number} [channels]
+     */
     _toImageDataWithNormalization(data, width, height, maxval, channels = 1) {
         const settings = this.settingsManager.settings;
-        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Invalidate cached stats if rgb24 mode changed
@@ -294,7 +311,7 @@ export class PpmProcessor {
         if (width !== naturalWidth || height !== naturalHeight) return '';
 
         const settings = this.settingsManager.settings;
-        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const normalizedFloatMode = settings.normalizedFloatMode;
 
         const idx = y * width + x;
@@ -339,8 +356,13 @@ export class PpmProcessor {
         return '';
     }
 
+    /**
+     * @param {Uint8Array|Uint16Array} data
+     * @param {number} width
+     * @param {number} height
+     */
     _flipImageVertically(data, width, height) {
-        const flipped = new (data.constructor)(data.length);
+        const flipped = /** @type {Uint8Array|Uint16Array} */ (new (/** @type {any} */ (data.constructor))(data.length));
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const srcIdx = y * width + x;

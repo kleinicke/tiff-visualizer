@@ -18,14 +18,23 @@ import { ColormapConverter } from './modules/colormap-converter.js';
  * Orchestrates all modules to provide image viewing functionality
  */
 (function () {
+	/**
+	 * @typedef {{parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} SettingsChanges
+	 * @typedef {{relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number|string}} CopiedPosition
+	 * @typedef {{colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean}} ColormapConversionState
+	 * @typedef {{width?: number, height?: number, samplesPerPixel?: number, bitsPerSample?: number, sampleFormat?: number, formatType?: string, [key: string]: any}} FormatInfo
+	 */
+
 	// @ts-ignore
 	const originalVscode = acquireVsCodeApi();
 
 	// Format info tracking for context menu
+	/** @type {FormatInfo|null} */
 	let currentFormatInfo = null;
 
 	// Wrap vscode.postMessage to track formatInfo
 	const vscode = {
+		/** @param {{type: string, [key: string]: any}} message */
 		postMessage: (message) => {
 			// Track formatInfo when it's sent
 			if (message.type === 'formatInfo' && message.value) {
@@ -57,15 +66,25 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	// Application state
 	let hasLoadedImage = false;
+	/** @type {HTMLCanvasElement|null} */
 	let canvas = null;
+	/** @type {HTMLCanvasElement|null} */
 	let imageElement = null;
+	/** @type {ImageData|null} */
 	let primaryImageData = null;
+	/** @type {ImageData|null} */
 	let peerImageData = null;
+	/** @type {any} */
 	let peerRawTiffData = null;      // Raw TIFF data for peer image (kept separate from primary)
+	/** @type {any} */
 	let peerLastStatistics = null;   // Statistics for peer TIFF image
+	/** @type {any} */
 	let peerRawExrData = null;       // Raw EXR data for peer image
+	/** @type {any} */
 	let peerExrStats = null;         // Cached stats for peer EXR image
+	/** @type {string[]} */
 	let peerImageUris = []; // Track peer URIs for comparison state
+	/** @type {{scale: number|string, [key: string]: any}|null} */
 	let _pendingZoomState = null; // Zoom state to restore after next image load
 	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
 	let isShowingPeer = false;
@@ -74,14 +93,17 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let currentLoadFormat = '';
 
 	// Colormap conversion state
+	/** @type {ColormapConversionState|null} */
 	let colormapConversionState = null;
 
 	// Original image state (for reverting from conversions)
+	/** @type {ImageData|null} */
 	let originalImageData = null;
 	let hasAppliedConversion = false;
 
 	// Copied position state (for paste position feature)
 	// Stores position as relative coordinates (0-1) for cross-resolution compatibility
+	/** @type {CopiedPosition|null} */
 	let copiedPositionState = null;
 
 	// Restore persisted state if available
@@ -151,23 +173,24 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Start loading the image
 		const settings = settingsManager.settings;
-		const resourceUri = settings.resourceUri;
+		const resourceUri = settings.resourceUri ?? '';
 
 		// Load image based on file extension
+		const src = settings.src ?? '';
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
-			handleTiff(settings.src);
+			handleTiff(src);
 		} else if (resourceUri.toLowerCase().endsWith('.exr')) {
-			handleExr(settings.src);
+			handleExr(src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
-			handlePfm(settings.src);
+			handlePfm(src);
 		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
-			handlePpm(settings.src);
+			handlePpm(src);
 		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
-			handlePng(settings.src);
+			handlePng(src);
 		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
-			handleNpy(settings.src);
+			handleNpy(src);
 		} else {
-			image.src = settings.src;
+			image.src = src;
 		}
 
 		// Restore comparison state if we have peer images
@@ -190,17 +213,19 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Restore colormap conversion if it was previously applied
 		if (colormapConversionState) {
+			// Capture in const so TypeScript can narrow through async callbacks
+			const savedColormapState = colormapConversionState;
 			// Wait for image to load, then reapply colormap conversion
 			// Use polling to detect when image is ready to minimize visual flash
 			const checkAndApplyColormap = async () => {
 				if (hasLoadedImage && canvas) {
 					// Apply colormap conversion immediately
 					await handleColormapConversion(
-						colormapConversionState.colormapName,
-						colormapConversionState.minValue,
-						colormapConversionState.maxValue,
-						colormapConversionState.inverted,
-						colormapConversionState.logarithmic
+						savedColormapState.colormapName,
+						savedColormapState.minValue,
+						savedColormapState.maxValue,
+						savedColormapState.inverted,
+						savedColormapState.logarithmic
 					);
 				} else {
 					// Check again in 50ms if not ready yet
@@ -259,25 +284,27 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		zoomController.resetZoom();
 
 		// Load image based on file extension
+		const reloadSrc = settings.src ?? '';
 		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
-			handleTiff(settings.src);
+			handleTiff(reloadSrc);
 		} else if (resourceUri.toLowerCase().endsWith('.exr')) {
-			handleExr(settings.src);
+			handleExr(reloadSrc);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
-			handlePfm(settings.src);
+			handlePfm(reloadSrc);
 		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
-			handlePpm(settings.src);
+			handlePpm(reloadSrc);
 		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
-			handlePng(settings.src);
+			handlePng(reloadSrc);
 		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
-			handleNpy(settings.src);
+			handleNpy(reloadSrc);
 		} else {
-			image.src = settings.src || '';
+			image.src = reloadSrc;
 		}
 	}
 
 	/**
 	 * Helper function to send formatInfo (tracking happens automatically in vscode wrapper)
+	 * @param {object} formatInfo
 	 */
 	function sendFormatInfo(formatInfo) {
 		vscode.postMessage({
@@ -288,6 +315,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Helper to log to VS Code Output
+	 * @param {string} message
 	 */
 	function logToOutput(message) {
 		vscode.postMessage({
@@ -322,7 +350,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		image.addEventListener('load', () => {
 			if (hasLoadedImage) return;
-			onImageLoaded();
+			onLoadSuccess();
 		});
 
 		image.addEventListener('error', () => {
@@ -375,6 +403,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle TIFF file loading
+	 * @param {string} src
+	 * @param {number} [gen]
 	 */
 	async function handleTiff(src, gen = _loadGeneration) {
 		currentLoadFormat = 'TIFF';
@@ -417,6 +447,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle EXR file loading
+	 * @param {string} src
+	 * @param {number} [gen]
 	 */
 	async function handleExr(src, gen = _loadGeneration) {
 		currentLoadFormat = 'EXR';
@@ -452,6 +484,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle PFM file loading
+	 * @param {string} src
+	 * @param {number} [gen]
 	 */
 	async function handlePfm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PFM';
@@ -482,6 +516,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle PPM/PGM file loading
+	 * @param {string} src
+	 * @param {number} [gen]
 	 */
 	async function handlePpm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PPM/PGM';
@@ -512,6 +548,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle PNG/JPEG file loading
+	 * @param {string} src
+	 * @param {number} [gen]
 	 */
 	async function handlePng(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PNG/JPEG';
@@ -542,6 +580,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle NPY/NPZ file loading
+	 * @param {string} src
+	 * @param {number} [gen]
 	 */
 	async function handleNpy(src, gen = _loadGeneration) {
 		currentLoadFormat = 'NPY/NPZ';
@@ -574,6 +614,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Finalize image setup after loading
 	 */
 	function finalizeImageSetup() {
+		if (!imageElement || !canvas) return;
 		// Update all controllers with references
 		zoomController.setImageElement(imageElement);
 		zoomController.setCanvas(canvas);
@@ -664,6 +705,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle messages from VS Code
+	 * @param {{type: string, [key: string]: any}} message
 	 */
 	async function handleVSCodeMessage(message) {
 		switch (message.type) {
@@ -920,6 +962,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		}
 		try {
 			const settings = settingsManager.settings;
+			/** @type {object} */
 			let histogramOptions = {
 				settings: settings
 			};
@@ -1138,7 +1181,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// Clear the raw processor data to prevent re-rendering from original data
 			// After colormap conversion, we want to work with the converted float data
 			tiffProcessor.rawTiffData = null;
-			if (exrProcessor) exrProcessor.rawExrData = null;
+			if (exrProcessor) exrProcessor.rawExrData = undefined;
 			if (npyProcessor) npyProcessor._lastRaw = null;
 			if (ppmProcessor) ppmProcessor._lastRaw = null;
 			if (pfmProcessor) pfmProcessor._lastRaw = null;
@@ -1180,7 +1223,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			console.error('Error during colormap conversion:', error);
 			vscode.postMessage({
 				type: 'error',
-				message: `Colormap conversion failed: ${error.message}`
+				message: `Colormap conversion failed: ${/** @type {any} */ (error).message}`
 			});
 		}
 	}
@@ -1206,7 +1249,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Clear converted data from processors
 			tiffProcessor.rawTiffData = null;
-			if (exrProcessor) exrProcessor.rawExrData = null;
+			if (exrProcessor) exrProcessor.rawExrData = undefined;
 			if (npyProcessor) npyProcessor._lastRaw = null;
 			if (ppmProcessor) ppmProcessor._lastRaw = null;
 			if (pfmProcessor) pfmProcessor._lastRaw = null;
@@ -1227,14 +1270,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			console.error('Error reverting to original image:', error);
 			vscode.postMessage({
 				type: 'error',
-				message: `Failed to revert to original image: ${error.message}`
+				message: `Failed to revert to original image: ${/** @type {any} */ (error).message}`
 			});
 		}
 	}
 
 	/**
 	 * Update image rendering with new settings
-	 * @param {Object} changes - Changed settings
+	 * @param {SettingsChanges|null} [changes] - Changed settings
 	 */
 	async function updateImageWithNewSettings(changes) {
 		if (!canvas || !primaryImageData) {
@@ -1497,7 +1540,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			menu.style.top = `${e.clientY}px`;
 
 			// Helper function to create menu items
-			const createMenuItem = (text, action) => {
+			const createMenuItem = (/** @type {string} */ text, /** @type {() => void} */ action) => {
 				const item = document.createElement('div');
 				item.className = 'context-menu-item';
 				item.textContent = text;
@@ -1541,10 +1584,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Check if image is 8-bit uint RGB for interpretation options
 			const isRgb8BitUint = currentFormatInfo &&
-				currentFormatInfo.samplesPerPixel >= 3 &&
+				(currentFormatInfo.samplesPerPixel ?? 0) >= 3 &&
 				currentFormatInfo.bitsPerSample === 8 &&
 				currentFormatInfo.sampleFormat !== 3; // Not float
-			const isRgbImage = currentFormatInfo && currentFormatInfo.samplesPerPixel >= 3;
+			const isRgbImage = currentFormatInfo && (currentFormatInfo.samplesPerPixel ?? 0) >= 3;
 
 			if (isRgb8BitUint) {
 				menu.appendChild(createSeparator());
@@ -1617,7 +1660,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
 			const plyFormats = ['tiff-float', 'tiff-int', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
-			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType)) {
+			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
 				menu.appendChild(createSeparator());
 				menu.appendChild(createMenuItem('Open as Point Cloud', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openAsPointCloud' });
@@ -1627,8 +1670,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			document.body.appendChild(menu);
 
 			// Remove menu when clicking outside
-			const removeMenu = (event) => {
-				if (!menu.contains(event.target)) {
+			const removeMenu = (/** @type {MouseEvent} */ event) => {
+				if (!menu.contains(/** @type {Node} */ (event.target))) {
 					menu.remove();
 					document.removeEventListener('click', removeMenu);
 				}
@@ -1676,7 +1719,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				peerExrStats = tempExrStats;
 
 				const imageData = isShowingPeer ? peerImageData : primaryImageData;
-				const ctx = canvas.getContext('2d');
+				const ctx = canvas && canvas.getContext('2d');
 				if (ctx && imageData) {
 					await renderImageDataToCanvas(imageData, ctx);
 					updateHistogramData();
@@ -1874,6 +1917,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Update image collection overlay
+	 * @param {{show: boolean, currentIndex: number, totalImages: number}} data
 	 */
 	function updateImageCollectionOverlay(data) {
 		if (!overlayElement) return;
@@ -1900,6 +1944,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
+	 * @param {string} uri
+	 * @param {string} resourceUri
 	 */
 	function switchToNewImage(uri, resourceUri) {
 		// Every switch gets a new generation so any in-flight load from a
@@ -1966,6 +2012,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Load image by type (wrapper function)
+	 * @param {string} uri
+	 * @param {string} resourceUri
+	 * @param {number} gen
 	 */
 	function loadImageByType(uri, resourceUri, gen) {
 		const lower = resourceUri.toLowerCase();
@@ -2090,7 +2139,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// To maintain functionality, `retries` is now defined internally if needed.
 		let retries = 5;
 		if (!document.hasFocus() && retries > 0) {
-			setTimeout(() => { copyImage(retries - 1); }, 20);
+			setTimeout(() => { copyImage(); }, 20);
 			return;
 		}
 
@@ -2192,14 +2241,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			showNotification(`Image${positionInfo} copied to clipboard`, 'success');
 		} catch (e) {
 			console.error('Copy failed:', e);
-			showNotification(`Failed to copy image: ${e.message}`, 'error');
+			showNotification(`Failed to copy image: ${/** @type {any} */ (e).message}`, 'error');
 		}
 	}
 
 	/**
 	 * Paste position from previously copied state
 	 * Scales the position for images of different sizes
-	 * @param {Object} positionState - Position state (from extension for cross-webview, or local)
+	 * @param {CopiedPosition|null} positionState - Position state (from extension for cross-webview, or local)
 	 */
 	function pastePosition(positionState) {
 		// Use provided state (from extension) or fall back to local state
@@ -2237,7 +2286,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			const heightRatio = targetHeight / sourceHeight;
 			const scaleRatio = Math.sqrt(widthRatio * heightRatio);
 			
-			targetScale = state.scale * scaleRatio;
+			targetScale = /** @type {number} */ (state.scale) * scaleRatio;
 			
 			// Clamp to valid zoom range
 			const constants = settingsManager.constants;
@@ -2254,13 +2303,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// Then scroll to center on the target point
 			// We need to wait a tick for the scale to be applied
 			setTimeout(() => {
+				if (!imageElement) return;
 				const rect = imageElement.getBoundingClientRect();
 				const elemLeftDoc = window.scrollX + rect.left;
 				const elemTopDoc = window.scrollY + rect.top;
 				
 				// Calculate where the target center should be in document coordinates
-				const targetDocX = elemLeftDoc + targetCenterX * targetScale;
-				const targetDocY = elemTopDoc + targetCenterY * targetScale;
+				const targetDocX = elemLeftDoc + targetCenterX * /** @type {number} */ (targetScale);
+				const targetDocY = elemTopDoc + targetCenterY * /** @type {number} */ (targetScale);
 				
 				// Scroll to center this point in the viewport
 				const newScrollX = targetDocX - container.clientWidth / 2;
@@ -2305,6 +2355,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	/**
 	 * Handle comparison setup
+	 * @param {string} peerUri
 	 */
 	async function handleStartComparison(peerUri) {
 		try {

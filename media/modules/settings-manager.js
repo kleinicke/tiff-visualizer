@@ -42,6 +42,7 @@
  * @property {boolean} [plyVisualizerInstalled]
  * @property {string} [resourceUri]
  * @property {string} [src]
+ * @property {number} [loadStartTime]
  */
 
 /**

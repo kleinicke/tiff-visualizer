@@ -1,32 +1,55 @@
 // @ts-check
 "use strict";
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+/** @typedef {{r: Uint32Array, g: Uint32Array, b: Uint32Array, luminance: Uint32Array, nanCount: number, stats: {r: {minBin:number,maxBin:number,meanBin:number,total:number}, g: {minBin:number,maxBin:number,meanBin:number,total:number}, b: {minBin:number,maxBin:number,meanBin:number,total:number}, luminance: {minBin:number,maxBin:number,meanBin:number,total:number}}}} HistogramData */
+/** @typedef {{rawData?: ArrayLike<number>|null, planarData?: ArrayLike<number>[]|null, channels?: number, settings?: ImageSettings, isFloat?: boolean, typeMax?: number, stats?: {min:number,max:number}|null, lut?: Uint8Array|null}} HistogramOptions */
+
 /**
  * Histogram Overlay Module
  * Provides interactive histogram visualization for images
  */
 export class HistogramOverlay {
+	/**
+	 * @param {SettingsManager} settingsManager
+	 * @param {VsCodeApi} vscode
+	 */
 	constructor(settingsManager, vscode) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
 
+		/** @type {HTMLDivElement|null} */
 		this.overlay = null;
+		/** @type {HTMLCanvasElement|null} */
 		this.canvas = null;
+		/** @type {CanvasRenderingContext2D|null} */
 		this.ctx = null;
 		this.isVisible = false;
+		/** @type {HistogramData|null} */
 		this.histogramData = null;
 		this.numBins = 256;
-		this.scaleMode = 'sqrt'; // 'linear', 'sqrt'
+		/** @type {'linear' | 'sqrt'} */
+		this.scaleMode = 'sqrt';
 
 		// Value range for bin labeling (set during computation)
 		this.valueRange = { min: 0, max: 255, isFloat: false };
 		// Original value stats (before gamma/brightness transformation)
+		/** @type {{r:{min:number,max:number,mean:number,total:number}, g:{min:number,max:number,mean:number,total:number}, b:{min:number,max:number,mean:number,total:number}}|null} */
 		this.originalStats = null;
 
 		// UI state
 		this.isDragging = false;
 		this.dragOffset = { x: 0, y: 0 };
 		this.hoveredBin = -1;
+
+		/** @type {HTMLDivElement|null} */
+		this.tooltip = null;
+		/** @type {HTMLSpanElement|null} */
+		this.minLabel = null;
+		/** @type {HTMLSpanElement|null} */
+		this.maxLabel = null;
 
 		this.createOverlay();
 	}
@@ -134,9 +157,10 @@ export class HistogramOverlay {
 
 	/**
 	 * Handle mouse move over canvas
+	 * @param {MouseEvent} e
 	 */
 	handleMouseMove(e) {
-		if (!this.histogramData) return;
+		if (!this.histogramData || !this.canvas) return;
 
 		const rect = this.canvas.getBoundingClientRect();
 		const scaleX = this.canvas.width / rect.width;
@@ -168,7 +192,7 @@ export class HistogramOverlay {
 	 */
 	handleMouseLeave() {
 		this.hoveredBin = -1;
-		this.tooltip.style.display = 'none';
+		if (this.tooltip) this.tooltip.style.display = 'none';
 		this.render();
 	}
 
@@ -201,13 +225,18 @@ export class HistogramOverlay {
 
 	/**
 	 * Update tooltip content and position
+	 * @param {number} clientX
+	 * @param {number} clientY
+	 * @param {number} binIndex
 	 */
 	updateTooltip(clientX, clientY, binIndex) {
 		if (!this.histogramData || binIndex < 0) return;
 
-		const rCount = this.histogramData.r[binIndex];
-		const gCount = this.histogramData.g[binIndex];
-		const bCount = this.histogramData.b[binIndex];
+		const rCount = this.histogramData.r[binIndex] ?? 0;
+		const gCount = this.histogramData.g[binIndex] ?? 0;
+		const bCount = this.histogramData.b[binIndex] ?? 0;
+
+		if (!this.tooltip) return;
 
 		// Clear existing content
 		this.tooltip.innerHTML = '';
@@ -248,7 +277,7 @@ export class HistogramOverlay {
 		// Check if image is grayscale (all channels have same count for this bin)
 		const isGrayscale = rCount === gCount && gCount === bCount;
 
-		const createRow = (label, count, color) => {
+		const createRow = (/** @type {string} */ label, /** @type {number} */ count, /** @type {string|null} */ color) => {
 			const div = document.createElement('div');
 			const span = document.createElement('span');
 			if (color) span.style.color = color;
@@ -270,6 +299,7 @@ export class HistogramOverlay {
 		this.tooltip.style.display = 'block';
 
 		// Position tooltip near mouse but keep within viewport
+		if (!this.overlay) return;
 		const overlayRect = this.overlay.getBoundingClientRect();
 		const tooltipX = clientX - overlayRect.left + 10;
 		const tooltipY = clientY - overlayRect.top + 10;
@@ -284,7 +314,7 @@ export class HistogramOverlay {
 	 */
 	show(skipNotification = false) {
 		this.isVisible = true;
-		this.overlay.style.display = 'flex';
+		if (this.overlay) this.overlay.style.display = 'flex';
 		// Trigger computation if we have image data
 		this.vscode.postMessage({ type: 'requestHistogram' });
 		if (!skipNotification) {
@@ -298,7 +328,7 @@ export class HistogramOverlay {
 	 */
 	hide(skipNotification = false) {
 		this.isVisible = false;
-		this.overlay.style.display = 'none';
+		if (this.overlay) this.overlay.style.display = 'none';
 		if (!skipNotification) {
 			this.vscode.postMessage({ type: 'histogramVisibilityChanged', isVisible: false });
 		}
@@ -318,8 +348,8 @@ export class HistogramOverlay {
 	/**
 	 * Toggle between linear and sqrt scale
 	 */
-	toggleScaleMode(button) {
-		const modes = ['linear', 'sqrt'];
+	toggleScaleMode(/** @type {HTMLElement} */ button) {
+		const modes = /** @type {('linear' | 'sqrt')[]} */ (['linear', 'sqrt']);
 		const currentIndex = modes.indexOf(this.scaleMode);
 		this.scaleMode = modes[(currentIndex + 1) % modes.length];
 
@@ -340,7 +370,7 @@ export class HistogramOverlay {
 	 * Generate a Look-Up Table for gamma/brightness transformation.
 	 * Maps input values (0-inputMax) to output bins (0-255).
 	 * This is the same transformation as NormalizationHelper.generateLut.
-	 * @param {Object} settings - Settings with gamma and brightness
+	 * @param {ImageSettings} settings - Settings with gamma and brightness
 	 * @param {number} inputMax - Maximum input value (255, 65535)
 	 * @returns {Uint8Array} LUT mapping input -> output bin
 	 */
@@ -367,7 +397,7 @@ export class HistogramOverlay {
 	/**
 	 * Generate a 16-bit LUT for float data.
 	 * Quantizes float range to 65536 steps and applies gamma/brightness.
-	 * @param {Object} settings - Settings with gamma and brightness  
+	 * @param {ImageSettings} settings - Settings with gamma and brightness
 	 * @returns {Uint8Array} LUT mapping quantized float (0-65535) -> output bin (0-255)
 	 */
 	generateFloatLUT(settings) {
@@ -394,8 +424,8 @@ export class HistogramOverlay {
 	 * OPTIMIZED: Uses LUT for integers, TypedArrays, and inlined processing.
 	 * Processes ALL pixels (no sampling) for exact results.
 	 * 
-	 * @param {ImageData} imageData - Canvas ImageData (fallback if no raw data)
-	 * @param {Object} options - Raw data and settings
+	 * @param {ImageData|null} imageData - Canvas ImageData (fallback if no raw data)
+	 * @param {HistogramOptions} [options]
 	 */
 	computeHistogram(imageData, options = {}) {
 		if (!imageData && !options.rawData && !options.planarData) return null;
@@ -463,6 +493,8 @@ export class HistogramOverlay {
 			// For float, use 16-bit quantization LUT (same as image rendering)
 			lut = this.generateFloatLUT(settings);
 		}
+		// Non-null assertion: lut is only accessed inside useIntegerLUT/useFloatLUT branches above
+		const safeLut = /** @type {Uint8Array} */ (lut);
 		
 		// For float LUT, precompute the quantization scale
 		const floatToLutScale = useFloatLUT ? (65535 / range) : 0;
@@ -485,9 +517,9 @@ export class HistogramOverlay {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
-						histR[lut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
-						histG[lut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
-						histB[lut[Math.max(0, Math.min(intTypeMax, bv | 0))]]++;
+						histR[safeLut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
+						histG[safeLut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
+						histB[safeLut[Math.max(0, Math.min(intTypeMax, bv | 0))]]++;
 						
 						if (rv < origMinR) origMinR = rv;
 						if (rv > origMaxR) origMaxR = rv;
@@ -512,9 +544,9 @@ export class HistogramOverlay {
 						const gIdx = Math.max(0, Math.min(65535, ((gv - normMin) * floatToLutScale) | 0));
 						const bIdx = Math.max(0, Math.min(65535, ((bv - normMin) * floatToLutScale) | 0));
 						
-						histR[lut[rIdx]]++;
-						histG[lut[gIdx]]++;
-						histB[lut[bIdx]]++;
+						histR[safeLut[rIdx]]++;
+						histG[safeLut[gIdx]]++;
+						histB[safeLut[bIdx]]++;
 						
 						if (rv < origMinR) origMinR = rv;
 						if (rv > origMaxR) origMaxR = rv;
@@ -567,9 +599,9 @@ export class HistogramOverlay {
 						const bv = channels > 2 ? rawData[i + 2] : rv;
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
-						histR[lut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
-						histG[lut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
-						histB[lut[Math.max(0, Math.min(intTypeMax, bv | 0))]]++;
+						histR[safeLut[Math.max(0, Math.min(intTypeMax, rv | 0))]]++;
+						histG[safeLut[Math.max(0, Math.min(intTypeMax, gv | 0))]]++;
+						histB[safeLut[Math.max(0, Math.min(intTypeMax, bv | 0))]]++;
 						
 						if (rv < origMinR) origMinR = rv;
 						if (rv > origMaxR) origMaxR = rv;
@@ -597,9 +629,9 @@ export class HistogramOverlay {
 						const gIdx = Math.max(0, Math.min(65535, ((gv - normMin) * floatToLutScale) | 0));
 						const bIdx = Math.max(0, Math.min(65535, ((bv - normMin) * floatToLutScale) | 0));
 						
-						histR[lut[rIdx]]++;
-						histG[lut[gIdx]]++;
-						histB[lut[bIdx]]++;
+						histR[safeLut[rIdx]]++;
+						histG[safeLut[gIdx]]++;
+						histB[safeLut[bIdx]]++;
 						
 						if (rv < origMinR) origMinR = rv;
 						if (rv > origMaxR) origMaxR = rv;
@@ -655,7 +687,7 @@ export class HistogramOverlay {
 				origSumG = origSumB = origSumR;
 				origCountG = origCountB = origCountR;
 			}
-		} else {
+		} else if (imageData) {
 			// Fallback: use 8-bit Canvas ImageData (already transformed)
 			this.valueRange = { min: 0, max: 255, isFloat: false };
 			const data = imageData.data;
@@ -680,7 +712,7 @@ export class HistogramOverlay {
 		}
 
 		// Calculate bin-based stats
-		const calculateBinStats = (hist) => {
+		const calculateBinStats = (/** @type {Uint32Array} */ hist) => {
 			let minBin = 0, maxBin = 255, sum = 0, count = 0;
 			for (let i = 0; i < 256; i++) {
 				if (hist[i] > 0) {
@@ -726,6 +758,8 @@ export class HistogramOverlay {
 
 	/**
 	 * Update histogram with new data
+	 * @param {ImageData|null} imageData
+	 * @param {HistogramOptions} [options]
 	 */
 	update(imageData, options = {}) {
 		this.histogramData = this.computeHistogram(imageData, options);
@@ -738,7 +772,7 @@ export class HistogramOverlay {
 	 * Render the histogram to canvas
 	 */
 	render() {
-		if (!this.histogramData || !this.ctx) return;
+		if (!this.histogramData || !this.ctx || !this.canvas) return;
 
 		const width = this.canvas.width;
 		const height = this.canvas.height;
@@ -787,7 +821,7 @@ export class HistogramOverlay {
 		}
 
 		// Apply scale
-		const scaleValue = (val) => {
+		const scaleValue = (/** @type {number} */ val) => {
 			if (this.scaleMode === 'sqrt') {
 				return Math.sqrt(val); // Square root
 			}
@@ -920,7 +954,7 @@ export class HistogramOverlay {
 		statsEl.innerHTML = '';
 
 		// Helper to format stat values
-		const formatStat = (value) => {
+		const formatStat = (/** @type {number} */ value) => {
 			if (isFloat) {
 				if (Math.abs(value) < 0.001 || Math.abs(value) >= 10000) {
 					return value.toExponential(2);
@@ -934,7 +968,7 @@ export class HistogramOverlay {
 		if (isGrayscale && origStats) {
 			const s = origStats.r;
 
-			const createSpan = (text) => {
+			const createSpan = (/** @type {string} */ text) => {
 				const span = document.createElement('span');
 				span.textContent = text;
 				return span;
@@ -945,7 +979,7 @@ export class HistogramOverlay {
 			statsEl.appendChild(createSpan(`Mean: ${formatStat(s.mean)}`));
 		} else if (origStats) {
 			// Show RGB stats in original values
-			const createStatSpan = (label, stat, color) => {
+			const createStatSpan = (/** @type {string} */ label, /** @type {{min:number,max:number,mean:number}} */ stat, /** @type {string} */ color) => {
 				const span = document.createElement('span');
 				span.style.color = color;
 				span.textContent = `${label}: ${formatStat(stat.min)}-${formatStat(stat.max)} (μ=${formatStat(stat.mean)})`;
@@ -958,7 +992,7 @@ export class HistogramOverlay {
 		} else {
 			// Fallback to bin-based stats (when no raw data available)
 			const stats = this.histogramData.stats;
-			const createStatSpan = (label, stat, color) => {
+			const createStatSpan = (/** @type {string} */ label, /** @type {{minBin:number,maxBin:number}} */ stat, /** @type {string} */ color) => {
 				const span = document.createElement('span');
 				span.style.color = color;
 				span.textContent = `${label}: ${stat.minBin}-${stat.maxBin}`;
@@ -999,6 +1033,7 @@ export class HistogramOverlay {
 		statsEl.style.color = isDarkTheme ? '#ffffff' : '#000000';
 
 		// Smart positioning
+		if (!this.overlay) return;
 		const overlayRect = this.overlay.getBoundingClientRect();
 		const windowWidth = window.innerWidth;
 
@@ -1049,7 +1084,8 @@ export class HistogramOverlay {
 	/**
 	 * Start dragging the overlay
 	 */
-	startDrag(e) {
+	startDrag(/** @type {MouseEvent} */ e) {
+		if (!this.overlay) return;
 		const rect = this.overlay.getBoundingClientRect();
 		this.isDragging = true;
 		this.dragOffset = {
@@ -1057,8 +1093,8 @@ export class HistogramOverlay {
 			y: e.clientY - rect.top
 		};
 
-		const onMouseMove = (e) => {
-			if (!this.isDragging) return;
+		const onMouseMove = (/** @type {MouseEvent} */ e) => {
+			if (!this.isDragging || !this.overlay) return;
 
 			const x = e.clientX - this.dragOffset.x;
 			const y = e.clientY - this.dragOffset.y;

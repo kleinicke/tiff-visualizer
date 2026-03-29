@@ -30,6 +30,7 @@ export class PngProcessor {
         this._lastRaw = null;
         this._pendingRenderData = null; // Store data waiting for format-specific settings
         this._isInitialLoad = true; // Track if this is the first render
+        /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
     }
@@ -266,9 +267,10 @@ export class PngProcessor {
         if (this._cachedStatsRgb24Mode !== rgbAs24BitMode) {
             this._cachedStats = undefined;
         }
+        /** @type {{min:number,max:number}|undefined} */
         let stats = this._cachedStats;
         if (!stats && !isGammaMode) {
-            stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, rgbAs24BitMode);
+            stats = ImageStatsCalculator.calculateIntegerStats(/** @type {any} */ (data), width, height, channels, rgbAs24BitMode);
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
             if (this.vscode) {

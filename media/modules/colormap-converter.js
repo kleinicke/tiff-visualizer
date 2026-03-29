@@ -12,6 +12,7 @@ export class ColormapConverter {
 	/**
 	 * Initialize colormap lookup tables
 	 * Each colormap is an array of 256 [r, g, b] values
+	 * @returns {{[key: string]: number[][]}}
 	 */
 	initializeColormaps() {
 		return {
@@ -104,7 +105,7 @@ export class ColormapConverter {
 	 * @param {number} r - Red value (0-255)
 	 * @param {number} g - Green value (0-255)
 	 * @param {number} b - Blue value (0-255)
-	 * @param {Array} colormap - Colormap lookup table
+	 * @param {number[][]} colormap - Colormap lookup table
 	 * @returns {number} Index of closest color (0-255)
 	 */
 	findClosestColormapIndex(r, g, b, colormap) {

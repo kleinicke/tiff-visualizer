@@ -2,6 +2,10 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
 /**
  * Convert IEEE 754 half-precision (float16) to single-precision (float32)
  * @param {number} uint16 - The 16-bit representation
@@ -33,6 +37,10 @@ function float16ToFloat32(uint16) {
  * Parses NumPy .npy and .npz files and renders them to ImageData
  */
 export class NpyProcessor {
+    /**
+     * @param {SettingsManager} settingsManager
+     * @param {VsCodeApi} vscode
+     */
     constructor(settingsManager, vscode) {
         this.settingsManager = settingsManager;
         this.vscode = vscode;
@@ -44,6 +52,7 @@ export class NpyProcessor {
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
     }
 
+    /** @param {string} src */
     async processNpy(src) {
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
@@ -99,6 +108,7 @@ export class NpyProcessor {
         return { canvas, imageData };
     }
 
+    /** @param {ArrayBuffer} arrayBuffer */
     _parseNpy(arrayBuffer) {
         const view = new DataView(arrayBuffer);
         // Magic '\x93NUMPY'
@@ -202,9 +212,11 @@ export class NpyProcessor {
         return { data, width, height, dtype, showNorm, channels };
     }
 
+    /** @param {ArrayBuffer} arrayBuffer */
     _parseNpz(arrayBuffer) {
         const view = new DataView(arrayBuffer);
         let offset = 0;
+        /** @type {{[key: string]: any}} */
         const arrays = {};
         while (offset < arrayBuffer.byteLength - 4) {
             const sig = view.getUint32(offset, true);
@@ -231,10 +243,15 @@ export class NpyProcessor {
         return { data: a.data, width: a.width, height: a.height, dtype: a.dtype, showNorm: a.showNorm, channels: a.channels };
     }
 
+    /**
+     * @param {Float32Array} data
+     * @param {number} width
+     * @param {number} height
+     */
     _toImageDataFloat(data, width, height) {
         const channels = this._lastRaw?.channels || 1;
         const settings = this.settingsManager.settings;
-        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const dtype = this._lastRaw?.dtype || 'f4';
         const isFloat = dtype.includes('f');
         const isGammaMode = settings.normalization?.gammaMode || false;
@@ -250,7 +267,7 @@ export class NpyProcessor {
             if (isFloat) {
                 stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             } else {
-                stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, rgbAs24BitMode);
+                stats = ImageStatsCalculator.calculateIntegerStats(/** @type {any} */ (data), width, height, channels, rgbAs24BitMode);
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
@@ -301,6 +318,12 @@ export class NpyProcessor {
         return this._toImageDataFloat(data, width, height);
     }
 
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @param {number} naturalWidth
+     * @param {number} naturalHeight
+     */
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
         const { width, height, data, channels, dtype } = this._lastRaw;
@@ -308,7 +331,7 @@ export class NpyProcessor {
 
         const pixelIdx = y * width + x;
         const settings = this.settingsManager.settings;
-        const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels === 3;
+        const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const normalizedFloatMode = settings.normalizedFloatMode;
 
         if (rgbAs24BitMode) {
@@ -330,7 +353,7 @@ export class NpyProcessor {
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
             if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
-                const formatNumber = (n) => {
+                const formatNumber = (/** @type {number} */ n) => {
                     // Use fixed decimal notation to avoid scientific notation
                     // Show up to 6 decimal places, but remove trailing zeros
                     return parseFloat(n.toFixed(6)).toString();
@@ -345,7 +368,7 @@ export class NpyProcessor {
             const b = data[srcIdx + 2];
             const a = data[srcIdx + 3];
             if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && Number.isFinite(a)) {
-                const formatNumber = (n) => {
+                const formatNumber = (/** @type {number} */ n) => {
                     // Use fixed decimal notation to avoid scientific notation
                     // Show up to 6 decimal places, but remove trailing zeros
                     return parseFloat(n.toFixed(6)).toString();
@@ -356,7 +379,7 @@ export class NpyProcessor {
             // Grayscale data
             const value = data[pixelIdx];
             if (Number.isFinite(value)) {
-                const formatNumber = (n) => {
+                const formatNumber = (/** @type {number} */ n) => {
                     // Use fixed decimal notation to avoid scientific notation
                     // Show up to 6 decimal places, but remove trailing zeros
                     return parseFloat(n.toFixed(6)).toString();
@@ -470,7 +493,7 @@ export class NpyProcessor {
 
     /**
      * Get NaN color from settings
-     * @param {Object} settings
+     * @param {ImageSettings} settings
      * @returns {{r: number, g: number, b: number}}
      */
     _getNanColor(settings) {

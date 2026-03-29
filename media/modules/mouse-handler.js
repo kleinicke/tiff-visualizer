@@ -1,11 +1,19 @@
 // @ts-check
 "use strict";
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
 /**
  * Mouse Handler Module
  * Handles mouse interactions, pixel reading, and cursor state
  */
 export class MouseHandler {
+	/**
+	 * @param {SettingsManager} settingsManager
+	 * @param {VsCodeApi} vscode
+	 * @param {any} tiffProcessor
+	 */
 	constructor(settingsManager, vscode, tiffProcessor) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
@@ -37,11 +45,11 @@ export class MouseHandler {
 		this.imageElement = element;
 	}
 
-	setExrProcessor(proc) { this.exrProcessor = proc; }
-	setNpyProcessor(proc) { this.npyProcessor = proc; }
-	setPfmProcessor(proc) { this.pfmProcessor = proc; }
-	setPpmProcessor(proc) { this.ppmProcessor = proc; }
-	setPngProcessor(proc) { this.pngProcessor = proc; }
+	/** @param {any} proc */ setExrProcessor(proc) { this.exrProcessor = proc; }
+	/** @param {any} proc */ setNpyProcessor(proc) { this.npyProcessor = proc; }
+	/** @param {any} proc */ setPfmProcessor(proc) { this.pfmProcessor = proc; }
+	/** @param {any} proc */ setPpmProcessor(proc) { this.ppmProcessor = proc; }
+	/** @param {any} proc */ setPngProcessor(proc) { this.pngProcessor = proc; }
 
 	/**
 	 * Set active state
@@ -79,7 +87,7 @@ export class MouseHandler {
 	 * Handle mouse enter event
 	 * @private
 	 */
-	_handleMouseEnter(e) {
+	_handleMouseEnter(/** @type {MouseEvent} */ e) {
 		if (!this.imageElement) return;
 		const pixelInfo = this._getPixelInfo(e);
 		if (pixelInfo) {
@@ -93,7 +101,7 @@ export class MouseHandler {
 	 * Handle mouse move event
 	 * @private
 	 */
-	_handleMouseMove(e) {
+	_handleMouseMove(/** @type {MouseEvent} */ e) {
 		if (!this.imageElement) return;
 		const pixelInfo = this._getPixelInfo(e);
 		if (pixelInfo) {
@@ -107,7 +115,7 @@ export class MouseHandler {
 	 * Handle mouse leave event
 	 * @private
 	 */
-	_handleMouseLeave(e) {
+	_handleMouseLeave(/** @type {MouseEvent} */ _e) {
 		this.vscode.postMessage({
 			type: 'pixelBlur'
 		});
@@ -117,7 +125,7 @@ export class MouseHandler {
 	 * Get pixel information at mouse position
 	 * @private
 	 */
-	_getPixelInfo(e) {
+	_getPixelInfo(/** @type {MouseEvent} */ e) {
 		if (!this.imageElement) return '';
 
 		const rect = this.imageElement.getBoundingClientRect();
@@ -173,7 +181,7 @@ export class MouseHandler {
 	 * Get color at specific pixel coordinates
 	 * @private
 	 */
-	_getColorAtPixel(x, y, naturalWidth, naturalHeight) {
+	_getColorAtPixel(/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ naturalWidth, /** @type {number} */ naturalHeight) {
 		// Check if we should show modified values
 		// ONLY allow showing modified values if we are in Gamma Mode
 		const isGammaMode = this.settingsManager.settings.normalization && this.settingsManager.settings.normalization.gammaMode;
@@ -324,7 +332,7 @@ export class MouseHandler {
 	 * Parse TIFF color string to array of values
 	 * @private
 	 * @param {string} colorStr - Color string from TIFF processor
-	 * @returns {Array<number>|null} - Array of numeric values or null
+	 * @returns {number[]|null} - Array of numeric values or null
 	 */
 	_parseTiffColor(colorStr) {
 		try {
@@ -334,7 +342,7 @@ export class MouseHandler {
 				const num = parseFloat(p);
 				return isNaN(num) ? null : num;
 			});
-			return values.every(v => v !== null) ? values : null;
+			return values.every(v => v !== null) ? /** @type {number[]} */ (values) : null;
 		} catch (e) {
 			return null;
 		}
@@ -345,7 +353,7 @@ export class MouseHandler {
 	 * Handles formats like: "1.234 2.345 3.456" or "1.234 2.345 3.456 A:4.567" or "NaN Inf -Inf"
 	 * @private
 	 * @param {string} colorStr - Color string
-	 * @returns {Array<number>|null} - Array of numeric values or null
+	 * @returns {number[]|null} - Array of numeric values or null
 	 */
 	_parseFloatColor(colorStr) {
 		try {
@@ -361,7 +369,7 @@ export class MouseHandler {
 				const num = parseFloat(cleanPart);
 				return isNaN(num) && cleanPart !== 'NaN' ? null : num;
 			});
-			return values.every(v => v !== null) ? values : null;
+			return values.every(v => v !== null) ? /** @type {number[]} */ (values) : null;
 		} catch (e) {
 			return null;
 		}
@@ -371,7 +379,7 @@ export class MouseHandler {
 	 * Parse integer color string to array of values (0-255)
 	 * @private
 	 * @param {string} colorStr - Color string like "255 128 64"
-	 * @returns {Array<number>|null} - Array of numeric values or null
+	 * @returns {number[]|null} - Array of numeric values or null
 	 */
 	_parseIntColor(colorStr) {
 		try {
@@ -381,7 +389,7 @@ export class MouseHandler {
 				const num = parseInt(p, 10);
 				return isNaN(num) ? null : num;
 			});
-			return values.every(v => v !== null) ? values : null;
+			return values.every(v => v !== null) ? /** @type {number[]} */ (values) : null;
 		} catch (e) {
 			return null;
 		}
@@ -427,7 +435,7 @@ export class MouseHandler {
 	 * Handle key down events
 	 * @private
 	 */
-	_handleKeyDown(e) {
+	_handleKeyDown(/** @type {KeyboardEvent} */ e) {
 		if (!this.imageElement) return;
 
 		if (e.key === 'Control') {
@@ -443,7 +451,7 @@ export class MouseHandler {
 	 * Handle key up events
 	 * @private
 	 */
-	_handleKeyUp(e) {
+	_handleKeyUp(/** @type {KeyboardEvent} */ e) {
 		if (!this.imageElement) return;
 
 		if (e.key === 'Control') {

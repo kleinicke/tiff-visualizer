@@ -8,12 +8,14 @@
  * It can be used as a drop-in replacement for geotiff.js for faster loading.
  */
 
+/** @type {any} */
 let wasmModule = null;
+/** @type {Promise<any>|null} */
 let wasmInitPromise = null;
 
 /**
  * Initialize the WASM module
- * @returns {Promise\u003cany\u003e}
+ * @returns {Promise<any>}
  */
 async function initWasm() {
     if (wasmModule) {
@@ -71,7 +73,7 @@ export class TiffWasmProcessor {
 
     /**
      * Initialize the WASM module
-     * @returns {Promise\u003cboolean\u003e} - True if WASM loaded, false if falling back to JS
+     * @returns {Promise<boolean>} - True if WASM loaded, false if falling back to JS
      */
     async init() {
         this.wasm = await initWasm();
@@ -89,7 +91,7 @@ export class TiffWasmProcessor {
     /**
      * Decode a TIFF file from an ArrayBuffer
      * @param {ArrayBuffer} buffer - TIFF file data
-     * @returns {Promise\u003cTiffDecodeResult\u003e}
+     * @returns {Promise<TiffDecodeResult>}
      */
     async decode(buffer) {
         if (!this.wasm) {

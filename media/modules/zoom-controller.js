@@ -1,11 +1,18 @@
 // @ts-check
 "use strict";
 
+/** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
+/** @typedef {{postMessage: (msg: any) => any, getState: () => any, setState: (s: any) => void}} VsCodeApi */
+
 /**
  * Zoom Controller Module
  * Handles zoom, scale, pan, and viewport management
  */
 export class ZoomController {
+	/**
+	 * @param {SettingsManager} settingsManager
+	 * @param {VsCodeApi} vscode
+	 */
 	constructor(settingsManager, vscode) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
@@ -72,7 +79,7 @@ export class ZoomController {
 			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
 		} else {
 			const oldScale = this.scale;
-			this.scale = this._clamp(newScale, constants.MIN_SCALE, constants.MAX_SCALE);
+			this.scale = this._clamp(/** @type {number} */ (newScale), constants.MIN_SCALE, constants.MAX_SCALE);
 			if (this.scale >= constants.PIXELATION_THRESHOLD) {
 				this.imageElement.classList.add('pixelated');
 			} else {
@@ -271,6 +278,7 @@ export class ZoomController {
 	/**
 	 * Restore zoom state after image switching
 	 */
+	/** @param {any} state */
 	restoreState(state) {
 		if (state && state.scale !== undefined) {
 			this.updateScale(state.scale);
@@ -287,6 +295,11 @@ export class ZoomController {
 	/**
 	 * Clamp a value between min and max
 	 * @private
+	 */
+	/**
+	 * @param {number} value
+	 * @param {number} min
+	 * @param {number} max
 	 */
 	_clamp(value, min, max) {
 		return Math.min(Math.max(value, min), max);
