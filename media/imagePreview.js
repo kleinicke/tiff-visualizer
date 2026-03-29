@@ -1628,8 +1628,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			menu.appendChild(createSeparator());
 
-			// Add Image to Collection option
-			menu.appendChild(createMenuItem('Add Image to Collection...', () => {
+			// Add Images to Collection option
+			menu.appendChild(createMenuItem('Add Images to Collection', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
 			}));
 
@@ -1794,6 +1794,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			const close = () => {
 				if (!input.isConnected) return;
 				activeCounterInput = null;
+				counterEl.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
 				input.replaceWith(counterEl);
 			};
 

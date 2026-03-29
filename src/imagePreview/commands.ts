@@ -1333,7 +1333,7 @@ export function registerImagePreviewCommands(
 					logCommand('browseAndAddToCollection', 'success', `duplicate: ${resource.fsPath}`);
 				}
 			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to add image to collection: ${error}`);
+				vscode.window.showErrorMessage(`Failed to add images to collection: ${error}`);
 				logCommand('browseAndAddToCollection', 'error', String(error));
 			}
 			return;

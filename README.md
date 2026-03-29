@@ -8,14 +8,15 @@ Additionally it allows for brightness and gamma corrections and offers a color v
 
 ## Features
 
-- **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types. Also supports compressed TIFF images using Deflate or LZW with predictors.
+- **Advanced TIFF Support**: Opens and displays complex TIFF files, including those with multiple channels and floating-point data types. Also supports compressed TIFF images using Deflate or LZW with predictors using a rust implementation with geoTIFF as fallback.
 - **Additional files Support**: Support for exr, npy, png, jpg, ppm, pfm and pgm images with uint8/16 and float16/32 support for bw, rgb and rgba images.
 - **Interactive Pixel Inspection**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.
-- **Add image to collection**: For fast skipping through images and easier comparison. Use wildcards to load multiple at once.
+- **Add images to collection**: For fast skipping through images and easier comparison. Use wildcards to load multiple at once.
 - **Dynamic Normalization**: Interactively adjust the normalization range for floating-point images to reveal hidden details or choose automatic normalization.
 - **Gamma and Brightness Correction**: Add or remove gamma correction for an image. To change brightness, the source gamma correction is removed, the brightness change (2\*\*Change) is multiplied in linear space onto the image, and the target gamma correction is applied.
 - **Keep All Settings for Session**: A single VS Code Window keeps the settings applied on one image for all images.
 - **Export as PNG**: Export the image, with the chosen image visualization as PNG for easy sharing.
+- **Right click menu**: Many options and settings of the extension are available through a right click menu or through clicking on the elements in the status bar.
 
 Float Image Visualization Options:
 ![float-options](assets/tiffVisualizerFloatOptions.png)

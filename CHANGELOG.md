@@ -1,10 +1,9 @@
 # Change Log
 
-## 1.6.0
+## 1.6.0 (2026-03-30)
 
 - Add option to add multiple files to collection
 - Stabilize quick switching between images
--
 
 ## 1.5.0 (2025-12-01)
 
