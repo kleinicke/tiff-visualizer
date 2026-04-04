@@ -1577,6 +1577,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 			menu.appendChild(createSeparator());
 
+			// Add Images to Collection option
+			menu.appendChild(createMenuItem('Add Images to Collection', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
+			}));
+
+			menu.appendChild(createSeparator());
+
 			// Add Toggle Histogram option (triggers command via extension for logging)
 			menu.appendChild(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
@@ -1625,13 +1632,6 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
 			}));
 
-
-			menu.appendChild(createSeparator());
-
-			// Add Images to Collection option
-			menu.appendChild(createMenuItem('Add Images to Collection', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
-			}));
 
 			menu.appendChild(createSeparator());
 

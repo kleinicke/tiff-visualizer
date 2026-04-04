@@ -209,6 +209,7 @@ export class PngProcessor {
                         bitDepth: 8,
                         maxValue: 255,
                         isRgbaFormat: true,  // Fallback path stores RGBA format from getImageData
+                        hasAlpha,            // Whether the image actually has a meaningful alpha channel
                         originalImageData: imageData // Store for zero-copy fast path
                     };
 
@@ -320,7 +321,7 @@ export class PngProcessor {
      */
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
         if (!this._lastRaw) return '';
-        const { width, height, data, channels, bitDepth, maxValue } = this._lastRaw;
+        const { width, height, data, channels, bitDepth, maxValue, hasAlpha } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
 
         const pixelIdx = y * width + x;
@@ -367,7 +368,7 @@ export class PngProcessor {
                     const scaleFactor = settings.scale24BitFactor || 1000;
                     const scaledValue = (combined24bit / scaleFactor).toFixed(3);
 
-                    if (channels === 4) {
+                    if (channels === 4 && hasAlpha !== false) {
                         const maxVal = bitDepth === 16 ? 65535 : 255;
                         const a = data[dataIdx + 3];
                         return `${scaledValue} α:${(a / maxVal).toFixed(2)}`;
@@ -377,7 +378,9 @@ export class PngProcessor {
                 }
 
                 // Normal mode - show RGB values
-                if (channels === 3) {
+                // hasAlpha=false means native API returned RGBA but image has no real alpha
+                const showAlpha = channels === 4 && hasAlpha !== false;
+                if (!showAlpha) {
                     if (bitDepth === 16) {
                         return `${r} ${g} ${b}`;
                     } else {

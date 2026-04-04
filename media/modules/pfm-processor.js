@@ -126,7 +126,7 @@ export class PfmProcessor {
             true, // isFloat (float32)
             stats || { min: 0, max: 1 },
             settings,
-            {} // No special options for PFM
+            { nanColor: this._getNanColor(settings) }
         );
     }
 
@@ -168,6 +168,18 @@ export class PfmProcessor {
             return formatValue(value);
         }
         return '';
+    }
+
+    /**
+     * @param {any} settings
+     * @returns {{r: number, g: number, b: number}}
+     */
+    _getNanColor(settings) {
+        if (settings.nanColor === 'fuchsia') {
+            return { r: 255, g: 0, b: 255 };
+        } else {
+            return { r: 0, g: 0, b: 0 };
+        }
     }
 
     /**
