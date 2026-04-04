@@ -558,7 +558,7 @@ export function registerImagePreviewCommands(
 			canSelectFolders: false,
 			canSelectMany: false,
 			filters: {
-				'Images': ['tif', 'tiff', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp']
+				'Images': ['tif', 'tiff', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'avif', 'tga', 'hdr', 'exr', 'ppm']
 			},
 			title: 'Select Comparison Image'
 		});
@@ -1325,7 +1325,7 @@ export function registerImagePreviewCommands(
 			canSelectFolders: false,
 			canSelectMany: false,
 			filters: {
-				'Images': ['tif', 'tiff', 'exr', 'pfm', 'ppm', 'pgm', 'pbm', 'npy', 'npz', 'png', 'jpg', 'jpeg']
+				'Images': ['tif', 'tiff', 'exr', 'pfm', 'ppm', 'pgm', 'pbm', 'npy', 'npz', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico']
 			},
 			title: 'Select Overlay Image',
 			openLabel: 'Select'

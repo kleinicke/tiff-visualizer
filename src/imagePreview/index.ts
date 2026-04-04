@@ -67,6 +67,12 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		supportsMultipleEditorsPerDocument: true,
 	}));
 
+	// Register the option custom editor provider for new formats
+	const viewTypeOption = `${viewType}.option`;
+	disposables.push(vscode.window.registerCustomEditorProvider(viewTypeOption, previewManager, {
+		supportsMultipleEditorsPerDocument: true,
+	}));
+
 	// Register commands
 	disposables.push(registerImagePreviewCommands(context, previewManager, sizeStatusBarEntry, binarySizeStatusBarEntry));
 

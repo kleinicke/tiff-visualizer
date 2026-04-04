@@ -13,8 +13,13 @@ export class MouseHandler {
 		this.exrProcessor = null;
 		this.npyProcessor = null;
 		this.pfmProcessor = null;
+		this.hdrProcessor = null;
 		this.ppmProcessor = null;
 		this.pngProcessor = null;
+		this.tgaProcessor = null;
+		this.webImageProcessor = null;
+		this.jxlProcessor = null;
+		this.rawProcessor = null;
 
 		// State
 		this.ctrlPressed = false;
@@ -40,8 +45,13 @@ export class MouseHandler {
 	setExrProcessor(proc) { this.exrProcessor = proc; }
 	setNpyProcessor(proc) { this.npyProcessor = proc; }
 	setPfmProcessor(proc) { this.pfmProcessor = proc; }
+	setHdrProcessor(proc) { this.hdrProcessor = proc; }
 	setPpmProcessor(proc) { this.ppmProcessor = proc; }
 	setPngProcessor(proc) { this.pngProcessor = proc; }
+	setTgaProcessor(proc) { this.tgaProcessor = proc; }
+	setWebImageProcessor(proc) { this.webImageProcessor = proc; }
+	setJxlProcessor(proc) { this.jxlProcessor = proc; }
+	setRawProcessor(proc) { this.rawProcessor = proc; }
 
 	/**
 	 * Set blended overlay data
@@ -321,6 +331,26 @@ export class MouseHandler {
 				}
 				return v;
 			}
+		}
+		if (this.tgaProcessor) {
+			const v = this.tgaProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
+		}
+		if (this.webImageProcessor) {
+			const v = this.webImageProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
+		}
+		if (this.hdrProcessor) {
+			const v = this.hdrProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
+		}
+		if (this.jxlProcessor) {
+			const v = this.jxlProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
+		}
+		if (this.rawProcessor) {
+			const v = this.rawProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) return v;
 		}
 
 		// Fallback to canvas pixel reading for standard images

@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'exr-float' | 'pfm' | 'npy-float' | 'npy-uint';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'exr-float' | 'pfm' | 'npy-float' | 'npy-uint' | 'hdr' | 'tga' | 'webimage';
 
 export interface ImageStats {
 	min: number;
@@ -320,15 +320,15 @@ export class AppStateManager {
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
-		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg') {
+		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webimage') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;
 			defaults.normalization.max = 1; // Will be overridden by webview based on bit depth
 		}
-		// Rule 2: Float images (TIFF, PFM) → Gamma mode with 0-1 range
+		// Rule 2: Float images (TIFF, PFM, HDR) → Gamma mode with 0-1 range
 		// (These are typically images stored as floats, expected in 0-1 range)
-		else if (format === 'tiff-float' || format === 'pfm') {
+		else if (format === 'tiff-float' || format === 'pfm' || format === 'hdr') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;

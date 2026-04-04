@@ -30,6 +30,7 @@ export interface IImagePreview {
 	zoomIn(): void;
 	zoomOut(): void;
 	copyImage(): void;
+	pastePosition(): void;
 	resetZoom(): void;
 	exportAsPng(): Promise<string | undefined>;
 	startComparison(peerUri: vscode.Uri): void;

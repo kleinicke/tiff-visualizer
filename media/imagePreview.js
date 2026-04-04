@@ -7,7 +7,12 @@ import { ExrProcessor } from './modules/exr-processor.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
+import { HdrProcessor } from './modules/hdr-processor.js';
 import { PngProcessor } from './modules/png-processor.js';
+import { TgaProcessor } from './modules/tga-processor.js';
+import { WebImageProcessor } from './modules/web-image-processor.js';
+import { JxlProcessor } from './modules/jxl-processor.js';
+import { RawProcessor } from './modules/raw-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
@@ -43,19 +48,29 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 	// Initialize all modules
 	const settingsManager = new SettingsManager();
 	const tiffProcessor = new TiffProcessor(settingsManager, vscode);
+	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
+	const rawProcessor = new RawProcessor(settingsManager, vscode);
 	const exrProcessor = new ExrProcessor(settingsManager, vscode);
+	const hdrProcessor = new HdrProcessor(settingsManager, vscode);
 	const zoomController = new ZoomController(settingsManager, vscode);
 	const mouseHandler = new MouseHandler(settingsManager, vscode, tiffProcessor);
 	const npyProcessor = new NpyProcessor(settingsManager, vscode);
 	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
 	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
 	const pngProcessor = new PngProcessor(settingsManager, vscode);
+	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
+	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
 	mouseHandler.setPpmProcessor(ppmProcessor);
+	mouseHandler.setHdrProcessor(hdrProcessor);
 	mouseHandler.setPngProcessor(pngProcessor);
+	mouseHandler.setTgaProcessor(tgaProcessor);
+	mouseHandler.setWebImageProcessor(webImageProcessor);
+	mouseHandler.setJxlProcessor(jxlProcessor);
+	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 
 	// Application state
@@ -133,7 +148,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 	 */
 	function initialize() {
 		initialLoadStartTime = performance.now();
-		// Get the extension start time from settings (for total elapsed measurement)
+		// @ts-ignore Let TypeScript bypass the missing property check in JS
 		extensionLoadStartTime = settingsManager.settings.loadStartTime || 0;
 		setupImageLoading();
 		setupMessageHandling();
@@ -166,8 +181,18 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			handleExr(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
 			handlePfm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.hdr')) {
+			handleHdr(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
 			handlePpm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.tga')) {
+			handleTga(settings.src);
+		} else if (resourceUri.toLowerCase().match(/\.(webp|avif|bmp|ico)$/)) {
+			handleWebImage(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
+			handleJxl(settings.src);
+		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|nef|arw|raf|rw2)$/)) {
+			handleRaw(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
 			handlePng(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
@@ -268,8 +293,18 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			handleTiff(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
 			handlePfm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.hdr')) {
+			handleHdr(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
 			handlePpm(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.tga')) {
+			handleTga(settings.src);
+		} else if (resourceUri.toLowerCase().match(/\.(webp|avif|bmp|ico)$/)) {
+			handleWebImage(settings.src);
+		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
+			handleJxl(settings.src);
+		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|nef|arw|raf|rw2)$/)) {
+			handleRaw(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
 			handlePng(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
@@ -467,6 +502,36 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 	}
 
 	/**
+	 * Handle HDR file loading
+	 */
+	async function handleHdr(src, gen = _loadGeneration) {
+		currentLoadFormat = 'HDR';
+		try {
+			const result = await hdrProcessor.processHdr(src);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+
+			if (!hdrProcessor._pendingRenderData) {
+				const endTime = performance.now();
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] HDR Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+			}
+		} catch (error) {
+			console.error('Error handling HDR:', error);
+			onImageError();
+		}
+	}
+
+	/**
 	 * Handle PPM/PGM file loading
 	 */
 	async function handlePpm(src, gen = _loadGeneration) {
@@ -493,6 +558,110 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 		} catch (error) {
 			console.error('Error handling PPM/PGM:', error);
 			onImageError();
+		}
+	}
+
+	async function handleTga(src, gen = _loadGeneration) {
+		currentLoadFormat = 'TGA';
+		try {
+			const result = await tgaProcessor.processTga(src);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+
+			if (!tgaProcessor._pendingRenderData) {
+				vscode.postMessage({ type: 'ready' });
+			}
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error('Failed to load TGA image:', error);
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			vscode.postMessage({ type: 'error', value: `Failed to load TGA image: ${errorMessage}` });
+		}
+	}
+
+	async function handleWebImage(src, gen = _loadGeneration) {
+		currentLoadFormat = 'Web Image';
+		try {
+			const result = await webImageProcessor.processWebImage(src);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+
+			if (!webImageProcessor._pendingRenderData) {
+				vscode.postMessage({ type: 'ready' });
+			}
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error('Failed to load Web Image:', error);
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			vscode.postMessage({ type: 'error', value: `Failed to load Web Image: ${errorMessage}` });
+		}
+	}
+
+	async function handleJxl(src, gen = _loadGeneration) {
+		currentLoadFormat = 'JXL';
+		try {
+			const result = await jxlProcessor.processJxl(src, settingsManager.settings.baseUri || '');
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+
+			if (!jxlProcessor._pendingRenderData) {
+				vscode.postMessage({ type: 'ready' });
+			}
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error('Failed to load JXL image:', error);
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			vscode.postMessage({ type: 'error', value: `Failed to load JXL image: ${errorMessage}` });
+		}
+	}
+
+	async function handleRaw(src, gen = _loadGeneration) {
+		currentLoadFormat = 'RAW';
+		try {
+			const result = await rawProcessor.processRaw(src, settingsManager.settings.baseUri || '');
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			finalizeImageSetup();
+
+			if (!rawProcessor._pendingRenderData) {
+				vscode.postMessage({ type: 'ready' });
+			}
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error('Failed to load RAW image:', error);
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			vscode.postMessage({ type: 'error', value: `Failed to load RAW image: ${errorMessage}` });
 		}
 	}
 
@@ -693,6 +862,16 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 						deferredImageData = ppmProcessor.performDeferredRender();
 					} else if (pfmProcessor._pendingRenderData) {
 						deferredImageData = pfmProcessor.performDeferredRender();
+					} else if (hdrProcessor._pendingRenderData) {
+						deferredImageData = hdrProcessor.performDeferredRender();
+					} else if (tgaProcessor._pendingRenderData) {
+						deferredImageData = tgaProcessor.performDeferredRender();
+					} else if (webImageProcessor._pendingRenderData) {
+						deferredImageData = webImageProcessor.performDeferredRender();
+					} else if (jxlProcessor._pendingRenderData) {
+						deferredImageData = jxlProcessor.performDeferredRender();
+					} else if (rawProcessor._pendingRenderData) {
+						deferredImageData = rawProcessor.performDeferredRender();
 					} else if (exrProcessor._pendingRenderData) {
 						deferredImageData = exrProcessor.updateSettings(settingsManager.settings);
 					}
@@ -727,6 +906,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 						(pngProcessor && pngProcessor._pendingRenderData) ||
 						(ppmProcessor && ppmProcessor._pendingRenderData) ||
 						(pfmProcessor && pfmProcessor._pendingRenderData) ||
+						(hdrProcessor && hdrProcessor._pendingRenderData) ||
 						(exrProcessor && exrProcessor._pendingRenderData);
 
 					if (hasLoadedImage && !hasPendingRender) {
@@ -1399,6 +1579,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 		}
 
 		// For PNG/JPEG images, re-render with new settings
+		// For PNG/JPEG images, re-render with new settings
 		if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
 			try {
 				// Re-render the PNG with current settings
@@ -1415,6 +1596,96 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 				}
 			} catch (error) {
 				console.error('Error updating PNG/JPEG image with new settings:', error);
+			}
+			return;
+		}
+
+		// For HDR images, re-render with new settings
+		if (primaryImageData && hdrProcessor && hdrProcessor._lastRaw) {
+			try {
+				const newImageData = hdrProcessor.renderHdrWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating HDR image with new settings:', error);
+			}
+			return;
+		}
+
+		// For TGA images, re-render with new settings
+		if (primaryImageData && tgaProcessor && tgaProcessor._lastRaw) {
+			try {
+				const newImageData = tgaProcessor.renderTgaWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating TGA image with new settings:', error);
+			}
+			return;
+		}
+
+		// For Web Images, re-render with new settings
+		if (primaryImageData && webImageProcessor && webImageProcessor._lastRaw) {
+			try {
+				const newImageData = webImageProcessor.renderWebImageWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating Web Image with new settings:', error);
+			}
+			return;
+		}
+
+		// For JXL images, re-render with new settings
+		if (primaryImageData && jxlProcessor && jxlProcessor._lastRaw) {
+			try {
+				const newImageData = jxlProcessor.renderJxlWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating JXL image with new settings:', error);
+			}
+			return;
+		}
+
+		// For RAW images, re-render with new settings
+		if (primaryImageData && rawProcessor && rawProcessor._lastRaw) {
+			try {
+				const newImageData = rawProcessor.renderRawWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating RAW image with new settings:', error);
 			}
 			return;
 		}

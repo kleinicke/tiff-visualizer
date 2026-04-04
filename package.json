@@ -77,7 +77,17 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,png,jpeg,jpg}"
+            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,png,jpeg,jpg,bmp,ico}"
+          }
+        ]
+      },
+      {
+        "viewType": "tiffVisualizer.previewEditor.option",
+        "displayName": "TIFF Visualizer",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.{hdr,tga,webp,avif,jxl,dng,cr2,nef,arw,raf,rw2}"
           }
         ]
       }
@@ -209,37 +219,37 @@
         "command": "tiffVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' || activeCustomEditorId == 'tiffVisualizer.previewEditor.option'"
       },
       {
         "command": "tiffVisualizer.copyImageInfo",
         "key": "ctrl+shift+i",
         "mac": "cmd+shift+i",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' || activeCustomEditorId == 'tiffVisualizer.previewEditor.option'"
       }
     ],
     "menus": {
       "explorer/context": [
         {
           "command": "tiffVisualizer.openWith",
-          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm",
+          "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .hdr || resourceExtname == .tga || resourceExtname == .webp || resourceExtname == .avif || resourceExtname == .bmp || resourceExtname == .ico || resourceExtname == .jxl || resourceExtname == .dng || resourceExtname == .cr2 || resourceExtname == .nef || resourceExtname == .arw || resourceExtname == .raf || resourceExtname == .rw2 || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm",
           "group": "navigation@0"
         },
         {
           "command": "tiffVisualizer.openNextToCurrent",
-          "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
+          "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .hdr || resourceExtname == .tga || resourceExtname == .webp || resourceExtname == .avif || resourceExtname == .bmp || resourceExtname == .ico || resourceExtname == .jxl || resourceExtname == .dng || resourceExtname == .cr2 || resourceExtname == .nef || resourceExtname == .arw || resourceExtname == .raf || resourceExtname == .rw2 || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
           "group": "navigation@1"
         }
       ],
       "editor/context": [
         {
           "command": "tiffVisualizer.selectForCompare",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' || activeCustomEditorId == 'tiffVisualizer.previewEditor.option'",
           "group": "comparison@1"
         },
         {
           "command": "tiffVisualizer.compareWithSelected",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
+          "when": "(activeCustomEditorId == 'tiffVisualizer.previewEditor' || activeCustomEditorId == 'tiffVisualizer.previewEditor.option') && tiffVisualizer.hasComparisonImage",
           "group": "comparison@1"
         }
       ]
@@ -248,7 +258,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "clean": "rimraf out",
-    "build:wasm": "cd wasm/tiff-decoder && wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && sed -i '' 's/tiff_wasm_bg\\.wasm/wasm\\/tiff-wasm.wasm/g' media/wasm/tiff-wasm.js",
+    "build:wasm": "cd wasm/tiff-decoder && wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && sed -i '' 's/tiff_wasm_bg\\.wasm/wasm\\/tiff-wasm.wasm/g' media/wasm/tiff-wasm.js && cp node_modules/@jsquash/jxl/codec/dec/jxl_dec.wasm media/wasm/ && cp node_modules/libraw-wasm/dist/libraw.wasm media/ && cp node_modules/libraw-wasm/dist/worker.js media/",
     "compile": "npm run clean && npm run build:wasm && node ./esbuild.js",
     "compile:quick": "npm run clean && node ./esbuild.js",
     "watch": "npm run clean && node ./esbuild.js --watch",
@@ -265,9 +275,13 @@
     "build": "webpack"
   },
   "dependencies": {
+    "@jsquash/jxl": "^1.3.0",
     "geotiff": "^2.1.3",
+    "libraw-wasm": "^1.1.2",
     "pako": "^2.1.0",
     "parse-exr": "^1.0.2",
+    "parse-hdr": "^1.0.0",
+    "tga-js": "^1.1.1",
     "tslib": "^2.8.1",
     "upng-js": "^2.1.0",
     "vscode-uri": "^3.0.6"

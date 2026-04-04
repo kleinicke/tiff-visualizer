@@ -622,7 +622,12 @@ export class ImagePreview extends MediaPreview {
 		const isPfm = lower.endsWith('.pfm');
 		const isNpy = lower.endsWith('.npy') || lower.endsWith('.npz');
 		const isExr = lower.endsWith('.exr');
-		this._isTiff = isTiff || isPpm || isPng;
+		const isWebFormats = lower.endsWith('.webp') || lower.endsWith('.avif') || lower.endsWith('.bmp') || lower.endsWith('.ico');
+		const isTga = lower.endsWith('.tga');
+		const isHdr = lower.endsWith('.hdr');
+		const isJxl = lower.endsWith('.jxl');
+		const isRaw = lower.endsWith('.dng') || lower.endsWith('.cr2') || lower.endsWith('.nef') || lower.endsWith('.arw') || lower.endsWith('.raf') || lower.endsWith('.rw2');
+		this._isTiff = isTiff || isPpm || isPng || isWebFormats || isTga || isHdr || isJxl || isRaw;
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)
@@ -686,7 +691,7 @@ export class ImagePreview extends MediaPreview {
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 	<link rel="stylesheet" href="${escapeAttribute(overlayPanelCssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource}; worker-src ${cspSource} blob:; child-src ${cspSource} blob:;">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
 <body class="container image">
