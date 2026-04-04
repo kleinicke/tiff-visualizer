@@ -61,9 +61,16 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		colorPickerModeStatusBarEntry
 	);
 
-	// Register the custom editor provider
+	// Register the primary custom editor provider (default priority)
 	const viewType = ImagePreviewManager.getViewType();
 	disposables.push(vscode.window.registerCustomEditorProvider(viewType, previewManager, {
+		supportsMultipleEditorsPerDocument: true,
+	}));
+
+	// Register option-priority provider for formats that have a built-in VS Code viewer
+	// (TGA, WebP, AVIF) — users can still pick "TIFF Visualizer" from the open-with menu
+	const viewTypeOption = `${viewType}.option`;
+	disposables.push(vscode.window.registerCustomEditorProvider(viewTypeOption, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
 	}));
 

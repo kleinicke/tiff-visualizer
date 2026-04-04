@@ -11,6 +11,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
  * @property {number} bitDepth
  * @property {number} maxValue
  * @property {boolean} isRgbaFormat - If true, data is RGBA format; if false, data is raw channel format
+ * @property {boolean} [hasAlpha] - Whether the image actually has a meaningful alpha channel (native API path only)
  * @property {ImageData} [originalImageData] - Original ImageData from getImageData for zero-copy fast path
  */
 

@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.7.0
+
+- Add more file formats: webp, hdr, tga, bmp and ico files
+
 ## 1.6.0 (2026-03-30)
 
 - Add option to add multiple files to collection

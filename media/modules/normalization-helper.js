@@ -224,7 +224,7 @@ export class ImageStatsCalculator {
 
     /**
      * Calculate min/max statistics for integer data.
-     * @param {Uint8Array|Uint16Array} data - Image data
+     * @param {Uint8Array|Uint8ClampedArray|Uint16Array} data - Image data
      * @param {number} width - Image width
      * @param {number} height - Image height
      * @param {number} channels - Number of channels

@@ -23,6 +23,9 @@ export class MouseHandler {
 		this.pfmProcessor = null;
 		this.ppmProcessor = null;
 		this.pngProcessor = null;
+		this.hdrProcessor = null;
+		this.tgaProcessor = null;
+		this.webImageProcessor = null;
 
 		// State
 		this.ctrlPressed = false;
@@ -50,6 +53,9 @@ export class MouseHandler {
 	/** @param {any} proc */ setPfmProcessor(proc) { this.pfmProcessor = proc; }
 	/** @param {any} proc */ setPpmProcessor(proc) { this.ppmProcessor = proc; }
 	/** @param {any} proc */ setPngProcessor(proc) { this.pngProcessor = proc; }
+	/** @param {any} proc */ setHdrProcessor(proc) { this.hdrProcessor = proc; }
+	/** @param {any} proc */ setTgaProcessor(proc) { this.tgaProcessor = proc; }
+	/** @param {any} proc */ setWebImageProcessor(proc) { this.webImageProcessor = proc; }
 
 	/**
 	 * Set active state
@@ -281,9 +287,8 @@ export class MouseHandler {
 				if (showModified) {
 					const values = this._parseIntColor(v);
 					if (values) {
-						// For PPM, normalize to 0-1, apply transforms, then scale back
 						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map(val => this._applyGammaBrightness(val));
+						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
 						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
 						return this._formatColorValues(scaled, values.length, true);
 					}
@@ -297,9 +302,53 @@ export class MouseHandler {
 				if (showModified) {
 					const values = this._parseIntColor(v);
 					if (values) {
-						// For PNG, normalize to 0-1, apply transforms, then scale back
+						// Normalize to 0-1, apply gamma/brightness to RGB only (skip alpha at index 3)
 						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map(val => this._applyGammaBrightness(val));
+						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
+						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
+						return this._formatColorValues(scaled, values.length, true);
+					}
+				}
+				return v;
+			}
+		}
+
+		if (this.hdrProcessor) {
+			const v = this.hdrProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) {
+				if (showModified) {
+					const values = this._parseFloatColor(v);
+					if (values) {
+						const transformed = values.map(val => this._applyGammaBrightness(val));
+						return this._formatColorValues(transformed, values.length);
+					}
+				}
+				return v;
+			}
+		}
+		if (this.tgaProcessor) {
+			const v = this.tgaProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) {
+				if (showModified) {
+					const values = this._parseIntColor(v);
+					if (values) {
+						const normalized = values.map(val => val / 255);
+						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
+						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
+						return this._formatColorValues(scaled, values.length, true);
+					}
+				}
+				return v;
+			}
+		}
+		if (this.webImageProcessor) {
+			const v = this.webImageProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) {
+				if (showModified) {
+					const values = this._parseIntColor(v);
+					if (values) {
+						const normalized = values.map(val => val / 255);
+						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
 						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
 						return this._formatColorValues(scaled, values.length, true);
 					}
@@ -360,8 +409,8 @@ export class MouseHandler {
 			// Float colors are space-separated numbers (possibly with A: prefix for alpha)
 			const parts = colorStr.trim().split(/\s+/);
 			const values = parts.map(p => {
-				// Remove "A:" prefix if present
-				const cleanPart = p.replace('A:', '');
+				// Remove α: or A: prefix (alpha channel marker)
+				const cleanPart = p.replace(/^[Aα]:/, '');
 				// Handle special values
 				if (cleanPart === 'NaN') return NaN;
 				if (cleanPart === 'Inf') return Infinity;
@@ -376,16 +425,22 @@ export class MouseHandler {
 	}
 
 	/**
-	 * Parse integer color string to array of values (0-255)
+	 * Parse integer color string to array of values (0-255).
+	 * Handles RGB strings like "255 128 064" and RGBA strings like "255 128 064 α:0.50".
+	 * The α: prefix carries a 0-1 float that is scaled to 0-255 for uniform processing.
 	 * @private
-	 * @param {string} colorStr - Color string like "255 128 64"
-	 * @returns {number[]|null} - Array of numeric values or null
+	 * @param {string} colorStr
+	 * @returns {number[]|null}
 	 */
 	_parseIntColor(colorStr) {
 		try {
-			// Integer colors are padded 3-digit numbers like "255 128 064"
 			const parts = colorStr.trim().split(/\s+/);
 			const values = parts.map(p => {
+				if (p.startsWith('α:')) {
+					// Alpha is a 0-1 normalized float; convert to 0-255 integer range
+					const num = parseFloat(p.slice(2));
+					return isNaN(num) ? null : Math.round(num * 255);
+				}
 				const num = parseInt(p, 10);
 				return isNaN(num) ? null : num;
 			});
@@ -405,20 +460,23 @@ export class MouseHandler {
 	 * @returns {string} - Formatted color string
 	 */
 	_formatColorValues(values, count, asIntegers = false) {
-		const formatted = values.slice(0, count).map((v, idx) => {
+		// RGB channels (indices 0-2)
+		const rgb = values.slice(0, Math.min(3, count)).map(v => {
 			if (asIntegers) {
 				return Math.round(v).toString().padStart(3, '0');
-			} else {
-				// Float format with appropriate precision
-				return v.toFixed(6);
 			}
+			return v.toFixed(6);
 		});
 
-		// Add alpha label if we have 4 values (RGBA)
 		if (count === 4) {
-			return `${formatted[0]} ${formatted[1]} ${formatted[2]} α:${formatted[3]}`;
+			// Alpha channel (index 3): always displayed as 0-1 float regardless of mode,
+			// because getColorAtPixel stores it as a 0-255 int but displays it as α:0.00-1.00
+			const alphaStr = asIntegers
+				? (values[3] / 255).toFixed(2)
+				: values[3].toFixed(6);
+			return `${rgb.join(' ')} α:${alphaStr}`;
 		}
-		return formatted.join(' ');
+		return rgb.join(' ');
 	}
 
 	/**

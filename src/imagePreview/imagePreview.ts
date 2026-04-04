@@ -655,7 +655,10 @@ export class ImagePreview extends MediaPreview {
 		const isPfm = lower.endsWith('.pfm');
 		const isNpy = lower.endsWith('.npy') || lower.endsWith('.npz');
 		const isExr = lower.endsWith('.exr');
-		this._isTiff = isTiff || isPpm || isPng;
+		const isHdr = lower.endsWith('.hdr');
+		const isTga = lower.endsWith('.tga');
+		const isWebImage = lower.endsWith('.webp') || lower.endsWith('.avif') || lower.endsWith('.bmp') || lower.endsWith('.ico');
+		this._isTiff = isTiff || isPpm || isPng || isHdr || isTga || isWebImage;
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)
