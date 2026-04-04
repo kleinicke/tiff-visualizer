@@ -1801,6 +1801,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			input.addEventListener('keydown', (e) => {
 				if (e.key === 'Enter') {
 					e.stopPropagation();
+					const index = parseInt(input.value, 10);
+					if (!isNaN(index) && index >= 1 && index <= imageCollection.totalImages) {
+						vscode.postMessage({ type: 'jumpToCollectionIndex', index: index - 1 });
+					}
 					close();
 				} else if (e.key === 'Escape') {
 					activeCounterInput = null;

@@ -12,6 +12,7 @@
 - Use native png and jpg decoding
 - Speedup webview creation time
 - Improve Histogram appearance
+- Can convert 8 bit rgb images into 24 bit float images
 
 ## 1.4.0 (2025-11-12)
 
