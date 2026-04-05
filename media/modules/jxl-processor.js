@@ -214,7 +214,7 @@ export class JxlProcessor {
                 samplesPerPixel: channels,
                 bitsPerSample: bitDepth,
                 sampleFormat: 1,
-                formatLabel: `JXL (${bitDepth}-bit)`,
+                formatLabel: `JXL (internally converted to 8-bit by decoder, no matter the input`,
                 formatType: 'jxl',
                 isInitialLoad: this._isInitialLoad
             }

@@ -379,7 +379,7 @@ export class RawProcessor {
 
             this._postFormatInfo(width, height, channels, 8);
             const processedImageData = this._renderToImageData();
-            
+
             if (this.vscode) {
                 this.vscode.postMessage({ type: 'refresh-status' });
             }

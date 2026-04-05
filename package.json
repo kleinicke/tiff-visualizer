@@ -220,7 +220,7 @@
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "title": "Add Image to Visualizer Collection",
-          "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl)$/i && tiffVisualizer.hasActivePreview",
           "group": "navigation@1"
         }
       ],

@@ -79,6 +79,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 
+	/** Camera RAW file extensions supported by RawProcessor */
+	const RAW_EXTENSIONS = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
+	/** @param {string} lower @returns {boolean} */
+	const isRawExtension = (lower) => RAW_EXTENSIONS.some(ext => lower.endsWith(ext));
+
 	// Application state
 	let hasLoadedImage = false;
 	/** @type {HTMLCanvasElement|null} */
@@ -212,7 +217,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			handleWebImage(src);
 		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
 			handleJxl(src);
-		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/)) {
+		} else if (isRawExtension(resourceUri.toLowerCase())) {
 			handleRaw(src);
 		} else {
 			image.src = src;
@@ -330,7 +335,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			handleWebImage(reloadSrc);
 		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
 			handleJxl(reloadSrc);
-		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/)) {
+		} else if (isRawExtension(resourceUri.toLowerCase())) {
 			handleRaw(reloadSrc);
 		} else {
 			image.src = reloadSrc;
@@ -2347,7 +2352,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			handleWebImage(uri, gen);
 		} else if (lower.endsWith('.jxl')) {
 			handleJxl(uri, gen);
-		} else if (lower.match(/\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/)) {
+		} else if (isRawExtension(lower)) {
 			handleRaw(uri, gen);
 		} else {
 			// Fallback to regular image loading
