@@ -16,6 +16,10 @@
 	user-select: none;
 }
 
+.overlay-panel-hidden {
+	display: none;
+}
+
 .overlay-panel-header {
 	display: flex;
 	align-items: center;
@@ -205,6 +209,10 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+
+.overlay-mask-options-hidden {
+	display: none;
 }
 
 /* Colormap Legend */

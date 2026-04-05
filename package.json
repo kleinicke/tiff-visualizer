@@ -77,17 +77,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,png,jpeg,jpg,bmp,ico}"
-          }
-        ]
-      },
-      {
-        "viewType": "tiffVisualizer.previewEditor.option",
-        "displayName": "TIFF Visualizer",
-        "priority": "option",
-        "selector": [
-          {
-            "filenamePattern": "*.{hdr,tga,webp,avif,jxl,dng,cr2,nef,arw,raf,rw2}"
+            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,png,jpeg,jpg,bmp,ico,hdr,tga,webp,avif,jxl,dng,cr2,nef,arw,raf,rw2}"
           }
         ]
       }

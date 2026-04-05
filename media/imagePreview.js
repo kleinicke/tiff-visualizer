@@ -88,6 +88,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
+	let pendingInitialRenderRequested = false;
 
 	// Colormap conversion state
 	let colormapConversionState = null;
@@ -122,6 +123,11 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 		show: false
 	};
 	let overlayElement = null;
+	const RAW_EXTENSION_REGEX = /\.(dng|cr2|nef|arw|raf|rw2|raw)(?:$|[?#])/i;
+
+	function isRawResourceUri(resourceUri) {
+		return RAW_EXTENSION_REGEX.test(resourceUri);
+	}
 
 	/**
 	 * Save current state to VS Code webview state for persistence across tab switches
@@ -191,7 +197,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			handleWebImage(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
 			handleJxl(settings.src);
-		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|nef|arw|raf|rw2)$/)) {
+		} else if (isRawResourceUri(resourceUri)) {
 			handleRaw(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
 			handlePng(settings.src);
@@ -251,6 +257,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 	function reloadImage() {
 		// Reset the state
 		hasLoadedImage = false;
+		pendingInitialRenderRequested = false;
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
@@ -303,7 +310,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			handleWebImage(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
 			handleJxl(settings.src);
-		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|nef|arw|raf|rw2)$/)) {
+		} else if (isRawResourceUri(resourceUri)) {
 			handleRaw(settings.src);
 		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
 			handlePng(settings.src);
@@ -401,6 +408,59 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 		container.classList.remove('loading');
 	}
 
+	async function performDeferredRenderIfPending() {
+		if (!canvas) {
+			return false;
+		}
+
+		let deferredImageData = null;
+		if (tiffProcessor._pendingRenderData) {
+			deferredImageData = await tiffProcessor.performDeferredRender();
+		} else if (npyProcessor._pendingRenderData) {
+			deferredImageData = npyProcessor.performDeferredRender();
+		} else if (pngProcessor._pendingRenderData) {
+			deferredImageData = pngProcessor.performDeferredRender();
+		} else if (ppmProcessor._pendingRenderData) {
+			deferredImageData = ppmProcessor.performDeferredRender();
+		} else if (pfmProcessor._pendingRenderData) {
+			deferredImageData = pfmProcessor.performDeferredRender();
+		} else if (hdrProcessor._pendingRenderData) {
+			deferredImageData = hdrProcessor.performDeferredRender();
+		} else if (tgaProcessor._pendingRenderData) {
+			deferredImageData = tgaProcessor.performDeferredRender();
+		} else if (webImageProcessor._pendingRenderData) {
+			deferredImageData = webImageProcessor.performDeferredRender();
+		} else if (jxlProcessor._pendingRenderData) {
+			deferredImageData = jxlProcessor.performDeferredRender();
+		} else if (rawProcessor._pendingRenderData) {
+			deferredImageData = rawProcessor.performDeferredRender();
+		} else if (exrProcessor._pendingRenderData) {
+			deferredImageData = exrProcessor.updateSettings(settingsManager.settings);
+		}
+
+		if (!deferredImageData) {
+			return false;
+		}
+
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (ctx) {
+			await renderImageDataToCanvas(deferredImageData, ctx);
+			primaryImageData = deferredImageData;
+			updateHistogramData();
+		}
+
+		// Log deferred render completion (only if we actually rendered deferred data)
+		if (initialLoadStartTime > 0) {
+			const endTime = performance.now();
+			const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+			const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+			logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+			initialLoadStartTime = 0; // Reset
+		}
+
+		return true;
+	}
+
 	/**
 	 * Handle TIFF file loading
 	 */
@@ -422,6 +482,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!tiffProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -457,6 +521,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!exrProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -488,6 +556,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!pfmProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -518,6 +590,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!hdrProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -548,6 +624,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!ppmProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -575,6 +655,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!tgaProcessor._pendingRenderData) {
 				vscode.postMessage({ type: 'ready' });
@@ -601,6 +685,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!webImageProcessor._pendingRenderData) {
 				vscode.postMessage({ type: 'ready' });
@@ -627,6 +715,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!jxlProcessor._pendingRenderData) {
 				vscode.postMessage({ type: 'ready' });
@@ -642,6 +734,7 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 	async function handleRaw(src, gen = _loadGeneration) {
 		currentLoadFormat = 'RAW';
 		try {
+			console.log('[RAW] handleRaw start:', { src, gen });
 			const result = await rawProcessor.processRaw(src, settingsManager.settings.baseUri || '');
 			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
@@ -653,6 +746,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!rawProcessor._pendingRenderData) {
 				vscode.postMessage({ type: 'ready' });
@@ -682,6 +779,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!pngProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -712,6 +813,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 			}
 			hasLoadedImage = true;
 			finalizeImageSetup();
+			if (pendingInitialRenderRequested) {
+				pendingInitialRenderRequested = false;
+				await performDeferredRenderIfPending();
+			}
 
 			if (!npyProcessor._pendingRenderData) {
 				const endTime = performance.now();
@@ -848,51 +953,9 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 				const newResourceUri = settingsManager.settings.resourceUri;
 
 				// Check if this is a deferred render trigger (initial load)
-				if (message.isInitialRender && canvas) {
-					// Trigger deferred rendering for the appropriate processor
-					let deferredImageData = null;
-
-					if (tiffProcessor._pendingRenderData) {
-						deferredImageData = await tiffProcessor.performDeferredRender();
-					} else if (npyProcessor._pendingRenderData) {
-						deferredImageData = npyProcessor.performDeferredRender();
-					} else if (pngProcessor._pendingRenderData) {
-						deferredImageData = pngProcessor.performDeferredRender();
-					} else if (ppmProcessor._pendingRenderData) {
-						deferredImageData = ppmProcessor.performDeferredRender();
-					} else if (pfmProcessor._pendingRenderData) {
-						deferredImageData = pfmProcessor.performDeferredRender();
-					} else if (hdrProcessor._pendingRenderData) {
-						deferredImageData = hdrProcessor.performDeferredRender();
-					} else if (tgaProcessor._pendingRenderData) {
-						deferredImageData = tgaProcessor.performDeferredRender();
-					} else if (webImageProcessor._pendingRenderData) {
-						deferredImageData = webImageProcessor.performDeferredRender();
-					} else if (jxlProcessor._pendingRenderData) {
-						deferredImageData = jxlProcessor.performDeferredRender();
-					} else if (rawProcessor._pendingRenderData) {
-						deferredImageData = rawProcessor.performDeferredRender();
-					} else if (exrProcessor._pendingRenderData) {
-						deferredImageData = exrProcessor.updateSettings(settingsManager.settings);
-					}
-
-					if (deferredImageData) {
-						const ctx = canvas.getContext('2d', { willReadFrequently: true });
-						if (ctx) {
-							await renderImageDataToCanvas(deferredImageData, ctx);
-							primaryImageData = deferredImageData;
-							updateHistogramData();
-						}
-
-						// Log deferred render completion (only if we actually rendered deferred data)
-						if (initialLoadStartTime > 0) {
-							const endTime = performance.now();
-							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
-							initialLoadStartTime = 0; // Reset
-						}
-					}
+				if (message.isInitialRender) {
+					const rendered = await performDeferredRenderIfPending();
+					pendingInitialRenderRequested = !rendered;
 				}
 				// If resource URI changed, reload the entire image
 				else if (oldResourceUri !== newResourceUri) {
@@ -907,6 +970,10 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 						(ppmProcessor && ppmProcessor._pendingRenderData) ||
 						(pfmProcessor && pfmProcessor._pendingRenderData) ||
 						(hdrProcessor && hdrProcessor._pendingRenderData) ||
+						(tgaProcessor && tgaProcessor._pendingRenderData) ||
+						(webImageProcessor && webImageProcessor._pendingRenderData) ||
+						(jxlProcessor && jxlProcessor._pendingRenderData) ||
+						(rawProcessor && rawProcessor._pendingRenderData) ||
 						(exrProcessor && exrProcessor._pendingRenderData);
 
 					if (hasLoadedImage && !hasPendingRender) {
@@ -2046,10 +2113,22 @@ import { ColormapLegend } from './modules/colormap-legend.js';
 		const lower = resourceUri.toLowerCase();
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
 			handleTiff(uri, gen);
+		} else if (lower.endsWith('.exr')) {
+			handleExr(uri, gen);
 		} else if (lower.endsWith('.pfm')) {
 			handlePfm(uri, gen);
+		} else if (lower.endsWith('.hdr')) {
+			handleHdr(uri, gen);
 		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
 			handlePpm(uri, gen);
+		} else if (lower.endsWith('.tga')) {
+			handleTga(uri, gen);
+		} else if (lower.match(/\.(webp|avif|bmp|ico)$/)) {
+			handleWebImage(uri, gen);
+		} else if (lower.endsWith('.jxl')) {
+			handleJxl(uri, gen);
+		} else if (isRawResourceUri(resourceUri)) {
+			handleRaw(uri, gen);
 		} else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
 			handlePng(uri, gen);
 		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {

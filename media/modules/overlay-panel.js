@@ -47,8 +47,7 @@ export class OverlayPanel {
 	 */
 	_createPanel() {
 		const panel = document.createElement('div');
-		panel.className = 'overlay-panel';
-		panel.style.display = 'none';
+		panel.className = 'overlay-panel overlay-panel-hidden';
 
 		panel.innerHTML = `
 			<div class="overlay-panel-header">
@@ -93,7 +92,7 @@ export class OverlayPanel {
 					<input type="checkbox" class="overlay-show-legend"/>
 					Show colormap legend
 				</label>
-				<div class="overlay-mask-options" style="display:none">
+				<div class="overlay-mask-options overlay-mask-options-hidden">
 					<div class="overlay-separator"></div>
 					<div class="overlay-mask-row">
 						<label>Threshold:</label>
@@ -209,7 +208,7 @@ export class OverlayPanel {
 		if (!this._panelElement) return;
 		const maskOptions = this._panelElement.querySelector('.overlay-mask-options');
 		if (maskOptions) {
-			/** @type {HTMLElement} */ (maskOptions).style.display = this._mode === 'mask' ? 'block' : 'none';
+			maskOptions.classList.toggle('overlay-mask-options-hidden', this._mode !== 'mask');
 		}
 	}
 
@@ -333,7 +332,7 @@ export class OverlayPanel {
 	 */
 	show() {
 		if (this._panelElement) {
-			this._panelElement.style.display = 'block';
+			this._panelElement.classList.remove('overlay-panel-hidden');
 		}
 	}
 
@@ -342,7 +341,7 @@ export class OverlayPanel {
 	 */
 	hide() {
 		if (this._panelElement) {
-			this._panelElement.style.display = 'none';
+			this._panelElement.classList.add('overlay-panel-hidden');
 		}
 		this._emitStateChange();
 	}
@@ -352,7 +351,7 @@ export class OverlayPanel {
 	 * @returns {boolean}
 	 */
 	isVisible() {
-		return this._panelElement ? this._panelElement.style.display !== 'none' : false;
+		return this._panelElement ? !this._panelElement.classList.contains('overlay-panel-hidden') : false;
 	}
 
 	/**

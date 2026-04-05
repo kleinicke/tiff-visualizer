@@ -651,12 +651,16 @@ export class ImagePreview extends MediaPreview {
 		const uri = this._webviewEditor.webview.asWebviewUri(this.resource);
 		const workspaceUri = vscode.workspace.getWorkspaceFolder(this.resource)?.uri ?? this.resource;
 		const folderUri = this._webviewEditor.webview.asWebviewUri(workspaceUri);
+		const baseUri = this._webviewEditor.webview.asWebviewUri(this.extensionRoot);
 
 		// Convert mask URIs to webview-safe URIs if they exist
 		const webviewSafeMasks = settings.maskFilters.map(mask => ({
 			...mask,
 			maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
 		}));
+		const jxlWasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'jxl_dec.wasm'));
+		const rawWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'worker.js'));
+		const rawWasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'libraw.wasm'));
 
 		// Extend settings with required properties for JavaScript
 		const extendedSettings = {
@@ -665,6 +669,10 @@ export class ImagePreview extends MediaPreview {
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
 			folder: folderUri.toString(),
+			baseUri: baseUri.toString(),
+			jxlWasmSrc: jxlWasmUri.toString(),
+			rawWorkerSrc: rawWorkerUri.toString(),
+			rawWasmSrc: rawWasmUri.toString(),
 			version: version,
 			loadStartTime: this._openTimestamp // For total elapsed time measurement (captured when file was opened)
 		};
@@ -691,7 +699,7 @@ export class ImagePreview extends MediaPreview {
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 	<link rel="stylesheet" href="${escapeAttribute(overlayPanelCssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource}; worker-src ${cspSource} blob:; child-src ${cspSource} blob:;">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'unsafe-eval'; style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource}; worker-src ${cspSource} blob:; child-src ${cspSource} blob:;">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
 <body class="container image">

@@ -18,6 +18,74 @@ export class HdrProcessor {
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
     }
 
+    _detectSingleChannelRgb(data) {
+        const eps = 1e-12;
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let maxR = 0;
+        let maxG = 0;
+        let maxB = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            if (Number.isFinite(r)) {
+                const ar = Math.abs(r);
+                sumR += ar;
+                maxR = Math.max(maxR, ar);
+            }
+            if (Number.isFinite(g)) {
+                const ag = Math.abs(g);
+                sumG += ag;
+                maxG = Math.max(maxG, ag);
+            }
+            if (Number.isFinite(b)) {
+                const ab = Math.abs(b);
+                sumB += ab;
+                maxB = Math.max(maxB, ab);
+            }
+        }
+
+        const sums = [sumR, sumG, sumB];
+        const maxes = [maxR, maxG, maxB];
+        const total = sumR + sumG + sumB;
+        if (!(total > eps)) {
+            return -1;
+        }
+
+        const dominantIndex = sums[1] > sums[0] ? (sums[2] > sums[1] ? 2 : 1) : (sums[2] > sums[0] ? 2 : 0);
+        const dominantSum = sums[dominantIndex];
+        const dominantMax = maxes[dominantIndex];
+        const otherA = sums[(dominantIndex + 1) % 3];
+        const otherB = sums[(dominantIndex + 2) % 3];
+        const otherMaxA = maxes[(dominantIndex + 1) % 3];
+        const otherMaxB = maxes[(dominantIndex + 2) % 3];
+
+        const dominantRatio = dominantSum / total;
+        const othersTinyVsDominant = otherA <= dominantSum * 1e-4 && otherB <= dominantSum * 1e-4;
+        const othersLowAbsolute = otherMaxA <= dominantMax * 1e-3 && otherMaxB <= dominantMax * 1e-3;
+
+        if (dominantRatio >= 0.999 && othersTinyVsDominant && othersLowAbsolute) {
+            return dominantIndex;
+        }
+
+        return -1;
+    }
+
+    _remapSingleChannelToGray(data, channelIndex) {
+        const remapped = new Float32Array(data.length);
+        for (let i = 0; i < data.length; i += 4) {
+            const v = data[i + channelIndex];
+            remapped[i] = v;
+            remapped[i + 1] = v;
+            remapped[i + 2] = v;
+            remapped[i + 3] = 1.0;
+        }
+        return remapped;
+    }
+
     async processHdr(src) {
         const response = await fetch(src);
         const buffer = await response.arrayBuffer();
@@ -27,8 +95,14 @@ export class HdrProcessor {
         const parsed = parseHdr(buffer);
         const width = parsed.shape[0];
         const height = parsed.shape[1];
-        const data = parsed.data; // The floating point pixel array [R, G, B, R, G, B, ..]
-        const channels = 3; // RGBE decodes to RGB float data
+        let data = parsed.data; // The floating point pixel array [R, G, B, A, R, G, B, A, ..]
+        const singleChannelIndex = this._detectSingleChannelRgb(data);
+        if (singleChannelIndex >= 0) {
+            // Some "single-channel HDR" test files store values in only one RGB component.
+            // Remap that component to grayscale so visualization is channel-agnostic.
+            data = this._remapSingleChannelToGray(data, singleChannelIndex);
+        }
+        const channels = 4; // parse-hdr returns RGBA float data
 
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
@@ -100,9 +174,9 @@ export class HdrProcessor {
             return parseFloat(v.toFixed(6)).toString();
         };
 
-        if (channels === 3) {
-            // RGB data - return space-separated values
-            const baseIdx = idx * 3;
+        if (channels === 3 || channels === 4) {
+            // RGB/RGBA float data - return RGB values for consistency with other float viewers
+            const baseIdx = idx * channels;
             if (baseIdx >= 0 && baseIdx + 2 < data.length) {
                 const r = data[baseIdx];
                 const g = data[baseIdx + 1];

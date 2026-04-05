@@ -20,11 +20,39 @@ export class JxlProcessor {
 
     async ensureWasmLoaded(baseUri) {
         if (!this._isWasmLoaded) {
-            const wasmUrl = `${baseUri}/wasm/jxl_dec.wasm`;
-            const wasmResponse = await fetch(wasmUrl);
-            const wasmBuffer = await wasmResponse.arrayBuffer();
-            await initJXLDecode(wasmBuffer);
-            this._isWasmLoaded = true;
+            const configuredWasm = this.settingsManager?.settings?.jxlWasmSrc;
+            const normalizedBase = (baseUri || '').replace(/\/$/, '');
+            const scriptBase = new URL('.', import.meta.url).href.replace(/\/$/, '');
+            const base = normalizedBase || scriptBase;
+            const wasmCandidates = [
+                configuredWasm,
+                new URL('./wasm/jxl_dec.wasm', import.meta.url).href,
+                new URL('../wasm/jxl_dec.wasm', import.meta.url).href,
+                `${base}/media/wasm/jxl_dec.wasm`,
+                `${base}/wasm/jxl_dec.wasm`,
+                `${base}/media/jxl_dec.wasm`,
+                `${base}/jxl_dec.wasm`
+            ].filter(Boolean);
+
+            let lastError = null;
+            for (const wasmUrl of wasmCandidates) {
+                try {
+                    const wasmResponse = await fetch(wasmUrl);
+                    if (!wasmResponse.ok) {
+                        throw new Error(`HTTP ${wasmResponse.status}`);
+                    }
+                    const wasmBuffer = await wasmResponse.arrayBuffer();
+                    const wasmModule = await WebAssembly.compile(wasmBuffer);
+                    await initJXLDecode(wasmModule);
+                    this._isWasmLoaded = true;
+                    return;
+                } catch (error) {
+                    lastError = error;
+                }
+            }
+
+            const details = lastError instanceof Error ? lastError.message : String(lastError);
+            throw new Error(`Unable to initialize JXL decoder WASM (${details})`);
         }
     }
 
