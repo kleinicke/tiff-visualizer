@@ -658,7 +658,9 @@ export class ImagePreview extends MediaPreview {
 		const isHdr = lower.endsWith('.hdr');
 		const isTga = lower.endsWith('.tga');
 		const isWebImage = lower.endsWith('.webp') || lower.endsWith('.avif') || lower.endsWith('.bmp') || lower.endsWith('.ico');
-		this._isTiff = isTiff || isPpm || isPng || isHdr || isTga || isWebImage;
+		const isJxl = lower.endsWith('.jxl');
+		const isRaw = /\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/.test(lower);
+		this._isTiff = isTiff || isPpm || isPng || isHdr || isTga || isWebImage || isJxl || isRaw;
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)
@@ -721,7 +723,7 @@ export class ImagePreview extends MediaPreview {
 
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval'; style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
 <body class="container image">

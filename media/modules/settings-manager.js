@@ -43,6 +43,9 @@
  * @property {string} [resourceUri]
  * @property {string} [src]
  * @property {number} [loadStartTime]
+ * @property {string} [jxlWasmSrc]
+ * @property {string} [rawWorkerSrc]
+ * @property {string} [rawWasmSrc]
  */
 
 /**

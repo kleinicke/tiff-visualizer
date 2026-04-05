@@ -133,8 +133,44 @@ if (isWatch) {
   };
 }
 
+function copyMediaAssets() {
+  // JXL decoder WASM
+  const jxlWasmSrc = path.join(__dirname, 'node_modules/@jsquash/jxl/codec/dec/jxl_dec.wasm');
+  const jxlWasmDst = path.join(__dirname, 'media/wasm/jxl_dec.wasm');
+  if (fs.existsSync(jxlWasmSrc)) {
+    fs.copyFileSync(jxlWasmSrc, jxlWasmDst);
+    console.log('Copied jxl_dec.wasm');
+  } else {
+    console.warn('WARNING: jxl_dec.wasm not found at', jxlWasmSrc);
+  }
+
+  // libraw-wasm worker script and WASM binary
+  const librawWorkerSrc = path.join(__dirname, 'node_modules/libraw-wasm/dist/worker.js');
+  const librawWorkerDst = path.join(__dirname, 'media/libraw-worker.js');
+  if (fs.existsSync(librawWorkerSrc)) {
+    fs.copyFileSync(librawWorkerSrc, librawWorkerDst);
+    console.log('Copied libraw-worker.js');
+  } else {
+    console.warn('WARNING: libraw worker.js not found at', librawWorkerSrc);
+  }
+
+  // libraw.wasm must sit next to libraw-worker.js so the worker resolves it
+  // via a relative URL without needing any locateFile patching or blob injection.
+  const librawWasmSrc = path.join(__dirname, 'node_modules/libraw-wasm/dist/libraw.wasm');
+  const librawWasmDst = path.join(__dirname, 'media/libraw.wasm');
+  if (fs.existsSync(librawWasmSrc)) {
+    fs.copyFileSync(librawWasmSrc, librawWasmDst);
+    console.log('Copied libraw.wasm');
+  } else {
+    console.warn('WARNING: libraw.wasm not found at', librawWasmSrc);
+  }
+}
+
 async function buildAll() {
   try {
+    // Copy required media assets from node_modules
+    copyMediaAssets();
+
     // Build extension for Node.js
     await build(extensionBuildOptions);
     console.log('Extension (Node.js) built successfully');

@@ -11,6 +11,8 @@ import { PngProcessor } from './modules/png-processor.js';
 import { HdrProcessor } from './modules/hdr-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
 import { WebImageProcessor } from './modules/web-image-processor.js';
+import { JxlProcessor } from './modules/jxl-processor.js';
+import { RawProcessor } from './modules/raw-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
@@ -62,6 +64,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	const hdrProcessor = new HdrProcessor(settingsManager, vscode);
 	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
+	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
+	const rawProcessor = new RawProcessor(settingsManager, vscode);
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
@@ -71,6 +75,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	mouseHandler.setHdrProcessor(hdrProcessor);
 	mouseHandler.setTgaProcessor(tgaProcessor);
 	mouseHandler.setWebImageProcessor(webImageProcessor);
+	mouseHandler.setJxlProcessor(jxlProcessor);
+	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 
 	// Application state
@@ -204,6 +210,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			handleTga(src);
 		} else if (resourceUri.toLowerCase().match(/\.(webp|avif|bmp|ico)$/)) {
 			handleWebImage(src);
+		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
+			handleJxl(src);
+		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/)) {
+			handleRaw(src);
 		} else {
 			image.src = src;
 		}
@@ -318,6 +328,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			handleTga(reloadSrc);
 		} else if (resourceUri.toLowerCase().match(/\.(webp|avif|bmp|ico)$/)) {
 			handleWebImage(reloadSrc);
+		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
+			handleJxl(reloadSrc);
+		} else if (resourceUri.toLowerCase().match(/\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/)) {
+			handleRaw(reloadSrc);
 		} else {
 			image.src = reloadSrc;
 		}
@@ -715,6 +729,62 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		}
 	}
 
+	/** @param {string} src @param {number} [gen] */
+	async function handleJxl(src, gen = _loadGeneration) {
+		currentLoadFormat = 'JXL';
+		try {
+				const result = await jxlProcessor.processJxl(src);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			if (!jxlProcessor._pendingRenderData) {
+				finalizeImageSetup();
+				const endTime = performance.now();
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] JXL Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+			}
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error('Error handling JXL:', error);
+			onImageError(`Failed to load JXL: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	/** @param {string} src @param {number} [gen] */
+	async function handleRaw(src, gen = _loadGeneration) {
+		currentLoadFormat = 'Camera RAW';
+		try {
+				const result = await rawProcessor.processRaw(src);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = canvas.getContext('2d');
+			if (ctx) {
+				await renderImageDataToCanvas(primaryImageData, ctx);
+			}
+			hasLoadedImage = true;
+			if (!rawProcessor._pendingRenderData) {
+				finalizeImageSetup();
+				const endTime = performance.now();
+				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+				logToOutput(`[Perf] Camera RAW Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+			}
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error('Error handling Camera RAW:', error);
+			onImageError(`Failed to load RAW: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
 	/**
 	 * Finalize image setup after loading
 	 */
@@ -767,7 +837,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			exrProcessor._pendingRenderData ||
 			hdrProcessor._pendingRenderData ||
 			tgaProcessor._pendingRenderData ||
-			webImageProcessor._pendingRenderData;
+			webImageProcessor._pendingRenderData ||
+			jxlProcessor._pendingRenderData ||
+			rawProcessor._pendingRenderData;
 		if (!hasPendingDeferred) {
 			clearCollectionLoadingState();
 		}
@@ -883,6 +955,10 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						deferredImageData = tgaProcessor.performDeferredRender();
 					} else if (webImageProcessor._pendingRenderData) {
 						deferredImageData = webImageProcessor.performDeferredRender();
+					} else if (jxlProcessor._pendingRenderData) {
+						deferredImageData = jxlProcessor.performDeferredRender();
+					} else if (rawProcessor._pendingRenderData) {
+						deferredImageData = rawProcessor.performDeferredRender();
 					}
 
 					if (deferredImageData) {
@@ -924,7 +1000,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						(exrProcessor && exrProcessor._pendingRenderData) ||
 						(hdrProcessor && hdrProcessor._pendingRenderData) ||
 						(tgaProcessor && tgaProcessor._pendingRenderData) ||
-						(webImageProcessor && webImageProcessor._pendingRenderData);
+						(webImageProcessor && webImageProcessor._pendingRenderData) ||
+						(jxlProcessor && jxlProcessor._pendingRenderData) ||
+						(rawProcessor && rawProcessor._pendingRenderData);
 
 					if (hasLoadedImage && !hasPendingRender) {
 						const startTime = performance.now();
@@ -1306,6 +1384,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			if (hdrProcessor) hdrProcessor._lastRaw = null;
 			if (tgaProcessor) tgaProcessor._lastRaw = null;
 			if (webImageProcessor) webImageProcessor._lastRaw = null;
+			if (jxlProcessor) jxlProcessor._lastRaw = null;
+			if (rawProcessor) rawProcessor._lastRaw = null;
 
 			// Update settings display
 			vscode.postMessage({
@@ -1376,6 +1456,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			if (pngProcessor) pngProcessor._lastRaw = null;
 			if (tgaProcessor) tgaProcessor._lastRaw = null;
 			if (webImageProcessor) webImageProcessor._lastRaw = null;
+			if (jxlProcessor) jxlProcessor._lastRaw = null;
+			if (rawProcessor) rawProcessor._lastRaw = null;
 			// @ts-ignore
 			tiffProcessor._convertedFloatData = null;
 
@@ -1621,6 +1703,42 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				}
 			} catch (error) {
 				console.error('Error updating Web Image with new settings:', error);
+			}
+			return;
+		}
+
+		// For JXL images, re-render with new settings
+		if (primaryImageData && jxlProcessor && jxlProcessor._lastRaw) {
+			try {
+				const newImageData = jxlProcessor.renderJxlWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating JXL image with new settings:', error);
+			}
+			return;
+		}
+
+		// For Camera RAW images, re-render with new settings
+		if (primaryImageData && rawProcessor && rawProcessor._lastRaw) {
+			try {
+				const newImageData = rawProcessor.renderRawWithSettings();
+				if (newImageData) {
+					const ctx = canvas.getContext('2d');
+					if (ctx) {
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
+				}
+			} catch (error) {
+				console.error('Error updating Camera RAW image with new settings:', error);
 			}
 			return;
 		}
@@ -2171,6 +2289,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		hdrProcessor._isInitialLoad = true;
 		tgaProcessor._isInitialLoad = true;
 		webImageProcessor._isInitialLoad = true;
+		jxlProcessor._isInitialLoad = true;
+		rawProcessor._isInitialLoad = true;
 
 		// Clear each processor's stale raw data so the mouse handler and histogram
 		// don't read pixels from the previous image. Without this, the TIFF-first
@@ -2188,6 +2308,8 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		hdrProcessor._lastRaw = null;
 		tgaProcessor._lastRaw = null;
 		webImageProcessor._lastRaw = null;
+		jxlProcessor._lastRaw = null;
+		rawProcessor._lastRaw = null;
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new
@@ -2217,6 +2339,16 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			handlePng(uri, gen);
 		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {
 			handleNpy(uri, gen);
+		} else if (lower.endsWith('.hdr')) {
+			handleHdr(uri, gen);
+		} else if (lower.endsWith('.tga')) {
+			handleTga(uri, gen);
+		} else if (lower.match(/\.(webp|avif|bmp|ico)$/)) {
+			handleWebImage(uri, gen);
+		} else if (lower.endsWith('.jxl')) {
+			handleJxl(uri, gen);
+		} else if (lower.match(/\.(dng|cr2|cr3|nef|arw|raf|rw2|orf|pef|srw|3fr|rwl|nrw|raw)$/)) {
+			handleRaw(uri, gen);
 		} else {
 			// Fallback to regular image loading
 			const newImage = document.createElement('img');
