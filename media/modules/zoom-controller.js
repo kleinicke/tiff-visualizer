@@ -9,17 +9,22 @@ export class ZoomController {
 	constructor(settingsManager, vscode) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
-		
+
 		// Initialize state from VS Code
 		const initialState = vscode.getState() || { scale: 'fit', offsetX: 0, offsetY: 0 };
 		this.scale = initialState.scale;
 		this.initialState = initialState;
-		
+
 		// DOM elements
 		this.container = document.body;
 		this.imageElement = null;
 		this.canvas = null;
 		this.hasLoadedImage = false;
+
+		// rAF batching for wheel zoom
+		this._rafPending = false;
+		this._pendingScale = null;
+		this._debouncedStateTimer = null;
 	}
 
 	/**
@@ -46,10 +51,11 @@ export class ZoomController {
 	}
 
 	/**
-	 * Update scale with new value
+	 * Apply the visual/layout part of a scale change (no setState/postMessage).
+	 * Called from both updateScale() and the rAF wheel handler.
 	 * @param {number|string} newScale
 	 */
-	updateScale(newScale) {
+	_applyScaleVisual(newScale) {
 		if (!this.imageElement || !this.hasLoadedImage || !this.imageElement.parentElement) {
 			return;
 		}
@@ -61,13 +67,11 @@ export class ZoomController {
 			this.scale = 'fit';
 			this.imageElement.classList.add('scale-to-fit');
 			this.imageElement.classList.remove('pixelated');
-			// Clear inline sizing and transforms when returning to fit
 			this.imageElement.style.transform = '';
 			this.imageElement.style.transformOrigin = '';
 			this.imageElement.style.width = '';
 			this.imageElement.style.height = '';
 			this.imageElement.style.margin = '';
-			this.vscode.setState(undefined);
 		} else {
 			const oldScale = this.scale;
 			this.scale = this._clamp(newScale, constants.MIN_SCALE, constants.MAX_SCALE);
@@ -81,7 +85,7 @@ export class ZoomController {
 			const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
 			const naturalWidth = canvas.width;
 			const naturalHeight = canvas.height;
-			const prevScale = (wasInFitMode)
+			const prevScale = wasInFitMode
 				? (canvas.clientWidth / naturalWidth)
 				: /** @type {number} */ (oldScale);
 
@@ -127,14 +131,46 @@ export class ZoomController {
 			newScrollY = Math.min(Math.max(0, newScrollY), maxScrollY);
 
 			window.scrollTo(newScrollX, newScrollY);
-
-			this.vscode.setState({ scale: this.scale, offsetX: newScrollX, offsetY: newScrollY });
 		}
+	}
 
-		this.vscode.postMessage({
-			type: 'zoom',
-			value: this.scale
-		});
+	/**
+	 * Debounce setState + postMessage after wheel zoom settles (150ms).
+	 * @param {number|string} scale
+	 */
+	_scheduleStateSave(scale) {
+		if (this._debouncedStateTimer !== null) {
+			clearTimeout(this._debouncedStateTimer);
+		}
+		this._debouncedStateTimer = setTimeout(() => {
+			this._debouncedStateTimer = null;
+			if (scale === 'fit') {
+				this.vscode.setState(undefined);
+			} else {
+				this.vscode.setState({ scale, offsetX: window.scrollX, offsetY: window.scrollY });
+			}
+			this.vscode.postMessage({ type: 'zoom', value: scale });
+		}, 150);
+	}
+
+	/**
+	 * Update scale with new value (for button/keyboard zoom — immediate setState/postMessage).
+	 * @param {number|string} newScale
+	 */
+	updateScale(newScale) {
+		// Cancel any pending debounced save from wheel zoom
+		if (this._debouncedStateTimer !== null) {
+			clearTimeout(this._debouncedStateTimer);
+			this._debouncedStateTimer = null;
+		}
+		this._applyScaleVisual(newScale);
+
+		if (this.scale === 'fit') {
+			this.vscode.setState(undefined);
+		} else {
+			this.vscode.setState({ scale: this.scale, offsetX: window.scrollX, offsetY: window.scrollY });
+		}
+		this.vscode.postMessage({ type: 'zoom', value: this.scale });
 	}
 
 	/**
@@ -203,7 +239,9 @@ export class ZoomController {
 	}
 
 	/**
-	 * Handle mouse wheel events for zooming
+	 * Handle mouse wheel events for zooming — batched via rAF for smooth performance.
+	 * Multiple wheel ticks within a single animation frame are merged into one layout update.
+	 * setState/postMessage are debounced to fire only after zooming settles.
 	 * @param {WheelEvent} e
 	 * @param {boolean} ctrlPressed
 	 * @param {boolean} altPressed
@@ -226,7 +264,25 @@ export class ZoomController {
 		}
 
 		const delta = e.deltaY > 0 ? 1 : -1;
-		this.updateScale(this.scale * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
+		const constants = this.settingsManager.constants;
+		// Accumulate scale changes — use pendingScale if already queued this frame
+		const base = this._pendingScale !== null ? this._pendingScale : this.scale;
+		this._pendingScale = this._clamp(
+			base * (1 - delta * constants.SCALE_PINCH_FACTOR),
+			constants.MIN_SCALE,
+			constants.MAX_SCALE
+		);
+
+		if (!this._rafPending) {
+			this._rafPending = true;
+			requestAnimationFrame(() => {
+				this._rafPending = false;
+				const targetScale = this._pendingScale;
+				this._pendingScale = null;
+				this._applyScaleVisual(targetScale);
+				this._scheduleStateSave(targetScale);
+			});
+		}
 	}
 
 	/**

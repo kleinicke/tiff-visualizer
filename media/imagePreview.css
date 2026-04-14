@@ -68,6 +68,11 @@ body img {
     margin: 0;
 }
 
+/* Promote zoomed canvas to GPU layer for smoother zoom/pan */
+.container canvas {
+    will-change: width, height;
+}
+
 .container.ready.zoom-in {
 	cursor: zoom-in;
 }
@@ -403,8 +408,7 @@ body img {
 /* === In-Webview Control Panel === */
 .iv-panel {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
+    /* bottom/right removed — set dynamically by applyPanelCorner() */
     background: var(--vscode-editor-background, #1e1e1e);
     border: 1px solid var(--vscode-panel-border, #3c3c3c);
     border-radius: 6px;
@@ -425,7 +429,7 @@ body img {
     padding: 6px 10px;
     background: var(--vscode-sideBarSectionHeader-background, #252526);
     border-radius: 6px 6px 0 0;
-    cursor: pointer;
+    cursor: grab;
     border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
 }
 
@@ -625,6 +629,25 @@ body img {
     color: var(--vscode-notificationsErrorIcon-foreground, #f48771);
 }
 
+.iv-layer-drag-handle {
+    cursor: grab;
+    color: var(--vscode-descriptionForeground, #888888);
+    font-size: 13px;
+    flex-shrink: 0;
+    padding: 0 2px;
+    line-height: 1;
+    user-select: none;
+}
+
+.iv-layer-drag-handle:active {
+    cursor: grabbing;
+}
+
+.iv-layer-entry.iv-drag-over {
+    border: 1px dashed var(--vscode-textLink-foreground, #3794ff);
+    background: var(--vscode-list-activeSelectionBackground, #094771);
+}
+
 /* Add layer button */
 .iv-add-layer-btn {
     display: flex;
@@ -674,4 +697,32 @@ body img {
 .vscode-light .iv-add-layer-btn {
     background: var(--vscode-button-secondaryBackground, #e8e8e8);
     color: var(--vscode-button-secondaryForeground, #333333);
+}
+
+/* === File drop-to-layer overlay === */
+.iv-drop-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    pointer-events: none;
+    border: 3px dashed var(--vscode-textLink-foreground, #3794ff);
+    box-sizing: border-box;
+}
+
+.iv-drop-overlay.iv-hidden {
+    display: none;
+}
+
+.iv-drop-label {
+    background: var(--vscode-editor-background, #1e1e1e);
+    color: var(--vscode-editor-foreground, #cccccc);
+    padding: 16px 32px;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    border: 1px solid var(--vscode-panel-border, #3c3c3c);
 }

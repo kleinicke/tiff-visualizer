@@ -72,7 +72,12 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 	let activeLayerIndex = 0;
 
 	// Control panel state
-	let panelCollapsed = false;
+	let panelCollapsed = true;
+	let panelCorner = 'bottom-right';
+	let globalBlendMode = 'source-over';
+	let panelIsDragging = false;
+	let panelDragStartX = 0, panelDragStartY = 0;
+	let panelDragStartLeft = 0, panelDragStartTop = 0;
 	let currentChannels = 1; // Track channels of base image for colormap enable/disable
 	let currentImageStats = { min: 0, max: 1 }; // Stats of the most recently loaded image
 	let currentTypeMax = 1.0; // Type max of the most recently loaded image
@@ -95,6 +100,8 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
+		if (persistedState.panelCorner) { panelCorner = persistedState.panelCorner; }
+		if (persistedState.globalBlendMode) { globalBlendMode = persistedState.globalBlendMode; }
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
 	}
@@ -118,6 +125,8 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 			currentResourceUri: settingsManager.settings.resourceUri,
 			colormapConversionState: colormapConversionState,
 			isHistogramVisible: histogramOverlay.getVisibility(),
+			panelCorner: panelCorner,
+			globalBlendMode: globalBlendMode,
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
@@ -139,6 +148,7 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		setupEventListeners();
 		createImageCollectionOverlay();
 		createControlPanel();
+		setupDropToLayer();
 
 		// Save state when webview might be disposed
 		window.addEventListener('beforeunload', saveState);
@@ -764,6 +774,10 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 
 					if (hasLoadedImage && !hasPendingRender) {
 						const startTime = performance.now();
+						// Ensure layer 0 is rendered with its own colormap, not one echoed back from a secondary layer change.
+						if (layers.length > 0) {
+							settingsManager.settings.colormap = layers[0].colormap || null;
+						}
 						await updateImageWithNewSettings(changes);
 						const endTime = performance.now();
 						logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
@@ -776,15 +790,22 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 								layers[0].settings.gamma.in = settingsManager.settings.gamma.in;
 								layers[0].settings.gamma.out = settingsManager.settings.gamma.out;
 								layers[0].settings.brightness.offset = settingsManager.settings.brightness.offset;
-								layers[0].colormap = settingsManager.settings.colormap || null;
+								// Only sync colormap from global settings when base layer is active;
+								// a secondary layer's colormap change must not overwrite layer 0's colormap.
+								if (activeLayerIndex === 0) {
+									layers[0].colormap = settingsManager.settings.colormap || null;
+								}
 							}
 							if (layers.length > 1) {
 								compositeLayers();
 							}
 						}
-						// Sync panel to active layer's settings
+						// Sync panel to active layer's settings (pass colormap separately — it lives on layer, not layer.settings)
 						const _aLayer = layers[activeLayerIndex];
-						syncPanelToSettings((_aLayer && _aLayer.settings) ? _aLayer.settings : settingsManager.settings);
+						syncPanelToSettings(
+							(_aLayer && _aLayer.settings) ? _aLayer.settings : settingsManager.settings,
+							_aLayer ? _aLayer.colormap : undefined
+						);
 					}
 				}
 				break;
@@ -1763,8 +1784,8 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		header.innerHTML = `<span class="iv-panel-title">&#9776; Controls</span>`;
 		const toggleBtn = document.createElement('button');
 		toggleBtn.className = 'iv-panel-toggle';
-		toggleBtn.textContent = '−';
-		toggleBtn.title = 'Collapse panel';
+		toggleBtn.textContent = panelCollapsed ? '+' : '−';
+		toggleBtn.title = panelCollapsed ? 'Expand panel' : 'Collapse panel';
 		header.appendChild(toggleBtn);
 		panel.appendChild(header);
 
@@ -1772,13 +1793,54 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		const body = document.createElement('div');
 		body.className = 'iv-panel-body';
 		body.id = 'iv-panel-body';
+		if (panelCollapsed) { body.classList.add('iv-collapsed'); }
 		panel.appendChild(body);
 
-		// Toggle collapse
+		// Drag logic — mousedown on header moves the panel freely, mouseup snaps to nearest corner
+		header.addEventListener('mousedown', (e) => {
+			if (e.target === toggleBtn) { return; }
+			panelIsDragging = false;
+			panelDragStartX = e.clientX; panelDragStartY = e.clientY;
+			const rect = panel.getBoundingClientRect();
+			panelDragStartLeft = rect.left; panelDragStartTop = rect.top;
+			// Switch to free pixel positioning
+			panel.style.top = rect.top + 'px'; panel.style.left = rect.left + 'px';
+			panel.style.bottom = ''; panel.style.right = '';
+
+			const onMouseMove = (me) => {
+				const dx = me.clientX - panelDragStartX, dy = me.clientY - panelDragStartY;
+				if (!panelIsDragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+					panelIsDragging = true;
+					header.style.cursor = 'grabbing';
+				}
+				if (panelIsDragging) {
+					panel.style.left = (panelDragStartLeft + dx) + 'px';
+					panel.style.top  = (panelDragStartTop + dy) + 'px';
+				}
+			};
+			const onMouseUp = () => {
+				document.removeEventListener('mousemove', onMouseMove);
+				document.removeEventListener('mouseup', onMouseUp);
+				header.style.cursor = '';
+				if (panelIsDragging) {
+					const r = panel.getBoundingClientRect();
+					panelCorner = getNearestCorner(r.left + r.width / 2, r.top + r.height / 2);
+					applyPanelCorner(panel, panelCorner);
+					saveState();
+					// Do NOT reset panelIsDragging — click handler reads it to suppress collapse toggle
+				}
+			};
+			document.addEventListener('mousemove', onMouseMove);
+			document.addEventListener('mouseup', onMouseUp);
+		});
+
+		// Click to toggle collapse — suppressed if this mousedown was a drag
 		header.addEventListener('click', () => {
+			if (panelIsDragging) { panelIsDragging = false; return; }
 			panelCollapsed = !panelCollapsed;
 			body.classList.toggle('iv-collapsed', panelCollapsed);
 			toggleBtn.textContent = panelCollapsed ? '+' : '−';
+			toggleBtn.title = panelCollapsed ? 'Expand panel' : 'Collapse panel';
 		});
 
 		// --- LAYERS section ---
@@ -1805,6 +1867,31 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		adjSectionLabel.className = 'iv-section-label';
 		adjSectionLabel.textContent = 'Adjustments';
 		body.appendChild(adjSectionLabel);
+
+		// Blend Mode row (global — applies to all layers)
+		const blendRow = createControlRow('Blend Mode', null);
+		const blendSelect = document.createElement('select');
+		blendSelect.className = 'iv-select';
+		blendSelect.id = 'iv-blend-select';
+		for (const { value, label } of [
+			{ value: 'source-over', label: 'Normal' },
+			{ value: 'lighter',     label: 'Additive' },
+			{ value: 'multiply',    label: 'Multiply' },
+			{ value: 'screen',      label: 'Screen' },
+			{ value: 'overlay',     label: 'Overlay' },
+		]) {
+			const opt = document.createElement('option');
+			opt.value = value; opt.textContent = label;
+			blendSelect.appendChild(opt);
+		}
+		blendSelect.value = globalBlendMode;
+		blendSelect.addEventListener('change', () => {
+			globalBlendMode = blendSelect.value;
+			compositeLayers();
+			saveState();
+		});
+		blendRow.querySelector('.iv-control-label').after(blendSelect);
+		body.appendChild(blendRow);
 
 		// Colormap row
 		const cmRow = createControlRow('Colormap', null);
@@ -1888,8 +1975,78 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		});
 		body.appendChild(brightnessRow);
 
+		applyPanelCorner(panel, panelCorner);
 		document.body.appendChild(panel);
 		return panel;
+	}
+
+	/** Snap the panel to a corner using inline styles (clears all four sides first) */
+	function applyPanelCorner(panel, corner) {
+		panel.style.top = panel.style.bottom = panel.style.left = panel.style.right = '';
+		const isBottom = corner.startsWith('bottom');
+		const isRight  = corner.endsWith('right');
+		panel.style[isBottom ? 'bottom' : 'top'] = '20px';
+		panel.style[isRight  ? 'right'  : 'left'] = '20px';
+	}
+
+	/** Return the corner name nearest to viewport point (x, y) */
+	function getNearestCorner(x, y) {
+		const h = x < window.innerWidth  / 2 ? 'left' : 'right';
+		const v = y < window.innerHeight / 2 ? 'top'  : 'bottom';
+		return `${v}-${h}`;
+	}
+
+	/**
+	 * Set up drag-and-drop of image files onto the webview to add them as layers.
+	 * Dropped URIs are forwarded to the extension host which reads the file and
+	 * sends back an addLayerData message.
+	 */
+	function setupDropToLayer() {
+		const dropOverlay = document.createElement('div');
+		dropOverlay.className = 'iv-drop-overlay iv-hidden';
+		dropOverlay.innerHTML = '<div class="iv-drop-label">Drop image to add as layer</div>';
+		document.body.appendChild(dropOverlay);
+
+		let dragCounter = 0;
+
+		document.addEventListener('dragenter', (e) => {
+			const types = e.dataTransfer ? Array.from(e.dataTransfer.types) : [];
+			if (!types.includes('Files') && !types.includes('text/uri-list')) { return; }
+			dragCounter++;
+			dropOverlay.classList.remove('iv-hidden');
+		});
+
+		document.addEventListener('dragleave', () => {
+			if (--dragCounter <= 0) {
+				dragCounter = 0;
+				dropOverlay.classList.add('iv-hidden');
+			}
+		});
+
+		document.addEventListener('dragover', (e) => { e.preventDefault(); });
+
+		document.addEventListener('drop', (e) => {
+			e.preventDefault();
+			dragCounter = 0;
+			dropOverlay.classList.add('iv-hidden');
+
+			// URI list: covers VS Code file explorer drags and most OS file managers
+			const uriList = e.dataTransfer ? e.dataTransfer.getData('text/uri-list') : '';
+			if (uriList) {
+				uriList.split('\n')
+					.map(s => s.trim())
+					.filter(s => s && !s.startsWith('#'))
+					.forEach(uri => vscode.postMessage({ type: 'dropLayerFile', uri }));
+				return;
+			}
+			// Fallback: files array (some OS file managers on Linux/Windows)
+			if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+				for (const file of e.dataTransfer.files) {
+					const path = (/** @type {any} */ (file)).path || file.name;
+					vscode.postMessage({ type: 'dropLayerFile', uri: `file://${path}` });
+				}
+			}
+		});
 	}
 
 	/**
@@ -2091,6 +2248,10 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 				if (bVal) bVal.textContent = parseFloat(settings.brightness.offset || 0).toFixed(1);
 			}
 		}
+
+		// Blend mode (global — always reflects current globalBlendMode)
+		const blendSel = document.getElementById('iv-blend-select');
+		if (blendSel) { blendSel.value = globalBlendMode; }
 	}
 
 	/**
@@ -2101,9 +2262,53 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		if (!layerList) return;
 		layerList.innerHTML = '';
 
+		let dragSourceIndex = null;
+
 		layers.forEach((layer, i) => {
 			const entry = document.createElement('div');
 			entry.className = 'iv-layer-entry' + (i === activeLayerIndex ? ' iv-layer-active' : '');
+			entry.draggable = true;
+
+			// Drag handle
+			const dragHandle = document.createElement('span');
+			dragHandle.className = 'iv-layer-drag-handle';
+			dragHandle.textContent = '\u2807';
+			dragHandle.title = 'Drag to reorder';
+			entry.appendChild(dragHandle);
+
+			// Drag events
+			entry.addEventListener('dragstart', (e) => {
+				dragSourceIndex = i;
+				e.dataTransfer.effectAllowed = 'move';
+			});
+			entry.addEventListener('dragend', () => {
+				dragSourceIndex = null;
+				layerList.querySelectorAll('.iv-drag-over').forEach(el => el.classList.remove('iv-drag-over'));
+			});
+			entry.addEventListener('dragover', (e) => {
+				e.preventDefault();
+				e.dataTransfer.dropEffect = 'move';
+				layerList.querySelectorAll('.iv-drag-over').forEach(el => el.classList.remove('iv-drag-over'));
+				if (dragSourceIndex !== null && dragSourceIndex !== i) {
+					entry.classList.add('iv-drag-over');
+				}
+			});
+			entry.addEventListener('drop', (e) => {
+				e.preventDefault();
+				if (dragSourceIndex === null || dragSourceIndex === i) return;
+				const moved = layers.splice(dragSourceIndex, 1)[0];
+				layers.splice(i, 0, moved);
+				if (activeLayerIndex === dragSourceIndex) {
+					activeLayerIndex = i;
+				} else if (dragSourceIndex < activeLayerIndex && i >= activeLayerIndex) {
+					activeLayerIndex--;
+				} else if (dragSourceIndex > activeLayerIndex && i <= activeLayerIndex) {
+					activeLayerIndex++;
+				}
+				dragSourceIndex = null;
+				updateLayerListUI();
+				compositeLayers();
+			});
 
 			// Visibility checkbox
 			const visCheck = document.createElement('input');
@@ -2127,10 +2332,9 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 				updateLayerListUI();
 				// Sync panel controls to the newly selected layer's settings
 				if (layers[i] && layers[i].settings) {
-					syncPanelToSettings(layers[i].settings);
+					syncPanelToSettings(layers[i].settings, layers[i].colormap);
 					const cmSelect = document.getElementById('iv-colormap-select');
 					if (cmSelect) {
-						cmSelect.value = layers[i].colormap || '';
 						cmSelect.disabled = (layers[i].channels || 1) !== 1;
 					}
 					if (layers[i].stats) {
@@ -2201,6 +2405,7 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 				const offCtx = offscreen.getContext('2d');
 				offCtx.putImageData(layer.imageData, 0, 0);
 				ctx.globalAlpha = layer.opacity;
+				ctx.globalCompositeOperation = globalBlendMode;
 				ctx.drawImage(offscreen, 0, 0);
 			} catch (e) {
 				// Fallback: just put image data (no opacity blending)
@@ -2208,6 +2413,7 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 			}
 		}
 		ctx.globalAlpha = 1.0;
+		ctx.globalCompositeOperation = 'source-over';
 
 		// Update histogram
 		updateHistogramData();

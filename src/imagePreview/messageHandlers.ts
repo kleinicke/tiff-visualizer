@@ -44,6 +44,7 @@ export class MessageRouter {
 		this.handlers.set('requestAddLayer', new RequestAddLayerMessageHandler());
 		this.handlers.set('removeLayer', new RemoveLayerMessageHandler());
 		this.handlers.set('layerSettingsChanged', new LayerSettingsChangedMessageHandler());
+		this.handlers.set('dropLayerFile', new DropLayerFileMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -313,28 +314,21 @@ class RemoveLayerMessageHandler implements MessageHandler {
 }
 
 class LayerSettingsChangedMessageHandler implements MessageHandler {
+	handle(_message: any, _preview: ImagePreview): void {
+		// Intentionally no-op: the webview manages per-tab layer settings locally.
+		// Calling AppStateManager mutators here broadcasts to ALL tabs of the same
+		// format, causing cross-tab contamination. The webview already applies
+		// settings locally via applyLayerSettings() without extension-host involvement.
+	}
+}
+
+class DropLayerFileMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		// Update AppStateManager with changed settings from webview panel sliders
-		const mgr = preview.getManager().appStateManager;
-		if (message.colormap !== undefined) {
-			mgr.setColormap(message.colormap);
-		}
-		if (message.normMin !== undefined || message.normMax !== undefined) {
-			const current = mgr.imageSettings.normalization;
-			mgr.updateNormalization(
-				message.normMin !== undefined ? message.normMin : current.min,
-				message.normMax !== undefined ? message.normMax : current.max
-			);
-		}
-		if (message.gammaIn !== undefined || message.gammaOut !== undefined) {
-			const current = mgr.imageSettings.gamma;
-			mgr.updateGamma(
-				message.gammaIn !== undefined ? message.gammaIn : current.in,
-				message.gammaOut !== undefined ? message.gammaOut : current.out
-			);
-		}
-		if (message.brightness !== undefined) {
-			mgr.updateBrightness(message.brightness);
+		try {
+			const uri = vscode.Uri.parse(message.uri, true);
+			preview.addLayerFromUri(uri);
+		} catch {
+			// Silently ignore unparseable URIs — the webview will not show a layer
 		}
 	}
 }

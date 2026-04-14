@@ -405,8 +405,10 @@ export class ImagePreview extends MediaPreview {
 			}
 		});
 		if (!uris || uris.length === 0) return;
+		await this.addLayerFromUri(uris[0]);
+	}
 
-		const uri = uris[0];
+	public async addLayerFromUri(uri: vscode.Uri): Promise<void> {
 		try {
 			const fileData = await vscode.workspace.fs.readFile(uri);
 			const filename = uri.path.split('/').pop() || uri.path;
