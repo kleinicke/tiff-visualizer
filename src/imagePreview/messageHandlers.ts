@@ -45,6 +45,7 @@ export class MessageRouter {
 		this.handlers.set('removeLayer', new RemoveLayerMessageHandler());
 		this.handlers.set('layerSettingsChanged', new LayerSettingsChangedMessageHandler());
 		this.handlers.set('dropLayerFile', new DropLayerFileMessageHandler());
+		this.handlers.set('resetFormatDefaults', new ResetFormatDefaultsMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -121,9 +122,9 @@ class FormatInfoMessageHandler implements MessageHandler {
 		// Store format info in app state for access by commands
 		preview.getManager().appStateManager.setFormatInfo(message.value);
 
-		// Set the format type for per-format settings
+		// Set the format type for per-instance settings
 		if (message.value && message.value.formatType) {
-			preview.getManager().appStateManager.setImageFormat(message.value.formatType);
+			preview.getManager().appStateManager.setActiveInstance(preview.resource.toString(), message.value.formatType);
 			// Track the format in this preview instance
 			preview.setCurrentFormat(message.value.formatType);
 
@@ -330,5 +331,14 @@ class DropLayerFileMessageHandler implements MessageHandler {
 		} catch {
 			// Silently ignore unparseable URIs — the webview will not show a layer
 		}
+	}
+}
+
+class ResetFormatDefaultsMessageHandler implements MessageHandler {
+	handle(_message: any, preview: ImagePreview): void {
+		const manager = preview.getManager();
+		// Reset only this instance — fires onDidChangeSettings which sends
+		// updated (default) settings back to this webview via updateSettings.
+		manager.appStateManager.resetToDefaults(preview.resource.toString());
 	}
 }

@@ -1975,6 +1975,38 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		});
 		body.appendChild(brightnessRow);
 
+		// Reset to defaults button
+		const resetBtn = document.createElement('button');
+		resetBtn.className = 'iv-reset-btn';
+		resetBtn.textContent = 'Reset to Defaults';
+		resetBtn.title = 'Reset all adjustments to format defaults';
+		resetBtn.addEventListener('click', () => {
+			// Reset blend mode globally
+			globalBlendMode = 'source-over';
+			const blendSel = document.getElementById('iv-blend-select');
+			if (blendSel) { blendSel.value = globalBlendMode; }
+
+			// Reset all layer colormaps and local adjustments (extra layers only)
+			layers.forEach((layer, i) => {
+				layer.colormap = null;
+				if (i > 0) {
+					// Secondary layers: reset to neutral display settings
+					layer.settings.gamma = { in: 1.0, out: 1.0 };
+					layer.settings.brightness = { offset: 0 };
+					layer.settings.normalization = {
+						min: 0, max: layer.typeMax || 1,
+						autoNormalize: layer.isFloat && layer.typeMax <= 1,
+						gammaMode: !layer.isFloat || (layer.typeMax || 1) > 1
+					};
+				}
+			});
+
+			// Ask the extension to reset the base format defaults — it will fire
+			// onDidChangeSettings which sends fresh default settings back to this webview.
+			vscode.postMessage({ type: 'resetFormatDefaults' });
+		});
+		body.appendChild(resetBtn);
+
 		applyPanelCorner(panel, panelCorner);
 		document.body.appendChild(panel);
 		return panel;

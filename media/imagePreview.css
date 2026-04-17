@@ -420,6 +420,10 @@ body img {
     user-select: none;
     min-width: 240px;
     max-width: 300px;
+    /* Never overflow the viewport vertically */
+    max-height: calc(100vh - 40px);
+    display: flex;
+    flex-direction: column;
 }
 
 .iv-panel-header {
@@ -454,10 +458,34 @@ body img {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0; /* required for flex children to shrink below content size */
 }
 
 .iv-panel-body.iv-collapsed {
     display: none;
+}
+
+/* Reset to defaults button */
+.iv-reset-btn {
+    width: 100%;
+    padding: 5px 10px;
+    margin-top: 4px;
+    background: none;
+    border: 1px solid var(--vscode-panel-border, #3c3c3c);
+    border-radius: 3px;
+    color: var(--vscode-editor-foreground, #cccccc);
+    font-size: 11px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s;
+}
+.iv-reset-btn:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+}
+.iv-reset-btn:active {
+    background: var(--vscode-toolbar-activeBackground, rgba(255,255,255,0.15));
 }
 
 /* Control rows */

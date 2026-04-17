@@ -153,10 +153,10 @@ export class ImagePreview extends MediaPreview {
 		// Subscribe to both managers but use single update function
 		// Per-image settings (maskFilters) always apply to this preview
 		this._register(this._manager.settingsManager.onDidChangeSettings(updateSettings));
-		// Per-format settings (normalization, gamma, brightness) only apply if format matches
+		// Per-instance settings only apply to this specific preview
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
-			// Only update if settings are for our format (prevents cross-format contamination)
-			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
+			// Only update if settings are for this specific file instance
+			if (this.resource.toString() === this._manager.appStateManager.currentUri) {
 				updateSettings();
 			}
 		}));
