@@ -745,6 +745,8 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 						if (ctx) {
 							await renderImageDataToCanvas(deferredImageData, ctx);
 							primaryImageData = deferredImageData;
+							if (layers.length > 0) layers[0].imageData = primaryImageData;
+							if (layers.length > 1) compositeLayers();
 							updateHistogramData();
 						}
 
@@ -2299,17 +2301,18 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		layers.forEach((layer, i) => {
 			const entry = document.createElement('div');
 			entry.className = 'iv-layer-entry' + (i === activeLayerIndex ? ' iv-layer-active' : '');
-			entry.draggable = true;
 
-			// Drag handle
+			// Drag handle — only the handle is draggable to avoid conflicts with range/checkbox inputs
 			const dragHandle = document.createElement('span');
 			dragHandle.className = 'iv-layer-drag-handle';
 			dragHandle.textContent = '\u2807';
 			dragHandle.title = 'Drag to reorder';
+			dragHandle.draggable = true;
 			entry.appendChild(dragHandle);
 
-			// Drag events
+			// Drag events (dragstart bubbles from handle to entry)
 			entry.addEventListener('dragstart', (e) => {
+				if (e.target !== dragHandle) return;
 				dragSourceIndex = i;
 				e.dataTransfer.effectAllowed = 'move';
 			});
