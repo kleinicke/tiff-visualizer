@@ -745,7 +745,35 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 						if (ctx) {
 							await renderImageDataToCanvas(deferredImageData, ctx);
 							primaryImageData = deferredImageData;
-							if (layers.length > 0) layers[0].imageData = primaryImageData;
+
+							// After deferred render, refresh stats and layer state so that
+							// the range sliders and layer settings reflect the actual data
+							// range (not the placeholder defaults used before the first render).
+							const _deferredStats =
+								(exrProcessor && exrProcessor._cachedStats) ||
+								(npyProcessor && npyProcessor._cachedStats) ||
+								(pfmProcessor && pfmProcessor._cachedStats) ||
+								(ppmProcessor && ppmProcessor._cachedStats) ||
+								(pngProcessor && pngProcessor._cachedStats) ||
+								null;
+							if (_deferredStats) {
+								currentImageStats = _deferredStats;
+								updateRangeSliderBounds(
+									currentImageStats.min, currentImageStats.max,
+									currentTypeMax, currentIsFloat
+								);
+							}
+
+							if (layers.length > 0) {
+								layers[0].imageData = primaryImageData;
+								layers[0].stats = currentImageStats;
+								// Sync normalization min/max from actual stats for autoNormalize formats
+								if (settingsManager.settings.normalization.autoNormalize) {
+									layers[0].settings.normalization.min = settingsManager.settings.normalization.min;
+									layers[0].settings.normalization.max = settingsManager.settings.normalization.max;
+								}
+							}
+
 							if (layers.length > 1) compositeLayers();
 							updateHistogramData();
 						}
@@ -964,6 +992,8 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 						const _layerIsFloat = layerResult.isFloat !== false;
 						const _layerTypeMax = layerResult.typeMax || (_layerIsFloat ? 1.0 : 255);
 						const _layerChannels = layerResult.channels || 1;
+						const _layerWidth = layerResult.width || layerImageData.width;
+						const _layerHeight = layerResult.height || layerImageData.height;
 						layers.push({
 							id: layerId,
 							name: filename || 'Layer ' + layers.length,
@@ -971,6 +1001,9 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 							opacity: 1.0,
 							imageData: layerImageData,
 							rawData: layerResult.rawData || null,
+							renderOptions: layerResult.renderOptions || null,
+							width: _layerWidth,
+							height: _layerHeight,
 							settings: {
 								normalization: { min: _layerStats.min, max: _layerStats.max, autoNormalize: false, gammaMode: false },
 								gamma: { in: 1.0, out: 1.0 },
@@ -1928,7 +1961,13 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		const minRow = createSliderRow('Range Min', 'iv-norm-min', 0, 1, 0, 0.001, (val) => {
 			const layer = layers[activeLayerIndex];
 			if (!layer) return;
-			// Switch to manual range mode so min/max values are actually used
+			// When first leaving gammaMode, seed max from the slider's current position
+			// (set by updateRangeSliderBounds to typeMax/statsMax) so the transition
+			// doesn't leave max at the fake gammaMode value of 1.
+			if (layer.settings.normalization.gammaMode) {
+				const maxSlider = document.getElementById('iv-norm-max');
+				if (maxSlider) layer.settings.normalization.max = parseFloat(maxSlider.value);
+			}
 			layer.settings.normalization.gammaMode = false;
 			layer.settings.normalization.autoNormalize = false;
 			layer.settings.normalization.min = parseFloat(val);
@@ -1941,7 +1980,13 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		const maxRow = createSliderRow('Range Max', 'iv-norm-max', 0, 1, 1, 0.001, (val) => {
 			const layer = layers[activeLayerIndex];
 			if (!layer) return;
-			// Switch to manual range mode so min/max values are actually used
+			// When first leaving gammaMode, seed min from the slider's current position
+			// (set by updateRangeSliderBounds to 0/statsMin) so the transition doesn't
+			// leave min at the fake gammaMode value.
+			if (layer.settings.normalization.gammaMode) {
+				const minSlider = document.getElementById('iv-norm-min');
+				if (minSlider) layer.settings.normalization.min = parseFloat(minSlider.value);
+			}
 			layer.settings.normalization.gammaMode = false;
 			layer.settings.normalization.autoNormalize = false;
 			layer.settings.normalization.max = parseFloat(val);
@@ -2217,10 +2262,13 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 	function rerenderAdditionalLayer(i) {
 		const layer = layers[i];
 		if (!layer || !layer.rawData) return;
+		const w = layer.width || (layer.imageData && layer.imageData.width) || 0;
+		const h = layer.height || (layer.imageData && layer.imageData.height) || 0;
+		const extraOpts = layer.renderOptions || {};
 		layer.imageData = ImageRenderer.render(
-			layer.rawData, layer.width, layer.height, layer.channels,
+			layer.rawData, w, h, layer.channels,
 			layer.isFloat, layer.stats, layer.settings,
-			{ typeMax: layer.typeMax, colormap: layer.colormap }
+			{ typeMax: layer.typeMax, colormap: layer.colormap, ...extraOpts }
 		);
 	}
 
@@ -2245,7 +2293,12 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 			const minVal = document.getElementById('iv-norm-min-val');
 			const maxVal = document.getElementById('iv-norm-max-val');
 
-			if (!settings.normalization.autoNormalize) {
+			// Only update range sliders in manual mode. In gammaMode the effective
+			// range is [0, typeMax] (set by updateRangeSliderBounds), and forcing
+			// sliders to normalization.max=1 would move the Range Max thumb to the
+			// far-left of the track — causing accidental mode-switches and white-outs
+			// if the user clicks near the Gamma slider below it.
+			if (!settings.normalization.autoNormalize && !settings.normalization.gammaMode) {
 				if (minSlider) {
 					const v = parseFloat(settings.normalization.min) || 0;
 					if (v < parseFloat(minSlider.min)) minSlider.min = v;

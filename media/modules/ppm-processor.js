@@ -66,13 +66,20 @@ export class PpmProcessor {
         canvas.width = width;
         canvas.height = height;
 
-        // _toImageDataWithNormalization uses settingsManager.settings directly
         const savedStats = this._cachedStats;
         this._cachedStats = undefined;
         const imageData = this._toImageDataWithNormalization(ppmData, width, height, maxval, channels);
+        const computedStats = this._cachedStats;
         this._cachedStats = savedStats;
 
-        return { canvas, imageData };
+        const typeMax = maxval;
+        const stats = computedStats || { min: 0, max: maxval };
+        return {
+            canvas, imageData,
+            rawData: ppmData, width, height, channels,
+            isFloat: false, typeMax, stats,
+            renderOptions: { typeMax }
+        };
     }
 
     _parsePpm(arrayBuffer) {

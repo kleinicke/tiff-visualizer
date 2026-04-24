@@ -105,6 +105,18 @@ class StatsMessageHandler implements MessageHandler {
 		// Update stats for any image sending stats (TIFF and non-TIFF float sources)
 		preview.getManager().settingsManager.updateImageStats(message.value.min, message.value.max);
 		preview.getNormalizationStatusBarEntry().updateImageStats(message.value.min, message.value.max);
+
+		// If auto-normalize is active, switch to manual mode with the actual data range.
+		// This makes the normalization controls show the real data values (e.g. 0–50m for depth)
+		// rather than staying locked at the 0–1 placeholder from the format defaults.
+		const appState = preview.getManager().appStateManager;
+		if (appState.imageSettings.normalization.autoNormalize) {
+			appState.setManualNormalization(message.value.min, message.value.max);
+			// setManualNormalization fires onDidChangeSettings → updateSettings() → webview re-renders
+			// with autoNormalize=false and min/max = actual data range (same visual output)
+			return;
+		}
+
 		preview.updateStatusBar();
 	}
 }

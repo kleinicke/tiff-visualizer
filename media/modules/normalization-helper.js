@@ -376,12 +376,16 @@ export class ImageRenderer {
                     b = nanColor.b;
                 } else {
                     const normalized = (value - min) * invRange;
-                    const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
-                        const entry = COLORMAP_TABLES[options.colormap][intensity];
-                        r = entry[0]; g = entry[1]; b = entry[2];
+                    if (normalized < 0 || normalized > 1) {
+                        r = g = b = 0;
                     } else {
-                        r = g = b = intensity;
+                        const intensity = Math.round(normalized * 255);
+                        if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                            const entry = COLORMAP_TABLES[options.colormap][intensity];
+                            r = entry[0]; g = entry[1]; b = entry[2];
+                        } else {
+                            r = g = b = intensity;
+                        }
                     }
                 }
             } else if (channels === 3) {
@@ -395,9 +399,12 @@ export class ImageRenderer {
                     g = nanColor.g;
                     b = nanColor.b;
                 } else {
-                    r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
-                    g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
-                    b = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
+                    const rNorm = (rVal - min) * invRange;
+                    const gNorm = (gVal - min) * invRange;
+                    const bNorm = (bVal - min) * invRange;
+                    r = (rNorm < 0 || rNorm > 1) ? 0 : Math.round(rNorm * 255);
+                    g = (gNorm < 0 || gNorm > 1) ? 0 : Math.round(gNorm * 255);
+                    b = (bNorm < 0 || bNorm > 1) ? 0 : Math.round(bNorm * 255);
                 }
             } else if (channels === 4) {
                 const idx = i * 4;
@@ -411,9 +418,12 @@ export class ImageRenderer {
                     g = nanColor.g;
                     b = nanColor.b;
                 } else {
-                    r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
-                    g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
-                    b = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
+                    const rNorm = (rVal - min) * invRange;
+                    const gNorm = (gVal - min) * invRange;
+                    const bNorm = (bVal - min) * invRange;
+                    r = (rNorm < 0 || rNorm > 1) ? 0 : Math.round(rNorm * 255);
+                    g = (gNorm < 0 || gNorm > 1) ? 0 : Math.round(gNorm * 255);
+                    b = (bNorm < 0 || bNorm > 1) ? 0 : Math.round(bNorm * 255);
                 }
 
                 const p = i * 4;
@@ -469,6 +479,8 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                } else if (value < min || value > max) {
+                    r = g = b = 0;
                 } else {
                     const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
                     r = g = b = lut[lutIdx];
@@ -488,12 +500,9 @@ export class ImageRenderer {
                     g = nanColor.g;
                     b = nanColor.b;
                 } else {
-                    const rIdx = Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)));
-                    const gIdx = Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)));
-                    const bIdx = Math.round(Math.max(0, Math.min(65535, (bVal - vMin) * invVRange)));
-                    r = lut[rIdx];
-                    g = lut[gIdx];
-                    b = lut[bIdx];
+                    r = (rVal < min || rVal > max) ? 0 : lut[Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)))];
+                    g = (gVal < min || gVal > max) ? 0 : lut[Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)))];
+                    b = (bVal < min || bVal > max) ? 0 : lut[Math.round(Math.max(0, Math.min(65535, (bVal - vMin) * invVRange)))];
                 }
             } else if (channels === 4) {
                 const idx = i * 4;
@@ -507,12 +516,9 @@ export class ImageRenderer {
                     g = nanColor.g;
                     b = nanColor.b;
                 } else {
-                    const rIdx = Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)));
-                    const gIdx = Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)));
-                    const bIdx = Math.round(Math.max(0, Math.min(65535, (bVal - vMin) * invVRange)));
-                    r = lut[rIdx];
-                    g = lut[gIdx];
-                    b = lut[bIdx];
+                    r = (rVal < min || rVal > max) ? 0 : lut[Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)))];
+                    g = (gVal < min || gVal > max) ? 0 : lut[Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)))];
+                    b = (bVal < min || bVal > max) ? 0 : lut[Math.round(Math.max(0, Math.min(65535, (bVal - vMin) * invVRange)))];
                 }
 
                 const p = i * 4;
@@ -554,7 +560,7 @@ export class ImageRenderer {
                 const val24 = (r << 16) | (g << 8) | b;
 
                 const normalized = (val24 - min) * invRange;
-                const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+                const val8 = (normalized < 0 || normalized > 1) ? 0 : Math.round(normalized * 255);
 
                 const p = i * 4;
                 out[p] = val8;
@@ -571,22 +577,27 @@ export class ImageRenderer {
             let r, g, b;
 
             if (channels === 1) {
-                const value = Math.max(min, Math.min(max, data[i]));
-                r = g = b = Math.round((value - min) * invRange);
-                if (options.colormap && COLORMAP_TABLES[options.colormap]) {
-                    const entry = COLORMAP_TABLES[options.colormap][r];
-                    r = entry[0]; g = entry[1]; b = entry[2];
+                const raw = data[i];
+                if (raw < min || raw > max) { r = g = b = 0; }
+                else {
+                    r = g = b = Math.round((raw - min) * invRange);
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][r];
+                        r = entry[0]; g = entry[1]; b = entry[2];
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
-                r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                const rRaw = data[idx], gRaw = data[idx + 1], bRaw = data[idx + 2];
+                r = (rRaw < min || rRaw > max) ? 0 : Math.round((rRaw - min) * invRange);
+                g = (gRaw < min || gRaw > max) ? 0 : Math.round((gRaw - min) * invRange);
+                b = (bRaw < min || bRaw > max) ? 0 : Math.round((bRaw - min) * invRange);
             } else if (channels === 4) {
                 const idx = i * 4;
-                r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                const rRaw = data[idx], gRaw = data[idx + 1], bRaw = data[idx + 2];
+                r = (rRaw < min || rRaw > max) ? 0 : Math.round((rRaw - min) * invRange);
+                g = (gRaw < min || gRaw > max) ? 0 : Math.round((gRaw - min) * invRange);
+                b = (bRaw < min || bRaw > max) ? 0 : Math.round((bRaw - min) * invRange);
 
                 const p = i * 4;
                 out[p] = r;
@@ -628,7 +639,7 @@ export class ImageRenderer {
 
                 let normalized = (val24 - min) * invRange;
                 normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-                const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+                const val8 = (normalized < 0 || normalized > 1) ? 0 : Math.round(normalized * 255);
 
                 const p = i * 4;
                 out[p] = val8;
@@ -648,22 +659,25 @@ export class ImageRenderer {
             let r, g, b;
 
             if (channels === 1) {
-                const value = Math.min(65535, data[i]);
-                r = g = b = lut[value];
-                if (options.colormap && COLORMAP_TABLES[options.colormap]) {
-                    const entry = COLORMAP_TABLES[options.colormap][r];
-                    r = entry[0]; g = entry[1]; b = entry[2];
+                const rawVal = data[i];
+                if (rawVal > normMax) { r = g = b = 0; }
+                else {
+                    r = g = b = lut[Math.min(65535, rawVal)];
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][r];
+                        r = entry[0]; g = entry[1]; b = entry[2];
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
-                r = lut[Math.min(65535, data[idx])];
-                g = lut[Math.min(65535, data[idx + 1])];
-                b = lut[Math.min(65535, data[idx + 2])];
+                r = data[idx] > normMax ? 0 : lut[Math.min(65535, data[idx])];
+                g = data[idx + 1] > normMax ? 0 : lut[Math.min(65535, data[idx + 1])];
+                b = data[idx + 2] > normMax ? 0 : lut[Math.min(65535, data[idx + 2])];
             } else if (channels === 4) {
                 const idx = i * 4;
-                r = lut[Math.min(65535, data[idx])];
-                g = lut[Math.min(65535, data[idx + 1])];
-                b = lut[Math.min(65535, data[idx + 2])];
+                r = data[idx] > normMax ? 0 : lut[Math.min(65535, data[idx])];
+                g = data[idx + 1] > normMax ? 0 : lut[Math.min(65535, data[idx + 1])];
+                b = data[idx + 2] > normMax ? 0 : lut[Math.min(65535, data[idx + 2])];
 
                 const p = i * 4;
                 out[p] = r;
@@ -702,7 +716,7 @@ export class ImageRenderer {
                 const val24 = (r << 16) | (g << 8) | b;
 
                 const normalized = (val24 - min) * invRange;
-                const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+                const val8 = (normalized < 0 || normalized > 1) ? 0 : Math.round(normalized * 255);
 
                 const p = i * 4;
                 out[p] = val8;
@@ -749,22 +763,27 @@ export class ImageRenderer {
                 let r, g, b;
 
                 if (channels === 1) {
-                    const value = Math.max(min, Math.min(max, data[i]));
-                    r = g = b = Math.round((value - min) * invRange);
-                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
-                        const entry = COLORMAP_TABLES[options.colormap][r];
-                        r = entry[0]; g = entry[1]; b = entry[2];
+                    const raw = data[i];
+                    if (raw < min || raw > max) { r = g = b = 0; }
+                    else {
+                        r = g = b = Math.round((raw - min) * invRange);
+                        if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                            const entry = COLORMAP_TABLES[options.colormap][r];
+                            r = entry[0]; g = entry[1]; b = entry[2];
+                        }
                     }
                 } else if (channels === 3) {
                     const idx = i * 3;
-                    r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                    g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                    b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                    const rRaw = data[idx], gRaw = data[idx + 1], bRaw = data[idx + 2];
+                    r = (rRaw < min || rRaw > max) ? 0 : Math.round((rRaw - min) * invRange);
+                    g = (gRaw < min || gRaw > max) ? 0 : Math.round((gRaw - min) * invRange);
+                    b = (bRaw < min || bRaw > max) ? 0 : Math.round((bRaw - min) * invRange);
                 } else if (channels === 4) {
                     const idx = i * 4;
-                    r = Math.round((Math.max(min, Math.min(max, data[idx])) - min) * invRange);
-                    g = Math.round((Math.max(min, Math.min(max, data[idx + 1])) - min) * invRange);
-                    b = Math.round((Math.max(min, Math.min(max, data[idx + 2])) - min) * invRange);
+                    const rRaw = data[idx], gRaw = data[idx + 1], bRaw = data[idx + 2];
+                    r = (rRaw < min || rRaw > max) ? 0 : Math.round((rRaw - min) * invRange);
+                    g = (gRaw < min || gRaw > max) ? 0 : Math.round((gRaw - min) * invRange);
+                    b = (bRaw < min || bRaw > max) ? 0 : Math.round((bRaw - min) * invRange);
 
                     const p = i * 4;
                     out[p] = r;
@@ -805,7 +824,7 @@ export class ImageRenderer {
 
                 let normalized = (val24 - min) * invRange;
                 normalized = NormalizationHelper.applyGammaAndBrightness(normalized, settings);
-                const val8 = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+                const val8 = (normalized < 0 || normalized > 1) ? 0 : Math.round(normalized * 255);
 
                 const p = i * 4;
                 out[p] = val8;
@@ -825,21 +844,25 @@ export class ImageRenderer {
             let r, g, b;
 
             if (channels === 1) {
-                r = g = b = lut[data[i]];
-                if (options.colormap && COLORMAP_TABLES[options.colormap]) {
-                    const entry = COLORMAP_TABLES[options.colormap][r];
-                    r = entry[0]; g = entry[1]; b = entry[2];
+                const rawVal = data[i];
+                if (rawVal > normMax) { r = g = b = 0; }
+                else {
+                    r = g = b = lut[rawVal];
+                    if (options.colormap && COLORMAP_TABLES[options.colormap]) {
+                        const entry = COLORMAP_TABLES[options.colormap][r];
+                        r = entry[0]; g = entry[1]; b = entry[2];
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
-                r = lut[data[idx]];
-                g = lut[data[idx + 1]];
-                b = lut[data[idx + 2]];
+                r = data[idx] > normMax ? 0 : lut[data[idx]];
+                g = data[idx + 1] > normMax ? 0 : lut[data[idx + 1]];
+                b = data[idx + 2] > normMax ? 0 : lut[data[idx + 2]];
             } else if (channels === 4) {
                 const idx = i * 4;
-                r = lut[data[idx]];
-                g = lut[data[idx + 1]];
-                b = lut[data[idx + 2]];
+                r = data[idx] > normMax ? 0 : lut[data[idx]];
+                g = data[idx + 1] > normMax ? 0 : lut[data[idx + 1]];
+                b = data[idx + 2] > normMax ? 0 : lut[data[idx + 2]];
 
                 const p = i * 4;
                 out[p] = r;

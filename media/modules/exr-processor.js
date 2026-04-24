@@ -188,11 +188,18 @@ export class ExrProcessor {
 		this._cachedStats = undefined;
 
 		const imageData = this.renderExrToCanvas(this.settingsManager.settings);
+		const computedStats = this._cachedStats;
 
 		this.rawExrData = savedRaw;
 		this._cachedStats = savedStats;
 
-		return { canvas, imageData };
+		const stats = computedStats || ImageStatsCalculator.calculateFloatStats(exrData, width, height, channels);
+		return {
+			canvas, imageData,
+			rawData: exrData, width, height, channels,
+			isFloat: true, typeMax: 1.0, stats,
+			renderOptions: { flipY: true }
+		};
 	}
 
 	/**

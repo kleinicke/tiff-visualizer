@@ -126,11 +126,30 @@ export class NpyProcessor {
         this._cachedStats = undefined;
 
         const imageData = this._toImageDataFloat(parsedData, width, height);
+        const computedStats = this._cachedStats;
 
         this._lastRaw = savedRaw;
         this._cachedStats = savedStats;
 
-        return { canvas, imageData };
+        // NPY always converts to Float32Array; compute typeMax from original dtype
+        const isDtypeFloat = dtype.includes('f');
+        let typeMax;
+        if (!isDtypeFloat) {
+            if (dtype.includes('1')) typeMax = 255;
+            else if (dtype.includes('2')) typeMax = 65535;
+            else if (dtype.includes('4')) typeMax = 4294967295;
+            else typeMax = 255;
+        } else {
+            typeMax = 1.0;
+        }
+        const stats = computedStats || { min: 0, max: typeMax };
+
+        return {
+            canvas, imageData,
+            rawData: parsedData, width, height, channels,
+            isFloat: true,  // parsedData is always Float32Array
+            typeMax, stats
+        };
     }
 
     _parseNpy(arrayBuffer) {

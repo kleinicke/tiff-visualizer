@@ -66,13 +66,18 @@ export class PfmProcessor {
         canvas.width = width;
         canvas.height = height;
 
-        // _toImageDataFloat uses settingsManager.settings directly — no state swap needed
         const savedStats = this._cachedStats;
         this._cachedStats = undefined;
         const imageData = this._toImageDataFloat(displayData, width, height, channels);
+        const computedStats = this._cachedStats;
         this._cachedStats = savedStats;
 
-        return { canvas, imageData };
+        const stats = computedStats || { min: 0, max: 1 };
+        return {
+            canvas, imageData,
+            rawData: displayData, width, height, channels,
+            isFloat: true, typeMax: 1.0, stats
+        };
     }
 
     _parsePfm(arrayBuffer) {

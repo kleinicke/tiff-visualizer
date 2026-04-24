@@ -188,7 +188,14 @@ export class PngProcessor {
             ctx.drawImage(bitmap, 0, 0);
             bitmap.close();
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            return { canvas, imageData };
+            // 8-bit JPEG/PNG: rawData is RGBA (already rendered); re-render not supported
+            const rawData8 = new Uint8Array(imageData.data.buffer);
+            return {
+                canvas, imageData,
+                rawData: rawData8, width: canvas.width, height: canvas.height, channels: 4,
+                isFloat: false, typeMax: 255, stats: { min: 0, max: 255 },
+                renderOptions: { isRgbaFormat: true }
+            };
         }
 
         // 16-bit PNG: decode with UPNG
@@ -239,10 +246,17 @@ export class PngProcessor {
         };
         this._cachedStats = undefined;
         const imageData = this._renderToImageData();
+        const computedStats = this._cachedStats;
         this._lastRaw = savedRaw;
         this._cachedStats = savedStats;
 
-        return { canvas, imageData };
+        const typeMax = pngBitDepth === 16 ? 65535 : 255;
+        const stats = computedStats || { min: 0, max: typeMax };
+        return {
+            canvas, imageData,
+            rawData, width, height, channels,
+            isFloat: false, typeMax, stats
+        };
     }
 
     /**

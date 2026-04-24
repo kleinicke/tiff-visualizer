@@ -191,6 +191,14 @@ export class AppStateManager {
 		}
 	}
 
+	public setManualNormalization(min: number, max: number): void {
+		this._imageSettings.normalization.autoNormalize = false;
+		this._imageSettings.normalization.gammaMode = false;
+		this._imageSettings.normalization.min = min;
+		this._imageSettings.normalization.max = max;
+		this._emitSettingsChanged();
+	}
+
 	public setAutoNormalize(enabled: boolean): void {
 		if (this._imageSettings.normalization.autoNormalize !== enabled) {
 			this._imageSettings.normalization.autoNormalize = enabled;
