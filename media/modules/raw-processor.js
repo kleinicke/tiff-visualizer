@@ -26,6 +26,8 @@ export class RawProcessor {
         this._libRaw = null;
         /** @type {string|null} */
         this._workerBootstrapUrl = null;
+        /** @type {ArrayBuffer|null} Cached file bytes to avoid re-fetching for full decode */
+        this._arrayBuffer = null;
     }
 
     /**
@@ -314,23 +316,124 @@ export class RawProcessor {
         }
     }
 
-    /** @param {string} src */
-    async processRaw(src) {
+    /**
+     * Scans a RAW file buffer for embedded JPEG images using marker-aware parsing.
+     * Most camera RAW formats (CR2, NEF, ARW, DNG, RAF, etc.) embed one or more
+     * JPEG preview images. Returns the largest one found, or null.
+     * @param {ArrayBuffer} arrayBuffer
+     * @returns {Uint8Array|null}
+     */
+    _extractEmbeddedJpeg(arrayBuffer) {
+        const bytes = new Uint8Array(arrayBuffer);
+        const len = bytes.length;
+        /** @type {{start: number, end: number}[]} */
+        const found = [];
+
+        let i = 0;
+        while (i < len - 3) {
+            // JPEG SOI marker: FF D8, immediately followed by FF (start of first marker)
+            if (bytes[i] !== 0xFF || bytes[i + 1] !== 0xD8 || bytes[i + 2] !== 0xFF) {
+                i++;
+                continue;
+            }
+            const start = i;
+            // Scan forward for EOI (FF D9), respecting byte-stuffing (FF 00 = literal FF in scan data)
+            let j = start + 2;
+            let ended = false;
+            while (j < len - 1) {
+                if (bytes[j] !== 0xFF) { j++; continue; }
+                const next = bytes[j + 1];
+                if (next === 0xD9) {
+                    found.push({ start, end: j + 2 });
+                    i = j + 2;
+                    ended = true;
+                    break;
+                }
+                // FF 00 = stuffed byte in scan data, not a real marker
+                if (next === 0x00) { j += 2; continue; }
+                j += 2;
+            }
+            if (!ended) i = start + 3;
+        }
+
+        if (found.length === 0) return null;
+        // Return the largest JPEG (most likely the full-quality preview)
+        found.sort((a, b) => (b.end - b.start) - (a.end - a.start));
+        const best = found[0];
+        return bytes.slice(best.start, best.end);
+    }
+
+    /**
+     * Fast path: fetch the file, cache the ArrayBuffer, extract the embedded JPEG
+     * thumbnail and draw it to a canvas. Returns null if no embedded JPEG is found.
+     * The ArrayBuffer is stored in `_arrayBuffer` so `processRaw` can reuse it.
+     * @param {string} src
+     * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}|null>}
+     */
+    async extractThumbnail(src) {
+        const response = await fetch(src);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        this._arrayBuffer = await response.arrayBuffer();
+
+        const jpegBytes = this._extractEmbeddedJpeg(this._arrayBuffer);
+        if (!jpegBytes) return null;
+
+        const jpegBuffer = new Uint8Array(jpegBytes).buffer;
+        const blob = new Blob([jpegBuffer], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        try {
+            const img = await new Promise((resolve, reject) => {
+                const image = new Image();
+                image.onload = () => resolve(image);
+                image.onerror = () => reject(new Error('Failed to decode embedded JPEG'));
+                image.src = url;
+            });
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+            const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
+            ctx.drawImage(img, 0, 0);
+            const imageData = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+            console.log(`[RAW] Embedded JPEG thumbnail: ${img.naturalWidth}x${img.naturalHeight} (${jpegBytes.length} bytes)`);
+            return { canvas, imageData };
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    /**
+     * @param {string} src
+     * @param {object} [decodeSettings] libraw-wasm settings (merged with defaults)
+     * @param {{keepBuffer?: boolean}} [opts] if keepBuffer, don't clear _arrayBuffer after use
+     */
+    async processRaw(src, decodeSettings = {}, opts = {}) {
         try {
             this._cachedStats = undefined;
             this._lastRaw = null;
             this._pendingRenderData = null;
             await this.ensureWasmLoaded();
 
-            const response = await fetch(src);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+            // Reuse the buffer fetched by extractThumbnail() or a prior pass; fetch only if needed
+            let arrayBuffer = this._arrayBuffer;
+            if (!opts.keepBuffer) {
+                this._arrayBuffer = null; // release reference once consumed
             }
-            const arrayBuffer = await response.arrayBuffer();
+            if (!arrayBuffer) {
+                const response = await fetch(src);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                arrayBuffer = await response.arrayBuffer();
+                if (opts.keepBuffer) {
+                    this._arrayBuffer = arrayBuffer;
+                }
+            }
 
-            // libraw-wasm open API
-            // using default settings
-            const settings = {};
+            const settings = {
+                use_camera_wb: 1,   // use camera's white balance (no calculation needed)
+                no_auto_bright: 1,  // skip auto-brightness normalization
+                ...decodeSettings,
+            };
             await this._withTimeout(
                 this._libRaw.open(new Uint8Array(arrayBuffer), settings),
                 20000,

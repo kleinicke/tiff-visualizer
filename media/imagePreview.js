@@ -766,7 +766,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	async function handleRaw(src, gen = _loadGeneration) {
 		currentLoadFormat = 'Camera RAW';
 		try {
-				const result = await rawProcessor.processRaw(src);
+			const result = await rawProcessor.processRaw(src);
 			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
@@ -2315,6 +2315,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		webImageProcessor._lastRaw = null;
 		jxlProcessor._lastRaw = null;
 		rawProcessor._lastRaw = null;
+		rawProcessor._arrayBuffer = null;
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new

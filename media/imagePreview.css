@@ -183,6 +183,40 @@ body img {
 	flex-shrink: 0;
 }
 
+/* RAW decoding in-progress badge — shown over the thumbnail while libraw runs */
+.raw-decoding-badge {
+	position: fixed;
+	bottom: 10px;
+	left: 50%;
+	transform: translateX(-50%);
+	background: var(--vscode-editor-background, #1e1e1e);
+	color: var(--vscode-descriptionForeground, #cccccc99);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 4px;
+	padding: 3px 10px;
+	font-size: 11px;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	pointer-events: none;
+	z-index: 1000;
+}
+
+.raw-decoding-badge::after {
+	content: '';
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	background: var(--vscode-textLink-foreground, #3794ff);
+	border-radius: 50%;
+	margin-left: 6px;
+	vertical-align: middle;
+	animation: raw-badge-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes raw-badge-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.3; }
+}
+
 /* Tooltip for filename badge — appended to body by JS to avoid overflow clipping */
 .filename-tooltip {
 	position: fixed;
