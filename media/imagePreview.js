@@ -88,7 +88,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	let hasLoadedImage = false;
 	/** @type {HTMLCanvasElement|null} */
 	let canvas = null;
-	/** @type {HTMLCanvasElement|null} */
+	/** @type {HTMLElement|null} */
 	let imageElement = null;
 	/** @type {ImageData|null} */
 	let primaryImageData = null;
@@ -371,13 +371,23 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 */
 	async function renderImageDataToCanvas(imageData, ctx) {
 		if (!ctx) return;
+		const start = performance.now();
+		const pixelCount = imageData.width * imageData.height;
+		if (pixelCount > 25_000_000) {
+			ctx.putImageData(imageData, 0, 0);
+			console.log(`[Canvas] putImageData upload took ${(performance.now() - start).toFixed(2)}ms`);
+			return;
+		}
 		try {
 			const bitmap = await createImageBitmap(imageData);
 			ctx.drawImage(bitmap, 0, 0);
 			bitmap.close(); // Release memory
+			console.log(`[Canvas] ImageBitmap upload took ${(performance.now() - start).toFixed(2)}ms`);
 		} catch (e) {
 			console.error("Error creating ImageBitmap, falling back to putImageData", e);
+			const fallbackStart = performance.now();
 			ctx.putImageData(imageData, 0, 0);
+			console.log(`[Canvas] putImageData fallback took ${(performance.now() - fallbackStart).toFixed(2)}ms`);
 		}
 	}
 
@@ -598,13 +608,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
-			imageElement = canvas;
+			imageElement = result.displayElement || canvas;
 			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			if (ctx && primaryImageData && !result.canvasAlreadyRendered) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
-			if (!pngProcessor._pendingRenderData) {
+			if (!pngProcessor._pendingRenderData && !result.lazyPixelData) {
 				finalizeImageSetup();
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
@@ -802,9 +812,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		mouseHandler.setImageElement(imageElement);
 
 		// Send size information to VS Code
+		const sizeElement = /** @type {any} */ (imageElement);
+		const sizeWidth = canvas?.width || sizeElement.naturalWidth || sizeElement.width;
+		const sizeHeight = canvas?.height || sizeElement.naturalHeight || sizeElement.height;
 		vscode.postMessage({
 			type: 'size',
-			value: `${imageElement.width}x${imageElement.height}`,
+			value: `${sizeWidth}x${sizeHeight}`,
 		});
 
 		// Remove any previous image/canvas elements now that the new one is ready,
@@ -856,6 +869,23 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Update histogram if visible
 		updateHistogramData();
+	}
+
+	function swapImageElementToCanvas() {
+		if (!canvas || imageElement === canvas) return;
+		const previousElement = imageElement;
+		if (previousElement) {
+			canvas.className = previousElement.className;
+			canvas.style.cssText = previousElement.style.cssText;
+			if (previousElement.parentElement) {
+				previousElement.replaceWith(canvas);
+			}
+		}
+		imageElement = canvas;
+		zoomController.setCanvas(canvas);
+		zoomController.setImageElement(imageElement);
+		mouseHandler.setImageElement(imageElement);
+		mouseHandler.addMouseListeners(imageElement);
 	}
 
 	/**
@@ -941,6 +971,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				if (message.isInitialRender && canvas) {
 					// Trigger deferred rendering for the appropriate processor
 					let deferredImageData = null;
+					let deferredCanvasAlreadyRendered = false;
 
 					if (tiffProcessor._pendingRenderData) {
 						deferredImageData = await tiffProcessor.performDeferredRender();
@@ -948,6 +979,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						deferredImageData = npyProcessor.performDeferredRender();
 					} else if (pngProcessor._pendingRenderData) {
 						deferredImageData = pngProcessor.performDeferredRender();
+						deferredCanvasAlreadyRendered = pngProcessor._lastRenderReusedOriginalImageData === true;
 					} else if (ppmProcessor._pendingRenderData) {
 						deferredImageData = ppmProcessor.performDeferredRender();
 					} else if (pfmProcessor._pendingRenderData) {
@@ -969,7 +1001,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					if (deferredImageData) {
 						const ctx = canvas.getContext('2d', { willReadFrequently: true });
 						if (ctx) {
-							await renderImageDataToCanvas(deferredImageData, ctx);
+							if (!deferredCanvasAlreadyRendered) {
+								await renderImageDataToCanvas(deferredImageData, ctx);
+							}
 							primaryImageData = deferredImageData;
 						}
 
@@ -985,6 +1019,19 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
 							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
 							initialLoadStartTime = 0; // Reset
+						}
+					} else if (pngProcessor.hasLazyNativeReadback()) {
+						if (!pngProcessor.canUseLazyNativeCanvasForSettings(settingsManager.settings)) {
+							await updateImageWithNewSettings(changes);
+						}
+						finalizeImageSetup();
+						clearCollectionLoadingState();
+						if (initialLoadStartTime > 0) {
+							const endTime = performance.now();
+							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
+							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
+							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+							initialLoadStartTime = 0;
 						}
 					}
 				}
@@ -1161,6 +1208,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			return;
 		}
 		try {
+			if (pngProcessor && pngProcessor.hasLazyNativeReadback()) {
+				const imageData = pngProcessor.renderPngWithSettings();
+				if (imageData) { primaryImageData = imageData; }
+			}
+
 			const settings = settingsManager.settings;
 			/** @type {object} */
 			let histogramOptions = {
@@ -1489,7 +1541,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * @param {SettingsChanges|null} [changes] - Changed settings
 	 */
 	async function updateImageWithNewSettings(changes) {
-		if (!canvas || !primaryImageData) {
+		const canRenderLazyPng = pngProcessor && pngProcessor.hasLazyNativeReadback();
+		if (!canvas || (!primaryImageData && !canRenderLazyPng)) {
+			return;
+		}
+		if (canRenderLazyPng && pngProcessor.canUseLazyNativeCanvasForSettings(settingsManager.settings)) {
 			return;
 		}
 
@@ -1586,6 +1642,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					if (ctx) {
 						await renderImageDataToCanvas(newImageData, ctx);
 						primaryImageData = newImageData;
+						swapImageElementToCanvas();
 						updateHistogramData();
 					}
 				}
@@ -1638,7 +1695,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		}
 
 		// For PNG/JPEG images, re-render with new settings
-		if (primaryImageData && pngProcessor && pngProcessor._lastRaw) {
+		if (pngProcessor && (pngProcessor._lastRaw || pngProcessor.hasLazyNativeReadback())) {
 			try {
 				// Re-render the PNG with current settings
 				const newImageData = pngProcessor.renderPngWithSettings();
@@ -1649,6 +1706,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 					if (ctx) {
 						await renderImageDataToCanvas(newImageData, ctx);
 						primaryImageData = newImageData;
+						swapImageElementToCanvas();
 						updateHistogramData();
 					}
 				}
@@ -2390,7 +2448,21 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Export canvas as PNG
 	 */
 	function exportAsPng() {
-		if (canvas) {
+		const lazyImageElement = imageElement?.tagName === 'IMG' ? /** @type {HTMLImageElement} */ (/** @type {unknown} */ (imageElement)) : null;
+		if (lazyImageElement) {
+			const tempCanvas = document.createElement('canvas');
+			tempCanvas.width = lazyImageElement.naturalWidth;
+			tempCanvas.height = lazyImageElement.naturalHeight;
+			const ctx = tempCanvas.getContext('2d');
+			if (ctx) {
+				ctx.drawImage(lazyImageElement, 0, 0);
+				vscode.postMessage({
+					type: 'didExportAsPng',
+					payload: tempCanvas.toDataURL('image/png')
+				});
+			}
+			tempCanvas.remove();
+		} else if (canvas) {
 			vscode.postMessage({
 				type: 'didExportAsPng',
 				payload: canvas.toDataURL('image/png')
@@ -2540,15 +2612,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 						return reject(new Error('Could not get canvas context'));
 					}
 
-					if (canvas) {
-						copyCanvas.width = canvas.width;
-						copyCanvas.height = canvas.height;
-						ctx.drawImage(canvas, 0, 0);
-					} else {
-						copyCanvas.width = image.naturalWidth;
-						copyCanvas.height = image.naturalHeight;
-						ctx.drawImage(image, 0, 0);
-					}
+					const sourceElement = imageElement?.tagName === 'IMG'
+						? /** @type {HTMLImageElement} */ (/** @type {unknown} */ (imageElement))
+						: canvas || image;
+					const sourceWidth = /** @type {any} */ (sourceElement).naturalWidth || sourceElement.width;
+					const sourceHeight = /** @type {any} */ (sourceElement).naturalHeight || sourceElement.height;
+					copyCanvas.width = sourceWidth;
+					copyCanvas.height = sourceHeight;
+					ctx.drawImage(sourceElement, 0, 0);
 
 					copyCanvas.toBlob((blob) => {
 						if (blob) {
@@ -2732,4 +2803,4 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 	// Start the application
 	initialize();
-}()); 
+}());

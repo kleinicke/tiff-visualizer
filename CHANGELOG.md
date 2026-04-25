@@ -2,7 +2,7 @@
 
 ## 1.7.0
 
-- Add more file formats: webp, hdr, tga, bmp and ico files
+- Add more file formats: webp, hdr, jxl, tga, bmp and ico files
 
 ## 1.6.0 (2026-03-30)
 

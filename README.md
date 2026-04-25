@@ -1,6 +1,6 @@
 # Float and TIFF Visualizer for Visual Studio Code
 
-A Image viewer for Visual Studio Code, for the formats tiff, exr, npy, png, jpg, ppm, pfm and pgm.
+A Image viewer for Visual Studio Code, for the formats tiff, exr, npy, png, jpg, webp, hdr, jxl, tga, bmp, ico, ppm, pfm and pgm.
 It visualizes 8 and 16 bit uint images and 16 and 32 bit float images. The visualization of all images can be normalized to a specified range.
 Additionally it allows for brightness and gamma corrections and offers a color value picker.
 

@@ -139,9 +139,9 @@ export class MouseHandler {
 		if (!this.imageElement) return '';
 
 		const rect = this.imageElement.getBoundingClientRect();
-		const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
-		const naturalWidth = canvas.width;
-		const naturalHeight = canvas.height;
+		const anyElement = /** @type {any} */ (this.imageElement);
+		const naturalWidth = anyElement.naturalWidth || anyElement.width;
+		const naturalHeight = anyElement.naturalHeight || anyElement.height;
 		// Ignore when outside the element's content box
 		if (
 			e.clientX < rect.left || e.clientX > rect.right ||
@@ -591,4 +591,4 @@ export class MouseHandler {
 			altPressed: this.altPressed
 		};
 	}
-} 
+}

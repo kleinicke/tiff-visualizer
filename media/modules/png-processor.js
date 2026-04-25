@@ -15,6 +15,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
  * @property {ImageData} [originalImageData] - Original ImageData from getImageData for zero-copy fast path
  */
 
+
 /**
  * PNG Processor for TIFF Visualizer using UPNG.js
  * Supports proper uint16 PNG handling and grayscale/RGB channel detection
@@ -29,18 +30,21 @@ export class PngProcessor {
         this.vscode = vscode;
         /** @type {RawImageData | null} */
         this._lastRaw = null;
-        this._pendingRenderData = null; // Store data waiting for format-specific settings
-        this._isInitialLoad = true; // Track if this is the first render
+        this._pendingRenderData = null;
+        this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
-        this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
-        this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+        this._cachedStats = undefined;
+        this._cachedStatsRgb24Mode = false;
+        this._lastRenderReusedOriginalImageData = false;
+        /** @type {{image: HTMLImageElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, tempCanvas?: HTMLCanvasElement, tempCtx?: CanvasRenderingContext2D | null, width: number, height: number, format: string} | null} */
+        this._lazyNativeReadback = null;
     }
 
     /**
      * Process PNG/JPEG file - uses native API for 8-bit PNGs and all JPEGs, UPNG for 16-bit PNGs
      * Note: JPEG handling is included here since JPEGs are always 8-bit and use the same native Image API path
      * @param {string} src - Source URI
-     * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
+     * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement}>}
      */
     async processPng(src) {
         // JPEG files always use native browser Image API (they don't support 16-bit)
@@ -172,11 +176,14 @@ export class PngProcessor {
     /**
      * Process image using native browser Image API (for 8-bit PNGs and JPEGs)
      * @param {string} src - Source URI
-     * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}>}
+     * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement}>}
      */
     async _processWithNativeAPI(src) {
+        const lowerSrc = src.toLowerCase();
+        const isJpeg = lowerSrc.includes('.jpg') || lowerSrc.includes('.jpeg');
         const image = new Image();
         const canvas = document.createElement('canvas');
+        canvas.classList.add('scale-to-fit');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         if (!ctx) {
@@ -189,43 +196,56 @@ export class PngProcessor {
                     canvas.width = image.naturalWidth;
                     canvas.height = image.naturalHeight;
 
+                    const format = lowerSrc.includes('.png') ? 'PNG' :
+                        isJpeg ? 'JPEG' :
+                            'Image';
+
+                    // Large JPEGs: show <img> immediately and use 1x1 canvas for pixel picking
+                    if (isJpeg && canvas.width * canvas.height > 100_000) {
+                        image.classList.add('scale-to-fit');
+                        this._lastRaw = null;
+                        this._cachedStats = undefined;
+                        this._cachedStatsRgb24Mode = false;
+                        this._lazyNativeReadback = { image, canvas, ctx, width: canvas.width, height: canvas.height, format: 'JPEG' };
+                        this._postFormatInfo(canvas.width, canvas.height, 4, 8, 'JPEG');
+                        this._pendingRenderData = false;
+                        resolve({ canvas, imageData: null, canvasAlreadyRendered: true, lazyPixelData: true, displayElement: image });
+                        return;
+                    }
+
                     ctx.drawImage(image, 0, 0);
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                     const rawData = imageData.data;
 
-                    // Determine if image has alpha channel
+                    // JPEG cannot carry alpha — skip the scan
                     let hasAlpha = false;
-                    for (let i = 3; i < rawData.length; i += 4) {
-                        if (rawData[i] < 255) {
-                            hasAlpha = true;
-                            break;
+                    if (!isJpeg) {
+                        for (let i = 3; i < rawData.length; i += 4) {
+                            if (rawData[i] < 255) {
+                                hasAlpha = true;
+                                break;
+                            }
                         }
                     }
 
+                    this._cachedStats = undefined;
+                    this._cachedStatsRgb24Mode = false;
                     this._lastRaw = {
                         width: canvas.width,
                         height: canvas.height,
                         data: rawData,
-                        channels: 4, // Native API always returns RGBA (4 channels)
+                        channels: 4,
                         bitDepth: 8,
                         maxValue: 255,
-                        isRgbaFormat: true,  // Fallback path stores RGBA format from getImageData
-                        hasAlpha,            // Whether the image actually has a meaningful alpha channel
-                        originalImageData: imageData // Store for zero-copy fast path
+                        isRgbaFormat: true,
+                        hasAlpha,
+                        originalImageData: imageData
                     };
 
-                    const format = src.toLowerCase().includes('.png') ? 'PNG' :
-                        src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg') ? 'JPEG' :
-                            'Image';
+                    this._postFormatInfo(canvas.width, canvas.height, 4, 8, format);
+                    this._pendingRenderData = true;
 
-                    // Use deferred rendering for consistency with other formats
-                    // Send format info and return placeholder - actual rendering happens in performDeferredRender()
-                    this._postFormatInfo(canvas.width, canvas.height, this._lastRaw.channels, 8, format);
-                    this._pendingRenderData = true; // Flag that _lastRaw is ready for deferred render
-
-                    // Return placeholder
-                    const placeholderImageData = new ImageData(canvas.width, canvas.height);
-                    resolve({ canvas, imageData: placeholderImageData });
+                    resolve({ canvas, imageData, canvasAlreadyRendered: true });
                 } catch (error) {
                     reject(error);
                 }
@@ -245,6 +265,7 @@ export class PngProcessor {
      */
     _renderToImageData() {
         if (!this._lastRaw) return new ImageData(1, 1);
+        this._lastRenderReusedOriginalImageData = false;
 
         const { width, height, data, channels, bitDepth, maxValue, originalImageData } = this._lastRaw;
         const settings = this.settingsManager.settings;
@@ -262,6 +283,7 @@ export class PngProcessor {
             !rgbAs24BitMode &&
             bitDepth === 8) {
             // Can use original ImageData directly - no processing needed
+            this._lastRenderReusedOriginalImageData = true;
             return originalImageData;
         }
 
@@ -302,13 +324,33 @@ export class PngProcessor {
             options
         );
     }
-    /**
-     * Fallback gamma rendering for browser Image API path
-     * Re-render PNG with current settings (for real-time updates)
-     * @returns {ImageData | null}
-     */
+    hasLazyNativeReadback() {
+        return !!this._lazyNativeReadback;
+    }
+
+    /** @param {any} settings @returns {boolean} */
+    canUseLazyNativeCanvasForSettings(settings) {
+        if (!this._lazyNativeReadback) return false;
+        const isGammaMode = settings.normalization?.gammaMode || false;
+        const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale === true;
+        return isGammaMode && isIdentity && !rgbAs24BitMode;
+    }
+
+    /** @returns {ImageData | null} */
+    _ensureLazyNativeImageData() {
+        if (this._lastRaw?.originalImageData) return this._lastRaw.originalImageData;
+        if (!this._lazyNativeReadback) return null;
+        const { image, canvas, ctx } = this._lazyNativeReadback;
+        ctx.drawImage(image, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        this._lastRaw = { width: canvas.width, height: canvas.height, data: imageData.data, channels: 4, bitDepth: 8, maxValue: 255, isRgbaFormat: true, hasAlpha: false, originalImageData: imageData };
+        this._lazyNativeReadback = null;
+        return imageData;
+    }
+
     renderPngWithSettings() {
-        if (!this._lastRaw) return null;
+        if (!this._lastRaw && !this._ensureLazyNativeImageData()) return null;
         return this._renderToImageData();
     }
 
@@ -321,6 +363,21 @@ export class PngProcessor {
      * @returns {string} Formatted color string
      */
     getColorAtPixel(x, y, naturalWidth, naturalHeight) {
+        if (!this._lastRaw && this._lazyNativeReadback) {
+            const lazy = this._lazyNativeReadback;
+            if (lazy.width !== naturalWidth || lazy.height !== naturalHeight) return '';
+            if (!lazy.tempCanvas) {
+                lazy.tempCanvas = document.createElement('canvas');
+                lazy.tempCanvas.width = 1;
+                lazy.tempCanvas.height = 1;
+                lazy.tempCtx = lazy.tempCanvas.getContext('2d', { willReadFrequently: true });
+            }
+            if (!lazy.tempCtx) return '';
+            lazy.tempCtx.clearRect(0, 0, 1, 1);
+            lazy.tempCtx.drawImage(lazy.image, x, y, 1, 1, 0, 0, 1, 1);
+            const pixel = lazy.tempCtx.getImageData(0, 0, 1, 1).data;
+            return `${pixel[0].toString().padStart(3, '0')} ${pixel[1].toString().padStart(3, '0')} ${pixel[2].toString().padStart(3, '0')}`;
+        }
         if (!this._lastRaw) return '';
         const { width, height, data, channels, bitDepth, maxValue, hasAlpha } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';

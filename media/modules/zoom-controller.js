@@ -46,6 +46,18 @@ export class ZoomController {
 	}
 
 	/**
+	 * @param {HTMLElement} element
+	 * @returns {{width: number, height: number}}
+	 */
+	_getNaturalSize(element) {
+		const anyElement = /** @type {any} */ (element);
+		return {
+			width: anyElement.naturalWidth || anyElement.width || 0,
+			height: anyElement.naturalHeight || anyElement.height || 0
+		};
+	}
+
+	/**
 	 * Mark that image has been loaded
 	 */
 	setImageLoaded() {
@@ -87,11 +99,9 @@ export class ZoomController {
 			}
 
 			// Compute the image-space point under the viewport center before scaling
-			const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
-			const naturalWidth = canvas.width;
-			const naturalHeight = canvas.height;
+			const { width: naturalWidth, height: naturalHeight } = this._getNaturalSize(this.imageElement);
 			const prevScale = (wasInFitMode)
-				? (canvas.clientWidth / naturalWidth)
+				? (this.imageElement.clientWidth / naturalWidth)
 				: /** @type {number} */ (oldScale);
 
 			// Viewport center in document coordinates
@@ -199,10 +209,8 @@ export class ZoomController {
 		if (!this.imageElement || !this.hasLoadedImage) {
 			return;
 		}
-		// For all image types, imageElement is the canvas.
-		// The current scale is the ratio of its displayed size to its intrinsic size.
-		const canvas = /** @type {HTMLCanvasElement} */ (this.imageElement);
-		this.scale = canvas.clientWidth / canvas.width;
+		const { width } = this._getNaturalSize(this.imageElement);
+		this.scale = this.imageElement.clientWidth / width;
 		this.updateScale(this.scale);
 	}
 
@@ -304,4 +312,4 @@ export class ZoomController {
 	_clamp(value, min, max) {
 		return Math.min(Math.max(value, min), max);
 	}
-} 
+}
