@@ -4,7 +4,7 @@ import { TiffVisualizerTestUtils } from './utils/testUtils';
 import * as fs from 'fs';
 import * as path from 'path';
 
-describe('TIFF Visualizer - Complete Workflow Tests', () => {
+describe('Image Visualizer - Complete Workflow Tests', () => {
     let workbench: Workbench;
     let testUtils: TiffVisualizerTestUtils;
 

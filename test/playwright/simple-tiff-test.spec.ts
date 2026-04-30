@@ -40,7 +40,7 @@ test.describe('TIFF File Loading Test', () => {
       await page.click('text=img_deflate_uint8_pred2');
       await page.waitForTimeout(3000);
       
-      // Check if the TIFF Visualizer editor opened
+      // Check if the Image Visualizer editor opened
       const canvas = await page.locator('canvas').count();
       console.log('Canvas elements after opening uint8 file:', canvas);
       
@@ -56,7 +56,7 @@ test.describe('TIFF File Loading Test', () => {
       await page.click('text=depth_deflate_32_pred3');
       await page.waitForTimeout(3000);
       
-      // Check if the TIFF Visualizer editor opened
+      // Check if the Image Visualizer editor opened
       const canvas = await page.locator('canvas').count();
       console.log('Canvas elements after opening float32 file:', canvas);
       

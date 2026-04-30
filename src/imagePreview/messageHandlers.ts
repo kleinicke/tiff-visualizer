@@ -41,6 +41,11 @@ export class MessageRouter {
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
+		this.handlers.set('requestAddLayer', new RequestAddLayerMessageHandler());
+		this.handlers.set('removeLayer', new RemoveLayerMessageHandler());
+		this.handlers.set('layerSettingsChanged', new LayerSettingsChangedMessageHandler());
+		this.handlers.set('dropLayerFile', new DropLayerFileMessageHandler());
+		this.handlers.set('resetFormatDefaults', new ResetFormatDefaultsMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -100,6 +105,18 @@ class StatsMessageHandler implements MessageHandler {
 		// Update stats for any image sending stats (TIFF and non-TIFF float sources)
 		preview.getManager().settingsManager.updateImageStats(message.value.min, message.value.max);
 		preview.getNormalizationStatusBarEntry().updateImageStats(message.value.min, message.value.max);
+
+		// If auto-normalize is active, switch to manual mode with the actual data range.
+		// This makes the normalization controls show the real data values (e.g. 0–50m for depth)
+		// rather than staying locked at the 0–1 placeholder from the format defaults.
+		const appState = preview.getManager().appStateManager;
+		if (appState.imageSettings.normalization.autoNormalize) {
+			appState.setManualNormalization(message.value.min, message.value.max);
+			// setManualNormalization fires onDidChangeSettings → updateSettings() → webview re-renders
+			// with autoNormalize=false and min/max = actual data range (same visual output)
+			return;
+		}
+
 		preview.updateStatusBar();
 	}
 }
@@ -117,9 +134,9 @@ class FormatInfoMessageHandler implements MessageHandler {
 		// Store format info in app state for access by commands
 		preview.getManager().appStateManager.setFormatInfo(message.value);
 
-		// Set the format type for per-format settings
+		// Set the format type for per-instance settings
 		if (message.value && message.value.formatType) {
-			preview.getManager().appStateManager.setImageFormat(message.value.formatType);
+			preview.getManager().appStateManager.setActiveInstance(preview.resource.toString(), message.value.formatType);
 			// Track the format in this preview instance
 			preview.setCurrentFormat(message.value.formatType);
 
@@ -290,5 +307,50 @@ class PositionCopiedMessageHandler implements MessageHandler {
 				(manager as any).setCopiedPosition(message.state);
 			}
 		}
+	}
+}
+
+class RequestAddLayerMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.handleAddLayerRequest();
+	}
+}
+
+class RemoveLayerMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// Just track removal if needed
+		if (message.layerId) {
+			(preview as any)._activeLayers = ((preview as any)._activeLayers || [])
+				.filter((id: string) => id !== message.layerId);
+		}
+	}
+}
+
+class LayerSettingsChangedMessageHandler implements MessageHandler {
+	handle(_message: any, _preview: ImagePreview): void {
+		// Intentionally no-op: the webview manages per-tab layer settings locally.
+		// Calling AppStateManager mutators here broadcasts to ALL tabs of the same
+		// format, causing cross-tab contamination. The webview already applies
+		// settings locally via applyLayerSettings() without extension-host involvement.
+	}
+}
+
+class DropLayerFileMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		try {
+			const uri = vscode.Uri.parse(message.uri, true);
+			preview.addLayerFromUri(uri);
+		} catch {
+			// Silently ignore unparseable URIs — the webview will not show a layer
+		}
+	}
+}
+
+class ResetFormatDefaultsMessageHandler implements MessageHandler {
+	handle(_message: any, preview: ImagePreview): void {
+		const manager = preview.getManager();
+		// Reset only this instance — fires onDidChangeSettings which sends
+		// updated (default) settings back to this webview via updateSettings.
+		manager.appStateManager.resetToDefaults(preview.resource.toString());
 	}
 }

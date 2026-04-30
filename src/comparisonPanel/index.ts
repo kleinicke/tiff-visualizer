@@ -8,7 +8,7 @@ export function registerComparisonPanelSupport(context: vscode.ExtensionContext)
 
 	// Register commands
 	disposables.push(
-		vscode.commands.registerCommand('tiffVisualizer.openComparisonPanel', (uri?: vscode.Uri) => {
+		vscode.commands.registerCommand('imageVisualizer.openComparisonPanel', (uri?: vscode.Uri) => {
 			const panel = ComparisonPanel.create(context.extensionUri);
 			if (uri) {
 				panel.addImage(uri);
@@ -17,7 +17,7 @@ export function registerComparisonPanelSupport(context: vscode.ExtensionContext)
 	);
 
 	disposables.push(
-		vscode.commands.registerCommand('tiffVisualizer.addToComparisonPanel', (uri: vscode.Uri) => {
+		vscode.commands.registerCommand('imageVisualizer.addToComparisonPanel', (uri: vscode.Uri) => {
 			const panel = ComparisonPanel.create(context.extensionUri);
 			panel.addImage(uri);
 		})

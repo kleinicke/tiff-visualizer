@@ -1,6 +1,6 @@
-# Playwright Testing for TIFF Visualizer Extension
+# Playwright Testing for Image Visualizer Extension
 
-This directory contains Playwright tests for the TIFF Visualizer VS Code extension.
+This directory contains Playwright tests for the Image Visualizer VS Code extension.
 
 ## Overview
 
@@ -97,7 +97,7 @@ test('test in Cursor desktop', async ({ page }) => {
 ### Current Tests
 
 1. **`vscode-web-test.spec.ts`**: Basic VS Code Web interface tests
-2. **`tiff-visualizer.spec.ts`**: Comprehensive TIFF Visualizer functionality tests
+2. **`image-visualizer.spec.ts`**: Comprehensive Image Visualizer functionality tests
 
 ### Test Categories
 
@@ -153,7 +153,7 @@ test('should open TIFF file in custom editor', async ({ page }) => {
   });
   
   // Wait for custom editor
-  await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]');
+  await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]');
   
   // Test custom editor content
   const canvas = await page.locator('canvas');

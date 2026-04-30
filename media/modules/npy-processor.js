@@ -29,7 +29,7 @@ function float16ToFloat32(uint16) {
 }
 
 /**
- * NPY/NPZ Processor for TIFF Visualizer
+ * NPY/NPZ Processor for Image Visualizer
  * Parses NumPy .npy and .npz files and renders them to ImageData
  */
 export class NpyProcessor {
@@ -95,6 +95,61 @@ export class NpyProcessor {
         const imageData = this._toImageDataFloat(data, width, height);
         this.vscode.postMessage({ type: 'refresh-status' });
         return { canvas, imageData };
+    }
+
+    /**
+     * Process NPY/NPZ file from raw bytes (for layer loading — skips fetch and deferred render).
+     * @param {number[]} data - Raw file bytes as plain Array
+     * @returns {{canvas: HTMLCanvasElement, imageData: ImageData}}
+     */
+    processNpyFromBuffer(data) {
+        const buffer = new Uint8Array(data).buffer;
+        const view = new DataView(buffer);
+
+        let parsed;
+        if (buffer.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50) {
+            parsed = this._parseNpz(buffer);
+        } else {
+            parsed = this._parseNpy(buffer);
+        }
+
+        const { data: parsedData, width, height, dtype, channels } = parsed;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        // _toImageDataFloat reads this._lastRaw?.channels — temporarily set it
+        const savedRaw = this._lastRaw;
+        const savedStats = this._cachedStats;
+        this._lastRaw = { width, height, data: parsedData, dtype, channels };
+        this._cachedStats = undefined;
+
+        const imageData = this._toImageDataFloat(parsedData, width, height);
+        const computedStats = this._cachedStats;
+
+        this._lastRaw = savedRaw;
+        this._cachedStats = savedStats;
+
+        // NPY always converts to Float32Array; compute typeMax from original dtype
+        const isDtypeFloat = dtype.includes('f');
+        let typeMax;
+        if (!isDtypeFloat) {
+            if (dtype.includes('1')) typeMax = 255;
+            else if (dtype.includes('2')) typeMax = 65535;
+            else if (dtype.includes('4')) typeMax = 4294967295;
+            else typeMax = 255;
+        } else {
+            typeMax = 1.0;
+        }
+        const stats = computedStats || { min: 0, max: typeMax };
+
+        return {
+            canvas, imageData,
+            rawData: parsedData, width, height, channels,
+            isFloat: true,  // parsedData is always Float32Array
+            typeMax, stats
+        };
     }
 
     _parseNpy(arrayBuffer) {

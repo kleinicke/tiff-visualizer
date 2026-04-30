@@ -3,7 +3,7 @@ import { expect } from 'chai';
 import * as path from 'path';
 
 /**
- * Enhanced utility class for TIFF Visualizer extension tests
+ * Enhanced utility class for Image Visualizer extension tests
  * Supports real TIFF file loading and processing verification
  */
 export class TiffVisualizerTestUtils {
@@ -148,7 +148,7 @@ export class TiffVisualizerTestUtils {
         console.log(`🎛️  Setting manual normalization range: ${min} to ${max}`);
         
         // Execute the Set Normalization Range command
-        await this.workbench.executeCommand('TIFF Visualizer: Set Normalization Range');
+        await this.workbench.executeCommand('Image Visualizer: Set Normalization Range');
         
         // Wait for the options dialog
         await this.driver.sleep(1000);
@@ -181,7 +181,7 @@ export class TiffVisualizerTestUtils {
     async setAutoNormalization(): Promise<void> {
         console.log('🤖 Setting automatic normalization...');
         
-        await this.workbench.executeCommand('TIFF Visualizer: Set Normalization Range');
+        await this.workbench.executeCommand('Image Visualizer: Set Normalization Range');
         await this.driver.sleep(1000);
         
         // Find and click "Auto-Normalize" option (second option)
@@ -201,7 +201,7 @@ export class TiffVisualizerTestUtils {
     async setGammaCorrection(gammaIn: number = 2.2, gammaOut: number = 1.0): Promise<void> {
         console.log(`⚡ Setting gamma correction: ${gammaIn} → ${gammaOut}`);
         
-        await this.workbench.executeCommand('TIFF Visualizer: Set Gamma');
+        await this.workbench.executeCommand('Image Visualizer: Set Gamma');
         await this.driver.sleep(1000);
         
         // Enter gamma in value
@@ -312,10 +312,10 @@ export class TiffVisualizerTestUtils {
     }
 
     /**
-     * Execute a TIFF Visualizer command
+     * Execute a Image Visualizer command
      */
     async executeTiffCommand(commandName: string): Promise<void> {
-        await this.workbench.executeCommand(`TIFF Visualizer: ${commandName}`);
+        await this.workbench.executeCommand(`Image Visualizer: ${commandName}`);
         await this.driver.sleep(500);
     }
 

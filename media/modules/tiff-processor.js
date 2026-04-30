@@ -530,6 +530,67 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * Process TIFF file from raw bytes (for layer loading — skips fetch and deferred render).
+	 * Uses GeoTIFF.js directly (no WASM path for simplicity).
+	 * @param {number[]} data - Raw file bytes as plain Array
+	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, rawData: TypedArray, width: number, height: number, channels: number, isFloat: boolean, typeMax: number, stats: {min: number, max: number}}>}
+	 */
+	async processTiffFromBuffer(data) {
+		const buffer = new Uint8Array(data).buffer;
+		const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+		const image = await tiff.getImage();
+		const width = image.getWidth();
+		const height = image.getHeight();
+		const rasters = await image.readRasters();
+		const sampleFormat = image.getSampleFormat();
+		const bitsPerSample = image.getBitsPerSample();
+		const samplesPerPixel = image.getSamplesPerPixel();
+
+		// Build interleaved raw data array (mirrors renderTiffWithSettings logic)
+		const isFloat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		let rawData;
+		if (isFloat) rawData = new Float32Array(width * height * samplesPerPixel);
+		else if (bitsPerSample === 16) rawData = new Uint16Array(width * height * samplesPerPixel);
+		else rawData = new Uint8Array(width * height * samplesPerPixel);
+
+		if (samplesPerPixel === 1) {
+			rawData.set(rasters[0]);
+		} else {
+			for (let i = 0; i < rasters[0].length; i++) {
+				for (let j = 0; j < samplesPerPixel; j++) {
+					rawData[i * samplesPerPixel + j] = rasters[j][i];
+				}
+			}
+		}
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+
+		// Save and restore processor state so layer loading doesn't corrupt base layer data
+		const savedRawTiffData = this.rawTiffData;
+		const savedStats = this._lastStatistics;
+		this._lastStatistics = null;
+
+		const imageData = await this.renderTiff(image, rasters);
+		const computedStats = this._lastStatistics;
+
+		this.rawTiffData = savedRawTiffData;
+		this._lastStatistics = savedStats;
+
+		const typeMax = isFloat ? 1.0 : (bitsPerSample === 16 ? 65535 : 255);
+		const stats = computedStats || (isFloat
+			? ImageStatsCalculator.calculateFloatStats(rawData, width, height, samplesPerPixel)
+			: { min: 0, max: typeMax });
+
+		return {
+			canvas, imageData,
+			rawData, width, height, channels: samplesPerPixel,
+			isFloat, typeMax, stats
+		};
+	}
+
+	/**
 	 * Load mask image for filtering
 	 * @param {string} maskSrc - Mask TIFF file URL
 	 * @returns {Promise<Float32Array>}

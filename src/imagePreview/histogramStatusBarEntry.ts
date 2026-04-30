@@ -9,11 +9,11 @@ export class HistogramStatusBarEntry implements StatusBarEntryInterface {
 	public readonly onDidChangeVisibility = this._onDidChangeVisibility.event;
 
 	constructor() {
-		this._statusBarEntry = vscode.window.createStatusBarItem('tiffVisualizer.histogram', vscode.StatusBarAlignment.Right, 103);
-		this._statusBarEntry.name = 'TIFF Visualizer Histogram';
+		this._statusBarEntry = vscode.window.createStatusBarItem('imageVisualizer.histogram', vscode.StatusBarAlignment.Right, 103);
+		this._statusBarEntry.name = 'Image Visualizer Histogram';
 		this._statusBarEntry.text = '$(graph)';
 		this._statusBarEntry.tooltip = 'Toggle Histogram';
-		this._statusBarEntry.command = 'tiffVisualizer.toggleHistogram';
+		this._statusBarEntry.command = 'imageVisualizer.toggleHistogram';
 	}
 
 	public show(): void {

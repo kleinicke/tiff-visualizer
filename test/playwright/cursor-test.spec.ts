@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('TIFF Visualizer in Cursor', () => {
+test.describe('Image Visualizer in Cursor', () => {
   test.skip('should work in Cursor desktop app', async ({ page }) => {
     // Skip this test when Cursor/VS Code Web server is not running
     // To run this test, start VS Code Web server first:
@@ -19,7 +19,7 @@ test.describe('TIFF Visualizer in Cursor', () => {
     console.log('✅ Cursor interface loaded successfully');
   });
 
-  test.skip('should load TIFF Visualizer extension in Cursor', async ({ page }) => {
+  test.skip('should load Image Visualizer extension in Cursor', async ({ page }) => {
     // Skip this test when Cursor/VS Code Web server is not running
     await page.goto('/');
     await page.waitForSelector('.monaco-editor', { timeout: 30000 });
@@ -27,22 +27,22 @@ test.describe('TIFF Visualizer in Cursor', () => {
     // Open command palette
     await page.keyboard.press('Ctrl+Shift+P');
     
-    // Search for TIFF Visualizer commands
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer');
+    // Search for Image Visualizer commands
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer');
     
     // Wait for commands to appear
     await page.waitForSelector('.monaco-list-row', { timeout: 5000 });
     
-    // Check that TIFF Visualizer commands are available
+    // Check that Image Visualizer commands are available
     const commands = await page.locator('.monaco-list-row');
     const commandTexts = await commands.allTextContents();
     
     const hasTiffCommands = commandTexts.some(text => 
-      text.includes('TIFF Visualizer')
+      text.includes('Image Visualizer')
     );
     
     expect(hasTiffCommands).toBe(true);
-    console.log('✅ TIFF Visualizer extension loaded in Cursor');
+    console.log('✅ Image Visualizer extension loaded in Cursor');
   });
 
   test.skip('should handle Cursor-specific file operations', async ({ page }) => {

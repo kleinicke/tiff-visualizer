@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const NORMALIZATION_RANGE_COMMAND_ID = 'tiffVisualizer.setNormalizationRange';
+const NORMALIZATION_RANGE_COMMAND_ID = 'imageVisualizer.setNormalizationRange';
 
 export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
@@ -17,7 +17,7 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
 		super(
-			'tiffVisualizer.normalization',
+			'imageVisualizer.normalization',
 			'Image Normalization',
 			vscode.StatusBarAlignment.Right,
 			101

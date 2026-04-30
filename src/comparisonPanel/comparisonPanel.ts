@@ -3,7 +3,7 @@ import { Utils } from 'vscode-uri';
 import { Disposable } from '../util/dispose';
 
 export class ComparisonPanel extends Disposable {
-	public static readonly viewType = 'tiffVisualizer.comparisonPanel';
+	public static readonly viewType = 'imageVisualizer.comparisonPanel';
 	private static currentPanel: ComparisonPanel | undefined;
 
 	private readonly _panel: vscode.WebviewPanel;
@@ -101,7 +101,7 @@ export class ComparisonPanel extends Disposable {
 	private async _openImageInMainEditor(uriString: string): Promise<void> {
 		try {
 			const uri = vscode.Uri.parse(uriString);
-			await vscode.commands.executeCommand('vscode.openWith', uri, 'tiffVisualizer.previewEditor');
+			await vscode.commands.executeCommand('vscode.openWith', uri, 'imageVisualizer.previewEditor');
 		} catch (error) {
 			console.error('Error opening image in main editor:', error);
 		}

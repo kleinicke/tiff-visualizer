@@ -11,10 +11,13 @@ This is a VS Code extension that provides advanced image visualization for scien
 ### Build & Development
 ```bash
 npm install              # Install dependencies
-npm run compile          # Build using esbuild (creates 3 bundles: Node.js, Web, Webview)
+npm run compile          # Full build: clean + WASM (Rust) + esbuild (5 bundles)
+npm run compile:quick    # Quick build: clean + esbuild only (skips WASM — use when Rust unchanged)
 npm run watch            # Watch mode for development
-npm run vscode:prepublish # Production build
+npm run vscode:prepublish # Production build (runs compile)
 ```
+
+> **WASM requirement**: `npm run compile` runs `build:wasm` which requires the Rust toolchain and `wasm-pack`. Install via `rustup` and `cargo install wasm-pack`. Use `compile:quick` to skip the WASM build when only editing TypeScript/JavaScript.
 
 ### Testing & Quality
 ```bash
@@ -39,14 +42,23 @@ vsce package            # Creates .vsix file for distribution
 
 ## Architecture Overview
 
-### Triple Build System
-The extension uses a sophisticated three-bundle build approach:
+### Five-Bundle Build System
+The extension uses a five-bundle build approach (produced by `esbuild.js`):
 
 1. **Extension bundle** (`out/extension.js`) - Node.js target for VS Code desktop API integration
 2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
-3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
+3. **AppStateManager bundle** (`out/src/imagePreview/appStateManager.js`) - Extracted for unit testing
+4. **Webview bundle** (`media/imagePreview.bundle.js`) - Browser-based visualization (built from `media/imagePreview.js`)
+5. **Test bundle** (`out/test/**/*.js`) - TypeScript test files auto-discovered and compiled
 
 This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).
+
+### WASM Component
+A Rust component in `wasm/tiff-decoder/` provides accelerated TIFF decoding:
+- Built with `wasm-pack --target web --release`
+- Outputs to `media/wasm/tiff-wasm.js` + `media/wasm/tiff-wasm.wasm`
+- Only rebuild when Rust source changes — use `compile:quick` otherwise
+- Requires: Rust toolchain (`rustup`) + `wasm-pack` (`cargo install wasm-pack`)
 
 ### Custom Editor Pattern
 Uses VS Code's `CustomReadonlyEditorProvider` API:
@@ -88,7 +100,7 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
 - **ColormapConverter**: Converts colormap images to float values using various colormaps (viridis, plasma, jet, etc.)
 
 ### Status Bar Integration
-Comprehensive status bar system with 8+ specialized entries:
+Comprehensive status bar system with 10+ specialized entries:
 - **Size** ([sizeStatusBarEntry.ts](src/imagePreview/sizeStatusBarEntry.ts)): Image dimensions, pixel position on hover
 - **Zoom** ([zoomStatusBarEntry.ts](src/imagePreview/zoomStatusBarEntry.ts)): Current zoom level with click to reset
 - **Normalization** ([normalizationStatusBarEntry.ts](src/imagePreview/normalizationStatusBarEntry.ts)): Float range controls (for float images)
@@ -97,6 +109,7 @@ Comprehensive status bar system with 8+ specialized entries:
 - **Binary Size** ([binarySizeStatusBarEntry.ts](src/binarySizeStatusBarEntry.ts)): File size information
 - **Mask Filter** ([maskFilterStatusBarEntry.ts](src/imagePreview/maskFilterStatusBarEntry.ts)): Pixel filtering by mask
 - **Histogram** ([histogramStatusBarEntry.ts](src/imagePreview/histogramStatusBarEntry.ts)): Toggle histogram overlay
+- **Color Picker Mode** ([colorPickerModeStatusBarEntry.ts](src/imagePreview/colorPickerModeStatusBarEntry.ts)): Toggle color picker mode
 
 Each status bar entry implements `StatusBarEntryInterface` and registers with `ImagePreviewManager`.
 
@@ -220,9 +233,10 @@ Comprehensive HDR image support via parse-exr library ([media/modules/exr-proces
 
 ## Testing Strategy
 
-### Three-Tier Testing
+### Testing Strategy (Multi-Tier)
+
 1. **Behavioral tests** ([test/simple-behavior-test.js](test/simple-behavior-test.js)): Fast unit tests without VS Code
-   - Tests AppStateManager logic in isolation
+   - Tests AppStateManager logic in isolation (intentionally duplicates AppStateManager code to avoid compile dependency)
    - No VS Code API required
    - Run with: `npm run test:behavior`
 
@@ -230,7 +244,15 @@ Comprehensive HDR image support via parse-exr library ([media/modules/exr-proces
    - Tests format processors work correctly
    - Run with: `npm run test:visualization`
 
-3. **UI tests** (Extension Tester): Full VS Code integration tests
+3. **TypeScript unit tests** ([test/behavioral.test.ts](test/behavioral.test.ts), `test/*.test.ts`): Compiled Mocha tests
+   - Auto-discovered via glob, compiled to `out/test/`
+   - Run with: `npm run test:unit` (uses `.mocharc.js`: 60s timeout, source maps, exit-after-tests)
+
+4. **Playwright tests** ([test/playwright/](test/playwright/)): Advanced integration/e2e tests
+   - Spec files: `cursor-test.spec.ts`, `extension-core.spec.ts`, etc.
+   - Full browser automation for webview interaction
+
+5. **UI tests** (Extension Tester): Full VS Code integration tests
    - Tests extension activation, commands, webview interaction
    - Run with: `npm run test:ui`
 

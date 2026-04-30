@@ -1,9 +1,9 @@
 {
-  "name": "tiff-visualizer",
-  "displayName": "Float and TIFF Visualizer",
-  "description": "Analyze float and int TIFF images, also works with exr, npy, png, jpg, ppm, pfm and pgm images.",
-  "version": "1.5.3",
-  "publisher": "kleinicke",
+  "name": "image-visualizer",
+  "displayName": "Image Visualizer",
+  "description": "Analyze images, also works with exr, npy, png, jpg, ppm, pfm and pgm images.",
+  "version": "1.6.3",
+  "publisher": "sguruswamy",
   "icon": "icon.png",
   "license": "MIT",
   "engines": {
@@ -72,8 +72,8 @@
   "contributes": {
     "customEditors": [
       {
-        "viewType": "tiffVisualizer.previewEditor",
-        "displayName": "TIFF Visualizer",
+        "viewType": "imageVisualizer.previewEditor",
+        "displayName": "Image Visualizer",
         "priority": "default",
         "selector": [
           {
@@ -84,152 +84,152 @@
     ],
     "commands": [
       {
-        "command": "tiffVisualizer.zoomIn",
+        "command": "imageVisualizer.zoomIn",
         "title": "Zoom In",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.zoomOut",
+        "command": "imageVisualizer.zoomOut",
         "title": "Zoom Out",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.copyImage",
+        "command": "imageVisualizer.copyImage",
         "title": "Copy Image",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.pastePosition",
+        "command": "imageVisualizer.pastePosition",
         "title": "Paste Position",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.resetZoom",
+        "command": "imageVisualizer.resetZoom",
         "title": "Reset Zoom",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.setNormalizationRange",
+        "command": "imageVisualizer.setNormalizationRange",
         "title": "Set Normalization Range",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.exportAsPng",
+        "command": "imageVisualizer.exportAsPng",
         "title": "Export as PNG",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.setGamma",
+        "command": "imageVisualizer.setGamma",
         "title": "Set Gamma",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.setBrightness",
+        "command": "imageVisualizer.setBrightness",
         "title": "Set Brightness",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.selectForCompare",
+        "command": "imageVisualizer.selectForCompare",
         "title": "Select for Compare",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.compareWithSelected",
+        "command": "imageVisualizer.compareWithSelected",
         "title": "Compare with Selected",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.filterByMask",
+        "command": "imageVisualizer.filterByMask",
         "title": "Filter by Mask",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.toggleNanColor",
+        "command": "imageVisualizer.toggleNanColor",
         "title": "Toggle NaN Color (Black/Fuchsia)",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.openWith",
-        "title": "Open with TIFF Visualizer",
-        "category": "TIFF Visualizer"
+        "command": "imageVisualizer.openWith",
+        "title": "Open with Image Visualizer",
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.openNextToCurrent",
+        "command": "imageVisualizer.openNextToCurrent",
         "title": "Open Next to Current Image",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.openComparisonPanel",
+        "command": "imageVisualizer.openComparisonPanel",
         "title": "Open Image Comparison Panel",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.resetAllSettings",
+        "command": "imageVisualizer.resetAllSettings",
         "title": "Reset All Settings to Defaults",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.toggleHistogram",
+        "command": "imageVisualizer.toggleHistogram",
         "title": "Toggle Histogram",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.convertColormapToFloat",
+        "command": "imageVisualizer.convertColormapToFloat",
         "title": "Convert Colormap Image to Float",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.revertToOriginal",
+        "command": "imageVisualizer.revertToOriginal",
         "title": "Revert to Original Image",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.toggleColorPickerMode",
+        "command": "imageVisualizer.toggleColorPickerMode",
         "title": "Toggle Color Picker: Show Modified Values",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       },
       {
-        "command": "tiffVisualizer.copyImageInfo",
+        "command": "imageVisualizer.copyImageInfo",
         "title": "Copy Image Information to Clipboard",
-        "category": "TIFF Visualizer"
+        "category": "Image Visualizer"
       }
     ],
     "keybindings": [
       {
-        "command": "tiffVisualizer.toggleHistogram",
+        "command": "imageVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId == 'imageVisualizer.previewEditor'"
       },
       {
-        "command": "tiffVisualizer.copyImageInfo",
+        "command": "imageVisualizer.copyImageInfo",
         "key": "ctrl+shift+i",
         "mac": "cmd+shift+i",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId == 'imageVisualizer.previewEditor'"
       }
     ],
     "menus": {
       "explorer/context": [
         {
-          "command": "tiffVisualizer.openWith",
+          "command": "imageVisualizer.openWith",
           "when": "resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm",
           "group": "navigation@0"
         },
         {
-          "command": "tiffVisualizer.openNextToCurrent",
-          "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && tiffVisualizer.hasActivePreview",
+          "command": "imageVisualizer.openNextToCurrent",
+          "when": "(resourceExtname == .png || resourceExtname == .jpg || resourceExtname == .jpeg || resourceExtname == .tif || resourceExtname == .tiff || resourceExtname == .exr || resourceExtname == .pfm || resourceExtname == .npy || resourceExtname == .npz || resourceExtname == .ppm || resourceExtname == .pgm || resourceExtname == .pbm) && imageVisualizer.hasActivePreview",
           "group": "navigation@1"
         }
       ],
       "editor/context": [
         {
-          "command": "tiffVisualizer.selectForCompare",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "command": "imageVisualizer.selectForCompare",
+          "when": "activeCustomEditorId == 'imageVisualizer.previewEditor'",
           "group": "comparison@1"
         },
         {
-          "command": "tiffVisualizer.compareWithSelected",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
+          "command": "imageVisualizer.compareWithSelected",
+          "when": "activeCustomEditorId == 'imageVisualizer.previewEditor' && imageVisualizer.hasComparisonImage",
           "group": "comparison@1"
         }
       ]
@@ -238,7 +238,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "clean": "rimraf out",
-    "build:wasm": "cd wasm/tiff-decoder && wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && sed -i '' 's/tiff_wasm_bg\\.wasm/wasm\\/tiff-wasm.wasm/g' media/wasm/tiff-wasm.js",
+    "build:wasm": "cd wasm/tiff-decoder && wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && sed -i 's/tiff_wasm_bg\\.wasm/wasm\\/tiff-wasm.wasm/g' media/wasm/tiff-wasm.js",
     "compile": "npm run clean && npm run build:wasm && node ./esbuild.js",
     "compile:quick": "npm run clean && node ./esbuild.js",
     "watch": "npm run clean && node ./esbuild.js --watch",
@@ -281,6 +281,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kleinicke/tiff-visualizer.git"
+    "url": "https://github.com/kleinicke/image-visualizer.git"
   }
 }

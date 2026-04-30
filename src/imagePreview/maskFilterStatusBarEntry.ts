@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const MASK_FILTER_COMMAND_ID = 'tiffVisualizer.filterByMask';
+const MASK_FILTER_COMMAND_ID = 'imageVisualizer.filterByMask';
 
 export class MaskFilterStatusBarEntry extends PreviewStatusBarEntry {
 	private _enabled: boolean = false;
@@ -11,7 +11,7 @@ export class MaskFilterStatusBarEntry extends PreviewStatusBarEntry {
 
 	constructor() {
 		super(
-			'tiffVisualizer.maskFilter',
+			'imageVisualizer.maskFilter',
 			'Mask Filter',
 			vscode.StatusBarAlignment.Right,
 			97 // To appear next to binary size (98)

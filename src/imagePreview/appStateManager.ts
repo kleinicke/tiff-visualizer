@@ -24,6 +24,7 @@ export interface ImageSettings {
 	rgbAs24BitGrayscale: boolean;
 	scale24BitFactor: number; // Divide 24-bit values by this for display (default 1000)
 	normalizedFloatMode: boolean; // Convert uint images to normalized float (0-1 range)
+	colormap: string | null;
 }
 
 // Image format types for per-format settings
@@ -62,7 +63,7 @@ export interface AppStateEvents {
 }
 
 /**
- * Centralized state manager for the TIFF Visualizer extension.
+ * Centralized state manager for the Image Visualizer extension.
  * Handles all application state including image settings, UI state, and coordination.
  */
 export class AppStateManager {
@@ -90,15 +91,16 @@ export class AppStateManager {
 			gammaMode: false
 		},
 		gamma: {
-			in: 2.2,
-			out: 2.2
+			in: 1.0,
+			out: 1.0
 		},
 		brightness: {
 			offset: 0
 		},
 		rgbAs24BitGrayscale: false,
 		scale24BitFactor: 1000,
-		normalizedFloatMode: false
+		normalizedFloatMode: false,
+		colormap: null
 	};
 
 	private _uiState: UIState = {
@@ -122,9 +124,10 @@ export class AppStateManager {
 		scaleMode: 'sqrt'
 	};
 
-	// Per-format settings cache
-	private _formatSettingsCache: Map<ImageFormatType, ImageSettings> = new Map();
+	// Per-instance settings cache (keyed by resource URI string)
+	private _instanceSettingsCache: Map<string, ImageSettings> = new Map();
 	private _currentFormat: ImageFormatType | undefined;
+	private _currentUri: string | undefined;
 
 	// Getters for readonly access
 	public get imageSettings(): Readonly<ImageSettings> {
@@ -149,6 +152,10 @@ export class AppStateManager {
 
 	public get currentFormat(): ImageFormatType | undefined {
 		return this._currentFormat;
+	}
+
+	public get currentUri(): string | undefined {
+		return this._currentUri;
 	}
 
 	public get histogramState(): Readonly<HistogramState> {
@@ -182,6 +189,14 @@ export class AppStateManager {
 			this._imageSettings.normalization.max = max;
 			this._emitSettingsChanged();
 		}
+	}
+
+	public setManualNormalization(min: number, max: number): void {
+		this._imageSettings.normalization.autoNormalize = false;
+		this._imageSettings.normalization.gammaMode = false;
+		this._imageSettings.normalization.min = min;
+		this._imageSettings.normalization.max = max;
+		this._emitSettingsChanged();
 	}
 
 	public setAutoNormalize(enabled: boolean): void {
@@ -264,22 +279,30 @@ export class AppStateManager {
 		}
 	}
 
-	// Per-format Settings Management
-	public setImageFormat(format: ImageFormatType): void {
-		// Save current settings for the previous format
-		if (this._currentFormat) {
-			this._formatSettingsCache.set(this._currentFormat, this._deepCopySettings(this._imageSettings));
+	public setColormap(colormap: string | null): void {
+		if (this._imageSettings.colormap !== colormap) {
+			this._imageSettings.colormap = colormap;
+			this._emitSettingsChanged();
+		}
+	}
+
+	// Per-instance Settings Management
+	public setActiveInstance(uri: string, format: ImageFormatType): void {
+		// Save current settings under the current URI before switching
+		if (this._currentUri) {
+			this._instanceSettingsCache.set(this._currentUri, this._deepCopySettings(this._imageSettings));
 		}
 
+		this._currentUri = uri;
 		this._currentFormat = format;
 
-		// Load settings for the new format
-		const cachedSettings = this._formatSettingsCache.get(format);
+		// Load settings for this specific URI instance
+		const cachedSettings = this._instanceSettingsCache.get(uri);
 		if (cachedSettings) {
 			this._imageSettings = this._deepCopySettings(cachedSettings);
 			this._emitSettingsChanged();
 		} else {
-			// Use default settings for this format
+			// First time seeing this URI — use format defaults
 			const defaults = this._getDefaultSettingsForFormat(format);
 			this._imageSettings = defaults;
 			this._emitSettingsChanged();
@@ -293,7 +316,8 @@ export class AppStateManager {
 			brightness: { ...settings.brightness },
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
 			scale24BitFactor: settings.scale24BitFactor,
-			normalizedFloatMode: settings.normalizedFloatMode
+			normalizedFloatMode: settings.normalizedFloatMode,
+			colormap: settings.colormap
 		};
 	}
 
@@ -315,7 +339,8 @@ export class AppStateManager {
 			},
 			rgbAs24BitGrayscale: false,
 			scale24BitFactor: 1000,
-			normalizedFloatMode: false
+			normalizedFloatMode: false,
+			colormap: null
 		};
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
@@ -389,7 +414,7 @@ export class AppStateManager {
 	// Comparison Management
 	public setComparisonBase(uri: vscode.Uri | undefined): void {
 		this._comparisonBaseUri = uri;
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', !!uri);
+		vscode.commands.executeCommand('setContext', 'imageVisualizer.hasComparisonImage', !!uri);
 	}
 
 	// Preview Management
@@ -439,20 +464,20 @@ export class AppStateManager {
 
 	// Cache Management
 	public clearAllCaches(): void {
-		this._formatSettingsCache.clear();
+		this._instanceSettingsCache.clear();
 	}
 
-	public resetToDefaults(format?: ImageFormatType): void {
-		if (format) {
-			// Reset specific format
-			this._formatSettingsCache.delete(format);
-			if (this._currentFormat === format) {
-				this._imageSettings = this._getDefaultSettingsForFormat(format);
+	public resetToDefaults(uri?: string): void {
+		if (uri) {
+			// Reset this specific instance back to format defaults
+			this._instanceSettingsCache.delete(uri);
+			if (this._currentUri === uri && this._currentFormat) {
+				this._imageSettings = this._getDefaultSettingsForFormat(this._currentFormat);
 				this._emitSettingsChanged();
 			}
 		} else {
-			// Reset all
-			this._formatSettingsCache.clear();
+			// Reset all instances
+			this._instanceSettingsCache.clear();
 			if (this._currentFormat) {
 				this._imageSettings = this._getDefaultSettingsForFormat(this._currentFormat);
 				this._emitSettingsChanged();

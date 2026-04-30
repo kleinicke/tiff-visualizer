@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { PreviewStatusBarEntry as OwnedStatusBarEntry } from '../ownedStatusBarEntry';
 
 
-const selectZoomLevelCommandId = '_tiffVisualizer.selectZoomLevel';
+const selectZoomLevelCommandId = '_imageVisualizer.selectZoomLevel';
 
 export type Scale = number | 'fit';
 
@@ -12,7 +12,7 @@ export class ZoomStatusBarEntry extends OwnedStatusBarEntry {
 	public readonly onDidChangeScale = this._onDidChangeScale.event;
 
 	constructor() {
-		super('status.tiffVisualizer.zoom', vscode.l10n.t("Image Zoom"), vscode.StatusBarAlignment.Right, 110 /* to the left of image size (102) */);
+		super('status.imageVisualizer.zoom', vscode.l10n.t("Image Zoom"), vscode.StatusBarAlignment.Right, 110 /* to the left of image size (102) */);
 
 		this._register(vscode.commands.registerCommand(selectZoomLevelCommandId, async () => {
 			type MyPickItem = vscode.QuickPickItem & { scale: Scale };

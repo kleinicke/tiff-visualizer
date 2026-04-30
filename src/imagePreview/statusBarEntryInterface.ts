@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 /**
- * Standardized interface for all status bar entries in the TIFF Visualizer extension.
+ * Standardized interface for all status bar entries in the Image Visualizer extension.
  * This eliminates inconsistencies between different hiding patterns and provides
  * a unified ownership-based approach.
  */

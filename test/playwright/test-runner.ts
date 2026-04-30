@@ -50,7 +50,7 @@ export class TIFFTestRunner {
         
         // Try to open the file using the test command
         if (typeof (window as any).vscode !== 'undefined' && (window as any).vscode.commands) {
-          await (window as any).vscode.commands.executeCommand('tiffVisualizer.openTestFile', filePath);
+          await (window as any).vscode.commands.executeCommand('imageVisualizer.openTestFile', filePath);
         } else {
           console.log('VS Code API not available, trying alternative method');
           // Alternative: try to trigger file opening through UI
@@ -69,8 +69,8 @@ export class TIFFTestRunner {
     }, imagePath);
 
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 20000 });
-    console.log('✅ TIFF Visualizer custom editor loaded');
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 20000 });
+    console.log('✅ Image Visualizer custom editor loaded');
   }
 
   async waitForCanvas(page: any) {
@@ -140,14 +140,14 @@ export class TIFFTestRunner {
   }
 
   async testCommands(page: any) {
-    console.log('Testing TIFF Visualizer commands...');
+    console.log('Testing Image Visualizer commands...');
     
     const commands = [
-      'TIFF Visualizer: Set Gamma',
-      'TIFF Visualizer: Set Brightness',
-      'TIFF Visualizer: Set Normalization Range',
-      'TIFF Visualizer: Zoom In',
-      'TIFF Visualizer: Zoom Out'
+      'Image Visualizer: Set Gamma',
+      'Image Visualizer: Set Brightness',
+      'Image Visualizer: Set Normalization Range',
+      'Image Visualizer: Zoom In',
+      'Image Visualizer: Zoom Out'
     ];
 
     for (const command of commands) {

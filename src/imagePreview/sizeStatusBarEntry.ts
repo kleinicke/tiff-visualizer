@@ -25,7 +25,7 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 	private _colorPickerShowModified: boolean = false;
 
 	constructor() {
-		super('status.tiffVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 102 /* to the right of zoom (110) */);
+		super('status.imageVisualizer.size', vscode.l10n.t("Image Size"), vscode.StatusBarAlignment.Right, 102 /* to the right of zoom (110) */);
 		this.updateTooltip();
 	}
 

@@ -6,9 +6,9 @@ export class ColorPickerModeStatusBarEntry implements StatusBarEntryInterface {
 	private _showModified: boolean = false;
 
 	constructor() {
-		this._statusBarEntry = vscode.window.createStatusBarItem('tiffVisualizer.colorPickerMode', vscode.StatusBarAlignment.Right, 101);
-		this._statusBarEntry.name = 'TIFF Visualizer Color Picker Mode';
-		this._statusBarEntry.command = 'tiffVisualizer.toggleColorPickerMode';
+		this._statusBarEntry = vscode.window.createStatusBarItem('imageVisualizer.colorPickerMode', vscode.StatusBarAlignment.Right, 101);
+		this._statusBarEntry.name = 'Image Visualizer Color Picker Mode';
+		this._statusBarEntry.command = 'imageVisualizer.toggleColorPickerMode';
 		this.updateMode(false);
 		// Don't show initially - let updateStatusBar control visibility
 	}

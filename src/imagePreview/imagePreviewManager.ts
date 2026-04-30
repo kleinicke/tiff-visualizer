@@ -25,7 +25,7 @@ export interface CopiedPositionState {
 
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
-	public static readonly viewType = 'tiffVisualizer.previewEditor';
+	public static readonly viewType = 'imageVisualizer.previewEditor';
 
 	// Export the viewType to ensure it's preserved in the build
 	public static getViewType() {
@@ -108,14 +108,15 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	}
 
 	/**
-	 * Ensures the active preview's format is set as current before modifying settings.
-	 * This prevents commands from accidentally modifying the wrong format's settings.
+	 * Ensures the active preview's instance is set as current before modifying settings.
+	 * This prevents commands from accidentally modifying the wrong instance's settings.
 	 */
 	private ensureActivePreviewFormat(): void {
 		if (this._activePreview && 'getCurrentFormat' in this._activePreview) {
 			const format = (this._activePreview as any).getCurrentFormat();
-			if (format && format !== this._appStateManager.currentFormat) {
-				this._appStateManager.setImageFormat(format);
+			const uri = (this._activePreview as any).resource?.toString();
+			if (format && uri && (uri !== this._appStateManager.currentUri)) {
+				this._appStateManager.setActiveInstance(uri, format);
 			}
 		}
 	}
@@ -186,18 +187,12 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	}
 
 	public updateAllPreviews() {
-		// Only update previews that match the current format
-		const currentFormat = this._appStateManager.currentFormat;
+		// Only update previews that match the current instance URI
+		const currentUri = this._appStateManager.currentUri;
 
 		for (const preview of this._previews) {
-			// Check if this preview matches the current format
-			if ('getCurrentFormat' in preview) {
-				const previewFormat = (preview as any).getCurrentFormat();
-				if (previewFormat === currentFormat) {
-					preview.updatePreview();
-				}
-			} else {
-				// Fallback: update preview if format can't be determined
+			const previewUri = (preview as any).resource?.toString();
+			if (previewUri && previewUri === currentUri) {
 				preview.updatePreview();
 			}
 		}
@@ -275,11 +270,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 				if (resource) {
 					const fileName = resource.path.split('/').pop() || resource.path;
 					getOutputChannel().appendLine(`📂 Reopened: ${fileName}`);
+					// Switch AppStateManager to this preview's instance
+					// This restores the cached settings for this specific file
+					this._appStateManager.setActiveInstance(resource.toString(), format);
 				}
-
-				// Switch AppStateManager to this preview's format
-				// This will load the cached settings for this format
-				this._appStateManager.setImageFormat(format);
 
 				// Update the status bar to reflect the new format's settings
 				if ('updateStatusBar' in value) {
@@ -289,6 +283,6 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		}
 
 		// Update context for menu visibility
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', !!value);
+		vscode.commands.executeCommand('setContext', 'imageVisualizer.hasActivePreview', !!value);
 	}
 } 

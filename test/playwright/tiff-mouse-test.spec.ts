@@ -44,7 +44,7 @@ test.describe('TIFF Mouse Interaction Tests', () => {
     await page.goto('/');
     await waitForVSCode(page);
     await openFileByExplorer(page, uintImagePath);
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 20000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 20000 });
     const canvas = await page.locator('canvas');
     await expect(canvas).toBeVisible();
     const canvasWidth = await canvas.evaluate((el: Element) => (el as HTMLCanvasElement).width);
@@ -84,7 +84,7 @@ test.describe('TIFF Mouse Interaction Tests', () => {
     await page.goto('/');
     await waitForVSCode(page);
     await openFileByExplorer(page, floatImagePath);
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 20000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 20000 });
     const canvas = await page.locator('canvas');
     await expect(canvas).toBeVisible();
     const canvasWidth = await canvas.evaluate((el: Element) => (el as HTMLCanvasElement).width);

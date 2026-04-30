@@ -40,7 +40,7 @@ test.describe('TIFF Interactive Tests', () => {
       try {
         // Try to open the file using the test command
         if (typeof (window as any).vscode !== 'undefined' && (window as any).vscode.commands) {
-          await (window as any).vscode.commands.executeCommand('tiffVisualizer.openTestFile', imagePath);
+          await (window as any).vscode.commands.executeCommand('imageVisualizer.openTestFile', imagePath);
         } else {
           console.log('VS Code API not available, trying alternative method');
           // Alternative: try to trigger file opening through UI
@@ -59,11 +59,11 @@ test.describe('TIFF Interactive Tests', () => {
     }, uintImagePath);
     
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 15000 });
-    console.log('✅ TIFF Visualizer custom editor loaded');
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 15000 });
+    console.log('✅ Image Visualizer custom editor loaded');
     
-    // Verify the TIFF Visualizer is active
-    const editor = await page.locator('[data-viewtype="tiffVisualizer.previewEditor"]');
+    // Verify the Image Visualizer is active
+    const editor = await page.locator('[data-viewtype="imageVisualizer.previewEditor"]');
     await expect(editor).toBeVisible();
     
     // Look for image preview elements
@@ -133,7 +133,7 @@ test.describe('TIFF Interactive Tests', () => {
     
     // Test gamma correction
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Gamma');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Set Gamma');
     await page.keyboard.press('Enter');
     console.log('✅ Gamma correction command executed');
     
@@ -142,7 +142,7 @@ test.describe('TIFF Interactive Tests', () => {
     
     // Test brightness correction
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Brightness');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Set Brightness');
     await page.keyboard.press('Enter');
     console.log('✅ Brightness correction command executed');
     
@@ -165,7 +165,7 @@ test.describe('TIFF Interactive Tests', () => {
       try {
         // Try to open the file using the test command
         if (typeof (window as any).vscode !== 'undefined' && (window as any).vscode.commands) {
-          await (window as any).vscode.commands.executeCommand('tiffVisualizer.openTestFile', imagePath);
+          await (window as any).vscode.commands.executeCommand('imageVisualizer.openTestFile', imagePath);
         } else {
           console.log('VS Code API not available, trying alternative method');
           // Alternative: try to trigger file opening through UI
@@ -184,11 +184,11 @@ test.describe('TIFF Interactive Tests', () => {
     }, floatImagePath);
     
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 15000 });
-    console.log('✅ TIFF Visualizer custom editor loaded for float test');
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 15000 });
+    console.log('✅ Image Visualizer custom editor loaded for float test');
     
-    // Verify the TIFF Visualizer is active
-    const editor = await page.locator('[data-viewtype="tiffVisualizer.previewEditor"]');
+    // Verify the Image Visualizer is active
+    const editor = await page.locator('[data-viewtype="imageVisualizer.previewEditor"]');
     await expect(editor).toBeVisible();
     
     // Look for image preview elements
@@ -257,7 +257,7 @@ test.describe('TIFF Interactive Tests', () => {
     
     // Test auto normalization (for float images)
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Normalization Range');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Set Normalization Range');
     await page.keyboard.press('Enter');
     console.log('✅ Auto normalization command executed');
     
@@ -309,7 +309,7 @@ test.describe('TIFF Interactive Tests', () => {
       try {
         // Try to open the file using the test command
         if (typeof (window as any).vscode !== 'undefined' && (window as any).vscode.commands) {
-          await (window as any).vscode.commands.executeCommand('tiffVisualizer.openTestFile', imagePath);
+          await (window as any).vscode.commands.executeCommand('imageVisualizer.openTestFile', imagePath);
         } else {
           console.log('VS Code API not available, trying alternative method');
         }
@@ -321,7 +321,7 @@ test.describe('TIFF Interactive Tests', () => {
     }, uintImagePath);
     
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 15000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 15000 });
     
     // Check for status bar entries
     const statusBar = await page.locator('.statusbar');

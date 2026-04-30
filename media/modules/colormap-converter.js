@@ -388,3 +388,9 @@ export class ColormapConverter {
 		return colormap;
 	}
 }
+
+// Pre-computed colormap tables for use in rendering pipeline
+// Instantiate once and export tables
+const _cmInstance = new ColormapConverter();
+export const COLORMAP_TABLES = _cmInstance.colormaps;
+export const COLORMAP_NAMES = Object.keys(_cmInstance.colormaps);

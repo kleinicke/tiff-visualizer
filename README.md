@@ -12,12 +12,24 @@ Additionally it allows for brightness and gamma corrections and offers a color v
 - **Additional files Support**: Support for exr, npy, png, jpg, ppm, pfm and pgm images with uint8/16 and float16/32 support for bw, rgb and rgba images.
 - **Interactive Pixel Inspection**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.
 - **Dynamic Normalization**: Interactively adjust the normalization range for floating-point images to reveal hidden details or choose automatic normalization.
-- **Gamma and Brightness Correction**: Add or remove gamma correction for an image. To change brightness, the source gamma correction is removed, the brightness change (2\*\*Change) is multiplied in linear space onto the image, and the target gamma correction is applied.
+- **Gamma and Brightness Correction**: Adjust image appearance with a per-layer control panel. **Gamma** uses the standard power-law transform: `output = input^γ` (napari convention). γ = 1.0 → no change; γ < 1.0 → brighter midtones (e.g. 0.5 = square-root lift); γ > 1.0 → darker midtones (e.g. 2.0 = square). Gamma is applied to the 0–1 normalised intensity *after* the min/max range step, so it is fully independent of the range sliders. **Brightness** applies an exposure shift of `2^stops` in linear space on top of the gamma result. On single-channel images, gamma is applied before the colormap lookup.
 - **Keep All Settings for Session**: A single VS Code Window keeps the settings applied on one image for all images.
 - **Export as PNG**: Export the image, with the chosen image visualization as PNG for easy sharing.
 
 Float Image Visualization Options:
 ![float-options](assets/tiffVisualizerFloatOptions.png)
+
+## Control Panel
+
+Each image (or layer) has an in-viewer control panel with the following adjustments:
+
+| Control | Formula | Behaviour |
+|---------|---------|-----------|
+| **Range Min / Max** | Maps `[min, max]` → `[0, 1]` | Values below Min → black; above Max → white (or first/last colormap colour). Switches to manual normalization mode. For EXR/float use actual data units (e.g. −1.0 to 2.5); for uint16 use 0–65535. |
+| **Gamma** | `output = input^γ` (napari power-law) | γ = 1.0 → no change. γ < 1.0 → brighter midtones (e.g. 0.5 = square-root lift). γ > 1.0 → darker midtones (e.g. 2.0 = square). Applied to the 0–1 normalised intensity *after* the range step — independent of Min/Max. On single-channel images, applied before the colormap lookup. |
+| **Brightness** | `output *= 2^stops` | +1 stop = 2× brighter; −1 stop = half as bright. Applied in linear space after gamma. |
+| **Colormap** | LUT applied to normalised 0–1 intensity | Only active for single-channel (grayscale) images. Applied after range + gamma. Choices: viridis, plasma, inferno, magma, jet, hot, cool, turbo, gray. |
+| **Opacity** | Per-layer alpha blend | Controls how strongly this layer composites over the layers beneath it. |
 
 ## About
 
@@ -40,8 +52,7 @@ If you have use cases that would be helpful for others or find problems, feel fr
 Instead of downloading from the Marketplace, you can also build from source by cloning the repo and building it by running:
 
 ```bash
-git clone https://github.com/kleinicke/tiff-visualizer
-cd tiff-visualizer
+cd image-visualizer
 npm install
 npm install -g vsce
 vsce package

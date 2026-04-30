@@ -160,6 +160,49 @@ export class ExrProcessor {
 	}
 
 	/**
+	 * Process EXR file from raw bytes (for layer loading — skips fetch and deferred render).
+	 * @param {number[]} data - Raw file bytes as plain Array (from extension postMessage)
+	 * @returns {{canvas: HTMLCanvasElement, imageData: ImageData}}
+	 */
+	processExrFromBuffer(data) {
+		// @ts-ignore
+		if (typeof parseExr === 'undefined') throw new Error('parseExr library not loaded');
+		const buffer = new Uint8Array(data).buffer;
+		// @ts-ignore
+		const exrResult = parseExr(buffer, 1015); // FloatType
+		const { width, height, data: exrData, format, type, channelNames } = exrResult;
+
+		let channels;
+		if (format === 1023) channels = 4;
+		else if (format === 1028) channels = 1;
+		else channels = exrData.length / (width * height);
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+
+		// Temporarily swap rawExrData so renderExrToCanvas can use it
+		const savedRaw = this.rawExrData;
+		const savedStats = this._cachedStats;
+		this.rawExrData = { width, height, data: exrData, channels, type, format, isFloat: true, channelNames: channelNames || [] };
+		this._cachedStats = undefined;
+
+		const imageData = this.renderExrToCanvas(this.settingsManager.settings);
+		const computedStats = this._cachedStats;
+
+		this.rawExrData = savedRaw;
+		this._cachedStats = savedStats;
+
+		const stats = computedStats || ImageStatsCalculator.calculateFloatStats(exrData, width, height, channels);
+		return {
+			canvas, imageData,
+			rawData: exrData, width, height, channels,
+			isFloat: true, typeMax: 1.0, stats,
+			renderOptions: { flipY: true }
+		};
+	}
+
+	/**
 	 * Render EXR data to canvas with current settings
 	 * @param {HTMLCanvasElement} canvas - Target canvas
 	 * @param {Object} settings - Current rendering settings

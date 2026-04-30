@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
-test.describe('TIFF Visualizer Extension Core Tests', () => {
+test.describe('Image Visualizer Extension Core Tests', () => {
   test('should have extension files compiled', async () => {
     // Check if the extension is compiled
     const extensionPath = path.join(__dirname, '..', '..', 'out', 'extension.js');
@@ -33,8 +33,8 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
     
     // Check extension configuration
-    expect(packageJson.name).toBe('tiff-visualizer');
-    expect(packageJson.displayName).toBe('TIFF Visualizer');
+    expect(packageJson.name).toBe('image-visualizer');
+    expect(packageJson.displayName).toBe('Image Visualizer');
     expect(packageJson.main).toBe('./out/extension.js');
     
     // Check custom editor configuration
@@ -43,7 +43,7 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
     expect(customEditors.length).toBeGreaterThan(0);
     
     const tiffEditor = customEditors.find((editor: any) => 
-      editor.viewType === 'tiffVisualizer.previewEditor'
+      editor.viewType === 'imageVisualizer.previewEditor'
     );
     expect(tiffEditor).toBeDefined();
     
@@ -56,18 +56,18 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
     
     const commands = packageJson.contributes?.commands || [];
     const requiredCommands = [
-      'tiffVisualizer.zoomIn',
-      'tiffVisualizer.zoomOut',
-      'tiffVisualizer.copyImage',
-      'tiffVisualizer.resetZoom',
-      'tiffVisualizer.setNormalizationRange',
-      'tiffVisualizer.exportAsPng',
-      'tiffVisualizer.setGamma',
-      'tiffVisualizer.setBrightness',
-      'tiffVisualizer.selectForCompare',
-      'tiffVisualizer.compareWithSelected',
-      'tiffVisualizer.filterByMask',
-      'tiffVisualizer.toggleNanColor'
+      'imageVisualizer.zoomIn',
+      'imageVisualizer.zoomOut',
+      'imageVisualizer.copyImage',
+      'imageVisualizer.resetZoom',
+      'imageVisualizer.setNormalizationRange',
+      'imageVisualizer.exportAsPng',
+      'imageVisualizer.setGamma',
+      'imageVisualizer.setBrightness',
+      'imageVisualizer.selectForCompare',
+      'imageVisualizer.compareWithSelected',
+      'imageVisualizer.filterByMask',
+      'imageVisualizer.toggleNanColor'
     ];
     
     const definedCommands = commands.map((cmd: any) => cmd.command);

@@ -91,7 +91,7 @@ export class ImageSettingsManager {
 
 	public setComparisonBase(uri: vscode.Uri | undefined): void {
 		this._comparisonBaseUri = uri;
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', !!uri);
+		vscode.commands.executeCommand('setContext', 'imageVisualizer.hasComparisonImage', !!uri);
 	}
 
 	private _fireSettingsChanged(): void {

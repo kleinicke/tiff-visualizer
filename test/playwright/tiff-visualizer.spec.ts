@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
-test.describe('TIFF Visualizer Extension', () => {
+test.describe('Image Visualizer Extension', () => {
   let testImagePath: string;
 
   test.beforeAll(async () => {
@@ -38,10 +38,10 @@ test.describe('TIFF Visualizer Extension', () => {
     }, testImagePath);
     
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 10000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 10000 });
     
-    // Verify the TIFF Visualizer is active
-    const editor = await page.locator('[data-viewtype="tiffVisualizer.previewEditor"]');
+    // Verify the Image Visualizer is active
+    const editor = await page.locator('[data-viewtype="imageVisualizer.previewEditor"]');
     await expect(editor).toBeVisible();
   });
 
@@ -56,7 +56,7 @@ test.describe('TIFF Visualizer Extension', () => {
       console.log('Opening file:', uri);
     }, testImagePath);
     
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 10000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 10000 });
     
     // Look for image preview elements
     const canvas = await page.locator('canvas');
@@ -81,13 +81,13 @@ test.describe('TIFF Visualizer Extension', () => {
       console.log('Opening file:', uri);
     }, testImagePath);
     
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 10000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 10000 });
     
     // Check for status bar entries
     const statusBar = await page.locator('.statusbar');
     await expect(statusBar).toBeVisible();
     
-    // Look for TIFF Visualizer specific status items
+    // Look for Image Visualizer specific status items
     // These would be the status bar entries like zoom, brightness, etc.
     const statusItems = await page.locator('.statusbar-item');
     const statusCount = await statusItems.count();
@@ -105,11 +105,11 @@ test.describe('TIFF Visualizer Extension', () => {
       console.log('Opening file:', uri);
     }, testImagePath);
     
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 10000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 10000 });
     
     // Test zoom in command
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Zoom In');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Zoom In');
     await page.keyboard.press('Enter');
     
     // Wait for zoom to be applied
@@ -117,7 +117,7 @@ test.describe('TIFF Visualizer Extension', () => {
     
     // Test zoom out command
     await page.keyboard.press('Ctrl+Shift+P');
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Zoom Out');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Zoom Out');
     await page.keyboard.press('Enter');
     
     await page.waitForTimeout(1000);
@@ -142,7 +142,7 @@ test.describe('TIFF Visualizer Extension', () => {
       }, imagePath);
       
       // Wait for editor to load
-      await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 10000 });
+      await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 10000 });
       
       // Verify image loads
       const canvas = await page.locator('canvas');
@@ -163,16 +163,16 @@ test.describe('TIFF Visualizer Extension', () => {
       console.log('Opening file:', uri);
     }, testImagePath);
     
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 10000 });
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 10000 });
     
     // Right-click in the editor to open context menu
-    await page.click('[data-viewtype="tiffVisualizer.previewEditor"]', { button: 'right' });
+    await page.click('[data-viewtype="imageVisualizer.previewEditor"]', { button: 'right' });
     
     // Look for context menu items
     const contextMenu = await page.locator('.monaco-menu');
     await expect(contextMenu).toBeVisible();
     
-    // Check for TIFF Visualizer specific menu items
+    // Check for Image Visualizer specific menu items
     const menuItems = await page.locator('.monaco-menu .action-item');
     const menuCount = await menuItems.count();
     expect(menuCount).toBeGreaterThan(0);
@@ -184,17 +184,17 @@ test.describe('TIFF Visualizer Extension', () => {
     const imageFiles = fs.readdirSync(examplePath).filter(f => f.endsWith('.tif'));
     
     expect(imageFiles.length).toBeGreaterThan(0);
-    console.log(`✅ Found ${imageFiles.length} test images for TIFF Visualizer testing`);
+    console.log(`✅ Found ${imageFiles.length} test images for Image Visualizer testing`);
     console.log('Sample images:', imageFiles.slice(0, 5));
   });
 
-  test('should have TIFF Visualizer test setup instructions', async () => {
-    // This test provides instructions for running TIFF Visualizer tests
-    console.log('📋 To run TIFF Visualizer integration tests:');
+  test('should have Image Visualizer test setup instructions', async () => {
+    // This test provides instructions for running Image Visualizer tests
+    console.log('📋 To run Image Visualizer integration tests:');
     console.log('1. Start VS Code Web server: npm run start:vscode-web');
-    console.log('2. In another terminal, run: npx playwright test tiff-visualizer.spec.ts');
+    console.log('2. In another terminal, run: npx playwright test image-visualizer.spec.ts');
     console.log('3. Or run all tests: npm run test:playwright');
     console.log('');
-    console.log('✅ TIFF Visualizer test setup instructions provided');
+    console.log('✅ Image Visualizer test setup instructions provided');
   });
 }); 

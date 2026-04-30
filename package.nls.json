@@ -1,7 +1,7 @@
 {
 	"displayName": "Tiff Visualizer",
 	"description": "Provides Tiff visusalization to VS Code",
-	"customEditor.tiffVisualizer.displayName": "TIFF Visualizer",
+	"customEditor.imageVisualizer.displayName": "Image Visualizer",
 	"command.zoomIn": "Zoom in",
 	"command.zoomOut": "Zoom out",
 	"command.copyImage": "Copy"

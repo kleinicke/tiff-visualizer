@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
 
-test.describe('Practical TIFF Visualizer Tests', () => {
+test.describe('Practical Image Visualizer Tests', () => {
   let uintImagePath: string;
   let floatImagePath: string;
 
@@ -44,11 +44,11 @@ test.describe('Practical TIFF Visualizer Tests', () => {
     }, uintImagePath);
     
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 15000 });
-    console.log('✅ TIFF Visualizer custom editor loaded');
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 15000 });
+    console.log('✅ Image Visualizer custom editor loaded');
     
-    // Verify the TIFF Visualizer is active
-    const editor = await page.locator('[data-viewtype="tiffVisualizer.previewEditor"]');
+    // Verify the Image Visualizer is active
+    const editor = await page.locator('[data-viewtype="imageVisualizer.previewEditor"]');
     await expect(editor).toBeVisible();
     
     // Look for image preview elements
@@ -92,7 +92,7 @@ test.describe('Practical TIFF Visualizer Tests', () => {
     
     // Test gamma correction
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Gamma');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Set Gamma');
     await page.keyboard.press('Enter');
     console.log('✅ Gamma correction command executed');
     
@@ -101,7 +101,7 @@ test.describe('Practical TIFF Visualizer Tests', () => {
     
     // Test brightness correction
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Brightness');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Set Brightness');
     await page.keyboard.press('Enter');
     console.log('✅ Brightness correction command executed');
     
@@ -128,11 +128,11 @@ test.describe('Practical TIFF Visualizer Tests', () => {
     }, floatImagePath);
     
     // Wait for the custom editor to load
-    await page.waitForSelector('[data-viewtype="tiffVisualizer.previewEditor"]', { timeout: 15000 });
-    console.log('✅ TIFF Visualizer custom editor loaded for float test');
+    await page.waitForSelector('[data-viewtype="imageVisualizer.previewEditor"]', { timeout: 15000 });
+    console.log('✅ Image Visualizer custom editor loaded for float test');
     
-    // Verify the TIFF Visualizer is active
-    const editor = await page.locator('[data-viewtype="tiffVisualizer.previewEditor"]');
+    // Verify the Image Visualizer is active
+    const editor = await page.locator('[data-viewtype="imageVisualizer.previewEditor"]');
     await expect(editor).toBeVisible();
     
     // Look for image preview elements
@@ -175,7 +175,7 @@ test.describe('Practical TIFF Visualizer Tests', () => {
     
     // Test auto normalization (for float images)
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Normalization Range');
+    await page.fill('.monaco-quick-input-widget input', 'Image Visualizer: Set Normalization Range');
     await page.keyboard.press('Enter');
     console.log('✅ Auto normalization command executed');
     

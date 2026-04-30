@@ -2,7 +2,7 @@ import { VSBrowser, Workbench, ActivityBar, SideBarView } from 'vscode-extension
 import { expect } from 'chai';
 import { TiffVisualizerTestUtils } from './utils/testUtils';
 
-describe('TIFF Visualizer - Simple Extension Test', () => {
+describe('Image Visualizer - Simple Extension Test', () => {
     let workbench: Workbench;
     let testUtils: TiffVisualizerTestUtils;
 
@@ -40,27 +40,27 @@ describe('TIFF Visualizer - Simple Extension Test', () => {
         console.log('✅ Explorer view opened successfully');
     });
 
-    it('should recognize TIFF Visualizer extension commands', async function() {
+    it('should recognize Image Visualizer extension commands', async function() {
         this.timeout(15000);
         
         // Open command palette
         await workbench.openCommandPrompt();
         
-        // Type to search for TIFF Visualizer commands
+        // Type to search for Image Visualizer commands
         const input = await workbench.getDriver().findElement({ css: '.quick-input-widget input' });
-        await input.sendKeys('TIFF Visualizer');
+        await input.sendKeys('Image Visualizer');
         
         // Wait a moment for suggestions to appear
         await workbench.getDriver().sleep(1000);
         
-        // Check if any TIFF Visualizer commands are suggested
+        // Check if any Image Visualizer commands are suggested
         const suggestions = await workbench.getDriver().findElements({ css: '.quick-input-list .monaco-list-row' });
         expect(suggestions.length).to.be.greaterThan(0);
         
         // Cancel the command palette
         await input.sendKeys('\uE00C'); // ESC key
         
-        console.log('✅ TIFF Visualizer commands found in command palette');
+        console.log('✅ Image Visualizer commands found in command palette');
     });
 
     it('should have status bar entries when a TIFF file is expected to be opened', async function() {

@@ -2,7 +2,7 @@ const { runTests } = require('@vscode/test-electron');
 const path = require('path');
 
 /**
- * Behavioral test runner for TIFF Visualizer extension
+ * Behavioral test runner for Image Visualizer extension
  * Tests the actual behavior with real TIFF images
  */
 async function main() {
@@ -11,7 +11,7 @@ async function main() {
         const extensionTestsPath = path.resolve(__dirname, './out/test/behavioral.test.js');
         const testWorkspace = path.resolve(__dirname, './test-workspace');
 
-        console.log('🧪 Running TIFF Visualizer Behavioral Tests...');
+        console.log('🧪 Running Image Visualizer Behavioral Tests...');
         console.log('📁 Extension path:', extensionDevelopmentPath);
         console.log('🧪 Test path:', extensionTestsPath);
         console.log('🖼️  Test workspace:', testWorkspace);
