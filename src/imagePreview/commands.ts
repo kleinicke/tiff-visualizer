@@ -1326,7 +1326,7 @@ export function registerImagePreviewCommands(
 				const wasAdded = await activePreview.addToImageCollection(resource);
 				if (wasAdded) {
 					vscode.commands.executeCommand('workbench.action.keepEditor');
-					vscode.window.showInformationMessage(`Added ${filename} to image collection. Press 't'/'r' to navigate.`);
+					vscode.window.showInformationMessage(`Added ${filename} to image collection. Press ← → to navigate.`);
 					logCommand('browseAndAddToCollection', 'success', resource.fsPath);
 				} else {
 					vscode.window.showWarningMessage(`${filename} is already in the collection.`);
@@ -1385,7 +1385,7 @@ export function registerImagePreviewCommands(
 						const base = added === 1
 							? `Added ${firstAdded!.fsPath.split(path.sep).pop()} to image collection.`
 							: `Added ${added} images to collection.`;
-						msg = skipped > 0 ? `${base} (${skipped} already in collection, skipped) Press 't'/'r' to navigate.` : `${base} Press 't'/'r' to navigate.`;
+						msg = skipped > 0 ? `${base} (${skipped} already in collection, skipped) Press ← → to navigate.` : `${base} Press ← → to navigate.`;
 						vscode.window.showInformationMessage(msg);
 					}
 					logCommand('browseAndAddToCollection', 'success', `Added ${added}, skipped ${skipped}`);
