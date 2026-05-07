@@ -3,7 +3,6 @@ name: Release
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 jobs:
   build-and-upload:
@@ -41,14 +40,6 @@ jobs:
         run: vsce package --out image-visualizer.vsix
 
       - name: Upload vsix to release
-        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: image-visualizer.vsix
-
-      - name: Upload vsix as artifact (manual runs)
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-visualizer.vsix
-          path: image-visualizer.vsix
