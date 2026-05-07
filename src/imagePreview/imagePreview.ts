@@ -52,6 +52,10 @@ export class ImagePreview extends MediaPreview {
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
 	public readonly onDidExport = this._onDidExport.event;
 
+	// Local copy of this preview's settings — updated only when appStateManager fires for THIS URI.
+	// Keeps settings isolated per window so other windows can't overwrite them.
+	private _localSettings: import('./appStateManager').ImageSettings | undefined;
+
 	private _openTimestamp: number = 0;
 
 	public setOpenTimestamp(timestamp: number) {
@@ -115,39 +119,44 @@ export class ImagePreview extends MediaPreview {
 
 		// Single unified settings update handler
 		const updateSettings = () => {
-			// Get current settings from both managers
+			// Use this preview's own cached settings so windows don't cross-contaminate.
+			// Fall back to appStateManager only before the first formatInfo has arrived.
+			const imageSettings = this._localSettings ?? this._manager.appStateManager.imageSettings;
+
 			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
 			const enabledMasks = maskFilters.filter(mask => mask.enabled);
 			const totalMasks = maskFilters.length;
 
-			// Update status bar entries
-			this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
-			this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
-			this._sizeStatusBarEntry.updateColorPickerMode(this._manager.settingsManager.getColorPickerShowModified());
-			this._maskFilterStatusBarEntry.updateMaskFilter(
-				totalMasks > 0,
-				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
-				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
-				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
-			);
-
-			// Create full settings object
+			// Create full settings object using this preview's own settings
 			const webviewSettings = {
-				normalization: this._manager.appStateManager.imageSettings.normalization,
-				gamma: this._manager.appStateManager.imageSettings.gamma,
-				brightness: this._manager.appStateManager.imageSettings.brightness,
-				rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
-				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
-				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
-				colormap: this._manager.appStateManager.imageSettings.colormap,
+				normalization: imageSettings.normalization,
+				gamma: imageSettings.gamma,
+				brightness: imageSettings.brightness,
+				rgbAs24BitGrayscale: imageSettings.rgbAs24BitGrayscale,
+				scale24BitFactor: imageSettings.scale24BitFactor,
+				normalizedFloatMode: imageSettings.normalizedFloatMode,
+				colormap: imageSettings.colormap,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 				maskFilters: maskFilters,
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
 
-			// Send to webview once
+			// Always send settings to this preview's webview
 			this.sendSettingsUpdate(webviewSettings);
-			this.updateStatusBar();
+
+			// Only update the shared status bar entries when this is the active preview
+			if (this === this._manager.activePreview) {
+				this._gammaStatusBarEntry.updateGamma(imageSettings.gamma.in, imageSettings.gamma.out);
+				this._brightnessStatusBarEntry.updateBrightness(imageSettings.brightness.offset);
+				this._sizeStatusBarEntry.updateColorPickerMode(webviewSettings.colorPickerShowModified);
+				this._maskFilterStatusBarEntry.updateMaskFilter(
+					totalMasks > 0,
+					enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
+					enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
+					enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
+				);
+				this.updateStatusBar();
+			}
 		};
 
 		// Subscribe to both managers but use single update function
@@ -157,6 +166,13 @@ export class ImagePreview extends MediaPreview {
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
 			// Only update if settings are for this specific file instance
 			if (this.resource.toString() === this._manager.appStateManager.currentUri) {
+				// Snapshot this preview's settings locally so future settingsManager
+				// events (nanColor, masks) don't accidentally send another window's values.
+				this._localSettings = { ...this._manager.appStateManager.imageSettings,
+					normalization: { ...this._manager.appStateManager.imageSettings.normalization },
+					gamma: { ...this._manager.appStateManager.imageSettings.gamma },
+					brightness: { ...this._manager.appStateManager.imageSettings.brightness }
+				};
 				updateSettings();
 			}
 		}));
@@ -594,26 +610,17 @@ export class ImagePreview extends MediaPreview {
 			);
 
 			// Always show normalization controls for all image formats
-			const normSettings = this._manager.appStateManager.imageSettings.normalization;
-			this._normalizationStatusBarEntry.setRgbAs24BitMode(
-				this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale
-			);
-			this._normalizationStatusBarEntry.setNormalizedFloatMode(
-				this._manager.appStateManager.imageSettings.normalizedFloatMode
-			);
-			this._normalizationStatusBarEntry.updateNormalization(
-				normSettings.min,
-				normSettings.max
-			);
-			this._normalizationStatusBarEntry.show(
-				normSettings.autoNormalize,
-				normSettings.gammaMode
-			);
+			const imageSettings = this._localSettings ?? this._manager.appStateManager.imageSettings;
+			const normSettings = imageSettings.normalization;
+			this._normalizationStatusBarEntry.setRgbAs24BitMode(imageSettings.rgbAs24BitGrayscale);
+			this._normalizationStatusBarEntry.setNormalizedFloatMode(imageSettings.normalizedFloatMode);
+			this._normalizationStatusBarEntry.updateNormalization(normSettings.min, normSettings.max);
+			this._normalizationStatusBarEntry.show(normSettings.autoNormalize, normSettings.gammaMode);
 
 			// Show gamma/brightness controls when in gamma mode
 			if (normSettings.gammaMode) {
-				this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
-				this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
+				this._gammaStatusBarEntry.updateGamma(imageSettings.gamma.in, imageSettings.gamma.out);
+				this._brightnessStatusBarEntry.updateBrightness(imageSettings.brightness.offset);
 				this._gammaStatusBarEntry.show();
 				this._brightnessStatusBarEntry.show();
 			} else {
