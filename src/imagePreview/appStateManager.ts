@@ -331,8 +331,8 @@ export class AppStateManager {
 				gammaMode: false
 			},
 			gamma: {
-				in: 2.2,
-				out: 2.2
+				in: 1.0,
+				out: 1.0
 			},
 			brightness: {
 				offset: 0
