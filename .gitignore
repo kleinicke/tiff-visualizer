@@ -12,8 +12,6 @@ test-workspace/
 playwright-report/
 test-resources/
 
-package-lock.json
-
 # Webpack
 *.webpack.config.js
 
