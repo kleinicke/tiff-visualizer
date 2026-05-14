@@ -26,7 +26,7 @@ jobs:
       run: npx playwright install --with-deps
     
     - name: Build extension
-      run: npm run compile
+      run: npm run compile:quick
     
     - name: Run Playwright tests
       run: npm run test:playwright
@@ -60,7 +60,7 @@ jobs:
       run: npx playwright install --with-deps
     
     - name: Build extension
-      run: npm run compile
+      run: npm run compile:quick
     
     - name: Run Cursor-specific tests
       run: npx playwright test cursor-test.spec.ts
