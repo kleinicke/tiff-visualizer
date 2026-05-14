@@ -26,7 +26,7 @@ jobs:
       run: npm run compile:quick
 
     - name: Run behavioral tests
-      run: npm run test:behavior
+      run: node test/simple-behavior-test.js
 
     - name: Run visualization tests
-      run: npm run test:visualization
+      run: node test/visualization-test.js
