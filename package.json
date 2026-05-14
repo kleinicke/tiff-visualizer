@@ -2,7 +2,7 @@
   "name": "image-visualizer",
   "displayName": "Image Visualizer",
   "description": "Analyze images, also works with exr, npy, png, jpg, ppm, pfm and pgm images.",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "publisher": "sguruswamy",
   "icon": "icon.png",
   "license": "MIT",

@@ -436,7 +436,7 @@ export class ImagePreview extends MediaPreview {
 				type: 'addLayerData',
 				layerId: layerId,
 				filename: filename,
-				fileData: Array.from(fileData), // Serialize Uint8Array for postMessage
+				fileData: Buffer.from(fileData).toString('base64'),
 				formatHint: filename
 			});
 		} catch (err) {

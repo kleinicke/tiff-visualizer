@@ -953,7 +953,8 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 
 			case 'addLayerData': {
 				// Load and add a new layer from file data sent by extension
-				const { layerId, filename, fileData, formatHint } = message;
+				const { layerId, filename, formatHint } = message;
+				const fileData = Uint8Array.from(atob(message.fileData), c => c.charCodeAt(0));
 				try {
 					const ext = (formatHint || filename || '').toLowerCase();
 					let layerResult = null;
