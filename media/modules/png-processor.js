@@ -335,7 +335,7 @@ export class PngProcessor {
     _renderToImageData() {
         if (!this._lastRaw) return new ImageData(1, 1);
 
-        const { width, height, data, channels, bitDepth, maxValue, originalImageData } = this._lastRaw;
+        const { width, height, data, channels, bitDepth, maxValue, originalImageData, isRgbaFormat } = this._lastRaw;
         const settings = this.settingsManager.settings;
         const isFloat = false; // PNG is always integer
 
@@ -344,6 +344,12 @@ export class PngProcessor {
         const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
         const isGammaMode = settings.normalization?.gammaMode || false;
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale && channels >= 3;
+
+        // Always compute and cache actual data stats for non-RGBA (UPNG) data.
+        // This must happen before any early return so the hint badge gets real values.
+        if (!this._cachedStats && !isRgbaFormat) {
+            this._cachedStats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
+        }
 
         if (originalImageData &&
             isGammaMode &&
@@ -354,17 +360,10 @@ export class PngProcessor {
             return originalImageData;
         }
 
-        // Calculate stats if needed
-        let stats = this._cachedStats;
-        if (!stats && !isGammaMode) {
-            stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
-            this._cachedStats = stats;
-        }
-
-        // For gamma mode, provide dummy stats (renderer uses full type range)
-        if (isGammaMode && !stats) {
-            stats = { min: 0, max: maxValue };
-        }
+        // For gamma mode the renderer needs the full type range, not the actual data stats.
+        // Use a separate renderStats so _cachedStats always holds the real data min/max.
+        const stats = this._cachedStats || { min: 0, max: maxValue };
+        const renderStats = isGammaMode ? { min: 0, max: maxValue } : stats;
 
         // Create options object
         const options = {
@@ -378,7 +377,7 @@ export class PngProcessor {
             height,
             channels,
             isFloat,
-            stats,
+            renderStats,
             settings,
             options
         );

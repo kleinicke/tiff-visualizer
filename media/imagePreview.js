@@ -575,6 +575,10 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 			currentChannels = ppmProcessor._lastRaw.channels || 1;
 			currentIsFloat = false;
 			currentTypeMax = 255;
+		} else if (pngProcessor && pngProcessor._lastRaw) {
+			currentChannels = pngProcessor._lastRaw.channels || 1;
+			currentIsFloat = false;
+			currentTypeMax = pngProcessor._lastRaw.maxValue || 255;
 		}
 		// Update colormap select disabled state
 		const cmSelect = document.getElementById('iv-colormap-select');
@@ -1996,6 +2000,52 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 		});
 		body.appendChild(maxRow);
 
+		// Scale to Data checkbox — auto-normalize visualization to actual data range
+		const autoScaleRow = document.createElement('div');
+		autoScaleRow.className = 'iv-control-row iv-auto-scale-row';
+
+		const autoScaleLabelEl = document.createElement('span');
+		autoScaleLabelEl.className = 'iv-control-label';
+		autoScaleLabelEl.textContent = 'Scale to Data';
+		autoScaleRow.appendChild(autoScaleLabelEl);
+
+		const autoScaleCheck = document.createElement('input');
+		autoScaleCheck.type = 'checkbox';
+		autoScaleCheck.id = 'iv-auto-scale';
+		autoScaleCheck.className = 'iv-checkbox';
+		autoScaleCheck.title = 'Scale visualization to actual data range (auto-normalize to min/max)';
+		autoScaleCheck.addEventListener('change', () => {
+			const layer = layers[activeLayerIndex];
+			if (!layer) return;
+			if (autoScaleCheck.checked) {
+				layer.settings.normalization.autoNormalize = true;
+				layer.settings.normalization.gammaMode = false;
+				if (layer.stats) {
+					layer.settings.normalization.min = layer.stats.min;
+					layer.settings.normalization.max = layer.stats.max;
+				}
+			} else {
+				layer.settings.normalization.autoNormalize = false;
+				if (!layer.isFloat) {
+					// Integer images: revert to gamma mode (full type range)
+					layer.settings.normalization.gammaMode = true;
+					layer.settings.normalization.min = 0;
+					layer.settings.normalization.max = layer.typeMax || currentTypeMax;
+				}
+			}
+			applyLayerSettings(activeLayerIndex);
+			vscode.postMessage({ type: 'layerSettingsChanged', autoNormalize: autoScaleCheck.checked });
+		});
+		autoScaleRow.appendChild(autoScaleCheck);
+
+		const autoScaleHint = document.createElement('span');
+		autoScaleHint.className = 'iv-auto-scale-hint iv-hidden';
+		autoScaleHint.id = 'iv-auto-scale-hint';
+		autoScaleHint.textContent = '!';
+		autoScaleRow.appendChild(autoScaleHint);
+
+		body.appendChild(autoScaleRow);
+
 		// Gamma row (single slider — sets gamma.out; gamma.in is always 1.0)
 		const gammaRow = createSliderRow('Gamma', 'iv-gamma', 0.1, 5.0, 1.0, 0.01, (val) => {
 			const layer = layers[activeLayerIndex];
@@ -2215,6 +2265,35 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 			maxSlider.value = hi;
 			if (maxVal) maxVal.textContent = isFloat ? hi.toFixed(decimals) : String(Math.round(hi));
 		}
+
+		updateAutoScaleHint(statsMax, typeMax, isFloat);
+	}
+
+	/**
+	 * Show or hide the "Scale to Data" hint badge based on whether the image's
+	 * actual data range underutilizes the type's maximum value.
+	 * Only relevant for integer images (float images always use their full range).
+	 * @param {number} statsMax - Actual maximum value in the image data
+	 * @param {number} typeMax - Maximum value for this data type (255, 65535, etc.)
+	 * @param {boolean} isFloat - Whether the image data is floating-point
+	 */
+	function updateAutoScaleHint(statsMax, typeMax, isFloat) {
+		const hint = document.getElementById('iv-auto-scale-hint');
+		if (!hint) return;
+
+		if (isFloat || typeMax <= 1 || statsMax <= 0) {
+			hint.classList.add('iv-hidden');
+			return;
+		}
+
+		const utilizationRatio = statsMax / typeMax;
+		if (utilizationRatio < 0.9) {
+			hint.classList.remove('iv-hidden');
+			const pct = Math.round(utilizationRatio * 100);
+			hint.title = `Data max is ${Math.round(statsMax)} (${pct}% of type max ${Math.round(typeMax)}) — enable Scale to Data to use the full display range`;
+		} else {
+			hint.classList.add('iv-hidden');
+		}
 	}
 
 	/**
@@ -2294,12 +2373,11 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 			const minVal = document.getElementById('iv-norm-min-val');
 			const maxVal = document.getElementById('iv-norm-max-val');
 
-			// Only update range sliders in manual mode. In gammaMode the effective
-			// range is [0, typeMax] (set by updateRangeSliderBounds), and forcing
-			// sliders to normalization.max=1 would move the Range Max thumb to the
-			// far-left of the track — causing accidental mode-switches and white-outs
-			// if the user clicks near the Gamma slider below it.
-			if (!settings.normalization.autoNormalize && !settings.normalization.gammaMode) {
+			// Update range sliders in manual and auto-normalize modes.
+			// Skip gammaMode: its effective range is [0, typeMax] set by updateRangeSliderBounds,
+			// and forcing sliders to normalization.max=1 would move Range Max to the far-left of
+			// the track causing accidental mode-switches and white-outs.
+			if (!settings.normalization.gammaMode) {
 				if (minSlider) {
 					const v = parseFloat(settings.normalization.min) || 0;
 					if (v < parseFloat(minSlider.min)) minSlider.min = v;
@@ -2314,6 +2392,12 @@ import { ColormapConverter, COLORMAP_NAMES } from './modules/colormap-converter.
 					maxSlider.value = v;
 					if (maxVal) maxVal.textContent = v.toFixed(3);
 				}
+			}
+
+			// Scale to Data checkbox
+			const autoScaleCheck = document.getElementById('iv-auto-scale');
+			if (autoScaleCheck) {
+				autoScaleCheck.checked = !!settings.normalization.autoNormalize;
 			}
 		}
 
