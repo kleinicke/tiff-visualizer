@@ -3,6 +3,7 @@
 ## 1.7.0
 
 - Add more file formats: webp, hdr, jxl, tga, bmp and ico files
+- Renamed extension to Scientific Image Visualizer
 
 ## 1.6.0 (2026-03-30)
 

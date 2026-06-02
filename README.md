@@ -1,4 +1,4 @@
-# Float and TIFF Visualizer for Visual Studio Code
+# Scientific Image Visualizer for Visual Studio Code
 
 Inspect high-bit-depth, floating-point, scientific, and camera image files directly inside Visual Studio Code.
 
@@ -7,6 +7,20 @@ Supports TIFF, EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM
 The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export the current visualization as PNG.
 
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
+
+ ## Supported Sample Types
+
+
+| Format | uint8 | uint16 | float16 | float32 | Notes |
+|---|---:|---:|---:|---:|---|
+| TIFF | Yes | Yes | Yes | Yes | Decoded by a Rust/WASM decoder by default (uint8/16/32, int, float16/32/64); geotiff.js is a fallback for 24-bit grayscale mode and TIFF variants the Rust decoder can't handle |
+| EXR | No | No | Yes | Yes | HDR floating-point format |
+| NPY/NPZ | Yes | Yes | Yes | Yes | Also supports float64 and int8/16/32/64, uint32/64 |
+| PFM | No | No | No | Yes | Portable Float Map |
+| HDR | No | No | No | Yes | Radiance RGBE, decoded to float32 |
+| PNG | Yes | Yes | No | No | Palette PNGs become 8-bit RGBA |
+| PPM/PGM/PBM | Yes | Yes | No | No | PBM is 1-bit, shown as 8-bit |
+| JPEG/WebP/AVIF/BMP/ICO/TGA/JXL | Yes | No | No | No | Decoded as 8-bit image data in the extension |
 
 ## Features
 
