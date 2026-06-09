@@ -1426,19 +1426,28 @@ export function registerImagePreviewCommands(
 		});
 	}
 
+	/**
+	 * Opens an image in the TIFF Visualizer custom editor and returns its preview
+	 * once registered. Used to bootstrap a collection when no preview is open yet.
+	 */
+	async function openPreviewForResource(uri: vscode.Uri) {
+		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.viewType);
+		// resolveCustomEditor runs asynchronously — wait briefly for the preview to register.
+		for (let i = 0; i < 60; i++) {
+			const preview = previewManager.getPreviewFor(uri) ?? previewManager.activePreview;
+			if (preview) { return preview; }
+			await new Promise(r => setTimeout(r, 50));
+		}
+		return previewManager.getPreviewFor(uri) ?? previewManager.activePreview;
+	}
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async (resource?: vscode.Uri, resources?: vscode.Uri[]) => {
 		logCommand('browseAndAddToCollection', 'start');
-		const activePreview = previewManager.activePreview;
-		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
-			logCommand('browseAndAddToCollection', 'error', 'No active preview');
-			return;
-		}
 
 		// When invoked from the Explorer context menu, VS Code passes the clicked
 		// resource as the first argument and, when several entries are selected,
 		// the full selection as the second argument. Honor the whole selection so
-		// users can Ctrl/Shift-select multiple files and add them all at once.
+		// users can Ctrl/Shift-select multiple files (and folders) and add them all.
 		const selectedResources = (resources && resources.length > 0)
 			? resources
 			: (resource ? [resource] : []);
@@ -1453,12 +1462,37 @@ export function registerImagePreviewCommands(
 					logCommand('browseAndAddToCollection', 'error', 'No image files in selection');
 					return;
 				}
-				const { added, skipped } = await addUrisToCollection(activePreview, files);
+
+				// No preview open yet: open the first image as the preview, then add
+				// the rest to its collection. This removes the chicken-and-egg of
+				// having to open an image manually before the menu does anything.
+				let activePreview = previewManager.activePreview;
+				let filesToAdd = files;
+				if (!activePreview) {
+					const [first, ...rest] = files;
+					activePreview = await openPreviewForResource(first);
+					if (!activePreview) {
+						vscode.window.showErrorMessage('Failed to open the image in TIFF Visualizer.');
+						logCommand('browseAndAddToCollection', 'error', 'Failed to open initial preview');
+						return;
+					}
+					filesToAdd = rest;
+				}
+
+				const { added, skipped } = await addUrisToCollection(activePreview, filesToAdd);
 				logCommand('browseAndAddToCollection', 'success', `explorer: added ${added}, skipped ${skipped}`);
 			} catch (error) {
 				vscode.window.showErrorMessage(`Failed to add images to collection: ${error}`);
 				logCommand('browseAndAddToCollection', 'error', String(error));
 			}
+			return;
+		}
+
+		// Command-palette invocation needs an already-open image to anchor the picker.
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
+			logCommand('browseAndAddToCollection', 'error', 'No active preview');
 			return;
 		}
 
