@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
@@ -216,6 +217,47 @@ async function expandGlobPatternAsync(pattern: string, isCancelled: () => boolea
 /** Returns the final path segment of a URI (scheme-agnostic). */
 function uriBasename(uri: vscode.Uri): string {
 	return uri.path.split('/').pop() || uri.path;
+}
+
+/** True if the URI's extension is one of the supported image formats. */
+function isImageUri(uri: vscode.Uri): boolean {
+	const ext = uriBasename(uri).split('.').pop()?.toLowerCase() ?? '';
+	return IMAGE_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Expands a selection of URIs into a flat, sorted list of image-file URIs.
+ * Directories are scanned (non-recursively) for supported image files via the
+ * VS Code filesystem API, so it works for local, remote (SSH) and virtual
+ * workspaces alike. Plain image files pass through unchanged; anything else is
+ * dropped. Duplicates are removed.
+ */
+async function collectImageFiles(uris: vscode.Uri[]): Promise<vscode.Uri[]> {
+	const out = new Map<string, vscode.Uri>();
+	for (const uri of uris) {
+		let type: vscode.FileType;
+		try {
+			type = (await vscode.workspace.fs.stat(uri)).type;
+		} catch {
+			continue;
+		}
+		if (type & vscode.FileType.Directory) {
+			let entries: [string, vscode.FileType][];
+			try {
+				entries = await vscode.workspace.fs.readDirectory(uri);
+			} catch {
+				continue;
+			}
+			for (const [name, entryType] of entries) {
+				if ((entryType & vscode.FileType.File) === 0) { continue; }
+				const child = Utils.joinPath(uri, name);
+				if (isImageUri(child)) { out.set(child.toString(), child); }
+			}
+		} else if ((type & vscode.FileType.File) && isImageUri(uri)) {
+			out.set(uri.toString(), uri);
+		}
+	}
+	return [...out.values()].sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
 }
 
 /**
@@ -1386,7 +1428,15 @@ export function registerImagePreviewCommands(
 
 		if (selectedResources.length > 0) {
 			try {
-				const { added, skipped } = await addUrisToCollection(activePreview, selectedResources);
+				// Selection may include folders (right-clicked or multi-selected) —
+				// expand them into the image files they contain.
+				const files = await collectImageFiles(selectedResources);
+				if (files.length === 0) {
+					vscode.window.showWarningMessage('No supported image files found in the selection.');
+					logCommand('browseAndAddToCollection', 'error', 'No image files in selection');
+					return;
+				}
+				const { added, skipped } = await addUrisToCollection(activePreview, files);
 				logCommand('browseAndAddToCollection', 'success', `explorer: added ${added}, skipped ${skipped}`);
 			} catch (error) {
 				vscode.window.showErrorMessage(`Failed to add images to collection: ${error}`);
