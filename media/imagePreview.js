@@ -17,6 +17,8 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
+import { LayerManager } from './modules/layer-manager.js';
+import { LayersPanel } from './modules/layers-panel.js';
 
 /**
  * Main Image Preview Application
@@ -78,6 +80,15 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	mouseHandler.setJxlProcessor(jxlProcessor);
 	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
+
+	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
+	const layerManager = new LayerManager();
+	const layersPanel = new LayersPanel(layerManager, {
+		onChange: () => { recompositeLayers(); },
+		onAddLayer: () => { vscode.postMessage({ type: 'requestAddLayer' }); },
+	});
+	/** @type {string|undefined} URI of the image currently used as the base layer. */
+	let _layerBaseUri;
 
 	/** Camera RAW file extensions supported by RawProcessor */
 	const RAW_EXTENSIONS = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
@@ -869,6 +880,234 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Update histogram if visible
 		updateHistogramData();
+
+		// Keep the layer stack's base in sync with the loaded image.
+		syncBaseLayer();
+		if (layerManager.active && layerManager.hasExtraLayers()) {
+			recompositeLayers();
+		}
+	}
+
+	// ===================== Layer compositing helpers =====================
+
+	/** @param {string} uri @returns {string} */
+	function layerBaseName(uri) {
+		try { return decodeURIComponent((uri || '').split('/').pop() || uri || 'layer'); }
+		catch { return (uri || '').split('/').pop() || 'layer'; }
+	}
+
+	/** NaN display color from current settings. */
+	function getNanColorObj() {
+		return settingsManager.settings && settingsManager.settings.nanColor === 'fuchsia'
+			? { r: 255, g: 0, b: 255 }
+			: { r: 0, g: 0, b: 0 };
+	}
+
+	/**
+	 * @param {string} [dtype]
+	 * @returns {{isFloat:boolean, typeMax:number}}
+	 */
+	function npyTypeInfo(dtype) {
+		const d = String(dtype || '').toLowerCase();
+		if (d.includes('f')) { return { isFloat: true, typeMax: 1.0 }; }
+		const bits = parseInt(d.replace(/\D/g, ''), 10) || 8;
+		return { isFloat: false, typeMax: bits >= 16 ? 65535 : 255 };
+	}
+
+	/**
+	 * Map a processor's raw struct to a compositor layer.
+	 * @param {any} raw @param {{isFloat:boolean, typeMax:number}} ti @param {string} name @param {string} uri
+	 * @returns {import('./modules/layer-manager.js').LayerInput|null}
+	 */
+	function lastRawToLayer(raw, ti, name, uri) {
+		if (!raw || !raw.data) { return null; }
+		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, name, uri };
+	}
+
+	/** @param {any} raw @param {string} name @param {string} uri */
+	function tiffRawToLayer(raw, name, uri) {
+		if (!raw || !raw.data || !raw.ifd) { return null; }
+		const ifd = raw.ifd;
+		const isFloat = ifd.t339 === 3;
+		const typeMax = isFloat ? 1.0 : (ifd.t258 === 16 ? 65535 : 255);
+		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, name, uri };
+	}
+
+	/** @param {any} raw @param {string} name @param {string} uri */
+	function exrRawToLayer(raw, name, uri) {
+		if (!raw || !raw.data) { return null; }
+		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: true, typeMax: 1.0, name, uri };
+	}
+
+	/**
+	 * Capture the currently displayed canvas pixels as a fallback layer (used for
+	 * formats whose raw float buffer isn't readily available).
+	 * @param {string} name @param {string} uri
+	 * @returns {import('./modules/layer-manager.js').LayerInput|null}
+	 */
+	function baseFromCanvas(name, uri) {
+		if (!canvas) { return null; }
+		const ctx = canvas.getContext('2d');
+		if (!ctx) { return null; }
+		const w = canvas.width, h = canvas.height;
+		const img = ctx.getImageData(0, 0, w, h);
+		const data = new Float32Array(img.data.length);
+		for (let i = 0; i < img.data.length; i++) { data[i] = img.data[i]; }
+		return { data, width: w, height: h, channels: 4, isFloat: false, typeMax: 255, name, uri };
+	}
+
+	/**
+	 * Derive the base (background) layer from whichever processor loaded the
+	 * current primary image.
+	 * @returns {import('./modules/layer-manager.js').LayerInput|null}
+	 */
+	function deriveBaseLayer() {
+		const uri = settingsManager.settings.resourceUri || '';
+		const name = layerBaseName(uri);
+		switch (currentLoadFormat) {
+			case 'TIFF': return tiffRawToLayer(tiffProcessor.rawTiffData, name, uri) || baseFromCanvas(name, uri);
+			case 'EXR': return exrRawToLayer(exrProcessor.rawExrData, name, uri) || baseFromCanvas(name, uri);
+			case 'PFM': return lastRawToLayer(pfmProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'PPM/PGM': return lastRawToLayer(ppmProcessor._lastRaw, { isFloat: false, typeMax: (ppmProcessor._lastRaw && ppmProcessor._lastRaw.maxval) || 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
+			default: return baseFromCanvas(name, uri);
+		}
+	}
+
+	/**
+	 * Decode an image URI into a layer using a fresh processor instance (so the
+	 * primary image's processor state is never disturbed). Falls back to a plain
+	 * <img> decode for formats without an exposed raw buffer.
+	 * @param {string} src Webview-safe URI to fetch.
+	 * @param {string} resourceUri Original resource URI (for extension + name).
+	 * @returns {Promise<import('./modules/layer-manager.js').LayerInput|null>}
+	 */
+	async function decodeLayer(src, resourceUri) {
+		const lower = (resourceUri || src || '').toLowerCase();
+		const name = layerBaseName(resourceUri || src);
+		const noop = { postMessage() { }, setState() { }, getState() { return undefined; } };
+		try {
+			if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false;
+				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
+			}
+			if (lower.endsWith('.exr')) {
+				const p = new ExrProcessor(settingsManager, noop); p._isInitialLoad = false;
+				await p.processExr(src); return exrRawToLayer(p.rawExrData, name, resourceUri);
+			}
+			if (lower.endsWith('.pfm')) {
+				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false;
+				await p.processPfm(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
+			}
+			if (lower.match(/\.(ppm|pgm|pbm)$/)) {
+				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false;
+				await p.processPpm(src); return lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxval) || 255 }, name, resourceUri);
+			}
+			if (lower.match(/\.(png|jpg|jpeg)$/)) {
+				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false;
+				await p.processPng(src);
+				const layer = lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxValue) || 255 }, name, resourceUri);
+				return layer || decodeViaImage(src, name, resourceUri);
+			}
+			if (lower.match(/\.(npy|npz)$/)) {
+				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false;
+				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
+			}
+			return decodeViaImage(src, name, resourceUri);
+		} catch (err) {
+			console.error('Failed to decode layer', resourceUri, err);
+			return null;
+		}
+	}
+
+	/**
+	 * Decode any browser-loadable image into an RGBA float layer.
+	 * @param {string} src @param {string} name @param {string} uri
+	 * @returns {Promise<import('./modules/layer-manager.js').LayerInput|null>}
+	 */
+	function decodeViaImage(src, name, uri) {
+		return new Promise((resolve) => {
+			const img = new Image();
+			img.onload = () => {
+				const c = document.createElement('canvas');
+				c.width = img.naturalWidth; c.height = img.naturalHeight;
+				const ctx = c.getContext('2d');
+				if (!ctx) { resolve(null); return; }
+				ctx.drawImage(img, 0, 0);
+				const id = ctx.getImageData(0, 0, c.width, c.height);
+				const data = new Float32Array(id.data.length);
+				for (let i = 0; i < id.data.length; i++) { data[i] = id.data[i]; }
+				resolve({ data, width: c.width, height: c.height, channels: 4, isFloat: false, typeMax: 255, name, uri });
+			};
+			img.onerror = () => resolve(null);
+			img.src = src;
+		});
+	}
+
+	/** (Re)synchronize the base layer with the current primary image. */
+	function syncBaseLayer() {
+		const base = deriveBaseLayer();
+		if (!base) { return; }
+		if (_layerBaseUri !== base.uri || layerManager.isEmpty()) {
+			_layerBaseUri = base.uri;
+			layerManager.setBaseLayer(base);
+			if (layersPanel.isVisible()) { layersPanel.refresh(); }
+		} else if (layerManager.layers[0]) {
+			Object.assign(layerManager.layers[0], {
+				data: base.data, width: base.width, height: base.height,
+				channels: base.channels, isFloat: base.isFloat, typeMax: base.typeMax,
+			});
+			layerManager.canvasWidth = base.width;
+			layerManager.canvasHeight = base.height;
+		}
+	}
+
+	/**
+	 * Composite the layer stack and draw the result to the main canvas.
+	 * @returns {boolean} True if a composite was rendered.
+	 */
+	function recompositeLayers() {
+		if (!layerManager.active || !canvas) { return false; }
+		const imageData = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
+		if (!imageData) { return false; }
+		if (canvas.width !== imageData.width || canvas.height !== imageData.height) {
+			canvas.width = imageData.width;
+			canvas.height = imageData.height;
+		}
+		const ctx = canvas.getContext('2d');
+		if (ctx) {
+			renderImageDataToCanvas(imageData, ctx);
+			primaryImageData = imageData;
+			updateHistogramData();
+		}
+		return true;
+	}
+
+	/** Drag-on-image move tool for the layer armed in the panel. */
+	let _layerDrag = null;
+	function setupLayerMoveDrag() {
+		container.addEventListener('mousedown', (e) => {
+			if (!layerManager.active || !layersPanel.movingLayerId || !imageElement) { return; }
+			_layerDrag = { id: layersPanel.movingLayerId, lastX: e.clientX, lastY: e.clientY };
+			e.preventDefault();
+			e.stopPropagation();
+		}, true);
+		window.addEventListener('mousemove', (e) => {
+			if (!_layerDrag || !canvas || !imageElement) { return; }
+			const rect = imageElement.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) { return; }
+			const dx = Math.round(((e.clientX - _layerDrag.lastX) / rect.width) * canvas.width);
+			const dy = Math.round(((e.clientY - _layerDrag.lastY) / rect.height) * canvas.height);
+			if (dx !== 0 || dy !== 0) {
+				layerManager.moveLayer(_layerDrag.id, dx, dy);
+				_layerDrag.lastX = e.clientX;
+				_layerDrag.lastY = e.clientY;
+				recompositeLayers();
+				layersPanel.refresh();
+			}
+		});
+		window.addEventListener('mouseup', () => { _layerDrag = null; });
 	}
 
 	function swapImageElementToCanvas() {
@@ -914,6 +1153,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			await handleVSCodeMessage(e.data);
 		});
 
+		// Enable the layer move tool (drag-on-image) once.
+		setupLayerMoveDrag();
+
 		// Send ready message to VS Code
 		vscode.postMessage({ type: 'get-initial-data' });
 	}
@@ -927,6 +1169,36 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			case 'setScale':
 				zoomController.updateScale(message.scale);
 				break;
+
+			case 'toggleLayers':
+				syncBaseLayer();
+				layersPanel.toggle();
+				layerManager.active = layersPanel.isVisible();
+				if (layerManager.active) {
+					recompositeLayers();
+				} else {
+					// Panel closed — restore the normal single-image render.
+					updateImageWithNewSettings(null);
+				}
+				break;
+
+			case 'addLayerImages': {
+				syncBaseLayer();
+				layerManager.active = true;
+				layersPanel.show();
+				let addedLayers = 0;
+				for (const im of (message.images || [])) {
+					const layer = await decodeLayer(im.src, im.resourceUri);
+					if (layer) { layerManager.addLayer(layer); addedLayers++; }
+				}
+				if (addedLayers > 0) {
+					layersPanel.refresh();
+					recompositeLayers();
+				} else {
+					vscode.postMessage({ type: 'show-error', message: 'Could not load the selected image(s) as layers.' });
+				}
+				break;
+			}
 
 			case 'setActive':
 				mouseHandler.setActive(message.value);
@@ -1547,6 +1819,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		}
 		if (canRenderLazyPng && pngProcessor.canUseLazyNativeCanvasForSettings(settingsManager.settings)) {
 			return;
+		}
+
+		// When compositing is active with extra layers, the composite owns the
+		// canvas — re-render it through the central pipeline and skip the
+		// per-processor paths below.
+		if (layerManager.active && layerManager.hasExtraLayers()) {
+			if (recompositeLayers()) { return; }
 		}
 
 		// Default to full update if no change info provided
