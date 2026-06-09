@@ -24,6 +24,8 @@
 /**
  * @typedef {Object} Layer
  * @property {string} [id]
+ * @property {string} [name]
+ * @property {string} [uri]
  * @property {ArrayLike<number>} data       Raw pixel data (interleaved by channel).
  * @property {number} width
  * @property {number} height

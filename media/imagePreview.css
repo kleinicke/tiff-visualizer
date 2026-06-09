@@ -588,3 +588,135 @@ body img {
 .vscode-light .context-menu-separator {
 	background: var(--vscode-menu-separatorBackground, #d4d4d4);
 }
+
+/* ===================== Layers panel ===================== */
+.layers-panel {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	width: 320px;
+	max-height: 70vh;
+	display: flex;
+	flex-direction: column;
+	background: var(--vscode-editorWidget-background, #252526);
+	color: var(--vscode-editorWidget-foreground, #ccc);
+	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	border-radius: 6px;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+	z-index: 50;
+	font-size: 12px;
+	user-select: none;
+}
+
+.layers-panel[hidden] {
+	display: none;
+}
+
+.layers-panel-header {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 8px;
+	border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
+}
+
+.layers-panel-title {
+	flex: 1;
+	font-weight: 600;
+}
+
+.layers-btn {
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	color: var(--vscode-button-secondaryForeground, #ccc);
+	border: none;
+	border-radius: 3px;
+	cursor: pointer;
+	padding: 2px 7px;
+	line-height: 1.4;
+	font-size: 12px;
+}
+
+.layers-btn:hover {
+	background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.layers-btn.active {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
+}
+
+.layers-list {
+	overflow-y: auto;
+	padding: 4px;
+}
+
+.layer-row {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	grid-gap: 4px 6px;
+	align-items: center;
+	padding: 6px;
+	margin-bottom: 4px;
+	background: var(--vscode-list-inactiveSelectionBackground, #2a2d2e);
+	border-radius: 4px;
+}
+
+.layer-row-base {
+	opacity: 0.9;
+}
+
+.layer-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.layer-base-tag {
+	grid-column: 2;
+	justify-self: start;
+	font-size: 10px;
+	opacity: 0.6;
+	text-transform: uppercase;
+}
+
+.layer-controls,
+.layer-position,
+.layer-actions {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.layer-blend {
+	flex: 1;
+	background: var(--vscode-dropdown-background, #3c3c3c);
+	color: var(--vscode-dropdown-foreground, #ccc);
+	border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 2px;
+}
+
+.layer-opacity {
+	flex: 1;
+}
+
+.layer-pos-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	opacity: 0.8;
+}
+
+.layer-offset-input {
+	width: 54px;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #ccc);
+	border: 1px solid var(--vscode-input-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 1px 3px;
+}
+
+.layer-actions {
+	justify-content: flex-end;
+}
