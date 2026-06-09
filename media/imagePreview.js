@@ -96,7 +96,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: () => { recompositeLayers(); },
-		onAddLayer: () => { vscode.postMessage({ type: 'requestAddLayer' }); },
+		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 	});
 	/** @type {string|undefined} URI of the image currently used as the base layer. */
 	let _layerBaseUri;
@@ -2348,9 +2348,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			menu.appendChild(createSeparator());
 
-			// Add Filter by Mask option (uses command - needs user input)
-			menu.appendChild(createMenuItem('Filter by Mask (beta)', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
+			// Layers compositing panel
+			menu.appendChild(createMenuItem('Toggle Layers Panel', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
+			}));
+			menu.appendChild(createMenuItem('Add Image as Layer…', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' });
 			}));
 
 

@@ -8,7 +8,7 @@ import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
-import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
+import { LayersStatusBarEntry } from './layersStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
@@ -43,7 +43,7 @@ export class ImagePreview extends MediaPreview {
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
 	private readonly _gammaStatusBarEntry: GammaStatusBarEntry;
 	private readonly _brightnessStatusBarEntry: BrightnessStatusBarEntry;
-	private readonly _maskFilterStatusBarEntry: MaskFilterStatusBarEntry;
+	private readonly _layersStatusBarEntry: LayersStatusBarEntry;
 	private readonly _histogramStatusBarEntry: HistogramStatusBarEntry;
 	private readonly _colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry;
 	private readonly _messageRouter: MessageRouter;
@@ -71,7 +71,7 @@ export class ImagePreview extends MediaPreview {
 		normalizationStatusBarEntry: NormalizationStatusBarEntry,
 		gammaStatusBarEntry: GammaStatusBarEntry,
 		brightnessStatusBarEntry: BrightnessStatusBarEntry,
-		maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
+		layersStatusBarEntry: LayersStatusBarEntry,
 		histogramStatusBarEntry: HistogramStatusBarEntry,
 		colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 		private readonly _manager: IImagePreviewManager,
@@ -85,7 +85,7 @@ export class ImagePreview extends MediaPreview {
 		this._normalizationStatusBarEntry = normalizationStatusBarEntry;
 		this._gammaStatusBarEntry = gammaStatusBarEntry;
 		this._brightnessStatusBarEntry = brightnessStatusBarEntry;
-		this._maskFilterStatusBarEntry = maskFilterStatusBarEntry;
+		this._layersStatusBarEntry = layersStatusBarEntry;
 		this._histogramStatusBarEntry = histogramStatusBarEntry;
 		this._colorPickerModeStatusBarEntry = colorPickerModeStatusBarEntry;
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
@@ -122,20 +122,11 @@ export class ImagePreview extends MediaPreview {
 		// Single unified settings update handler
 		const updateSettings = () => {
 			// Get current settings from both managers
-			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
-			const enabledMasks = maskFilters.filter(mask => mask.enabled);
-			const totalMasks = maskFilters.length;
-
 			// Update status bar entries
 			this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
 			this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
 			this._sizeStatusBarEntry.updateColorPickerMode(this._manager.settingsManager.getColorPickerShowModified());
-			this._maskFilterStatusBarEntry.updateMaskFilter(
-				totalMasks > 0,
-				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
-				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
-				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
-			);
+			this._layersStatusBarEntry.show();
 
 			// Create full settings object
 			const webviewSettings = {
@@ -146,7 +137,7 @@ export class ImagePreview extends MediaPreview {
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
-				maskFilters: maskFilters,
+				maskFilters: [],
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
 
@@ -173,7 +164,7 @@ export class ImagePreview extends MediaPreview {
 				this._normalizationStatusBarEntry.forceHide();
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
-				this._maskFilterStatusBarEntry.hide();
+				this._layersStatusBarEntry.hide();
 				this._histogramStatusBarEntry.hide();
 				this._colorPickerModeStatusBarEntry.hide();
 			}
@@ -207,7 +198,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
-			this._maskFilterStatusBarEntry.hide();
+			this._layersStatusBarEntry.hide();
 			this._histogramStatusBarEntry.hide();
 		}
 		super.dispose();
@@ -437,6 +428,26 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
+	/** Toggle the Layers compositing panel in the webview. */
+	public toggleLayers(): void {
+		this._webviewEditor.webview.postMessage({ type: 'toggleLayers' });
+	}
+
+	/**
+	 * Send images to the webview to be decoded and added as layers. Reuses
+	 * ensureLocalResourceRoots so the webview can fetch files outside the initial folder.
+	 * @param uris Image resources to add as layers.
+	 */
+	public addLayerImages(uris: vscode.Uri[]): void {
+		if (uris.length === 0) { return; }
+		this.ensureLocalResourceRoots(uris);
+		const images = uris.map(u => ({
+			src: this._webviewEditor.webview.asWebviewUri(u).toString(),
+			resourceUri: u.toString(),
+		}));
+		this._webviewEditor.webview.postMessage({ type: 'addLayerImages', images });
+	}
+
 	/** Returns true if the image was added, false if it was already in the collection. */
 	public async addToImageCollection(uri: vscode.Uri): Promise<boolean> {
 		if (this._imageCollection.some(img => img.toString() === uri.toString())) {
@@ -581,7 +592,7 @@ export class ImagePreview extends MediaPreview {
 		// Send to both Active and Visible previews (for multi-preview support)
 		if (this.previewState === PreviewState.Active || this.previewState === PreviewState.Visible) {
 			// Convert mask URIs to webview-safe URIs if they exist
-			const webviewSafeMasks = settings.maskFilters.map(mask => ({
+			const webviewSafeMasks = (settings.maskFilters || []).map(mask => ({
 				...mask,
 				maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
 			}));
@@ -614,7 +625,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
-			this._maskFilterStatusBarEntry.hide();
+			this._layersStatusBarEntry.hide();
 			this._histogramStatusBarEntry.hide();
 			return;
 		}
@@ -623,17 +634,8 @@ export class ImagePreview extends MediaPreview {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
 
-			// Show mask filter status bar entry if enabled
-			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
-			// Update mask filter status bar with summary
-			const enabledMasks = maskFilters.filter(mask => mask.enabled);
-			const totalMasks = maskFilters.length;
-			this._maskFilterStatusBarEntry.updateMaskFilter(
-				totalMasks > 0,
-				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
-				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
-				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
-			);
+			// Show the Layers button while a preview is active.
+			this._layersStatusBarEntry.show();
 
 			// Always show normalization controls for all image formats
 			const normSettings = this._manager.appStateManager.imageSettings.normalization;

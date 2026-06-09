@@ -5,7 +5,7 @@ import { ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
-import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
+import { LayersStatusBarEntry } from './layersStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { ImageSettingsManager } from './imageSettings';
@@ -49,7 +49,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		private readonly normalizationStatusBarEntry: NormalizationStatusBarEntry,
 		private readonly gammaStatusBarEntry: GammaStatusBarEntry,
 		private readonly brightnessStatusBarEntry: BrightnessStatusBarEntry,
-		private readonly maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
+		private readonly layersStatusBarEntry: LayersStatusBarEntry,
 		private readonly histogramStatusBarEntry: HistogramStatusBarEntry,
 		private readonly colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 	) {
@@ -82,7 +82,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			this.normalizationStatusBarEntry.forceHide();
 			this.gammaStatusBarEntry.forceHide();
 			this.brightnessStatusBarEntry.forceHide();
-			this.maskFilterStatusBarEntry.hide();
+			this.layersStatusBarEntry.hide();
 			this.histogramStatusBarEntry.hide();
 			this.colorPickerModeStatusBarEntry.hide();
 		}
@@ -229,7 +229,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		webviewEditor: vscode.WebviewPanel,
 		openTimestamp?: number
 	): void {
-		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.maskFilterStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp);
+		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.layersStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 

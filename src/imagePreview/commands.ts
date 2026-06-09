@@ -871,374 +871,43 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.filterByMask', async () => {
-		logCommand('filterByMask', 'start');
+
+	// Toggle the Layers compositing panel in the active preview.
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleLayers', () => {
+		logCommand('toggleLayers', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF preview found.');
-			logCommand('filterByMask', 'error', 'No active preview');
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
+			logCommand('toggleLayers', 'error', 'No active preview');
 			return;
 		}
-
-		const imageUri = activePreview.resource.toString();
-		const currentMasks = previewManager.settingsManager.getMaskFilterSettings(imageUri);
-
-		// Build mask management options
-		const maskOptions: Array<{
-			label: string;
-			description: string;
-			detail: string;
-			action: string;
-			maskIndex?: number;
-		}> = [];
-
-		// Add existing masks
-		currentMasks.forEach((mask, index) => {
-			const fileName = mask.maskUri.split('/').pop() || mask.maskUri.split('\\').pop() || 'Unknown';
-			const status = mask.enabled ? '$(check)' : '$(x)';
-			const direction = mask.filterHigher ? 'Higher' : 'Lower';
-
-			maskOptions.push({
-				label: `${status} Mask ${index + 1}: ${fileName}`,
-				description: `Threshold: ${mask.threshold}, Filter: ${direction}`,
-				detail: mask.enabled ? 'Click to edit or disable' : 'Click to enable',
-				action: 'edit',
-				maskIndex: index
-			});
-		});
-
-		// Add action options
-		maskOptions.push({
-			label: '$(plus) Add New Mask',
-			description: 'Add a new mask filter',
-			detail: 'Select mask file and configure parameters',
-			action: 'add'
-		});
-
-		if (currentMasks.length > 0) {
-			maskOptions.push({
-				label: '$(trash) Remove All Masks',
-				description: 'Remove all mask filters for this image',
-				detail: 'This will delete all masks permanently',
-				action: 'removeAll'
-			});
-		}
-
-		// Create QuickPick
-		const maskQuickPick = vscode.window.createQuickPick<typeof maskOptions[0]>();
-		maskQuickPick.items = maskOptions;
-		maskQuickPick.placeholder = 'Manage mask filters for this image';
-		maskQuickPick.title = 'Mask Filter Management';
-		maskQuickPick.canSelectMany = false;
-		maskQuickPick.ignoreFocusOut = false;
-		maskQuickPick.value = '';
-
-		const choice = await new Promise<typeof maskOptions[0] | undefined>((resolve) => {
-			maskQuickPick.onDidChangeSelection(selection => {
-				if (selection.length > 0) {
-					resolve(selection[0]);
-					maskQuickPick.hide();
-				}
-			});
-
-			maskQuickPick.onDidHide(() => {
-				resolve(undefined);
-				maskQuickPick.dispose();
-			});
-
-			maskQuickPick.onDidChangeValue(() => {
-				maskQuickPick.value = '';
-			});
-
-			maskQuickPick.show();
-		});
-
-		if (!choice) {
-			logCommand('filterByMask', 'error', 'User cancelled');
-			return;
-		}
-
-		// Handle the selected action
-		if (choice.action === 'add') {
-			const result = await addNewMask(previewManager, imageUri);
-			if (result) {
-				logCommand('filterByMask', 'success', `Mask added: ${result}`);
-			} else {
-				logCommand('filterByMask', 'error', 'Failed to add mask');
-			}
-		} else if (choice.action === 'edit' && choice.maskIndex !== undefined) {
-			const result = await editMask(previewManager, imageUri, choice.maskIndex);
-			if (result) {
-				logCommand('filterByMask', 'success', `Mask ${choice.maskIndex} ${result}`);
-			} else {
-				logCommand('filterByMask', 'error', 'Failed to edit mask');
-			}
-		} else if (choice.action === 'removeAll') {
-			// Remove all masks
-			while (currentMasks.length > 0) {
-				previewManager.settingsManager.removeMaskFilter(imageUri, 0);
-			}
-			previewManager.updateAllPreviews();
-			vscode.window.showInformationMessage('All mask filters removed.');
-			logCommand('filterByMask', 'success', 'All masks removed');
-		}
+		activePreview.toggleLayers();
+		logCommand('toggleLayers', 'success');
 	}));
 
-	// Helper function to add a new mask
-	async function addNewMask(previewManager: ImagePreviewManager, imageUri: string): Promise<string | null> {
-		// Step 1: Select mask image
-		const maskUris = await vscode.window.showOpenDialog({
+	// Pick one or more images and add them as layers to the active preview.
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.addLayer', async () => {
+		logCommand('addLayer', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
+			logCommand('addLayer', 'error', 'No active preview');
+			return;
+		}
+		const picked = await vscode.window.showOpenDialog({
 			canSelectFiles: true,
 			canSelectFolders: false,
-			canSelectMany: false,
-			filters: {
-				'TIFF Images': ['tif', 'tiff']
-			},
-			title: 'Select Mask Image (TIFF)',
-			openLabel: 'Select Mask'
+			canSelectMany: true,
+			openLabel: 'Add as layer(s)',
+			filters: { 'Images': IMAGE_EXTENSIONS },
 		});
-
-		if (!maskUris || maskUris.length === 0) {
-			return null;
+		if (!picked || picked.length === 0) {
+			logCommand('addLayer', 'error', 'User cancelled');
+			return;
 		}
-
-		const maskUri = maskUris[0];
-
-		// Step 2: Set threshold value
-		const threshold = await vscode.window.showInputBox({
-			prompt: 'Enter threshold value for filtering',
-			value: '0.5',
-			validateInput: text => {
-				return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
-			}
-		});
-
-		if (threshold === undefined) {
-			return null;
-		}
-
-		const thresholdValue = parseFloat(threshold);
-
-		// Step 3: Choose filter direction
-		const directionOptions = [
-			{
-				label: '$(arrow-up) Filter Higher Values',
-				description: 'Set pixels to NaN where mask values are higher than threshold',
-				detail: 'Pixels with mask values > threshold will be filtered out',
-				action: true
-			},
-			{
-				label: '$(arrow-down) Filter Lower Values',
-				description: 'Set pixels to NaN where mask values are lower than threshold',
-				detail: 'Pixels with mask values < threshold will be filtered out',
-				action: false
-			}
-		];
-
-		const directionQuickPick = vscode.window.createQuickPick<typeof directionOptions[0]>();
-		directionQuickPick.items = directionOptions;
-		directionQuickPick.placeholder = 'Choose filtering direction';
-		directionQuickPick.title = 'Filter Direction';
-		directionQuickPick.canSelectMany = false;
-		directionQuickPick.ignoreFocusOut = false;
-		directionQuickPick.value = '';
-
-		const directionChoice = await new Promise<typeof directionOptions[0] | undefined>((resolve) => {
-			directionQuickPick.onDidChangeSelection(selection => {
-				if (selection.length > 0) {
-					resolve(selection[0]);
-					directionQuickPick.hide();
-				}
-			});
-
-			directionQuickPick.onDidHide(() => {
-				resolve(undefined);
-				directionQuickPick.dispose();
-			});
-
-			directionQuickPick.onDidChangeValue(() => {
-				directionQuickPick.value = '';
-			});
-
-			directionQuickPick.show();
-		});
-
-		if (!directionChoice) {
-			return null;
-		}
-
-		// Add the new mask
-		const newMask = {
-			maskUri: maskUri.toString(),
-			threshold: thresholdValue,
-			filterHigher: directionChoice.action,
-			enabled: true
-		};
-
-		previewManager.settingsManager.addMaskFilter(imageUri, newMask);
-		previewManager.updateAllPreviews();
-
-		const directionText = directionChoice.action ? 'higher' : 'lower';
-		const fileName = maskUri.fsPath.split('/').pop() || maskUri.fsPath.split('\\').pop() || 'Unknown';
-		vscode.window.showInformationMessage(
-			`New mask added: ${fileName}\nThreshold: ${thresholdValue}, Filter: ${directionText} values`
-		);
-		return `${fileName} (threshold: ${thresholdValue}, filter: ${directionText})`;
-	}
-
-	// Helper function to edit an existing mask
-	async function editMask(previewManager: ImagePreviewManager, imageUri: string, maskIndex: number): Promise<string | null> {
-		const masks = previewManager.settingsManager.getMaskFilterSettings(imageUri);
-		const mask = masks[maskIndex];
-
-		if (!mask) {
-			vscode.window.showErrorMessage('Mask not found.');
-			return null;
-		}
-
-		// Show edit options
-		const editOptions = [
-			{
-				label: mask.enabled ? '$(x) Disable Mask' : '$(check) Enable Mask',
-				description: mask.enabled ? 'Temporarily disable this mask' : 'Enable this mask',
-				action: 'toggle'
-			},
-			{
-				label: '$(edit) Edit Parameters',
-				description: 'Change threshold and filter direction',
-				action: 'edit'
-			},
-			{
-				label: '$(trash) Delete Mask',
-				description: 'Permanently remove this mask',
-				action: 'delete'
-			}
-		];
-
-		const editQuickPick = vscode.window.createQuickPick<typeof editOptions[0]>();
-		editQuickPick.items = editOptions;
-		editQuickPick.placeholder = 'Choose action for this mask';
-		editQuickPick.title = 'Edit Mask';
-		editQuickPick.canSelectMany = false;
-		editQuickPick.ignoreFocusOut = false;
-		editQuickPick.value = '';
-
-		const editChoice = await new Promise<typeof editOptions[0] | undefined>((resolve) => {
-			editQuickPick.onDidChangeSelection(selection => {
-				if (selection.length > 0) {
-					resolve(selection[0]);
-					editQuickPick.hide();
-				}
-			});
-
-			editQuickPick.onDidHide(() => {
-				resolve(undefined);
-				editQuickPick.dispose();
-			});
-
-			editQuickPick.onDidChangeValue(() => {
-				editQuickPick.value = '';
-			});
-
-			editQuickPick.show();
-		});
-
-		if (!editChoice) {
-			return null;
-		}
-
-		if (editChoice.action === 'toggle') {
-			previewManager.settingsManager.setMaskFilterEnabled(imageUri, maskIndex, !mask.enabled);
-			previewManager.updateAllPreviews();
-			vscode.window.showInformationMessage(`Mask ${mask.enabled ? 'disabled' : 'enabled'}.`);
-			return mask.enabled ? 'disabled' : 'enabled';
-		} else if (editChoice.action === 'delete') {
-			previewManager.settingsManager.removeMaskFilter(imageUri, maskIndex);
-			previewManager.updateAllPreviews();
-			vscode.window.showInformationMessage('Mask deleted.');
-			return 'deleted';
-		} else if (editChoice.action === 'edit') {
-			// Edit threshold
-			const threshold = await vscode.window.showInputBox({
-				prompt: 'Enter new threshold value for filtering',
-				value: mask.threshold.toString(),
-				validateInput: text => {
-					return isNaN(parseFloat(text)) ? 'Please enter a valid number.' : null;
-				}
-			});
-
-			if (threshold === undefined) {
-				return null;
-			}
-
-			const thresholdValue = parseFloat(threshold);
-
-			// Edit direction
-			const directionOptions = [
-				{
-					label: '$(arrow-up) Filter Higher Values',
-					description: 'Set pixels to NaN where mask values are higher than threshold',
-					detail: 'Pixels with mask values > threshold will be filtered out',
-					action: true
-				},
-				{
-					label: '$(arrow-down) Filter Lower Values',
-					description: 'Set pixels to NaN where mask values are lower than threshold',
-					detail: 'Pixels with mask values < threshold will be filtered out',
-					action: false
-				}
-			];
-
-			const directionQuickPick = vscode.window.createQuickPick<typeof directionOptions[0]>();
-			directionQuickPick.items = directionOptions;
-			directionQuickPick.placeholder = 'Choose filtering direction';
-			directionQuickPick.title = 'Filter Direction';
-			directionQuickPick.canSelectMany = false;
-			directionQuickPick.ignoreFocusOut = false;
-			directionQuickPick.value = '';
-
-			// Pre-select current direction
-			directionQuickPick.activeItems = [directionOptions[mask.filterHigher ? 0 : 1]];
-
-			const directionChoice = await new Promise<typeof directionOptions[0] | undefined>((resolve) => {
-				directionQuickPick.onDidChangeSelection(selection => {
-					if (selection.length > 0) {
-						resolve(selection[0]);
-						directionQuickPick.hide();
-					}
-				});
-
-				directionQuickPick.onDidHide(() => {
-					resolve(undefined);
-					directionQuickPick.dispose();
-				});
-
-				directionQuickPick.onDidChangeValue(() => {
-					directionQuickPick.value = '';
-				});
-
-				directionQuickPick.show();
-			});
-
-			if (!directionChoice) {
-				return null;
-			}
-
-			// Update the mask
-			previewManager.settingsManager.updateMaskFilter(imageUri, maskIndex, {
-				threshold: thresholdValue,
-				filterHigher: directionChoice.action
-			});
-			previewManager.updateAllPreviews();
-
-			const directionText = directionChoice.action ? 'higher' : 'lower';
-			vscode.window.showInformationMessage(
-				`Mask updated: Threshold: ${thresholdValue}, Filter: ${directionText} values`
-			);
-			return `edited (threshold: ${thresholdValue}, filter: ${directionText})`;
-		}
-		return null;
-	}
+		activePreview.addLayerImages(picked);
+		logCommand('addLayer', 'success', `${picked.length} image(s)`);
+	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleNanColor', () => {
 		logCommand('toggleNanColor', 'start');

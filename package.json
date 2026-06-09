@@ -141,8 +141,13 @@
         "category": "TIFF Visualizer"
       },
       {
-        "command": "tiffVisualizer.filterByMask",
-        "title": "Filter by Mask",
+        "command": "tiffVisualizer.toggleLayers",
+        "title": "Toggle Layers Panel",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.addLayer",
+        "title": "Add Image as Layer",
         "category": "TIFF Visualizer"
       },
       {

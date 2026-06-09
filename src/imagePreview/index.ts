@@ -5,7 +5,7 @@ import { ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
-import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
+import { LayersStatusBarEntry } from './layersStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
@@ -38,8 +38,8 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const brightnessStatusBarEntry = new BrightnessStatusBarEntry();
 	disposables.push(brightnessStatusBarEntry);
 
-	const maskFilterStatusBarEntry = new MaskFilterStatusBarEntry();
-	disposables.push(maskFilterStatusBarEntry);
+	const layersStatusBarEntry = new LayersStatusBarEntry();
+	disposables.push(layersStatusBarEntry);
 
 	const histogramStatusBarEntry = new HistogramStatusBarEntry();
 	disposables.push(histogramStatusBarEntry);
@@ -56,7 +56,7 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		normalizationStatusBarEntry,
 		gammaStatusBarEntry,
 		brightnessStatusBarEntry,
-		maskFilterStatusBarEntry,
+		layersStatusBarEntry,
 		histogramStatusBarEntry,
 		colorPickerModeStatusBarEntry
 	);
