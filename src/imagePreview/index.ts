@@ -65,6 +65,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const viewType = ImagePreviewManager.getViewType();
 	disposables.push(vscode.window.registerCustomEditorProvider(viewType, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
+		// Keep the webview alive when its tab is hidden so layer compositions,
+		// the histogram, comparison and zoom state survive switching tabs and
+		// coming back, instead of being reloaded from scratch.
+		webviewOptions: { retainContextWhenHidden: true },
 	}));
 
 	// Register option-priority provider for formats that have a built-in VS Code viewer
@@ -72,6 +76,7 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	const viewTypeOption = `${viewType}.option`;
 	disposables.push(vscode.window.registerCustomEditorProvider(viewTypeOption, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
+		webviewOptions: { retainContextWhenHidden: true },
 	}));
 
 	// Register commands
