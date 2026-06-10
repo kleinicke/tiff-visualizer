@@ -741,7 +741,7 @@ export function registerImagePreviewCommands(
 	}));
 
 	// Pick one or more images and add them as layers to the active preview.
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.addLayer', async () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.addLayer', async (resource?: vscode.Uri, resources?: vscode.Uri[]) => {
 		logCommand('addLayer', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -749,19 +749,31 @@ export function registerImagePreviewCommands(
 			logCommand('addLayer', 'error', 'No active preview');
 			return;
 		}
-		const picked = await vscode.window.showOpenDialog({
-			canSelectFiles: true,
-			canSelectFolders: false,
-			canSelectMany: true,
-			openLabel: 'Add as layer(s)',
-			filters: { 'Images': IMAGE_EXTENSIONS },
-		});
-		if (!picked || picked.length === 0) {
-			logCommand('addLayer', 'error', 'User cancelled');
-			return;
+
+		// From the Explorer context menu we get the selected resource(s) directly;
+		// from the command palette, prompt with an open dialog.
+		const selected = (resources && resources.length > 0)
+			? resources
+			: (resource ? [resource] : []);
+		let uris: vscode.Uri[];
+		if (selected.length > 0) {
+			uris = selected;
+		} else {
+			const picked = await vscode.window.showOpenDialog({
+				canSelectFiles: true,
+				canSelectFolders: false,
+				canSelectMany: true,
+				openLabel: 'Add as layer(s)',
+				filters: { 'Images': IMAGE_EXTENSIONS },
+			});
+			if (!picked || picked.length === 0) {
+				logCommand('addLayer', 'error', 'User cancelled');
+				return;
+			}
+			uris = picked;
 		}
-		activePreview.addLayerImages(picked);
-		logCommand('addLayer', 'success', `${picked.length} image(s)`);
+		activePreview.addLayerImages(uris);
+		logCommand('addLayer', 'success', `${uris.length} image(s)`);
 	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleNanColor', () => {

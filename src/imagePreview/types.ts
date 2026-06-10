@@ -16,6 +16,7 @@ export interface IImagePreviewManager {
 	setComparisonBase(uri: vscode.Uri | undefined): void;
 	getComparisonBase(): vscode.Uri | undefined;
 	updateAllPreviews(): void;
+	refreshActiveMode(): void;
 }
 
 export interface IImagePreview {
@@ -38,6 +39,8 @@ export interface IImagePreview {
 	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
 	toggleLayers(): void;
 	addLayerImages(uris: vscode.Uri[]): void;
+	getViewMode(): 'layers' | 'collection' | 'normal';
+	setLayerMode(active: boolean): void;
 	pastePosition(): void;
 	jumpToCollectionIndex(index: number): void;
 	removeCurrentFromCollection(): void;

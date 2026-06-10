@@ -33,6 +33,9 @@ export class ImagePreview extends MediaPreview {
 	// Image collection management
 	private _imageCollection: vscode.Uri[] = [];
 	private _currentImageIndex: number = 0;
+	// True while the Layers compositing panel is active for this view. A view is
+	// either a layer view or a collection, never both.
+	private _isLayerView: boolean = false;
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
 
@@ -396,8 +399,28 @@ export class ImagePreview extends MediaPreview {
 		return this._imageCollection;
 	}
 
+	/**
+	 * The exclusive mode of this view. A preview is either a layer-compositing
+	 * view or an image collection, never both.
+	 */
+	public getViewMode(): 'layers' | 'collection' | 'normal' {
+		if (this._isLayerView) { return 'layers'; }
+		if (this._imageCollection.length > 1) { return 'collection'; }
+		return 'normal';
+	}
+
+	/** Called when the webview reports the Layers panel opened/closed. */
+	public setLayerMode(active: boolean): void {
+		this._isLayerView = active;
+		this._manager.refreshActiveMode();
+	}
+
 	/** Toggle the Layers compositing panel in the webview. */
 	public toggleLayers(): void {
+		if (this._imageCollection.length > 1) {
+			vscode.window.showWarningMessage('Layers are not available for a multi-image collection. Open a single image to use layers.');
+			return;
+		}
 		this._webviewEditor.webview.postMessage({ type: 'toggleLayers' });
 	}
 
@@ -408,6 +431,10 @@ export class ImagePreview extends MediaPreview {
 	 */
 	public addLayerImages(uris: vscode.Uri[]): void {
 		if (uris.length === 0) { return; }
+		if (this._imageCollection.length > 1) {
+			vscode.window.showWarningMessage('Layers are not available for a multi-image collection.');
+			return;
+		}
 
 		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
 		const rootsToAdd = uris
@@ -429,11 +456,17 @@ export class ImagePreview extends MediaPreview {
 
 	/** Returns true if the image was added, false if it was already in the collection. */
 	public async addToImageCollection(uri: vscode.Uri): Promise<boolean> {
+		if (this._isLayerView) {
+			// This view is a layer composition — collections are disabled here.
+			return false;
+		}
 		if (this._imageCollection.some(img => img.toString() === uri.toString())) {
 			return false;
 		}
 
 		this._imageCollection.push(uri);
+		// Adding a second image makes this a collection — keep the menu state in sync.
+		this._manager.refreshActiveMode();
 
 		// Expand localResourceRoots to include the new image's directory so
 		// the webview fetch() can access files outside the initial file's folder.

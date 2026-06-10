@@ -40,6 +40,7 @@ export class MessageRouter {
 		this.handlers.set('histogramPositionChanged', new HistogramPositionChangedMessageHandler());
 		this.handlers.set('histogramScaleModeChanged', new HistogramScaleModeChangedMessageHandler());
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
+		this.handlers.set('layerModeChanged', new LayerModeChangedMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
 	}
@@ -278,6 +279,12 @@ class ExecuteCommandMessageHandler implements MessageHandler {
 		if (message.command) {
 			vscode.commands.executeCommand(message.command);
 		}
+	}
+}
+
+class LayerModeChangedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.setLayerMode(!!message.active);
 	}
 }
 
