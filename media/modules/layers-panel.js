@@ -22,8 +22,13 @@ export class LayersPanel {
 		this.root = null;
 		/** @type {HTMLElement|null} */
 		this.listEl = null;
+		/** @type {HTMLElement|null} */
+		this.titleEl = null;
+		/** @type {HTMLButtonElement|null} */
+		this.minimizeBtn = null;
 		/** id of the layer currently armed for drag-to-move, or null */
 		this.movingLayerId = null;
+		this.collapsed = false;
 	}
 
 	/** Build the panel DOM (once) and attach it to the document body. */
@@ -39,12 +44,20 @@ export class LayersPanel {
 		const title = document.createElement('span');
 		title.className = 'layers-panel-title';
 		title.textContent = 'Layers';
+		this.titleEl = title;
 
 		const addBtn = document.createElement('button');
 		addBtn.className = 'layers-btn layers-add';
 		addBtn.title = 'Add image(s) as layers';
 		addBtn.textContent = '+';
 		addBtn.addEventListener('click', () => this.onAddLayer());
+
+		const minimizeBtn = document.createElement('button');
+		minimizeBtn.className = 'layers-btn layers-minimize';
+		minimizeBtn.title = 'Minimize / expand panel';
+		minimizeBtn.textContent = '–';
+		minimizeBtn.addEventListener('click', () => this.toggleCollapsed());
+		this.minimizeBtn = minimizeBtn;
 
 		const closeBtn = document.createElement('button');
 		closeBtn.className = 'layers-btn layers-close';
@@ -54,6 +67,7 @@ export class LayersPanel {
 
 		header.appendChild(title);
 		header.appendChild(addBtn);
+		header.appendChild(minimizeBtn);
 		header.appendChild(closeBtn);
 
 		const list = document.createElement('div');
@@ -65,6 +79,7 @@ export class LayersPanel {
 
 		this.root = root;
 		this.listEl = list;
+		this._applyCollapsed();
 		this.refresh();
 	}
 
@@ -88,6 +103,24 @@ export class LayersPanel {
 		this.movingLayerId = null;
 	}
 
+	/** Collapse the panel to just its header (or expand it again). */
+	toggleCollapsed() {
+		this.collapsed = !this.collapsed;
+		this._applyCollapsed();
+	}
+
+	_applyCollapsed() {
+		if (!this.root) { return; }
+		this.root.classList.toggle('layers-panel--collapsed', this.collapsed);
+		if (this.minimizeBtn) {
+			this.minimizeBtn.textContent = this.collapsed ? '▸' : '–';
+		}
+		if (this.titleEl) {
+			const n = this.manager.layers.length;
+			this.titleEl.textContent = this.collapsed ? `Layers (${n})` : 'Layers';
+		}
+	}
+
 	/** Rebuild the layer rows from the manager state (top layer shown first). */
 	refresh() {
 		if (!this.listEl) { return; }
@@ -96,6 +129,7 @@ export class LayersPanel {
 		for (let i = layers.length - 1; i >= 0; i--) {
 			this.listEl.appendChild(this._buildRow(layers[i], i));
 		}
+		this._applyCollapsed(); // keep the collapsed "(n)" count in sync
 	}
 
 	/**
