@@ -34,6 +34,8 @@ export class LayerManager {
 		this.active = false;
 		this.canvasWidth = 0;
 		this.canvasHeight = 0;
+		/** @type {import('./layer-compositor.js').CompositeResult|null} */
+		this._lastComposite = null;
 	}
 
 	/** @returns {boolean} True if there is more than just the base layer. */
@@ -137,6 +139,7 @@ export class LayerManager {
 	renderToImageData(settings, options = {}) {
 		const c = this.getComposite();
 		if (!c) { return null; }
+		this._lastComposite = c; // cache for pixel inspection
 		return ImageRenderer.render(
 			c.data,
 			c.width,
@@ -157,7 +160,9 @@ export class LayerManager {
 	 * @returns {number[]|null}
 	 */
 	getCompositeValueAt(x, y) {
-		const c = this.getComposite();
+		// Use the most recently rendered composite to avoid recompositing the
+		// whole stack on every pointer move.
+		const c = this._lastComposite;
 		if (!c || x < 0 || y < 0 || x >= c.width || y >= c.height) { return null; }
 		const base = (y * c.width + x) * c.channels;
 		const out = [];
