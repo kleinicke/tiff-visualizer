@@ -2255,13 +2255,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			menu.appendChild(createSeparator());
 
-			// Add Images to Collection option
-			menu.appendChild(createMenuItem('Add Images to Collection', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
-			}));
-
-			menu.appendChild(createSeparator());
-
 			// Add Toggle Histogram option (triggers command via extension for logging)
 			menu.appendChild(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
@@ -2308,9 +2301,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 			// Layers compositing panel
 			menu.appendChild(createMenuItem('Toggle Layers Panel', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
-			}));
-			menu.appendChild(createMenuItem('Add Image as Layer…', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' });
 			}));
 
 
