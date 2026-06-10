@@ -729,3 +729,31 @@ body img {
 .layer-actions {
 	justify-content: flex-end;
 }
+
+.layer-mask {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.layer-mask-label {
+	opacity: 0.8;
+}
+
+.layer-mask-op {
+	background: var(--vscode-dropdown-background, #3c3c3c);
+	color: var(--vscode-dropdown-foreground, #ccc);
+	border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 2px;
+}
+
+.layer-mask-threshold {
+	width: 70px;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #ccc);
+	border: 1px solid var(--vscode-input-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 1px 3px;
+}

@@ -134,6 +134,24 @@ async function main() {
 		console.log('✅ Hidden / zero-opacity layers ignored');
 	}
 
+	// 12. Mask mode hides the content below where the condition is false.
+	{
+		const { evalMaskCondition } = mod;
+		// base values 0,1,2,3 ; mask values 0,1,0,1 ; condition "> 0.5" keeps where mask>0.5.
+		const base = layer({ data: new Float32Array([0, 1, 2, 3]), width: 2, height: 2 });
+		const mask = layer({ data: new Float32Array([0, 1, 0, 1]), width: 2, height: 2, blendMode: 'mask', maskCondition: { op: 'gt', threshold: 0.5 } });
+		const r = composite([base, mask], 2, 2);
+		assert.ok(Number.isNaN(r.data[0]), 'mask 0 (<=0.5) hides -> NaN');
+		assert.strictEqual(r.data[1], 1, 'mask 1 (>0.5) keeps base');
+		assert.ok(Number.isNaN(r.data[2]), 'mask 0 hides');
+		assert.strictEqual(r.data[3], 3, 'mask 1 keeps');
+		// Condition helper sanity.
+		assert.strictEqual(evalMaskCondition(0.6, { op: 'gt', threshold: 0.5 }), true);
+		assert.strictEqual(evalMaskCondition(NaN, { op: 'isnan' }), true);
+		assert.strictEqual(evalMaskCondition(0.2, { op: 'isfinite' }), true);
+		console.log('✅ Mask mode hides below where condition is false');
+	}
+
 	console.log('\n🎉 All layer compositor tests passed.\n');
 }
 
