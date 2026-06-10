@@ -221,8 +221,22 @@ async function expandGlobSegmentsAsync(
 async function expandGlobPatternAsync(pattern: string, anchor: vscode.Uri, isCancelled: () => boolean): Promise<vscode.Uri[]> {
 	const pp = pathModuleFor(anchor);
 	if (!pattern.includes('*') && !pattern.includes('?')) {
-		const st = await statPath(pattern, anchor);
-		return st && (st.type & vscode.FileType.File) ? [pathToUri(pattern, anchor)] : [];
+		const plain = pattern.replace(/[/\\]+$/, '') || pp.sep;
+		const st = await statPath(plain, anchor);
+		if (!st) return [];
+		if (st.type & vscode.FileType.Directory) {
+			// A plain folder path expands to every supported image directly
+			// inside it (non-recursive, mirroring the Explorer context menu).
+			const results: vscode.Uri[] = [];
+			for (const [name, fileType] of await readDirPath(plain, anchor)) {
+				if (isCancelled() || results.length >= MAX_GLOB_RESULTS) break;
+				if ((fileType & vscode.FileType.File) === 0) continue;
+				const uri = pathToUri(pp.join(plain, name), anchor);
+				if (isImageUri(uri)) results.push(uri);
+			}
+			return results.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+		}
+		return (st.type & vscode.FileType.File) ? [pathToUri(plain, anchor)] : [];
 	}
 
 	const firstWild = pattern.search(/[*?]/);
@@ -1260,7 +1274,7 @@ export function registerImagePreviewCommands(
 		const initialDir = pp.dirname(anchor.scheme === 'file' ? anchor.fsPath : anchor.path);
 		return new Promise<string | undefined>((resolve) => {
 			const qp = vscode.window.createQuickPick();
-			qp.placeholder = 'Type a path or wildcard pattern (e.g. *.tiff)';
+			qp.placeholder = 'Type a file path, folder, or wildcard pattern (e.g. *.tiff)';
 			qp.value = initialDir + sep;
 			qp.matchOnDescription = false;
 			qp.matchOnDetail = false;
@@ -1333,7 +1347,7 @@ export function registerImagePreviewCommands(
 									contentItems.push({
 										label: '$(folder) ' + name,
 										description: fullPath,
-										detail: 'Directory — select to navigate into it',
+										detail: 'Folder — select to navigate into it, or confirm the typed path to add all images inside',
 										alwaysShow: true,
 									} as vscode.QuickPickItem & { _dirPath?: string });
 									(contentItems[contentItems.length - 1] as any)._dirPath = fullPath;
@@ -1352,7 +1366,8 @@ export function registerImagePreviewCommands(
 
 				if (searchVersion !== version) return;
 
-				// Detect if the typed path is a plain directory (no wildcards)
+				// Detect if the typed path is a plain directory (no wildcards) —
+				// folders are accepted and expand to all images directly inside.
 				let isDirectoryPath = false;
 				if (typed && !typed.includes('*') && !typed.includes('?')) {
 					const st = await statPath(typed.replace(/[/\\]+$/, '') || sep, anchor);
@@ -1360,34 +1375,27 @@ export function registerImagePreviewCommands(
 					if (searchVersion !== version) return;
 				}
 
-				let finalUseItem: vscode.QuickPickItem;
-				if (isDirectoryPath) {
-					finalUseItem = {
-						label: '$(warning) This is a folder, not a file',
-						description: 'Add * or *.ext at the end to match images inside',
-						alwaysShow: true,
-					};
-					(finalUseItem as any)._useRaw = false; // not selectable as a pattern
+				const files = await expandGlobPatternAsync(typed, anchor, isCancelled);
+				if (searchVersion !== version) return;
+				const existingSet = new Set(existingCollection.map(u => u.toString()));
+				const newCount = files.filter(u => !existingSet.has(u.toString())).length;
+				const alreadyCount = files.length - newCount;
+				const fromFolder = isDirectoryPath ? ' from this folder' : '';
+				let useLabel: string;
+				if (files.length === 0) {
+					useLabel = isDirectoryPath
+						? '$(warning) No supported images in this folder'
+						: '$(check) Use this pattern';
+				} else if (alreadyCount === 0) {
+					useLabel = `$(check) Add ${newCount} image${newCount === 1 ? '' : 's'}${fromFolder}`;
+				} else if (newCount === 0) {
+					useLabel = `$(warning) All ${alreadyCount} image${alreadyCount === 1 ? '' : 's'} already in collection`;
 				} else {
-					const files = await expandGlobPatternAsync(typed, anchor, isCancelled);
-					if (searchVersion !== version) return;
-					const existingSet = new Set(existingCollection.map(u => u.toString()));
-					const newCount = files.filter(u => !existingSet.has(u.toString())).length;
-					const alreadyCount = files.length - newCount;
-					let useLabel: string;
-					if (files.length === 0) {
-						useLabel = '$(check) Use this pattern';
-					} else if (alreadyCount === 0) {
-						useLabel = `$(check) Add ${newCount} image${newCount === 1 ? '' : 's'}`;
-					} else if (newCount === 0) {
-						useLabel = `$(warning) All ${alreadyCount} image${alreadyCount === 1 ? '' : 's'} already in collection`;
-					} else {
-						useLabel = `$(check) Add ${newCount} new image${newCount === 1 ? '' : 's'} (${alreadyCount} already in collection)`;
-					}
-					const canConfirm = newCount > 0;
-					finalUseItem = { label: useLabel, description: canConfirm ? 'Press Enter to confirm' : undefined, alwaysShow: true };
-					(finalUseItem as any)._useRaw = canConfirm;
+					useLabel = `$(check) Add ${newCount} new image${newCount === 1 ? '' : 's'}${fromFolder} (${alreadyCount} already in collection)`;
 				}
+				const canConfirm = newCount > 0;
+				const finalUseItem: vscode.QuickPickItem = { label: useLabel, description: canConfirm ? 'Press Enter to confirm' : undefined, alwaysShow: true };
+				(finalUseItem as any)._useRaw = canConfirm;
 				qp.items = [finalUseItem, ...contentItems];
 			}
 
