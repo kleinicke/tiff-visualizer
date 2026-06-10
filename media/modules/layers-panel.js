@@ -12,11 +12,12 @@ import { BLEND_MODES } from './layer-compositor.js';
 export class LayersPanel {
 	/**
 	 * @param {import('./layer-manager.js').LayerManager} manager
-	 * @param {{ onChange: () => void }} callbacks
+	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void }} callbacks
 	 */
 	constructor(manager, callbacks) {
 		this.manager = manager;
 		this.onChange = callbacks.onChange;
+		this.onVisibilityChange = callbacks.onVisibilityChange;
 		/** @type {HTMLElement|null} */
 		this.root = null;
 		/** @type {HTMLElement|null} */
@@ -88,11 +89,13 @@ export class LayersPanel {
 		this.mount();
 		this.root?.removeAttribute('hidden');
 		this.refresh();
+		this.onVisibilityChange?.(true);
 	}
 
 	hide() {
 		this.root?.setAttribute('hidden', '');
 		this.movingLayerId = null;
+		this.onVisibilityChange?.(false);
 	}
 
 	/** Collapse the panel to just its header (or expand it again). */

@@ -96,6 +96,17 @@ import { LayersPanel } from './modules/layers-panel.js';
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: () => { scheduleRecomposite(); },
+		onVisibilityChange: (visible) => {
+			layerManager.active = visible;
+			// Tell the extension so it can track layer mode (and block collection ops).
+			vscode.postMessage({ type: 'layerModeChanged', active: visible });
+			if (visible) {
+				recompositeLayers();
+			} else {
+				// Restore the normal single-image render.
+				updateImageWithNewSettings(null);
+			}
+		},
 	});
 	// Pixel inspector reads the composite value when compositing is active.
 	mouseHandler.compositeValueProvider = (x, y) =>
@@ -1275,19 +1286,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			case 'toggleLayers':
 				syncBaseLayer();
+				// toggle() fires onVisibilityChange, which sets active state,
+				// notifies the extension and re-renders.
 				layersPanel.toggle();
-				layerManager.active = layersPanel.isVisible();
-				if (layerManager.active) {
-					recompositeLayers();
-				} else {
-					// Panel closed — restore the normal single-image render.
-					updateImageWithNewSettings(null);
-				}
 				break;
 
 			case 'addLayerImages': {
 				syncBaseLayer();
-				layerManager.active = true;
 				layersPanel.show();
 				let addedLayers = 0;
 				for (const im of (message.images || [])) {

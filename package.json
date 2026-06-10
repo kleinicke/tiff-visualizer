@@ -225,13 +225,19 @@
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "title": "Add Image to Visualizer Collection",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl)$/i",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl)$/i && tiffVisualizer.activeMode != 'layers'",
           "group": "navigation@1"
         },
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "title": "Add Folder Images to Visualizer Collection",
-          "when": "explorerResourceIsFolder",
+          "when": "explorerResourceIsFolder && tiffVisualizer.activeMode != 'layers'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "tiffVisualizer.addLayer",
+          "title": "Add Image as Layer",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
           "group": "navigation@1"
         }
       ],

@@ -305,6 +305,18 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		} else {
 			this.setMenuVisibility(this._previews.size > 0);
 		}
+		this.refreshActiveMode();
+	}
+
+	/**
+	 * Publish the active preview's exclusive mode (layers / collection / normal)
+	 * as a context key so the Explorer menus can show the right "Add" action.
+	 */
+	public refreshActiveMode(): void {
+		const mode = this._activePreview && 'getViewMode' in this._activePreview
+			? (this._activePreview as any).getViewMode()
+			: 'normal';
+		vscode.commands.executeCommand('setContext', 'tiffVisualizer.activeMode', mode);
 	}
 
 	private setMenuVisibility(visible: boolean): void {
