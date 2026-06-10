@@ -2142,6 +2142,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 				return;
 			}
 
+			// In layer move mode, a click on the image moves the layer — don't zoom.
+			if (layerManager.active && layersPanel.movingLayerId) {
+				return;
+			}
+
 			if (mouseHandler.consumeClick) {
 				mouseHandler.consumeClick = false;
 				return;
