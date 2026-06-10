@@ -134,7 +134,6 @@ export class LayersPanel {
 			tag.className = 'layer-base-tag';
 			tag.textContent = 'base';
 			row.appendChild(tag);
-			return row;
 		}
 
 		// Controls row (blend mode + opacity).
