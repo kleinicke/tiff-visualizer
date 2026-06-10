@@ -2255,6 +2255,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			menu.appendChild(createSeparator());
 
+			// Add Images to Collection option
+			menu.appendChild(createMenuItem('Add Images to Collection', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
+			}));
+
+			menu.appendChild(createSeparator());
+
 			// Add Toggle Histogram option (triggers command via extension for logging)
 			menu.appendChild(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
