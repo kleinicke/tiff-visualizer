@@ -12,12 +12,11 @@ import { BLEND_MODES } from './layer-compositor.js';
 export class LayersPanel {
 	/**
 	 * @param {import('./layer-manager.js').LayerManager} manager
-	 * @param {{ onChange: () => void, onAddLayer: () => void }} callbacks
+	 * @param {{ onChange: () => void }} callbacks
 	 */
 	constructor(manager, callbacks) {
 		this.manager = manager;
 		this.onChange = callbacks.onChange;
-		this.onAddLayer = callbacks.onAddLayer;
 		/** @type {HTMLElement|null} */
 		this.root = null;
 		/** @type {HTMLElement|null} */
@@ -46,12 +45,6 @@ export class LayersPanel {
 		title.textContent = 'Layers';
 		this.titleEl = title;
 
-		const addBtn = document.createElement('button');
-		addBtn.className = 'layers-btn layers-add';
-		addBtn.title = 'Add image(s) as layers';
-		addBtn.textContent = '+';
-		addBtn.addEventListener('click', () => this.onAddLayer());
-
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
 		minimizeBtn.title = 'Minimize / expand panel';
@@ -66,7 +59,6 @@ export class LayersPanel {
 		closeBtn.addEventListener('click', () => this.hide());
 
 		header.appendChild(title);
-		header.appendChild(addBtn);
 		header.appendChild(minimizeBtn);
 		header.appendChild(closeBtn);
 

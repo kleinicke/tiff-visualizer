@@ -35,6 +35,15 @@ export class MouseHandler {
 		this.isActive = false;
 		this.consumeClick = true;
 
+		/**
+		 * Optional provider that returns the composited float value(s) at a pixel
+		 * when layer compositing is active. When set and it returns a value, the
+		 * pixel inspector shows the composite value (e.g. a subtraction result,
+		 * which may be negative) instead of a single source image's value.
+		 * @type {((x:number, y:number) => number[]|null)|null}
+		 */
+		this.compositeValueProvider = null;
+
 		// DOM elements
 		this.container = document.body;
 		this.imageElement = null;
@@ -188,10 +197,39 @@ export class MouseHandler {
 	}
 
 	/**
+	 * Format composited float channel values for display (handles negatives,
+	 * NaN and Infinity).
+	 * @private
+	 * @param {number[]} values
+	 * @returns {string}
+	 */
+	_formatCompositeValues(values) {
+		const fmt = (/** @type {number} */ v) => {
+			if (Number.isNaN(v)) return 'NaN';
+			if (v === Infinity) return 'Inf';
+			if (v === -Infinity) return '-Inf';
+			return parseFloat(v.toFixed(6)).toString();
+		};
+		if (values.length === 4) {
+			return `${fmt(values[0])} ${fmt(values[1])} ${fmt(values[2])} α:${fmt(values[3])}`;
+		}
+		return values.map(fmt).join(' ');
+	}
+
+	/**
 	 * Get color at specific pixel coordinates
 	 * @private
 	 */
 	_getColorAtPixel(/** @type {number} */ x, /** @type {number} */ y, /** @type {number} */ naturalWidth, /** @type {number} */ naturalHeight) {
+		// When layer compositing is active, always report the composited value at
+		// this pixel (works for subtraction/negative results, NaN, etc.).
+		if (this.compositeValueProvider) {
+			const composite = this.compositeValueProvider(x, y);
+			if (composite) {
+				return this._formatCompositeValues(composite);
+			}
+		}
+
 		// Check if we should show modified values
 		// ONLY allow showing modified values if we are in Gamma Mode
 		const isGammaMode = this.settingsManager.settings.normalization && this.settingsManager.settings.normalization.gammaMode;

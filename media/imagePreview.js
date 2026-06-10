@@ -95,9 +95,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
-		onChange: () => { recompositeLayers(); },
-		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
+		onChange: () => { scheduleRecomposite(); },
 	});
+	// Pixel inspector reads the composite value when compositing is active.
+	mouseHandler.compositeValueProvider = (x, y) =>
+		(layerManager.active && layerManager.hasExtraLayers()) ? layerManager.getCompositeValueAt(x, y) : null;
 	/** @type {string|undefined} URI of the image currently used as the base layer. */
 	let _layerBaseUri;
 
@@ -1161,6 +1163,18 @@ import { LayersPanel } from './modules/layers-panel.js';
 		return true;
 	}
 
+	// Coalesce rapid recomposite requests (e.g. dragging the opacity slider) into
+	// at most one composite per animation frame so the UI stays responsive.
+	let _recompositeScheduled = false;
+	function scheduleRecomposite() {
+		if (_recompositeScheduled) { return; }
+		_recompositeScheduled = true;
+		requestAnimationFrame(() => {
+			_recompositeScheduled = false;
+			recompositeLayers();
+		});
+	}
+
 	/** Drag-on-image move tool for the layer armed in the panel. */
 	let _layerDrag = null;
 	function setupLayerMoveDrag() {
@@ -1188,7 +1202,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 				layerManager.moveLayer(_layerDrag.id, dx, dy);
 				_layerDrag.lastX = e.clientX;
 				_layerDrag.lastY = e.clientY;
-				recompositeLayers();
+				scheduleRecomposite();
 			}
 		});
 		window.addEventListener('mouseup', () => {
