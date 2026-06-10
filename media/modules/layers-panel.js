@@ -7,7 +7,7 @@
  * (b) request the extension to open a file picker for adding a layer.
  */
 
-import { BLEND_MODES } from './layer-compositor.js';
+import { BLEND_MODES, MASK_CONDITIONS } from './layer-compositor.js';
 
 export class LayersPanel {
 	/**
@@ -180,7 +180,12 @@ export class LayersPanel {
 			blend.appendChild(opt);
 		}
 		blend.addEventListener('change', () => {
-			this.manager.updateLayer(id, { blendMode: blend.value });
+			const patch = { blendMode: blend.value };
+			if (blend.value === 'mask' && !layer.maskCondition) {
+				patch.maskCondition = { op: 'gt', threshold: 0.5 };
+			}
+			this.manager.updateLayer(id, patch);
+			this.refresh(); // show/hide the mask condition row
 			this.onChange();
 		});
 		controls.appendChild(blend);
@@ -192,12 +197,18 @@ export class LayersPanel {
 		opacity.max = '100';
 		opacity.value = String(Math.round((layer.opacity ?? 1) * 100));
 		opacity.title = 'Opacity';
+		opacity.disabled = layer.blendMode === 'mask';
 		opacity.addEventListener('input', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
 			this.onChange();
 		});
 		controls.appendChild(opacity);
 		row.appendChild(controls);
+
+		// Mask condition row (only when this layer is a mask).
+		if (layer.blendMode === 'mask') {
+			row.appendChild(this._buildMaskRow(layer, id));
+		}
 
 		// Position controls (numeric offsets + drag-to-move arm button).
 		const pos = document.createElement('div');
@@ -272,6 +283,58 @@ export class LayersPanel {
 		actions.appendChild(down);
 		actions.appendChild(remove);
 		row.appendChild(actions);
+
+		return row;
+	}
+
+	/**
+	 * Build the mask condition row: "keep where  [op] [threshold]".
+	 * @param {import('./layer-compositor.js').Layer} layer
+	 * @param {string} id
+	 * @returns {HTMLElement}
+	 */
+	_buildMaskRow(layer, id) {
+		const cond = layer.maskCondition || { op: 'gt', threshold: 0.5 };
+		const row = document.createElement('div');
+		row.className = 'layer-mask';
+
+		const label = document.createElement('span');
+		label.className = 'layer-mask-label';
+		label.textContent = 'keep where';
+		row.appendChild(label);
+
+		const opSel = document.createElement('select');
+		opSel.className = 'layer-mask-op';
+		opSel.title = 'Mask condition';
+		for (const c of MASK_CONDITIONS) {
+			const opt = document.createElement('option');
+			opt.value = c.id;
+			opt.textContent = c.label;
+			if (cond.op === c.id) { opt.selected = true; }
+			opSel.appendChild(opt);
+		}
+		row.appendChild(opSel);
+
+		const thr = document.createElement('input');
+		thr.type = 'number';
+		thr.step = 'any';
+		thr.className = 'layer-mask-threshold';
+		thr.value = String(cond.threshold ?? 0.5);
+		thr.title = 'Threshold';
+		const meta = MASK_CONDITIONS.find(c => c.id === cond.op);
+		if (meta && !meta.needsThreshold) { thr.style.display = 'none'; }
+		row.appendChild(thr);
+
+		const readCond = () => ({ op: opSel.value, threshold: parseFloat(thr.value) });
+		opSel.addEventListener('change', () => {
+			this.manager.updateLayer(id, { maskCondition: readCond() });
+			this.refresh(); // show/hide threshold for is-finite / is-NaN
+			this.onChange();
+		});
+		thr.addEventListener('input', () => {
+			this.manager.updateLayer(id, { maskCondition: readCond() });
+			this.onChange();
+		});
 
 		return row;
 	}

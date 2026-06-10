@@ -37,6 +37,7 @@
  * @property {number} [opacity]             0..1, default 1.
  * @property {string} [blendMode]           One of BLEND_MODES, default 'normal'.
  * @property {boolean} [visible]            Default true.
+ * @property {{op:string, threshold?:number}} [maskCondition]  Only for blendMode 'mask'.
  */
 
 /**
@@ -67,14 +68,48 @@ export const BLEND_MODES = [
 	{ id: 'min', label: 'Darken (min)', arithmetic: true },
 	{ id: 'max', label: 'Lighten (max)', arithmetic: true },
 	{ id: 'average', label: 'Average', arithmetic: true },
+	{ id: 'mask', label: 'Mask (hide below)', arithmetic: false, mask: true },
 ];
 
 const BLEND_MODE_IDS = new Set(BLEND_MODES.map(m => m.id));
 const ARITHMETIC_MODES = new Set(BLEND_MODES.filter(m => m.arithmetic).map(m => m.id));
 
+/** Mask condition operators shown in the UI. */
+export const MASK_CONDITIONS = [
+	{ id: 'gt', label: '>', needsThreshold: true },
+	{ id: 'ge', label: '≥', needsThreshold: true },
+	{ id: 'lt', label: '<', needsThreshold: true },
+	{ id: 'le', label: '≤', needsThreshold: true },
+	{ id: 'eq', label: '=', needsThreshold: true },
+	{ id: 'isfinite', label: 'is finite', needsThreshold: false },
+	{ id: 'isnan', label: 'is NaN/Inf', needsThreshold: false },
+];
+
 /** @param {string} mode */
 export function isArithmeticMode(mode) {
 	return ARITHMETIC_MODES.has(mode);
+}
+
+/**
+ * Evaluate a mask condition: returns true where the content below should be
+ * KEPT (visible), false where it should be hidden.
+ * @param {number} v Mask layer value at the pixel.
+ * @param {{op:string, threshold?:number}|undefined} cond
+ * @returns {boolean}
+ */
+export function evalMaskCondition(v, cond) {
+	if (!cond) { return true; }
+	const t = cond.threshold ?? 0;
+	switch (cond.op) {
+		case 'gt': return v > t;
+		case 'ge': return v >= t;
+		case 'lt': return v < t;
+		case 'le': return v <= t;
+		case 'eq': return v === t;
+		case 'isfinite': return Number.isFinite(v);
+		case 'isnan': return !Number.isFinite(v);
+		default: return true;
+	}
 }
 
 /**
@@ -158,6 +193,8 @@ export function composite(layers, canvasWidth, canvasHeight) {
 		const opacity = Math.max(0, Math.min(1, layer.opacity ?? 1));
 		const mode = BLEND_MODE_IDS.has(layer.blendMode ?? 'normal') ? (layer.blendMode ?? 'normal') : 'normal';
 		const arithmetic = ARITHMETIC_MODES.has(mode);
+		const isMask = mode === 'mask';
+		const maskCondition = layer.maskCondition;
 
 		// Canvas range that this layer overlaps.
 		const xStart = Math.max(0, offsetX);
@@ -173,6 +210,18 @@ export function composite(layers, canvasWidth, canvasHeight) {
 				sampleLayer(layer, lx, ly, outChannels, src);
 
 				const di = pixel * outChannels;
+
+				if (isMask) {
+					// A mask layer never draws colour; it hides the content below
+					// wherever its condition is false. With nothing below, it does
+					// nothing.
+					if (!covered[pixel]) { continue; }
+					if (!evalMaskCondition(src[0], maskCondition)) {
+						for (let c = 0; c < outChannels; c++) data[di + c] = NaN;
+					}
+					continue;
+				}
+
 				if (!covered[pixel]) {
 					// First layer to reach this pixel establishes the base value;
 					// there is nothing beneath to blend with, so opacity/mode are moot.
