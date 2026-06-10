@@ -371,6 +371,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 */
 	async function renderImageDataToCanvas(imageData, ctx) {
 		if (!ctx) return;
+		// Ensure the canvas matches the image size. Without this, drawing a smaller
+		// image onto a canvas still sized for a previous (larger) image leaves the
+		// old pixels visible around the new one — both images appear overlaid.
+		if (ctx.canvas.width !== imageData.width || ctx.canvas.height !== imageData.height) {
+			ctx.canvas.width = imageData.width;
+			ctx.canvas.height = imageData.height;
+		}
 		const start = performance.now();
 		const pixelCount = imageData.width * imageData.height;
 		if (pixelCount > 25_000_000) {
@@ -2374,6 +2381,22 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		jxlProcessor._lastRaw = null;
 		rawProcessor._lastRaw = null;
 		rawProcessor._arrayBuffer = null;
+
+		// Drop any pending deferred-render data from the previous image. Otherwise a
+		// late updateSettings(isInitialRender) for the old image could draw it onto
+		// the new image's canvas, overlaying two images of different sizes.
+		tiffProcessor._pendingRenderData = null;
+		exrProcessor._pendingRenderData = null;
+		npyProcessor._pendingRenderData = null;
+		pfmProcessor._pendingRenderData = null;
+		ppmProcessor._pendingRenderData = null;
+		pngProcessor._pendingRenderData = null;
+		pngProcessor._lazyNativeReadback = null;
+		hdrProcessor._pendingRenderData = null;
+		tgaProcessor._pendingRenderData = null;
+		webImageProcessor._pendingRenderData = null;
+		jxlProcessor._pendingRenderData = null;
+		rawProcessor._pendingRenderData = null;
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new
