@@ -76,8 +76,8 @@ export class LayerManager {
 	/** @param {string} id */
 	removeLayer(id) {
 		const idx = this.layers.findIndex(l => l.id === id);
-		// Never remove the base layer (index 0).
-		if (idx > 0) { this.layers.splice(idx, 1); }
+		// Keep at least one layer (it defines the canvas).
+		if (idx >= 0 && this.layers.length > 1) { this.layers.splice(idx, 1); }
 	}
 
 	/**
@@ -98,21 +98,22 @@ export class LayerManager {
 	 */
 	moveLayer(id, dx, dy) {
 		const layer = this.layers.find(l => l.id === id);
-		if (layer && layer.id !== this.layers[0]?.id) {
+		if (layer) {
 			layer.offsetX = (layer.offsetX ?? 0) + dx;
 			layer.offsetY = (layer.offsetY ?? 0) + dy;
 		}
 	}
 
 	/**
-	 * Reorder a layer within the stack (0 = bottom). The base layer stays at 0.
+	 * Reorder a layer within the stack (0 = bottom).
 	 * @param {string} id
 	 * @param {number} newIndex
 	 */
 	reorderLayer(id, newIndex) {
 		const idx = this.layers.findIndex(l => l.id === id);
-		if (idx <= 0) { return; } // base layer is fixed
-		const clamped = Math.max(1, Math.min(this.layers.length - 1, newIndex));
+		if (idx < 0) { return; }
+		const clamped = Math.max(0, Math.min(this.layers.length - 1, newIndex));
+		if (clamped === idx) { return; }
 		const [layer] = this.layers.splice(idx, 1);
 		this.layers.splice(clamped, 0, layer);
 	}

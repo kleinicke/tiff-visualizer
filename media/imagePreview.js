@@ -1124,13 +1124,19 @@ import { LayersPanel } from './modules/layers-panel.js';
 			_layerBaseUri = base.uri;
 			layerManager.setBaseLayer(base);
 			if (layersPanel.isVisible()) { layersPanel.refresh(); }
-		} else if (layerManager.layers[0]) {
-			Object.assign(layerManager.layers[0], {
-				data: base.data, width: base.width, height: base.height,
-				channels: base.channels, isFloat: base.isFloat, typeMax: base.typeMax,
-			});
-			layerManager.canvasWidth = base.width;
-			layerManager.canvasHeight = base.height;
+		} else {
+			// Same image re-rendered: refresh the matching layer's data in place
+			// (it may have been reordered). If the user removed that layer, leave
+			// the stack untouched — don't re-inject it.
+			const existing = layerManager.layers.find(l => l.uri === base.uri);
+			if (existing) {
+				Object.assign(existing, {
+					data: base.data, width: base.width, height: base.height,
+					channels: base.channels, isFloat: base.isFloat, typeMax: base.typeMax,
+				});
+				layerManager.canvasWidth = base.width;
+				layerManager.canvasHeight = base.height;
+			}
 		}
 	}
 
@@ -1160,7 +1166,15 @@ import { LayersPanel } from './modules/layers-panel.js';
 	function setupLayerMoveDrag() {
 		container.addEventListener('mousedown', (e) => {
 			if (!layerManager.active || !layersPanel.movingLayerId || !imageElement) { return; }
+			const target = /** @type {Node|null} */ (e.target);
+			// Never hijack clicks on the panel — its controls must keep working.
+			if (layersPanel.root && target && layersPanel.root.contains(target)) { return; }
+			// Only begin a move when the drag starts on the image/canvas itself.
+			const onImage = target === imageElement || target === canvas ||
+				(!!target && !!imageElement.contains && imageElement.contains(target));
+			if (!onImage) { return; }
 			_layerDrag = { id: layersPanel.movingLayerId, lastX: e.clientX, lastY: e.clientY };
+			// Capture-phase stop so the zoom/pan controller doesn't also react.
 			e.preventDefault();
 			e.stopPropagation();
 		}, true);
@@ -1175,10 +1189,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 				_layerDrag.lastX = e.clientX;
 				_layerDrag.lastY = e.clientY;
 				recompositeLayers();
-				layersPanel.refresh();
 			}
 		});
-		window.addEventListener('mouseup', () => { _layerDrag = null; });
+		window.addEventListener('mouseup', () => {
+			if (_layerDrag) {
+				_layerDrag = null;
+				layersPanel.refresh(); // sync the numeric offset inputs after the drag
+			}
+		});
 	}
 
 	function swapImageElementToCanvas() {
