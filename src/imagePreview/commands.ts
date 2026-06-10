@@ -243,7 +243,9 @@ async function expandGlobPatternAsync(pattern: string, anchor: vscode.Uri, isCan
 	const beforeWild = pattern.substring(0, firstWild);
 	const endsWithSep = beforeWild.endsWith('/') || beforeWild.endsWith('\\');
 	const baseDir = pp.dirname(endsWithSep ? beforeWild + '_' : beforeWild);
-	const remainder = pattern.substring(baseDir.length + 1);
+	// dirname of a root-level path returns the root itself ('/' or 'C:\'),
+	// which already ends with a separator — don't skip an extra character.
+	const remainder = pattern.substring(baseDir.endsWith(pp.sep) ? baseDir.length : baseDir.length + 1);
 	const segments = remainder.split(/[/\\]/);
 
 	const results: vscode.Uri[] = [];
