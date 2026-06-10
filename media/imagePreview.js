@@ -2402,10 +2402,17 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * @param {number} gen
 	 */
 	async function loadImageByType(uri, resourceUri, gen) {
-		// Yield one macrotask so a burst of queued switch messages (rapid key
-		// presses) is fully processed before any decode starts; all but the
-		// newest switch bail out here instead of each running a complete load.
-		await new Promise(resolve => setTimeout(resolve, 0));
+		// Wait until the browser has painted the loading UI (counter, filename
+		// badge, loading dot) before starting synchronous decode work, so every
+		// switch gives immediate visual feedback. This also lets a burst of
+		// queued switch messages (rapid key presses) be processed first — all
+		// but the newest switch bail out here instead of running a full load.
+		// The plain timeout races as a fallback because requestAnimationFrame
+		// does not fire while the webview is hidden.
+		await new Promise(resolve => {
+			requestAnimationFrame(() => setTimeout(resolve, 0));
+			setTimeout(resolve, 100);
+		});
 		if (gen !== _loadGeneration) { return; }
 		const lower = resourceUri.toLowerCase();
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
