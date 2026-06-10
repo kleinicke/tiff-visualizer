@@ -36,6 +36,7 @@ export interface IImagePreview {
 	updateStatusBar(): void;
 	readonly imageCollection: readonly vscode.Uri[];
 	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
+	ensureLocalResourceRoots(uris: vscode.Uri[]): void;
 	pastePosition(): void;
 	jumpToCollectionIndex(index: number): void;
 	removeCurrentFromCollection(): void;

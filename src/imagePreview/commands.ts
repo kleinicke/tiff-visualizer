@@ -289,13 +289,20 @@ async function collectImageFiles(uris: vscode.Uri[]): Promise<vscode.Uri[]> {
  * Shared by the Explorer context-menu path and the wildcard pattern picker.
  */
 async function addUrisToCollection(
-	activePreview: { addToImageCollection(uri: vscode.Uri): Promise<boolean> },
+	activePreview: {
+		addToImageCollection(uri: vscode.Uri): Promise<boolean>;
+		ensureLocalResourceRoots(uris: vscode.Uri[]): void;
+	},
 	uris: vscode.Uri[],
 ): Promise<{ added: number; skipped: number }> {
 	const result = { added: 0, skipped: 0 };
 	if (uris.length === 0) {
 		return result;
 	}
+
+	// Register all folders in one shot so the webview reloads at most once
+	// (ideally zero times for in-workspace images) instead of per file.
+	activePreview.ensureLocalResourceRoots(uris);
 
 	let firstAdded: vscode.Uri | undefined;
 	await vscode.window.withProgress(

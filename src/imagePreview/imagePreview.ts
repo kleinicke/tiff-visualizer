@@ -405,6 +405,31 @@ export class ImagePreview extends MediaPreview {
 		return this._imageCollection;
 	}
 
+	/**
+	 * Ensure the webview's localResourceRoots cover the directories of the given
+	 * URIs, reassigning webview.options at most once. Reassigning options reloads
+	 * the webview, so callers should pass a whole batch to avoid repeated reloads,
+	 * and this is a no-op when every folder is already covered.
+	 */
+	public ensureLocalResourceRoots(uris: vscode.Uri[]): void {
+		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
+		const have = new Set(currentRoots.map(r => r.toString()));
+		const toAdd: vscode.Uri[] = [];
+		for (const uri of uris) {
+			const dir = Utils.dirname(uri);
+			const key = dir.toString();
+			if (!have.has(key) && !toAdd.some(d => d.toString() === key)) {
+				toAdd.push(dir);
+			}
+		}
+		if (toAdd.length > 0) {
+			this._webviewEditor.webview.options = {
+				...this._webviewEditor.webview.options,
+				localResourceRoots: [...currentRoots, ...toAdd],
+			};
+		}
+	}
+
 	/** Returns true if the image was added, false if it was already in the collection. */
 	public async addToImageCollection(uri: vscode.Uri): Promise<boolean> {
 		if (this._imageCollection.some(img => img.toString() === uri.toString())) {
@@ -413,16 +438,10 @@ export class ImagePreview extends MediaPreview {
 
 		this._imageCollection.push(uri);
 
-		// Expand localResourceRoots to include the new image's directory so
-		// the webview fetch() can access files outside the initial file's folder.
-		const newDir = Utils.dirname(uri);
-		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
-		if (!currentRoots.some(r => r.toString() === newDir.toString())) {
-			this._webviewEditor.webview.options = {
-				...this._webviewEditor.webview.options,
-				localResourceRoots: [...currentRoots, newDir],
-			};
-		}
+		// Make sure the webview can fetch this image's folder. Reassigning
+		// webview.options reloads the webview, so this is a no-op when the folder
+		// is already covered (e.g. it's inside the workspace).
+		this.ensureLocalResourceRoots([uri]);
 
 		// Start preloading the image data (async, don't wait)
 		this.preloadImageData(uri);
