@@ -24,12 +24,15 @@ export class PpmProcessor {
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     /** @param {string} src */
     async processPpm(src) {
-        const response = await fetch(src);
+        const response = await fetch(src, { signal: this.loadSignal });
         const buffer = await response.arrayBuffer();
+        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         const { width, height, channels, data, maxval, format } = this._parsePpm(buffer);
 
         // Keep RGB data for color display

@@ -50,6 +50,8 @@ export class NpyProcessor {
         /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     /** @param {string} src */
@@ -58,8 +60,9 @@ export class NpyProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        const response = await fetch(src);
+        const response = await fetch(src, { signal: this.loadSignal });
         const buffer = await response.arrayBuffer();
+        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         const view = new DataView(buffer);
 
         // NPZ (ZIP) signature 0x04034b50

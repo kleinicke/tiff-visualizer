@@ -23,12 +23,15 @@ export class PfmProcessor {
         this._isInitialLoad = true; // Track if this is the first render
         /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     /** @param {string} src */
     async processPfm(src) {
-        const response = await fetch(src);
+        const response = await fetch(src, { signal: this.loadSignal });
         const buffer = await response.arrayBuffer();
+        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         const { width, height, channels, data } = this._parsePfm(buffer);
         // Keep color data for RGB PFM files
         let displayData = data;

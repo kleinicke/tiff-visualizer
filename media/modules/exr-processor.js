@@ -33,6 +33,8 @@ export class ExrProcessor {
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
 		this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+		/** @type {AbortSignal|undefined} */
+		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 	}
 
 	/**
@@ -74,8 +76,9 @@ export class ExrProcessor {
 				throw new Error('parseExr library not loaded. Make sure parse-exr is included.');
 			}
 
-			const response = await fetch(src);
+			const response = await fetch(src, { signal: this.loadSignal });
 			const buffer = await response.arrayBuffer();
+			if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
 			// Invalidate stats cache for new image
 			this._cachedStats = undefined;

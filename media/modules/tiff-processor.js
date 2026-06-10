@@ -40,6 +40,8 @@ export class TiffProcessor {
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
+		/** @type {AbortSignal|undefined} */
+		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 
 		// WASM decoder
 		this._wasmProcessor = new TiffWasmProcessor();
@@ -94,8 +96,9 @@ export class TiffProcessor {
 	async processTiff(src) {
 		const startTime = performance.now();
 		try {
-			const response = await fetch(src);
+			const response = await fetch(src, { signal: this.loadSignal });
 			const buffer = await response.arrayBuffer();
+			if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
 

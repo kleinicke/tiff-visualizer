@@ -29,6 +29,8 @@ export class WebImageProcessor {
         this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined;
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; superseded loads are discarded by the caller's generation check
     }
 
     /** @param {string} src */

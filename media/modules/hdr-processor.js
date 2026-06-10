@@ -29,12 +29,15 @@ export class HdrProcessor {
         this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined;
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     /** @param {string} src */
     async processHdr(src) {
-        const response = await fetch(src);
+        const response = await fetch(src, { signal: this.loadSignal });
         const buffer = await response.arrayBuffer();
+        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // parse-hdr returns { shape:[width,height], exposure, gamma, data:Float32Array }
         // data is RGBA stride-4, alpha is always 1.0

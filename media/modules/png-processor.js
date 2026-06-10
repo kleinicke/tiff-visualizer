@@ -38,6 +38,8 @@ export class PngProcessor {
         this._lastRenderReusedOriginalImageData = false;
         /** @type {{image: HTMLImageElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, tempCanvas?: HTMLCanvasElement, tempCtx?: CanvasRenderingContext2D | null, width: number, height: number, format: string} | null} */
         this._lazyNativeReadback = null;
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     /**
@@ -60,8 +62,9 @@ export class PngProcessor {
             this._cachedStats = undefined;
             this._cachedStatsRgb24Mode = false;
 
-            const response = await fetch(src);
+            const response = await fetch(src, { signal: this.loadSignal });
             const arrayBuffer = await response.arrayBuffer();
+            if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // Quick bit depth detection from PNG IHDR chunk (just reads byte 24)
             const bitDepth = this._detectPngBitDepth(arrayBuffer);
