@@ -142,7 +142,7 @@
       },
       {
         "command": "tiffVisualizer.toggleLayers",
-        "title": "Toggle Layers Panel",
+        "title": "Open Layers View",
         "category": "TIFF Visualizer"
       },
       {
