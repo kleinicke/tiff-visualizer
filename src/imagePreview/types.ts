@@ -37,7 +37,6 @@ export interface IImagePreview {
 	updateStatusBar(): void;
 	readonly imageCollection: readonly vscode.Uri[];
 	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
-	toggleLayers(): void;
 	addLayerImages(uris: vscode.Uri[]): void;
 	getViewMode(): 'layers' | 'collection' | 'normal';
 	setLayerMode(active: boolean): void;

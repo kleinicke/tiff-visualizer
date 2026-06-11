@@ -1326,13 +1326,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 				zoomController.updateScale(message.scale);
 				break;
 
-			case 'toggleLayers':
-				syncBaseLayer();
-				// toggle() fires onVisibilityChange, which sets active state,
-				// notifies the extension and re-renders.
-				layersPanel.toggle();
-				break;
-
 			case 'addLayerImages': {
 				syncBaseLayer();
 				layersPanel.show();

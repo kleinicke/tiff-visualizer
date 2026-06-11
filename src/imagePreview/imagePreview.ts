@@ -458,15 +458,6 @@ export class ImagePreview extends MediaPreview {
 		this._webviewEditor.reveal();
 	}
 
-	/** Toggle the Layers compositing panel in the webview. */
-	public toggleLayers(): void {
-		if (this._imageCollection.length > 1) {
-			vscode.window.showWarningMessage('Layers are not available for a multi-image collection. Open a single image to use layers.');
-			return;
-		}
-		this._webviewEditor.webview.postMessage({ type: 'toggleLayers' });
-	}
-
 	/**
 	 * Send images to the webview to be decoded and added as layers. Expands
 	 * localResourceRoots so the webview can fetch files outside the initial folder.
