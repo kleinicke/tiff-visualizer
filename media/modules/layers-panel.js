@@ -13,12 +13,16 @@ export class LayersPanel {
 	/**
 	 * @param {import('./layer-manager.js').LayerManager} manager
 	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void, onPersist?: () => void }} callbacks
+	 * @param {{ closable?: boolean }} [options]
 	 */
-	constructor(manager, callbacks) {
+	constructor(manager, callbacks, options = {}) {
 		this.manager = manager;
 		this.onChange = callbacks.onChange;
 		this.onVisibilityChange = callbacks.onVisibilityChange;
 		this.onPersist = callbacks.onPersist;
+		// In a dedicated Layers window the panel can't be closed (close the tab
+		// instead); only the minimize control is shown.
+		this.closable = options.closable !== false;
 		/** @type {HTMLElement|null} */
 		this.root = null;
 		/** @type {HTMLElement|null} */
@@ -54,15 +58,16 @@ export class LayersPanel {
 		minimizeBtn.addEventListener('click', () => this.toggleCollapsed());
 		this.minimizeBtn = minimizeBtn;
 
-		const closeBtn = document.createElement('button');
-		closeBtn.className = 'layers-btn layers-close';
-		closeBtn.title = 'Close panel';
-		closeBtn.textContent = '×';
-		closeBtn.addEventListener('click', () => this.hide());
-
 		header.appendChild(title);
 		header.appendChild(minimizeBtn);
-		header.appendChild(closeBtn);
+		if (this.closable) {
+			const closeBtn = document.createElement('button');
+			closeBtn.className = 'layers-btn layers-close';
+			closeBtn.title = 'Close panel';
+			closeBtn.textContent = '×';
+			closeBtn.addEventListener('click', () => this.hide());
+			header.appendChild(closeBtn);
+		}
 
 		const list = document.createElement('div');
 		list.className = 'layers-list';

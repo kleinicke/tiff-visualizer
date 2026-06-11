@@ -727,7 +727,7 @@ export function registerImagePreviewCommands(
 	}));
 
 
-	// Toggle the Layers compositing panel in the active preview.
+	// Open (or reveal) the dedicated Layers window for the active image.
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleLayers', () => {
 		logCommand('toggleLayers', 'start');
 		const activePreview = previewManager.activePreview;
@@ -736,7 +736,11 @@ export function registerImagePreviewCommands(
 			logCommand('toggleLayers', 'error', 'No active preview');
 			return;
 		}
-		activePreview.toggleLayers();
+		if (activePreview.getViewMode() === 'collection') {
+			vscode.window.showWarningMessage('Layers are not available for a multi-image collection. Open a single image to use layers.');
+			return;
+		}
+		previewManager.openLayerView(activePreview.resource);
 		logCommand('toggleLayers', 'success');
 	}));
 
