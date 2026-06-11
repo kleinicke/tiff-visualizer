@@ -38,7 +38,6 @@ export interface IImagePreview {
 	readonly imageCollection: readonly vscode.Uri[];
 	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
 	ensureLocalResourceRoots(uris: vscode.Uri[]): void;
-	toggleLayers(): void;
 	addLayerImages(uris: vscode.Uri[]): void;
 	getViewMode(): 'layers' | 'collection' | 'normal';
 	setLayerMode(active: boolean): void;

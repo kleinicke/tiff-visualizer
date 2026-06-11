@@ -27,6 +27,8 @@ export interface CopiedPositionState {
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
+	// Standalone webview panel type for the dedicated Layers window.
+	public static readonly layerViewType = 'tiffVisualizer.layerView';
 
 	// Export the viewType to ensure it's preserved in the build
 	public static getViewType() {
@@ -276,7 +278,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		}
 
 		const panel = vscode.window.createWebviewPanel(
-			'tiffVisualizer.layerView',
+			ImagePreviewManager.layerViewType,
 			`Layers — ${Utils.basename(resource)}`,
 			vscode.ViewColumn.Active,
 			{
@@ -289,6 +291,17 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 				],
 			},
 		);
+		const document: vscode.CustomDocument = { uri: resource, dispose: () => { } };
+		this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
+	}
+
+	/**
+	 * Re-attach a Layers window that VS Code restored after a restart (via the
+	 * WebviewPanelSerializer). The panel already exists; we wire an ImagePreview
+	 * to it and the webview restores its layer stack from persisted state.
+	 */
+	public reviveLayerView(panel: vscode.WebviewPanel, resource: vscode.Uri): void {
+		panel.title = `Layers — ${Utils.basename(resource)}`;
 		const document: vscode.CustomDocument = { uri: resource, dispose: () => { } };
 		this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
 	}

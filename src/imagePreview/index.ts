@@ -74,6 +74,19 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		supportsMultipleEditorsPerDocument: true,
 	}));
 
+	// Restore dedicated Layers windows after a full VS Code restart. The webview
+	// reloads and rebuilds its layer stack from its persisted state.
+	disposables.push(vscode.window.registerWebviewPanelSerializer(ImagePreviewManager.layerViewType, {
+		async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: any) {
+			const resourceUri = state?.currentResourceUri;
+			if (!resourceUri) {
+				panel.dispose();
+				return;
+			}
+			previewManager.reviveLayerView(panel, vscode.Uri.parse(resourceUri));
+		}
+	}));
+
 	// Register commands
 	disposables.push(registerImagePreviewCommands(context, previewManager, sizeStatusBarEntry, binarySizeStatusBarEntry));
 
