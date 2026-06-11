@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ZoomStatusBarEntry } from './zoomStatusBarEntry';
@@ -227,9 +228,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		extensionRoot: vscode.Uri,
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
-		openTimestamp?: number
-	): void {
-		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.layersStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp);
+		openTimestamp?: number,
+		surfaceMode: 'editor' | 'layers' = 'editor'
+	): any {
+		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.layersStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp, surfaceMode);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
@@ -253,6 +255,42 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 				this.scheduleMenuVisibilityClear();
 			}
 		});
+
+		return preview;
+	}
+
+	/**
+	 * Open (or reveal) a dedicated, retained Layers view for an image. It is a
+	 * standalone webview panel running the same preview app in 'layers' mode —
+	 * so it gets the status bar, pixel inspector, histogram and zoom for free —
+	 * but with a custom tab title and kept in memory across tab switches.
+	 */
+	public openLayerView(resource: vscode.Uri): void {
+		// Reveal an existing layer view for this image if there is one.
+		for (const preview of this._previews) {
+			if ('getSurfaceMode' in preview && (preview as any).getSurfaceMode() === 'layers'
+				&& preview.resource.toString() === resource.toString()) {
+				(preview as any).reveal();
+				return;
+			}
+		}
+
+		const panel = vscode.window.createWebviewPanel(
+			'tiffVisualizer.layerView',
+			`Layers — ${Utils.basename(resource)}`,
+			vscode.ViewColumn.Active,
+			{
+				enableScripts: true,
+				retainContextWhenHidden: true,
+				localResourceRoots: [
+					Utils.dirname(resource),
+					this.extensionRoot,
+					...(vscode.workspace.workspaceFolders?.map(f => f.uri) ?? []),
+				],
+			},
+		);
+		const document: vscode.CustomDocument = { uri: resource, dispose: () => { } };
+		this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
 	}
 
 	public get activePreview() {

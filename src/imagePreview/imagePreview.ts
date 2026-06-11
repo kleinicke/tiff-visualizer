@@ -36,6 +36,8 @@ export class ImagePreview extends MediaPreview {
 	// True while the Layers compositing panel is active for this view. A view is
 	// either a layer view or a collection, never both.
 	private _isLayerView: boolean = false;
+	// 'layers' when this preview is the dedicated, retained Layers window.
+	private _surfaceMode: 'editor' | 'layers' = 'editor';
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
 
@@ -78,10 +80,16 @@ export class ImagePreview extends MediaPreview {
 		histogramStatusBarEntry: HistogramStatusBarEntry,
 		colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 		private readonly _manager: IImagePreviewManager,
-		openTimestamp?: number
+		openTimestamp?: number,
+		surfaceMode: 'editor' | 'layers' = 'editor'
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
 		this._openTimestamp = openTimestamp || Date.now();
+		this._surfaceMode = surfaceMode;
+		// A dedicated Layers window is always a layer view (collections disabled).
+		if (surfaceMode === 'layers') {
+			this._isLayerView = true;
+		}
 
 		this._sizeStatusBarEntry = sizeStatusBarEntry;
 		this._zoomStatusBarEntry = zoomStatusBarEntry;
@@ -473,6 +481,15 @@ export class ImagePreview extends MediaPreview {
 		this._webviewEditor.webview.postMessage({ type: 'layerUrisResolved', map });
 	}
 
+	public getSurfaceMode(): 'editor' | 'layers' {
+		return this._surfaceMode;
+	}
+
+	/** Bring this preview's tab to the foreground. */
+	public reveal(): void {
+		this._webviewEditor.reveal();
+	}
+
 	/** Toggle the Layers compositing panel in the webview. */
 	public toggleLayers(): void {
 		if (this._imageCollection.length > 1) {
@@ -788,6 +805,7 @@ export class ImagePreview extends MediaPreview {
 			src: uri.toString(),
 			folder: folderUri.toString(),
 			version: version,
+			surfaceMode: this._surfaceMode, // 'layers' = dedicated Layers window
 			loadStartTime: this._openTimestamp // For total elapsed time measurement (captured when file was opened)
 		};
 

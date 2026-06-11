@@ -109,7 +109,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			}
 			scheduleSaveState();
 		},
-	});
+	}, { closable: settingsManager.settings.surfaceMode !== 'layers' });
 	// Pixel inspector reads the composite value when compositing is active.
 	mouseHandler.compositeValueProvider = (x, y) =>
 		(layerManager.active && layerManager.hasExtraLayers()) ? layerManager.getCompositeValueAt(x, y) : null;
@@ -996,6 +996,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 		syncBaseLayer();
 		// Restore a saved layer stack after a webview reload (once the base exists).
 		maybeRestoreLayers();
+		// In a dedicated Layers window, open the panel automatically on first load.
+		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown) {
+			_layerSurfaceShown = true;
+			layersPanel.show();
+		}
 		if (layerManager.active && layerManager.hasExtraLayers()) {
 			recompositeLayers();
 		}
@@ -1225,6 +1230,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 	// ---- Layer restore after a webview reload (tab switch) ----
 	let _layersRestoreDone = false;
+	// True once the dedicated Layers window has auto-opened its panel.
+	let _layerSurfaceShown = false;
 
 	/** Kick off layer-stack restore once the base image has loaded. */
 	function maybeRestoreLayers() {
