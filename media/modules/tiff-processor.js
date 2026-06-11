@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
+import { PerfTrace } from './perf-trace.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -103,6 +104,7 @@ export class TiffProcessor {
 			if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
+			PerfTrace.mark('fetch');
 
 			// Wait for WASM initialization if it's in progress
 			if (!this._wasmAvailable && this._wasmProcessor) {
@@ -132,6 +134,7 @@ export class TiffProcessor {
 					wasmResult = workerResponse.result;
 					localBuffer = null;
 					console.log(`[TiffProcessor] Worker WASM decode time: ${(performance.now() - workerStart).toFixed(2)}ms`);
+					PerfTrace.mark('decode-worker');
 				} else {
 					workerTiffFailed = true;
 					localBuffer = (workerResponse?.buffer && workerResponse.buffer.byteLength > 0) ? workerResponse.buffer : null;
@@ -151,6 +154,7 @@ export class TiffProcessor {
 					wasmResult = await this._wasmProcessor.decode(localBuffer.slice(0));
 					const decodeTime = performance.now() - decodeStart;
 					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
+					PerfTrace.mark('decode-wasm-local');
 				} catch (wasmError) {
 					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
 					// Disable WASM for the rest of the session — a failure can leave
@@ -188,6 +192,7 @@ export class TiffProcessor {
 							}
 							rasters.push(channel);
 						}
+						PerfTrace.mark('deinterleave');
 					}
 
 					// Store interleaved data
@@ -300,6 +305,7 @@ export class TiffProcessor {
 			const rasters = await image.readRasters();
 			const decodeTime = performance.now() - decodeStart;
 			console.log(`[TiffProcessor] geotiff.js decode time: ${decodeTime.toFixed(2)}ms`);
+			PerfTrace.mark('decode-geotiff');
 
 			const samplesPerPixel = image.getSamplesPerPixel();
 			const bitsPerSample = image.getBitsPerSample();
@@ -326,6 +332,7 @@ export class TiffProcessor {
 					}
 				}
 			}
+			PerfTrace.mark('interleave-raw');
 
 			// Store TIFF data for pixel inspection and re-rendering
 			this.rawTiffData = {
@@ -398,6 +405,7 @@ export class TiffProcessor {
 		for (let i = 0; i < rasters.length; i++) {
 			rastersCopy.push(new Float32Array(rasters[i]));
 		}
+		PerfTrace.mark('raster-copy');
 
 		// Apply mask filtering if enabled
 		const settings = this.settingsManager.settings;
@@ -446,6 +454,7 @@ export class TiffProcessor {
 					}
 				}
 			}
+			PerfTrace.mark('finite-scan');
 		}
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
@@ -547,6 +556,7 @@ export class TiffProcessor {
 
 			this._lastStatistics = stats;
 			this._lastStatisticsRgb24Mode = currentRgb24Mode;
+			PerfTrace.mark('stats');
 		}
 
 		// Send stats to VS Code
@@ -582,6 +592,7 @@ export class TiffProcessor {
 				}
 			}
 		}
+		PerfTrace.mark('interleave');
 
 		// Create options object
 		const options = {

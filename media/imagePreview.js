@@ -18,6 +18,7 @@ import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
+import { PerfTrace } from './modules/perf-trace.js';
 
 /**
  * Main Image Preview Application
@@ -375,6 +376,13 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 		});
 	}
 
+	// PerfTrace summaries go to both the webview console and the extension's
+	// Output channel, so timing is visible without opening Developer Tools.
+	PerfTrace.setLogger((message) => {
+		console.log(message);
+		logToOutput(message);
+	});
+
 	/**
 	 * Helper to render ImageData to canvas using createImageBitmap for performance
 	 * @param {ImageData} imageData
@@ -394,6 +402,7 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 		if (pixelCount > 25_000_000) {
 			ctx.putImageData(imageData, 0, 0);
 			console.log(`[Canvas] putImageData upload took ${(performance.now() - start).toFixed(2)}ms`);
+			PerfTrace.mark('canvas-upload');
 			return;
 		}
 		try {
@@ -407,6 +416,7 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 			ctx.putImageData(imageData, 0, 0);
 			console.log(`[Canvas] putImageData fallback took ${(performance.now() - fallbackStart).toFixed(2)}ms`);
 		}
+		PerfTrace.mark('canvas-upload');
 	}
 
 	/**
@@ -454,6 +464,7 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 	 * Handle image loading error, with optional specific message.
 	 */
 	function onImageError(/** @type {string} */ message = '') {
+		PerfTrace.cancel();
 		hasLoadedImage = true;
 		// Remove previous image/canvas so the error message shows on a clean background
 		container.querySelectorAll('img, canvas').forEach(el => {
@@ -893,6 +904,14 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 
 		// Update histogram if visible
 		updateHistogramData();
+
+		// Close the switch trace once the final pixels are shown. With a deferred
+		// render pending this call is the placeholder finalize — keep the trace
+		// open; the post-deferred finalize (pending cleared by then) ends it.
+		PerfTrace.mark('finalize');
+		if (!hasPendingDeferred) {
+			PerfTrace.end();
+		}
 	}
 
 	function swapImageElementToCanvas() {
@@ -993,6 +1012,9 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 
 				// Check if this is a deferred render trigger (initial load)
 				if (message.isInitialRender && canvas) {
+					// Time between formatInfo going out and per-format settings
+					// coming back — extension-host latency, not main-thread work.
+					PerfTrace.mark('await-settings');
 					// Trigger deferred rendering for the appropriate processor
 					let deferredImageData = null;
 					let deferredCanvasAlreadyRendered = false;
@@ -2338,6 +2360,10 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
 
+		// Trace where this switch spends its time; the summary is logged from
+		// finalizeImageSetup once the final pixels are on screen.
+		PerfTrace.begin(`switch ${resourceUri.split('/').pop()}`);
+
 		// Abort the previous in-flight load: cancels its network fetch and lets
 		// the processors stop before decoding, instead of the superseded load
 		// running to completion and blocking the next image.
@@ -2421,6 +2447,7 @@ import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 			setTimeout(resolve, 100);
 		});
 		if (gen !== _loadGeneration) { return; }
+		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
 			handleTiff(uri, gen);

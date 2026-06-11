@@ -13,6 +13,8 @@
  * behavior and performance are then identical to not having a worker at all.
  */
 
+import { PerfTrace } from './perf-trace.js';
+
 const DECODE_TIMEOUT_MS = 30000;
 
 export class DecodeWorkerClient {
@@ -183,6 +185,8 @@ export class DecodeWorkerClient {
 			throw new DOMException('Load superseded', 'AbortError');
 		}
 		if (response?.ok) {
+			// Spans the caller's fetch too (it runs just before this helper).
+			PerfTrace.mark(`fetch+decode-worker(${format})`);
 			return response.result;
 		}
 		if (response) {
@@ -193,6 +197,8 @@ export class DecodeWorkerClient {
 			const refetched = await fetch(src, { signal });
 			localBuffer = await refetched.arrayBuffer();
 		}
-		return parseLocal(localBuffer);
+		const result = await parseLocal(localBuffer);
+		PerfTrace.mark(`fetch+decode-local(${format})`);
+		return result;
 	}
 }

@@ -1,6 +1,8 @@
 // @ts-check
 "use strict";
 
+import { PerfTrace } from './perf-trace.js';
+
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 
 /**
@@ -219,6 +221,7 @@ export class ImageStatsCalculator {
         }
 
         console.log(`[Stats] Float stats calculation took ${(performance.now() - perfStart).toFixed(2)}ms`);
+        PerfTrace.mark('stats');
         return { min: minVal, max: maxVal };
     }
 
@@ -252,6 +255,7 @@ export class ImageStatsCalculator {
             }
         }
 
+        PerfTrace.mark('stats');
         return { min: minVal, max: maxVal };
     }
 }
@@ -280,9 +284,11 @@ export class ImageRenderer {
         if (options.flipY) {
             const flipped = this._flipY(result);
             console.log(`[Render] Total render time: ${(performance.now() - perfStart).toFixed(2)}ms (with flip)`);
+            PerfTrace.mark('render');
             return flipped;
         }
         console.log(`[Render] Total render time: ${(performance.now() - perfStart).toFixed(2)}ms`);
+        PerfTrace.mark('render');
         return result;
     }
 
