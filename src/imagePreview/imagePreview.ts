@@ -447,6 +447,32 @@ export class ImagePreview extends MediaPreview {
 		this._manager.refreshActiveMode();
 	}
 
+	/**
+	 * Convert layer resource URIs to webview-safe URIs so the webview can re-fetch
+	 * them when restoring a layer stack after a reload. Ensures the folders are in
+	 * localResourceRoots first.
+	 */
+	public resolveLayerUris(resourceUris: string[]): void {
+		const uris = resourceUris.map(s => vscode.Uri.parse(s));
+
+		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
+		const rootsToAdd = uris
+			.map(u => Utils.dirname(u))
+			.filter(dir => !currentRoots.some(r => r.toString() === dir.toString()));
+		if (rootsToAdd.length > 0) {
+			this._webviewEditor.webview.options = {
+				...this._webviewEditor.webview.options,
+				localResourceRoots: [...currentRoots, ...rootsToAdd],
+			};
+		}
+
+		const map: { [key: string]: string } = {};
+		for (const u of uris) {
+			map[u.toString()] = this._webviewEditor.webview.asWebviewUri(u).toString();
+		}
+		this._webviewEditor.webview.postMessage({ type: 'layerUrisResolved', map });
+	}
+
 	/** Toggle the Layers compositing panel in the webview. */
 	public toggleLayers(): void {
 		if (this._imageCollection.length > 1) {

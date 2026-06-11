@@ -12,12 +12,13 @@ import { BLEND_MODES, MASK_CONDITIONS } from './layer-compositor.js';
 export class LayersPanel {
 	/**
 	 * @param {import('./layer-manager.js').LayerManager} manager
-	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void }} callbacks
+	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void, onPersist?: () => void }} callbacks
 	 */
 	constructor(manager, callbacks) {
 		this.manager = manager;
 		this.onChange = callbacks.onChange;
 		this.onVisibilityChange = callbacks.onVisibilityChange;
+		this.onPersist = callbacks.onPersist;
 		/** @type {HTMLElement|null} */
 		this.root = null;
 		/** @type {HTMLElement|null} */
@@ -102,6 +103,7 @@ export class LayersPanel {
 	toggleCollapsed() {
 		this.collapsed = !this.collapsed;
 		this._applyCollapsed();
+		this.onPersist?.();
 	}
 
 	_applyCollapsed() {

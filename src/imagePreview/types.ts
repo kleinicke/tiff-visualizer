@@ -42,6 +42,7 @@ export interface IImagePreview {
 	addLayerImages(uris: vscode.Uri[]): void;
 	getViewMode(): 'layers' | 'collection' | 'normal';
 	setLayerMode(active: boolean): void;
+	resolveLayerUris(resourceUris: string[]): void;
 	pastePosition(): void;
 	jumpToCollectionIndex(index: number): void;
 	removeCurrentFromCollection(): void;

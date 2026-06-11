@@ -171,6 +171,35 @@ export class LayerManager {
 	}
 
 	/**
+	 * Build a layer object with explicit settings (used when restoring a saved
+	 * stack). Does not add it to the stack.
+	 * @param {LayerInput} input
+	 * @param {Partial<import('./layer-compositor.js').Layer>} settings
+	 * @returns {import('./layer-compositor.js').Layer}
+	 */
+	createLayer(input, settings = {}) {
+		const l = this._toLayer(input, settings.offsetX ?? 0, settings.offsetY ?? 0);
+		l.opacity = settings.opacity ?? 1;
+		l.blendMode = settings.blendMode ?? 'normal';
+		l.visible = settings.visible !== false;
+		l.maskCondition = settings.maskCondition;
+		l.name = settings.name ?? input.name;
+		return l;
+	}
+
+	/**
+	 * Replace the whole stack at once (used when restoring after a reload).
+	 * @param {import('./layer-compositor.js').Layer[]} layers
+	 * @param {number} canvasWidth
+	 * @param {number} canvasHeight
+	 */
+	setLayers(layers, canvasWidth, canvasHeight) {
+		this.layers = layers;
+		this.canvasWidth = canvasWidth;
+		this.canvasHeight = canvasHeight;
+	}
+
+	/**
 	 * Build an internal layer object with a fresh id and default appearance.
 	 * @param {LayerInput} layer
 	 * @param {number} offsetX

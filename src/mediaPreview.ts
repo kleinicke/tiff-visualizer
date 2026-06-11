@@ -29,9 +29,9 @@ export abstract class MediaPreview extends Disposable {
 			localResourceRoots: [
 				Utils.dirname(_resource),
 				extensionRoot,
-				// Include workspace folders up front so adding images from the
-				// workspace to a collection doesn't require reassigning
-				// webview.options later (which reloads the webview).
+				// Include workspace folders up front so adding images to a collection
+				// or as layers (and restoring a layer stack after reload) doesn't
+				// require reassigning webview.options later, which reloads the webview.
 				...(vscode.workspace.workspaceFolders?.map(f => f.uri) ?? []),
 			]
 		};
