@@ -17,7 +17,7 @@ export class LayersStatusBarEntry extends PreviewStatusBarEntry {
 		);
 		this.entry.command = LAYERS_COMMAND_ID;
 		this.entry.text = '$(layers) Layers';
-		this.entry.tooltip = 'Open the Layers panel — stack images and blend them (add, subtract, multiply, …)';
+		this.entry.tooltip = 'Open the Layers view — stack images and blend them (add, subtract, multiply, …)';
 	}
 
 	public show() {

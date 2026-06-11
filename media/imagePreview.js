@@ -97,6 +97,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: () => { scheduleRecomposite(); scheduleSaveState(); },
 		onPersist: () => { scheduleSaveState(); },
+		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 		onVisibilityChange: (visible) => {
 			layerManager.active = visible;
 			// Tell the extension so it can track layer mode (and block collection ops).
@@ -2507,8 +2508,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			menu.appendChild(createSeparator());
 
-			// Layers compositing panel
-			menu.appendChild(createMenuItem('Toggle Layers Panel', () => {
+			// Layers compositing view
+			menu.appendChild(createMenuItem('Open Layers View', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
 			}));
 

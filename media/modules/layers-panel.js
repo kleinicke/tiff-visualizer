@@ -12,7 +12,7 @@ import { BLEND_MODES, MASK_CONDITIONS } from './layer-compositor.js';
 export class LayersPanel {
 	/**
 	 * @param {import('./layer-manager.js').LayerManager} manager
-	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void, onPersist?: () => void }} callbacks
+	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void, onPersist?: () => void, onAddLayer?: () => void }} callbacks
 	 * @param {{ closable?: boolean }} [options]
 	 */
 	constructor(manager, callbacks, options = {}) {
@@ -20,6 +20,7 @@ export class LayersPanel {
 		this.onChange = callbacks.onChange;
 		this.onVisibilityChange = callbacks.onVisibilityChange;
 		this.onPersist = callbacks.onPersist;
+		this.onAddLayer = callbacks.onAddLayer;
 		// In a dedicated Layers window the panel can't be closed (close the tab
 		// instead); only the minimize control is shown.
 		this.closable = options.closable !== false;
@@ -51,6 +52,12 @@ export class LayersPanel {
 		title.textContent = 'Layers';
 		this.titleEl = title;
 
+		const addBtn = document.createElement('button');
+		addBtn.className = 'layers-btn layers-add';
+		addBtn.title = 'Add image(s) as layers';
+		addBtn.textContent = '+';
+		addBtn.addEventListener('click', () => this.onAddLayer?.());
+
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
 		minimizeBtn.title = 'Minimize / expand panel';
@@ -59,6 +66,7 @@ export class LayersPanel {
 		this.minimizeBtn = minimizeBtn;
 
 		header.appendChild(title);
+		header.appendChild(addBtn);
 		header.appendChild(minimizeBtn);
 		if (this.closable) {
 			const closeBtn = document.createElement('button');
