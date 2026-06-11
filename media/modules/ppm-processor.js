@@ -33,12 +33,13 @@ export class PpmProcessor {
 
     /** @param {string} src */
     async processPpm(src) {
-        const response = await fetch(src, { signal: this.loadSignal });
+        const loadSignal = this.loadSignal;
+        const response = await fetch(src, { signal: loadSignal });
         const buffer = await response.arrayBuffer();
-        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data, maxval, format } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'ppm', buffer, src, this.loadSignal, (b) => this._parsePpm(b));
+            this.decodeWorker, 'ppm', buffer, src, loadSignal, (b) => this._parsePpm(b));
 
         // Keep RGB data for color display
         const displayData = data;

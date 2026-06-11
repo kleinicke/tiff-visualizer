@@ -34,12 +34,13 @@ export class TgaProcessor {
 
     /** @param {string} src */
     async processTga(src) {
+        const loadSignal = this.loadSignal;
         try {
             this._cachedStats = undefined;
 
-            const response = await fetch(src, { signal: this.loadSignal });
+            const response = await fetch(src, { signal: loadSignal });
             const arrayBuffer = await response.arrayBuffer();
-            if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // @ts-ignore
             const tga = new TgaLoader();

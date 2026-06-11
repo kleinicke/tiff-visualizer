@@ -373,10 +373,11 @@ export class RawProcessor {
      * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData}|null>}
      */
     async extractThumbnail(src) {
-        const response = await fetch(src, { signal: this.loadSignal });
+        const loadSignal = this.loadSignal;
+        const response = await fetch(src, { signal: loadSignal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         this._arrayBuffer = await response.arrayBuffer();
-        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         const jpegBytes = this._extractEmbeddedJpeg(this._arrayBuffer);
         if (!jpegBytes) return null;
@@ -410,6 +411,7 @@ export class RawProcessor {
      * @param {{keepBuffer?: boolean}} [opts] if keepBuffer, don't clear _arrayBuffer after use
      */
     async processRaw(src, decodeSettings = {}, opts = {}) {
+        const loadSignal = this.loadSignal;
         try {
             this._cachedStats = undefined;
             this._lastRaw = null;
@@ -422,12 +424,12 @@ export class RawProcessor {
                 this._arrayBuffer = null; // release reference once consumed
             }
             if (!arrayBuffer) {
-                const response = await fetch(src, { signal: this.loadSignal });
+                const response = await fetch(src, { signal: loadSignal });
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}`);
                 }
                 arrayBuffer = await response.arrayBuffer();
-                if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+                if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
                 if (opts.keepBuffer) {
                     this._arrayBuffer = arrayBuffer;
                 }

@@ -32,12 +32,13 @@ export class PfmProcessor {
 
     /** @param {string} src */
     async processPfm(src) {
-        const response = await fetch(src, { signal: this.loadSignal });
+        const loadSignal = this.loadSignal;
+        const response = await fetch(src, { signal: loadSignal });
         const buffer = await response.arrayBuffer();
-        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'pfm', buffer, src, this.loadSignal, (b) => this._parsePfm(b));
+            this.decodeWorker, 'pfm', buffer, src, loadSignal, (b) => this._parsePfm(b));
         // Keep color data for RGB PFM files
         let displayData = data;
 
@@ -294,5 +295,4 @@ export class PfmProcessor {
         return flipped;
     }
 }
-
 

@@ -22,6 +22,10 @@ import './modules/worker-shims.js';
 // npm parse-exr package lacks channelNames/displayedChannels, so the worker
 // must use the exact same build as the main thread.
 import './parse-exr.js';
+// Keep the compatibility TIFF fallback in this worker too. Some valid TIFF
+// variants are not supported by the Rust decoder, and decoding those with
+// geotiff.js on the webview thread would freeze the UI.
+import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
 import initTiffWasm, { decode_tiff } from './wasm/tiff-wasm.js';
@@ -36,12 +40,43 @@ const pfmParser = new PfmProcessor(/** @type {any} */ (null), null);
 const ppmParser = new PpmProcessor(/** @type {any} */ (null), null);
 
 let tiffWasmReady = false;
+/** @type {Promise<void>|null} */
+let tiffWasmInitPromise = null;
+const TIFF_WASM_INIT_TIMEOUT_MS = 3000;
 
-/** @param {string[]} urls - Candidate URLs for tiff-wasm.wasm */
-async function initTiffDecoder(urls) {
+/** @param {Promise<any>} promise @param {number} ms @param {string} message */
+function withTimeout(promise, ms, message) {
+	return Promise.race([
+		promise,
+		new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+	]);
+}
+
+/**
+ * @param {ArrayBuffer|null|undefined} buffer - Bytes fetched by the webview
+ * @param {string[]} urls - Candidate URLs for ordinary browser workers
+ */
+async function initTiffDecoder(buffer, urls) {
+	if (buffer?.byteLength) {
+		try {
+			await withTimeout(
+				initTiffWasm({ module_or_path: buffer }),
+				TIFF_WASM_INIT_TIMEOUT_MS,
+				'TIFF WASM byte initialization timed out',
+			);
+			tiffWasmReady = true;
+			return;
+		} catch (error) {
+			console.warn('[DecodeWorker] TIFF WASM byte initialization failed', error);
+		}
+	}
 	for (const url of urls || []) {
 		try {
-			await initTiffWasm(url);
+			await withTimeout(
+				initTiffWasm({ module_or_path: url }),
+				TIFF_WASM_INIT_TIMEOUT_MS,
+				'TIFF WASM URL initialization timed out',
+			);
 			tiffWasmReady = true;
 			return;
 		} catch (error) {
@@ -55,7 +90,7 @@ async function initTiffDecoder(urls) {
  * and additionally deinterleaving the per-channel rasters off-thread.
  * @param {ArrayBuffer} buffer
  */
-function decodeTiff(buffer) {
+function decodeTiffWasm(buffer) {
 	if (!tiffWasmReady) {
 		throw new Error('TIFF WASM decoder not initialized');
 	}
@@ -99,10 +134,81 @@ function decodeTiff(buffer) {
 }
 
 /**
+ * Decode TIFF variants unsupported by the Rust decoder without blocking the
+ * webview thread.
+ * @param {ArrayBuffer} buffer
+ * @param {string} wasmError
+ */
+async function decodeTiffGeotiff(buffer, wasmError) {
+	const tiff = await WorkerGeoTIFF.fromArrayBuffer(buffer);
+	const image = await tiff.getImage();
+	const width = image.getWidth();
+	const height = image.getHeight();
+	const samplesPerPixel = image.getSamplesPerPixel();
+	const rawBitsPerSample = image.getBitsPerSample();
+	const rawSampleFormat = image.getSampleFormat();
+	const bitsPerSample = Array.isArray(rawBitsPerSample) ? rawBitsPerSample[0] : rawBitsPerSample;
+	const sampleFormat = Array.isArray(rawSampleFormat) ? rawSampleFormat[0] : rawSampleFormat;
+	const decodedRasters = await image.readRasters();
+	const fileDirectory = image.fileDirectory || {};
+
+	/** @type {Float32Array} */
+	let data;
+	/** @type {Float32Array[]|any[]} */
+	let rasters;
+	if (samplesPerPixel === 1) {
+		data = new Float32Array(decodedRasters[0]);
+		rasters = [data];
+	} else {
+		const pixelCount = width * height;
+		data = new Float32Array(pixelCount * samplesPerPixel);
+		for (let i = 0; i < pixelCount; i++) {
+			for (let c = 0; c < samplesPerPixel; c++) {
+				data[i * samplesPerPixel + c] = decodedRasters[c][i];
+			}
+		}
+		rasters = decodedRasters;
+	}
+
+	return {
+		width,
+		height,
+		channels: samplesPerPixel,
+		bitsPerSample,
+		sampleFormat,
+		compression: fileDirectory.Compression || 1,
+		predictor: fileDirectory.Predictor || 1,
+		photometricInterpretation: fileDirectory.PhotometricInterpretation || 1,
+		planarConfiguration: fileDirectory.PlanarConfiguration || 1,
+		data,
+		rasters,
+		decodedWith: 'geotiff.js (worker)',
+		wasmFallbackReason: wasmError,
+	};
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodeTiff(buffer) {
+	if (tiffWasmInitPromise) {
+		// WASM is preferred, but a slow or wedged initialization must never
+		// prevent the worker's GeoTIFF compatibility decoder from running.
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'TIFF WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodeTiffWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM decode failed');
+		console.warn('[DecodeWorker] TIFF WASM decode failed, using geotiff.js in worker:', message);
+		return decodeTiffGeotiff(buffer, message);
+	}
+}
+
+/**
  * @param {string} format
  * @param {ArrayBuffer} buffer
  */
-function decodeFormat(format, buffer) {
+async function decodeFormat(format, buffer) {
 	switch (format) {
 		case 'tiff':
 			return decodeTiff(buffer);
@@ -164,14 +270,19 @@ function collectTransferables(value, buffers = new Set(), depth = 0) {
 self.onmessage = async (event) => {
 	const msg = event.data;
 	if (msg.type === 'init') {
-		await initTiffDecoder(msg.tiffWasmUrls);
-		self.postMessage({ type: 'ready', caps: { tiffWasm: tiffWasmReady } });
+		// GeoTIFF is ready as soon as the worker bundle has loaded. Advertise
+		// that immediately so early image loads do not fall back to the UI
+		// thread while WASM is still initializing.
+		self.postMessage({ type: 'ready', caps: { tiff: true, tiffWasm: false } });
+		tiffWasmInitPromise = initTiffDecoder(msg.tiffWasmBuffer, msg.tiffWasmUrls);
+		await tiffWasmInitPromise;
+		self.postMessage({ type: 'caps', caps: { tiff: true, tiffWasm: tiffWasmReady } });
 		return;
 	}
 
 	const { id, format, buffer } = msg;
 	try {
-		const result = decodeFormat(format, buffer);
+		const result = await decodeFormat(format, buffer);
 		self.postMessage({ id, ok: true, result }, collectTransferables(result));
 	} catch (error) {
 		// Send the input bytes back (transferred) so the caller can fall back

@@ -75,7 +75,8 @@ import { PerfTrace } from './modules/perf-trace.js';
 	// is unavailable, so worker failures never break image loading.
 	const decodeWorkerClient = new DecodeWorkerClient();
 	decodeWorkerClient.start();
-	for (const p of allProcessors) { p.decodeWorker = decodeWorkerClient; }
+	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor];
+	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
@@ -119,10 +120,30 @@ import { PerfTrace } from './modules/perf-trace.js';
 	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
 	/** @type {AbortController|null} */
 	let _loadAbortController = null; // Aborts the in-flight load's fetch when a newer switch supersedes it
+	/** @type {Promise<void>} */
+	let _tiffCanvasReadyPromise;
+	/** @type {(() => void)|null} */
+	let _tiffCanvasReadyResolve = null;
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
+
+	function resetTiffCanvasReady() {
+		// Release a stale waiter before replacing it; its generation check will
+		// prevent it from rendering into the next image.
+		_tiffCanvasReadyResolve?.();
+		_tiffCanvasReadyPromise = new Promise(resolve => {
+			_tiffCanvasReadyResolve = resolve;
+		});
+	}
+
+	function signalTiffCanvasReady() {
+		_tiffCanvasReadyResolve?.();
+		_tiffCanvasReadyResolve = null;
+	}
+
+	resetTiffCanvasReady();
 
 	// Colormap conversion state
 	/** @type {ColormapConversionState|null} */
@@ -193,6 +214,11 @@ import { PerfTrace } from './modules/perf-trace.js';
 		initialLoadStartTime = performance.now();
 		// Get the extension start time from settings (for total elapsed measurement)
 		extensionLoadStartTime = settingsManager.settings.loadStartTime || 0;
+		// The initial image must be cancellable too. Without a signal, switching
+		// while it decodes lets the stale load continue after its worker is
+		// terminated and interfere with the newest image.
+		_loadAbortController = new AbortController();
+		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
@@ -466,6 +492,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	function onImageError(/** @type {string} */ message = '') {
 		PerfTrace.cancel();
 		hasLoadedImage = true;
+		signalTiffCanvasReady();
 		// Remove previous image/canvas so the error message shows on a clean background
 		container.querySelectorAll('img, canvas').forEach(el => {
 			if (!el.closest('.histogram-overlay')) {
@@ -502,6 +529,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 			}
 
 			hasLoadedImage = true;
+			signalTiffCanvasReady();
 			if (!tiffProcessor._pendingRenderData) {
 				finalizeImageSetup();
 				const endTime = performance.now();
@@ -1009,6 +1037,17 @@ import { PerfTrace } from './modules/perf-trace.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const changes = settingsManager.updateSettings(message.settings);
 				const newResourceUri = settingsManager.settings.resourceUri;
+
+				// formatInfo is posted from inside processTiff(), before handleTiff()
+				// receives and installs its canvas. Do not drop the immediate
+				// initial-settings response while that canvas is still in flight.
+				if (message.isInitialRender && currentLoadFormat === 'TIFF' && !canvas) {
+					const waitingGeneration = _loadGeneration;
+					await _tiffCanvasReadyPromise;
+					if (waitingGeneration !== _loadGeneration) {
+						break;
+					}
+				}
 
 				// Check if this is a deferred render trigger (initial load)
 				if (message.isInitialRender && canvas) {
@@ -2368,6 +2407,8 @@ import { PerfTrace } from './modules/perf-trace.js';
 		// the processors stop before decoding, instead of the superseded load
 		// running to completion and blocking the next image.
 		if (_loadAbortController) { _loadAbortController.abort(); }
+		decodeWorkerClient.cancelActiveDecodes();
+		resetTiffCanvasReady();
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
 
@@ -2411,7 +2452,8 @@ import { PerfTrace } from './modules/perf-trace.js';
 		tiffProcessor._convertedFloatData = null;
 		exrProcessor.rawExrData = undefined;
 		exrProcessor._cachedStats = undefined;
-		for (const p of allProcessors) { p._lastRaw = null; }
+		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor];
+		for (const p of rawDataProcessors) { p._lastRaw = null; }
 		rawProcessor._arrayBuffer = null;
 
 		// Drop any pending deferred-render data from the previous image. Otherwise a

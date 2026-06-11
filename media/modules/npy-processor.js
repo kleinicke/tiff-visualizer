@@ -59,18 +59,19 @@ export class NpyProcessor {
 
     /** @param {string} src */
     async processNpy(src) {
+        const loadSignal = this.loadSignal;
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        const response = await fetch(src, { signal: this.loadSignal });
+        const response = await fetch(src, { signal: loadSignal });
         const buffer = await response.arrayBuffer();
-        if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // Parse in the decode worker when available, locally otherwise.
         // NPY and NPZ (ZIP signature 0x04034b50) share the same result shape.
         const parsed = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'npy', buffer, src, this.loadSignal,
+            this.decodeWorker, 'npy', buffer, src, loadSignal,
             (b) => {
                 const view = new DataView(b);
                 return (b.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50)
@@ -504,5 +505,4 @@ export class NpyProcessor {
         return { r: 255, g: 0, b: 0 }; // Default red
     }
 }
-
 

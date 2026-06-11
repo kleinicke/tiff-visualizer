@@ -16,13 +16,37 @@
 import { PerfTrace } from './perf-trace.js';
 
 const DECODE_TIMEOUT_MS = 30000;
+const WASM_FETCH_TIMEOUT_MS = 3000;
+
+/**
+ * Fetch the first available resource without allowing a broken webview URI to
+ * hold worker startup indefinitely.
+ * @param {string[]} urls
+ * @returns {Promise<ArrayBuffer|null>}
+ */
+async function fetchFirstArrayBuffer(urls) {
+	for (const url of urls) {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), WASM_FETCH_TIMEOUT_MS);
+		try {
+			const response = await fetch(url, { signal: controller.signal });
+			if (response.ok) {
+				return await response.arrayBuffer();
+			}
+		} catch { /* try next candidate */ }
+		finally {
+			clearTimeout(timer);
+		}
+	}
+	return null;
+}
 
 export class DecodeWorkerClient {
 	constructor() {
 		/** @type {Worker|null} */
 		this._worker = null;
 		this._ready = false;
-		/** @type {{tiffWasm?: boolean}} */
+		/** @type {{tiff?: boolean, tiffWasm?: boolean}} */
 		this._caps = {};
 		/** @type {Map<number, (response: any) => void>} */
 		this._pending = new Map();
@@ -31,6 +55,12 @@ export class DecodeWorkerClient {
 		this._startPromise = null;
 		/** @type {((caps: any) => void)|undefined} */
 		this._readyResolve = undefined;
+		/** @type {string|null} */
+		this._blobUrl = null;
+		/** @type {ArrayBuffer|null} */
+		this._tiffWasmBytes = null;
+		/** @type {Promise<ArrayBuffer|null>|null} */
+		this._tiffWasmFetchPromise = null;
 	}
 
 	/** Begin booting the worker in the background. Never throws. */
@@ -49,6 +79,20 @@ export class DecodeWorkerClient {
 			new URL('./decodeWorker.bundle.js', import.meta.url).href,
 			new URL('../decodeWorker.bundle.js', import.meta.url).href,
 		];
+		const tiffWasmUrls = [
+			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
+			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
+		];
+		if (!this._tiffWasmBytes && !this._tiffWasmFetchPromise) {
+			this._tiffWasmFetchPromise = fetchFirstArrayBuffer(tiffWasmUrls)
+				.then(bytes => {
+					this._tiffWasmBytes = bytes;
+					return bytes;
+				})
+				.finally(() => {
+					this._tiffWasmFetchPromise = null;
+				});
+		}
 		let source = null;
 		for (const url of candidates) {
 			try {
@@ -64,31 +108,35 @@ export class DecodeWorkerClient {
 		}
 
 		const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-		const worker = new Worker(blobUrl);
+		this._blobUrl = blobUrl;
+		const worker = new Worker(blobUrl, { type: 'module' });
 		this._worker = worker;
 		worker.onmessage = (event) => this._onMessage(event.data);
 		worker.onerror = (event) => {
+			if (this._worker !== worker) {
+				return;
+			}
 			console.warn('[DecodeWorker] Worker error:', event.message || event);
 			this._teardown();
 		};
 
-		// The worker fetches its own WASM; pass candidate URLs since the
-		// blob worker can't resolve paths relative to the bundle location.
-		const tiffWasmUrls = [
-			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
-			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
-		];
+		// VS Code webview-resource URLs are authorized in the webview, but a
+		// blob worker may be unable to fetch them. Fetch the WASM here and
+		// transfer a copy into the worker; retain URLs as a browser fallback.
+		const cachedWasmBytes = this._tiffWasmBytes || await this._tiffWasmFetchPromise;
+		const tiffWasmBuffer = cachedWasmBytes?.slice(0) || null;
 		const caps = await new Promise((resolve, reject) => {
 			this._readyResolve = resolve;
 			setTimeout(() => reject(new Error('worker init timeout')), 20000);
-			worker.postMessage({ type: 'init', tiffWasmUrls });
+			const initMessage = { type: 'init', tiffWasmBuffer, tiffWasmUrls };
+			worker.postMessage(initMessage, tiffWasmBuffer ? [tiffWasmBuffer] : []);
 		});
 		if (this._worker !== worker) {
 			return; // torn down while initializing
 		}
 		this._caps = caps || {};
 		this._ready = true;
-		console.log(`[DecodeWorker] Ready (tiffWasm=${!!this._caps.tiffWasm})`);
+		console.log(`[DecodeWorker] Ready (tiff=${!!this._caps.tiff}, tiffWasm=${!!this._caps.tiffWasm})`);
 	}
 
 	/** @param {string} format */
@@ -96,10 +144,10 @@ export class DecodeWorkerClient {
 		if (!this._ready || !this._worker) {
 			return false;
 		}
-		// TIFF is only routed to the worker when its WASM decoder initialized;
-		// otherwise the main thread's WASM path stays the fastest option.
+		// TIFF is routed to the worker whenever either its WASM decoder or its
+		// geotiff.js compatibility fallback is available.
 		if (format === 'tiff') {
-			return !!this._caps.tiffWasm;
+			return !!this._caps.tiff;
 		}
 		return true;
 	}
@@ -147,11 +195,29 @@ export class DecodeWorkerClient {
 			this._readyResolve?.(msg.caps);
 			return;
 		}
+		if (msg && msg.type === 'caps') {
+			this._caps = { ...this._caps, ...msg.caps };
+			console.log(`[DecodeWorker] Capabilities updated (tiff=${!!this._caps.tiff}, tiffWasm=${!!this._caps.tiffWasm})`);
+			return;
+		}
 		const resolve = this._pending.get(msg?.id);
 		if (resolve) {
 			this._pending.delete(msg.id);
 			resolve(msg);
 		}
+	}
+
+	/**
+	 * Stop CPU work for superseded image loads. Web Workers cannot interrupt a
+	 * synchronous decoder, so terminating the worker is the only reliable
+	 * cancellation mechanism. It is restarted lazily by the newest load.
+	 */
+	cancelActiveDecodes() {
+		if (this._pending.size === 0) {
+			return;
+		}
+		console.log(`[DecodeWorker] Cancelling ${this._pending.size} superseded decode(s)`);
+		this._teardown();
 	}
 
 	_teardown() {
@@ -165,6 +231,13 @@ export class DecodeWorkerClient {
 			resolve({ ok: false, error: 'decode worker unavailable' });
 		}
 		this._pending.clear();
+		if (this._blobUrl) {
+			URL.revokeObjectURL(this._blobUrl);
+			this._blobUrl = null;
+		}
+		this._caps = {};
+		this._readyResolve = undefined;
+		this._startPromise = null;
 	}
 
 	/**

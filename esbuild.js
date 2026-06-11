@@ -52,7 +52,7 @@ const webviewBuildOptions = {
 };
 
 // Build the decode worker (runs format decoders off the webview UI thread).
-// IIFE so it can boot as a classic worker from a blob URL.
+// ESM preserves import.meta.url used by bundled WASM/worker dependencies.
 const decodeWorkerBuildOptions = {
   entryPoints: ['media/decode-worker.js'],
   bundle: true,
@@ -60,7 +60,7 @@ const decodeWorkerBuildOptions = {
   platform: 'browser',
   target: 'es2020',
   sourcemap: true,
-  format: 'iife',
+  format: 'esm',
 };
 
 // Build tests if they exist
@@ -224,4 +224,4 @@ async function buildAll() {
   }
 }
 
-buildAll(); 
+buildAll();

@@ -52,6 +52,7 @@ export class PngProcessor {
      * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement}>}
      */
     async processPng(src) {
+        const loadSignal = this.loadSignal;
         // JPEG files always use native browser Image API (they don't support 16-bit)
         const isJpeg = src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg');
 
@@ -65,9 +66,9 @@ export class PngProcessor {
             this._cachedStats = undefined;
             this._cachedStatsRgb24Mode = false;
 
-            const response = await fetch(src, { signal: this.loadSignal });
+            const response = await fetch(src, { signal: loadSignal });
             const arrayBuffer = await response.arrayBuffer();
-            if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // Quick bit depth detection from PNG IHDR chunk (just reads byte 24)
             const bitDepth = this._detectPngBitDepth(arrayBuffer);
@@ -80,7 +81,7 @@ export class PngProcessor {
             // Decode with UPNG.js — in the decode worker when available,
             // locally otherwise (16-bit path only; 8-bit returned above).
             const png = await DecodeWorkerClient.decodeWithFallback(
-                this.decodeWorker, 'png16', arrayBuffer, src, this.loadSignal,
+                this.decodeWorker, 'png16', arrayBuffer, src, loadSignal,
                 // @ts-ignore
                 (b) => UPNG.decode(b));
 

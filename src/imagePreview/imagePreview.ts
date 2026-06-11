@@ -413,12 +413,19 @@ export class ImagePreview extends MediaPreview {
 	 */
 	public ensureLocalResourceRoots(uris: vscode.Uri[]): void {
 		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
-		const have = new Set(currentRoots.map(r => r.toString()));
 		const toAdd: vscode.Uri[] = [];
+		const isCovered = (dir: vscode.Uri): boolean => {
+			return [...currentRoots, ...toAdd].some(root => {
+				if (root.scheme !== dir.scheme || root.authority !== dir.authority) {
+					return false;
+				}
+				const rootPath = root.path.endsWith('/') ? root.path : `${root.path}/`;
+				return dir.path === root.path || dir.path.startsWith(rootPath);
+			});
+		};
 		for (const uri of uris) {
 			const dir = Utils.dirname(uri);
-			const key = dir.toString();
-			if (!have.has(key) && !toAdd.some(d => d.toString() === key)) {
+			if (!isCovered(dir)) {
 				toAdd.push(dir);
 			}
 		}
@@ -800,4 +807,4 @@ export class ImagePreview extends MediaPreview {
 	private extensionResource(...parts: string[]) {
 		return vscode.Uri.joinPath(this.extensionRoot, ...parts);
 	}
-} 
+}

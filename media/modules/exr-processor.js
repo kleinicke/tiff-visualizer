@@ -72,6 +72,7 @@ export class ExrProcessor {
 	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, exrData: Object}>}
 	 */
 	async processExr(src) {
+		const loadSignal = this.loadSignal;
 		try {
 			// Check if parseExr is available (from parse-exr library)
 			// @ts-ignore
@@ -79,9 +80,9 @@ export class ExrProcessor {
 				throw new Error('parseExr library not loaded. Make sure parse-exr is included.');
 			}
 
-			const response = await fetch(src, { signal: this.loadSignal });
+			const response = await fetch(src, { signal: loadSignal });
 			const buffer = await response.arrayBuffer();
-			if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
 			// Invalidate stats cache for new image
 			this._cachedStats = undefined;
@@ -92,7 +93,7 @@ export class ExrProcessor {
 			// HalfFloatType (1016) returns Uint16Array with raw bytes which need decoding
 			const FloatType = 1015;
 			const exrResult = await DecodeWorkerClient.decodeWithFallback(
-				this.decodeWorker, 'exr', buffer, src, this.loadSignal,
+				this.decodeWorker, 'exr', buffer, src, loadSignal,
 				// @ts-ignore
 				(b) => parseExr(b, FloatType));
 
