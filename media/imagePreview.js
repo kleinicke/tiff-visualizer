@@ -17,6 +17,7 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
+import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 
 /**
  * Main Image Preview Application
@@ -68,6 +69,12 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	const rawProcessor = new RawProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
 	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor];
+	// Off-thread decode worker, pre-warmed in the background. Processors fall
+	// back to their local (main-thread) decoders until it is ready or if it
+	// is unavailable, so worker failures never break image loading.
+	const decodeWorkerClient = new DecodeWorkerClient();
+	decodeWorkerClient.start();
+	for (const p of allProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);

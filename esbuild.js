@@ -51,6 +51,18 @@ const webviewBuildOptions = {
   format: 'esm',
 };
 
+// Build the decode worker (runs format decoders off the webview UI thread).
+// IIFE so it can boot as a classic worker from a blob URL.
+const decodeWorkerBuildOptions = {
+  entryPoints: ['media/decode-worker.js'],
+  bundle: true,
+  outfile: 'media/decodeWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'iife',
+};
+
 // Build tests if they exist
 const testBuildOptions = {
   entryPoints: [],
@@ -131,6 +143,16 @@ if (isWatch) {
       }
     },
   };
+
+  decodeWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('decode worker watch build failed:', error);
+      } else {
+        console.log('decode worker watch build succeeded');
+      }
+    },
+  };
 }
 
 function copyMediaAssets() {
@@ -186,6 +208,10 @@ async function buildAll() {
     // Build webview scripts
     await build(webviewBuildOptions);
     console.log('Webview scripts built successfully');
+
+    // Build decode worker
+    await build(decodeWorkerBuildOptions);
+    console.log('Decode worker built successfully');
 
     // Build tests if they exist
     if (testBuildOptions.entryPoints.length > 0) {

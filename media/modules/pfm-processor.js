@@ -1,6 +1,7 @@
 // @ts-check
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
@@ -25,6 +26,8 @@ export class PfmProcessor {
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+        /** @type {DecodeWorkerClient|null} */
+        this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
     }
 
     /** @param {string} src */
@@ -32,7 +35,9 @@ export class PfmProcessor {
         const response = await fetch(src, { signal: this.loadSignal });
         const buffer = await response.arrayBuffer();
         if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-        const { width, height, channels, data } = this._parsePfm(buffer);
+        // Parse in the decode worker when available, locally otherwise.
+        const { width, height, channels, data } = await DecodeWorkerClient.decodeWithFallback(
+            this.decodeWorker, 'pfm', buffer, src, this.loadSignal, (b) => this._parsePfm(b));
         // Keep color data for RGB PFM files
         let displayData = data;
 

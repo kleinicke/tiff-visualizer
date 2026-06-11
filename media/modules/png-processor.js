@@ -1,6 +1,7 @@
 // @ts-check
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -40,6 +41,8 @@ export class PngProcessor {
         this._lazyNativeReadback = null;
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+        /** @type {DecodeWorkerClient|null} */
+        this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
     }
 
     /**
@@ -74,9 +77,12 @@ export class PngProcessor {
             }
 
 
-            // Decode with UPNG.js
-            // @ts-ignore
-            const png = UPNG.decode(arrayBuffer);
+            // Decode with UPNG.js — in the decode worker when available,
+            // locally otherwise (16-bit path only; 8-bit returned above).
+            const png = await DecodeWorkerClient.decodeWithFallback(
+                this.decodeWorker, 'png16', arrayBuffer, src, this.loadSignal,
+                // @ts-ignore
+                (b) => UPNG.decode(b));
 
             /*
             png = {

@@ -42,6 +42,8 @@ export class TiffProcessor {
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		/** @type {AbortSignal|undefined} */
 		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+		/** @type {import('./decode-worker-client.js').DecodeWorkerClient|null} */
+		this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
 
 		// WASM decoder
 		this._wasmProcessor = new TiffWasmProcessor();
@@ -112,18 +114,54 @@ export class TiffProcessor {
 			const settings = this.settingsManager.settings;
 			const use24BitMode = settings.rgbAs24BitGrayscale || false;
 
-			let useWasm = this._wasmAvailable && !use24BitMode;
-			console.log(`[TiffProcessor] Decode decision: wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
+			// Try the decode worker first: the same Rust/WASM decoder, but off
+			// the UI thread so big decodes don't freeze input handling or
+			// painting. On failure the worker transfers the bytes back and we
+			// fall straight through to geotiff.js — retrying the identical
+			// WASM decoder locally would just fail again.
+			/** @type {any} */
+			let wasmResult = null;
+			let workerTiffFailed = false;
+			/** @type {ArrayBuffer|null} */
+			let localBuffer = buffer;
+			if (!use24BitMode && this.decodeWorker?.canDecode('tiff')) {
+				const workerStart = performance.now();
+				const workerResponse = await this.decodeWorker.decode('tiff', buffer);
+				if (this.loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				if (workerResponse?.ok) {
+					wasmResult = workerResponse.result;
+					localBuffer = null;
+					console.log(`[TiffProcessor] Worker WASM decode time: ${(performance.now() - workerStart).toFixed(2)}ms`);
+				} else {
+					workerTiffFailed = true;
+					localBuffer = (workerResponse?.buffer && workerResponse.buffer.byteLength > 0) ? workerResponse.buffer : null;
+					console.warn('[TiffProcessor] Worker decode failed, falling back to geotiff.js:', workerResponse?.error);
+				}
+			}
 
-			// Try WASM decoding first if available
-			if (useWasm) {
+			const useWasm = !wasmResult && !workerTiffFailed && this._wasmAvailable && !use24BitMode;
+			console.log(`[TiffProcessor] Decode decision: worker=${!!wasmResult}, wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
+
+			// Local WASM decoding when the worker isn't available
+			if (useWasm && localBuffer) {
 				try {
 					const decodeStart = performance.now();
 					// Use a copy so a WASM failure/memory-growth cannot invalidate the
 					// original buffer that the geotiff.js fallback path needs below.
-					const wasmResult = await this._wasmProcessor.decode(buffer.slice(0));
+					wasmResult = await this._wasmProcessor.decode(localBuffer.slice(0));
 					const decodeTime = performance.now() - decodeStart;
 					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
+				} catch (wasmError) {
+					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
+					// Disable WASM for the rest of the session — a failure can leave
+					// the module in an indeterminate state after a panic.
+					this._wasmAvailable = false;
+					wasmResult = null;
+				}
+			}
+
+			if (wasmResult) {
+				try {
 
 					// Convert WASM result to format compatible with existing code
 					const width = wasmResult.width;
@@ -132,11 +170,16 @@ export class TiffProcessor {
 					const bitsPerSample = wasmResult.bitsPerSample;
 					const sampleFormat = wasmResult.sampleFormat;
 
-					// Create rasters from WASM data (deinterleave if needed)
-					const rasters = [];
-					if (samplesPerPixel === 1) {
-						rasters.push(wasmResult.data);
+					// Per-channel rasters: the worker already deinterleaved them
+					// off-thread; the local WASM path deinterleaves here.
+					/** @type {Float32Array[]} */
+					let rasters;
+					if (wasmResult.rasters) {
+						rasters = wasmResult.rasters;
+					} else if (samplesPerPixel === 1) {
+						rasters = [wasmResult.data];
 					} else {
+						rasters = [];
 						// Deinterleave for compatibility with existing rendering code
 						for (let c = 0; c < samplesPerPixel; c++) {
 							const channel = new Float32Array(width * height);
@@ -200,7 +243,7 @@ export class TiffProcessor {
 								bitsPerSample,
 								formatType,
 								isInitialLoad: true,
-								decodedWith: 'wasm'
+								decodedWith: wasmResult.decodedWith || 'wasm'
 							}
 						});
 
@@ -230,8 +273,13 @@ export class TiffProcessor {
 			}
 
 			// Fallback to geotiff.js (or if WASM not available/failed)
+			if (!localBuffer || localBuffer.byteLength === 0) {
+				// The bytes were transferred to the worker; refetch (rare error path).
+				const refetched = await fetch(src, { signal: this.loadSignal });
+				localBuffer = await refetched.arrayBuffer();
+			}
 			const decodeStart = performance.now();
-			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+			const tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
 			const image = await tiff.getImage();
 			const sampleFormat = image.getSampleFormat();
 
