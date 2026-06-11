@@ -84,7 +84,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
-		onChange: () => { scheduleRecomposite(); },
+		onChange: () => { scheduleRecomposite(); scheduleSaveState(); },
+		onPersist: () => { scheduleSaveState(); },
 		onVisibilityChange: (visible) => {
 			layerManager.active = visible;
 			// Tell the extension so it can track layer mode (and block collection ops).
@@ -95,6 +96,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 				// Restore the normal single-image render.
 				updateImageWithNewSettings(null);
 			}
+			scheduleSaveState();
 		},
 	});
 	// Pixel inspector reads the composite value when compositing is active.
@@ -152,12 +154,22 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
+	/** @type {{layers:any[], active:boolean, collapsed:boolean}|null} Layer stack to restore after the base image loads. */
+	let _pendingLayerRestore = null;
 	if (persistedState) {
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
+		const savedLayers = persistedState.layers;
+		if (Array.isArray(savedLayers) && (savedLayers.length > 1 || persistedState.layerActive)) {
+			_pendingLayerRestore = {
+				layers: savedLayers,
+				active: !!persistedState.layerActive,
+				collapsed: !!persistedState.layerCollapsed,
+			};
+		}
 	}
 
 	// Image collection state
@@ -189,9 +201,32 @@ import { LayersPanel } from './modules/layers-panel.js';
 			scale: zoomState.scale,
 			offsetX: zoomState.x,
 			offsetY: zoomState.y,
+			// Layer compositing state — metadata only (images are re-decoded from
+			// their URIs on reload). Lets a layer view restore itself after the
+			// webview is unloaded and reloaded on a tab switch.
+			layers: layerManager.layers.map((l, i) => ({
+				resourceUri: l.uri,
+				name: l.name,
+				offsetX: l.offsetX,
+				offsetY: l.offsetY,
+				opacity: l.opacity,
+				blendMode: l.blendMode,
+				visible: l.visible,
+				maskCondition: l.maskCondition,
+				isBase: i === 0,
+			})),
+			layerActive: layerManager.active,
+			layerCollapsed: layersPanel.collapsed,
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
+	}
+
+	// Debounced state save for frequent layer edits (slider drags, moves).
+	let _saveStateTimer = null;
+	function scheduleSaveState() {
+		if (_saveStateTimer) { return; }
+		_saveStateTimer = setTimeout(() => { _saveStateTimer = null; saveState(); }, 150);
 	}
 
 	// DOM elements
@@ -896,6 +931,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Keep the layer stack's base in sync with the loaded image.
 		syncBaseLayer();
+		// Restore a saved layer stack after a webview reload (once the base exists).
+		maybeRestoreLayers();
 		if (layerManager.active && layerManager.hasExtraLayers()) {
 			recompositeLayers();
 		}
@@ -1115,6 +1152,73 @@ import { LayersPanel } from './modules/layers-panel.js';
 		});
 	}
 
+	// ---- Layer restore after a webview reload (tab switch) ----
+	let _layersRestoreDone = false;
+
+	/** Kick off layer-stack restore once the base image has loaded. */
+	function maybeRestoreLayers() {
+		if (_layersRestoreDone || !_pendingLayerRestore) { return; }
+		_layersRestoreDone = true;
+
+		const metas = _pendingLayerRestore.layers || [];
+		const baseMeta = metas.find(m => m.isBase);
+		const currentUri = settingsManager.settings.resourceUri;
+		// Only restore if the saved stack belongs to the image now showing.
+		if (baseMeta && baseMeta.resourceUri && currentUri && baseMeta.resourceUri !== currentUri) {
+			_pendingLayerRestore = null;
+			return;
+		}
+
+		const nonBase = metas.filter(m => !m.isBase && m.resourceUri);
+		if (nonBase.length === 0) {
+			finishLayerRestore({});
+		} else {
+			// Ask the extension for webview-safe URIs to fetch the layer images.
+			vscode.postMessage({ type: 'resolveLayerUris', resourceUris: nonBase.map(m => m.resourceUri) });
+		}
+	}
+
+	/**
+	 * Rebuild the layer stack from the pending metadata using resolved URIs.
+	 * @param {{[resourceUri:string]: string}} uriMap
+	 */
+	async function finishLayerRestore(uriMap) {
+		const pending = _pendingLayerRestore;
+		_pendingLayerRestore = null;
+		if (!pending) { return; }
+
+		syncBaseLayer();
+		const baseLayer = layerManager.layers.find(l => l.uri === settingsManager.settings.resourceUri) || layerManager.layers[0];
+		const rebuilt = [];
+		for (const meta of pending.layers) {
+			if (meta.isBase) {
+				if (baseLayer) {
+					Object.assign(baseLayer, {
+						offsetX: meta.offsetX ?? 0, offsetY: meta.offsetY ?? 0,
+						opacity: meta.opacity ?? 1, blendMode: meta.blendMode ?? 'normal',
+						visible: meta.visible !== false, maskCondition: meta.maskCondition,
+					});
+					rebuilt.push(baseLayer);
+				}
+			} else {
+				const src = uriMap[meta.resourceUri];
+				if (!src) { continue; }
+				const input = await decodeLayer(src, meta.resourceUri);
+				if (input) { rebuilt.push(layerManager.createLayer(input, meta)); }
+			}
+		}
+		if (rebuilt.length === 0) {
+			if (baseLayer) { rebuilt.push(baseLayer); } else { return; }
+		}
+		layerManager.setLayers(rebuilt, layerManager.canvasWidth, layerManager.canvasHeight);
+		layersPanel.collapsed = !!pending.collapsed;
+		if (pending.active) {
+			layersPanel.show(); // sets active, notifies the extension and recomposites
+		} else {
+			layersPanel.refresh();
+		}
+	}
+
 	/** Drag-on-image move tool for the layer armed in the panel. */
 	let _layerDrag = null;
 	function setupLayerMoveDrag() {
@@ -1149,6 +1253,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			if (_layerDrag) {
 				_layerDrag = null;
 				layersPanel.refresh(); // sync the numeric offset inputs after the drag
+				scheduleSaveState();
 			}
 		});
 	}
@@ -1231,11 +1336,16 @@ import { LayersPanel } from './modules/layers-panel.js';
 				if (addedLayers > 0) {
 					layersPanel.refresh();
 					recompositeLayers();
+					scheduleSaveState();
 				} else {
 					vscode.postMessage({ type: 'show-error', message: 'Could not load the selected image(s) as layers.' });
 				}
 				break;
 			}
+
+			case 'layerUrisResolved':
+				finishLayerRestore(message.map || {});
+				break;
 
 			case 'setActive':
 				mouseHandler.setActive(message.value);
