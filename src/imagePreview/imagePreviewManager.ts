@@ -266,8 +266,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	 * standalone webview panel running the same preview app in 'layers' mode —
 	 * so it gets the status bar, pixel inspector, histogram and zoom for free —
 	 * but with a custom tab title and kept in memory across tab switches.
+	 * @param resource The base image (defines the canvas and the tab title).
+	 * @param additionalLayers Extra images to stack on top once the view loads.
 	 */
-	public openLayerView(resource: vscode.Uri): void {
+	public openLayerView(resource: vscode.Uri, additionalLayers: vscode.Uri[] = []): void {
 		// Reveal an existing layer view for this image if there is one.
 		for (const preview of this._previews) {
 			if ('getSurfaceMode' in preview && (preview as any).getSurfaceMode() === 'layers'
@@ -277,6 +279,14 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			}
 		}
 
+		// Include the extra layers' folders up front so adding them never has to
+		// reassign webview.options (which would reload the window).
+		const roots = [
+			Utils.dirname(resource),
+			this.extensionRoot,
+			...(vscode.workspace.workspaceFolders?.map(f => f.uri) ?? []),
+			...additionalLayers.map(u => Utils.dirname(u)),
+		];
 		const panel = vscode.window.createWebviewPanel(
 			ImagePreviewManager.layerViewType,
 			`Layers — ${Utils.basename(resource)}`,
@@ -284,15 +294,14 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			{
 				enableScripts: true,
 				retainContextWhenHidden: true,
-				localResourceRoots: [
-					Utils.dirname(resource),
-					this.extensionRoot,
-					...(vscode.workspace.workspaceFolders?.map(f => f.uri) ?? []),
-				],
+				localResourceRoots: roots,
 			},
 		);
 		const document: vscode.CustomDocument = { uri: resource, dispose: () => { } };
-		this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
+		const preview = this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
+		if (additionalLayers.length > 0 && preview && 'setInitialLayers' in preview) {
+			(preview as any).setInitialLayers(additionalLayers);
+		}
 	}
 
 	/**

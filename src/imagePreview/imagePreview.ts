@@ -407,6 +407,29 @@ export class ImagePreview extends MediaPreview {
 		return this._imageCollection;
 	}
 
+	/** The image currently displayed (the active collection entry, or the resource). */
+	public getCurrentImage(): vscode.Uri {
+		return this._imageCollection[this._currentImageIndex] ?? this.resource;
+	}
+
+	/**
+	 * Images to add as layers once the webview is ready (used when a Layers
+	 * window is opened with extra images, e.g. a whole collection).
+	 */
+	private _initialLayers: vscode.Uri[] = [];
+	public setInitialLayers(uris: vscode.Uri[]): void {
+		this._initialLayers = uris;
+	}
+
+	/** Send the queued initial layers to the webview (once it has loaded). */
+	public sendInitialLayers(): void {
+		if (this._initialLayers.length > 0) {
+			const uris = this._initialLayers;
+			this._initialLayers = [];
+			this.addLayerImages(uris);
+		}
+	}
+
 	/**
 	 * Ensure the webview's localResourceRoots cover the directories of the given
 	 * URIs, reassigning webview.options at most once. Reassigning options reloads

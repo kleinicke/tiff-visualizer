@@ -36,6 +36,7 @@ export interface IImagePreview {
 	startComparison(peerUri: vscode.Uri): void;
 	updateStatusBar(): void;
 	readonly imageCollection: readonly vscode.Uri[];
+	getCurrentImage(): vscode.Uri;
 	addToImageCollection(uri: vscode.Uri): Promise<boolean>;
 	ensureLocalResourceRoots(uris: vscode.Uri[]): void;
 	addLayerImages(uris: vscode.Uri[]): void;

@@ -997,10 +997,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 		syncBaseLayer();
 		// Restore a saved layer stack after a webview reload (once the base exists).
 		maybeRestoreLayers();
-		// In a dedicated Layers window, open the panel automatically on first load.
+		// In a dedicated Layers window, open the panel automatically on first load
+		// and ask the extension for any images to stack on top (e.g. a collection).
 		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown) {
 			_layerSurfaceShown = true;
 			layersPanel.show();
+			if (!_pendingLayerRestore) {
+				vscode.postMessage({ type: 'requestInitialLayers' });
+			}
 		}
 		if (layerManager.active && layerManager.hasExtraLayers()) {
 			recompositeLayers();
@@ -1116,29 +1120,29 @@ import { LayersPanel } from './modules/layers-panel.js';
 		const noop = { postMessage() { }, setState() { }, getState() { return undefined; } };
 		try {
 			if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
-				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false;
+				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
 			}
 			if (lower.endsWith('.exr')) {
-				const p = new ExrProcessor(settingsManager, noop); p._isInitialLoad = false;
+				const p = new ExrProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processExr(src); return exrRawToLayer(p.rawExrData, name, resourceUri);
 			}
 			if (lower.endsWith('.pfm')) {
-				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false;
+				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processPfm(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
 			}
 			if (lower.match(/\.(ppm|pgm|pbm)$/)) {
-				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false;
+				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processPpm(src); return lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxval) || 255 }, name, resourceUri);
 			}
 			if (lower.match(/\.(png|jpg|jpeg)$/)) {
-				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false;
+				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processPng(src);
 				const layer = lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxValue) || 255 }, name, resourceUri);
 				return layer || decodeViaImage(src, name, resourceUri);
 			}
 			if (lower.match(/\.(npy|npz)$/)) {
-				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false;
+				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
 			}
 			return decodeViaImage(src, name, resourceUri);

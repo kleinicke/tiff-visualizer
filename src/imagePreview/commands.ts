@@ -873,7 +873,7 @@ export function registerImagePreviewCommands(
 
 
 	// Open (or reveal) the dedicated Layers window for the active image.
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleLayers', () => {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleLayers', async () => {
 		logCommand('toggleLayers', 'start');
 		const activePreview = previewManager.activePreview;
 		if (!activePreview) {
@@ -881,11 +881,33 @@ export function registerImagePreviewCommands(
 			logCommand('toggleLayers', 'error', 'No active preview');
 			return;
 		}
+
+		// The currently displayed image becomes the base layer and names the tab.
+		const current = activePreview.getCurrentImage();
+
 		if (activePreview.getViewMode() === 'collection') {
-			vscode.window.showWarningMessage('Layers are not available for a multi-image collection. Open a single image to use layers.');
+			// In a collection, offer to bring just this image or the whole set.
+			const collection = activePreview.imageCollection;
+			const choice = await vscode.window.showQuickPick(
+				[
+					{ label: 'Current image only', detail: current.path.split('/').pop(), action: 'current' as const },
+					{ label: `All ${collection.length} images from the collection`, detail: 'Stacked as layers, current image as the base', action: 'all' as const },
+				],
+				{ placeHolder: 'Open the Layers view with…' }
+			);
+			if (!choice) {
+				logCommand('toggleLayers', 'error', 'User cancelled');
+				return;
+			}
+			const extras = choice.action === 'all'
+				? collection.filter(u => u.toString() !== current.toString())
+				: [];
+			previewManager.openLayerView(current, extras);
+			logCommand('toggleLayers', 'success', `collection: ${choice.action}`);
 			return;
 		}
-		previewManager.openLayerView(activePreview.resource);
+
+		previewManager.openLayerView(current);
 		logCommand('toggleLayers', 'success');
 	}));
 

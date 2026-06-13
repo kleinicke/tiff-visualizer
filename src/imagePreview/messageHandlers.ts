@@ -42,6 +42,7 @@ export class MessageRouter {
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
 		this.handlers.set('layerModeChanged', new LayerModeChangedMessageHandler());
 		this.handlers.set('resolveLayerUris', new ResolveLayerUrisMessageHandler());
+		this.handlers.set('requestInitialLayers', new RequestInitialLayersMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
 	}
@@ -294,6 +295,12 @@ class ResolveLayerUrisMessageHandler implements MessageHandler {
 		if (Array.isArray(message.resourceUris)) {
 			preview.resolveLayerUris(message.resourceUris);
 		}
+	}
+}
+
+class RequestInitialLayersMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.sendInitialLayers();
 	}
 }
 
