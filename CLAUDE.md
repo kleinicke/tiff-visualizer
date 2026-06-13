@@ -11,7 +11,7 @@ This is a VS Code extension that provides advanced image visualization for scien
 ### Build & Development
 ```bash
 npm install              # Install dependencies
-npm run compile          # Build using esbuild (creates 3 bundles: Node.js, Web, Webview)
+npm run compile          # Build using esbuild (creates 4 bundles: Node.js, Web, Webview, Decode Worker)
 npm run watch            # Watch mode for development
 npm run vscode:prepublish # Production build
 ```
@@ -45,6 +45,7 @@ The extension uses a sophisticated three-bundle build approach:
 1. **Extension bundle** (`out/extension.js`) - Node.js target for VS Code desktop API integration
 2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
 3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
+4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Web Worker running the pure-data format decoders (TIFF via WASM, EXR, NPY/NPZ, PFM, PPM, 16-bit PNG, HDR) off the webview UI thread. File bytes and decoded typed arrays cross the thread boundary as zero-copy transfers. Booted from a blob URL by [media/modules/decode-worker-client.js](media/modules/decode-worker-client.js); every format keeps its main-thread decoder as an automatic fallback, so an unavailable worker never breaks loading.
 
 This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).
 

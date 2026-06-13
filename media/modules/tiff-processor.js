@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
+import { PerfTrace } from './perf-trace.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -40,6 +41,10 @@ export class TiffProcessor {
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
+		/** @type {AbortSignal|undefined} */
+		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+		/** @type {import('./decode-worker-client.js').DecodeWorkerClient|null} */
+		this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
 
 		// WASM decoder
 		this._wasmProcessor = new TiffWasmProcessor();
@@ -93,34 +98,86 @@ export class TiffProcessor {
 	 */
 	async processTiff(src) {
 		const startTime = performance.now();
+		const loadSignal = this.loadSignal;
 		try {
-			const response = await fetch(src);
+			const response = await fetch(src, { signal: loadSignal });
 			const buffer = await response.arrayBuffer();
+			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
-
-			// Wait for WASM initialization if it's in progress
-			if (!this._wasmAvailable && this._wasmProcessor) {
-				await this._wasmProcessor.init();
-				this._wasmAvailable = this._wasmProcessor.isAvailable();
-			}
+			PerfTrace.mark('fetch');
 
 			// Check if we should use WASM decoder
 			const settings = this.settingsManager.settings;
 			const use24BitMode = settings.rgbAs24BitGrayscale || false;
 
-			let useWasm = this._wasmAvailable && !use24BitMode;
-			console.log(`[TiffProcessor] Decode decision: wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
+			// Try the decode worker first: the same Rust/WASM decoder, but off
+			// the UI thread so big decodes don't freeze input handling or
+			// painting. On failure the worker transfers the bytes back and we
+			// fall straight through to geotiff.js — retrying the identical
+			// WASM decoder locally would just fail again.
+			// Wait for worker startup so an early load does not take a
+			// synchronous main-thread decoder merely because boot is in flight.
+			if (this.decodeWorker && !this.decodeWorker.canDecode('tiff')) {
+				await Promise.race([
+					this.decodeWorker.start(),
+					new Promise(resolve => setTimeout(resolve, 500)),
+				]);
+			}
+			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+			/** @type {any} */
+			let wasmResult = null;
+			let workerTiffFailed = false;
+			/** @type {ArrayBuffer|null} */
+			let localBuffer = buffer;
+			if (!use24BitMode && this.decodeWorker?.canDecode('tiff')) {
+				const workerStart = performance.now();
+				const workerResponse = await this.decodeWorker.decode('tiff', buffer);
+				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				if (workerResponse?.ok) {
+					wasmResult = workerResponse.result;
+					localBuffer = null;
+					const decodedWith = wasmResult.decodedWith || 'wasm (worker)';
+					console.log(`[TiffProcessor] Worker TIFF decode time: ${(performance.now() - workerStart).toFixed(2)}ms (${decodedWith})`);
+					if (wasmResult.wasmFallbackReason) {
+						console.warn('[TiffProcessor] Worker used geotiff.js because WASM rejected the TIFF:', wasmResult.wasmFallbackReason);
+						this.vscode?.postMessage({
+							type: 'log',
+							value: `[TiffProcessor] WASM rejected TIFF; using geotiff.js worker fallback: ${wasmResult.wasmFallbackReason}`,
+						});
+					}
+					PerfTrace.mark(decodedWith.startsWith('geotiff.js') ? 'decode-geotiff-worker' : 'decode-wasm-worker');
+				} else {
+					workerTiffFailed = true;
+					localBuffer = (workerResponse?.buffer && workerResponse.buffer.byteLength > 0) ? workerResponse.buffer : null;
+					console.warn('[TiffProcessor] Worker decode failed, falling back to geotiff.js:', workerResponse?.error);
+				}
+			}
 
-			// Try WASM decoding first if available
-			if (useWasm) {
+			const useWasm = !wasmResult && !workerTiffFailed && this._wasmAvailable && !use24BitMode;
+			console.log(`[TiffProcessor] Decode decision: worker=${!!wasmResult}, wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
+
+			// Local WASM decoding when the worker isn't available
+			if (useWasm && localBuffer) {
 				try {
 					const decodeStart = performance.now();
 					// Use a copy so a WASM failure/memory-growth cannot invalidate the
 					// original buffer that the geotiff.js fallback path needs below.
-					const wasmResult = await this._wasmProcessor.decode(buffer.slice(0));
+					wasmResult = await this._wasmProcessor.decode(localBuffer.slice(0));
 					const decodeTime = performance.now() - decodeStart;
 					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
+					PerfTrace.mark('decode-wasm-local');
+				} catch (wasmError) {
+					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
+					// Disable WASM for the rest of the session — a failure can leave
+					// the module in an indeterminate state after a panic.
+					this._wasmAvailable = false;
+					wasmResult = null;
+				}
+			}
+
+			if (wasmResult) {
+				try {
 
 					// Convert WASM result to format compatible with existing code
 					const width = wasmResult.width;
@@ -129,11 +186,16 @@ export class TiffProcessor {
 					const bitsPerSample = wasmResult.bitsPerSample;
 					const sampleFormat = wasmResult.sampleFormat;
 
-					// Create rasters from WASM data (deinterleave if needed)
-					const rasters = [];
-					if (samplesPerPixel === 1) {
-						rasters.push(wasmResult.data);
+					// Per-channel rasters: the worker already deinterleaved them
+					// off-thread; the local WASM path deinterleaves here.
+					/** @type {Float32Array[]} */
+					let rasters;
+					if (wasmResult.rasters) {
+						rasters = wasmResult.rasters;
+					} else if (samplesPerPixel === 1) {
+						rasters = [wasmResult.data];
 					} else {
+						rasters = [];
 						// Deinterleave for compatibility with existing rendering code
 						for (let c = 0; c < samplesPerPixel; c++) {
 							const channel = new Float32Array(width * height);
@@ -142,6 +204,7 @@ export class TiffProcessor {
 							}
 							rasters.push(channel);
 						}
+						PerfTrace.mark('deinterleave');
 					}
 
 					// Store interleaved data
@@ -182,6 +245,7 @@ export class TiffProcessor {
 					if (this.vscode && this._isInitialLoad) {
 						const showNormTiff = sampleFormat === 3;
 						const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
+						this._pendingRenderData = { image, rasters };
 
 						this.vscode.postMessage({
 							type: 'formatInfo',
@@ -197,11 +261,9 @@ export class TiffProcessor {
 								bitsPerSample,
 								formatType,
 								isInitialLoad: true,
-								decodedWith: 'wasm'
+								decodedWith: wasmResult.decodedWith || 'wasm'
 							}
 						});
-
-						this._pendingRenderData = { image, rasters };
 
 						const canvas = document.createElement('canvas');
 						canvas.width = width;
@@ -227,8 +289,13 @@ export class TiffProcessor {
 			}
 
 			// Fallback to geotiff.js (or if WASM not available/failed)
+			if (!localBuffer || localBuffer.byteLength === 0) {
+				// The bytes were transferred to the worker; refetch (rare error path).
+				const refetched = await fetch(src, { signal: loadSignal });
+				localBuffer = await refetched.arrayBuffer();
+			}
 			const decodeStart = performance.now();
-			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
+			const tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
 			const image = await tiff.getImage();
 			const sampleFormat = image.getSampleFormat();
 
@@ -249,6 +316,7 @@ export class TiffProcessor {
 			const rasters = await image.readRasters();
 			const decodeTime = performance.now() - decodeStart;
 			console.log(`[TiffProcessor] geotiff.js decode time: ${decodeTime.toFixed(2)}ms`);
+			PerfTrace.mark('decode-geotiff');
 
 			const samplesPerPixel = image.getSamplesPerPixel();
 			const bitsPerSample = image.getBitsPerSample();
@@ -275,6 +343,7 @@ export class TiffProcessor {
 					}
 				}
 			}
+			PerfTrace.mark('interleave-raw');
 
 			// Store TIFF data for pixel inspection and re-rendering
 			this.rawTiffData = {
@@ -297,6 +366,7 @@ export class TiffProcessor {
 				// Determine if this is a float TIFF or int TIFF
 				const showNormTiff = sampleFormat === 3; // 3 = IEEE floating point
 				const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
+				this._pendingRenderData = { image, rasters };
 
 				this.vscode.postMessage({
 					type: 'formatInfo',
@@ -315,9 +385,6 @@ export class TiffProcessor {
 						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js'
 					}
 				});
-
-				// Store pending render data - will render when settings are updated
-				this._pendingRenderData = { image, rasters };
 
 				// Return placeholder - actual rendering happens when settings update
 				const placeholderImageData = new ImageData(width, height);
@@ -347,6 +414,7 @@ export class TiffProcessor {
 		for (let i = 0; i < rasters.length; i++) {
 			rastersCopy.push(new Float32Array(rasters[i]));
 		}
+		PerfTrace.mark('raster-copy');
 
 		// Apply mask filtering if enabled
 		const settings = this.settingsManager.settings;
@@ -395,6 +463,7 @@ export class TiffProcessor {
 					}
 				}
 			}
+			PerfTrace.mark('finite-scan');
 		}
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
@@ -496,6 +565,7 @@ export class TiffProcessor {
 
 			this._lastStatistics = stats;
 			this._lastStatisticsRgb24Mode = currentRgb24Mode;
+			PerfTrace.mark('stats');
 		}
 
 		// Send stats to VS Code
@@ -531,6 +601,7 @@ export class TiffProcessor {
 				}
 			}
 		}
+		PerfTrace.mark('interleave');
 
 		// Create options object
 		const options = {
@@ -752,4 +823,4 @@ export class TiffProcessor {
 		console.log(`[TiffProcessor] Deferred render took ${(performance.now() - perfStart).toFixed(2)}ms`);
 		return imageData;
 	}
-} 
+}

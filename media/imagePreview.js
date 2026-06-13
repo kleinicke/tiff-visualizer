@@ -17,6 +17,8 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
+import { DecodeWorkerClient } from './modules/decode-worker-client.js';
+import { PerfTrace } from './modules/perf-trace.js';
 
 /**
  * Main Image Preview Application
@@ -66,6 +68,15 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	const rawProcessor = new RawProcessor(settingsManager, vscode);
+	// All format processors, for bulk per-switch state resets and load cancellation.
+	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor];
+	// Off-thread decode worker, pre-warmed in the background. Processors fall
+	// back to their local (main-thread) decoders until it is ready or if it
+	// is unavailable, so worker failures never break image loading.
+	const decodeWorkerClient = new DecodeWorkerClient();
+	decodeWorkerClient.start();
+	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor];
+	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
@@ -107,10 +118,32 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	/** @type {{scale: number|string, [key: string]: any}|null} */
 	let _pendingZoomState = null; // Zoom state to restore after next image load
 	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
+	/** @type {AbortController|null} */
+	let _loadAbortController = null; // Aborts the in-flight load's fetch when a newer switch supersedes it
+	/** @type {Promise<void>} */
+	let _tiffCanvasReadyPromise;
+	/** @type {(() => void)|null} */
+	let _tiffCanvasReadyResolve = null;
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
+
+	function resetTiffCanvasReady() {
+		// Release a stale waiter before replacing it; its generation check will
+		// prevent it from rendering into the next image.
+		_tiffCanvasReadyResolve?.();
+		_tiffCanvasReadyPromise = new Promise(resolve => {
+			_tiffCanvasReadyResolve = resolve;
+		});
+	}
+
+	function signalTiffCanvasReady() {
+		_tiffCanvasReadyResolve?.();
+		_tiffCanvasReadyResolve = null;
+	}
+
+	resetTiffCanvasReady();
 
 	// Colormap conversion state
 	/** @type {ColormapConversionState|null} */
@@ -181,6 +214,11 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		initialLoadStartTime = performance.now();
 		// Get the extension start time from settings (for total elapsed measurement)
 		extensionLoadStartTime = settingsManager.settings.loadStartTime || 0;
+		// The initial image must be cancellable too. Without a signal, switching
+		// while it decodes lets the stale load continue after its worker is
+		// terminated and interfere with the newest image.
+		_loadAbortController = new AbortController();
+		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
@@ -364,6 +402,13 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		});
 	}
 
+	// PerfTrace summaries go to both the webview console and the extension's
+	// Output channel, so timing is visible without opening Developer Tools.
+	PerfTrace.setLogger((message) => {
+		console.log(message);
+		logToOutput(message);
+	});
+
 	/**
 	 * Helper to render ImageData to canvas using createImageBitmap for performance
 	 * @param {ImageData} imageData
@@ -371,11 +416,19 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 */
 	async function renderImageDataToCanvas(imageData, ctx) {
 		if (!ctx) return;
+		// Ensure the canvas matches the image size. Without this, drawing a smaller
+		// image onto a canvas still sized for a previous (larger) image leaves the
+		// old pixels visible around the new one — both images appear overlaid.
+		if (ctx.canvas.width !== imageData.width || ctx.canvas.height !== imageData.height) {
+			ctx.canvas.width = imageData.width;
+			ctx.canvas.height = imageData.height;
+		}
 		const start = performance.now();
 		const pixelCount = imageData.width * imageData.height;
 		if (pixelCount > 25_000_000) {
 			ctx.putImageData(imageData, 0, 0);
 			console.log(`[Canvas] putImageData upload took ${(performance.now() - start).toFixed(2)}ms`);
+			PerfTrace.mark('canvas-upload');
 			return;
 		}
 		try {
@@ -389,6 +442,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			ctx.putImageData(imageData, 0, 0);
 			console.log(`[Canvas] putImageData fallback took ${(performance.now() - fallbackStart).toFixed(2)}ms`);
 		}
+		PerfTrace.mark('canvas-upload');
 	}
 
 	/**
@@ -436,7 +490,9 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * Handle image loading error, with optional specific message.
 	 */
 	function onImageError(/** @type {string} */ message = '') {
+		PerfTrace.cancel();
 		hasLoadedImage = true;
+		signalTiffCanvasReady();
 		// Remove previous image/canvas so the error message shows on a clean background
 		container.querySelectorAll('img, canvas').forEach(el => {
 			if (!el.closest('.histogram-overlay')) {
@@ -473,6 +529,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 
 			hasLoadedImage = true;
+			signalTiffCanvasReady();
 			if (!tiffProcessor._pendingRenderData) {
 				finalizeImageSetup();
 				const endTime = performance.now();
@@ -483,6 +540,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
 		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling TIFF:', error);
 			const msg = String(error instanceof Error ? error.message : error);
 			if (msg.includes('50000') || msg.toLowerCase().includes('zstd')) {
@@ -527,6 +585,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
 		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling EXR:', error);
 			onImageError();
 		}
@@ -559,6 +618,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling PFM:', error);
 			onImageError();
 		}
@@ -591,6 +651,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling PPM/PGM:', error);
 			onImageError();
 		}
@@ -623,6 +684,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling PNG/JPEG:', error);
 			onImageError();
 		}
@@ -655,6 +717,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling NPY/NPZ:', error);
 			onImageError();
 		}
@@ -869,6 +932,14 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 
 		// Update histogram if visible
 		updateHistogramData();
+
+		// Close the switch trace once the final pixels are shown. With a deferred
+		// render pending this call is the placeholder finalize — keep the trace
+		// open; the post-deferred finalize (pending cleared by then) ends it.
+		PerfTrace.mark('finalize');
+		if (!hasPendingDeferred) {
+			PerfTrace.end();
+		}
 	}
 
 	function swapImageElementToCanvas() {
@@ -967,8 +1038,22 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 				const changes = settingsManager.updateSettings(message.settings);
 				const newResourceUri = settingsManager.settings.resourceUri;
 
+				// formatInfo is posted from inside processTiff(), before handleTiff()
+				// receives and installs its canvas. Do not drop the immediate
+				// initial-settings response while that canvas is still in flight.
+				if (message.isInitialRender && currentLoadFormat === 'TIFF' && !canvas) {
+					const waitingGeneration = _loadGeneration;
+					await _tiffCanvasReadyPromise;
+					if (waitingGeneration !== _loadGeneration) {
+						break;
+					}
+				}
+
 				// Check if this is a deferred render trigger (initial load)
 				if (message.isInitialRender && canvas) {
+					// Time between formatInfo going out and per-format settings
+					// coming back — extension-host latency, not main-thread work.
+					PerfTrace.mark('await-settings');
 					// Trigger deferred rendering for the appropriate processor
 					let deferredImageData = null;
 					let deferredCanvasAlreadyRendered = false;
@@ -2314,6 +2399,19 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
 
+		// Trace where this switch spends its time; the summary is logged from
+		// finalizeImageSetup once the final pixels are on screen.
+		PerfTrace.begin(`switch ${resourceUri.split('/').pop()}`);
+
+		// Abort the previous in-flight load: cancels its network fetch and lets
+		// the processors stop before decoding, instead of the superseded load
+		// running to completion and blocking the next image.
+		if (_loadAbortController) { _loadAbortController.abort(); }
+		decodeWorkerClient.cancelActiveDecodes();
+		resetTiffCanvasReady();
+		_loadAbortController = new AbortController();
+		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
+
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
@@ -2343,17 +2441,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		// new image (e.g. switching from TIFF-int to EXR-float needs different
 		// normalization defaults). The AppStateManager caches settings per-format
 		// so any user adjustments are preserved when switching back.
-		tiffProcessor._isInitialLoad = true;
-		exrProcessor._isInitialLoad = true;
-		npyProcessor._isInitialLoad = true;
-		pfmProcessor._isInitialLoad = true;
-		ppmProcessor._isInitialLoad = true;
-		pngProcessor._isInitialLoad = true;
-		hdrProcessor._isInitialLoad = true;
-		tgaProcessor._isInitialLoad = true;
-		webImageProcessor._isInitialLoad = true;
-		jxlProcessor._isInitialLoad = true;
-		rawProcessor._isInitialLoad = true;
+		for (const p of allProcessors) { p._isInitialLoad = true; }
 
 		// Clear each processor's stale raw data so the mouse handler and histogram
 		// don't read pixels from the previous image. Without this, the TIFF-first
@@ -2364,16 +2452,15 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 		tiffProcessor._convertedFloatData = null;
 		exrProcessor.rawExrData = undefined;
 		exrProcessor._cachedStats = undefined;
-		npyProcessor._lastRaw = null;
-		pfmProcessor._lastRaw = null;
-		ppmProcessor._lastRaw = null;
-		pngProcessor._lastRaw = null;
-		hdrProcessor._lastRaw = null;
-		tgaProcessor._lastRaw = null;
-		webImageProcessor._lastRaw = null;
-		jxlProcessor._lastRaw = null;
-		rawProcessor._lastRaw = null;
+		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor];
+		for (const p of rawDataProcessors) { p._lastRaw = null; }
 		rawProcessor._arrayBuffer = null;
+
+		// Drop any pending deferred-render data from the previous image. Otherwise a
+		// late updateSettings(isInitialRender) for the old image could draw it onto
+		// the new image's canvas, overlaying two images of different sizes.
+		for (const p of allProcessors) { p._pendingRenderData = null; }
+		pngProcessor._lazyNativeReadback = null;
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new
@@ -2389,7 +2476,20 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 	 * @param {string} resourceUri
 	 * @param {number} gen
 	 */
-	function loadImageByType(uri, resourceUri, gen) {
+	async function loadImageByType(uri, resourceUri, gen) {
+		// Wait until the browser has painted the loading UI (counter, filename
+		// badge, loading dot) before starting synchronous decode work, so every
+		// switch gives immediate visual feedback. This also lets a burst of
+		// queued switch messages (rapid key presses) be processed first — all
+		// but the newest switch bail out here instead of running a full load.
+		// The plain timeout races as a fallback because requestAnimationFrame
+		// does not fire while the webview is hidden.
+		await new Promise(resolve => {
+			requestAnimationFrame(() => setTimeout(resolve, 0));
+			setTimeout(resolve, 100);
+		});
+		if (gen !== _loadGeneration) { return; }
+		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
 			handleTiff(uri, gen);

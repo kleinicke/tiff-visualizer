@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
+import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
@@ -94,12 +94,44 @@ function segmentToRegex(segment: string): RegExp {
 const MAX_GLOB_RESULTS = 2000;
 
 /**
- * Async resolveWildcardDirs — same logic as the sync version but uses fs.promises.
+ * Path helpers that resolve typed path strings against an "anchor" URI — the
+ * currently open image. All filesystem access goes through `vscode.workspace.fs`
+ * rather than Node's `fs`, and child URIs inherit the anchor's scheme and
+ * authority. This is what makes wildcard scanning work over Remote-SSH, dev
+ * containers, and VS Code Web, instead of accidentally hitting the local disk.
+ */
+function pathModuleFor(anchor: vscode.Uri): path.PlatformPath {
+	// Local files follow the host OS path rules; everything else (remote, virtual) is POSIX.
+	return anchor.scheme === 'file' ? path : path.posix;
+}
+
+/** Builds a URI for an absolute path string, inheriting scheme/authority from the anchor. */
+function pathToUri(p: string, anchor: vscode.Uri): vscode.Uri {
+	if (anchor.scheme === 'file') {
+		return vscode.Uri.file(p);
+	}
+	return anchor.with({ path: p.replace(/\\/g, '/'), query: '', fragment: '' });
+}
+
+/** stat() a path string via the VS Code filesystem API; undefined if it does not exist. */
+async function statPath(p: string, anchor: vscode.Uri): Promise<vscode.FileStat | undefined> {
+	try { return await vscode.workspace.fs.stat(pathToUri(p, anchor)); } catch { return undefined; }
+}
+
+/** readDirectory() a path string via the VS Code filesystem API; empty if unreadable. */
+async function readDirPath(p: string, anchor: vscode.Uri): Promise<[string, vscode.FileType][]> {
+	try { return await vscode.workspace.fs.readDirectory(pathToUri(p, anchor)); } catch { return []; }
+}
+
+/**
+ * Expand the directory portion of a path (which may itself contain wildcards)
+ * into the list of concrete directories it matches.
  * Accepts an isCancelled callback so in-flight scans abort as soon as the QuickPick closes.
  */
-async function resolveWildcardDirsAsync(dirPath: string, isCancelled: () => boolean): Promise<string[]> {
+async function resolveWildcardDirsAsync(dirPath: string, anchor: vscode.Uri, isCancelled: () => boolean): Promise<string[]> {
+	const pp = pathModuleFor(anchor);
 	if (!dirPath.includes('*') && !dirPath.includes('?')) {
-		try { await fs.promises.access(dirPath); return [dirPath]; } catch { return []; }
+		return (await statPath(dirPath, anchor)) ? [dirPath] : [];
 	}
 	const segments = dirPath.split(/[/\\]/);
 	const baseSegs: string[] = [];
@@ -108,7 +140,7 @@ async function resolveWildcardDirsAsync(dirPath: string, isCancelled: () => bool
 		baseSegs.push(seg);
 	}
 	const wildcardSegs = segments.slice(baseSegs.length);
-	const baseDir = baseSegs.join(path.sep) || path.sep;
+	const baseDir = baseSegs.join(pp.sep) || pp.sep;
 
 	async function walkDirs(dir: string, segs: string[]): Promise<string[]> {
 		if (isCancelled()) return [];
@@ -116,22 +148,18 @@ async function resolveWildcardDirsAsync(dirPath: string, isCancelled: () => bool
 		const [head, ...rest] = segs;
 		if (!head) return walkDirs(dir, rest);
 		if (!/[*?]/.test(head)) {
-			const next = path.join(dir, head);
-			try { await fs.promises.access(next); return walkDirs(next, rest); } catch { return []; }
+			const next = pp.join(dir, head);
+			return (await statPath(next, anchor)) ? walkDirs(next, rest) : [];
 		}
 		const regex = segmentToRegex(head);
-		let names: string[];
-		try { names = await fs.promises.readdir(dir); } catch { return []; }
+		const entries = await readDirPath(dir, anchor);
 		const out: string[] = [];
-		for (const name of names) {
+		for (const [name, fileType] of entries) {
 			if (isCancelled()) return out;
 			if (!regex.test(name)) continue;
-			const fullPath = path.join(dir, name);
-			try {
-				if ((await fs.promises.stat(fullPath)).isDirectory()) {
-					out.push(...await walkDirs(fullPath, rest));
-				}
-			} catch { /* skip inaccessible */ }
+			if (fileType & vscode.FileType.Directory) {
+				out.push(...await walkDirs(pp.join(dir, name), rest));
+			}
 		}
 		return out;
 	}
@@ -140,77 +168,194 @@ async function resolveWildcardDirsAsync(dirPath: string, isCancelled: () => bool
 }
 
 /**
- * Async glob expansion — uses fs.promises and supports cancellation + a hard result cap.
- * Mutates the shared `results` array so the cap is enforced across recursive calls.
+ * Async glob expansion via the VS Code filesystem API, with cancellation and a
+ * hard result cap. Mutates the shared `results` array so the cap is enforced
+ * across recursive calls.
  */
 async function expandGlobSegmentsAsync(
 	baseDir: string,
 	segments: string[],
+	anchor: vscode.Uri,
 	results: vscode.Uri[],
 	isCancelled: () => boolean,
 ): Promise<void> {
 	if (isCancelled() || results.length >= MAX_GLOB_RESULTS || segments.length === 0) return;
 
+	const pp = pathModuleFor(anchor);
 	const [head, ...tail] = segments;
 	const isLast = tail.length === 0;
 
 	if (!head.includes('*') && !head.includes('?')) {
-		const fullPath = path.join(baseDir, head);
+		const fullPath = pp.join(baseDir, head);
 		if (isLast) {
-			try {
-				const st = await fs.promises.stat(fullPath);
-				if (st.isFile()) {
-					const ext = head.split('.').pop()?.toLowerCase() ?? '';
-					if (IMAGE_EXTENSIONS.includes(ext)) results.push(vscode.Uri.file(fullPath));
-				}
-			} catch { /* not found */ }
+			const st = await statPath(fullPath, anchor);
+			if (st && (st.type & vscode.FileType.File)) {
+				const uri = pathToUri(fullPath, anchor);
+				if (isImageUri(uri)) results.push(uri);
+			}
 		} else {
-			await expandGlobSegmentsAsync(fullPath, tail, results, isCancelled);
+			await expandGlobSegmentsAsync(fullPath, tail, anchor, results, isCancelled);
 		}
 		return;
 	}
 
 	const regex = segmentToRegex(head);
-	try {
-		const entries = await fs.promises.readdir(baseDir);
-		for (const entry of entries) {
-			if (isCancelled() || results.length >= MAX_GLOB_RESULTS) return;
-			if (!regex.test(entry)) continue;
-			const fullPath = path.join(baseDir, entry);
-			try {
-				const stat = await fs.promises.stat(fullPath);
-				if (isLast) {
-					if (stat.isFile()) {
-						const ext = entry.split('.').pop()?.toLowerCase() ?? '';
-						if (IMAGE_EXTENSIONS.includes(ext)) results.push(vscode.Uri.file(fullPath));
-					}
-				} else {
-					if (stat.isDirectory()) {
-						await expandGlobSegmentsAsync(fullPath, tail, results, isCancelled);
-					}
-				}
-			} catch { /* skip inaccessible entries */ }
+	const entries = await readDirPath(baseDir, anchor);
+	for (const [entry, fileType] of entries) {
+		if (isCancelled() || results.length >= MAX_GLOB_RESULTS) return;
+		if (!regex.test(entry)) continue;
+		const fullPath = pp.join(baseDir, entry);
+		if (isLast) {
+			if (fileType & vscode.FileType.File) {
+				const uri = pathToUri(fullPath, anchor);
+				if (isImageUri(uri)) results.push(uri);
+			}
+		} else {
+			if (fileType & vscode.FileType.Directory) {
+				await expandGlobSegmentsAsync(fullPath, tail, anchor, results, isCancelled);
+			}
 		}
-	} catch { /* unreadable directory */ }
+	}
 }
 
-async function expandGlobPatternAsync(pattern: string, isCancelled: () => boolean): Promise<vscode.Uri[]> {
+async function expandGlobPatternAsync(pattern: string, anchor: vscode.Uri, isCancelled: () => boolean): Promise<vscode.Uri[]> {
+	const pp = pathModuleFor(anchor);
 	if (!pattern.includes('*') && !pattern.includes('?')) {
-		try {
-			const st = await fs.promises.stat(pattern);
-			return st.isFile() ? [vscode.Uri.file(pattern)] : [];
-		} catch { return []; }
+		const plain = pattern.replace(/[/\\]+$/, '') || pp.sep;
+		const st = await statPath(plain, anchor);
+		if (!st) return [];
+		if (st.type & vscode.FileType.Directory) {
+			// A plain folder path expands to every supported image directly
+			// inside it (non-recursive, mirroring the Explorer context menu).
+			const results: vscode.Uri[] = [];
+			for (const [name, fileType] of await readDirPath(plain, anchor)) {
+				if (isCancelled() || results.length >= MAX_GLOB_RESULTS) break;
+				if ((fileType & vscode.FileType.File) === 0) continue;
+				const uri = pathToUri(pp.join(plain, name), anchor);
+				if (isImageUri(uri)) results.push(uri);
+			}
+			return results.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+		}
+		return (st.type & vscode.FileType.File) ? [pathToUri(plain, anchor)] : [];
 	}
 
 	const firstWild = pattern.search(/[*?]/);
 	const beforeWild = pattern.substring(0, firstWild);
-	const baseDir = path.dirname(beforeWild.endsWith(path.sep) ? beforeWild + '_' : beforeWild);
-	const remainder = pattern.substring(baseDir.length + 1);
+	const endsWithSep = beforeWild.endsWith('/') || beforeWild.endsWith('\\');
+	const baseDir = pp.dirname(endsWithSep ? beforeWild + '_' : beforeWild);
+	// dirname of a root-level path returns the root itself ('/' or 'C:\'),
+	// which already ends with a separator — don't skip an extra character.
+	const remainder = pattern.substring(baseDir.endsWith(pp.sep) ? baseDir.length : baseDir.length + 1);
 	const segments = remainder.split(/[/\\]/);
 
 	const results: vscode.Uri[] = [];
-	await expandGlobSegmentsAsync(baseDir, segments, results, isCancelled);
-	return results.sort((a, b) => a.fsPath.localeCompare(b.fsPath, undefined, { numeric: true }));
+	await expandGlobSegmentsAsync(baseDir, segments, anchor, results, isCancelled);
+	return results.sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+}
+
+/** Returns the final path segment of a URI (scheme-agnostic). */
+function uriBasename(uri: vscode.Uri): string {
+	return uri.path.split('/').pop() || uri.path;
+}
+
+/** True if the URI's extension is one of the supported image formats. */
+function isImageUri(uri: vscode.Uri): boolean {
+	const ext = uriBasename(uri).split('.').pop()?.toLowerCase() ?? '';
+	return IMAGE_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Expands a selection of URIs into a flat, sorted list of image-file URIs.
+ * Directories are scanned (non-recursively) for supported image files via the
+ * VS Code filesystem API, so it works for local, remote (SSH) and virtual
+ * workspaces alike. Plain image files pass through unchanged; anything else is
+ * dropped. Duplicates are removed.
+ */
+async function collectImageFiles(uris: vscode.Uri[]): Promise<vscode.Uri[]> {
+	const out = new Map<string, vscode.Uri>();
+	for (const uri of uris) {
+		let type: vscode.FileType;
+		try {
+			type = (await vscode.workspace.fs.stat(uri)).type;
+		} catch {
+			continue;
+		}
+		if (type & vscode.FileType.Directory) {
+			let entries: [string, vscode.FileType][];
+			try {
+				entries = await vscode.workspace.fs.readDirectory(uri);
+			} catch {
+				continue;
+			}
+			for (const [name, entryType] of entries) {
+				if ((entryType & vscode.FileType.File) === 0) { continue; }
+				const child = Utils.joinPath(uri, name);
+				if (isImageUri(child)) { out.set(child.toString(), child); }
+			}
+		} else if ((type & vscode.FileType.File) && isImageUri(uri)) {
+			out.set(uri.toString(), uri);
+		}
+	}
+	return [...out.values()].sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
+}
+
+/**
+ * Adds a list of image URIs to the given preview's collection, showing progress
+ * for multi-file operations and a summary message at the end.
+ * Shared by the Explorer context-menu path and the wildcard pattern picker.
+ */
+async function addUrisToCollection(
+	activePreview: {
+		addToImageCollection(uri: vscode.Uri): Promise<boolean>;
+		ensureLocalResourceRoots(uris: vscode.Uri[]): void;
+	},
+	uris: vscode.Uri[],
+): Promise<{ added: number; skipped: number }> {
+	const result = { added: 0, skipped: 0 };
+	if (uris.length === 0) {
+		return result;
+	}
+
+	// Register all folders in one shot so the webview reloads at most once
+	// (ideally zero times for in-workspace images) instead of per file.
+	activePreview.ensureLocalResourceRoots(uris);
+
+	let firstAdded: vscode.Uri | undefined;
+	await vscode.window.withProgress(
+		{ location: vscode.ProgressLocation.Notification, title: 'Adding to collection…', cancellable: true },
+		async (progress, token) => {
+			for (const uri of uris) {
+				if (token.isCancellationRequested) { break; }
+				if (uris.length > 1) {
+					progress.report({ message: `Adding ${result.added + result.skipped + 1} / ${uris.length}…`, increment: 100 / uris.length });
+				}
+				try {
+					const wasAdded = await activePreview.addToImageCollection(uri);
+					if (wasAdded) { if (!firstAdded) { firstAdded = uri; } result.added++; } else { result.skipped++; }
+				} catch (error) {
+					logCommand('browseAndAddToCollection', 'error', `Failed to add ${uri.fsPath}: ${error}`);
+				}
+			}
+		}
+	);
+
+	const { added, skipped } = result;
+	if (added === 0 && skipped > 0) {
+		const msg = skipped === 1
+			? `${uriBasename(uris[0])} is already in the collection.`
+			: `All ${skipped} images are already in the collection.`;
+		vscode.window.showWarningMessage(msg);
+	} else if (added > 0) {
+		vscode.commands.executeCommand('workbench.action.keepEditor');
+		const base = added === 1
+			? `Added ${uriBasename(firstAdded!)} to image collection.`
+			: `Added ${added} images to collection.`;
+		const msg = skipped > 0
+			? `${base} (${skipped} already in collection, skipped) Press ← → to navigate.`
+			: `${base} Press ← → to navigate.`;
+		vscode.window.showInformationMessage(msg);
+	}
+	return result;
 }
 
 /**
@@ -1125,11 +1270,14 @@ export function registerImagePreviewCommands(
 	 * Show a QuickPick-based path picker with filesystem autocomplete.
 	 * Returns the final typed/selected pattern, or undefined if cancelled.
 	 */
-	async function pickPathWithAutocomplete(initialDir: string, existingCollection: readonly vscode.Uri[] = []): Promise<string | undefined> {
+	async function pickPathWithAutocomplete(anchor: vscode.Uri, existingCollection: readonly vscode.Uri[] = []): Promise<string | undefined> {
+		const pp = pathModuleFor(anchor);
+		const sep = pp.sep;
+		const initialDir = pp.dirname(anchor.scheme === 'file' ? anchor.fsPath : anchor.path);
 		return new Promise<string | undefined>((resolve) => {
 			const qp = vscode.window.createQuickPick();
-			qp.placeholder = 'Type a path or wildcard pattern (e.g. *.tiff)';
-			qp.value = initialDir + path.sep;
+			qp.placeholder = 'Type a file path, folder, or wildcard pattern (e.g. *.tiff)';
+			qp.value = initialDir + sep;
 			qp.matchOnDescription = false;
 			qp.matchOnDetail = false;
 
@@ -1160,15 +1308,15 @@ export function registerImagePreviewCommands(
 
 				if (typed) {
 					try {
-						const trailingSlash = typed.endsWith(path.sep) || typed.endsWith('/');
+						const trailingSlash = typed.endsWith('/') || typed.endsWith('\\');
 						let dirToList: string;
 						let prefix: string;
 						if (trailingSlash) {
-							dirToList = typed.replace(/[/\\]+$/, '') || path.sep;
+							dirToList = typed.replace(/[/\\]+$/, '') || sep;
 							prefix = '';
 						} else {
-							dirToList = path.dirname(typed);
-							prefix = path.basename(typed).toLowerCase();
+							dirToList = pp.dirname(typed);
+							prefix = pp.basename(typed).toLowerCase();
 						}
 
 						const prefixHasWild = /[*?]/.test(prefix);
@@ -1176,52 +1324,42 @@ export function registerImagePreviewCommands(
 						const matchesPrefix = (name: string) =>
 							prefixHasWild ? prefixRegex!.test(name) : name.startsWith(prefix);
 
-						const imageExts = new Set(IMAGE_EXTENSIONS);
-						const dirsToList = await resolveWildcardDirsAsync(dirToList, isCancelled);
+						const dirsToList = await resolveWildcardDirsAsync(dirToList, anchor, isCancelled);
 
 						if (searchVersion !== version) return;
 
 						for (const dir of dirsToList) {
 							if (searchVersion !== version) return;
 
-							let entries: fs.Dirent[];
-							try {
-								entries = await fs.promises.readdir(dir, { withFileTypes: true });
-							} catch { continue; }
+							const entries = await readDirPath(dir, anchor);
 
 							if (searchVersion !== version) return;
 
-							for (const entry of entries) {
-								const name = entry.name;
+							for (const [name, fileType] of entries) {
 								if (!matchesPrefix(name.toLowerCase())) continue;
 
-								const fullPath = path.join(dir, name);
-								let isDir = entry.isDirectory();
-								if (!isDir && entry.isSymbolicLink()) {
-									try {
-										const st = await fs.promises.stat(fullPath);
-										isDir = st.isDirectory();
-									} catch { isDir = false; }
+								const fullPath = pp.join(dir, name);
+								let isDir = (fileType & vscode.FileType.Directory) !== 0;
+								if (!isDir && (fileType & vscode.FileType.SymbolicLink)) {
+									const st = await statPath(fullPath, anchor);
+									isDir = !!st && (st.type & vscode.FileType.Directory) !== 0;
 								}
 
 								if (isDir) {
 									contentItems.push({
 										label: '$(folder) ' + name,
 										description: fullPath,
-										detail: 'Directory — select to navigate into it',
+										detail: 'Folder — select to navigate into it, or confirm the typed path to add all images inside',
 										alwaysShow: true,
 									} as vscode.QuickPickItem & { _dirPath?: string });
 									(contentItems[contentItems.length - 1] as any)._dirPath = fullPath;
-								} else {
-									const ext = name.split('.').pop()?.toLowerCase() ?? '';
-									if (imageExts.has(ext)) {
-										contentItems.push({
-											label: '$(file-media) ' + name,
-											description: fullPath,
-											alwaysShow: true,
-										} as vscode.QuickPickItem & { _filePath?: string });
-										(contentItems[contentItems.length - 1] as any)._filePath = fullPath;
-									}
+								} else if (isImageUri(pathToUri(fullPath, anchor))) {
+									contentItems.push({
+										label: '$(file-media) ' + name,
+										description: fullPath,
+										alwaysShow: true,
+									} as vscode.QuickPickItem & { _filePath?: string });
+									(contentItems[contentItems.length - 1] as any)._filePath = fullPath;
 								}
 							}
 						}
@@ -1230,41 +1368,36 @@ export function registerImagePreviewCommands(
 
 				if (searchVersion !== version) return;
 
-				// Detect if the typed path is a plain directory (no wildcards)
+				// Detect if the typed path is a plain directory (no wildcards) —
+				// folders are accepted and expand to all images directly inside.
 				let isDirectoryPath = false;
 				if (typed && !typed.includes('*') && !typed.includes('?')) {
-					try { isDirectoryPath = (await fs.promises.stat(typed.replace(/[/\\]+$/, '') || path.sep)).isDirectory(); } catch { /* ignore */ }
+					const st = await statPath(typed.replace(/[/\\]+$/, '') || sep, anchor);
+					isDirectoryPath = !!st && (st.type & vscode.FileType.Directory) !== 0;
 					if (searchVersion !== version) return;
 				}
 
-				let finalUseItem: vscode.QuickPickItem;
-				if (isDirectoryPath) {
-					finalUseItem = {
-						label: '$(warning) This is a folder, not a file',
-						description: 'Add * or *.ext at the end to match images inside',
-						alwaysShow: true,
-					};
-					(finalUseItem as any)._useRaw = false; // not selectable as a pattern
+				const files = await expandGlobPatternAsync(typed, anchor, isCancelled);
+				if (searchVersion !== version) return;
+				const existingSet = new Set(existingCollection.map(u => u.toString()));
+				const newCount = files.filter(u => !existingSet.has(u.toString())).length;
+				const alreadyCount = files.length - newCount;
+				const fromFolder = isDirectoryPath ? ' from this folder' : '';
+				let useLabel: string;
+				if (files.length === 0) {
+					useLabel = isDirectoryPath
+						? '$(warning) No supported images in this folder'
+						: '$(check) Use this pattern';
+				} else if (alreadyCount === 0) {
+					useLabel = `$(check) Add ${newCount} image${newCount === 1 ? '' : 's'}${fromFolder}`;
+				} else if (newCount === 0) {
+					useLabel = `$(warning) All ${alreadyCount} image${alreadyCount === 1 ? '' : 's'} already in collection`;
 				} else {
-					const files = await expandGlobPatternAsync(typed, isCancelled);
-					if (searchVersion !== version) return;
-					const existingSet = new Set(existingCollection.map(u => u.toString()));
-					const newCount = files.filter(u => !existingSet.has(u.toString())).length;
-					const alreadyCount = files.length - newCount;
-					let useLabel: string;
-					if (files.length === 0) {
-						useLabel = '$(check) Use this pattern';
-					} else if (alreadyCount === 0) {
-						useLabel = `$(check) Add ${newCount} image${newCount === 1 ? '' : 's'}`;
-					} else if (newCount === 0) {
-						useLabel = `$(warning) All ${alreadyCount} image${alreadyCount === 1 ? '' : 's'} already in collection`;
-					} else {
-						useLabel = `$(check) Add ${newCount} new image${newCount === 1 ? '' : 's'} (${alreadyCount} already in collection)`;
-					}
-					const canConfirm = newCount > 0;
-					finalUseItem = { label: useLabel, description: canConfirm ? 'Press Enter to confirm' : undefined, alwaysShow: true };
-					(finalUseItem as any)._useRaw = canConfirm;
+					useLabel = `$(check) Add ${newCount} new image${newCount === 1 ? '' : 's'}${fromFolder} (${alreadyCount} already in collection)`;
 				}
+				const canConfirm = newCount > 0;
+				const finalUseItem: vscode.QuickPickItem = { label: useLabel, description: canConfirm ? 'Press Enter to confirm' : undefined, alwaysShow: true };
+				(finalUseItem as any)._useRaw = canConfirm;
 				qp.items = [finalUseItem, ...contentItems];
 			}
 
@@ -1289,7 +1422,7 @@ export function registerImagePreviewCommands(
 					// Warning item (folder path) — ignore, let user keep typing
 				} else if (selected._dirPath) {
 					// Navigate into directory
-					qp.value = selected._dirPath + path.sep;
+					qp.value = selected._dirPath + sep;
 					updateSuggestions(qp.value);
 				} else if (selected._filePath) {
 					resolve(selected._filePath);
@@ -1310,28 +1443,61 @@ export function registerImagePreviewCommands(
 		});
 	}
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async (resource?: vscode.Uri) => {
-		logCommand('browseAndAddToCollection', 'start');
-		const activePreview = previewManager.activePreview;
-		if (!activePreview) {
-			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
-			logCommand('browseAndAddToCollection', 'error', 'No active preview');
-			return;
+	/**
+	 * Opens an image in the TIFF Visualizer custom editor and returns its preview
+	 * once registered. Used to bootstrap a collection when no preview is open yet.
+	 */
+	async function openPreviewForResource(uri: vscode.Uri) {
+		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.viewType);
+		// resolveCustomEditor runs asynchronously — wait briefly for the preview to register.
+		for (let i = 0; i < 60; i++) {
+			const preview = previewManager.getPreviewFor(uri) ?? previewManager.activePreview;
+			if (preview) { return preview; }
+			await new Promise(r => setTimeout(r, 50));
 		}
+		return previewManager.getPreviewFor(uri) ?? previewManager.activePreview;
+	}
 
-		// When invoked from the Explorer context menu, resource is the right-clicked file — add it directly.
-		if (resource) {
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async (resource?: vscode.Uri, resources?: vscode.Uri[]) => {
+		logCommand('browseAndAddToCollection', 'start');
+
+		// When invoked from the Explorer context menu, VS Code passes the clicked
+		// resource as the first argument and, when several entries are selected,
+		// the full selection as the second argument. Honor the whole selection so
+		// users can Ctrl/Shift-select multiple files (and folders) and add them all.
+		const selectedResources = (resources && resources.length > 0)
+			? resources
+			: (resource ? [resource] : []);
+
+		if (selectedResources.length > 0) {
 			try {
-				const filename = resource.fsPath.split(path.sep).pop() ?? resource.fsPath;
-				const wasAdded = await activePreview.addToImageCollection(resource);
-				if (wasAdded) {
-					vscode.commands.executeCommand('workbench.action.keepEditor');
-					vscode.window.showInformationMessage(`Added ${filename} to image collection. Press ← → to navigate.`);
-					logCommand('browseAndAddToCollection', 'success', resource.fsPath);
-				} else {
-					vscode.window.showWarningMessage(`${filename} is already in the collection.`);
-					logCommand('browseAndAddToCollection', 'success', `duplicate: ${resource.fsPath}`);
+				// Selection may include folders (right-clicked or multi-selected) —
+				// expand them into the image files they contain.
+				const files = await collectImageFiles(selectedResources);
+				if (files.length === 0) {
+					vscode.window.showWarningMessage('No supported image files found in the selection.');
+					logCommand('browseAndAddToCollection', 'error', 'No image files in selection');
+					return;
 				}
+
+				// No preview open yet: open the first image as the preview, then add
+				// the rest to its collection. This removes the chicken-and-egg of
+				// having to open an image manually before the menu does anything.
+				let activePreview = previewManager.activePreview;
+				let filesToAdd = files;
+				if (!activePreview) {
+					const [first, ...rest] = files;
+					activePreview = await openPreviewForResource(first);
+					if (!activePreview) {
+						vscode.window.showErrorMessage('Failed to open the image in TIFF Visualizer.');
+						logCommand('browseAndAddToCollection', 'error', 'Failed to open initial preview');
+						return;
+					}
+					filesToAdd = rest;
+				}
+
+				const { added, skipped } = await addUrisToCollection(activePreview, filesToAdd);
+				logCommand('browseAndAddToCollection', 'success', `explorer: added ${added}, skipped ${skipped}`);
 			} catch (error) {
 				vscode.window.showErrorMessage(`Failed to add images to collection: ${error}`);
 				logCommand('browseAndAddToCollection', 'error', String(error));
@@ -1339,59 +1505,26 @@ export function registerImagePreviewCommands(
 			return;
 		}
 
-		const currentDir = path.dirname(activePreview.resource.fsPath);
-		const pattern = await pickPathWithAutocomplete(currentDir, activePreview.imageCollection);
-		if (!pattern) return;
+		// Command-palette invocation needs an already-open image to anchor the picker.
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active TIFF Visualizer preview found. Please open an image first.');
+			logCommand('browseAndAddToCollection', 'error', 'No active preview');
+			return;
+		}
 
-		await vscode.window.withProgress(
-			{ location: vscode.ProgressLocation.Notification, title: 'Adding to collection…', cancellable: true },
-			async (progress, token) => {
-				const isCancelled = () => token.isCancellationRequested;
+		const pattern = await pickPathWithAutocomplete(activePreview.resource, activePreview.imageCollection);
+		if (!pattern) { return; }
 
-				progress.report({ message: 'Scanning files…' });
-				const filesToAdd = await expandGlobPatternAsync(pattern, isCancelled);
+		const filesToAdd = await expandGlobPatternAsync(pattern, activePreview.resource, () => false);
+		if (filesToAdd.length === 0) {
+			vscode.window.showWarningMessage(`No image files found matching: ${pattern}`);
+			logCommand('browseAndAddToCollection', 'error', `No files matching: ${pattern}`);
+			return;
+		}
 
-				if (isCancelled()) return;
-
-				if (filesToAdd.length === 0) {
-					vscode.window.showWarningMessage(`No image files found matching: ${pattern}`);
-					logCommand('browseAndAddToCollection', 'error', `No files matching: ${pattern}`);
-					return;
-				}
-
-				let added = 0;
-				let skipped = 0;
-				let firstAdded: vscode.Uri | undefined;
-				for (const uri of filesToAdd) {
-					if (isCancelled()) break;
-					progress.report({ message: `Adding ${added + skipped + 1} / ${filesToAdd.length}…`, increment: 100 / filesToAdd.length });
-					try {
-						const wasAdded = await activePreview.addToImageCollection(uri);
-						if (wasAdded) { if (!firstAdded) { firstAdded = uri; } added++; } else { skipped++; }
-					} catch (error) {
-						logCommand('browseAndAddToCollection', 'error', `Failed to add ${uri.fsPath}: ${error}`);
-					}
-				}
-
-				if (added > 0 || skipped > 0) {
-					let msg: string;
-					if (added === 0) {
-						msg = skipped === 1
-							? `${filesToAdd[0].fsPath.split(path.sep).pop()} is already in the collection.`
-							: `All ${skipped} images are already in the collection.`;
-						vscode.window.showWarningMessage(msg);
-					} else {
-						vscode.commands.executeCommand('workbench.action.keepEditor');
-						const base = added === 1
-							? `Added ${firstAdded!.fsPath.split(path.sep).pop()} to image collection.`
-							: `Added ${added} images to collection.`;
-						msg = skipped > 0 ? `${base} (${skipped} already in collection, skipped) Press ← → to navigate.` : `${base} Press ← → to navigate.`;
-						vscode.window.showInformationMessage(msg);
-					}
-					logCommand('browseAndAddToCollection', 'success', `Added ${added}, skipped ${skipped}`);
-				}
-			}
-		);
+		const { added, skipped } = await addUrisToCollection(activePreview, filesToAdd);
+		logCommand('browseAndAddToCollection', 'success', `Added ${added}, skipped ${skipped}`);
 	}));
 
 	// Comparison Panel Commands

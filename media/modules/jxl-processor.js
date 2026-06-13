@@ -28,6 +28,8 @@ export class JxlProcessor {
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined;
         this._isWasmLoaded = false;
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     async ensureWasmLoaded() {
@@ -65,15 +67,18 @@ export class JxlProcessor {
      * @param {string} src
      */
     async processJxl(src) {
+        const loadSignal = this.loadSignal;
         this._cachedStats = undefined;
         await this.ensureWasmLoaded();
 
-        const response = await fetch(src);
+        const response = await fetch(src, { signal: loadSignal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // @jsquash/jxl decode returns a standard ImageData (RGBA, 8-bit)
         const decoded = await decode(arrayBuffer);
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         const width = decoded.width;
         const height = decoded.height;

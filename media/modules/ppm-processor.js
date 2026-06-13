@@ -1,6 +1,7 @@
 // @ts-check
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
@@ -24,13 +25,21 @@ export class PpmProcessor {
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+        /** @type {DecodeWorkerClient|null} */
+        this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
     }
 
     /** @param {string} src */
     async processPpm(src) {
-        const response = await fetch(src);
+        const loadSignal = this.loadSignal;
+        const response = await fetch(src, { signal: loadSignal });
         const buffer = await response.arrayBuffer();
-        const { width, height, channels, data, maxval, format } = this._parsePpm(buffer);
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        // Parse in the decode worker when available, locally otherwise.
+        const { width, height, channels, data, maxval, format } = await DecodeWorkerClient.decodeWithFallback(
+            this.decodeWorker, 'ppm', buffer, src, loadSignal, (b) => this._parsePpm(b));
 
         // Keep RGB data for color display
         const displayData = data;

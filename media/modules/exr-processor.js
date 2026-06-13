@@ -1,6 +1,7 @@
 // @ts-check
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
 
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -33,6 +34,10 @@ export class ExrProcessor {
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
 		this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+		/** @type {AbortSignal|undefined} */
+		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+		/** @type {DecodeWorkerClient|null} */
+		this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
 	}
 
 	/**
@@ -67,6 +72,7 @@ export class ExrProcessor {
 	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, exrData: Object}>}
 	 */
 	async processExr(src) {
+		const loadSignal = this.loadSignal;
 		try {
 			// Check if parseExr is available (from parse-exr library)
 			// @ts-ignore
@@ -74,19 +80,22 @@ export class ExrProcessor {
 				throw new Error('parseExr library not loaded. Make sure parse-exr is included.');
 			}
 
-			const response = await fetch(src);
+			const response = await fetch(src, { signal: loadSignal });
 			const buffer = await response.arrayBuffer();
+			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
 			// Invalidate stats cache for new image
 			this._cachedStats = undefined;
 
-			// Parse EXR using parse-exr library
+			// Parse EXR using parse-exr library — in the decode worker when
+			// available (same vendored build), locally otherwise.
 			// Use FloatType (1015) to get Float32Array with decoded float values
 			// HalfFloatType (1016) returns Uint16Array with raw bytes which need decoding
-			// @ts-ignore
 			const FloatType = 1015;
-			// @ts-ignore
-			const exrResult = parseExr(buffer, FloatType);
+			const exrResult = await DecodeWorkerClient.decodeWithFallback(
+				this.decodeWorker, 'exr', buffer, src, loadSignal,
+				// @ts-ignore
+				(b) => parseExr(b, FloatType));
 
 			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;
 

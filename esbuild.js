@@ -51,6 +51,18 @@ const webviewBuildOptions = {
   format: 'esm',
 };
 
+// Build the decode worker (runs format decoders off the webview UI thread).
+// ESM preserves import.meta.url used by bundled WASM/worker dependencies.
+const decodeWorkerBuildOptions = {
+  entryPoints: ['media/decode-worker.js'],
+  bundle: true,
+  outfile: 'media/decodeWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 // Build tests if they exist
 const testBuildOptions = {
   entryPoints: [],
@@ -131,6 +143,16 @@ if (isWatch) {
       }
     },
   };
+
+  decodeWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('decode worker watch build failed:', error);
+      } else {
+        console.log('decode worker watch build succeeded');
+      }
+    },
+  };
 }
 
 function copyMediaAssets() {
@@ -187,6 +209,10 @@ async function buildAll() {
     await build(webviewBuildOptions);
     console.log('Webview scripts built successfully');
 
+    // Build decode worker
+    await build(decodeWorkerBuildOptions);
+    console.log('Decode worker built successfully');
+
     // Build tests if they exist
     if (testBuildOptions.entryPoints.length > 0) {
       await build(testBuildOptions);
@@ -198,4 +224,4 @@ async function buildAll() {
   }
 }
 
-buildAll(); 
+buildAll();

@@ -28,15 +28,19 @@ export class TgaProcessor {
         this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined;
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
     /** @param {string} src */
     async processTga(src) {
+        const loadSignal = this.loadSignal;
         try {
             this._cachedStats = undefined;
 
-            const response = await fetch(src);
+            const response = await fetch(src, { signal: loadSignal });
             const arrayBuffer = await response.arrayBuffer();
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // @ts-ignore
             const tga = new TgaLoader();

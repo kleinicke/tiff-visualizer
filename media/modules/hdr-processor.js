@@ -1,6 +1,7 @@
 // @ts-check
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
 import parseHdr from 'parse-hdr';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -29,16 +30,24 @@ export class HdrProcessor {
         this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined;
+        /** @type {AbortSignal|undefined} */
+        this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
+        /** @type {DecodeWorkerClient|null} */
+        this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
     }
 
     /** @param {string} src */
     async processHdr(src) {
-        const response = await fetch(src);
+        const loadSignal = this.loadSignal;
+        const response = await fetch(src, { signal: loadSignal });
         const buffer = await response.arrayBuffer();
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // parse-hdr returns { shape:[width,height], exposure, gamma, data:Float32Array }
         // data is RGBA stride-4, alpha is always 1.0
-        const parsed = parseHdr(buffer);
+        // Parsed in the decode worker when available, locally otherwise.
+        const parsed = await DecodeWorkerClient.decodeWithFallback(
+            this.decodeWorker, 'hdr', buffer, src, loadSignal, (b) => parseHdr(b));
         const width = parsed.shape[0];
         const height = parsed.shape[1];
 
