@@ -56,7 +56,7 @@
  * Blend mode metadata. `arithmetic: true` means the mode combines raw float
  * values (NaN propagates); `arithmetic: false` is display-style alpha blending
  * (NaN is treated as transparent).
- * @type {{id:string,label:string,arithmetic:boolean}[]}
+ * @type {{id:string,label:string,arithmetic:boolean,mask?:boolean}[]}
  */
 export const BLEND_MODES = [
 	{ id: 'normal', label: 'Normal', arithmetic: false },

@@ -28,14 +28,14 @@ import { LayersPanel } from './modules/layers-panel.js';
  */
 (function () {
 	/**
-	 * @typedef {{parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} SettingsChanges
+	 * @typedef {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} SettingsChanges
 	 * @typedef {{relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number|string}} CopiedPosition
 	 * @typedef {{colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean}} ColormapConversionState
 	 * @typedef {{width?: number, height?: number, samplesPerPixel?: number, bitsPerSample?: number, sampleFormat?: number, formatType?: string, [key: string]: any}} FormatInfo
 	 */
 
 	// @ts-ignore
-	const originalVscode = acquireVsCodeApi();
+	const originalVscode = /** @type {{postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any}} */ (acquireVsCodeApi());
 
 	// Format info tracking for context menu
 	/** @type {FormatInfo|null} */
@@ -155,6 +155,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
+	/** @type {{engine: string, durationMs: number}|null} */
+	let currentLoadDecodeInfo = null;
+
+	function formatDecodeInfo() {
+		return currentLoadDecodeInfo
+			? `, decode: ${currentLoadDecodeInfo.engine} ${currentLoadDecodeInfo.durationMs.toFixed(2)}ms`
+			: '';
+	}
 
 	function resetTiffCanvasReady() {
 		// Release a stale waiter before replacing it; its generation check will
@@ -257,6 +265,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	}
 
 	// Debounced state save for frequent layer edits (slider drags, moves).
+	/** @type {ReturnType<typeof setTimeout>|null} */
 	let _saveStateTimer = null;
 	function scheduleSaveState() {
 		if (_saveStateTimer) { return; }
@@ -574,9 +583,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	async function handleTiff(src, gen = _loadGeneration) {
 		currentLoadFormat = 'TIFF';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await tiffProcessor.processTiff(src);
 			if (gen !== _loadGeneration) { return; }
+			currentLoadDecodeInfo = result.decodeInfo;
 
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
@@ -595,7 +606,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
@@ -620,6 +631,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	async function handleExr(src, gen = _loadGeneration) {
 		currentLoadFormat = 'EXR';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await exrProcessor.processExr(src);
 			if (gen !== _loadGeneration) { return; }
@@ -658,6 +670,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	async function handlePfm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PFM';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await pfmProcessor.processPfm(src);
 			if (gen !== _loadGeneration) { return; }
@@ -691,6 +704,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	async function handlePpm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PPM/PGM';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await ppmProcessor.processPpm(src);
 			if (gen !== _loadGeneration) { return; }
@@ -724,6 +738,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	async function handlePng(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PNG/JPEG';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await pngProcessor.processPng(src);
 			if (gen !== _loadGeneration) { return; }
@@ -757,6 +772,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	async function handleNpy(src, gen = _loadGeneration) {
 		currentLoadFormat = 'NPY/NPZ';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await npyProcessor.processNpy(src);
 			if (gen !== _loadGeneration) { return; }
@@ -786,6 +802,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleHdr(src, gen = _loadGeneration) {
 		currentLoadFormat = 'HDR';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await hdrProcessor.processHdr(src);
 			if (gen !== _loadGeneration) { return; }
@@ -814,6 +831,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleTga(src, gen = _loadGeneration) {
 		currentLoadFormat = 'TGA';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await tgaProcessor.processTga(src);
 			if (gen !== _loadGeneration) { return; }
@@ -842,6 +860,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleWebImage(src, gen = _loadGeneration) {
 		currentLoadFormat = 'Web Image';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await webImageProcessor.processWebImage(src);
 			if (gen !== _loadGeneration) { return; }
@@ -870,6 +889,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleJxl(src, gen = _loadGeneration) {
 		currentLoadFormat = 'JXL';
+		currentLoadDecodeInfo = null;
 		try {
 				const result = await jxlProcessor.processJxl(src);
 			if (gen !== _loadGeneration) { return; }
@@ -898,6 +918,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleRaw(src, gen = _loadGeneration) {
 		currentLoadFormat = 'Camera RAW';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await rawProcessor.processRaw(src);
 			if (gen !== _loadGeneration) { return; }
@@ -1117,7 +1138,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 	async function decodeLayer(src, resourceUri) {
 		const lower = (resourceUri || src || '').toLowerCase();
 		const name = layerBaseName(resourceUri || src);
-		const noop = { postMessage() { }, setState() { }, getState() { return undefined; } };
+		const noop = {
+			postMessage() { },
+			setState() { },
+			getState: () => /** @type {any} */ (undefined),
+		};
 		try {
 			if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
 				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
@@ -1303,6 +1328,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	}
 
 	/** Drag-on-image move tool for the layer armed in the panel. */
+	/** @type {{id: string, lastX: number, lastY: number}|null} */
 	let _layerDrag = null;
 	function setupLayerMoveDrag() {
 		container.addEventListener('mousedown', (e) => {
@@ -1461,6 +1487,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const changes = settingsManager.updateSettings(message.settings);
 				const newResourceUri = settingsManager.settings.resourceUri;
+				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
 
 				// formatInfo is posted from inside processTiff(), before handleTiff()
 				// receives and installs its canvas. Do not drop the immediate
@@ -1526,7 +1553,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
 							initialLoadStartTime = 0; // Reset
 						}
 					} else if (pngProcessor.hasLazyNativeReadback()) {
@@ -1539,7 +1566,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
 							initialLoadStartTime = 0;
 						}
 					}
@@ -1565,11 +1592,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 						(jxlProcessor && jxlProcessor._pendingRenderData) ||
 						(rawProcessor && rawProcessor._pendingRenderData);
 
-					if (hasLoadedImage && !hasPendingRender) {
+					if (hasLoadedImage && !hasPendingRender && changes.changed) {
 						const startTime = performance.now();
 						await updateImageWithNewSettings(changes);
 						const endTime = performance.now();
-						logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+						logToOutput(`[Perf] Settings re-render (${updateReason}; ${changes.changedKeys.join(', ')}) took ${(endTime - startTime).toFixed(2)}ms`);
+					} else if (hasLoadedImage && !hasPendingRender && !changes.changed) {
+						logToOutput(`[Perf] Skipped no-op settings update (${updateReason})`);
 					}
 				}
 				break;
@@ -2067,7 +2096,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Default to full update if no change info provided
 		if (!changes) {
-			changes = { parametersOnly: false, changedMasks: false, changedStructure: false };
+			changes = { changed: true, changedKeys: ['unspecified'], parametersOnly: false, changedMasks: false, changedStructure: false };
 		}
 
 		// If masks changed, clear the mask cache

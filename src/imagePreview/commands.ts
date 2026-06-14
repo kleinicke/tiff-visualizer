@@ -872,7 +872,7 @@ export function registerImagePreviewCommands(
 	}));
 
 
-	// Open (or reveal) the dedicated Layers window for the active image.
+	// Open a new dedicated Layers window for the active image.
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleLayers', async () => {
 		logCommand('toggleLayers', 'start');
 		const activePreview = previewManager.activePreview;

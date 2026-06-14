@@ -93,6 +93,16 @@ export class LayerManager {
 	}
 
 	/**
+	 * Make one layer visible and hide every other layer.
+	 * @param {string} id
+	 */
+	showOnlyLayer(id) {
+		for (const layer of this.layers) {
+			layer.visible = layer.id === id;
+		}
+	}
+
+	/**
 	 * Nudge a layer's offset by (dx, dy) canvas pixels (used by the move tool).
 	 * @param {string} id
 	 * @param {number} dx

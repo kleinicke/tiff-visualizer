@@ -134,6 +134,7 @@ class FormatInfoMessageHandler implements MessageHandler {
 			preview.getWebview().postMessage({
 				type: 'updateSettings',
 				settings: settings,
+				reason: 'initial-format-settings',
 				isInitialRender: true  // Trigger deferred rendering
 			});
 		}

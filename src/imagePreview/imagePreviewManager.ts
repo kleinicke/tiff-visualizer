@@ -262,7 +262,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	}
 
 	/**
-	 * Open (or reveal) a dedicated, retained Layers view for an image. It is a
+	 * Open a dedicated, retained Layers view for an image. It is a
 	 * standalone webview panel running the same preview app in 'layers' mode —
 	 * so it gets the status bar, pixel inspector, histogram and zoom for free —
 	 * but with a custom tab title and kept in memory across tab switches.
@@ -270,15 +270,6 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	 * @param additionalLayers Extra images to stack on top once the view loads.
 	 */
 	public openLayerView(resource: vscode.Uri, additionalLayers: vscode.Uri[] = []): void {
-		// Reveal an existing layer view for this image if there is one.
-		for (const preview of this._previews) {
-			if ('getSurfaceMode' in preview && (preview as any).getSurfaceMode() === 'layers'
-				&& preview.resource.toString() === resource.toString()) {
-				(preview as any).reveal();
-				return;
-			}
-		}
-
 		// Include the extra layers' folders up front so adding them never has to
 		// reassign webview.options (which would reload the window).
 		const roots = [
@@ -397,4 +388,4 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', anyActive);
 		}, 300);
 	}
-} 
+}

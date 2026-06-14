@@ -266,6 +266,13 @@ export class AppStateManager {
 
 	// Per-format Settings Management
 	public setImageFormat(format: ImageFormatType): void {
+		// Re-activating a preview of the same format does not change settings.
+		// Avoid emitting a duplicate update that would make the webview re-render
+		// an already-visible image.
+		if (this._currentFormat === format) {
+			return;
+		}
+
 		// Save current settings for the previous format
 		if (this._currentFormat) {
 			this._formatSettingsCache.set(this._currentFormat, this._deepCopySettings(this._imageSettings));
@@ -469,4 +476,4 @@ export class AppStateManager {
 		this._onDidDeactivatePreview.dispose();
 		this._onDidChangeHistogramState.dispose();
 	}
-} 
+}

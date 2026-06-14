@@ -131,7 +131,7 @@ export class ImagePreview extends MediaPreview {
 		}));
 
 		// Single unified settings update handler
-		const updateSettings = () => {
+		const updateSettings = (reason: string) => {
 			// Get current settings from both managers
 			// Update status bar entries
 			this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
@@ -153,18 +153,18 @@ export class ImagePreview extends MediaPreview {
 			};
 
 			// Send to webview once
-			this.sendSettingsUpdate(webviewSettings);
+			this.sendSettingsUpdate(webviewSettings, reason);
 			this.updateStatusBar();
 		};
 
 		// Subscribe to both managers but use single update function
 		// Per-image settings (maskFilters) always apply to this preview
-		this._register(this._manager.settingsManager.onDidChangeSettings(updateSettings));
+		this._register(this._manager.settingsManager.onDidChangeSettings(() => updateSettings('preview-settings-changed')));
 		// Per-format settings (normalization, gamma, brightness) only apply if format matches
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
 			// Only update if settings are for our format (prevents cross-format contamination)
 			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
-				updateSettings();
+				updateSettings('format-settings-changed');
 			}
 		}));
 
@@ -315,7 +315,7 @@ export class ImagePreview extends MediaPreview {
 		};
 
 		// Send to webview
-		this.sendSettingsUpdate(webviewSettings);
+		this.sendSettingsUpdate(webviewSettings, 'preview-refresh');
 	}
 
 	public setImageSize(size: string): void {
@@ -678,7 +678,7 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
-	private sendSettingsUpdate(settings: WebviewImageSettings): void {
+	private sendSettingsUpdate(settings: WebviewImageSettings, reason: string): void {
 		// Send to both Active and Visible previews (for multi-preview support)
 		if (this.previewState === PreviewState.Active || this.previewState === PreviewState.Visible) {
 			// Convert mask URIs to webview-safe URIs if they exist
@@ -703,7 +703,8 @@ export class ImagePreview extends MediaPreview {
 
 			this._webviewEditor.webview.postMessage({
 				type: 'updateSettings',
-				settings: webviewSafeSettings
+				settings: webviewSafeSettings,
+				reason
 			});
 		}
 	}

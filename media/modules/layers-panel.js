@@ -159,7 +159,13 @@ export class LayersPanel {
 		vis.type = 'checkbox';
 		vis.className = 'layer-visible';
 		vis.checked = layer.visible !== false;
-		vis.title = 'Toggle visibility';
+		vis.title = 'Toggle visibility (Shift-click to show only this layer)';
+		vis.addEventListener('click', (event) => {
+			if (!event.shiftKey) { return; }
+			event.preventDefault();
+			event.stopPropagation();
+			this._showOnlyLayer(id);
+		});
 		vis.addEventListener('change', () => {
 			this.manager.updateLayer(id, { visible: vis.checked });
 			this.onChange();
@@ -170,8 +176,16 @@ export class LayersPanel {
 		const name = document.createElement('span');
 		name.className = 'layer-name';
 		name.textContent = `${layer.name || id} (${layer.width}×${layer.height})`;
-		name.title = layer.uri || layer.name || id;
+		name.title = `${layer.uri || layer.name || id}\nShift-click to show only this layer`;
 		row.appendChild(name);
+
+		row.addEventListener('click', (event) => {
+			if (!event.shiftKey) { return; }
+			const target = /** @type {HTMLElement} */ (event.target);
+			if (target !== vis && target.closest('button, select, input')) { return; }
+			event.preventDefault();
+			this._showOnlyLayer(id);
+		});
 
 		if (isBase) {
 			const tag = document.createElement('span');
@@ -195,7 +209,7 @@ export class LayersPanel {
 			blend.appendChild(opt);
 		}
 		blend.addEventListener('change', () => {
-			const patch = { blendMode: blend.value };
+			const patch = /** @type {Partial<import('./layer-compositor.js').Layer>} */ ({ blendMode: blend.value });
 			if (blend.value === 'mask' && !layer.maskCondition) {
 				patch.maskCondition = { op: 'gt', threshold: 0.5 };
 			}
@@ -300,6 +314,16 @@ export class LayersPanel {
 		row.appendChild(actions);
 
 		return row;
+	}
+
+	/**
+	 * Show only the selected layer and redraw the composite.
+	 * @param {string} id
+	 */
+	_showOnlyLayer(id) {
+		this.manager.showOnlyLayer(id);
+		this.refresh();
+		this.onChange();
 	}
 
 	/**
