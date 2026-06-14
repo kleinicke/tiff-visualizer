@@ -347,22 +347,23 @@ suite('TIFF Visualizer Behavioral Tests', () => {
             console.log('✅ Mask filter settings can be updated correctly');
         });
 
-        test('Mask filter status bar entry works correctly', () => {
-            console.log('Testing mask filter status bar entry');
-            
-            const { MaskFilterStatusBarEntry } = require('../src/imagePreview/maskFilterStatusBarEntry');
-            const maskFilterEntry = new MaskFilterStatusBarEntry();
-            
+        test('Layers status bar entry works correctly', () => {
+            console.log('Testing layers status bar entry');
+
+            const { LayersStatusBarEntry } = require('../src/imagePreview/layersStatusBarEntry');
+            const layersEntry = new LayersStatusBarEntry();
+
             // Test that the entry has the correct properties
-            assert.ok(maskFilterEntry, 'MaskFilterStatusBarEntry should be created successfully');
-            assert.strictEqual(maskFilterEntry.entry.alignment, vscode.StatusBarAlignment.Right, 'Should be right-aligned');
-            assert.strictEqual(maskFilterEntry.entry.priority, 97, 'Should have priority 97');
-            
-            // Test updating the mask filter
-            maskFilterEntry.updateMaskFilter(true, 'file:///test/mask.tif', 0.7, true);
-            assert.ok(maskFilterEntry.entry.text.includes('>0.70'), 'Should show correct threshold and direction');
-            
-            console.log('✅ Mask filter status bar entry works correctly');
+            assert.ok(layersEntry, 'LayersStatusBarEntry should be created successfully');
+            assert.strictEqual(layersEntry.entry.alignment, vscode.StatusBarAlignment.Right, 'Should be right-aligned');
+            assert.strictEqual(layersEntry.entry.priority, 97, 'Should have priority 97');
+
+            // Test that it shows the Layers button
+            layersEntry.show();
+            assert.ok(layersEntry.entry.text.includes('Layers'), 'Should show the Layers label');
+            assert.strictEqual(layersEntry.entry.command, 'tiffVisualizer.toggleLayers', 'Should run the toggleLayers command');
+
+            console.log('✅ Layers status bar entry works correctly');
         });
 
         	// Test multiple mask filter functionality

@@ -46,6 +46,7 @@
  * @property {string} [jxlWasmSrc]
  * @property {string} [rawWorkerSrc]
  * @property {string} [rawWasmSrc]
+ * @property {'editor'|'layers'} [surfaceMode]
  */
 
 /**
@@ -114,39 +115,69 @@ export class SettingsManager {
   /**
    * Update settings from new data (for real-time updates)
    * @param {ImageSettings} newSettings - New settings object
-   * @returns {{parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} - What changed
+   * @returns {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} - What changed
    */
   updateSettings(newSettings) {
     if (!newSettings) {
-      return { parametersOnly: false, changedMasks: false, changedStructure: false };
+      return { changed: false, changedKeys: [], parametersOnly: false, changedMasks: false, changedStructure: false };
     }
 
     // Track what changed
-    const changes = {
+    const changes = /** @type {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} */ ({
+      changed: false,
+      changedKeys: [],
       parametersOnly: false,
       changedMasks: false,
       changedStructure: false
-    };
+    });
 
     // Check if only parameters changed (gamma, brightness, normalization ranges)
     const oldSettings = this._settings;
 
     // Check parameter changes
-    const gammaChanged = JSON.stringify(oldSettings.gamma) !== JSON.stringify(newSettings.gamma);
-    const brightnessChanged = JSON.stringify(oldSettings.brightness) !== JSON.stringify(newSettings.brightness);
-    const normRangeChanged = oldSettings.normalization?.min !== newSettings.normalization?.min ||
-      oldSettings.normalization?.max !== newSettings.normalization?.max;
-    const normAutoChanged = oldSettings.normalization?.autoNormalize !== newSettings.normalization?.autoNormalize;
-    const normGammaModeChanged = oldSettings.normalization?.gammaMode !== newSettings.normalization?.gammaMode;
+    const gammaChanged = newSettings.gamma !== undefined &&
+      JSON.stringify(oldSettings.gamma) !== JSON.stringify(newSettings.gamma);
+    const brightnessChanged = newSettings.brightness !== undefined &&
+      JSON.stringify(oldSettings.brightness) !== JSON.stringify(newSettings.brightness);
+    const normRangeChanged = newSettings.normalization !== undefined &&
+      (oldSettings.normalization?.min !== newSettings.normalization.min ||
+        oldSettings.normalization?.max !== newSettings.normalization.max);
+    const normAutoChanged = newSettings.normalization !== undefined &&
+      oldSettings.normalization?.autoNormalize !== newSettings.normalization.autoNormalize;
+    const normGammaModeChanged = newSettings.normalization !== undefined &&
+      oldSettings.normalization?.gammaMode !== newSettings.normalization.gammaMode;
 
     // Check structural changes
-    const masksChanged = JSON.stringify(oldSettings.maskFilters || []) !== JSON.stringify(newSettings.maskFilters || []);
-    const rgbModeChanged = oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
-    const scaleModeChanged = oldSettings.scale24BitFactor !== newSettings.scale24BitFactor;
-    const floatModeChanged = oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
-    const nanColorChanged = (oldSettings.nanColor ?? 'black') !== (newSettings.nanColor ?? 'black');
+    const masksChanged = newSettings.maskFilters !== undefined &&
+      JSON.stringify(oldSettings.maskFilters || []) !== JSON.stringify(newSettings.maskFilters);
+    const rgbModeChanged = newSettings.rgbAs24BitGrayscale !== undefined &&
+      oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
+    const scaleModeChanged = newSettings.scale24BitFactor !== undefined &&
+      oldSettings.scale24BitFactor !== newSettings.scale24BitFactor;
+    const floatModeChanged = newSettings.normalizedFloatMode !== undefined &&
+      oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
+    const nanColorChanged = newSettings.nanColor !== undefined &&
+      (oldSettings.nanColor ?? 'black') !== newSettings.nanColor;
 
-    const colorPickerModeChanged = oldSettings.colorPickerShowModified !== newSettings.colorPickerShowModified;
+    const colorPickerModeChanged = newSettings.colorPickerShowModified !== undefined &&
+      oldSettings.colorPickerShowModified !== newSettings.colorPickerShowModified;
+
+    /** @type {[boolean, string][]} */
+    const changedFields = [
+      [gammaChanged, 'gamma'],
+      [brightnessChanged, 'brightness'],
+      [normRangeChanged, 'normalization.range'],
+      [normAutoChanged, 'normalization.auto'],
+      [normGammaModeChanged, 'normalization.gammaMode'],
+      [masksChanged, 'maskFilters'],
+      [rgbModeChanged, 'rgbAs24BitGrayscale'],
+      [scaleModeChanged, 'scale24BitFactor'],
+      [floatModeChanged, 'normalizedFloatMode'],
+      [nanColorChanged, 'nanColor'],
+      [colorPickerModeChanged, 'colorPickerShowModified'],
+    ];
+    changes.changedKeys = changedFields.filter(([changed]) => changed).map(([, key]) => key);
+    changes.changed = changes.changedKeys.length > 0;
 
     // Determine change type
     if (masksChanged) {
@@ -157,18 +188,12 @@ export class SettingsManager {
       changes.changedStructure = true;
     }
 
-    // Determine if anything changed at all
-    const somethingChanged = gammaChanged || brightnessChanged || normRangeChanged ||
-      normAutoChanged || normGammaModeChanged || masksChanged ||
-      rgbModeChanged || scaleModeChanged || floatModeChanged || nanColorChanged || colorPickerModeChanged;
-
     // If only gamma, brightness, normalization ranges, nanColor, or colorPickerMode changed, it's parameters-only
-    // Also treat "no changes" as parameters-only to avoid unnecessary slow path
-    if (!somethingChanged ||
+    if (changes.changed &&
       ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || colorPickerModeChanged) &&
         !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
       changes.parametersOnly = true;
-    } else {
+    } else if (changes.changedStructure || changes.changedMasks) {
       console.log('⚠️ Structural changes detected:', {
         masksChanged,
         rgbModeChanged,

@@ -8,7 +8,7 @@ import { Scale, ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
-import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
+import { LayersStatusBarEntry } from './layersStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
@@ -33,6 +33,11 @@ export class ImagePreview extends MediaPreview {
 	// Image collection management
 	private _imageCollection: vscode.Uri[] = [];
 	private _currentImageIndex: number = 0;
+	// True while the Layers compositing panel is active for this view. A view is
+	// either a layer view or a collection, never both.
+	private _isLayerView: boolean = false;
+	// 'layers' when this preview is the dedicated, retained Layers window.
+	private _surfaceMode: 'editor' | 'layers' = 'editor';
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
 
@@ -43,7 +48,7 @@ export class ImagePreview extends MediaPreview {
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
 	private readonly _gammaStatusBarEntry: GammaStatusBarEntry;
 	private readonly _brightnessStatusBarEntry: BrightnessStatusBarEntry;
-	private readonly _maskFilterStatusBarEntry: MaskFilterStatusBarEntry;
+	private readonly _layersStatusBarEntry: LayersStatusBarEntry;
 	private readonly _histogramStatusBarEntry: HistogramStatusBarEntry;
 	private readonly _colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry;
 	private readonly _messageRouter: MessageRouter;
@@ -71,21 +76,27 @@ export class ImagePreview extends MediaPreview {
 		normalizationStatusBarEntry: NormalizationStatusBarEntry,
 		gammaStatusBarEntry: GammaStatusBarEntry,
 		brightnessStatusBarEntry: BrightnessStatusBarEntry,
-		maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
+		layersStatusBarEntry: LayersStatusBarEntry,
 		histogramStatusBarEntry: HistogramStatusBarEntry,
 		colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 		private readonly _manager: IImagePreviewManager,
-		openTimestamp?: number
+		openTimestamp?: number,
+		surfaceMode: 'editor' | 'layers' = 'editor'
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
 		this._openTimestamp = openTimestamp || Date.now();
+		this._surfaceMode = surfaceMode;
+		// A dedicated Layers window is always a layer view (collections disabled).
+		if (surfaceMode === 'layers') {
+			this._isLayerView = true;
+		}
 
 		this._sizeStatusBarEntry = sizeStatusBarEntry;
 		this._zoomStatusBarEntry = zoomStatusBarEntry;
 		this._normalizationStatusBarEntry = normalizationStatusBarEntry;
 		this._gammaStatusBarEntry = gammaStatusBarEntry;
 		this._brightnessStatusBarEntry = brightnessStatusBarEntry;
-		this._maskFilterStatusBarEntry = maskFilterStatusBarEntry;
+		this._layersStatusBarEntry = layersStatusBarEntry;
 		this._histogramStatusBarEntry = histogramStatusBarEntry;
 		this._colorPickerModeStatusBarEntry = colorPickerModeStatusBarEntry;
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
@@ -120,22 +131,13 @@ export class ImagePreview extends MediaPreview {
 		}));
 
 		// Single unified settings update handler
-		const updateSettings = () => {
+		const updateSettings = (reason: string) => {
 			// Get current settings from both managers
-			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
-			const enabledMasks = maskFilters.filter(mask => mask.enabled);
-			const totalMasks = maskFilters.length;
-
 			// Update status bar entries
 			this._gammaStatusBarEntry.updateGamma(this._manager.appStateManager.imageSettings.gamma.in, this._manager.appStateManager.imageSettings.gamma.out);
 			this._brightnessStatusBarEntry.updateBrightness(this._manager.appStateManager.imageSettings.brightness.offset);
 			this._sizeStatusBarEntry.updateColorPickerMode(this._manager.settingsManager.getColorPickerShowModified());
-			this._maskFilterStatusBarEntry.updateMaskFilter(
-				totalMasks > 0,
-				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
-				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
-				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
-			);
+			this._layersStatusBarEntry.show();
 
 			// Create full settings object
 			const webviewSettings = {
@@ -146,23 +148,23 @@ export class ImagePreview extends MediaPreview {
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
-				maskFilters: maskFilters,
+				maskFilters: [],
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
 
 			// Send to webview once
-			this.sendSettingsUpdate(webviewSettings);
+			this.sendSettingsUpdate(webviewSettings, reason);
 			this.updateStatusBar();
 		};
 
 		// Subscribe to both managers but use single update function
 		// Per-image settings (maskFilters) always apply to this preview
-		this._register(this._manager.settingsManager.onDidChangeSettings(updateSettings));
+		this._register(this._manager.settingsManager.onDidChangeSettings(() => updateSettings('preview-settings-changed')));
 		// Per-format settings (normalization, gamma, brightness) only apply if format matches
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
 			// Only update if settings are for our format (prevents cross-format contamination)
 			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
-				updateSettings();
+				updateSettings('format-settings-changed');
 			}
 		}));
 
@@ -173,7 +175,7 @@ export class ImagePreview extends MediaPreview {
 				this._normalizationStatusBarEntry.forceHide();
 				this._gammaStatusBarEntry.hide();
 				this._brightnessStatusBarEntry.hide();
-				this._maskFilterStatusBarEntry.hide();
+				this._layersStatusBarEntry.hide();
 				this._histogramStatusBarEntry.hide();
 				this._colorPickerModeStatusBarEntry.hide();
 			}
@@ -207,7 +209,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
-			this._maskFilterStatusBarEntry.hide();
+			this._layersStatusBarEntry.hide();
 			this._histogramStatusBarEntry.hide();
 		}
 		super.dispose();
@@ -313,7 +315,7 @@ export class ImagePreview extends MediaPreview {
 		};
 
 		// Send to webview
-		this.sendSettingsUpdate(webviewSettings);
+		this.sendSettingsUpdate(webviewSettings, 'preview-refresh');
 	}
 
 	public setImageSize(size: string): void {
@@ -405,6 +407,29 @@ export class ImagePreview extends MediaPreview {
 		return this._imageCollection;
 	}
 
+	/** The image currently displayed (the active collection entry, or the resource). */
+	public getCurrentImage(): vscode.Uri {
+		return this._imageCollection[this._currentImageIndex] ?? this.resource;
+	}
+
+	/**
+	 * Images to add as layers once the webview is ready (used when a Layers
+	 * window is opened with extra images, e.g. a whole collection).
+	 */
+	private _initialLayers: vscode.Uri[] = [];
+	public setInitialLayers(uris: vscode.Uri[]): void {
+		this._initialLayers = uris;
+	}
+
+	/** Send the queued initial layers to the webview (once it has loaded). */
+	public sendInitialLayers(): void {
+		if (this._initialLayers.length > 0) {
+			const uris = this._initialLayers;
+			this._initialLayers = [];
+			this.addLayerImages(uris);
+		}
+	}
+
 	/**
 	 * Ensure the webview's localResourceRoots cover the directories of the given
 	 * URIs, reassigning webview.options at most once. Reassigning options reloads
@@ -437,13 +462,89 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
+	/**
+	 * The exclusive mode of this view. A preview is either a layer-compositing
+	 * view or an image collection, never both.
+	 */
+	public getViewMode(): 'layers' | 'collection' | 'normal' {
+		if (this._isLayerView) { return 'layers'; }
+		if (this._imageCollection.length > 1) { return 'collection'; }
+		return 'normal';
+	}
+
+	/** Called when the webview reports the Layers panel opened/closed. */
+	public setLayerMode(active: boolean): void {
+		this._isLayerView = active;
+		this._manager.refreshActiveMode();
+	}
+
+	/**
+	 * Convert layer resource URIs to webview-safe URIs so the webview can re-fetch
+	 * them when restoring a layer stack after a reload. Ensures the folders are in
+	 * localResourceRoots first.
+	 */
+	public resolveLayerUris(resourceUris: string[]): void {
+		const uris = resourceUris.map(s => vscode.Uri.parse(s));
+
+		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
+		const rootsToAdd = uris
+			.map(u => Utils.dirname(u))
+			.filter(dir => !currentRoots.some(r => r.toString() === dir.toString()));
+		if (rootsToAdd.length > 0) {
+			this._webviewEditor.webview.options = {
+				...this._webviewEditor.webview.options,
+				localResourceRoots: [...currentRoots, ...rootsToAdd],
+			};
+		}
+
+		const map: { [key: string]: string } = {};
+		for (const u of uris) {
+			map[u.toString()] = this._webviewEditor.webview.asWebviewUri(u).toString();
+		}
+		this._webviewEditor.webview.postMessage({ type: 'layerUrisResolved', map });
+	}
+
+	public getSurfaceMode(): 'editor' | 'layers' {
+		return this._surfaceMode;
+	}
+
+	/** Bring this preview's tab to the foreground. */
+	public reveal(): void {
+		this._webviewEditor.reveal();
+	}
+
+	/**
+	 * Send images to the webview to be decoded and added as layers. Reuses
+	 * ensureLocalResourceRoots so the webview can fetch files outside the initial folder.
+	 * @param uris Image resources to add as layers.
+	 */
+	public addLayerImages(uris: vscode.Uri[]): void {
+		if (uris.length === 0) { return; }
+		if (this._imageCollection.length > 1) {
+			vscode.window.showWarningMessage('Layers are not available for a multi-image collection.');
+			return;
+		}
+		this.ensureLocalResourceRoots(uris);
+		const images = uris.map(u => ({
+			src: this._webviewEditor.webview.asWebviewUri(u).toString(),
+			resourceUri: u.toString(),
+		}));
+		this._webviewEditor.webview.postMessage({ type: 'addLayerImages', images });
+	}
+
 	/** Returns true if the image was added, false if it was already in the collection. */
 	public async addToImageCollection(uri: vscode.Uri): Promise<boolean> {
+		if (this._isLayerView) {
+			// This view is a layer composition — collections are disabled here.
+			return false;
+		}
 		if (this._imageCollection.some(img => img.toString() === uri.toString())) {
 			return false;
 		}
 
 		this._imageCollection.push(uri);
+		// Adding a second image makes this a collection — keep the menu state in sync.
+		this._manager.refreshActiveMode();
 
 		// Make sure the webview can fetch this image's folder. Reassigning
 		// webview.options reloads the webview, so this is a no-op when the folder
@@ -577,11 +678,11 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
-	private sendSettingsUpdate(settings: WebviewImageSettings): void {
+	private sendSettingsUpdate(settings: WebviewImageSettings, reason: string): void {
 		// Send to both Active and Visible previews (for multi-preview support)
 		if (this.previewState === PreviewState.Active || this.previewState === PreviewState.Visible) {
 			// Convert mask URIs to webview-safe URIs if they exist
-			const webviewSafeMasks = settings.maskFilters.map(mask => ({
+			const webviewSafeMasks = (settings.maskFilters || []).map(mask => ({
 				...mask,
 				maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
 			}));
@@ -602,7 +703,8 @@ export class ImagePreview extends MediaPreview {
 
 			this._webviewEditor.webview.postMessage({
 				type: 'updateSettings',
-				settings: webviewSafeSettings
+				settings: webviewSafeSettings,
+				reason
 			});
 		}
 	}
@@ -614,7 +716,7 @@ export class ImagePreview extends MediaPreview {
 			this._normalizationStatusBarEntry.forceHide();
 			this._gammaStatusBarEntry.hide();
 			this._brightnessStatusBarEntry.hide();
-			this._maskFilterStatusBarEntry.hide();
+			this._layersStatusBarEntry.hide();
 			this._histogramStatusBarEntry.hide();
 			return;
 		}
@@ -623,17 +725,8 @@ export class ImagePreview extends MediaPreview {
 			this._sizeStatusBarEntry.show(this, this._imageSize || '');
 			this._zoomStatusBarEntry.show(this, this._imageZoom || 'fit');
 
-			// Show mask filter status bar entry if enabled
-			const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
-			// Update mask filter status bar with summary
-			const enabledMasks = maskFilters.filter(mask => mask.enabled);
-			const totalMasks = maskFilters.length;
-			this._maskFilterStatusBarEntry.updateMaskFilter(
-				totalMasks > 0,
-				enabledMasks.length > 0 ? `${enabledMasks.length}/${totalMasks} masks` : undefined,
-				enabledMasks.length > 0 ? enabledMasks[0].threshold : 0,
-				enabledMasks.length > 0 ? enabledMasks[0].filterHigher : true
-			);
+			// Show the Layers button while a preview is active.
+			this._layersStatusBarEntry.show();
 
 			// Always show normalization controls for all image formats
 			const normSettings = this._manager.appStateManager.imageSettings.normalization;
@@ -727,6 +820,7 @@ export class ImagePreview extends MediaPreview {
 			src: uri.toString(),
 			folder: folderUri.toString(),
 			version: version,
+			surfaceMode: this._surfaceMode, // 'layers' = dedicated Layers window
 			loadStartTime: this._openTimestamp // For total elapsed time measurement (captured when file was opened)
 		};
 

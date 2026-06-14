@@ -19,6 +19,8 @@ import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 import { PerfTrace } from './modules/perf-trace.js';
+import { LayerManager } from './modules/layer-manager.js';
+import { LayersPanel } from './modules/layers-panel.js';
 
 /**
  * Main Image Preview Application
@@ -26,14 +28,14 @@ import { PerfTrace } from './modules/perf-trace.js';
  */
 (function () {
 	/**
-	 * @typedef {{parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} SettingsChanges
+	 * @typedef {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} SettingsChanges
 	 * @typedef {{relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number|string}} CopiedPosition
 	 * @typedef {{colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean}} ColormapConversionState
 	 * @typedef {{width?: number, height?: number, samplesPerPixel?: number, bitsPerSample?: number, sampleFormat?: number, formatType?: string, [key: string]: any}} FormatInfo
 	 */
 
 	// @ts-ignore
-	const originalVscode = acquireVsCodeApi();
+	const originalVscode = /** @type {{postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any}} */ (acquireVsCodeApi());
 
 	// Format info tracking for context menu
 	/** @type {FormatInfo|null} */
@@ -90,6 +92,31 @@ import { PerfTrace } from './modules/perf-trace.js';
 	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 
+	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
+	const layerManager = new LayerManager();
+	const layersPanel = new LayersPanel(layerManager, {
+		onChange: () => { scheduleRecomposite(); scheduleSaveState(); },
+		onPersist: () => { scheduleSaveState(); },
+		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
+		onVisibilityChange: (visible) => {
+			layerManager.active = visible;
+			// Tell the extension so it can track layer mode (and block collection ops).
+			vscode.postMessage({ type: 'layerModeChanged', active: visible });
+			if (visible) {
+				recompositeLayers();
+			} else {
+				// Restore the normal single-image render.
+				updateImageWithNewSettings(null);
+			}
+			scheduleSaveState();
+		},
+	}, { closable: settingsManager.settings.surfaceMode !== 'layers' });
+	// Pixel inspector reads the composite value when compositing is active.
+	mouseHandler.compositeValueProvider = (x, y) =>
+		(layerManager.active && layerManager.hasExtraLayers()) ? layerManager.getCompositeValueAt(x, y) : null;
+	/** @type {string|undefined} URI of the image currently used as the base layer. */
+	let _layerBaseUri;
+
 	/** Camera RAW file extensions supported by RawProcessor */
 	const RAW_EXTENSIONS = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
 	/** @param {string} lower @returns {boolean} */
@@ -128,6 +155,14 @@ import { PerfTrace } from './modules/perf-trace.js';
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
 	let currentLoadFormat = '';
+	/** @type {{engine: string, durationMs: number}|null} */
+	let currentLoadDecodeInfo = null;
+
+	function formatDecodeInfo() {
+		return currentLoadDecodeInfo
+			? `, decode: ${currentLoadDecodeInfo.engine} ${currentLoadDecodeInfo.durationMs.toFixed(2)}ms`
+			: '';
+	}
 
 	function resetTiffCanvasReady() {
 		// Release a stale waiter before replacing it; its generation check will
@@ -161,12 +196,22 @@ import { PerfTrace } from './modules/perf-trace.js';
 
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
+	/** @type {{layers:any[], active:boolean, collapsed:boolean}|null} Layer stack to restore after the base image loads. */
+	let _pendingLayerRestore = null;
 	if (persistedState) {
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
+		const savedLayers = persistedState.layers;
+		if (Array.isArray(savedLayers) && (savedLayers.length > 1 || persistedState.layerActive)) {
+			_pendingLayerRestore = {
+				layers: savedLayers,
+				active: !!persistedState.layerActive,
+				collapsed: !!persistedState.layerCollapsed,
+			};
+		}
 	}
 
 	// Image collection state
@@ -198,9 +243,33 @@ import { PerfTrace } from './modules/perf-trace.js';
 			scale: zoomState.scale,
 			offsetX: zoomState.x,
 			offsetY: zoomState.y,
+			// Layer compositing state — metadata only (images are re-decoded from
+			// their URIs on reload). Lets a layer view restore itself after the
+			// webview is unloaded and reloaded on a tab switch.
+			layers: layerManager.layers.map((l, i) => ({
+				resourceUri: l.uri,
+				name: l.name,
+				offsetX: l.offsetX,
+				offsetY: l.offsetY,
+				opacity: l.opacity,
+				blendMode: l.blendMode,
+				visible: l.visible,
+				maskCondition: l.maskCondition,
+				isBase: i === 0,
+			})),
+			layerActive: layerManager.active,
+			layerCollapsed: layersPanel.collapsed,
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
+	}
+
+	// Debounced state save for frequent layer edits (slider drags, moves).
+	/** @type {ReturnType<typeof setTimeout>|null} */
+	let _saveStateTimer = null;
+	function scheduleSaveState() {
+		if (_saveStateTimer) { return; }
+		_saveStateTimer = setTimeout(() => { _saveStateTimer = null; saveState(); }, 150);
 	}
 
 	// DOM elements
@@ -514,9 +583,11 @@ import { PerfTrace } from './modules/perf-trace.js';
 	 */
 	async function handleTiff(src, gen = _loadGeneration) {
 		currentLoadFormat = 'TIFF';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await tiffProcessor.processTiff(src);
 			if (gen !== _loadGeneration) { return; }
+			currentLoadDecodeInfo = result.decodeInfo;
 
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
@@ -535,7 +606,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
@@ -560,6 +631,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	 */
 	async function handleExr(src, gen = _loadGeneration) {
 		currentLoadFormat = 'EXR';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await exrProcessor.processExr(src);
 			if (gen !== _loadGeneration) { return; }
@@ -598,6 +670,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	 */
 	async function handlePfm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PFM';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await pfmProcessor.processPfm(src);
 			if (gen !== _loadGeneration) { return; }
@@ -631,6 +704,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	 */
 	async function handlePpm(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PPM/PGM';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await ppmProcessor.processPpm(src);
 			if (gen !== _loadGeneration) { return; }
@@ -664,6 +738,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	 */
 	async function handlePng(src, gen = _loadGeneration) {
 		currentLoadFormat = 'PNG/JPEG';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await pngProcessor.processPng(src);
 			if (gen !== _loadGeneration) { return; }
@@ -697,6 +772,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	 */
 	async function handleNpy(src, gen = _loadGeneration) {
 		currentLoadFormat = 'NPY/NPZ';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await npyProcessor.processNpy(src);
 			if (gen !== _loadGeneration) { return; }
@@ -726,6 +802,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleHdr(src, gen = _loadGeneration) {
 		currentLoadFormat = 'HDR';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await hdrProcessor.processHdr(src);
 			if (gen !== _loadGeneration) { return; }
@@ -754,6 +831,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleTga(src, gen = _loadGeneration) {
 		currentLoadFormat = 'TGA';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await tgaProcessor.processTga(src);
 			if (gen !== _loadGeneration) { return; }
@@ -782,6 +860,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleWebImage(src, gen = _loadGeneration) {
 		currentLoadFormat = 'Web Image';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await webImageProcessor.processWebImage(src);
 			if (gen !== _loadGeneration) { return; }
@@ -810,6 +889,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleJxl(src, gen = _loadGeneration) {
 		currentLoadFormat = 'JXL';
+		currentLoadDecodeInfo = null;
 		try {
 				const result = await jxlProcessor.processJxl(src);
 			if (gen !== _loadGeneration) { return; }
@@ -838,6 +918,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 	/** @param {string} src @param {number} [gen] */
 	async function handleRaw(src, gen = _loadGeneration) {
 		currentLoadFormat = 'Camera RAW';
+		currentLoadDecodeInfo = null;
 		try {
 			const result = await rawProcessor.processRaw(src);
 			if (gen !== _loadGeneration) { return; }
@@ -933,6 +1014,23 @@ import { PerfTrace } from './modules/perf-trace.js';
 		// Update histogram if visible
 		updateHistogramData();
 
+		// Keep the layer stack's base in sync with the loaded image.
+		syncBaseLayer();
+		// Restore a saved layer stack after a webview reload (once the base exists).
+		maybeRestoreLayers();
+		// In a dedicated Layers window, open the panel automatically on first load
+		// and ask the extension for any images to stack on top (e.g. a collection).
+		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown) {
+			_layerSurfaceShown = true;
+			layersPanel.show();
+			if (!_pendingLayerRestore) {
+				vscode.postMessage({ type: 'requestInitialLayers' });
+			}
+		}
+		if (layerManager.active && layerManager.hasExtraLayers()) {
+			recompositeLayers();
+		}
+
 		// Close the switch trace once the final pixels are shown. With a deferred
 		// render pending this call is the placeholder finalize — keep the trace
 		// open; the post-deferred finalize (pending cleared by then) ends it.
@@ -940,6 +1038,333 @@ import { PerfTrace } from './modules/perf-trace.js';
 		if (!hasPendingDeferred) {
 			PerfTrace.end();
 		}
+	}
+
+	// ===================== Layer compositing helpers =====================
+
+	/** @param {string} uri @returns {string} */
+	function layerBaseName(uri) {
+		try { return decodeURIComponent((uri || '').split('/').pop() || uri || 'layer'); }
+		catch { return (uri || '').split('/').pop() || 'layer'; }
+	}
+
+	/** NaN display color from current settings. */
+	function getNanColorObj() {
+		return settingsManager.settings && settingsManager.settings.nanColor === 'fuchsia'
+			? { r: 255, g: 0, b: 255 }
+			: { r: 0, g: 0, b: 0 };
+	}
+
+	/**
+	 * @param {string} [dtype]
+	 * @returns {{isFloat:boolean, typeMax:number}}
+	 */
+	function npyTypeInfo(dtype) {
+		const d = String(dtype || '').toLowerCase();
+		if (d.includes('f')) { return { isFloat: true, typeMax: 1.0 }; }
+		const bits = parseInt(d.replace(/\D/g, ''), 10) || 8;
+		return { isFloat: false, typeMax: bits >= 16 ? 65535 : 255 };
+	}
+
+	/**
+	 * Map a processor's raw struct to a compositor layer.
+	 * @param {any} raw @param {{isFloat:boolean, typeMax:number}} ti @param {string} name @param {string} uri
+	 * @returns {import('./modules/layer-manager.js').LayerInput|null}
+	 */
+	function lastRawToLayer(raw, ti, name, uri) {
+		if (!raw || !raw.data) { return null; }
+		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, name, uri };
+	}
+
+	/** @param {any} raw @param {string} name @param {string} uri */
+	function tiffRawToLayer(raw, name, uri) {
+		if (!raw || !raw.data || !raw.ifd) { return null; }
+		const ifd = raw.ifd;
+		const isFloat = ifd.t339 === 3;
+		const typeMax = isFloat ? 1.0 : (ifd.t258 === 16 ? 65535 : 255);
+		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, name, uri };
+	}
+
+	/** @param {any} raw @param {string} name @param {string} uri */
+	function exrRawToLayer(raw, name, uri) {
+		if (!raw || !raw.data) { return null; }
+		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: true, typeMax: 1.0, name, uri };
+	}
+
+	/**
+	 * Capture the currently displayed canvas pixels as a fallback layer (used for
+	 * formats whose raw float buffer isn't readily available).
+	 * @param {string} name @param {string} uri
+	 * @returns {import('./modules/layer-manager.js').LayerInput|null}
+	 */
+	function baseFromCanvas(name, uri) {
+		if (!canvas) { return null; }
+		const ctx = canvas.getContext('2d');
+		if (!ctx) { return null; }
+		const w = canvas.width, h = canvas.height;
+		const img = ctx.getImageData(0, 0, w, h);
+		const data = new Float32Array(img.data.length);
+		for (let i = 0; i < img.data.length; i++) { data[i] = img.data[i]; }
+		return { data, width: w, height: h, channels: 4, isFloat: false, typeMax: 255, name, uri };
+	}
+
+	/**
+	 * Derive the base (background) layer from whichever processor loaded the
+	 * current primary image.
+	 * @returns {import('./modules/layer-manager.js').LayerInput|null}
+	 */
+	function deriveBaseLayer() {
+		const uri = settingsManager.settings.resourceUri || '';
+		const name = layerBaseName(uri);
+		switch (currentLoadFormat) {
+			case 'TIFF': return tiffRawToLayer(tiffProcessor.rawTiffData, name, uri) || baseFromCanvas(name, uri);
+			case 'EXR': return exrRawToLayer(exrProcessor.rawExrData, name, uri) || baseFromCanvas(name, uri);
+			case 'PFM': return lastRawToLayer(pfmProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'PPM/PGM': return lastRawToLayer(ppmProcessor._lastRaw, { isFloat: false, typeMax: (ppmProcessor._lastRaw && ppmProcessor._lastRaw.maxval) || 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
+			default: return baseFromCanvas(name, uri);
+		}
+	}
+
+	/**
+	 * Decode an image URI into a layer using a fresh processor instance (so the
+	 * primary image's processor state is never disturbed). Falls back to a plain
+	 * <img> decode for formats without an exposed raw buffer.
+	 * @param {string} src Webview-safe URI to fetch.
+	 * @param {string} resourceUri Original resource URI (for extension + name).
+	 * @returns {Promise<import('./modules/layer-manager.js').LayerInput|null>}
+	 */
+	async function decodeLayer(src, resourceUri) {
+		const lower = (resourceUri || src || '').toLowerCase();
+		const name = layerBaseName(resourceUri || src);
+		const noop = {
+			postMessage() { },
+			setState() { },
+			getState: () => /** @type {any} */ (undefined),
+		};
+		try {
+			if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
+			}
+			if (lower.endsWith('.exr')) {
+				const p = new ExrProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.processExr(src); return exrRawToLayer(p.rawExrData, name, resourceUri);
+			}
+			if (lower.endsWith('.pfm')) {
+				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.processPfm(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
+			}
+			if (lower.match(/\.(ppm|pgm|pbm)$/)) {
+				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.processPpm(src); return lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxval) || 255 }, name, resourceUri);
+			}
+			if (lower.match(/\.(png|jpg|jpeg)$/)) {
+				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.processPng(src);
+				const layer = lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxValue) || 255 }, name, resourceUri);
+				return layer || decodeViaImage(src, name, resourceUri);
+			}
+			if (lower.match(/\.(npy|npz)$/)) {
+				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
+			}
+			return decodeViaImage(src, name, resourceUri);
+		} catch (err) {
+			console.error('Failed to decode layer', resourceUri, err);
+			return null;
+		}
+	}
+
+	/**
+	 * Decode any browser-loadable image into an RGBA float layer.
+	 * @param {string} src @param {string} name @param {string} uri
+	 * @returns {Promise<import('./modules/layer-manager.js').LayerInput|null>}
+	 */
+	function decodeViaImage(src, name, uri) {
+		return new Promise((resolve) => {
+			const img = new Image();
+			img.onload = () => {
+				const c = document.createElement('canvas');
+				c.width = img.naturalWidth; c.height = img.naturalHeight;
+				const ctx = c.getContext('2d');
+				if (!ctx) { resolve(null); return; }
+				ctx.drawImage(img, 0, 0);
+				const id = ctx.getImageData(0, 0, c.width, c.height);
+				const data = new Float32Array(id.data.length);
+				for (let i = 0; i < id.data.length; i++) { data[i] = id.data[i]; }
+				resolve({ data, width: c.width, height: c.height, channels: 4, isFloat: false, typeMax: 255, name, uri });
+			};
+			img.onerror = () => resolve(null);
+			img.src = src;
+		});
+	}
+
+	/** (Re)synchronize the base layer with the current primary image. */
+	function syncBaseLayer() {
+		const base = deriveBaseLayer();
+		if (!base) { return; }
+		if (_layerBaseUri !== base.uri || layerManager.isEmpty()) {
+			_layerBaseUri = base.uri;
+			layerManager.setBaseLayer(base);
+			if (layersPanel.isVisible()) { layersPanel.refresh(); }
+		} else {
+			// Same image re-rendered: refresh the matching layer's data in place
+			// (it may have been reordered). If the user removed that layer, leave
+			// the stack untouched — don't re-inject it.
+			const existing = layerManager.layers.find(l => l.uri === base.uri);
+			if (existing) {
+				Object.assign(existing, {
+					data: base.data, width: base.width, height: base.height,
+					channels: base.channels, isFloat: base.isFloat, typeMax: base.typeMax,
+				});
+				layerManager.canvasWidth = base.width;
+				layerManager.canvasHeight = base.height;
+			}
+		}
+	}
+
+	/**
+	 * Composite the layer stack and draw the result to the main canvas.
+	 * @returns {boolean} True if a composite was rendered.
+	 */
+	function recompositeLayers() {
+		if (!layerManager.active || !canvas) { return false; }
+		const imageData = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
+		if (!imageData) { return false; }
+		if (canvas.width !== imageData.width || canvas.height !== imageData.height) {
+			canvas.width = imageData.width;
+			canvas.height = imageData.height;
+		}
+		const ctx = canvas.getContext('2d');
+		if (ctx) {
+			renderImageDataToCanvas(imageData, ctx);
+			primaryImageData = imageData;
+			updateHistogramData();
+		}
+		return true;
+	}
+
+	// Coalesce rapid recomposite requests (e.g. dragging the opacity slider) into
+	// at most one composite per animation frame so the UI stays responsive.
+	let _recompositeScheduled = false;
+	function scheduleRecomposite() {
+		if (_recompositeScheduled) { return; }
+		_recompositeScheduled = true;
+		requestAnimationFrame(() => {
+			_recompositeScheduled = false;
+			recompositeLayers();
+		});
+	}
+
+	// ---- Layer restore after a webview reload (tab switch) ----
+	let _layersRestoreDone = false;
+	// True once the dedicated Layers window has auto-opened its panel.
+	let _layerSurfaceShown = false;
+
+	/** Kick off layer-stack restore once the base image has loaded. */
+	function maybeRestoreLayers() {
+		if (_layersRestoreDone || !_pendingLayerRestore) { return; }
+		_layersRestoreDone = true;
+
+		const metas = _pendingLayerRestore.layers || [];
+		const baseMeta = metas.find(m => m.isBase);
+		const currentUri = settingsManager.settings.resourceUri;
+		// Only restore if the saved stack belongs to the image now showing.
+		if (baseMeta && baseMeta.resourceUri && currentUri && baseMeta.resourceUri !== currentUri) {
+			_pendingLayerRestore = null;
+			return;
+		}
+
+		const nonBase = metas.filter(m => !m.isBase && m.resourceUri);
+		if (nonBase.length === 0) {
+			finishLayerRestore({});
+		} else {
+			// Ask the extension for webview-safe URIs to fetch the layer images.
+			vscode.postMessage({ type: 'resolveLayerUris', resourceUris: nonBase.map(m => m.resourceUri) });
+		}
+	}
+
+	/**
+	 * Rebuild the layer stack from the pending metadata using resolved URIs.
+	 * @param {{[resourceUri:string]: string}} uriMap
+	 */
+	async function finishLayerRestore(uriMap) {
+		const pending = _pendingLayerRestore;
+		_pendingLayerRestore = null;
+		if (!pending) { return; }
+
+		syncBaseLayer();
+		const baseLayer = layerManager.layers.find(l => l.uri === settingsManager.settings.resourceUri) || layerManager.layers[0];
+		const rebuilt = [];
+		for (const meta of pending.layers) {
+			if (meta.isBase) {
+				if (baseLayer) {
+					Object.assign(baseLayer, {
+						offsetX: meta.offsetX ?? 0, offsetY: meta.offsetY ?? 0,
+						opacity: meta.opacity ?? 1, blendMode: meta.blendMode ?? 'normal',
+						visible: meta.visible !== false, maskCondition: meta.maskCondition,
+					});
+					rebuilt.push(baseLayer);
+				}
+			} else {
+				const src = uriMap[meta.resourceUri];
+				if (!src) { continue; }
+				const input = await decodeLayer(src, meta.resourceUri);
+				if (input) { rebuilt.push(layerManager.createLayer(input, meta)); }
+			}
+		}
+		if (rebuilt.length === 0) {
+			if (baseLayer) { rebuilt.push(baseLayer); } else { return; }
+		}
+		layerManager.setLayers(rebuilt, layerManager.canvasWidth, layerManager.canvasHeight);
+		layersPanel.collapsed = !!pending.collapsed;
+		if (pending.active) {
+			layersPanel.show(); // sets active, notifies the extension and recomposites
+		} else {
+			layersPanel.refresh();
+		}
+	}
+
+	/** Drag-on-image move tool for the layer armed in the panel. */
+	/** @type {{id: string, lastX: number, lastY: number}|null} */
+	let _layerDrag = null;
+	function setupLayerMoveDrag() {
+		container.addEventListener('mousedown', (e) => {
+			if (!layerManager.active || !layersPanel.movingLayerId || !imageElement) { return; }
+			const target = /** @type {Node|null} */ (e.target);
+			// Never hijack clicks on the panel — its controls must keep working.
+			if (layersPanel.root && target && layersPanel.root.contains(target)) { return; }
+			// Only begin a move when the drag starts on the image/canvas itself.
+			const onImage = target === imageElement || target === canvas ||
+				(!!target && !!imageElement.contains && imageElement.contains(target));
+			if (!onImage) { return; }
+			_layerDrag = { id: layersPanel.movingLayerId, lastX: e.clientX, lastY: e.clientY };
+			// Capture-phase stop so the zoom/pan controller doesn't also react.
+			e.preventDefault();
+			e.stopPropagation();
+		}, true);
+		window.addEventListener('mousemove', (e) => {
+			if (!_layerDrag || !canvas || !imageElement) { return; }
+			const rect = imageElement.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) { return; }
+			const dx = Math.round(((e.clientX - _layerDrag.lastX) / rect.width) * canvas.width);
+			const dy = Math.round(((e.clientY - _layerDrag.lastY) / rect.height) * canvas.height);
+			if (dx !== 0 || dy !== 0) {
+				layerManager.moveLayer(_layerDrag.id, dx, dy);
+				_layerDrag.lastX = e.clientX;
+				_layerDrag.lastY = e.clientY;
+				scheduleRecomposite();
+			}
+		});
+		window.addEventListener('mouseup', () => {
+			if (_layerDrag) {
+				_layerDrag = null;
+				layersPanel.refresh(); // sync the numeric offset inputs after the drag
+				scheduleSaveState();
+			}
+		});
 	}
 
 	function swapImageElementToCanvas() {
@@ -985,6 +1410,9 @@ import { PerfTrace } from './modules/perf-trace.js';
 			await handleVSCodeMessage(e.data);
 		});
 
+		// Enable the layer move tool (drag-on-image) once.
+		setupLayerMoveDrag();
+
 		// Send ready message to VS Code
 		vscode.postMessage({ type: 'get-initial-data' });
 	}
@@ -997,6 +1425,28 @@ import { PerfTrace } from './modules/perf-trace.js';
 		switch (message.type) {
 			case 'setScale':
 				zoomController.updateScale(message.scale);
+				break;
+
+			case 'addLayerImages': {
+				syncBaseLayer();
+				layersPanel.show();
+				let addedLayers = 0;
+				for (const im of (message.images || [])) {
+					const layer = await decodeLayer(im.src, im.resourceUri);
+					if (layer) { layerManager.addLayer(layer); addedLayers++; }
+				}
+				if (addedLayers > 0) {
+					layersPanel.refresh();
+					recompositeLayers();
+					scheduleSaveState();
+				} else {
+					vscode.postMessage({ type: 'show-error', message: 'Could not load the selected image(s) as layers.' });
+				}
+				break;
+			}
+
+			case 'layerUrisResolved':
+				finishLayerRestore(message.map || {});
 				break;
 
 			case 'setActive':
@@ -1037,6 +1487,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const changes = settingsManager.updateSettings(message.settings);
 				const newResourceUri = settingsManager.settings.resourceUri;
+				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
 
 				// formatInfo is posted from inside processTiff(), before handleTiff()
 				// receives and installs its canvas. Do not drop the immediate
@@ -1102,7 +1553,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
 							initialLoadStartTime = 0; // Reset
 						}
 					} else if (pngProcessor.hasLazyNativeReadback()) {
@@ -1115,7 +1566,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
 							initialLoadStartTime = 0;
 						}
 					}
@@ -1141,11 +1592,13 @@ import { PerfTrace } from './modules/perf-trace.js';
 						(jxlProcessor && jxlProcessor._pendingRenderData) ||
 						(rawProcessor && rawProcessor._pendingRenderData);
 
-					if (hasLoadedImage && !hasPendingRender) {
+					if (hasLoadedImage && !hasPendingRender && changes.changed) {
 						const startTime = performance.now();
 						await updateImageWithNewSettings(changes);
 						const endTime = performance.now();
-						logToOutput(`[Perf] Re-render (Gamma/Brightness) took ${(endTime - startTime).toFixed(2)}ms`);
+						logToOutput(`[Perf] Settings re-render (${updateReason}; ${changes.changedKeys.join(', ')}) took ${(endTime - startTime).toFixed(2)}ms`);
+					} else if (hasLoadedImage && !hasPendingRender && !changes.changed) {
+						logToOutput(`[Perf] Skipped no-op settings update (${updateReason})`);
 					}
 				}
 				break;
@@ -1634,9 +2087,16 @@ import { PerfTrace } from './modules/perf-trace.js';
 			return;
 		}
 
+		// When compositing is active with extra layers, the composite owns the
+		// canvas — re-render it through the central pipeline and skip the
+		// per-processor paths below.
+		if (layerManager.active && layerManager.hasExtraLayers()) {
+			if (recompositeLayers()) { return; }
+		}
+
 		// Default to full update if no change info provided
 		if (!changes) {
-			changes = { parametersOnly: false, changedMasks: false, changedStructure: false };
+			changes = { changed: true, changedKeys: ['unspecified'], parametersOnly: false, changedMasks: false, changedStructure: false };
 		}
 
 		// If masks changed, clear the mask cache
@@ -1930,6 +2390,11 @@ import { PerfTrace } from './modules/perf-trace.js';
 				return;
 			}
 
+			// In layer move mode, a click on the image moves the layer — don't zoom.
+			if (layerManager.active && layersPanel.movingLayerId) {
+				return;
+			}
+
 			if (mouseHandler.consumeClick) {
 				mouseHandler.consumeClick = false;
 				return;
@@ -2069,9 +2534,9 @@ import { PerfTrace } from './modules/perf-trace.js';
 
 			menu.appendChild(createSeparator());
 
-			// Add Filter by Mask option (uses command - needs user input)
-			menu.appendChild(createMenuItem('Filter by Mask (beta)', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.filterByMask' });
+			// Layers compositing view
+			menu.appendChild(createMenuItem('Open Layers View', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
 			}));
 
 

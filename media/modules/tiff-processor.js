@@ -94,11 +94,13 @@ export class TiffProcessor {
 	/**
 	 * Process TIFF file from URL
 	 * @param {string} src - TIFF file URL
-	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, tiffData: Object}>}
+	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, tiffData: Object, decodeInfo: {engine: string, durationMs: number}}>}
 	 */
 	async processTiff(src) {
 		const startTime = performance.now();
 		const loadSignal = this.loadSignal;
+		/** @type {{engine: string, durationMs: number}|null} */
+		let decodeInfo = null;
 		try {
 			const response = await fetch(src, { signal: loadSignal });
 			const buffer = await response.arrayBuffer();
@@ -138,7 +140,8 @@ export class TiffProcessor {
 					wasmResult = workerResponse.result;
 					localBuffer = null;
 					const decodedWith = wasmResult.decodedWith || 'wasm (worker)';
-					console.log(`[TiffProcessor] Worker TIFF decode time: ${(performance.now() - workerStart).toFixed(2)}ms (${decodedWith})`);
+					decodeInfo = { engine: decodedWith, durationMs: performance.now() - workerStart };
+					console.log(`[TiffProcessor] Worker TIFF decode time: ${decodeInfo.durationMs.toFixed(2)}ms (${decodedWith})`);
 					if (wasmResult.wasmFallbackReason) {
 						console.warn('[TiffProcessor] Worker used geotiff.js because WASM rejected the TIFF:', wasmResult.wasmFallbackReason);
 						this.vscode?.postMessage({
@@ -165,6 +168,7 @@ export class TiffProcessor {
 					// original buffer that the geotiff.js fallback path needs below.
 					wasmResult = await this._wasmProcessor.decode(localBuffer.slice(0));
 					const decodeTime = performance.now() - decodeStart;
+					decodeInfo = { engine: 'wasm (main thread)', durationMs: decodeTime };
 					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
 					PerfTrace.mark('decode-wasm-local');
 				} catch (wasmError) {
@@ -269,7 +273,7 @@ export class TiffProcessor {
 						canvas.width = width;
 						canvas.height = height;
 						const placeholderImageData = new ImageData(width, height);
-						return { canvas, imageData: placeholderImageData, tiffData: this.rawTiffData };
+						return { canvas, imageData: placeholderImageData, tiffData: this.rawTiffData, decodeInfo: /** @type {{engine: string, durationMs: number}} */ (decodeInfo) };
 					}
 
 					const canvas = document.createElement('canvas');
@@ -278,7 +282,7 @@ export class TiffProcessor {
 					const imageData = await this.renderTiff(image, rasters);
 					const totalTime = performance.now() - startTime;
 					console.log(`[TiffProcessor] Total WASM processing time: ${totalTime.toFixed(2)}ms`);
-					return { canvas, imageData, tiffData: this.rawTiffData };
+					return { canvas, imageData, tiffData: this.rawTiffData, decodeInfo: /** @type {{engine: string, durationMs: number}} */ (decodeInfo) };
 				} catch (wasmError) {
 					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
 					// Disable WASM for the rest of the session — a failure can leave
@@ -315,6 +319,10 @@ export class TiffProcessor {
 
 			const rasters = await image.readRasters();
 			const decodeTime = performance.now() - decodeStart;
+			decodeInfo = {
+				engine: use24BitMode ? 'geotiff.js (main thread, 24-bit mode)' : 'geotiff.js (main thread)',
+				durationMs: decodeTime,
+			};
 			console.log(`[TiffProcessor] geotiff.js decode time: ${decodeTime.toFixed(2)}ms`);
 			PerfTrace.mark('decode-geotiff');
 
@@ -388,14 +396,14 @@ export class TiffProcessor {
 
 				// Return placeholder - actual rendering happens when settings update
 				const placeholderImageData = new ImageData(width, height);
-				return { canvas, imageData: placeholderImageData, tiffData: this.rawTiffData };
+				return { canvas, imageData: placeholderImageData, tiffData: this.rawTiffData, decodeInfo };
 			}
 
 			// Non-initial loads or if no vscode (render immediately)
 			const imageData = await this.renderTiff(image, rasters);
 			const totalTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Total geotiff.js processing time: ${totalTime.toFixed(2)}ms`);
-			return { canvas, imageData, tiffData: this.rawTiffData };
+			return { canvas, imageData, tiffData: this.rawTiffData, decodeInfo };
 		} catch (error) {
 			console.error('Error processing TIFF:', error);
 			throw error;

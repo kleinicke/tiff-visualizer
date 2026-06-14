@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
+import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ZoomStatusBarEntry } from './zoomStatusBarEntry';
 import { NormalizationStatusBarEntry } from './normalizationStatusBarEntry';
 import { GammaStatusBarEntry } from './gammaStatusBarEntry';
 import { BrightnessStatusBarEntry } from './brightnessStatusBarEntry';
-import { MaskFilterStatusBarEntry } from './maskFilterStatusBarEntry';
+import { LayersStatusBarEntry } from './layersStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { ImageSettingsManager } from './imageSettings';
@@ -26,6 +27,8 @@ export interface CopiedPositionState {
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
+	// Standalone webview panel type for the dedicated Layers window.
+	public static readonly layerViewType = 'tiffVisualizer.layerView';
 
 	// Export the viewType to ensure it's preserved in the build
 	public static getViewType() {
@@ -49,7 +52,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		private readonly normalizationStatusBarEntry: NormalizationStatusBarEntry,
 		private readonly gammaStatusBarEntry: GammaStatusBarEntry,
 		private readonly brightnessStatusBarEntry: BrightnessStatusBarEntry,
-		private readonly maskFilterStatusBarEntry: MaskFilterStatusBarEntry,
+		private readonly layersStatusBarEntry: LayersStatusBarEntry,
 		private readonly histogramStatusBarEntry: HistogramStatusBarEntry,
 		private readonly colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 	) {
@@ -82,7 +85,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			this.normalizationStatusBarEntry.forceHide();
 			this.gammaStatusBarEntry.forceHide();
 			this.brightnessStatusBarEntry.forceHide();
-			this.maskFilterStatusBarEntry.hide();
+			this.layersStatusBarEntry.hide();
 			this.histogramStatusBarEntry.hide();
 			this.colorPickerModeStatusBarEntry.hide();
 		}
@@ -227,9 +230,10 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		extensionRoot: vscode.Uri,
 		document: vscode.CustomDocument,
 		webviewEditor: vscode.WebviewPanel,
-		openTimestamp?: number
-	): void {
-		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.maskFilterStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp);
+		openTimestamp?: number,
+		surfaceMode: 'editor' | 'layers' = 'editor'
+	): any {
+		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.layersStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp, surfaceMode);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 
@@ -253,6 +257,53 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 				this.scheduleMenuVisibilityClear();
 			}
 		});
+
+		return preview;
+	}
+
+	/**
+	 * Open a dedicated, retained Layers view for an image. It is a
+	 * standalone webview panel running the same preview app in 'layers' mode —
+	 * so it gets the status bar, pixel inspector, histogram and zoom for free —
+	 * but with a custom tab title and kept in memory across tab switches.
+	 * @param resource The base image (defines the canvas and the tab title).
+	 * @param additionalLayers Extra images to stack on top once the view loads.
+	 */
+	public openLayerView(resource: vscode.Uri, additionalLayers: vscode.Uri[] = []): void {
+		// Include the extra layers' folders up front so adding them never has to
+		// reassign webview.options (which would reload the window).
+		const roots = [
+			Utils.dirname(resource),
+			this.extensionRoot,
+			...(vscode.workspace.workspaceFolders?.map(f => f.uri) ?? []),
+			...additionalLayers.map(u => Utils.dirname(u)),
+		];
+		const panel = vscode.window.createWebviewPanel(
+			ImagePreviewManager.layerViewType,
+			`Layers — ${Utils.basename(resource)}`,
+			vscode.ViewColumn.Active,
+			{
+				enableScripts: true,
+				retainContextWhenHidden: true,
+				localResourceRoots: roots,
+			},
+		);
+		const document: vscode.CustomDocument = { uri: resource, dispose: () => { } };
+		const preview = this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
+		if (additionalLayers.length > 0 && preview && 'setInitialLayers' in preview) {
+			(preview as any).setInitialLayers(additionalLayers);
+		}
+	}
+
+	/**
+	 * Re-attach a Layers window that VS Code restored after a restart (via the
+	 * WebviewPanelSerializer). The panel already exists; we wire an ImagePreview
+	 * to it and the webview restores its layer stack from persisted state.
+	 */
+	public reviveLayerView(panel: vscode.WebviewPanel, resource: vscode.Uri): void {
+		panel.title = `Layers — ${Utils.basename(resource)}`;
+		const document: vscode.CustomDocument = { uri: resource, dispose: () => { } };
+		this.createPreview(ImagePreview, this.extensionRoot, document, panel, Date.now(), 'layers');
 	}
 
 	public get activePreview() {
@@ -305,6 +356,18 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		} else {
 			this.setMenuVisibility(this._previews.size > 0);
 		}
+		this.refreshActiveMode();
+	}
+
+	/**
+	 * Publish the active preview's exclusive mode (layers / collection / normal)
+	 * as a context key so the Explorer menus can show the right "Add" action.
+	 */
+	public refreshActiveMode(): void {
+		const mode = this._activePreview && 'getViewMode' in this._activePreview
+			? (this._activePreview as any).getViewMode()
+			: 'normal';
+		vscode.commands.executeCommand('setContext', 'tiffVisualizer.activeMode', mode);
 	}
 
 	private setMenuVisibility(visible: boolean): void {
@@ -325,4 +388,4 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasActivePreview', anyActive);
 		}, 300);
 	}
-} 
+}

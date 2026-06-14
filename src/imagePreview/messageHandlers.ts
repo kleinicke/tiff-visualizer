@@ -40,6 +40,9 @@ export class MessageRouter {
 		this.handlers.set('histogramPositionChanged', new HistogramPositionChangedMessageHandler());
 		this.handlers.set('histogramScaleModeChanged', new HistogramScaleModeChangedMessageHandler());
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
+		this.handlers.set('layerModeChanged', new LayerModeChangedMessageHandler());
+		this.handlers.set('resolveLayerUris', new ResolveLayerUrisMessageHandler());
+		this.handlers.set('requestInitialLayers', new RequestInitialLayersMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
 	}
@@ -131,6 +134,7 @@ class FormatInfoMessageHandler implements MessageHandler {
 			preview.getWebview().postMessage({
 				type: 'updateSettings',
 				settings: settings,
+				reason: 'initial-format-settings',
 				isInitialRender: true  // Trigger deferred rendering
 			});
 		}
@@ -278,6 +282,26 @@ class ExecuteCommandMessageHandler implements MessageHandler {
 		if (message.command) {
 			vscode.commands.executeCommand(message.command);
 		}
+	}
+}
+
+class LayerModeChangedMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.setLayerMode(!!message.active);
+	}
+}
+
+class ResolveLayerUrisMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (Array.isArray(message.resourceUris)) {
+			preview.resolveLayerUris(message.resourceUris);
+		}
+	}
+}
+
+class RequestInitialLayersMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.sendInitialLayers();
 	}
 }
 
