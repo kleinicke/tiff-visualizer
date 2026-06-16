@@ -141,6 +141,14 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     let (width, height) = decoder.dimensions()
         .map_err(|e| JsValue::from_str(&format!("Failed to get dimensions: {}", e)))?;
 
+    // Palette (RGBPalette, PhotometricInterpretation 3) images are rejected by
+    // the tiff crate's colortype()/read_image(), so handle them via a dedicated
+    // index + ColorMap path before those calls error out.
+    let photometric_early = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation).unwrap_or(1);
+    if photometric_early == 3 {
+        return decode_palette(data, width, height);
+    }
+
     // Get color type and bits per sample
     let color_type = decoder.colortype()
         .map_err(|e| JsValue::from_str(&format!("Failed to get color type: {}", e)))?;
@@ -353,6 +361,119 @@ fn unpack_bilevel(data: &[u8], width: u32, height: u32, photometric: u32) -> Vec
         }
     }
     out
+}
+
+/// Rewrite the first IFD's PhotometricInterpretation (tag 262) from
+/// RGBPalette (3) to BlackIsZero (1), in place, so the tiff crate will decode
+/// the raw palette indices instead of refusing the image. Returns false (and
+/// leaves the buffer untouched) for anything it does not understand, e.g.
+/// BigTIFF.
+fn patch_photometric_to_grayscale(buf: &mut [u8]) -> bool {
+    if buf.len() < 8 {
+        return false;
+    }
+    let le = match &buf[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return false,
+    };
+    let rd16 = |b: &[u8]| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
+    let rd32 = |b: &[u8]| if le {
+        u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+    } else {
+        u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+    };
+    // Only classic TIFF (magic 42) is handled; BigTIFF (43) is left to fall back.
+    if rd16(&buf[2..4]) != 42 {
+        return false;
+    }
+    let ifd = rd32(&buf[4..8]) as usize;
+    if ifd + 2 > buf.len() {
+        return false;
+    }
+    let count = rd16(&buf[ifd..ifd + 2]) as usize;
+    for i in 0..count {
+        let e = ifd + 2 + i * 12;
+        if e + 12 > buf.len() {
+            return false;
+        }
+        if rd16(&buf[e..e + 2]) == 262 {
+            // SHORT value stored inline in the entry's value field.
+            let one = if le { [1u8, 0u8] } else { [0u8, 1u8] };
+            buf[e + 8] = one[0];
+            buf[e + 9] = one[1];
+            return true;
+        }
+    }
+    false
+}
+
+/// Decode a palette (RGBPalette) TIFF by reading the raw indices and expanding
+/// them through the ColorMap tag into interleaved 8-bit RGB.
+fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, JsValue> {
+    use tiff::tags::Tag;
+
+    // ColorMap (tag 320): 3 * 2^bits 16-bit entries, laid out as all reds, then
+    // all greens, then all blues.
+    let cmap = {
+        let mut d = Decoder::new(Cursor::new(data))
+            .map_err(|e| JsValue::from_str(&format!("Palette: decoder init: {}", e)))?;
+        d.get_tag_u16_vec(Tag::Unknown(320))
+            .map_err(|e| JsValue::from_str(&format!("Palette: missing ColorMap: {}", e)))?
+    };
+    if cmap.is_empty() || cmap.len() % 3 != 0 {
+        return Err(JsValue::from_str("Palette: invalid ColorMap length"));
+    }
+    let n_colors = cmap.len() / 3;
+
+    // Patch the photometric tag so the tiff crate decodes the indices for us,
+    // reusing all of its compression / predictor / strip handling.
+    let mut patched = data.to_vec();
+    if !patch_photometric_to_grayscale(&mut patched) {
+        return Err(JsValue::from_str("Palette: could not patch photometric tag"));
+    }
+
+    let mut d = Decoder::new(Cursor::new(patched.as_slice()))
+        .map_err(|e| JsValue::from_str(&format!("Palette: patched decoder init: {}", e)))?;
+    let compression = d.get_tag_u32(Tag::Compression).unwrap_or(1);
+    let predictor = d.get_tag_u32(Tag::Predictor).unwrap_or(1);
+    let planar = d.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
+
+    let indices: Vec<usize> = match d.read_image()
+        .map_err(|e| JsValue::from_str(&format!("Palette: index decode failed: {}", e)))?
+    {
+        DecodingResult::U8(v) => v.iter().map(|&x| x as usize).collect(),
+        DecodingResult::U16(v) => v.iter().map(|&x| x as usize).collect(),
+        _ => return Err(JsValue::from_str("Palette: unexpected index sample type")),
+    };
+
+    // ColorMap entries are 16-bit; scale down to 8-bit per channel.
+    let mut rgb = Vec::with_capacity(indices.len().saturating_mul(3));
+    for &i in &indices {
+        if i < n_colors {
+            rgb.push((cmap[i] >> 8) as u8);
+            rgb.push((cmap[n_colors + i] >> 8) as u8);
+            rgb.push((cmap[2 * n_colors + i] >> 8) as u8);
+        } else {
+            rgb.extend_from_slice(&[0, 0, 0]);
+        }
+    }
+
+    let (min, max) = compute_stats_u8(&rgb);
+    Ok(TiffResult {
+        width,
+        height,
+        channels: 3,
+        bits_per_sample: 8,
+        sample_format: 1,
+        compression,
+        predictor,
+        photometric_interpretation: 2, // expanded to RGB
+        planar_configuration: planar,
+        data: rgb,
+        min_value: min as f64,
+        max_value: max as f64,
+    })
 }
 
 /// Decode a CCITT-fax-compressed TIFF (compression 2, 3 or 4) using hayro-ccitt.

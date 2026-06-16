@@ -13,7 +13,7 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 wasm-bindgen = "0.2"
-tiff = "0.10.3"
+tiff = { version = "0.10.3", features = ["zstd"] }
 hayro-ccitt = "0.3"
 console_error_panic_hook = { version = "0.1.6", optional = true }
 js-sys = "0.3"

@@ -7,6 +7,8 @@
  *   - CCITT Group 4 / T.6   (compression 4)
  *   - JPEG-in-TIFF          (compression 7, decoded to RGB)
  *   - Uncompressed bilevel  (1-bit, expanded to 8-bit grayscale)
+ *   - Palette / RGBPalette  (indices expanded to RGB via the ColorMap)
+ *   - ZSTD                  (compression 50000)
  *
  * The CCITT-compressed images are byte-for-byte copies of an uncompressed
  * reference, so a correct decode must match the reference exactly.
@@ -86,6 +88,34 @@ async function main() {
 		const max = jpeg.data.reduce((m, v) => Math.max(m, v), 0);
 		assert.ok(max > 0, 'JPEG image should contain non-zero pixels');
 		console.log('✅ JPEG-in-TIFF (compression 7) decodes to 3-channel RGB');
+	}
+
+	// 4. Palette images expand to RGB through the ColorMap. The first pixel of
+	//    this fixture is palette index -> (20, 12, 27), matching Pillow's own
+	//    palette->RGB conversion.
+	{
+		const pal = decode(mod, 'palette.tif');
+		assert.strictEqual(pal.width, 160);
+		assert.strictEqual(pal.height, 120);
+		assert.strictEqual(pal.channels, 3, 'palette should expand to 3 channels');
+		assert.strictEqual(pal.bitsPerSample, 8);
+		assert.strictEqual(pal.data.length, 160 * 120 * 3);
+		assert.deepStrictEqual(pal.data.slice(0, 3), [20, 12, 27],
+			'first pixel must match the ColorMap expansion');
+		console.log('✅ Palette (RGBPalette) expands to RGB via the ColorMap');
+	}
+
+	// 5. ZSTD-compressed (compression 50000) decodes correctly.
+	{
+		const zstd = decode(mod, 'zstd_u16.tif');
+		assert.strictEqual(zstd.compression, 50000, 'ZSTD compression tag');
+		assert.strictEqual(zstd.width, 160);
+		assert.strictEqual(zstd.height, 120);
+		assert.strictEqual(zstd.bitsPerSample, 16);
+		assert.strictEqual(zstd.data.length, 160 * 120);
+		const max = zstd.data.reduce((m, v) => Math.max(m, v), 0);
+		assert.ok(max > 60000, 'ZSTD 16-bit image should span the full range');
+		console.log('✅ ZSTD (compression 50000) decodes correctly');
 	}
 
 	console.log('\n🎉 All WASM TIFF decoder tests passed.\n');
