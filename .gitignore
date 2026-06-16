@@ -14,7 +14,7 @@ test-workspace/
 playwright-report/
 test-resources/
 
-package-lock.json
+# package-lock.json is committed so CI's `npm ci` has a lockfile to install from.
 
 # Webpack
 *.webpack.config.js
