@@ -177,7 +177,12 @@
       },
       {
         "command": "tiffVisualizer.convertColormapToFloat",
-        "title": "Convert Colormap Image to Float",
+        "title": "Decode Colormap Image to Float",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.applyColormap",
+        "title": "Apply Colormap (Pseudocolor)",
         "category": "TIFF Visualizer"
       },
       {

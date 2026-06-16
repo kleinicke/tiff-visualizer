@@ -17,6 +17,7 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
+import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager } from './modules/layer-manager.js';
@@ -114,6 +115,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 	// Pixel inspector reads the composite value when compositing is active.
 	mouseHandler.compositeValueProvider = (x, y) =>
 		(layerManager.active && layerManager.hasExtraLayers()) ? layerManager.getCompositeValueAt(x, y) : null;
+	// Pixel inspector reads the decoded scalar when a colormap has been decoded.
+	mouseHandler.decodedValueProvider = (x, y) => {
+		if (!decodedColormapSource) { return null; }
+		const { floatData, width, height } = decodedColormapSource;
+		if (x < 0 || y < 0 || x >= width || y >= height) { return null; }
+		return floatData[y * width + x];
+	};
 	/** @type {string|undefined} URI of the image currently used as the base layer. */
 	let _layerBaseUri;
 
@@ -189,6 +197,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 	let originalImageData = null;
 	let hasAppliedConversion = false;
 
+	// Decoded single-channel float data produced by "Decode Colormap to Float".
+	// When set, it becomes the active single-image source: it renders through the
+	// central ImageRenderer pipeline (so normalization/gamma/display-colormap all
+	// apply) and feeds the pixel inspector.
+	/** @type {{floatData: Float32Array, width: number, height: number}|null} */
+	let decodedColormapSource = null;
+
 	// Copied position state (for paste position feature)
 	// Stores position as relative coordinates (0-1) for cross-resolution compatibility
 	/** @type {CopiedPosition|null} */
@@ -202,6 +217,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
+		if (persistedState.displayColormap) {
+			settingsManager.settings.displayColormap = persistedState.displayColormap;
+		}
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
 		const savedLayers = persistedState.layers;
@@ -238,6 +256,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			isShowingPeer: isShowingPeer,
 			currentResourceUri: settingsManager.settings.resourceUri,
 			colormapConversionState: colormapConversionState,
+			displayColormap: settingsManager.settings.displayColormap,
 			isHistogramVisible: histogramOverlay.getVisibility(),
 			// Include zoom so it isn't erased when the app-level state is written
 			scale: zoomState.scale,
@@ -1729,7 +1748,30 @@ import { LayersPanel } from './modules/layers-panel.js';
 				// Revert to the original image
 				handleRevertToOriginal();
 				break;
+
+			case 'setDisplayColormap':
+				// Apply (or clear) a render-time pseudocolor colormap.
+				await handleSetDisplayColormap(message.colormap || 'none');
+				break;
 		}
+	}
+
+	/**
+	 * Set the render-time display colormap (pseudocolor) and re-render. Pass
+	 * 'none' to clear it. Applies to single-channel images and to layers, since
+	 * everything renders through ImageRenderer which reads this setting.
+	 * @param {string} colormapName
+	 */
+	async function handleSetDisplayColormap(colormapName) {
+		settingsManager.settings.displayColormap = colormapName;
+		saveState();
+		await updateImageWithNewSettings({
+			changed: true,
+			changedKeys: ['displayColormap'],
+			parametersOnly: true,
+			changedMasks: false,
+			changedStructure: false
+		});
 	}
 
 	/**
@@ -1878,11 +1920,48 @@ import { LayersPanel } from './modules/layers-panel.js';
 	}
 
 	/**
-	 * Convert colormap image to float values
-	 * @param {string} colormapName - Name of the colormap to use
-	 * @param {number} minValue - Minimum value to map to
-	 * @param {number} maxValue - Maximum value to map to
-	 * @param {boolean} inverted - Whether to invert the mapping
+	 * Clear the cached raw data of every format processor. Used when the decoded
+	 * colormap scalar takes over as the active single-image source.
+	 */
+	function clearAllProcessorRawData() {
+		tiffProcessor.rawTiffData = null;
+		if (exrProcessor) exrProcessor.rawExrData = undefined;
+		if (npyProcessor) npyProcessor._lastRaw = null;
+		if (ppmProcessor) ppmProcessor._lastRaw = null;
+		if (pfmProcessor) pfmProcessor._lastRaw = null;
+		if (pngProcessor) pngProcessor._lastRaw = null;
+		if (hdrProcessor) hdrProcessor._lastRaw = null;
+		if (tgaProcessor) tgaProcessor._lastRaw = null;
+		if (webImageProcessor) webImageProcessor._lastRaw = null;
+		if (jxlProcessor) jxlProcessor._lastRaw = null;
+		if (rawProcessor) rawProcessor._lastRaw = null;
+	}
+
+	/**
+	 * Render the decoded colormap scalar source through the central pipeline,
+	 * honoring the current normalization / gamma / display-colormap settings.
+	 */
+	async function renderDecodedColormapSource() {
+		if (!decodedColormapSource || !canvas) { return; }
+		const ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (!ctx) { return; }
+		const { floatData, width, height } = decodedColormapSource;
+		const stats = ImageStatsCalculator.calculateFloatStats(floatData, width, height, 1);
+		const imageData = ImageRenderer.render(
+			floatData, width, height, 1, true, stats,
+			settingsManager.settings, { nanColor: getNanColorObj() }
+		);
+		await renderImageDataToCanvas(imageData, ctx);
+		primaryImageData = imageData;
+		updateHistogramData();
+	}
+
+	/**
+	 * Decode a colormapped image to scalar float values (inverse colormap).
+	 * @param {string} colormapName - Name of the colormap used in the image
+	 * @param {number} minValue - Value mapped to the start of the colormap
+	 * @param {number} maxValue - Value mapped to the end of the colormap
+	 * @param {boolean} inverted - Whether the colormap was applied inverted
 	 * @param {boolean} logarithmic - Whether to use logarithmic mapping
 	 */
 	async function handleColormapConversion(colormapName, minValue, maxValue, inverted, logarithmic) {
@@ -1898,10 +1977,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 				return;
 			}
 
-			// Get the current image data from canvas
+			// Read the displayed RGB pixels (the true colormap colors at the
+			// current display) and invert the colormap to recover scalar values.
 			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+			const width = imageData.width;
+			const height = imageData.height;
 
-			// Convert to float using the colormap
 			const floatData = colormapConverter.convertToFloat(
 				imageData,
 				colormapName,
@@ -1911,76 +1992,25 @@ import { LayersPanel } from './modules/layers-panel.js';
 				logarithmic
 			);
 
-			// Create a new ImageData for the float visualization
-			// We'll render it as if it's a float TIFF
-			const width = imageData.width;
-			const height = imageData.height;
+			// The decoded scalar becomes the active single-image source. Clearing
+			// the per-processor raw data ensures settings re-renders go through the
+			// decoded-source path below instead of re-rendering the original image.
+			decodedColormapSource = { floatData, width, height };
+			clearAllProcessorRawData();
 
-			// Store the float data for display
-			// Create a temporary processor-like object to handle the float data
-			const floatImageData = new ImageData(width, height);
-
-			// Enable auto-normalization and set the range
+			// Switch to a float view of the decoded range.
 			if (settingsManager.settings.normalization) {
 				settingsManager.settings.normalization.autoNormalize = true;
 				settingsManager.settings.normalization.min = minValue;
 				settingsManager.settings.normalization.max = maxValue;
 			}
 
-			// Normalize float values to 0-255 for display
-			for (let i = 0; i < floatData.length; i++) {
-				const value = floatData[i];
-				// Normalize to 0-255
-				const normalized = ((value - minValue) / (maxValue - minValue)) * 255;
-				const clamped = Math.max(0, Math.min(255, normalized));
-
-				const offset = i * 4;
-				floatImageData.data[offset] = clamped;     // R
-				floatImageData.data[offset + 1] = clamped; // G
-				floatImageData.data[offset + 2] = clamped; // B
-				floatImageData.data[offset + 3] = 255;     // A
-			}
-
-			// Display the converted float image
-			await renderImageDataToCanvas(floatImageData, ctx);
-			primaryImageData = floatImageData;
-
-			// Force a visual update by triggering a reflow
-			// This ensures the canvas changes are actually displayed
-			if (imageElement === canvas) {
-				// Canvas is already in DOM, force a repaint
-				canvas.style.display = 'none';
-				canvas.offsetHeight; // Trigger reflow
-				canvas.style.display = '';
-			}
+			// Render the decoded scalar through the central pipeline so
+			// normalization / gamma / display-colormap all apply.
+			await renderDecodedColormapSource();
 
 			// Update zoom controller to refresh the display
 			zoomController.updateScale(zoomController.scale || 'fit');
-
-			// Store the float data for pixel inspection
-			// Store converted float data in a custom property (dynamic property)
-			// @ts-ignore - Adding dynamic property for converted colormap data
-			tiffProcessor._convertedFloatData = {
-				floatData: floatData,
-				width: width,
-				height: height,
-				min: minValue,
-				max: maxValue
-			};
-
-			// Clear the raw processor data to prevent re-rendering from original data
-			// After colormap conversion, we want to work with the converted float data
-			tiffProcessor.rawTiffData = null;
-			if (exrProcessor) exrProcessor.rawExrData = undefined;
-			if (npyProcessor) npyProcessor._lastRaw = null;
-			if (ppmProcessor) ppmProcessor._lastRaw = null;
-			if (pfmProcessor) pfmProcessor._lastRaw = null;
-			if (pngProcessor) pngProcessor._lastRaw = null;
-			if (hdrProcessor) hdrProcessor._lastRaw = null;
-			if (tgaProcessor) tgaProcessor._lastRaw = null;
-			if (webImageProcessor) webImageProcessor._lastRaw = null;
-			if (jxlProcessor) jxlProcessor._lastRaw = null;
-			if (rawProcessor) rawProcessor._lastRaw = null;
 
 			// Update settings display
 			vscode.postMessage({
@@ -1988,7 +2018,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 				value: { min: minValue, max: maxValue }
 			});
 
-			// Send format info
+			// Tell the extension this is now a single-channel float image so the
+			// float status-bar controls (normalization) appear.
 			sendFormatInfo({
 				width: width,
 				height: height,
@@ -1998,9 +2029,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 				formatType: 'colormap-converted',
 				isInitialLoad: false
 			});
-
-			// Update histogram
-			updateHistogramData();
 
 			// Save the colormap conversion state for persistence
 			colormapConversionState = {
@@ -2013,7 +2041,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			hasAppliedConversion = true;
 			saveState();
 
-			console.log(`Colormap conversion complete: ${colormapName} [${minValue}, ${maxValue}]`);
+			console.log(`Colormap decode complete: ${colormapName} [${minValue}, ${maxValue}]`);
 		} catch (error) {
 			console.error('Error during colormap conversion:', error);
 			vscode.postMessage({
@@ -2041,20 +2069,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 			colormapConversionState = null;
 			hasAppliedConversion = false;
 			originalImageData = null;
+			decodedColormapSource = null;
 
 			// Clear converted data from processors
-			tiffProcessor.rawTiffData = null;
-			if (exrProcessor) exrProcessor.rawExrData = undefined;
-			if (npyProcessor) npyProcessor._lastRaw = null;
-			if (ppmProcessor) ppmProcessor._lastRaw = null;
-			if (pfmProcessor) pfmProcessor._lastRaw = null;
-			if (pngProcessor) pngProcessor._lastRaw = null;
-			if (tgaProcessor) tgaProcessor._lastRaw = null;
-			if (webImageProcessor) webImageProcessor._lastRaw = null;
-			if (jxlProcessor) jxlProcessor._lastRaw = null;
-			if (rawProcessor) rawProcessor._lastRaw = null;
-			// @ts-ignore
-			tiffProcessor._convertedFloatData = null;
+			clearAllProcessorRawData();
 
 			// Reload the image
 			reloadImage();
@@ -2092,6 +2110,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 		// per-processor paths below.
 		if (layerManager.active && layerManager.hasExtraLayers()) {
 			if (recompositeLayers()) { return; }
+		}
+
+		// When a colormap has been decoded to float, that scalar is the active
+		// source — re-render it (so normalization / gamma / display-colormap apply).
+		if (decodedColormapSource) {
+			await renderDecodedColormapSource();
+			return;
 		}
 
 		// Default to full update if no change info provided
@@ -2502,6 +2527,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 				currentFormatInfo.bitsPerSample === 8 &&
 				currentFormatInfo.sampleFormat !== 3; // Not float
 			const isRgbImage = currentFormatInfo && (currentFormatInfo.samplesPerPixel ?? 0) >= 3;
+			// Single-channel scalar image (or a decoded colormap): can be pseudocolored.
+			const isSingleChannel = !!currentFormatInfo && (currentFormatInfo.samplesPerPixel ?? 1) <= 1;
 
 			if (isRgb8BitUint) {
 				menu.appendChild(createSeparator());
@@ -2512,13 +2539,29 @@ import { LayersPanel } from './modules/layers-panel.js';
 				}));
 			}
 
+			// "Apply Colormap" (pseudocolor): map a single-channel scalar to colors.
+			if (isSingleChannel) {
+				menu.appendChild(createSeparator());
+
+				const activeColormap = settingsManager.settings.displayColormap;
+				const hasColormap = activeColormap && activeColormap !== 'none';
+				menu.appendChild(createMenuItem(hasColormap ? `Apply Colormap… (${activeColormap})` : 'Apply Colormap…', () => {
+					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.applyColormap' });
+				}));
+				if (hasColormap) {
+					menu.appendChild(createMenuItem('Remove Colormap', () => {
+						handleSetDisplayColormap('none');
+					}));
+				}
+			}
+
+			// "Decode Colormap to Float": recover a scalar from a colormapped RGB image.
 			if (isRgbImage) {
 				if (!isRgb8BitUint) {
 					menu.appendChild(createSeparator());
 				}
 
-				// Add Convert Colormap to Float option (uses command - needs user input)
-				menu.appendChild(createMenuItem('Convert Colormap to Float', () => {
+				menu.appendChild(createMenuItem('Decode Colormap to Float', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.convertColormapToFloat' });
 				}));
 			}

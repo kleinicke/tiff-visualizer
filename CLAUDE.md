@@ -87,7 +87,8 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
-- **ColormapConverter**: Converts colormap images to float values using various colormaps (viridis, plasma, jet, etc.)
+- **Colormaps** ([media/modules/colormaps.js](media/modules/colormaps.js)): Shared source of truth for all colormaps (viridis, plasma, jet, etc.) — `getColormapLut()` (forward 256-entry RGB LUT, used for render-time "apply"/pseudocolor) and `rgbToColormapIndex()` (cached 32³ inverse cube, used for "decode")
+- **ColormapConverter** ([media/modules/colormap-converter.js](media/modules/colormap-converter.js)): "Decode" direction — recovers scalar float values from a colormapped RGB image using the shared inverse lookup
 
 ### Status Bar Integration
 Comprehensive status bar system with specialized entries:
@@ -144,7 +145,8 @@ All commands registered with `tiffVisualizer.` prefix ([src/imagePreview/command
 - **Collection**: `browseAndAddToCollection` — adds a file to the active preview's image collection; accepts an optional URI (Explorer context menu) or prompts with a glob/path picker (command palette)
 - **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`
 - **Filters**: `filterByMask`, `toggleNanColor`
-- **Colormap conversion**: `convertColormapToFloat` - converts colormap images to float values
+- **Colormap apply**: `applyColormap` - sets the render-time `displayColormap` (pseudocolor) on single-channel images; non-destructive and applied in `ImageRenderer.render()`, so it also works in layers
+- **Colormap decode**: `convertColormapToFloat` - recovers scalar float values from a colormapped RGB image (inverse colormap)
 - **Reset**: `resetAllSettings`
 - **Histogram**: `toggleHistogram` (Ctrl+H / Cmd+H)
 - **Color picker mode**: `toggleColorPickerMode` — switches pixel inspector between original and modified (gamma/exposure) values
@@ -294,7 +296,8 @@ media/
 │   ├── zoom-controller.js            # Pan/zoom functionality
 │   ├── mouse-handler.js              # Pixel inspection
 │   ├── histogram-overlay.js          # Histogram visualization
-│   └── colormap-converter.js         # Colormap to float conversion
+│   ├── colormaps.js                  # Shared colormap LUTs + inverse lookup (apply & decode)
+│   └── colormap-converter.js         # Colormap decode (RGB → float, inverse colormap)
 ├── geotiff.min.js                    # TIFF processing library (copied from node_modules)
 ├── parse-exr.js                      # EXR processing library
 ├── upng.min.js                       # PNG decoding

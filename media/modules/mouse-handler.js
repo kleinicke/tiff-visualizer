@@ -44,6 +44,14 @@ export class MouseHandler {
 		 */
 		this.compositeValueProvider = null;
 
+		/**
+		 * Optional provider for the decoded scalar value at a pixel, set when a
+		 * colormapped image has been decoded to float. When set and it returns a
+		 * finite value, the pixel inspector shows that scalar.
+		 * @type {((x:number, y:number) => number|null)|null}
+		 */
+		this.decodedValueProvider = null;
+
 		// DOM elements
 		this.container = document.body;
 		this.imageElement = null;
@@ -227,6 +235,15 @@ export class MouseHandler {
 			const composite = this.compositeValueProvider(x, y);
 			if (composite) {
 				return this._formatCompositeValues(composite);
+			}
+		}
+
+		// When a colormapped image has been decoded to float, report the decoded
+		// scalar (works regardless of which colormap is now applied for display).
+		if (this.decodedValueProvider) {
+			const decoded = this.decodedValueProvider(x, y);
+			if (decoded !== null && decoded !== undefined) {
+				return this._formatCompositeValues([decoded]);
 			}
 		}
 

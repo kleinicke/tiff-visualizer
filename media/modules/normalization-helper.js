@@ -2,6 +2,7 @@
 "use strict";
 
 import { PerfTrace } from './perf-trace.js';
+import { getColormapLut } from './colormaps.js';
 
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 
@@ -281,6 +282,16 @@ export class ImageRenderer {
         const perfStart = performance.now();
         const result = this._renderInternal(data, width, height, channels, isFloat, stats, settings, options);
 
+        // Apply a display colormap (pseudocolor) to single-channel images. This is
+        // a non-destructive render-time step: the grayscale intensity already
+        // written by the render paths is used as the colormap index. NaN pixels
+        // (rendered as nanColor) are left untouched. Applied before flipY since
+        // flipping only reorders rows. Works for every format and for layers,
+        // because they all funnel through this method.
+        if (channels === 1 && settings && settings.displayColormap && settings.displayColormap !== 'none') {
+            this._applyDisplayColormap(result, data, isFloat, settings.displayColormap);
+        }
+
         if (options.flipY) {
             const flipped = this._flipY(result);
             console.log(`[Render] Total render time: ${(performance.now() - perfStart).toFixed(2)}ms (with flip)`);
@@ -394,6 +405,34 @@ export class ImageRenderer {
             data.set(tempLine, bottomOffset);
         }
         return imageData;
+    }
+
+    /**
+     * Remap a freshly-rendered single-channel (grayscale) ImageData through a
+     * colormap, in place. The grayscale value of each pixel (out[p], 0-255) is
+     * used as the lookup index. Pixels whose source value is non-finite were
+     * rendered as nanColor and are skipped so they keep their NaN color.
+     * @private
+     * @param {ImageData} imageData
+     * @param {ArrayLike<number>} data - original single-channel source data
+     * @param {boolean} isFloat - whether source can contain NaN/Inf
+     * @param {string} colormapName
+     */
+    static _applyDisplayColormap(imageData, data, isFloat, colormapName) {
+        const lut = getColormapLut(colormapName);
+        if (!lut) { return; }
+        const out = imageData.data;
+        const n = imageData.width * imageData.height;
+        for (let i = 0; i < n; i++) {
+            // Only float sources can hold NaN/Inf; integer sources never do.
+            if (isFloat && !Number.isFinite(data[i])) { continue; }
+            const p = i * 4;
+            const ci = out[p] * 3; // grayscale intensity (r === g === b) as index
+            out[p] = lut[ci];
+            out[p + 1] = lut[ci + 1];
+            out[p + 2] = lut[ci + 2];
+            // alpha (out[p + 3]) preserved
+        }
     }
 
 

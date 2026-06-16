@@ -1501,6 +1501,52 @@ export function registerImagePreviewCommands(
 			logCommand('convertColormapToFloat', 'error', 'No webview available');
 		}
 	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.applyColormap', async () => {
+		logCommand('applyColormap', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active image preview found.');
+			logCommand('applyColormap', 'error', 'No active preview');
+			return;
+		}
+
+		// Pseudocolor a single-channel image: pick a colormap (or None to clear).
+		const colormapOptions = [
+			{ label: 'None', description: 'Show as grayscale (remove colormap)', value: 'none' },
+			{ label: 'Viridis', description: 'Purple-blue-green-yellow perceptually uniform colormap', value: 'viridis' },
+			{ label: 'Plasma', description: 'Purple-pink-orange perceptually uniform colormap', value: 'plasma' },
+			{ label: 'Inferno', description: 'Black-purple-orange-yellow perceptually uniform colormap', value: 'inferno' },
+			{ label: 'Magma', description: 'Black-purple-pink-yellow perceptually uniform colormap', value: 'magma' },
+			{ label: 'Jet', description: 'Rainbow colormap (blue-cyan-green-yellow-red)', value: 'jet' },
+			{ label: 'Hot', description: 'Black-red-orange-yellow-white colormap', value: 'hot' },
+			{ label: 'Cool', description: 'Cyan-magenta colormap', value: 'cool' },
+			{ label: 'Turbo', description: 'Improved rainbow colormap', value: 'turbo' },
+			{ label: 'Gray', description: 'Grayscale colormap', value: 'gray' }
+		];
+
+		const selected = await vscode.window.showQuickPick(colormapOptions, {
+			placeHolder: 'Select a colormap to apply (pseudocolor)',
+			title: 'Apply Colormap'
+		});
+
+		if (!selected) {
+			logCommand('applyColormap', 'error', 'User cancelled colormap selection');
+			return;
+		}
+
+		const preview = activePreview as any;
+		if (preview.getWebview) {
+			preview.getWebview().postMessage({
+				type: 'setDisplayColormap',
+				colormap: selected.value
+			});
+			logCommand('applyColormap', 'success', selected.value);
+		} else {
+			logCommand('applyColormap', 'error', 'No webview available');
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.revertToOriginal', async () => {
 		logCommand('revertToOriginal', 'start');
 		const activePreview = previewManager.activePreview;

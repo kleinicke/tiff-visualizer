@@ -1,9 +1,17 @@
 # Change Log
 
-## 1.7.0
+## 1.8.0
+
+- Add more compression support
+- Improve colormap support
+
+## 1.7.0 (2026-06-14)
 
 - Add more file formats: webp, hdr, jxl, tga, bmp and ico files
 - Renamed extension to Scientific Image Visualizer
+- Improving the collection feature to have multiple images next to each other.
+- Adding a layer feature allowing to compose multiple images with each other.
+- Reworked colormaps into a unified feature: apply a colormap (pseudocolor) to any single-channel image as a non-destructive render setting that also works in layers, and decode colormapped RGB images back to float through the central pipeline.
 
 ## 1.6.0 (2026-03-30)
 
