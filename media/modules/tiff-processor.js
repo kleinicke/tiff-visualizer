@@ -132,7 +132,10 @@ export class TiffProcessor {
 			let workerTiffFailed = false;
 			/** @type {ArrayBuffer|null} */
 			let localBuffer = buffer;
-			if (!use24BitMode && this.decodeWorker?.canDecode('tiff')) {
+			// 24-bit grayscale is a post-decode reinterpretation (combine R/G/B
+			// into one value), handled later in renderTiff/ImageRenderer, so the
+			// Rust/WASM decoder can decode these images like any other RGB TIFF.
+			if (this.decodeWorker?.canDecode('tiff')) {
 				const workerStart = performance.now();
 				const workerResponse = await this.decodeWorker.decode('tiff', buffer);
 				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
@@ -157,7 +160,7 @@ export class TiffProcessor {
 				}
 			}
 
-			const useWasm = !wasmResult && !workerTiffFailed && this._wasmAvailable && !use24BitMode;
+			const useWasm = !wasmResult && !workerTiffFailed && this._wasmAvailable;
 			console.log(`[TiffProcessor] Decode decision: worker=${!!wasmResult}, wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
 
 			// Local WASM decoding when the worker isn't available
