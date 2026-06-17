@@ -76,6 +76,22 @@ async function main() {
 		console.log(`✅ CCITT ${label} (compression ${comp}) matches the uncompressed reference exactly`);
 	}
 
+	// 2b. Multi-strip CCITT Modified Huffman (compression 2, WhiteIsZero) masks.
+	//     Each strip is an independent byte-aligned stream; these must decode
+	//     identically to a deflate-compressed grayscale reference (regression for
+	//     a real dataset that previously rendered garbled or failed to load).
+	for (const n of [1, 2, 3]) {
+		const img = decode(mod, `ccitt_mh_strip_${n}.tif`);
+		const ref = decode(mod, `ccitt_mh_strip_${n}_ref.tif`);
+		assert.strictEqual(img.compression, 2, `mask ${n} compression tag`);
+		assert.strictEqual(img.width, 1024);
+		assert.strictEqual(img.height, 1024);
+		assert.strictEqual(img.data.length, ref.data.length, `mask ${n} length`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`multi-strip CCITT MH mask ${n} must match the reference exactly`);
+		console.log(`✅ Multi-strip CCITT Modified Huffman mask ${n} matches the reference exactly`);
+	}
+
 	// 3. JPEG-in-TIFF decodes to a 3-channel (RGB) 8-bit image.
 	{
 		const jpeg = decode(mod, 'jpeg_ycbcr.tif');
