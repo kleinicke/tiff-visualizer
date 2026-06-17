@@ -35,6 +35,7 @@
  * @property {BrightnessSettings} [brightness]
  * @property {MaskFilterSettings[]} [maskFilters]
  * @property {string} [nanColor]
+ * @property {string} [displayColormap]
  * @property {boolean} [rgbAs24BitGrayscale]
  * @property {number} [scale24BitFactor]
  * @property {boolean} [normalizedFloatMode]
@@ -158,6 +159,8 @@ export class SettingsManager {
       oldSettings.normalizedFloatMode !== newSettings.normalizedFloatMode;
     const nanColorChanged = newSettings.nanColor !== undefined &&
       (oldSettings.nanColor ?? 'black') !== newSettings.nanColor;
+    const displayColormapChanged = newSettings.displayColormap !== undefined &&
+      (oldSettings.displayColormap ?? 'none') !== newSettings.displayColormap;
 
     const colorPickerModeChanged = newSettings.colorPickerShowModified !== undefined &&
       oldSettings.colorPickerShowModified !== newSettings.colorPickerShowModified;
@@ -174,6 +177,7 @@ export class SettingsManager {
       [scaleModeChanged, 'scale24BitFactor'],
       [floatModeChanged, 'normalizedFloatMode'],
       [nanColorChanged, 'nanColor'],
+      [displayColormapChanged, 'displayColormap'],
       [colorPickerModeChanged, 'colorPickerShowModified'],
     ];
     changes.changedKeys = changedFields.filter(([changed]) => changed).map(([, key]) => key);
@@ -190,7 +194,7 @@ export class SettingsManager {
 
     // If only gamma, brightness, normalization ranges, nanColor, or colorPickerMode changed, it's parameters-only
     if (changes.changed &&
-      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || colorPickerModeChanged) &&
+      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || displayColormapChanged || colorPickerModeChanged) &&
         !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
       changes.parametersOnly = true;
     } else if (changes.changedStructure || changes.changedMasks) {

@@ -504,6 +504,17 @@ export function registerImagePreviewCommands(
 		const isSingleChannelUint = formatInfo && formatInfo.samplesPerPixel === 1 && formatInfo.sampleFormat !== 3; // Not float
 		const normalizedFloatModeEnabled = previewManager.appStateManager.imageSettings.normalizedFloatMode;
 
+		// Gamma mode normalizes to the full type range: 0-1 for float images, but
+		// 0-typeMax for integer images (e.g. 0-255 for uint8, 0-65535 for uint16).
+		// Reflect the actual range in the labels so it isn't misleading.
+		const isFloatImage = !formatInfo || formatInfo.sampleFormat === 3;
+		const gammaMax = (isFloatImage || normalizedFloatModeEnabled)
+			? 1
+			: (Math.pow(2, formatInfo.bitsPerSample || 8) - 1);
+		const gammaRangeLabel = formatInfo
+			? `0-${gammaMax}`
+			: '0-1 (float) or 0-255/0-65535 (integer)';
+
 		// First show a QuickPick with options
 		const options: Array<vscode.QuickPickItem & { action?: string }> = [
 			{
@@ -520,8 +531,8 @@ export function registerImagePreviewCommands(
 			},
 			{
 				label: currentConfig.gammaMode ? '$(check) Gamma/Brightness Mode' : '$(square) Gamma/Brightness Mode',
-				description: 'Normalize to fixed 0-1 range and enable gamma/brightness controls',
-				detail: 'Always normalize to 0-1 range, then apply gamma and brightness adjustments',
+				description: `Normalize to fixed ${gammaRangeLabel} range and enable gamma/brightness controls`,
+				detail: `Always normalize to ${gammaRangeLabel} range, then apply gamma and brightness adjustments`,
 				action: 'gamma'
 			}
 		];
@@ -1501,6 +1512,52 @@ export function registerImagePreviewCommands(
 			logCommand('convertColormapToFloat', 'error', 'No webview available');
 		}
 	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.applyColormap', async () => {
+		logCommand('applyColormap', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active image preview found.');
+			logCommand('applyColormap', 'error', 'No active preview');
+			return;
+		}
+
+		// Pseudocolor a single-channel image: pick a colormap (or None to clear).
+		const colormapOptions = [
+			{ label: 'None', description: 'Show as grayscale (remove colormap)', value: 'none' },
+			{ label: 'Viridis', description: 'Purple-blue-green-yellow perceptually uniform colormap', value: 'viridis' },
+			{ label: 'Plasma', description: 'Purple-pink-orange perceptually uniform colormap', value: 'plasma' },
+			{ label: 'Inferno', description: 'Black-purple-orange-yellow perceptually uniform colormap', value: 'inferno' },
+			{ label: 'Magma', description: 'Black-purple-pink-yellow perceptually uniform colormap', value: 'magma' },
+			{ label: 'Jet', description: 'Rainbow colormap (blue-cyan-green-yellow-red)', value: 'jet' },
+			{ label: 'Hot', description: 'Black-red-orange-yellow-white colormap', value: 'hot' },
+			{ label: 'Cool', description: 'Cyan-magenta colormap', value: 'cool' },
+			{ label: 'Turbo', description: 'Improved rainbow colormap', value: 'turbo' },
+			{ label: 'Gray', description: 'Grayscale colormap', value: 'gray' }
+		];
+
+		const selected = await vscode.window.showQuickPick(colormapOptions, {
+			placeHolder: 'Select a colormap to apply (pseudocolor)',
+			title: 'Apply Colormap'
+		});
+
+		if (!selected) {
+			logCommand('applyColormap', 'error', 'User cancelled colormap selection');
+			return;
+		}
+
+		const preview = activePreview as any;
+		if (preview.getWebview) {
+			preview.getWebview().postMessage({
+				type: 'setDisplayColormap',
+				colormap: selected.value
+			});
+			logCommand('applyColormap', 'success', selected.value);
+		} else {
+			logCommand('applyColormap', 'error', 'No webview available');
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.revertToOriginal', async () => {
 		logCommand('revertToOriginal', 'start');
 		const activePreview = previewManager.activePreview;

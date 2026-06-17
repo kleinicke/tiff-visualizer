@@ -344,7 +344,8 @@ export class PngProcessor {
         const isGammaMode = settings.normalization?.gammaMode || false;
         const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
         const rgbAs24BitMode = settings.rgbAs24BitGrayscale === true;
-        return isGammaMode && isIdentity && !rgbAs24BitMode;
+        const hasColormap = !!settings.displayColormap && settings.displayColormap !== 'none';
+        return isGammaMode && isIdentity && !rgbAs24BitMode && !hasColormap;
     }
 
     /** @returns {ImageData | null} */
