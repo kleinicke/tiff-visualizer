@@ -204,11 +204,21 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         // FillOrder defaults to 1 (MSB first); T4Options (tag 292) defaults to 0.
         let fill_order = decoder.get_tag_u32(tiff::tags::Tag::FillOrder).unwrap_or(1);
         let t4_options = decoder.get_tag_u32(tiff::tags::Tag::Unknown(292)).unwrap_or(0);
+        // Each strip is an independent CCITT stream; default to a single strip.
+        let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
         return decode_ccitt(
             data, width, height, compression, predictor,
             photometric_interpretation, planar_configuration,
-            &offsets, &counts, fill_order, t4_options,
+            &offsets, &counts, fill_order, t4_options, rows_per_strip,
         );
+    }
+
+    // JPEG-compressed YCbCr (compression 7, PhotometricInterpretation 6). The
+    // tiff crate applies a YCbCr->RGB conversion on top of zune-jpeg's already
+    // converted RGB output (a double conversion), which tints grayscale-stored
+    // images. Decode the JPEG strips directly with zune-jpeg, which is correct.
+    if compression == 7 && photometric_interpretation == 6 {
+        return decode_jpeg_ycbcr(data, &mut decoder, width, height);
     }
 
     let decode_start = js_sys::Date::now();
@@ -502,6 +512,90 @@ fn build_uncompressed_tiff(
     buf
 }
 
+/// Reconstruct a complete JPEG datastream from the optional shared JPEGTables
+/// and one strip's image data (the TIFF Technote 2 abbreviated-stream layout):
+/// a single SOI, then the tables, then the strip's frame.
+fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
+    match tables {
+        Some(t) => {
+            let t = if t.ends_with(&[0xFF, 0xD9]) { &t[..t.len() - 2] } else { t };
+            let s = if strip.starts_with(&[0xFF, 0xD8]) { &strip[2..] } else { strip };
+            let mut out = Vec::with_capacity(t.len() + s.len());
+            out.extend_from_slice(t);
+            out.extend_from_slice(s);
+            out
+        }
+        None => strip.to_vec(),
+    }
+}
+
+/// Decode a JPEG-compressed YCbCr TIFF (compression 7, photometric 6) by
+/// decoding each strip's JPEG directly with zune-jpeg. The tiff crate applies a
+/// second YCbCr->RGB conversion on top of zune-jpeg's already-RGB output, which
+/// tints the image; decoding the strips ourselves avoids that. Tiled images are
+/// not handled here.
+fn decode_jpeg_ycbcr(
+    data: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    width: u32,
+    height: u32,
+) -> Result<TiffResult, JsValue> {
+    use tiff::tags::Tag;
+    use zune_jpeg::JpegDecoder;
+
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return Err(JsValue::from_str("JPEG: tiled YCbCr JPEG is not supported by the direct path"));
+    }
+    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
+        .map_err(|e| JsValue::from_str(&format!("JPEG: StripOffsets: {}", e)))?;
+    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
+        .map_err(|e| JsValue::from_str(&format!("JPEG: StripByteCounts: {}", e)))?;
+    // JPEGTables (tag 347): optional abbreviated table stream shared by strips.
+    let tables: Option<Vec<u8>> = decoder.get_tag_u8_vec(Tag::Unknown(347)).ok();
+
+    let mut rgb: Vec<u8> = Vec::with_capacity((width as usize).saturating_mul(height as usize) * 3);
+    let mut channels = 3u32;
+    for (off, cnt) in offsets.iter().zip(counts.iter()) {
+        let start = *off as usize;
+        let end = start.saturating_add(*cnt as usize);
+        if end > data.len() {
+            return Err(JsValue::from_str("JPEG: strip byte range out of bounds"));
+        }
+        let jpeg = build_jpeg(tables.as_deref(), &data[start..end]);
+        let mut jd = JpegDecoder::new(Cursor::new(jpeg));
+        let px = jd.decode()
+            .map_err(|e| JsValue::from_str(&format!("JPEG decode failed: {:?}", e)))?;
+        let info = jd.info()
+            .ok_or_else(|| JsValue::from_str("JPEG: missing image info"))?;
+        let pixels = (info.width as usize).saturating_mul(info.height as usize);
+        if pixels == 0 {
+            return Err(JsValue::from_str("JPEG: empty strip"));
+        }
+        channels = (px.len() / pixels) as u32;
+        rgb.extend_from_slice(&px);
+    }
+    if channels != 1 && channels != 3 {
+        return Err(JsValue::from_str("JPEG: unexpected channel count"));
+    }
+
+    let (min, max) = compute_stats_u8(&rgb);
+    Ok(TiffResult {
+        width,
+        height,
+        channels,
+        bits_per_sample: 8,
+        sample_format: 1,
+        compression: 7,
+        predictor: 1,
+        // Data is now decoded RGB (or grayscale); report it as such.
+        photometric_interpretation: if channels == 3 { 2 } else { 1 },
+        planar_configuration: 1,
+        data: rgb,
+        min_value: min as f64,
+        max_value: max as f64,
+    })
+}
+
 /// Expand MSB-first packed bilevel (1-bit) data to one byte per pixel.
 ///
 /// Each row is padded to a byte boundary. Pixel polarity follows the TIFF
@@ -655,47 +749,22 @@ fn decode_ccitt(
     counts: &[u64],
     fill_order: u32,
     t4_options: u32,
+    rows_per_strip: u32,
 ) -> Result<TiffResult, JsValue> {
     use hayro_ccitt::{decode, DecodeSettings, DecoderContext, EncodingMode, Decoder as CcittDecoder};
 
-    // Concatenate the raw compressed bytes of every strip.
-    let mut compressed: Vec<u8> = Vec::new();
-    for (off, cnt) in offsets.iter().zip(counts.iter()) {
-        let start = *off as usize;
-        let end = start.saturating_add(*cnt as usize);
-        if end > data.len() {
-            return Err(JsValue::from_str("CCITT: strip byte range out of bounds"));
-        }
-        compressed.extend_from_slice(&data[start..end]);
-    }
-
-    // TIFF FillOrder 2 stores the least-significant bit first; hayro-ccitt
-    // expects most-significant-bit-first data, so flip each byte.
-    if fill_order == 2 {
-        for b in compressed.iter_mut() {
-            *b = b.reverse_bits();
-        }
-    }
-
     // Map the TIFF compression + T4Options to a hayro encoding mode.
     let two_dimensional = (t4_options & 0b1) != 0; // bit 0: 2D coding
-    let byte_aligned = (t4_options & 0b100) != 0; // bit 2: EncodedByteAlign
-    let (encoding, end_of_line) = match compression {
-        4 => (EncodingMode::Group4, false),
-        3 if two_dimensional => (EncodingMode::Group3_2D { k: u32::MAX }, true),
+    // Compression 2 (Modified Huffman) byte-aligns every row; for Group 3 this
+    // is controlled by T4Options bit 2 (EncodedByteAlign).
+    let byte_aligned = compression == 2 || (t4_options & 0b100) != 0;
+    let encoding = match compression {
+        4 => EncodingMode::Group4,
+        3 if two_dimensional => EncodingMode::Group3_2D { k: u32::MAX },
         // Compression 2 (Modified Huffman) and 3 (Group 3, 1D).
-        _ => (EncodingMode::Group3_1D, false),
+        _ => EncodingMode::Group3_1D,
     };
-
-    let settings = DecodeSettings {
-        columns: width,
-        rows: height,
-        end_of_block: true,
-        end_of_line,
-        rows_are_byte_aligned: byte_aligned,
-        encoding,
-        invert_black: false,
-    };
+    let end_of_line = matches!(encoding, EncodingMode::Group3_2D { .. });
 
     // hayro-ccitt emits a "white" pel for TIFF sample value 0 (the CCITT
     // convention). Map that to a display value through PhotometricInterpretation
@@ -736,7 +805,6 @@ fn decode_ccitt(
     }
 
     let expected = (width as usize).saturating_mul(height as usize);
-    let mut ctx = DecoderContext::new(settings);
     let mut collector = Collector {
         pixels: Vec::with_capacity(expected),
         width,
@@ -744,8 +812,42 @@ fn decode_ccitt(
         white_value: white_pel_value,
         black_value: black_pel_value,
     };
-    decode(&compressed, &mut collector, &mut ctx)
-        .map_err(|e| JsValue::from_str(&format!("CCITT decode failed: {:?}", e)))?;
+
+    // Each strip is an independent CCITT stream covering up to rows_per_strip
+    // rows. Decode them one at a time (resetting the decoder per strip) and
+    // accumulate the pixel rows, rather than concatenating the bitstreams.
+    let rps = if rows_per_strip == 0 { height } else { rows_per_strip };
+    for (i, (off, cnt)) in offsets.iter().zip(counts.iter()).enumerate() {
+        let start = *off as usize;
+        let end = start.saturating_add(*cnt as usize);
+        if end > data.len() {
+            return Err(JsValue::from_str("CCITT: strip byte range out of bounds"));
+        }
+        let rows_in_strip = height.saturating_sub(i as u32 * rps).min(rps);
+        if rows_in_strip == 0 {
+            break;
+        }
+        // FillOrder 2 stores the least-significant bit first; hayro expects MSB.
+        let mut strip = data[start..end].to_vec();
+        if fill_order == 2 {
+            for b in strip.iter_mut() {
+                *b = b.reverse_bits();
+            }
+        }
+        let settings = DecodeSettings {
+            columns: width,
+            rows: rows_in_strip,
+            end_of_block: true,
+            end_of_line,
+            rows_are_byte_aligned: byte_aligned,
+            encoding,
+            invert_black: false,
+        };
+        let mut ctx = DecoderContext::new(settings);
+        collector.cur_x = 0;
+        decode(&strip, &mut collector, &mut ctx)
+            .map_err(|e| JsValue::from_str(&format!("CCITT strip {} decode failed: {:?}", i, e)))?;
+    }
 
     let mut pixels = collector.pixels;
     pixels.resize(expected, white_pel_value);

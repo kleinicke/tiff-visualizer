@@ -76,6 +76,22 @@ async function main() {
 		console.log(`✅ CCITT ${label} (compression ${comp}) matches the uncompressed reference exactly`);
 	}
 
+	// 2b. Multi-strip CCITT Modified Huffman (compression 2, WhiteIsZero) masks.
+	//     Each strip is an independent byte-aligned stream; these must decode
+	//     identically to a deflate-compressed grayscale reference (regression for
+	//     a real dataset that previously rendered garbled or failed to load).
+	for (const n of [1, 2, 3]) {
+		const img = decode(mod, `ccitt_mh_strip_${n}.tif`);
+		const ref = decode(mod, `ccitt_mh_strip_${n}_ref.tif`);
+		assert.strictEqual(img.compression, 2, `mask ${n} compression tag`);
+		assert.strictEqual(img.width, 1024);
+		assert.strictEqual(img.height, 1024);
+		assert.strictEqual(img.data.length, ref.data.length, `mask ${n} length`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`multi-strip CCITT MH mask ${n} must match the reference exactly`);
+		console.log(`✅ Multi-strip CCITT Modified Huffman mask ${n} matches the reference exactly`);
+	}
+
 	// 3. JPEG-in-TIFF decodes to a 3-channel (RGB) 8-bit image.
 	{
 		const jpeg = decode(mod, 'jpeg_ycbcr.tif');
@@ -88,6 +104,24 @@ async function main() {
 		const max = jpeg.data.reduce((m, v) => Math.max(m, v), 0);
 		assert.ok(max > 0, 'JPEG image should contain non-zero pixels');
 		console.log('✅ JPEG-in-TIFF (compression 7) decodes to 3-channel RGB');
+	}
+
+	// 3b. JPEG with PhotometricInterpretation YCbCr (6) is decoded directly with
+	//     zune-jpeg to avoid the tiff crate's double YCbCr->RGB conversion. The
+	//     result must match a libjpeg reference within JPEG rounding tolerance
+	//     (the buggy double-converted path was off by ~100+).
+	{
+		const ycc = decode(mod, 'jpeg_ycbcr_color.tif');
+		const ref = decode(mod, 'jpeg_ycbcr_color_ref.tif');
+		assert.strictEqual(ycc.compression, 7, 'YCbCr JPEG compression tag');
+		assert.strictEqual(ycc.channels, 3, 'YCbCr JPEG decodes to 3 channels');
+		assert.strictEqual(ycc.data.length, ref.data.length, 'YCbCr JPEG length');
+		let maxDelta = 0;
+		for (let i = 0; i < ref.data.length; i++) {
+			maxDelta = Math.max(maxDelta, Math.abs(ycc.data[i] - ref.data[i]));
+		}
+		assert.ok(maxDelta <= 6, `YCbCr JPEG must match libjpeg within tolerance (got ${maxDelta})`);
+		console.log(`✅ YCbCr JPEG (photometric 6) decodes correctly (max delta ${maxDelta} vs libjpeg)`);
 	}
 
 	// 4. Palette images expand to RGB through the ColorMap. The first pixel of
