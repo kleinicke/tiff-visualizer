@@ -1,6 +1,8 @@
 node_modules
 out/
 *.tif
+# Keep the small TIFF fixtures used by the WASM decoder tests.
+!test-samples/*.tif
 *.vsix
 yarn.lock
 example/
@@ -12,7 +14,7 @@ test-workspace/
 playwright-report/
 test-resources/
 
-package-lock.json
+# package-lock.json is committed so CI's `npm ci` has a lockfile to install from.
 
 # Webpack
 *.webpack.config.js

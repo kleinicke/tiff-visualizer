@@ -109,6 +109,38 @@ export class PpmProcessor {
             return token;
         };
 
+        // Read a numeric header field (width/height/maxval). Unlike readToken,
+        // this stops at the first non-digit, so it never swallows binary raster
+        // bytes when the single whitespace before the data is missing or when a
+        // data byte merely happens not to be whitespace.
+        const readNumber = () => {
+            // Skip whitespace and comments (same rules as readToken).
+            while (offset < uint8Array.length) {
+                const char = uint8Array[offset];
+                if (char === 35) { // '#' - comment
+                    while (offset < uint8Array.length && uint8Array[offset] !== 10) {
+                        offset++;
+                    }
+                    if (offset < uint8Array.length) offset++; // Skip newline
+                } else if (char === 32 || char === 9 || char === 10 || char === 13) {
+                    offset++;
+                } else {
+                    break;
+                }
+            }
+            let token = '';
+            while (offset < uint8Array.length) {
+                const char = uint8Array[offset];
+                if (char >= 48 && char <= 57) { // '0'-'9'
+                    token += String.fromCharCode(char);
+                    offset++;
+                } else {
+                    break;
+                }
+            }
+            return parseInt(token, 10);
+        };
+
         // Read magic number
         const magic = readToken();
         if (!['P1', 'P2', 'P3', 'P4', 'P5', 'P6'].includes(magic)) {
@@ -125,10 +157,10 @@ export class PpmProcessor {
         const isPbm = magic === 'P1' || magic === 'P4';
 
         // Read dimensions
-        const width = parseInt(readToken(), 10);
-        const height = parseInt(readToken(), 10);
+        const width = readNumber();
+        const height = readNumber();
         // PBM files don't have maxval, only PGM/PPM do
-        const maxval = isPbm ? 1 : parseInt(readToken(), 10);
+        const maxval = isPbm ? 1 : readNumber();
 
         if (width <= 0 || height <= 0 || (!isPbm && maxval <= 0)) {
             throw new Error('Invalid PPM/PGM/PBM dimensions or maxval');
@@ -155,6 +187,16 @@ export class PpmProcessor {
             }
         } else if (isPbm && !isAscii) {
             // PBM binary format (P4) - packed bits
+            // PBM spec: exactly one whitespace separates the header from the
+            // raster data. Skip it (matching the P5/P6 branch below); tolerate
+            // its absence in slightly malformed files.
+            if (offset < uint8Array.length) {
+                const char = uint8Array[offset];
+                if (char === 32 || char === 9 || char === 10 || char === 13) {
+                    offset++;
+                }
+            }
+
             const bytesPerRow = Math.ceil(width / 8);
             const expectedBytes = bytesPerRow * height;
 
