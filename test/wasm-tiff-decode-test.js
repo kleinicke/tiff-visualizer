@@ -118,6 +118,20 @@ async function main() {
 		console.log('✅ ZSTD (compression 50000) decodes correctly');
 	}
 
+	// 6. WebP-compressed (compression 50001) decodes to RGB.
+	{
+		const webp = decode(mod, 'webp_rgb.tif');
+		assert.strictEqual(webp.compression, 50001, 'WebP compression tag');
+		assert.strictEqual(webp.width, 160);
+		assert.strictEqual(webp.height, 120);
+		assert.strictEqual(webp.channels, 3, 'WebP should decode to 3 channels');
+		assert.strictEqual(webp.bitsPerSample, 8);
+		assert.strictEqual(webp.data.length, 160 * 120 * 3);
+		const max = webp.data.reduce((m, v) => Math.max(m, v), 0);
+		assert.ok(max > 0, 'WebP image should contain non-zero pixels');
+		console.log('✅ WebP (compression 50001) decodes to 3-channel RGB');
+	}
+
 	console.log('\n🎉 All WASM TIFF decoder tests passed.\n');
 }
 
