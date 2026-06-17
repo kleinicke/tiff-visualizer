@@ -106,6 +106,24 @@ async function main() {
 		console.log('✅ JPEG-in-TIFF (compression 7) decodes to 3-channel RGB');
 	}
 
+	// 3b. JPEG with PhotometricInterpretation YCbCr (6) is decoded directly with
+	//     zune-jpeg to avoid the tiff crate's double YCbCr->RGB conversion. The
+	//     result must match a libjpeg reference within JPEG rounding tolerance
+	//     (the buggy double-converted path was off by ~100+).
+	{
+		const ycc = decode(mod, 'jpeg_ycbcr_color.tif');
+		const ref = decode(mod, 'jpeg_ycbcr_color_ref.tif');
+		assert.strictEqual(ycc.compression, 7, 'YCbCr JPEG compression tag');
+		assert.strictEqual(ycc.channels, 3, 'YCbCr JPEG decodes to 3 channels');
+		assert.strictEqual(ycc.data.length, ref.data.length, 'YCbCr JPEG length');
+		let maxDelta = 0;
+		for (let i = 0; i < ref.data.length; i++) {
+			maxDelta = Math.max(maxDelta, Math.abs(ycc.data[i] - ref.data[i]));
+		}
+		assert.ok(maxDelta <= 6, `YCbCr JPEG must match libjpeg within tolerance (got ${maxDelta})`);
+		console.log(`✅ YCbCr JPEG (photometric 6) decodes correctly (max delta ${maxDelta} vs libjpeg)`);
+	}
+
 	// 4. Palette images expand to RGB through the ColorMap. The first pixel of
 	//    this fixture is palette index -> (20, 12, 27), matching Pillow's own
 	//    palette->RGB conversion.

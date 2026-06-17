@@ -213,6 +213,14 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
         );
     }
 
+    // JPEG-compressed YCbCr (compression 7, PhotometricInterpretation 6). The
+    // tiff crate applies a YCbCr->RGB conversion on top of zune-jpeg's already
+    // converted RGB output (a double conversion), which tints grayscale-stored
+    // images. Decode the JPEG strips directly with zune-jpeg, which is correct.
+    if compression == 7 && photometric_interpretation == 6 {
+        return decode_jpeg_ycbcr(data, &mut decoder, width, height);
+    }
+
     let decode_start = js_sys::Date::now();
 
     // Read image data (decompression happens here). ZSTD (50000) is decoded
@@ -502,6 +510,90 @@ fn build_uncompressed_tiff(
     buf.extend_from_slice(&ext);
     buf.extend_from_slice(raster);
     buf
+}
+
+/// Reconstruct a complete JPEG datastream from the optional shared JPEGTables
+/// and one strip's image data (the TIFF Technote 2 abbreviated-stream layout):
+/// a single SOI, then the tables, then the strip's frame.
+fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
+    match tables {
+        Some(t) => {
+            let t = if t.ends_with(&[0xFF, 0xD9]) { &t[..t.len() - 2] } else { t };
+            let s = if strip.starts_with(&[0xFF, 0xD8]) { &strip[2..] } else { strip };
+            let mut out = Vec::with_capacity(t.len() + s.len());
+            out.extend_from_slice(t);
+            out.extend_from_slice(s);
+            out
+        }
+        None => strip.to_vec(),
+    }
+}
+
+/// Decode a JPEG-compressed YCbCr TIFF (compression 7, photometric 6) by
+/// decoding each strip's JPEG directly with zune-jpeg. The tiff crate applies a
+/// second YCbCr->RGB conversion on top of zune-jpeg's already-RGB output, which
+/// tints the image; decoding the strips ourselves avoids that. Tiled images are
+/// not handled here.
+fn decode_jpeg_ycbcr(
+    data: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    width: u32,
+    height: u32,
+) -> Result<TiffResult, JsValue> {
+    use tiff::tags::Tag;
+    use zune_jpeg::JpegDecoder;
+
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return Err(JsValue::from_str("JPEG: tiled YCbCr JPEG is not supported by the direct path"));
+    }
+    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
+        .map_err(|e| JsValue::from_str(&format!("JPEG: StripOffsets: {}", e)))?;
+    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
+        .map_err(|e| JsValue::from_str(&format!("JPEG: StripByteCounts: {}", e)))?;
+    // JPEGTables (tag 347): optional abbreviated table stream shared by strips.
+    let tables: Option<Vec<u8>> = decoder.get_tag_u8_vec(Tag::Unknown(347)).ok();
+
+    let mut rgb: Vec<u8> = Vec::with_capacity((width as usize).saturating_mul(height as usize) * 3);
+    let mut channels = 3u32;
+    for (off, cnt) in offsets.iter().zip(counts.iter()) {
+        let start = *off as usize;
+        let end = start.saturating_add(*cnt as usize);
+        if end > data.len() {
+            return Err(JsValue::from_str("JPEG: strip byte range out of bounds"));
+        }
+        let jpeg = build_jpeg(tables.as_deref(), &data[start..end]);
+        let mut jd = JpegDecoder::new(Cursor::new(jpeg));
+        let px = jd.decode()
+            .map_err(|e| JsValue::from_str(&format!("JPEG decode failed: {:?}", e)))?;
+        let info = jd.info()
+            .ok_or_else(|| JsValue::from_str("JPEG: missing image info"))?;
+        let pixels = (info.width as usize).saturating_mul(info.height as usize);
+        if pixels == 0 {
+            return Err(JsValue::from_str("JPEG: empty strip"));
+        }
+        channels = (px.len() / pixels) as u32;
+        rgb.extend_from_slice(&px);
+    }
+    if channels != 1 && channels != 3 {
+        return Err(JsValue::from_str("JPEG: unexpected channel count"));
+    }
+
+    let (min, max) = compute_stats_u8(&rgb);
+    Ok(TiffResult {
+        width,
+        height,
+        channels,
+        bits_per_sample: 8,
+        sample_format: 1,
+        compression: 7,
+        predictor: 1,
+        // Data is now decoded RGB (or grayscale); report it as such.
+        photometric_interpretation: if channels == 3 { 2 } else { 1 },
+        planar_configuration: 1,
+        data: rgb,
+        min_value: min as f64,
+        max_value: max as f64,
+    })
 }
 
 /// Expand MSB-first packed bilevel (1-bit) data to one byte per pixel.
