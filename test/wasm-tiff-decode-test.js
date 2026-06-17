@@ -118,6 +118,23 @@ async function main() {
 		console.log('✅ ZSTD (compression 50000) decodes correctly');
 	}
 
+	// 5b. ZSTD with predictors must decode identically to an uncompressed twin.
+	//     This exercises the pure-Rust (ruzstd) path's predictor handling:
+	//     horizontal (2) on 16-bit and RGB, and floating-point (3) on float32.
+	for (const [zstdFile, refFile, label] of [
+		['zstd_pred2_u16.tif', 'pred_ref_u16.tif', 'horizontal predictor, uint16'],
+		['zstd_pred2_rgb8.tif', 'pred_ref_rgb8.tif', 'horizontal predictor, RGB8'],
+		['zstd_pred3_f32.tif', 'pred_ref_f32.tif', 'float predictor, float32'],
+	]) {
+		const z = decode(mod, zstdFile);
+		const r = decode(mod, refFile);
+		assert.strictEqual(z.compression, 50000, `${zstdFile} compression tag`);
+		assert.strictEqual(z.data.length, r.data.length, `${label}: length`);
+		assert.deepStrictEqual(z.data, r.data,
+			`ZSTD ${label} must match the uncompressed reference exactly`);
+		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
+	}
+
 	// 6. WebP-compressed (compression 50001) decodes to RGB.
 	{
 		const webp = decode(mod, 'webp_rgb.tif');
