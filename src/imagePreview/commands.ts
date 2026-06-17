@@ -504,6 +504,17 @@ export function registerImagePreviewCommands(
 		const isSingleChannelUint = formatInfo && formatInfo.samplesPerPixel === 1 && formatInfo.sampleFormat !== 3; // Not float
 		const normalizedFloatModeEnabled = previewManager.appStateManager.imageSettings.normalizedFloatMode;
 
+		// Gamma mode normalizes to the full type range: 0-1 for float images, but
+		// 0-typeMax for integer images (e.g. 0-255 for uint8, 0-65535 for uint16).
+		// Reflect the actual range in the labels so it isn't misleading.
+		const isFloatImage = !formatInfo || formatInfo.sampleFormat === 3;
+		const gammaMax = (isFloatImage || normalizedFloatModeEnabled)
+			? 1
+			: (Math.pow(2, formatInfo.bitsPerSample || 8) - 1);
+		const gammaRangeLabel = formatInfo
+			? `0-${gammaMax}`
+			: '0-1 (float) or 0-255/0-65535 (integer)';
+
 		// First show a QuickPick with options
 		const options: Array<vscode.QuickPickItem & { action?: string }> = [
 			{
@@ -520,8 +531,8 @@ export function registerImagePreviewCommands(
 			},
 			{
 				label: currentConfig.gammaMode ? '$(check) Gamma/Brightness Mode' : '$(square) Gamma/Brightness Mode',
-				description: 'Normalize to fixed 0-1 range and enable gamma/brightness controls',
-				detail: 'Always normalize to 0-1 range, then apply gamma and brightness adjustments',
+				description: `Normalize to fixed ${gammaRangeLabel} range and enable gamma/brightness controls`,
+				detail: `Always normalize to ${gammaRangeLabel} range, then apply gamma and brightness adjustments`,
 				action: 'gamma'
 			}
 		];

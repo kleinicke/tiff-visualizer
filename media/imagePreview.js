@@ -406,6 +406,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 		primaryImageData = null;
 		peerImageData = null;
 
+		// Reset each processor's initial-load flag so the reload re-sends
+		// formatInfo (refreshing currentFormatInfo and per-format settings).
+		// Without this, reverting a colormap decode would leave the menu/status
+		// bars showing the decoded single-channel-float format instead of the
+		// original image's format.
+		for (const p of allProcessors) { p._isInitialLoad = true; }
+
 		// Clear stats in UI to prevent stale values
 		vscode.postMessage({ type: 'stats', value: null });
 
