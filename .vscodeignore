@@ -26,12 +26,11 @@ yarn.lock
 *.tif
 *.jpg
 *.ply
+test-samples/**
 
-# Rust/WASM source and build artifacts (keep only compiled .wasm and .js)
-wasm/tiff-decoder/src/**
-wasm/tiff-decoder/target/**
-wasm/tiff-decoder/Cargo.toml
-wasm/tiff-decoder/Cargo.lock
+# Rust/WASM source and build artifacts. The runtime binary lives in
+# media/wasm/; nothing under wasm/ is needed in the package.
+wasm/**
 scripts/build-wasm.sh
 
 # Exclude source files for webview (using bundle instead)

@@ -261,14 +261,14 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compile:quick",
     "clean": "rimraf out",
     "build:wasm": "cd wasm/tiff-decoder && wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && node -e \"const fs=require('fs');const f='media/wasm/tiff-wasm.js';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/tiff_wasm_bg\\.wasm/g,'wasm/tiff-wasm.wasm'))\"",
     "compile": "npm run clean && npm run build:wasm && node ./esbuild.js",
     "compile:quick": "npm run clean && node ./esbuild.js",
     "watch": "npm run clean && node ./esbuild.js --watch",
     "check": "npm run typecheck && npm run test",
-    "pretest": "npm run compile && npm run lint",
+    "pretest": "npm run compile:quick && npm run lint",
     "lint": "eslint src media/imagePreview.js media/comparisonPanel.js media/modules --ext ts,js",
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
