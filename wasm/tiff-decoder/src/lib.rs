@@ -213,9 +213,17 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
 
     let decode_start = js_sys::Date::now();
 
-    // Read image data (decompression happens here)
-    let decode_result = decoder.read_image()
-        .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?;
+    // Read image data (decompression happens here). ZSTD (50000) is decoded
+    // with the pure-Rust ruzstd crate rather than the tiff crate's C zstd, so
+    // the WASM build needs no C toolchain. The decompressed strips are rebuilt
+    // into an uncompressed TIFF and handed back to the tiff crate, which still
+    // performs predictor un-application and type/endianness handling.
+    let decode_result = if compression == 50000 {
+        decode_zstd(data, &mut decoder)?
+    } else {
+        decoder.read_image()
+            .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?
+    };
     
     let decompress_time = js_sys::Date::now() - decode_start;
     let convert_start = js_sys::Date::now();
@@ -339,6 +347,159 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     ).into());
     
     result
+}
+
+/// Decode a ZSTD-compressed TIFF (compression 50000) using the pure-Rust
+/// ruzstd crate. We decompress each strip, concatenate the raster (still
+/// predictor-encoded), rebuild it as a single-strip *uncompressed* TIFF that
+/// keeps the predictor tag, and hand that back to the tiff crate so it performs
+/// predictor un-application and type/endianness handling for us.
+///
+/// Tiled images and planar configuration 2 are not supported by this path.
+fn decode_zstd(
+    original: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+) -> Result<DecodingResult, JsValue> {
+    use std::io::Read;
+    use tiff::tags::Tag;
+
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return Err(JsValue::from_str("ZSTD: tiled TIFFs are not supported by the pure-Rust path"));
+    }
+    let planar = decoder.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
+    if planar != 1 {
+        return Err(JsValue::from_str("ZSTD: planar configuration 2 is not supported"));
+    }
+
+    let (width, height) = decoder.dimensions()
+        .map_err(|e| JsValue::from_str(&format!("ZSTD: dimensions: {}", e)))?;
+    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
+        .map_err(|e| JsValue::from_str(&format!("ZSTD: StripOffsets: {}", e)))?;
+    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
+        .map_err(|e| JsValue::from_str(&format!("ZSTD: StripByteCounts: {}", e)))?;
+    let spp = decoder.get_tag_u32(Tag::SamplesPerPixel).unwrap_or(1);
+    let predictor = decoder.get_tag_u32(Tag::Predictor).unwrap_or(1);
+    let photometric = decoder.get_tag_u32(Tag::PhotometricInterpretation).unwrap_or(1);
+    let bits: Vec<u32> = decoder.get_tag_u64_vec(Tag::BitsPerSample)
+        .map(|v| v.into_iter().map(|b| b as u32).collect())
+        .unwrap_or_else(|_| vec![8; spp as usize]);
+    let sample_format: Vec<u32> = decoder.get_tag_u64_vec(Tag::SampleFormat)
+        .map(|v| v.into_iter().map(|s| s as u32).collect())
+        .unwrap_or_else(|_| vec![1; spp as usize]);
+
+    // Decompress every strip with pure-Rust ruzstd, concatenated in row order.
+    let mut raster: Vec<u8> = Vec::new();
+    for (off, cnt) in offsets.iter().zip(counts.iter()) {
+        let start = *off as usize;
+        let end = start.saturating_add(*cnt as usize);
+        if end > original.len() {
+            return Err(JsValue::from_str("ZSTD: strip byte range out of bounds"));
+        }
+        let mut dec = ruzstd::decoding::StreamingDecoder::new(Cursor::new(&original[start..end]))
+            .map_err(|e| JsValue::from_str(&format!("ZSTD: decoder init: {:?}", e)))?;
+        dec.read_to_end(&mut raster)
+            .map_err(|e| JsValue::from_str(&format!("ZSTD: decompress: {:?}", e)))?;
+    }
+
+    // Match the rebuilt TIFF's byte order to the original so multi-byte samples
+    // are interpreted correctly.
+    let little_endian = original.get(0..2) != Some(b"MM");
+    let rebuilt = build_uncompressed_tiff(
+        little_endian, width, height, spp, &bits, &sample_format, photometric, predictor, &raster,
+    );
+    let mut d = Decoder::new(Cursor::new(rebuilt.as_slice()))
+        .map_err(|e| JsValue::from_str(&format!("ZSTD: rebuilt decoder: {}", e)))?;
+    d.read_image()
+        .map_err(|e| JsValue::from_str(&format!("ZSTD: rebuilt read_image: {}", e)))
+}
+
+/// Build a minimal single-strip, uncompressed classic TIFF wrapping `raster`,
+/// preserving the tags the decoder needs (incl. the predictor, which the tiff
+/// crate then un-applies). `raster` must be the full image in row order.
+#[allow(clippy::too_many_arguments)]
+fn build_uncompressed_tiff(
+    le: bool,
+    width: u32,
+    height: u32,
+    spp: u32,
+    bits: &[u32],
+    sample_format: &[u32],
+    photometric: u32,
+    predictor: u32,
+    raster: &[u8],
+) -> Vec<u8> {
+    let u16b = |v: u16| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+    let u32b = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
+    // SHORT (type 3) and LONG (type 4) tag values. Single SHORT values are
+    // left-justified in the 4-byte value field; arrays are stored externally.
+    let short_val = |v: u32| { let b = u16b(v as u16); [b[0], b[1], 0, 0] };
+    let long_val = |v: u32| u32b(v);
+
+    const N_TAGS: u16 = 12;
+    let ifd_offset: u32 = 8;
+    let ifd_size: u32 = 2 + (N_TAGS as u32) * 12 + 4;
+    let after_ifd = ifd_offset + ifd_size;
+
+    // BitsPerSample (258) / SampleFormat (339): a SHORT array fits inline in the
+    // 4-byte value field when count <= 2; otherwise it is stored externally and
+    // the value field holds the offset.
+    let pack_inline = |vals: &[u32]| -> [u8; 4] {
+        let mut f = [0u8; 4];
+        for (i, &v) in vals.iter().enumerate().take(2) {
+            let b = u16b(v as u16);
+            f[2 * i] = b[0];
+            f[2 * i + 1] = b[1];
+        }
+        f
+    };
+    let mut ext: Vec<u8> = Vec::new();
+    let bits_field = if spp <= 2 {
+        pack_inline(bits)
+    } else {
+        let off = after_ifd + ext.len() as u32;
+        for &b in bits { ext.extend_from_slice(&u16b(b as u16)); }
+        u32b(off)
+    };
+    let sf_field = if spp <= 2 {
+        pack_inline(sample_format)
+    } else {
+        let off = after_ifd + ext.len() as u32;
+        for &s in sample_format { ext.extend_from_slice(&u16b(s as u16)); }
+        u32b(off)
+    };
+    let data_off = after_ifd + ext.len() as u32;
+
+    let mut buf: Vec<u8> = Vec::with_capacity(data_off as usize + raster.len());
+    buf.extend_from_slice(if le { b"II" } else { b"MM" });
+    buf.extend_from_slice(&u16b(42));
+    buf.extend_from_slice(&u32b(ifd_offset));
+    buf.extend_from_slice(&u16b(N_TAGS));
+
+    let mut put = |buf: &mut Vec<u8>, tag: u16, typ: u16, count: u32, valfield: [u8; 4]| {
+        buf.extend_from_slice(&u16b(tag));
+        buf.extend_from_slice(&u16b(typ));
+        buf.extend_from_slice(&u32b(count));
+        buf.extend_from_slice(&valfield);
+    };
+
+    // Tags must be in ascending order.
+    put(&mut buf, 256, 4, 1, long_val(width));               // ImageWidth
+    put(&mut buf, 257, 4, 1, long_val(height));              // ImageLength
+    put(&mut buf, 258, 3, spp, bits_field);                  // BitsPerSample
+    put(&mut buf, 259, 3, 1, short_val(1));                  // Compression = none
+    put(&mut buf, 262, 3, 1, short_val(photometric));        // PhotometricInterpretation
+    put(&mut buf, 273, 4, 1, long_val(data_off));            // StripOffsets
+    put(&mut buf, 277, 3, 1, short_val(spp));                // SamplesPerPixel
+    put(&mut buf, 278, 4, 1, long_val(height));              // RowsPerStrip
+    put(&mut buf, 279, 4, 1, long_val(raster.len() as u32)); // StripByteCounts
+    put(&mut buf, 284, 3, 1, short_val(1));                  // PlanarConfiguration = chunky
+    put(&mut buf, 317, 3, 1, short_val(predictor));          // Predictor
+    put(&mut buf, 339, 3, spp, sf_field);                    // SampleFormat
+
+    buf.extend_from_slice(&u32b(0)); // next IFD offset
+    buf.extend_from_slice(&ext);
+    buf.extend_from_slice(raster);
+    buf
 }
 
 /// Expand MSB-first packed bilevel (1-bit) data to one byte per pixel.
