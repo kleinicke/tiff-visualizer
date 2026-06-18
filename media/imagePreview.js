@@ -29,7 +29,7 @@ import { LayersPanel } from './modules/layers-panel.js';
  */
 (function () {
 	/**
-	 * @typedef {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} SettingsChanges
+	 * @typedef {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedStructure: boolean}} SettingsChanges
 	 * @typedef {{relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number|string}} CopiedPosition
 	 * @typedef {{colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean}} ColormapConversionState
 	 * @typedef {{width?: number, height?: number, samplesPerPixel?: number, bitsPerSample?: number, sampleFormat?: number, formatType?: string, [key: string]: any}} FormatInfo
@@ -1728,12 +1728,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 				extensionLoadStartTime = message.timestamp;
 				break;
 
-			case 'mask-filter-settings':
-				// Handle mask filter settings updates
-				const maskChanges = settingsManager.updateSettings(message.settings);
-				updateImageWithNewSettings(maskChanges);
-				break;
-
 			case 'updateImageCollectionOverlay':
 				updateImageCollectionOverlay(message.data);
 				break;
@@ -1871,7 +1865,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 			changed: true,
 			changedKeys: ['displayColormap'],
 			parametersOnly: true,
-			changedMasks: false,
 			changedStructure: false
 		});
 	}
@@ -2280,12 +2273,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Default to full update if no change info provided
 		if (!changes) {
-			changes = { changed: true, changedKeys: ['unspecified'], parametersOnly: false, changedMasks: false, changedStructure: false };
-		}
-
-		// If masks changed, clear the mask cache
-		if (changes.changedMasks && tiffProcessor._maskCache) {
-			tiffProcessor.clearMaskCache();
+			changes = { changed: true, changedKeys: ['unspecified'], parametersOnly: false, changedStructure: false };
 		}
 
 		// For TIFF images, optimize based on what changed

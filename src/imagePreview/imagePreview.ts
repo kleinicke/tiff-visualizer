@@ -14,11 +14,9 @@ import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager } from './types';
 import type { ImageSettings } from './appStateManager';
-import type { MaskFilterSettings } from './imageSettings';
 
-// Extended settings for webview (includes per-image mask filters and nanColor)
+// Extended settings for webview (includes preview-local display settings).
 interface WebviewImageSettings extends ImageSettings {
-	maskFilters: MaskFilterSettings[];
 	nanColor: 'black' | 'fuchsia';
 	colorPickerShowModified: boolean;
 }
@@ -148,7 +146,6 @@ export class ImagePreview extends MediaPreview {
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
-				maskFilters: [],
 				nanColor: this._manager.settingsManager.getNanColor()
 			};
 
@@ -157,8 +154,7 @@ export class ImagePreview extends MediaPreview {
 			this.updateStatusBar();
 		};
 
-		// Subscribe to both managers but use single update function
-		// Per-image settings (maskFilters) always apply to this preview
+		// Subscribe to both managers but use single update function.
 		this._register(this._manager.settingsManager.onDidChangeSettings(() => updateSettings('preview-settings-changed')));
 		// Per-format settings (normalization, gamma, brightness) only apply if format matches
 		this._register(this._manager.appStateManager.onDidChangeSettings(() => {
@@ -298,9 +294,6 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	private sendCurrentSettings() {
-		// Get current settings from both managers
-		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
-
 		// Create full settings object
 		const webviewSettings = {
 			normalization: this._manager.appStateManager.imageSettings.normalization,
@@ -309,7 +302,6 @@ export class ImagePreview extends MediaPreview {
 			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
-			maskFilters: maskFilters,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified()
 		};
@@ -681,12 +673,6 @@ export class ImagePreview extends MediaPreview {
 	private sendSettingsUpdate(settings: WebviewImageSettings, reason: string): void {
 		// Send to both Active and Visible previews (for multi-preview support)
 		if (this.previewState === PreviewState.Active || this.previewState === PreviewState.Visible) {
-			// Convert mask URIs to webview-safe URIs if they exist
-			const webviewSafeMasks = (settings.maskFilters || []).map(mask => ({
-				...mask,
-				maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
-			}));
-
 			// Use the currently displayed image URI (not always the original resource when
 			// using the image collection). This prevents settings updates from triggering
 			// a full reload when the webview is showing a different image in the collection.
@@ -696,7 +682,6 @@ export class ImagePreview extends MediaPreview {
 			const uri = this._webviewEditor.webview.asWebviewUri(currentResource);
 			const webviewSafeSettings = {
 				...settings,
-				maskFilters: webviewSafeMasks,
 				resourceUri: currentResource.toString(),
 				src: uri.toString()
 			};
@@ -784,8 +769,7 @@ export class ImagePreview extends MediaPreview {
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)
-		// - maskFilters from settingsManager (per-image)
-		const maskFilters = this._manager.settingsManager.getMaskFilterSettings(this.resource.toString());
+		// - nan color / color-picker mode from preview settings
 		const settings = {
 			normalization: this._manager.appStateManager.imageSettings.normalization,
 			gamma: this._manager.appStateManager.imageSettings.gamma,
@@ -793,7 +777,6 @@ export class ImagePreview extends MediaPreview {
 			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
-			maskFilters: maskFilters,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer')
@@ -806,16 +789,9 @@ export class ImagePreview extends MediaPreview {
 		const workspaceUri = vscode.workspace.getWorkspaceFolder(this.resource)?.uri ?? this.resource;
 		const folderUri = this._webviewEditor.webview.asWebviewUri(workspaceUri);
 
-		// Convert mask URIs to webview-safe URIs if they exist
-		const webviewSafeMasks = settings.maskFilters.map(mask => ({
-			...mask,
-			maskUri: this._webviewEditor.webview.asWebviewUri(vscode.Uri.parse(mask.maskUri)).toString()
-		}));
-
 		// Extend settings with required properties for JavaScript
 		const extendedSettings = {
 			...settings,
-			maskFilters: webviewSafeMasks,
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
 			folder: folderUri.toString(),

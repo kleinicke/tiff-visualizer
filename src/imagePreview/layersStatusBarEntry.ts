@@ -5,7 +5,7 @@ const LAYERS_COMMAND_ID = 'tiffVisualizer.toggleLayers';
 
 /**
  * Status bar button that opens the Layers panel for image compositing.
- * Replaces the former mask-filter button.
+ * Opens the layer stack and masking controls.
  */
 export class LayersStatusBarEntry extends PreviewStatusBarEntry {
 	constructor() {
@@ -13,7 +13,7 @@ export class LayersStatusBarEntry extends PreviewStatusBarEntry {
 			'tiffVisualizer.layers',
 			'Layers',
 			vscode.StatusBarAlignment.Right,
-			97 // Same slot the mask filter button used (next to binary size)
+			97 // Next to binary size
 		);
 		this.entry.command = LAYERS_COMMAND_ID;
 		this.entry.text = '$(layers) Layers';

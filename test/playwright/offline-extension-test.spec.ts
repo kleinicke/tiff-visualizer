@@ -126,7 +126,6 @@ test.describe('Offline TIFF Visualizer Extension Tests', () => {
       'tiffVisualizer.setBrightness',
       'tiffVisualizer.selectForCompare',
       'tiffVisualizer.compareWithSelected',
-      'tiffVisualizer.filterByMask',
       'tiffVisualizer.toggleNanColor'
     ];
     

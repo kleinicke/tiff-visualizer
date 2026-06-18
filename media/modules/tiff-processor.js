@@ -35,7 +35,6 @@ export class TiffProcessor {
 		this.rawTiffData = null;
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
-		this._maskCache = new Map(); // Cache loaded mask images by URI
 		this._lastImageData = null; // Store the last rendered image data for fast parameter updates
 		/** @type {{min:number,max:number}|null} */
 		this._lastStatistics = null; // Cache min/max statistics
@@ -501,41 +500,8 @@ export class TiffProcessor {
 		this._lastRenderHistogram = null;
 		this._lastRenderUsedWebGL = false;
 		const settings = this.settingsManager.settings;
-		const hasEnabledMasks = !!settings.maskFilters?.some(maskFilter => maskFilter.enabled && maskFilter.maskUri);
-
-		// Mask filters mutate the per-band data, so copy only when a mask is
-		// actually active. The common no-mask path can render from the decoded
-		// buffers directly.
-		const rastersCopy = hasEnabledMasks
-			? rasters.map((raster) => new Float32Array(raster))
-			: rasters;
-		PerfTrace.mark(hasEnabledMasks ? 'raster-copy' : 'raster-copy-skipped');
-
-		// Apply mask filtering if enabled
-		if (hasEnabledMasks) {
-			try {
-				// Apply all enabled masks in sequence
-				for (const maskFilter of settings.maskFilters) {
-					if (!maskFilter.enabled || !maskFilter.maskUri) {
-						continue;
-					}
-					const maskData = await this.loadMaskImage(maskFilter.maskUri);
-					// Apply mask filter to each band
-					for (let band = 0; band < rastersCopy.length; band++) {
-						const filteredData = this.applyMaskFilter(
-							rastersCopy[band],
-							maskData,
-							maskFilter.threshold,
-							maskFilter.filterHigher
-						);
-						rastersCopy[band] = filteredData;
-					}
-				}
-			} catch (error) {
-				console.error('Error applying mask filters:', error);
-				// Continue without mask filtering if there's an error
-			}
-		}
+		const rastersCopy = rasters;
+		PerfTrace.mark('raster-copy-skipped');
 
 		const width = image.getWidth();
 		const height = image.getHeight();
@@ -681,7 +647,7 @@ export class TiffProcessor {
 		let interleavedData;
 		const len = width * height;
 		const storedData = this.rawTiffData?.data;
-		const canUseStoredInterleaved = !hasEnabledMasks &&
+		const canUseStoredInterleaved =
 			storedData &&
 			storedData.length === len * channels &&
 			(isFloat ||
@@ -728,7 +694,6 @@ export class TiffProcessor {
 			height,
 			channels,
 			isFloat,
-			hasEnabledMasks,
 			settings,
 			collectHistogram: renderOptions.collectHistogram === true
 		})) {
@@ -765,90 +730,18 @@ export class TiffProcessor {
 	}
 
 	/**
-	 * Fast render TIFF data with current settings (skips mask loading and uses cached statistics)
+	 * Fast render TIFF data with current settings.
 	 * @param {*} image - GeoTIFF image object
 	 * @param {*} rasters - Raster data
-	 * @param {boolean} _skipMasks - Whether to skip mask filtering
 	 * @returns {Promise<ImageData>}
 	 */
-	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, _skipMasks = true, renderOptions = {}) {
+	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, renderOptions = {}) {
 		// Redirect to main render method for now to ensure correctness and use centralized ImageRenderer
-		// TODO: Re-implement optimization for skipMasks if needed
 		return this.renderTiffWithSettings(image, rasters, renderOptions);
 	}
 
 	async renderTiff(/** @type {any} */ image, /** @type {any} */ rasters, renderOptions = {}) {
 		return this.renderTiffWithSettings(image, rasters, renderOptions);
-	}
-
-	/**
-	 * Load mask image for filtering
-	 * @param {string} maskSrc - Mask TIFF file URL
-	 * @returns {Promise<Float32Array>}
-	 */
-	async loadMaskImage(maskSrc) {
-		// Check cache first
-		if (this._maskCache.has(maskSrc)) {
-			return this._maskCache.get(maskSrc);
-		}
-
-		try {
-			const response = await fetch(maskSrc);
-			const buffer = await response.arrayBuffer();
-			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
-			const image = await tiff.getImage();
-			const rasters = await image.readRasters();
-
-			// Return the first band as a Float32Array
-			const maskData = new Float32Array(rasters[0]);
-
-			// Cache the mask data
-			this._maskCache.set(maskSrc, maskData);
-
-			return maskData;
-		} catch (error) {
-			console.error('Error loading mask image:', error);
-			throw error;
-		}
-	}
-
-	/**
-	 * Clear the mask cache (call when mask URIs change)
-	 */
-	clearMaskCache() {
-		this._maskCache.clear();
-	}
-
-	/**
-	 * Apply mask filtering to image data
-	 * @param {Float32Array} imageData - Original image data
-	 * @param {Float32Array} maskData - Mask data
-	 * @param {number} threshold - Threshold value
-	 * @param {boolean} filterHigher - Whether to filter higher or lower values
-	 * @returns {Float32Array} - Filtered image data
-	 */
-	applyMaskFilter(imageData, maskData, threshold, filterHigher) {
-		const filteredData = new Float32Array(imageData.length);
-
-		for (let i = 0; i < imageData.length; i++) {
-			const maskValue = maskData[i];
-			const imageValue = imageData[i];
-
-			let shouldFilter = false;
-			if (filterHigher) {
-				shouldFilter = maskValue > threshold;
-			} else {
-				shouldFilter = maskValue < threshold;
-			}
-
-			if (shouldFilter) {
-				filteredData[i] = NaN;
-			} else {
-				filteredData[i] = imageValue;
-			}
-		}
-
-		return filteredData;
 	}
 
 	/**

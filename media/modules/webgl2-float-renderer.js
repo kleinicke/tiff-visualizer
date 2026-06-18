@@ -37,13 +37,12 @@ export class WebGL2FloatRenderer {
 	}
 
 	/**
-	 * @param {{data: ArrayLike<number>, width: number, height: number, channels: number, isFloat: boolean, hasEnabledMasks?: boolean, settings: any, collectHistogram?: boolean}} params
+	 * @param {{data: ArrayLike<number>, width: number, height: number, channels: number, isFloat: boolean, settings: any, collectHistogram?: boolean}} params
 	 */
 	canRender(params) {
 		if (this.failed) { return false; }
 		if (!params.isFloat) { return false; }
 		if (!ArrayBuffer.isView(params.data) || params.data.BYTES_PER_ELEMENT !== 4) { return false; }
-		if (params.hasEnabledMasks) { return false; }
 		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && params.channels === 3 && !this.rgb32fFailed;
 		const wantsScalar = params.channels === 1;
 		if (!wantsScalar && !wantsRgb24) { return false; }

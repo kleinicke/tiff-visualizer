@@ -144,39 +144,6 @@ class TestAppStateManager {
         this._imageSettings.nanColor = this._imageSettings.nanColor === 'black' ? 'fuchsia' : 'black';
     }
 
-    setMaskFilter(imageUri, enabled, maskUri, threshold, filterHigher) {
-        // Mock implementation for testing
-        if (!this._perImageMaskFilters) {
-            this._perImageMaskFilters = new Map();
-        }
-        
-        const currentSettings = this._perImageMaskFilters.get(imageUri) || {
-            enabled: false,
-            maskUri: undefined,
-            threshold: 0.5,
-            filterHigher: true
-        };
-
-        if (enabled !== undefined) currentSettings.enabled = enabled;
-        if (maskUri !== undefined) currentSettings.maskUri = maskUri;
-        if (threshold !== undefined) currentSettings.threshold = threshold;
-        if (filterHigher !== undefined) currentSettings.filterHigher = filterHigher;
-
-        this._perImageMaskFilters.set(imageUri, currentSettings);
-    }
-
-    getMaskFilterSettings(imageUri) {
-        if (!this._perImageMaskFilters) {
-            return this._imageSettings.maskFilter;
-        }
-        
-        const perImageSettings = this._perImageMaskFilters.get(imageUri);
-        if (perImageSettings) {
-            return perImageSettings;
-        }
-        return this._imageSettings.maskFilter;
-    }
-
     dispose() {
         // Mock dispose
     }
@@ -267,34 +234,6 @@ function testAppStateManager() {
     assert.strictEqual(finalColor, 'black', 'Final color should be black again');
     console.log('    ✅ NaN color toggle works correctly');
 
-    // Test per-image mask filter settings
-    console.log('  🎭 Testing per-image mask filter settings...');
-    const imageUri1 = 'file:///path/to/image1.tif';
-    const imageUri2 = 'file:///path/to/image2.tif';
-    
-    // Set mask filter for first image
-    manager.setMaskFilter(imageUri1, true, 'file:///path/to/mask1.tif', 0.3, true);
-    const settings1 = manager.getMaskFilterSettings(imageUri1);
-    assert.strictEqual(settings1.enabled, true, 'Mask filter should be enabled for image1');
-    assert.strictEqual(settings1.maskUri, 'file:///path/to/mask1.tif', 'Mask URI should be set for image1');
-    assert.strictEqual(settings1.threshold, 0.3, 'Threshold should be set for image1');
-    assert.strictEqual(settings1.filterHigher, true, 'Filter direction should be set for image1');
-    
-    // Set different mask filter for second image
-    manager.setMaskFilter(imageUri2, true, 'file:///path/to/mask2.tif', 0.7, false);
-    const settings2 = manager.getMaskFilterSettings(imageUri2);
-    assert.strictEqual(settings2.enabled, true, 'Mask filter should be enabled for image2');
-    assert.strictEqual(settings2.maskUri, 'file:///path/to/mask2.tif', 'Mask URI should be set for image2');
-    assert.strictEqual(settings2.threshold, 0.7, 'Threshold should be set for image2');
-    assert.strictEqual(settings2.filterHigher, false, 'Filter direction should be set for image2');
-    
-    // Verify settings are independent
-    const settings1Again = manager.getMaskFilterSettings(imageUri1);
-    assert.strictEqual(settings1Again.maskUri, 'file:///path/to/mask1.tif', 'Image1 settings should be preserved');
-    assert.strictEqual(settings1Again.threshold, 0.3, 'Image1 threshold should be preserved');
-    
-    console.log('    ✅ Per-image mask filter settings work correctly');
-    
     // Cleanup
     manager.dispose();
     cleanManager.dispose();
@@ -355,7 +294,6 @@ async function runAllTests() {
         console.log('  ✅ UI state management works');
         console.log('  ✅ Image stats tracking works');
         console.log('  ✅ NaN color toggle works');
-        console.log('  ✅ Per-image mask filter settings work');
         console.log('  ✅ Test image files are available');
         console.log('\n🚀 Extension refactoring Phase 1 is stable and ready!');
         console.log('\n🔍 Key Behaviors Verified:');
