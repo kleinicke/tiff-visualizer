@@ -1,6 +1,8 @@
 // @ts-check
 "use strict";
 
+import { PerfTrace } from './perf-trace.js';
+
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
@@ -489,9 +491,11 @@ export class HistogramOverlay {
 		
 		if (useIntegerLUT && !lut) {
 			lut = this.generateTransformLUT(settings, intTypeMax);
+			PerfTrace.mark('histogram-lut');
 		} else if (useFloatLUT && !lut) {
 			// For float, use 16-bit quantization LUT (same as image rendering)
 			lut = this.generateFloatLUT(settings);
+			PerfTrace.mark('histogram-lut');
 		}
 		// Non-null assertion: lut is only accessed inside useIntegerLUT/useFloatLUT branches above
 		const safeLut = /** @type {Uint8Array} */ (lut);
@@ -505,7 +509,47 @@ export class HistogramOverlay {
 			const channels = options.channels || 3;
 			const isGrayscale = channels === 1 || (planarData && planarData.length === 1);
 
-			if (planarData) {
+			if (isGrayscale) {
+				const grayData = planarData ? planarData[0] : rawData;
+				if (grayData) {
+					const len = grayData.length;
+					if (useIntegerLUT) {
+						for (let i = 0; i < len; i++) {
+							const value = grayData[i];
+							if (!Number.isFinite(value)) { nanCount++; continue; }
+							histR[safeLut[Math.max(0, Math.min(intTypeMax, value | 0))]]++;
+							if (value < origMinR) origMinR = value;
+							if (value > origMaxR) origMaxR = value;
+							origSumR += value;
+							origCountR++;
+						}
+					} else if (useFloatLUT) {
+						for (let i = 0; i < len; i++) {
+							const value = grayData[i];
+							if (!Number.isFinite(value)) { nanCount++; continue; }
+							const lutIdx = Math.max(0, Math.min(65535, ((value - normMin) * floatToLutScale) | 0));
+							histR[safeLut[lutIdx]]++;
+							if (value < origMinR) origMinR = value;
+							if (value > origMaxR) origMaxR = value;
+							origSumR += value;
+							origCountR++;
+						}
+					} else {
+						for (let i = 0; i < len; i++) {
+							const value = grayData[i];
+							if (!Number.isFinite(value)) { nanCount++; continue; }
+							const bin = Math.max(0, Math.min(255, ((value - normMin) * invRange * 255) | 0));
+							histR[bin]++;
+							if (value < origMinR) origMinR = value;
+							if (value > origMaxR) origMaxR = value;
+							origSumR += value;
+							origCountR++;
+						}
+					}
+					histG.set(histR);
+					histB.set(histR);
+				}
+			} else if (planarData) {
 				const len = planarData[0].length;
 				const rCh = planarData[0];
 				const gCh = planarData.length > 1 ? planarData[1] : rCh;
@@ -711,6 +755,8 @@ export class HistogramOverlay {
 			}
 		}
 
+		PerfTrace.mark('histogram-scan');
+
 		// Calculate bin-based stats
 		const calculateBinStats = (/** @type {Uint32Array} */ hist) => {
 			let minBin = 0, maxBin = 255, sum = 0, count = 0;
@@ -743,6 +789,7 @@ export class HistogramOverlay {
 		}
 
 		console.log(`[Histogram] ${(performance.now() - startTime).toFixed(1)}ms (${totalPixels} pixels)`);
+		PerfTrace.mark('histogram-stats');
 
 		return {
 			r: histR, g: histG, b: histB, luminance: histLum,
@@ -928,6 +975,7 @@ export class HistogramOverlay {
 
 		// Update stats display
 		this.updateStatsDisplay();
+		PerfTrace.mark('histogram-draw');
 	}
 
 	/**

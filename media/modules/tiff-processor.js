@@ -153,6 +153,16 @@ export class TiffProcessor {
 						});
 					}
 					PerfTrace.mark(decodedWith.startsWith('geotiff.js') ? 'decode-geotiff-worker' : 'decode-wasm-worker');
+					if (Array.isArray(wasmResult.decodeTimings)) {
+						let measuredWorkerTime = 0;
+						for (const timing of wasmResult.decodeTimings) {
+							const durationMs = Number(timing?.durationMs);
+							if (!Number.isFinite(durationMs)) { continue; }
+							measuredWorkerTime += durationMs;
+							PerfTrace.detail(String(timing.name || 'decode-worker-detail'), durationMs);
+						}
+						PerfTrace.detail('decode-worker-transfer+overhead', decodeInfo.durationMs - measuredWorkerTime);
+					}
 				} else {
 					workerTiffFailed = true;
 					localBuffer = (workerResponse?.buffer && workerResponse.buffer.byteLength > 0) ? workerResponse.buffer : null;
@@ -247,6 +257,10 @@ export class TiffProcessor {
 						},
 						data: data
 					};
+					if (Number.isFinite(wasmResult.min) && Number.isFinite(wasmResult.max)) {
+						this._lastStatistics = { min: wasmResult.min, max: wasmResult.max };
+						this._lastStatisticsRgb24Mode = false;
+					}
 
 					// Send format information to VS Code
 					if (this.vscode && this._isInitialLoad) {
@@ -420,31 +434,35 @@ export class TiffProcessor {
 	 * @returns {Promise<ImageData>}
 	 */
 	async renderTiffWithSettings(image, rasters) {
-		// Create copies of rasters to avoid modifying the original data
-		const rastersCopy = [];
-		for (let i = 0; i < rasters.length; i++) {
-			rastersCopy.push(new Float32Array(rasters[i]));
-		}
-		PerfTrace.mark('raster-copy');
+		const settings = this.settingsManager.settings;
+		const hasEnabledMasks = !!settings.maskFilters?.some(maskFilter => maskFilter.enabled && maskFilter.maskUri);
+
+		// Mask filters mutate the per-band data, so copy only when a mask is
+		// actually active. The common no-mask path can render from the decoded
+		// buffers directly.
+		const rastersCopy = hasEnabledMasks
+			? rasters.map((raster) => new Float32Array(raster))
+			: rasters;
+		PerfTrace.mark(hasEnabledMasks ? 'raster-copy' : 'raster-copy-skipped');
 
 		// Apply mask filtering if enabled
-		const settings = this.settingsManager.settings;
-		if (settings.maskFilters && settings.maskFilters.length > 0) {
+		if (hasEnabledMasks) {
 			try {
 				// Apply all enabled masks in sequence
 				for (const maskFilter of settings.maskFilters) {
-					if (maskFilter.enabled && maskFilter.maskUri) {
-						const maskData = await this.loadMaskImage(maskFilter.maskUri);
-						// Apply mask filter to each band
-						for (let band = 0; band < rastersCopy.length; band++) {
-							const filteredData = this.applyMaskFilter(
-								rastersCopy[band],
-								maskData,
-								maskFilter.threshold,
-								maskFilter.filterHigher
-							);
-							rastersCopy[band] = filteredData;
-						}
+					if (!maskFilter.enabled || !maskFilter.maskUri) {
+						continue;
+					}
+					const maskData = await this.loadMaskImage(maskFilter.maskUri);
+					// Apply mask filter to each band
+					for (let band = 0; band < rastersCopy.length; band++) {
+						const filteredData = this.applyMaskFilter(
+							rastersCopy[band],
+							maskData,
+							maskFilter.threshold,
+							maskFilter.filterHigher
+						);
+						rastersCopy[band] = filteredData;
 					}
 				}
 			} catch (error) {
@@ -593,26 +611,38 @@ export class TiffProcessor {
 
 		let interleavedData;
 		const len = width * height;
+		const storedData = this.rawTiffData?.data;
+		const canUseStoredInterleaved = !hasEnabledMasks &&
+			storedData &&
+			storedData.length === len * channels &&
+			(isFloat ||
+				(bitsPerSample === 16 && storedData instanceof Uint16Array) ||
+				(bitsPerSample !== 16 && (storedData instanceof Uint8Array || storedData instanceof Uint8ClampedArray)));
 
-		if (isFloat) {
-			interleavedData = new Float32Array(len * channels);
-		} else if (bitsPerSample === 16) {
-			interleavedData = new Uint16Array(len * channels);
+		if (canUseStoredInterleaved) {
+			interleavedData = storedData;
+			PerfTrace.mark('interleave-skipped');
 		} else {
-			interleavedData = new Uint8Array(len * channels);
-		}
+			if (isFloat) {
+				interleavedData = new Float32Array(len * channels);
+			} else if (bitsPerSample === 16) {
+				interleavedData = new Uint16Array(len * channels);
+			} else {
+				interleavedData = new Uint8Array(len * channels);
+			}
 
-		// Interleave
-		if (channels === 1) {
-			interleavedData.set(rastersCopy[0]);
-		} else {
-			for (let i = 0; i < len; i++) {
-				for (let c = 0; c < channels; c++) {
-					interleavedData[i * channels + c] = rastersCopy[c][i];
+			// Interleave
+			if (channels === 1) {
+				interleavedData.set(rastersCopy[0]);
+			} else {
+				for (let i = 0; i < len; i++) {
+					for (let c = 0; c < channels; c++) {
+						interleavedData[i * channels + c] = rastersCopy[c][i];
+					}
 				}
 			}
+			PerfTrace.mark('interleave');
 		}
-		PerfTrace.mark('interleave');
 
 		// Create options object
 		const options = {

@@ -1033,6 +1033,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		}
 
 		mouseHandler.addMouseListeners(imageElement);
+		PerfTrace.mark('finalize-dom');
 
 		// Note: Histogram visibility is restored via restoreHistogramState message
 		// when webview becomes active (sent from ImagePreview.sendHistogramState)
@@ -1042,8 +1043,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Keep the layer stack's base in sync with the loaded image.
 		syncBaseLayer();
+		PerfTrace.mark('layers-sync');
 		// Restore a saved layer stack after a webview reload (once the base exists).
 		maybeRestoreLayers();
+		PerfTrace.mark('layers-restore');
 		// In a dedicated Layers window, open the panel automatically on first load
 		// and ask the extension for any images to stack on top (e.g. a collection).
 		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown) {
@@ -1055,6 +1058,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		}
 		if (layerManager.active && layerManager.hasExtraLayers()) {
 			recompositeLayers();
+			PerfTrace.mark('layers-recomposite');
 		}
 
 		// Close the switch trace once the final pixels are shown. With a deferred
@@ -1801,7 +1805,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			}
 
 			const settings = settingsManager.settings;
-			/** @type {object} */
+			/** @type {any} */
 			let histogramOptions = {
 				settings: settings
 			};
@@ -1914,10 +1918,16 @@ import { LayersPanel } from './modules/layers-panel.js';
 				};
 			}
 
+			PerfTrace.mark('histogram-prepare');
+
 			// Get canvas image data as fallback
-			const ctx = canvas.getContext('2d', { willReadFrequently: true });
-			if (!ctx) return;
-			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+			let imageData = null;
+			if (!histogramOptions.rawData && !histogramOptions.planarData) {
+				const ctx = canvas.getContext('2d', { willReadFrequently: true });
+				if (!ctx) return;
+				imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+				PerfTrace.mark('histogram-canvas-readback');
+			}
 
 			// Update histogram overlay
 			histogramOverlay.update(imageData, histogramOptions);

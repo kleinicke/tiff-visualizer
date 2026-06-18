@@ -94,12 +94,21 @@ function decodeTiffWasm(buffer) {
 	if (!tiffWasmReady) {
 		throw new Error('TIFF WASM decoder not initialized');
 	}
+	const timings = [];
+	let phaseStart = performance.now();
 	const result = decode_tiff(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-wasm-rust', durationMs: now - phaseStart });
+
+	phaseStart = now;
 	const width = result.width;
 	const height = result.height;
 	const channels = result.channels;
 	const data = new Float32Array(result.get_data_as_f32());
+	now = performance.now();
+	timings.push({ name: 'decode-wasm-to-f32', durationMs: now - phaseStart });
 
+	phaseStart = now;
 	/** @type {Float32Array[]} */
 	const rasters = [];
 	if (channels === 1) {
@@ -114,6 +123,8 @@ function decodeTiffWasm(buffer) {
 			rasters.push(channel);
 		}
 	}
+	now = performance.now();
+	timings.push({ name: 'decode-wasm-deinterleave', durationMs: now - phaseStart });
 
 	return {
 		width,
@@ -130,6 +141,7 @@ function decodeTiffWasm(buffer) {
 		min: result.min_value,
 		max: result.max_value,
 		decodedWith: 'wasm (worker)',
+		decodeTimings: timings,
 	};
 }
 
@@ -140,8 +152,17 @@ function decodeTiffWasm(buffer) {
  * @param {string} wasmError
  */
 async function decodeTiffGeotiff(buffer, wasmError) {
+	const timings = [];
+	let phaseStart = performance.now();
 	const tiff = await WorkerGeoTIFF.fromArrayBuffer(buffer);
+	let now = performance.now();
+	timings.push({ name: 'decode-geotiff-open', durationMs: now - phaseStart });
+
+	phaseStart = now;
 	const image = await tiff.getImage();
+	now = performance.now();
+	timings.push({ name: 'decode-geotiff-ifd', durationMs: now - phaseStart });
+
 	const width = image.getWidth();
 	const height = image.getHeight();
 	const samplesPerPixel = image.getSamplesPerPixel();
@@ -149,7 +170,10 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 	const rawSampleFormat = image.getSampleFormat();
 	const bitsPerSample = Array.isArray(rawBitsPerSample) ? rawBitsPerSample[0] : rawBitsPerSample;
 	const sampleFormat = Array.isArray(rawSampleFormat) ? rawSampleFormat[0] : rawSampleFormat;
+	phaseStart = performance.now();
 	const decodedRasters = await image.readRasters();
+	now = performance.now();
+	timings.push({ name: 'decode-geotiff-rasters', durationMs: now - phaseStart });
 	const fileDirectory = image.fileDirectory || {};
 
 	/** @type {Float32Array} */
@@ -157,9 +181,13 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 	/** @type {Float32Array[]|any[]} */
 	let rasters;
 	if (samplesPerPixel === 1) {
+		phaseStart = performance.now();
 		data = new Float32Array(decodedRasters[0]);
 		rasters = [data];
+		now = performance.now();
+		timings.push({ name: 'decode-geotiff-copy', durationMs: now - phaseStart });
 	} else {
+		phaseStart = performance.now();
 		const pixelCount = width * height;
 		data = new Float32Array(pixelCount * samplesPerPixel);
 		for (let i = 0; i < pixelCount; i++) {
@@ -168,6 +196,8 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 			}
 		}
 		rasters = decodedRasters;
+		now = performance.now();
+		timings.push({ name: 'decode-geotiff-interleave', durationMs: now - phaseStart });
 	}
 
 	return {
@@ -184,6 +214,7 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 		rasters,
 		decodedWith: 'geotiff.js (worker)',
 		wasmFallbackReason: wasmError,
+		decodeTimings: timings,
 	};
 }
 
