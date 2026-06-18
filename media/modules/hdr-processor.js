@@ -107,7 +107,11 @@ export class HdrProcessor {
             }
         }
         const nanColor = this._getNanColor(settings);
-        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+        // parse-hdr currently exposes RGBA float data, with alpha fixed at 1.0.
+        // Uploading that 4-channel float texture is very expensive for large HDRs,
+        // so keep the CPU path until we can decode or pack HDR as RGB directly.
+        const canUseWebGL = renderChannels <= 3;
+        if (canUseWebGL && renderOptions.targetCanvas && this._webglRenderer.canRender({
             data,
             width,
             height,

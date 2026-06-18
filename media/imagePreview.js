@@ -112,6 +112,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			// Tell the extension so it can track layer mode (and block collection ops).
 			vscode.postMessage({ type: 'layerModeChanged', active: visible });
 			if (visible) {
+				syncBaseLayer();
 				recompositeLayers();
 			} else {
 				// Restore the normal single-image render.
@@ -1110,9 +1111,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 		// Update histogram if visible
 		updateHistogramData();
 
-		// Keep the layer stack's base in sync with the loaded image.
-		syncBaseLayer();
-		PerfTrace.mark('layers-sync');
+		// Keep the layer stack's base in sync only when the layer system needs it.
+		// Browser-native images without raw buffers otherwise force a full-canvas readback.
+		if (shouldSyncBaseLayer()) {
+			syncBaseLayer();
+			PerfTrace.mark('layers-sync');
+		} else {
+			PerfTrace.detail('layers-sync-skipped', 0);
+		}
 		// Restore a saved layer stack after a webview reload (once the base exists).
 		maybeRestoreLayers();
 		PerfTrace.mark('layers-restore');
@@ -1301,6 +1307,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 	}
 
 	/** (Re)synchronize the base layer with the current primary image. */
+	function shouldSyncBaseLayer() {
+		return layerManager.active ||
+			layersPanel.isVisible() ||
+			!!_pendingLayerRestore ||
+			settingsManager.settings.surfaceMode === 'layers' ||
+			layerManager.hasExtraLayers();
+	}
+
 	function syncBaseLayer() {
 		const base = deriveBaseLayer();
 		if (!base) { return; }
