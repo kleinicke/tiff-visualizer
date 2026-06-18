@@ -140,6 +140,25 @@ export function decode_tiff(data) {
     return TiffResult.__wrap(ret[0]);
 }
 
+/**
+ * Decode a TIFF file without eagerly computing min/max statistics.
+ *
+ * The webview render path computes stats lazily when a non-gamma mode needs
+ * them. Skipping eager stats saves a full pass over large float TIFFs during
+ * the common gamma-mode initial load.
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_tiffresult_free(ptr >>> 0, 1));
@@ -194,6 +213,13 @@ export class TiffResult {
     /**
      * @returns {number}
      */
+    get timing_pack_ms() {
+        const ret = wasm.tiffresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
     get bits_per_sample() {
         const ret = wasm.tiffresult_bits_per_sample(this.__wbg_ptr);
         return ret >>> 0;
@@ -207,6 +233,45 @@ export class TiffResult {
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_stats_ms() {
+        const ret = wasm.tiffresult_timing_stats_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Move float data out of the result when possible. This avoids cloning the
+     * decoded f32 vector before wasm-bindgen copies it into JS-owned memory.
+     * @returns {Float32Array}
+     */
+    take_data_as_f32() {
+        const ret = wasm.tiffresult_take_data_as_f32(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_decode_ms() {
+        const ret = wasm.tiffresult_timing_decode_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_convert_ms() {
+        const ret = wasm.tiffresult_timing_convert_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_metadata_ms() {
+        const ret = wasm.tiffresult_timing_metadata_ms(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {number}

@@ -39,6 +39,7 @@ export class TiffProcessor {
 		/** @type {{min:number,max:number}|null} */
 		this._lastStatistics = null; // Cache min/max statistics
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+		this._lastRenderHistogram = null; // Histogram computed during render when requested
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		/** @type {AbortSignal|undefined} */
@@ -98,6 +99,7 @@ export class TiffProcessor {
 	 */
 	async processTiff(src) {
 		const startTime = performance.now();
+		this._lastRenderHistogram = null;
 		const loadSignal = this.loadSignal;
 		/** @type {{engine: string, durationMs: number}|null} */
 		let decodeInfo = null;
@@ -433,7 +435,8 @@ export class TiffProcessor {
 	 * @param {*} rasters - Raster data
 	 * @returns {Promise<ImageData>}
 	 */
-	async renderTiffWithSettings(image, rasters) {
+	async renderTiffWithSettings(image, rasters, renderOptions = {}) {
+		this._lastRenderHistogram = null;
 		const settings = this.settingsManager.settings;
 		const hasEnabledMasks = !!settings.maskFilters?.some(maskFilter => maskFilter.enabled && maskFilter.maskUri);
 
@@ -647,10 +650,11 @@ export class TiffProcessor {
 		// Create options object
 		const options = {
 			nanColor: nanColor,
-			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale
+			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
+			collectHistogram: renderOptions.collectHistogram === true
 		};
 
-		return ImageRenderer.render(
+		const imageData = ImageRenderer.render(
 			interleavedData,
 			width,
 			height,
@@ -660,6 +664,8 @@ export class TiffProcessor {
 			settings,
 			options
 		);
+		this._lastRenderHistogram = options.renderHistogramResult || null;
+		return imageData;
 	}
 
 	/**
@@ -669,14 +675,14 @@ export class TiffProcessor {
 	 * @param {boolean} _skipMasks - Whether to skip mask filtering
 	 * @returns {Promise<ImageData>}
 	 */
-	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, _skipMasks = true) {
+	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, _skipMasks = true, renderOptions = {}) {
 		// Redirect to main render method for now to ensure correctness and use centralized ImageRenderer
 		// TODO: Re-implement optimization for skipMasks if needed
-		return this.renderTiffWithSettings(image, rasters);
+		return this.renderTiffWithSettings(image, rasters, renderOptions);
 	}
 
-	async renderTiff(/** @type {any} */ image, /** @type {any} */ rasters) {
-		return this.renderTiffWithSettings(image, rasters);
+	async renderTiff(/** @type {any} */ image, /** @type {any} */ rasters, renderOptions = {}) {
+		return this.renderTiffWithSettings(image, rasters, renderOptions);
 	}
 
 	/**
@@ -849,7 +855,7 @@ export class TiffProcessor {
 	 * Called when format-specific settings have been applied
 	 * @returns {Promise<ImageData|null>} - The rendered image data, or null if no pending render
 	 */
-	async performDeferredRender() {
+	async performDeferredRender(renderOptions = {}) {
 		const perfStart = performance.now();
 		if (!this._pendingRenderData) {
 			return null;
@@ -860,7 +866,7 @@ export class TiffProcessor {
 		this._isInitialLoad = false;
 
 		// Now render with the correct format-specific settings
-		const imageData = await this.renderTiff(image, rasters);
+		const imageData = await this.renderTiff(image, rasters, renderOptions);
 		console.log(`[TiffProcessor] Deferred render took ${(performance.now() - perfStart).toFixed(2)}ms`);
 		return imageData;
 	}

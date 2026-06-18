@@ -816,6 +816,23 @@ export class HistogramOverlay {
 	}
 
 	/**
+	 * Use a histogram computed during image rendering.
+	 * @param {{histogramData: HistogramData, originalStats?: any, valueRange?: {min:number,max:number,isFloat:boolean}}} precomputed
+	 */
+	updateFromPrecomputed(precomputed) {
+		this.histogramData = precomputed.histogramData;
+		if (precomputed.originalStats) {
+			this.originalStats = precomputed.originalStats;
+		}
+		if (precomputed.valueRange) {
+			this.valueRange = precomputed.valueRange;
+		}
+		if (this.isVisible) {
+			this.render();
+		}
+	}
+
+	/**
 	 * Render the histogram to canvas
 	 */
 	render() {

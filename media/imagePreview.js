@@ -1540,7 +1540,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 					let deferredCanvasAlreadyRendered = false;
 
 					if (tiffProcessor._pendingRenderData) {
-						deferredImageData = await tiffProcessor.performDeferredRender();
+						deferredImageData = await tiffProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility()
+						});
 					} else if (npyProcessor._pendingRenderData) {
 						deferredImageData = npyProcessor.performDeferredRender();
 					} else if (pngProcessor._pendingRenderData) {
@@ -1802,6 +1804,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 			if (pngProcessor && pngProcessor.hasLazyNativeReadback()) {
 				const imageData = pngProcessor.renderPngWithSettings();
 				if (imageData) { primaryImageData = imageData; }
+			}
+
+			if (tiffProcessor.rawTiffData && tiffProcessor._lastRenderHistogram) {
+				PerfTrace.mark('histogram-prepare');
+				histogramOverlay.updateFromPrecomputed(tiffProcessor._lastRenderHistogram);
+				PerfTrace.mark('histogram-from-render');
+				return;
 			}
 
 			const settings = settingsManager.settings;
@@ -2156,7 +2165,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 					const newImageData = await tiffProcessor.renderTiffWithSettingsFast(
 						tiffProcessor.rawTiffData.image,
 						tiffProcessor.rawTiffData.rasters,
-						true // skipMasks flag
+						true, // skipMasks flag
+						{ collectHistogram: histogramOverlay.getVisibility() }
 					);
 
 					// Update the canvas with new image data
@@ -2172,7 +2182,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 				// Fallback to full re-render for structural changes or mask changes
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
 					tiffProcessor.rawTiffData.image,
-					tiffProcessor.rawTiffData.rasters
+					tiffProcessor.rawTiffData.rasters,
+					{ collectHistogram: histogramOverlay.getVisibility() }
 				);
 
 				// Update the canvas with new image data

@@ -7,7 +7,7 @@ import { getColormapLut } from './colormaps.js';
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 
 /**
- * @typedef {{nanColor?: {r:number,g:number,b:number}, flipY?: boolean, typeMax?: number, rgbAs24BitGrayscale?: boolean, planarData?: any}} RenderOptions
+ * @typedef {{nanColor?: {r:number,g:number,b:number}, flipY?: boolean, typeMax?: number, rgbAs24BitGrayscale?: boolean, planarData?: any, collectHistogram?: boolean, renderHistogramResult?: any}} RenderOptions
  */
 
 /**
@@ -267,6 +267,59 @@ export class ImageStatsCalculator {
  */
 export class ImageRenderer {
     /**
+     * Build the histogram payload consumed by HistogramOverlay from a histogram
+     * collected during a render pass.
+     * @private
+     * @param {Uint32Array} hist
+     * @param {number} nanCount
+     * @param {{min:number,max:number,isFloat:boolean}} valueRange
+     * @param {{min:number,max:number,sum:number,count:number}} original
+     * @returns {any}
+     */
+    static _finishSingleChannelRenderHistogram(hist, nanCount, valueRange, original) {
+        const histG = new Uint32Array(hist);
+        const histB = new Uint32Array(hist);
+        const histLum = new Uint32Array(hist);
+        const calculateBinStats = (/** @type {Uint32Array} */ h) => {
+            let minBin = 0, maxBin = 255, sum = 0, count = 0;
+            for (let i = 0; i < 256; i++) {
+                if (h[i] > 0) {
+                    if (count === 0) minBin = i;
+                    maxBin = i;
+                    sum += i * h[i];
+                    count += h[i];
+                }
+            }
+            return { minBin, maxBin, meanBin: count > 0 ? sum / count : 0, total: count };
+        };
+        const binStats = calculateBinStats(hist);
+        const mean = original.count > 0 ? original.sum / original.count : 0;
+        const min = original.count > 0 ? original.min : 0;
+        const max = original.count > 0 ? original.max : 0;
+        return {
+            histogramData: {
+                r: hist,
+                g: histG,
+                b: histB,
+                luminance: histLum,
+                nanCount,
+                stats: {
+                    r: binStats,
+                    g: binStats,
+                    b: binStats,
+                    luminance: binStats
+                }
+            },
+            originalStats: {
+                r: { min, max, mean, total: original.count },
+                g: { min, max, mean, total: original.count },
+                b: { min, max, mean, total: original.count }
+            },
+            valueRange
+        };
+    }
+
+    /**
      * Render typed array to ImageData with normalization and corrections.
      * @param {Uint8Array|Uint16Array|Float32Array|ArrayLike<number>} data - Image data
      * @param {number} width - Image width
@@ -453,6 +506,51 @@ export class ImageRenderer {
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 }; // Magenta default
         const range = max - min;
         const invRange = range > 0 ? 1.0 / range : 0;
+        const collectHistogram = options.collectHistogram === true && channels === 1;
+        const renderHist = collectHistogram ? new Uint32Array(256) : null;
+        let renderHistNanCount = 0;
+        const renderOriginal = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+
+        if (channels === 1) {
+            for (let i = 0; i < width * height; i++) {
+                const p = i * 4;
+                const value = data[i];
+                if (!Number.isFinite(value)) {
+                    out[p] = nanColor.r;
+                    out[p + 1] = nanColor.g;
+                    out[p + 2] = nanColor.b;
+                    out[p + 3] = 255;
+                    if (renderHist) { renderHistNanCount++; }
+                    continue;
+                }
+
+                const normalized = (value - min) * invRange;
+                const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+                out[p] = intensity;
+                out[p + 1] = intensity;
+                out[p + 2] = intensity;
+                out[p + 3] = 255;
+
+                if (renderHist) {
+                    renderHist[intensity]++;
+                    if (value < renderOriginal.min) renderOriginal.min = value;
+                    if (value > renderOriginal.max) renderOriginal.max = value;
+                    renderOriginal.sum += value;
+                    renderOriginal.count++;
+                }
+            }
+
+            if (renderHist) {
+                options.renderHistogramResult = this._finishSingleChannelRenderHistogram(
+                    renderHist,
+                    renderHistNanCount,
+                    { min, max, isFloat: true },
+                    renderOriginal
+                );
+            }
+
+            return new ImageData(out, width, height);
+        }
 
         for (let i = 0; i < width * height; i++) {
             let r = 0, g = 0, b = 0;
@@ -463,10 +561,18 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    renderHistNanCount++;
                 } else {
                     const normalized = (value - min) * invRange;
                     const intensity = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
                     r = g = b = intensity;
+                    if (renderHist) {
+                        renderHist[intensity]++;
+                        if (value < renderOriginal.min) renderOriginal.min = value;
+                        if (value > renderOriginal.max) renderOriginal.max = value;
+                        renderOriginal.sum += value;
+                        renderOriginal.count++;
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
@@ -515,6 +621,15 @@ export class ImageRenderer {
             out[p + 3] = 255;
         }
 
+        if (renderHist) {
+            options.renderHistogramResult = this._finishSingleChannelRenderHistogram(
+                renderHist,
+                renderHistNanCount,
+                { min, max, isFloat: true },
+                renderOriginal
+            );
+        }
+
         return new ImageData(out, width, height);
     }
 
@@ -551,6 +666,51 @@ export class ImageRenderer {
         const lut = NormalizationHelper.generateLut(lutSettings, 16, 65535, 0, 65535);
         const vRange = vMax - vMin;
         const invVRange = vRange > 0 ? 65535 / vRange : 0;
+        const collectHistogram = options.collectHistogram === true && channels === 1;
+        const renderHist = collectHistogram ? new Uint32Array(256) : null;
+        let renderHistNanCount = 0;
+        const renderOriginal = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+
+        if (channels === 1) {
+            for (let i = 0; i < width * height; i++) {
+                const p = i * 4;
+                const value = data[i];
+                if (!Number.isFinite(value)) {
+                    out[p] = nanColor.r;
+                    out[p + 1] = nanColor.g;
+                    out[p + 2] = nanColor.b;
+                    out[p + 3] = 255;
+                    if (renderHist) { renderHistNanCount++; }
+                    continue;
+                }
+
+                const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
+                const intensity = lut[lutIdx];
+                out[p] = intensity;
+                out[p + 1] = intensity;
+                out[p + 2] = intensity;
+                out[p + 3] = 255;
+
+                if (renderHist) {
+                    renderHist[intensity]++;
+                    if (value < renderOriginal.min) renderOriginal.min = value;
+                    if (value > renderOriginal.max) renderOriginal.max = value;
+                    renderOriginal.sum += value;
+                    renderOriginal.count++;
+                }
+            }
+
+            if (renderHist) {
+                options.renderHistogramResult = this._finishSingleChannelRenderHistogram(
+                    renderHist,
+                    renderHistNanCount,
+                    { min, max, isFloat: true },
+                    renderOriginal
+                );
+            }
+
+            return new ImageData(out, width, height);
+        }
 
         for (let i = 0; i < width * height; i++) {
             let r = 0, g = 0, b = 0;
@@ -561,9 +721,17 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    renderHistNanCount++;
                 } else {
                     const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
                     r = g = b = lut[lutIdx];
+                    if (renderHist) {
+                        renderHist[r]++;
+                        if (value < renderOriginal.min) renderOriginal.min = value;
+                        if (value > renderOriginal.max) renderOriginal.max = value;
+                        renderOriginal.sum += value;
+                        renderOriginal.count++;
+                    }
                 }
             } else if (channels === 3) {
                 const idx = i * 3;
@@ -616,6 +784,15 @@ export class ImageRenderer {
             out[p + 1] = g;
             out[p + 2] = b;
             out[p + 3] = 255;
+        }
+
+        if (renderHist) {
+            options.renderHistogramResult = this._finishSingleChannelRenderHistogram(
+                renderHist,
+                renderHistNanCount,
+                { min, max, isFloat: true },
+                renderOriginal
+            );
         }
 
         return new ImageData(out, width, height);

@@ -28,7 +28,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_tiff } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -96,15 +96,34 @@ function decodeTiffWasm(buffer) {
 	}
 	const timings = [];
 	let phaseStart = performance.now();
-	const result = decode_tiff(new Uint8Array(buffer));
+	const result = typeof decode_tiff_fast === 'function'
+		? decode_tiff_fast(new Uint8Array(buffer))
+		: decode_tiff(new Uint8Array(buffer));
 	let now = performance.now();
 	timings.push({ name: 'decode-wasm-rust', durationMs: now - phaseStart });
+	if (Number.isFinite(result.timing_metadata_ms)) {
+		timings.push({ name: 'decode-rust-metadata', durationMs: result.timing_metadata_ms });
+	}
+	if (Number.isFinite(result.timing_decode_ms)) {
+		timings.push({ name: 'decode-rust-read-image', durationMs: result.timing_decode_ms });
+	}
+	if (Number.isFinite(result.timing_convert_ms)) {
+		timings.push({ name: 'decode-rust-convert-pack', durationMs: result.timing_convert_ms });
+	}
+	if (Number.isFinite(result.timing_stats_ms)) {
+		timings.push({ name: 'decode-rust-stats', durationMs: result.timing_stats_ms });
+	}
+	if (Number.isFinite(result.timing_pack_ms)) {
+		timings.push({ name: 'decode-rust-pack', durationMs: result.timing_pack_ms });
+	}
 
 	phaseStart = now;
 	const width = result.width;
 	const height = result.height;
 	const channels = result.channels;
-	const data = new Float32Array(result.get_data_as_f32());
+	const data = typeof result.take_data_as_f32 === 'function'
+		? result.take_data_as_f32()
+		: result.get_data_as_f32();
 	now = performance.now();
 	timings.push({ name: 'decode-wasm-to-f32', durationMs: now - phaseStart });
 
