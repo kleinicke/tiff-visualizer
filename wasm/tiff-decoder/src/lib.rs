@@ -7,6 +7,7 @@
 use wasm_bindgen::prelude::*;
 use std::io::Cursor;
 use std::mem;
+use exr::prelude::FlatSamples;
 use tiff::decoder::{Decoder, DecodingResult};
 
 #[cfg(feature = "console_error_panic_hook")]
@@ -46,6 +47,79 @@ pub struct TiffResult {
     timing_convert_ms: f64,
     timing_stats_ms: f64,
     timing_pack_ms: f64,
+}
+
+#[wasm_bindgen]
+pub struct ExrResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    data_f32: Vec<f32>,
+    channel_names_csv: String,
+    displayed_channels_csv: String,
+    format: u32,
+    data_type: u32,
+    timing_read_ms: f64,
+    timing_pack_ms: f64,
+    timing_total_ms: f64,
+}
+
+#[wasm_bindgen]
+impl ExrResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 {
+        self.channels
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn channel_names_csv(&self) -> String {
+        self.channel_names_csv.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn displayed_channels_csv(&self) -> String {
+        self.displayed_channels_csv.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn format(&self) -> u32 {
+        self.format
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_type(&self) -> u32 {
+        self.data_type
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_read_ms(&self) -> f64 {
+        self.timing_read_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_pack_ms(&self) -> f64 {
+        self.timing_pack_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_total_ms(&self) -> f64 {
+        self.timing_total_ms
+    }
+
+    #[wasm_bindgen]
+    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
+        mem::take(&mut self.data_f32)
+    }
 }
 
 #[wasm_bindgen]
@@ -243,6 +317,163 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
 #[wasm_bindgen]
 pub fn decode_tiff_fast(data: &[u8]) -> Result<TiffResult, JsValue> {
     decode_tiff_impl(data, false)
+}
+
+#[wasm_bindgen]
+pub fn decode_exr_fast(data: &[u8]) -> Result<ExrResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    decode_exr_impl(data)
+}
+
+fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
+    use exr::prelude::*;
+
+    let start_time = js_sys::Date::now();
+    let cursor = Cursor::new(data);
+    let image = read()
+        .no_deep_data()
+        .largest_resolution_level()
+        .all_channels()
+        .first_valid_layer()
+        .all_attributes()
+        .from_buffered(cursor)
+        .map_err(|e| JsValue::from_str(&format!("Failed to decode EXR: {}", e)))?;
+    let read_time = js_sys::Date::now() - start_time;
+    let pack_start = js_sys::Date::now();
+
+    let layer = image.layer_data;
+    let width = layer.size.0;
+    let height = layer.size.1;
+    if width == 0 || height == 0 {
+        return Err(JsValue::from_str("EXR has empty dimensions"));
+    }
+
+    let channels = layer.channel_data.list;
+    if channels.is_empty() {
+        return Err(JsValue::from_str("EXR has no flat channels"));
+    }
+
+    let pixel_count = width
+        .checked_mul(height)
+        .ok_or_else(|| JsValue::from_str("EXR dimensions overflow"))?;
+    let channel_names: Vec<String> = channels.iter().map(|channel| channel.name.to_string()).collect();
+    let selected_indices = select_exr_display_channels(&channel_names);
+    if selected_indices.is_empty() {
+        return Err(JsValue::from_str("EXR has no displayable channels"));
+    }
+
+    for &index in &selected_indices {
+        let channel = &channels[index];
+        if channel.sampling.0 != 1 || channel.sampling.1 != 1 {
+            return Err(JsValue::from_str("Subsampled EXR channels are not supported by the Rust fast path"));
+        }
+        if channel.sample_data.len() < pixel_count {
+            return Err(JsValue::from_str("EXR channel sample count is smaller than the image dimensions"));
+        }
+    }
+
+    let output_channels = selected_indices.len();
+    let mut interleaved = vec![0.0f32; pixel_count * output_channels];
+    for (out_channel, &source_index) in selected_indices.iter().enumerate() {
+        copy_exr_channel_to_interleaved(
+            &channels[source_index].sample_data,
+            &mut interleaved,
+            out_channel,
+            output_channels,
+            pixel_count,
+        );
+    }
+
+    let displayed_names: Vec<String> = selected_indices.iter()
+        .map(|&index| channel_names[index].clone())
+        .collect();
+    let format = if output_channels == 1 { 1028 } else { 1023 };
+    let pack_time = js_sys::Date::now() - pack_start;
+    let total_time = js_sys::Date::now() - start_time;
+
+    Ok(ExrResult {
+        width: width as u32,
+        height: height as u32,
+        channels: output_channels as u32,
+        data_f32: interleaved,
+        channel_names_csv: channel_names.join(","),
+        displayed_channels_csv: displayed_names.join(","),
+        format,
+        data_type: 1015,
+        timing_read_ms: read_time,
+        timing_pack_ms: pack_time,
+        timing_total_ms: total_time,
+    })
+}
+
+fn select_exr_display_channels(channel_names: &[String]) -> Vec<usize> {
+    let red = find_exr_channel(channel_names, &["R", "red"]);
+    let green = find_exr_channel(channel_names, &["G", "green"]);
+    let blue = find_exr_channel(channel_names, &["B", "blue"]);
+    if let (Some(r), Some(g), Some(b)) = (red, green, blue) {
+        let mut selected = vec![r, g, b];
+        if let Some(a) = find_exr_channel(channel_names, &["A", "alpha"]) {
+            selected.push(a);
+        }
+        return selected;
+    }
+
+    for candidates in [
+        &["Y", "luma", "luminance"][..],
+        &["Z", "depth", "Depth", "distance"][..],
+        &["R", "red"][..],
+        &["G", "green"][..],
+        &["B", "blue"][..],
+    ] {
+        if let Some(index) = find_exr_channel(channel_names, candidates) {
+            return vec![index];
+        }
+    }
+
+    vec![0]
+}
+
+fn find_exr_channel(channel_names: &[String], candidates: &[&str]) -> Option<usize> {
+    for candidate in candidates {
+        if let Some(index) = channel_names.iter().position(|name| name == candidate) {
+            return Some(index);
+        }
+    }
+    for candidate in candidates {
+        let candidate_lower = candidate.to_ascii_lowercase();
+        if let Some(index) = channel_names.iter().position(|name| name.to_ascii_lowercase() == candidate_lower) {
+            return Some(index);
+        }
+    }
+    None
+}
+
+fn copy_exr_channel_to_interleaved(
+    samples: &FlatSamples,
+    out: &mut [f32],
+    out_channel: usize,
+    output_channels: usize,
+    pixel_count: usize,
+) {
+    match samples {
+        FlatSamples::F16(values) => {
+            for i in 0..pixel_count {
+                out[i * output_channels + out_channel] = values[i].to_f32();
+            }
+        }
+        FlatSamples::F32(values) => {
+            for i in 0..pixel_count {
+                out[i * output_channels + out_channel] = values[i];
+            }
+        }
+        FlatSamples::U32(values) => {
+            for i in 0..pixel_count {
+                out[i * output_channels + out_channel] = values[i] as f32;
+            }
+        }
+    }
 }
 
 fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsValue> {

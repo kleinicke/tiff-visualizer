@@ -100,19 +100,24 @@ export class ExrProcessor {
 				this.decodeWorker, 'exr', buffer, src, loadSignal,
 				// @ts-ignore
 				(b) => parseExr(b, FloatType));
+			if (exrResult.wasmFallbackReason) {
+				console.warn('[ExrProcessor] Rust EXR decoder fell back to parse-exr:', exrResult.wasmFallbackReason);
+			}
 
 			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028
 			let channels;
-			if (format === 1023) { // RGBA
+			const pixelCount = width * height;
+			if (Array.isArray(displayedChannels) && displayedChannels.length > 0 && data.length === pixelCount * displayedChannels.length) {
+				channels = displayedChannels.length;
+			} else if (format === 1023) { // RGBA
 				channels = 4;
 			} else if (format === 1028) { // Red (grayscale)
 				channels = 1;
 			} else {
 				// Fallback: try to detect from data length
-				const pixelCount = width * height;
 				const totalValues = data.length;
 				channels = totalValues / pixelCount;
 			}

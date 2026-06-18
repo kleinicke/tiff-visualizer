@@ -253,13 +253,30 @@ export class DecodeWorkerClient {
 	 * @param {(buffer: ArrayBuffer) => any} parseLocal
 	 */
 	static async decodeWithFallback(client, format, buffer, src, signal, parseLocal) {
+		const workerStart = performance.now();
 		const response = client ? await client.decode(format, buffer) : null;
+		const workerDuration = performance.now() - workerStart;
 		if (signal?.aborted) {
 			throw new DOMException('Load superseded', 'AbortError');
 		}
 		if (response?.ok) {
 			// Spans the caller's fetch too (it runs just before this helper).
 			PerfTrace.mark(`fetch+decode-worker(${format})`);
+			if (Array.isArray(response.result?.decodeTimings)) {
+				let measuredWorkerTime = 0;
+				let topLevelDecodeTime = 0;
+				for (const timing of response.result.decodeTimings) {
+					const durationMs = Number(timing?.durationMs);
+					if (!Number.isFinite(durationMs)) { continue; }
+					const name = String(timing.name || `${format}-decode-detail`);
+					measuredWorkerTime += durationMs;
+					if (name === `decode-${format}-rust` || name === `decode-${format}-parse-exr`) {
+						topLevelDecodeTime += durationMs;
+					}
+					PerfTrace.detail(name, durationMs);
+				}
+				PerfTrace.detail(`decode-${format}-worker-transfer+overhead`, workerDuration - (topLevelDecodeTime || measuredWorkerTime));
+			}
 			return response.result;
 		}
 		if (response) {

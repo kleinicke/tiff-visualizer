@@ -28,7 +28,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -266,6 +266,77 @@ async function decodeTiff(buffer) {
 }
 
 /**
+ * Decode an EXR with the Rust/WASM decoder, returning a parse-exr-compatible
+ * shape for the existing EXR processor.
+ * @param {ArrayBuffer} buffer
+ */
+function decodeExrWasm(buffer) {
+	if (!tiffWasmReady || typeof decode_exr_fast !== 'function') {
+		throw new Error('EXR WASM decoder not initialized');
+	}
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = decode_exr_fast(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-exr-rust', durationMs: now - phaseStart });
+	if (Number.isFinite(result.timing_read_ms)) {
+		timings.push({ name: 'decode-exr-read-image', durationMs: result.timing_read_ms });
+	}
+	if (Number.isFinite(result.timing_pack_ms)) {
+		timings.push({ name: 'decode-exr-pack', durationMs: result.timing_pack_ms });
+	}
+
+	phaseStart = now;
+	const data = result.take_data_as_f32();
+	now = performance.now();
+	timings.push({ name: 'decode-exr-to-f32', durationMs: now - phaseStart });
+
+	const channelNames = String(result.channel_names_csv || '').split(',').filter(Boolean);
+	const displayedChannels = String(result.displayed_channels_csv || '').split(',').filter(Boolean);
+	return {
+		width: result.width,
+		height: result.height,
+		data,
+		format: result.format,
+		type: result.data_type,
+		channelNames,
+		displayedChannels,
+		shape: [result.width, result.height],
+		decodedWith: 'rust-exr-wasm (worker)',
+		decodeTimings: timings,
+	};
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodeExrParseExr(buffer, wasmError = '') {
+	const phaseStart = performance.now();
+	// FloatType (1015): decoded Float32Array values, matching exr-processor.
+	// @ts-ignore — parseExr is attached to the (shimmed) window by parse-exr.js
+	const result = globalThis.parseExr(buffer, 1015);
+	result.decodedWith = 'parse-exr.js (worker)';
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
+	result.decodeTimings = [{ name: 'decode-exr-parse-exr', durationMs: performance.now() - phaseStart }];
+	return result;
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodeExr(buffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodeExrWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM EXR decode failed');
+		console.warn('[DecodeWorker] EXR WASM decode failed, using parse-exr in worker:', message);
+		return decodeExrParseExr(buffer, message);
+	}
+}
+
+/**
  * @param {string} format
  * @param {ArrayBuffer} buffer
  */
@@ -274,9 +345,7 @@ async function decodeFormat(format, buffer) {
 		case 'tiff':
 			return decodeTiff(buffer);
 		case 'exr':
-			// FloatType (1015): decoded Float32Array values, matching exr-processor.
-			// @ts-ignore — parseExr is attached to the (shimmed) window by parse-exr.js
-			return globalThis.parseExr(buffer, 1015);
+			return decodeExr(buffer);
 		case 'npy': {
 			const view = new DataView(buffer);
 			// NPZ (ZIP) signature 0x04034b50

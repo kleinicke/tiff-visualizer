@@ -125,22 +125,6 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 /**
- * Decode a TIFF file from an ArrayBuffer
- * Returns TiffResult with image data and metadata
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
  * Decode a TIFF file without eagerly computing min/max statistics.
  *
  * The webview render path computes stats lazily when a non-gamma mode needs
@@ -158,6 +142,159 @@ export function decode_tiff_fast(data) {
     }
     return TiffResult.__wrap(ret[0]);
 }
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a TIFF file from an ArrayBuffer
+ * Returns TiffResult with image data and metadata
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+const ExrResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_exrresult_free(ptr >>> 0, 1));
+
+export class ExrResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ExrResult.prototype);
+        obj.__wbg_ptr = ptr;
+        ExrResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ExrResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_exrresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_pack_ms() {
+        const ret = wasm.exrresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_read_ms() {
+        const ret = wasm.exrresult_timing_read_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_total_ms() {
+        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_data_as_f32() {
+        const ret = wasm.exrresult_take_data_as_f32(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get channel_names_csv() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.exrresult_channel_names_csv(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    get displayed_channels_csv() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.exrresult_displayed_channels_csv(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.exrresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get format() {
+        const ret = wasm.exrresult_format(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.exrresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_type() {
+        const ret = wasm.exrresult_data_type(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) ExrResult.prototype[Symbol.dispose] = ExrResult.prototype.free;
 
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -375,7 +512,7 @@ export class TiffResult {
      * @returns {number}
      */
     get min_value() {
-        const ret = wasm.tiffresult_min_value(this.__wbg_ptr);
+        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
         return ret;
     }
     /**
