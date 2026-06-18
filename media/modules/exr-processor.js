@@ -198,7 +198,7 @@ export class ExrProcessor {
 		// Calculate stats if needed (for auto-normalize or just to have them)
 		/** @type {{min: number, max: number} | undefined} */
 		let stats = this._cachedStats;
-		if (!stats && !isGammaMode) {
+		if (!stats && NormalizationHelper.needsStats(settings)) {
 			stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
 			this._cachedStats = stats;
 
@@ -235,6 +235,7 @@ export class ExrProcessor {
 				typeMax: 1.0,
 				settings,
 				nanColor,
+				channels,
 				flipY: true
 			});
 			if (rendered) {

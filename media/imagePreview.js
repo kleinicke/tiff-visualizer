@@ -93,6 +93,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 
+	function disposeWebglRenderers() {
+		for (const p of allProcessors) {
+			if (p?._webglRenderer && typeof p._webglRenderer.dispose === 'function') {
+				p._webglRenderer.dispose();
+			}
+		}
+	}
+
 	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
@@ -407,6 +415,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		imageElement = null;
 		primaryImageData = null;
 		peerImageData = null;
+		disposeWebglRenderers();
 
 		// Reset each processor's initial-load flag so the reload re-sends
 		// formatInfo (refreshing currentFormatInfo and per-format settings).
@@ -2085,6 +2094,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (webImageProcessor) webImageProcessor._lastRaw = null;
 		if (jxlProcessor) jxlProcessor._lastRaw = null;
 		if (rawProcessor) rawProcessor._lastRaw = null;
+		disposeWebglRenderers();
 	}
 
 	/**
@@ -3144,6 +3154,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
+		disposeWebglRenderers();
 
 		// Reset each processor's initial-load flag so they re-send formatInfo and
 		// trigger the extension to apply the correct per-format settings for the

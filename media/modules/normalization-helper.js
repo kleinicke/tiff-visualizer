@@ -56,6 +56,16 @@ export class NormalizationHelper {
     }
 
     /**
+     * Whether rendering needs exact data min/max for the current settings.
+     * Manual range and gamma-mode renders can use their configured/full range
+     * without scanning the image first.
+     * @param {ImageSettings} settings
+     */
+    static needsStats(settings) {
+        return !settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false;
+    }
+
+    /**
      * Apply gamma and brightness corrections to a normalized value (0-1).
      * @param {number} normalized - Value in range 0-1
      * @param {ImageSettings} settings - Settings object with gamma and brightness
@@ -211,12 +221,24 @@ export class ImageStatsCalculator {
         let maxVal = -Infinity;
 
         const len = width * height;
-        for (let i = 0; i < len; i++) {
-            for (let c = 0; c < Math.min(channels, 3); c++) {
-                const val = data[i * channels + c];
-                if (Number.isFinite(val)) {
+        if (channels === 1) {
+            for (let i = 0; i < len; i++) {
+                const val = data[i];
+                if (val === val && val !== Infinity && val !== -Infinity) {
                     if (val < minVal) minVal = val;
                     if (val > maxVal) maxVal = val;
+                }
+            }
+        } else {
+            const scanChannels = Math.min(channels, 3);
+            for (let i = 0; i < len; i++) {
+                const base = i * channels;
+                for (let c = 0; c < scanChannels; c++) {
+                    const val = data[base + c];
+                    if (val === val && val !== Infinity && val !== -Infinity) {
+                        if (val < minVal) minVal = val;
+                        if (val > maxVal) maxVal = val;
+                    }
                 }
             }
         }
@@ -246,10 +268,18 @@ export class ImageStatsCalculator {
                 if (val24 < minVal) minVal = val24;
                 if (val24 > maxVal) maxVal = val24;
             }
-        } else {
+        } else if (channels === 1) {
             for (let i = 0; i < len; i++) {
-                for (let c = 0; c < Math.min(channels, 3); c++) {
-                    const val = data[i * channels + c];
+                const val = data[i];
+                if (val < minVal) minVal = val;
+                if (val > maxVal) maxVal = val;
+            }
+        } else {
+            const scanChannels = Math.min(channels, 3);
+            for (let i = 0; i < len; i++) {
+                const base = i * channels;
+                for (let c = 0; c < scanChannels; c++) {
+                    const val = data[base + c];
                     if (val < minVal) minVal = val;
                     if (val > maxVal) maxVal = val;
                 }

@@ -3,6 +3,7 @@
 
 import { NormalizationHelper } from './normalization-helper.js';
 import { PerfTrace } from './perf-trace.js';
+import { getColormapLut } from './colormaps.js';
 
 /**
  * Small WebGL2 renderer for the hot scientific-image path:
@@ -21,13 +22,18 @@ export class WebGL2FloatRenderer {
 		this.program = null;
 		/** @type {WebGLTexture|null} */
 		this.texture = null;
+		/** @type {WebGLTexture|null} */
+		this.colormapTexture = null;
 		/** @type {WebGLVertexArrayObject|null} */
 		this.vao = null;
 		/** @type {Float32Array|null} */
 		this.textureData = null;
+		this.textureFormat = '';
+		this.colormapName = '';
 		this.textureWidth = 0;
 		this.textureHeight = 0;
 		this.failed = false;
+		this.rgb32fFailed = false;
 	}
 
 	/**
@@ -35,17 +41,18 @@ export class WebGL2FloatRenderer {
 	 */
 	canRender(params) {
 		if (this.failed) { return false; }
-		if (params.channels !== 1 || !params.isFloat) { return false; }
+		if (!params.isFloat) { return false; }
 		if (!ArrayBuffer.isView(params.data) || params.data.BYTES_PER_ELEMENT !== 4) { return false; }
 		if (params.hasEnabledMasks) { return false; }
-		if (params.settings?.rgbAs24BitGrayscale) { return false; }
-		if (params.settings?.displayColormap && params.settings.displayColormap !== 'none') { return false; }
+		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && params.channels === 3 && !this.rgb32fFailed;
+		const wantsScalar = params.channels === 1;
+		if (!wantsScalar && !wantsRgb24) { return false; }
 		return typeof WebGL2RenderingContext !== 'undefined';
 	}
 
 	/**
 	 * @param {HTMLCanvasElement} canvas
-	 * @param {{data: Float32Array, width: number, height: number, min: number, max: number, typeMax: number, settings: any, nanColor: {r:number,g:number,b:number}, flipY?: boolean}} params
+	 * @param {{data: Float32Array, width: number, height: number, channels?: number, min: number, max: number, typeMax: number, settings: any, nanColor: {r:number,g:number,b:number}, flipY?: boolean}} params
 	 * @returns {boolean} true when WebGL rendered the canvas
 	 */
 	render(canvas, params) {
@@ -62,11 +69,17 @@ export class WebGL2FloatRenderer {
 				canvas.height = params.height;
 			}
 
-			this._uploadTextureIfNeeded(params.data, params.width, params.height);
+			this._uploadTextureIfNeeded(params.data, params.width, params.height, params.settings?.rgbAs24BitGrayscale && params.channels >= 3 ? 'rgb32f' : 'r32f');
+			this._uploadColormapIfNeeded(params.settings?.displayColormap || 'none');
 			this._draw(params);
 			PerfTrace.mark('render-webgl');
 			return true;
 		} catch (error) {
+			if (params.settings?.rgbAs24BitGrayscale && params.channels === 3) {
+				this.rgb32fFailed = true;
+				console.warn('[WebGL2FloatRenderer] Disabled RGB24 GPU path after render failure:', error);
+				return false;
+			}
 			this.failed = true;
 			console.warn('[WebGL2FloatRenderer] Disabled after render failure:', error);
 			return false;
@@ -77,6 +90,7 @@ export class WebGL2FloatRenderer {
 		const gl = this.gl;
 		if (gl) {
 			if (this.texture) { gl.deleteTexture(this.texture); }
+			if (this.colormapTexture) { gl.deleteTexture(this.colormapTexture); }
 			if (this.program) { gl.deleteProgram(this.program); }
 			if (this.vao) { gl.deleteVertexArray(this.vao); }
 		}
@@ -84,8 +98,11 @@ export class WebGL2FloatRenderer {
 		this.gl = null;
 		this.program = null;
 		this.texture = null;
+		this.colormapTexture = null;
 		this.vao = null;
 		this.textureData = null;
+		this.textureFormat = '';
+		this.colormapName = '';
 		this.textureWidth = 0;
 		this.textureHeight = 0;
 	}
@@ -112,7 +129,8 @@ export class WebGL2FloatRenderer {
 		const program = this._createProgram(gl);
 		const vao = gl.createVertexArray();
 		const texture = gl.createTexture();
-		if (!program || !vao || !texture) {
+		const colormapTexture = gl.createTexture();
+		if (!program || !vao || !texture || !colormapTexture) {
 			this.failed = true;
 			return false;
 		}
@@ -140,10 +158,17 @@ export class WebGL2FloatRenderer {
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
+		gl.bindTexture(gl.TEXTURE_2D, colormapTexture);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
 		this.canvas = canvas;
 		this.gl = gl;
 		this.program = program;
 		this.texture = texture;
+		this.colormapTexture = colormapTexture;
 		this.vao = vao;
 		return true;
 	}
@@ -152,17 +177,22 @@ export class WebGL2FloatRenderer {
 	 * @param {Float32Array} data
 	 * @param {number} width
 	 * @param {number} height
+	 * @param {'r32f'|'rgb32f'} textureFormat
 	 */
-	_uploadTextureIfNeeded(data, width, height) {
+	_uploadTextureIfNeeded(data, width, height, textureFormat) {
 		const gl = /** @type {WebGL2RenderingContext} */ (this.gl);
-		if (this.textureData === data && this.textureWidth === width && this.textureHeight === height) {
+		if (this.textureData === data && this.textureWidth === width && this.textureHeight === height && this.textureFormat === textureFormat) {
 			PerfTrace.detail('webgl-texture-upload-skipped', 0);
 			return;
 		}
 		const start = performance.now();
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
+		if (textureFormat === 'rgb32f') {
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB32F, width, height, 0, gl.RGB, gl.FLOAT, data);
+		} else {
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
+		}
 		const error = gl.getError();
 		if (error !== gl.NO_ERROR) {
 			throw new Error(`Float texture upload failed: WebGL error ${error}`);
@@ -170,20 +200,56 @@ export class WebGL2FloatRenderer {
 		this.textureData = data;
 		this.textureWidth = width;
 		this.textureHeight = height;
+		this.textureFormat = textureFormat;
 		PerfTrace.mark('webgl-texture-upload');
 		console.log(`[WebGL2] Float texture upload took ${(performance.now() - start).toFixed(2)}ms`);
 	}
 
-	/** @param {{min:number,max:number,typeMax:number,settings:any,nanColor:{r:number,g:number,b:number}}} params */
+	/** @param {string} colormapName */
+	_uploadColormapIfNeeded(colormapName) {
+		if (!colormapName || colormapName === 'none') {
+			this.colormapName = 'none';
+			return;
+		}
+		if (this.colormapName === colormapName) { return; }
+		const lut = getColormapLut(colormapName);
+		if (!lut) {
+			this.colormapName = 'none';
+			return;
+		}
+		const gl = /** @type {WebGL2RenderingContext} */ (this.gl);
+		gl.activeTexture(gl.TEXTURE1);
+		gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture);
+		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, 256, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, lut);
+		const error = gl.getError();
+		if (error !== gl.NO_ERROR) {
+			throw new Error(`Colormap texture upload failed: WebGL error ${error}`);
+		}
+		this.colormapName = colormapName;
+	}
+
+	/** @param {{min:number,max:number,typeMax:number,settings:any,nanColor:{r:number,g:number,b:number},channels?:number}} params */
 	_draw(params) {
 		const gl = /** @type {WebGL2RenderingContext} */ (this.gl);
 		const program = /** @type {WebGLProgram} */ (this.program);
 		const settings = params.settings || {};
 		const isGammaMode = settings.normalization?.gammaMode || false;
 		const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
-		let displayMin = params.min;
-		let displayMax = params.max;
+		const stats = Number.isFinite(params.min) && Number.isFinite(params.max)
+			? { min: params.min, max: params.max }
+			: null;
+		let displayMin;
+		let displayMax;
 		let gammaExponent = 1.0;
+		if (isGammaMode && isIdentity) {
+			displayMin = 0;
+			displayMax = params.typeMax;
+		} else {
+			const range = NormalizationHelper.getNormalizationRange(settings, stats, params.typeMax, true);
+			displayMin = range.min;
+			displayMax = range.max;
+		}
 		if (isGammaMode && !isIdentity) {
 			const range = NormalizationHelper.getEffectiveVisualizationRange(settings, 0, params.typeMax);
 			displayMin = range.min;
@@ -200,10 +266,16 @@ export class WebGL2FloatRenderer {
 		gl.activeTexture(gl.TEXTURE0);
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.uniform1i(gl.getUniformLocation(program, 'u_data'), 0);
+		gl.activeTexture(gl.TEXTURE1);
+		gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture);
+		gl.uniform1i(gl.getUniformLocation(program, 'u_colormap'), 1);
 		gl.uniform1f(gl.getUniformLocation(program, 'u_min'), displayMin);
 		gl.uniform1f(gl.getUniformLocation(program, 'u_invRange'), range > 0 ? 1.0 / range : 0.0);
 		gl.uniform1f(gl.getUniformLocation(program, 'u_gammaExponent'), gammaExponent);
 		gl.uniform1i(gl.getUniformLocation(program, 'u_flipY'), params.flipY ? 1 : 0);
+		gl.uniform1i(gl.getUniformLocation(program, 'u_renderMode'), settings.rgbAs24BitGrayscale && (params.channels || 1) >= 3 ? 2 : 0);
+		gl.uniform1i(gl.getUniformLocation(program, 'u_useColormap'), !!settings.displayColormap && settings.displayColormap !== 'none' ? 1 : 0);
+		gl.uniform1f(gl.getUniformLocation(program, 'u_rgb24ChannelDivisor'), params.typeMax > 255 ? 257.0 : 1.0);
 		gl.uniform3f(
 			gl.getUniformLocation(program, 'u_nanColor'),
 			params.nanColor.r / 255,
@@ -231,23 +303,49 @@ void main() {
 precision highp float;
 precision highp sampler2D;
 uniform sampler2D u_data;
+uniform sampler2D u_colormap;
 uniform float u_min;
 uniform float u_invRange;
 uniform float u_gammaExponent;
+uniform float u_rgb24ChannelDivisor;
 uniform bool u_flipY;
+uniform int u_renderMode;
+uniform bool u_useColormap;
 uniform vec3 u_nanColor;
 in vec2 v_texCoord;
 out vec4 outColor;
+float applyGamma(float value) {
+	float normalized = clamp((value - u_min) * u_invRange, 0.0, 1.0);
+	if (abs(u_gammaExponent - 1.0) > 0.0001) {
+		normalized = pow(normalized, u_gammaExponent);
+	}
+	return normalized;
+}
 void main() {
 	vec2 texCoord = u_flipY ? vec2(v_texCoord.x, 1.0 - v_texCoord.y) : v_texCoord;
-	float value = texture(u_data, texCoord).r;
+	vec4 sampleValue = texture(u_data, texCoord);
+	if (u_renderMode == 2) {
+		if (isnan(sampleValue.r) || isinf(sampleValue.r) || isnan(sampleValue.g) || isinf(sampleValue.g) || isnan(sampleValue.b) || isinf(sampleValue.b)) {
+			outColor = vec4(u_nanColor, 1.0);
+			return;
+		}
+		float r8 = floor(clamp(sampleValue.r / u_rgb24ChannelDivisor, 0.0, 255.0) + 0.5);
+		float g8 = floor(clamp(sampleValue.g / u_rgb24ChannelDivisor, 0.0, 255.0) + 0.5);
+		float b8 = floor(clamp(sampleValue.b / u_rgb24ChannelDivisor, 0.0, 255.0) + 0.5);
+		float value24 = r8 * 65536.0 + g8 * 256.0 + b8;
+		float gray = applyGamma(value24);
+		outColor = vec4(vec3(gray), 1.0);
+		return;
+	}
+	float value = sampleValue.r;
 	if (isnan(value) || isinf(value)) {
 		outColor = vec4(u_nanColor, 1.0);
 		return;
 	}
-	float normalized = clamp((value - u_min) * u_invRange, 0.0, 1.0);
-	if (abs(u_gammaExponent - 1.0) > 0.0001) {
-		normalized = pow(normalized, u_gammaExponent);
+	float normalized = applyGamma(value);
+	if (u_useColormap) {
+		outColor = vec4(texture(u_colormap, vec2(normalized, 0.5)).rgb, 1.0);
+		return;
 	}
 	outColor = vec4(vec3(normalized), 1.0);
 }`);

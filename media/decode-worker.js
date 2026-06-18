@@ -286,7 +286,7 @@ async function decodeFormat(format, buffer) {
 			return npyParser._parseNpy(buffer);
 		}
 		case 'pfm':
-			return pfmParser._parsePfm(buffer);
+			return pfmParser._parsePfm(buffer, { topDown: true });
 		case 'ppm':
 			return ppmParser._parsePpm(buffer);
 		case 'png16':

@@ -571,7 +571,7 @@ export class TiffProcessor {
 		let stats = this._lastStatistics;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
-		if (!stats && !isGammaMode) {
+		if (!stats && NormalizationHelper.needsStats(settings)) {
 			if (isFloat) {
 				// Use centralized float stats calculator
 				// We need to interleave data for the calculator if it's planar
@@ -599,28 +599,28 @@ export class TiffProcessor {
 				// Use the first 3 channels to determine the image stats
 				if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
 					// Calculate min/max of combined 24-bit values
+					const r0 = rastersCopy[0];
+					const r1 = rastersCopy[1];
+					const r2 = rastersCopy[2];
 					for (let j = 0; j < rastersCopy[0].length; j++) {
-						const values = [];
-						for (let i = 0; i < 3; i++) {
-							const value = rastersCopy[i][j];
-							if (!isNaN(value) && isFinite(value)) {
-								values.push(Math.round(Math.max(0, Math.min(255, value))));
-							} else {
-								values.push(0);
-							}
-						}
-						const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-						min = Math.min(min, combined24bit);
-						max = Math.max(max, combined24bit);
+						const rv = r0[j], gv = r1[j], bv = r2[j];
+						const r = (rv === rv && rv !== Infinity && rv !== -Infinity) ? Math.round(Math.max(0, Math.min(255, rv))) : 0;
+						const g = (gv === gv && gv !== Infinity && gv !== -Infinity) ? Math.round(Math.max(0, Math.min(255, gv))) : 0;
+						const b = (bv === bv && bv !== Infinity && bv !== -Infinity) ? Math.round(Math.max(0, Math.min(255, bv))) : 0;
+						const combined24bit = (r << 16) | (g << 8) | b;
+						if (combined24bit < min) min = combined24bit;
+						if (combined24bit > max) max = combined24bit;
 					}
 				} else {
 					// Normal mode: use individual channel values
-					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-						for (let j = 0; j < rastersCopy[i].length; j++) {
-							const value = rastersCopy[i][j];
-							if (!isNaN(value) && isFinite(value)) {
-								min = Math.min(min, value);
-								max = Math.max(max, value);
+					const scanChannels = Math.min(rastersCopy.length, 3);
+					for (let i = 0; i < scanChannels; i++) {
+						const raster = rastersCopy[i];
+						for (let j = 0; j < raster.length; j++) {
+							const value = raster[j];
+							if (value === value && value !== Infinity && value !== -Infinity) {
+								if (value < min) min = value;
+								if (value > max) max = value;
 							}
 						}
 					}
@@ -634,23 +634,26 @@ export class TiffProcessor {
 
 				if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
 					// Same 24-bit logic
+					const r0 = rastersCopy[0];
+					const r1 = rastersCopy[1];
+					const r2 = rastersCopy[2];
 					for (let j = 0; j < rastersCopy[0].length; j++) {
-						const values = [];
-						for (let i = 0; i < 3; i++) {
-							const value = rastersCopy[i][j];
-							values.push(Math.round(Math.max(0, Math.min(255, value))));
-						}
-						const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-						min = Math.min(min, combined24bit);
-						max = Math.max(max, combined24bit);
+						const r = Math.round(Math.max(0, Math.min(255, r0[j])));
+						const g = Math.round(Math.max(0, Math.min(255, r1[j])));
+						const b = Math.round(Math.max(0, Math.min(255, r2[j])));
+						const combined24bit = (r << 16) | (g << 8) | b;
+						if (combined24bit < min) min = combined24bit;
+						if (combined24bit > max) max = combined24bit;
 					}
 				} else {
-					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-						for (let j = 0; j < rastersCopy[i].length; j++) {
-							const value = rastersCopy[i][j];
-							if (!isNaN(value) && isFinite(value)) {
-								min = Math.min(min, value);
-								max = Math.max(max, value);
+					const scanChannels = Math.min(rastersCopy.length, 3);
+					for (let i = 0; i < scanChannels; i++) {
+						const raster = rastersCopy[i];
+						for (let j = 0; j < raster.length; j++) {
+							const value = raster[j];
+							if (value === value && value !== Infinity && value !== -Infinity) {
+								if (value < min) min = value;
+								if (value > max) max = value;
 							}
 						}
 					}
@@ -737,7 +740,8 @@ export class TiffProcessor {
 				max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
 				typeMax,
 				settings,
-				nanColor
+				nanColor,
+				channels
 			});
 			if (rendered) {
 				this._lastRenderUsedWebGL = true;

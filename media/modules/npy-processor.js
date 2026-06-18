@@ -261,7 +261,7 @@ export class NpyProcessor {
         }
         let stats = this._cachedStats;
 
-        if (!stats && !isGammaMode) {
+        if (!stats && NormalizationHelper.needsStats(settings)) {
             if (isFloat) {
                 stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             } else {
@@ -303,7 +303,8 @@ export class NpyProcessor {
                 max: (stats && Number.isFinite(stats.max)) ? stats.max : effectiveTypeMax,
                 typeMax: effectiveTypeMax,
                 settings,
-                nanColor
+                nanColor,
+                channels
             });
             if (rendered) {
                 this._lastRenderUsedWebGL = true;
