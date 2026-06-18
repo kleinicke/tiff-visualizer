@@ -7,7 +7,7 @@ import { PerfTrace } from './perf-trace.js';
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
 /** @typedef {{r: Uint32Array, g: Uint32Array, b: Uint32Array, luminance: Uint32Array, nanCount: number, stats: {r: {minBin:number,maxBin:number,meanBin:number,total:number}, g: {minBin:number,maxBin:number,meanBin:number,total:number}, b: {minBin:number,maxBin:number,meanBin:number,total:number}, luminance: {minBin:number,maxBin:number,meanBin:number,total:number}}}} HistogramData */
-/** @typedef {{rawData?: ArrayLike<number>|null, planarData?: ArrayLike<number>[]|null, channels?: number, settings?: ImageSettings, isFloat?: boolean, typeMax?: number, stats?: {min:number,max:number}|null, lut?: Uint8Array|null}} HistogramOptions */
+/** @typedef {{rawData?: ArrayLike<number>|null, planarData?: ArrayLike<number>[]|null, channels?: number, settings?: ImageSettings, isFloat?: boolean, typeMax?: number, stats?: {min:number,max:number}|null, lut?: Uint8Array|null, sampleStep?: number}} HistogramOptions */
 
 /**
  * Histogram Overlay Module
@@ -433,6 +433,7 @@ export class HistogramOverlay {
 		if (!imageData && !options.rawData && !options.planarData) return null;
 
 		const startTime = performance.now();
+		const sampleStep = Math.max(1, Math.floor(options.sampleStep || 1));
 
 		// Use TypedArrays for bins (much faster than regular arrays)
 		const histR = new Uint32Array(256);
@@ -514,7 +515,7 @@ export class HistogramOverlay {
 				if (grayData) {
 					const len = grayData.length;
 					if (useIntegerLUT) {
-						for (let i = 0; i < len; i++) {
+						for (let i = 0; i < len; i += sampleStep) {
 							const value = grayData[i];
 							if (!Number.isFinite(value)) { nanCount++; continue; }
 							histR[safeLut[Math.max(0, Math.min(intTypeMax, value | 0))]]++;
@@ -524,7 +525,7 @@ export class HistogramOverlay {
 							origCountR++;
 						}
 					} else if (useFloatLUT) {
-						for (let i = 0; i < len; i++) {
+						for (let i = 0; i < len; i += sampleStep) {
 							const value = grayData[i];
 							if (!Number.isFinite(value)) { nanCount++; continue; }
 							const lutIdx = Math.max(0, Math.min(65535, ((value - normMin) * floatToLutScale) | 0));
@@ -535,7 +536,7 @@ export class HistogramOverlay {
 							origCountR++;
 						}
 					} else {
-						for (let i = 0; i < len; i++) {
+						for (let i = 0; i < len; i += sampleStep) {
 							const value = grayData[i];
 							if (!Number.isFinite(value)) { nanCount++; continue; }
 							const bin = Math.max(0, Math.min(255, ((value - normMin) * invRange * 255) | 0));
@@ -557,7 +558,7 @@ export class HistogramOverlay {
 
 				if (useIntegerLUT) {
 					// Fast path: integer data with LUT - process ALL pixels
-				for (let i = 0; i < len; i++) {
+				for (let i = 0; i < len; i += sampleStep) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
@@ -579,7 +580,7 @@ export class HistogramOverlay {
 					}
 				} else if (useFloatLUT) {
 					// Float data with LUT - quantize to 16-bit and lookup
-					for (let i = 0; i < len; i++) {
+					for (let i = 0; i < len; i += sampleStep) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
@@ -606,7 +607,7 @@ export class HistogramOverlay {
 				}
 			} else {
 					// Non-gamma mode (no transformation needed) - process ALL pixels
-					for (let i = 0; i < len; i++) {
+					for (let i = 0; i < len; i += sampleStep) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
@@ -637,7 +638,7 @@ export class HistogramOverlay {
 
 				if (useIntegerLUT) {
 					// Fast path with LUT - process ALL pixels
-				for (let i = 0; i < len; i += channels) {
+				for (let i = 0; i < len; i += channels * sampleStep) {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
@@ -663,7 +664,7 @@ export class HistogramOverlay {
 			}
 				} else if (useFloatLUT) {
 					// Float data with LUT - quantize and lookup
-					for (let i = 0; i < len; i += channels) {
+					for (let i = 0; i < len; i += channels * sampleStep) {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
@@ -693,7 +694,7 @@ export class HistogramOverlay {
 					}
 				} else {
 					// Non-gamma mode - just normalize to bins
-					for (let i = 0; i < len; i += channels) {
+					for (let i = 0; i < len; i += channels * sampleStep) {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
@@ -738,7 +739,7 @@ export class HistogramOverlay {
 			const len = data.length;
 			
 			// Process ALL pixels
-			for (let i = 0; i < len; i += 4) {
+			for (let i = 0; i < len; i += 4 * sampleStep) {
 				if (data[i + 3] === 0) continue;
 				const rv = data[i], gv = data[i + 1], bv = data[i + 2];
 				histR[rv]++; histG[gv]++; histB[bv]++;
@@ -755,7 +756,7 @@ export class HistogramOverlay {
 			}
 		}
 
-		PerfTrace.mark('histogram-scan');
+		PerfTrace.mark(sampleStep > 1 ? 'histogram-sampled-scan' : 'histogram-scan');
 
 		// Calculate bin-based stats
 		const calculateBinStats = (/** @type {Uint32Array} */ hist) => {
@@ -788,7 +789,7 @@ export class HistogramOverlay {
 			}
 		}
 
-		console.log(`[Histogram] ${(performance.now() - startTime).toFixed(1)}ms (${totalPixels} pixels)`);
+		console.log(`[Histogram] ${(performance.now() - startTime).toFixed(1)}ms (${totalPixels} pixels${sampleStep > 1 ? `, sampled every ${sampleStep}` : ''})`);
 		PerfTrace.mark('histogram-stats');
 
 		return {

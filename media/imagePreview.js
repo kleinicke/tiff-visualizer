@@ -165,6 +165,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 	let currentLoadFormat = '';
 	/** @type {{engine: string, durationMs: number}|null} */
 	let currentLoadDecodeInfo = null;
+	/** @type {number|null} */
+	let _deferredHistogramTimer = null;
 
 	function formatDecodeInfo() {
 		return currentLoadDecodeInfo
@@ -723,9 +725,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 			primaryImageData = result.imageData;
 			imageElement = canvas;
 
-			// Draw the processed image data to canvas
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			// Deferred float renders may use WebGL2, so don't create a 2D
+			// context for their placeholder canvases.
+			const ctx = exrProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 
@@ -760,8 +763,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			const ctx = pfmProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
@@ -794,8 +797,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			const ctx = npyProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
@@ -1603,16 +1606,31 @@ import { LayersPanel } from './modules/layers-panel.js';
 						});
 						deferredCanvasAlreadyRendered = tiffProcessor._lastRenderUsedWebGL === true;
 					} else if (npyProcessor._pendingRenderData) {
-						deferredImageData = npyProcessor.performDeferredRender();
+						deferredImageData = npyProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = npyProcessor._lastRenderUsedWebGL === true;
 					} else if (pngProcessor._pendingRenderData) {
 						deferredImageData = pngProcessor.performDeferredRender();
 						deferredCanvasAlreadyRendered = pngProcessor._lastRenderReusedOriginalImageData === true;
 					} else if (ppmProcessor._pendingRenderData) {
 						deferredImageData = ppmProcessor.performDeferredRender();
 					} else if (pfmProcessor._pendingRenderData) {
-						deferredImageData = pfmProcessor.performDeferredRender();
+						deferredImageData = pfmProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = pfmProcessor._lastRenderUsedWebGL === true;
 					} else if (exrProcessor._pendingRenderData) {
-						deferredImageData = exrProcessor.updateSettings(settingsManager.settings);
+						deferredImageData = exrProcessor.updateSettings(settingsManager.settings, {
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = exrProcessor._lastRenderUsedWebGL === true;
 					} else if (hdrProcessor._pendingRenderData) {
 						deferredImageData = hdrProcessor.performDeferredRender();
 					} else if (tgaProcessor._pendingRenderData) {
@@ -1863,6 +1881,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 			return;
 		}
 		try {
+			if (_deferredHistogramTimer !== null) {
+				clearTimeout(_deferredHistogramTimer);
+				_deferredHistogramTimer = null;
+			}
 			if (pngProcessor && pngProcessor.hasLazyNativeReadback()) {
 				const imageData = pngProcessor.renderPngWithSettings();
 				if (imageData) { primaryImageData = imageData; }
@@ -1871,6 +1893,24 @@ import { LayersPanel } from './modules/layers-panel.js';
 			if (tiffProcessor.rawTiffData && tiffProcessor._lastRenderHistogram) {
 				PerfTrace.mark('histogram-prepare');
 				histogramOverlay.updateFromPrecomputed(tiffProcessor._lastRenderHistogram);
+				PerfTrace.mark('histogram-from-render');
+				return;
+			}
+			if (exrProcessor.rawExrData && exrProcessor._lastRenderHistogram) {
+				PerfTrace.mark('histogram-prepare');
+				histogramOverlay.updateFromPrecomputed(exrProcessor._lastRenderHistogram);
+				PerfTrace.mark('histogram-from-render');
+				return;
+			}
+			if (npyProcessor._lastRaw && npyProcessor._lastRenderHistogram) {
+				PerfTrace.mark('histogram-prepare');
+				histogramOverlay.updateFromPrecomputed(npyProcessor._lastRenderHistogram);
+				PerfTrace.mark('histogram-from-render');
+				return;
+			}
+			if (pfmProcessor._lastRaw && pfmProcessor._lastRenderHistogram) {
+				PerfTrace.mark('histogram-prepare');
+				histogramOverlay.updateFromPrecomputed(pfmProcessor._lastRenderHistogram);
 				PerfTrace.mark('histogram-from-render');
 				return;
 			}
@@ -1997,6 +2037,29 @@ import { LayersPanel } from './modules/layers-panel.js';
 				imageData = readDisplayedCanvasImageData(canvas);
 				if (!imageData) return;
 				PerfTrace.mark('histogram-canvas-readback');
+			}
+
+			const rawPixelCount = histogramOptions.planarData
+				? (histogramOptions.planarData[0]?.length || 0)
+				: (histogramOptions.rawData ? Math.floor(histogramOptions.rawData.length / (histogramOptions.channels || 1)) : 0);
+			const largeRawHistogram = rawPixelCount > 4_000_000 && (histogramOptions.rawData || histogramOptions.planarData);
+			if (largeRawHistogram) {
+				const sampleStep = Math.max(2, Math.ceil(rawPixelCount / 1_000_000));
+				histogramOverlay.update(imageData, { ...histogramOptions, sampleStep });
+				const generation = _loadGeneration;
+				const runExact = () => {
+					_deferredHistogramTimer = null;
+					if (generation !== _loadGeneration || !histogramOverlay.getVisibility()) { return; }
+					try {
+						const exactStart = performance.now();
+						histogramOverlay.update(imageData, histogramOptions);
+						console.log(`[Histogram] Deferred exact update took ${(performance.now() - exactStart).toFixed(1)}ms`);
+					} catch (error) {
+						console.error('Error updating exact histogram:', error);
+					}
+				};
+				_deferredHistogramTimer = window.setTimeout(runExact, 250);
+				return;
 			}
 
 			// Update histogram overlay
@@ -2291,16 +2354,26 @@ import { LayersPanel } from './modules/layers-panel.js';
 			console.log('📄 Processing EXR update');
 			try {
 				// Re-render the EXR with current settings
-				const newImageData = exrProcessor.updateSettings(settingsManager.settings);
+				const newImageData = exrProcessor.updateSettings(settingsManager.settings, {
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
 
 				if (newImageData) {
 					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						console.log('✅ CANVAS UPDATE (EXR): Applying new ImageData to canvas');
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (exrProcessor._lastRenderUsedWebGL) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) {
+							console.log('✅ CANVAS UPDATE (EXR): Applying new ImageData to canvas');
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							updateHistogramData();
+						}
 					}
 				}
 			} catch (error) {
@@ -2334,15 +2407,25 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (primaryImageData && pfmProcessor && pfmProcessor._lastRaw) {
 			try {
 				// Re-render the PFM with current settings
-				const newImageData = pfmProcessor.renderPfmWithSettings();
+				const newImageData = pfmProcessor.renderPfmWithSettings({
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
 
 				if (newImageData) {
 					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (pfmProcessor._lastRenderUsedWebGL) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) {
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							updateHistogramData();
+						}
 					}
 				}
 			} catch (error) {
@@ -2355,15 +2438,25 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
 			try {
 				// Re-render the NPY with current settings
-				const newImageData = npyProcessor.renderNpyWithSettings();
+				const newImageData = npyProcessor.renderNpyWithSettings({
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
 
 				if (newImageData) {
 					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (npyProcessor._lastRenderUsedWebGL) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) {
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							updateHistogramData();
+						}
 					}
 				}
 			} catch (error) {

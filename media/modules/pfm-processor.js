@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
@@ -24,6 +25,9 @@ export class PfmProcessor {
         this._isInitialLoad = true; // Track if this is the first render
         /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         /** @type {DecodeWorkerClient|null} */
@@ -110,7 +114,9 @@ export class PfmProcessor {
      * @param {number} height
      * @param {number} [channels]
      */
-    _toImageDataFloat(data, width, height, channels = 1) {
+    _toImageDataFloat(data, width, height, channels = 1, renderOptions = {}) {
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
         const settings = this.settingsManager.settings;
         const isGammaMode = settings.normalization?.gammaMode || false;
 
@@ -126,8 +132,38 @@ export class PfmProcessor {
             }
         }
 
+        const nanColor = this._getNanColor(settings);
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels,
+            isFloat: true,
+            settings,
+            collectHistogram: renderOptions.collectHistogram === true
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data,
+                width,
+                height,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
+                typeMax: 1.0,
+                settings,
+                nanColor
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
+
         // Use centralized ImageRenderer
-        return ImageRenderer.render(
+        const options = {
+            nanColor,
+            collectHistogram: renderOptions.collectHistogram === true
+        };
+        const imageData = ImageRenderer.render(
             data,
             width,
             height,
@@ -135,8 +171,10 @@ export class PfmProcessor {
             true, // isFloat (float32)
             stats || { min: 0, max: 1 },
             settings,
-            { nanColor: this._getNanColor(settings) }
+            options
         );
+        this._lastRenderHistogram = options.renderHistogramResult || null;
+        return imageData;
     }
 
     /**
@@ -223,7 +261,7 @@ export class PfmProcessor {
      * Called when format-specific settings have been applied
      * @returns {ImageData|null} - The rendered image data, or null if no pending render
      */
-    performDeferredRender() {
+    performDeferredRender(renderOptions = {}) {
         if (!this._pendingRenderData) {
             return null;
         }
@@ -233,7 +271,7 @@ export class PfmProcessor {
         this._isInitialLoad = false;
 
         // Now render with the correct format-specific settings
-        const imageData = this._toImageDataFloat(displayData, width, height, channels);
+        const imageData = this._toImageDataFloat(displayData, width, height, channels, renderOptions);
 
         // Force status refresh
         this.vscode.postMessage({ type: 'refresh-status' });
@@ -245,10 +283,10 @@ export class PfmProcessor {
      * Re-render PFM with current settings (for real-time updates)
      * @returns {ImageData | null}
      */
-    renderPfmWithSettings() {
+    renderPfmWithSettings(renderOptions = {}) {
         if (!this._lastRaw) return null;
         const { width, height, data, channels } = this._lastRaw;
-        return this._toImageDataFloat(data, width, height, channels);
+        return this._toImageDataFloat(data, width, height, channels, renderOptions);
     }
 
     /**
@@ -295,4 +333,3 @@ export class PfmProcessor {
         return flipped;
     }
 }
-
