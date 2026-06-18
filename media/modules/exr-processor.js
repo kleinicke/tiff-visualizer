@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -34,6 +35,9 @@ export class ExrProcessor {
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
 		this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+		this._lastRenderHistogram = null;
+		this._lastRenderUsedWebGL = false;
+		this._webglRenderer = new WebGL2FloatRenderer();
 		/** @type {AbortSignal|undefined} */
 		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 		/** @type {DecodeWorkerClient|null} */
@@ -181,7 +185,9 @@ export class ExrProcessor {
 	 * @param {ImageSettings} settings - Current rendering settings
 	 * @returns {ImageData} - Rendered image data
 	 */
-	renderExrToCanvas(settings) {
+	renderExrToCanvas(settings, renderOptions = {}) {
+		this._lastRenderHistogram = null;
+		this._lastRenderUsedWebGL = false;
 		if (!this.rawExrData) {
 			throw new Error('No EXR data loaded');
 		}
@@ -211,11 +217,38 @@ export class ExrProcessor {
 
 		const nanColor = this._getNanColor(settings);
 
+		if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+			data,
+			width,
+			height,
+			channels,
+			isFloat: true,
+			settings,
+			collectHistogram: renderOptions.collectHistogram === true
+		})) {
+			const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+				data,
+				width,
+				height,
+				min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+				max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
+				typeMax: 1.0,
+				settings,
+				nanColor,
+				flipY: true
+			});
+			if (rendered) {
+				this._lastRenderUsedWebGL = true;
+				return renderOptions.placeholderImageData || new ImageData(width, height);
+			}
+		}
+
 		// Create options object
 		const options = {
 			nanColor: nanColor,
 			// EXR data is typically bottom-up, so we need to flip it for display
-			flipY: true
+			flipY: true,
+			collectHistogram: renderOptions.collectHistogram === true
 		};
 
 		const imageData = ImageRenderer.render(
@@ -228,6 +261,7 @@ export class ExrProcessor {
 			settings,
 			options
 		);
+		this._lastRenderHistogram = options.renderHistogramResult || null;
 
 		return imageData;
 	}
@@ -259,11 +293,10 @@ export class ExrProcessor {
 	 * @param {ImageSettings} settings - New settings
 	 * @returns {ImageData|null} - Updated image data
 	 */
-	updateSettings(settings) {
+	updateSettings(settings, renderOptions = {}) {
 		if (this._pendingRenderData && this._isInitialLoad) {
 			// First render after initial load - use pending data
-			const { width, height } = this._pendingRenderData;
-			const imageData = this.renderExrToCanvas(settings);
+			const imageData = this.renderExrToCanvas(settings, renderOptions);
 			this._isInitialLoad = false;
 			this._pendingRenderData = null;
 

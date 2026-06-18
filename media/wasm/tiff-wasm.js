@@ -189,9 +189,44 @@ export class TiffResult {
     /**
      * @returns {number}
      */
+    get tile_count() {
+        const ret = wasm.tiffresult_tile_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get tile_width() {
+        const ret = wasm.tiffresult_tile_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
     get compression() {
         const ret = wasm.tiffresult_compression(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_count() {
+        const ret = wasm.tiffresult_strip_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get tile_length() {
+        const ret = wasm.tiffresult_tile_length(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get direct_decode() {
+        const ret = wasm.tiffresult_direct_decode(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {number}
@@ -209,6 +244,13 @@ export class TiffResult {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get rows_per_strip() {
+        const ret = wasm.tiffresult_rows_per_strip(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * @returns {number}
@@ -279,6 +321,20 @@ export class TiffResult {
     get planar_configuration() {
         const ret = wasm.tiffresult_planar_configuration(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_byte_count_max() {
+        const ret = wasm.tiffresult_strip_byte_count_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_byte_count_total() {
+        const ret = wasm.tiffresult_strip_byte_count_total(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {number}

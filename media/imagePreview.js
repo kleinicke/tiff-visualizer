@@ -541,6 +541,62 @@ import { LayersPanel } from './modules/layers-panel.js';
 	}
 
 	/**
+	 * A canvas that has a WebGL context can never acquire a 2D context. When a
+	 * later operation needs CPU ImageData rendering, replace it with a fresh
+	 * canvas of the same size and styling.
+	 * @returns {CanvasRenderingContext2D|null}
+	 */
+	function ensure2dCanvasContext() {
+		if (!canvas) { return null; }
+		let ctx = canvas.getContext('2d', { willReadFrequently: true });
+		if (ctx) { return ctx; }
+
+		const replacement = document.createElement('canvas');
+		replacement.width = canvas.width;
+		replacement.height = canvas.height;
+		replacement.className = canvas.className;
+		replacement.style.cssText = canvas.style.cssText;
+		if (imageElement === canvas && canvas.parentElement) {
+			canvas.replaceWith(replacement);
+		}
+		canvas = replacement;
+		imageElement = replacement;
+		zoomController.setCanvas(canvas);
+		zoomController.setImageElement(imageElement);
+		mouseHandler.setImageElement(imageElement);
+		mouseHandler.addMouseListeners(imageElement);
+		ctx = canvas.getContext('2d', { willReadFrequently: true });
+		return ctx;
+	}
+
+	/**
+	 * Read the displayed canvas pixels from either a 2D or WebGL2-backed canvas.
+	 * WebGL readPixels is bottom-left origin, so rows are flipped into ImageData.
+	 * @param {HTMLCanvasElement} sourceCanvas
+	 * @returns {ImageData|null}
+	 */
+	function readDisplayedCanvasImageData(sourceCanvas) {
+		const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+		if (ctx) {
+			return ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+		}
+		const gl = sourceCanvas.getContext('webgl2');
+		if (!gl) { return null; }
+		const width = sourceCanvas.width;
+		const height = sourceCanvas.height;
+		const bottomUp = new Uint8Array(width * height * 4);
+		gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, bottomUp);
+		const topDown = new Uint8ClampedArray(bottomUp.length);
+		const rowBytes = width * 4;
+		for (let y = 0; y < height; y++) {
+			const src = (height - 1 - y) * rowBytes;
+			const dst = y * rowBytes;
+			topDown.set(bottomUp.subarray(src, src + rowBytes), dst);
+		}
+		return new ImageData(topDown, width, height);
+	}
+
+	/**
 	 * Setup image loading handlers
 	 */
 	function setupImageLoading() {
@@ -619,9 +675,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 			primaryImageData = result.imageData;
 			imageElement = canvas;
 
-			// Draw the processed image data to canvas
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			// Deferred TIFF renders must not create a 2D context here; doing so
+			// would prevent the later WebGL2 render path from using this canvas.
+			const ctx = tiffProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 
@@ -1129,10 +1186,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	function baseFromCanvas(name, uri) {
 		if (!canvas) { return null; }
-		const ctx = canvas.getContext('2d');
-		if (!ctx) { return null; }
 		const w = canvas.width, h = canvas.height;
-		const img = ctx.getImageData(0, 0, w, h);
+		const img = readDisplayedCanvasImageData(canvas);
+		if (!img) { return null; }
 		const data = new Float32Array(img.data.length);
 		for (let i = 0; i < img.data.length; i++) { data[i] = img.data[i]; }
 		return { data, width: w, height: h, channels: 4, isFloat: false, typeMax: 255, name, uri };
@@ -1541,8 +1597,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 					if (tiffProcessor._pendingRenderData) {
 						deferredImageData = await tiffProcessor.performDeferredRender({
-							collectHistogram: histogramOverlay.getVisibility()
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
 						});
+						deferredCanvasAlreadyRendered = tiffProcessor._lastRenderUsedWebGL === true;
 					} else if (npyProcessor._pendingRenderData) {
 						deferredImageData = npyProcessor.performDeferredRender();
 					} else if (pngProcessor._pendingRenderData) {
@@ -1567,12 +1626,15 @@ import { LayersPanel } from './modules/layers-panel.js';
 					}
 
 					if (deferredImageData) {
-						const ctx = canvas.getContext('2d', { willReadFrequently: true });
-						if (ctx) {
-							if (!deferredCanvasAlreadyRendered) {
-								await renderImageDataToCanvas(deferredImageData, ctx);
-							}
+						if (deferredCanvasAlreadyRendered) {
+							PerfTrace.mark('canvas-upload-skipped');
 							primaryImageData = deferredImageData;
+						} else {
+							const ctx = canvas.getContext('2d', { willReadFrequently: true });
+							if (ctx) {
+								await renderImageDataToCanvas(deferredImageData, ctx);
+								primaryImageData = deferredImageData;
+							}
 						}
 
 						// Canvas now has real pixels — swap out old canvas and finalize
@@ -1932,9 +1994,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 			// Get canvas image data as fallback
 			let imageData = null;
 			if (!histogramOptions.rawData && !histogramOptions.planarData) {
-				const ctx = canvas.getContext('2d', { willReadFrequently: true });
-				if (!ctx) return;
-				imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+				imageData = readDisplayedCanvasImageData(canvas);
+				if (!imageData) return;
 				PerfTrace.mark('histogram-canvas-readback');
 			}
 
@@ -1997,15 +2058,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 		}
 
 		try {
-			const ctx = canvas.getContext('2d', { willReadFrequently: true });
-			if (!ctx) {
+			const imageData = readDisplayedCanvasImageData(canvas);
+			if (!imageData) {
 				console.error('Could not get canvas context');
 				return;
 			}
 
 			// Read the displayed RGB pixels (the true colormap colors at the
 			// current display) and invert the colormap to recover scalar values.
-			const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 			const width = imageData.width;
 			const height = imageData.height;
 
@@ -2166,15 +2226,25 @@ import { LayersPanel } from './modules/layers-panel.js';
 						tiffProcessor.rawTiffData.image,
 						tiffProcessor.rawTiffData.rasters,
 						true, // skipMasks flag
-						{ collectHistogram: histogramOverlay.getVisibility() }
+						{
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						}
 					);
 
 					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx && newImageData) {
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (tiffProcessor._lastRenderUsedWebGL && newImageData) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx && newImageData) {
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							updateHistogramData();
+						}
 					}
 					return;
 				}
@@ -2183,16 +2253,26 @@ import { LayersPanel } from './modules/layers-panel.js';
 				const newImageData = await tiffProcessor.renderTiffWithSettings(
 					tiffProcessor.rawTiffData.image,
 					tiffProcessor.rawTiffData.rasters,
-					{ collectHistogram: histogramOverlay.getVisibility() }
+					{
+						collectHistogram: histogramOverlay.getVisibility(),
+						targetCanvas: canvas,
+						placeholderImageData: primaryImageData
+					}
 				);
 
 				// Update the canvas with new image data
-				const ctx = canvas.getContext('2d');
-				if (ctx && newImageData) {
-					console.log('✅ CANVAS UPDATE (TIFF slow path): Applying new ImageData to canvas');
-					await renderImageDataToCanvas(newImageData, ctx);
+				if (tiffProcessor._lastRenderUsedWebGL && newImageData) {
+					PerfTrace.mark('canvas-upload-skipped');
 					primaryImageData = newImageData;
 					updateHistogramData();
+				} else {
+					const ctx = ensure2dCanvasContext();
+					if (ctx && newImageData) {
+						console.log('✅ CANVAS UPDATE (TIFF slow path): Applying new ImageData to canvas');
+						await renderImageDataToCanvas(newImageData, ctx);
+						primaryImageData = newImageData;
+						updateHistogramData();
+					}
 				}
 				console.log('✨ Slow path complete, returning');
 				return; // Don't fall through to other processors

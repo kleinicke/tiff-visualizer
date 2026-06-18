@@ -116,6 +116,9 @@ function decodeTiffWasm(buffer) {
 	if (Number.isFinite(result.timing_pack_ms)) {
 		timings.push({ name: 'decode-rust-pack', durationMs: result.timing_pack_ms });
 	}
+	if (result.direct_decode) {
+		timings.push({ name: 'decode-rust-direct', durationMs: 1 });
+	}
 
 	phaseStart = now;
 	const width = result.width;
@@ -155,6 +158,14 @@ function decodeTiffWasm(buffer) {
 		predictor: result.predictor,
 		photometricInterpretation: result.photometric_interpretation,
 		planarConfiguration: result.planar_configuration,
+		rowsPerStrip: result.rows_per_strip,
+		stripCount: result.strip_count,
+		stripByteCountTotal: Number(result.strip_byte_count_total || 0),
+		stripByteCountMax: Number(result.strip_byte_count_max || 0),
+		tileWidth: result.tile_width,
+		tileLength: result.tile_length,
+		tileCount: result.tile_count,
+		directDecode: result.direct_decode,
 		data,
 		rasters,
 		min: result.min_value,

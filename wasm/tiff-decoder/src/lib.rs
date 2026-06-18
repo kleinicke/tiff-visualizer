@@ -25,6 +25,14 @@ pub struct TiffResult {
     predictor: u32,
     photometric_interpretation: u32,
     planar_configuration: u32,
+    rows_per_strip: u32,
+    strip_count: u32,
+    strip_byte_count_total: u64,
+    strip_byte_count_max: u64,
+    tile_width: u32,
+    tile_length: u32,
+    tile_count: u32,
+    direct_decode: bool,
     // Data stored as bytes, interpreted based on sample_format
     data: Vec<u8>,
     // Float representation used by the webview render pipeline. For float TIFFs
@@ -120,6 +128,46 @@ impl TiffResult {
     #[wasm_bindgen(getter)]
     pub fn planar_configuration(&self) -> u32 {
         self.planar_configuration
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn rows_per_strip(&self) -> u32 {
+        self.rows_per_strip
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn strip_count(&self) -> u32 {
+        self.strip_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn strip_byte_count_total(&self) -> f64 {
+        self.strip_byte_count_total as f64
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn strip_byte_count_max(&self) -> f64 {
+        self.strip_byte_count_max as f64
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn tile_width(&self) -> u32 {
+        self.tile_width
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn tile_length(&self) -> u32 {
+        self.tile_length
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn tile_count(&self) -> u32 {
+        self.tile_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn direct_decode(&self) -> bool {
+        self.direct_decode
     }
 
     /// Get raw data as bytes (for transferring to JS)
@@ -262,6 +310,17 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     let planar_configuration = decoder.get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1);
 
+    let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
+    let strip_byte_counts = decoder.get_tag_u64_vec(tiff::tags::Tag::StripByteCounts).unwrap_or_default();
+    let strip_count = strip_byte_counts.len() as u32;
+    let strip_byte_count_total = strip_byte_counts.iter().copied().sum::<u64>();
+    let strip_byte_count_max = strip_byte_counts.iter().copied().max().unwrap_or(0);
+    let tile_width = decoder.get_tag_u32(tiff::tags::Tag::TileWidth).unwrap_or(0);
+    let tile_length = decoder.get_tag_u32(tiff::tags::Tag::TileLength).unwrap_or(0);
+    let tile_count = decoder.get_tag_u64_vec(tiff::tags::Tag::TileByteCounts)
+        .map(|counts| counts.len() as u32)
+        .unwrap_or(0);
+
     // CCITT fax compressions: 2 (Modified Huffman), 3 (Group 3 / T.4) and
     // 4 (Group 4 / T.6). The tiff crate only decodes Group 4, so route all of
     // them through hayro-ccitt, which understands the TIFF encoding options.
@@ -297,8 +356,22 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     // the WASM build needs no C toolchain. The decompressed strips are rebuilt
     // into an uncompressed TIFF and handed back to the tiff crate, which still
     // performs predictor un-application and type/endianness handling.
+    let mut direct_decode = false;
     let decode_result = if compression == 50000 {
         decode_zstd(data, &mut decoder)?
+    } else if let Some(result) = try_decode_uncompressed_strips(
+        data,
+        &mut decoder,
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        planar_configuration,
+    )? {
+        direct_decode = true;
+        result
     } else {
         decoder.read_image()
             .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?
@@ -519,6 +592,14 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         predictor,
         photometric_interpretation,
         planar_configuration,
+        rows_per_strip,
+        strip_count,
+        strip_byte_count_total,
+        strip_byte_count_max,
+        tile_width,
+        tile_length,
+        tile_count,
+        direct_decode,
         data: data_bytes,
         data_f32,
         min_value: min_val,
@@ -536,6 +617,173 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     ).into());
     
     result
+}
+
+fn tiff_is_little_endian(data: &[u8]) -> Option<bool> {
+    match data.get(0..4)? {
+        b"II*\0" | b"II+\0" => Some(true),
+        b"MM\0*" | b"MM\0+" => Some(false),
+        _ => None,
+    }
+}
+
+fn try_decode_uncompressed_strips(
+    data: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    predictor: u32,
+    planar_configuration: u32,
+) -> Result<Option<DecodingResult>, JsValue> {
+    use tiff::tags::Tag;
+
+    if compression != 1 || predictor != 1 || planar_configuration != 1 {
+        return Ok(None);
+    }
+    if bits_per_sample == 0 || bits_per_sample % 8 != 0 {
+        return Ok(None);
+    }
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return Ok(None);
+    }
+
+    let little_endian = match tiff_is_little_endian(data) {
+        Some(value) => value,
+        None => return Ok(None),
+    };
+    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
+        Ok(value) if !value.is_empty() => value,
+        _ => return Ok(None),
+    };
+    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
+        Ok(value) if value.len() == offsets.len() => value,
+        _ => return Ok(None),
+    };
+
+    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .unwrap_or(1) as u32;
+    let sample_count = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|v| v.checked_mul(channels as usize))
+        .ok_or_else(|| JsValue::from_str("Direct TIFF decode: image dimensions overflow"))?;
+    let bytes_per_sample = (bits_per_sample / 8) as usize;
+    let expected_bytes = sample_count
+        .checked_mul(bytes_per_sample)
+        .ok_or_else(|| JsValue::from_str("Direct TIFF decode: raster byte count overflow"))?;
+
+    let total_available = counts.iter().try_fold(0usize, |acc, &count| {
+        acc.checked_add(count as usize)
+    }).ok_or_else(|| JsValue::from_str("Direct TIFF decode: strip byte count overflow"))?;
+    if total_available < expected_bytes {
+        return Ok(None);
+    }
+
+    let mut raster = Vec::with_capacity(expected_bytes);
+    for (&offset, &count) in offsets.iter().zip(counts.iter()) {
+        if raster.len() >= expected_bytes {
+            break;
+        }
+        let start = offset as usize;
+        let count_usize = count as usize;
+        let end = match start.checked_add(count_usize) {
+            Some(value) => value,
+            None => return Ok(None),
+        };
+        if end > data.len() {
+            return Ok(None);
+        }
+        let remaining = expected_bytes - raster.len();
+        let take = remaining.min(count_usize);
+        raster.extend_from_slice(&data[start..start + take]);
+    }
+    if raster.len() != expected_bytes {
+        return Ok(None);
+    }
+
+    let result = match (sample_format, bits_per_sample) {
+        (1, 8) => DecodingResult::U8(raster),
+        (1, 16) => {
+            let values = raster.chunks_exact(2)
+                .map(|b| {
+                    if little_endian {
+                        u16::from_le_bytes([b[0], b[1]])
+                    } else {
+                        u16::from_be_bytes([b[0], b[1]])
+                    }
+                })
+                .collect();
+            DecodingResult::U16(values)
+        }
+        (1, 32) => {
+            let values = raster.chunks_exact(4)
+                .map(|b| {
+                    if little_endian {
+                        u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                    } else {
+                        u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+                    }
+                })
+                .collect();
+            DecodingResult::U32(values)
+        }
+        (2, 8) => DecodingResult::I8(raster.into_iter().map(|v| v as i8).collect()),
+        (2, 16) => {
+            let values = raster.chunks_exact(2)
+                .map(|b| {
+                    if little_endian {
+                        i16::from_le_bytes([b[0], b[1]])
+                    } else {
+                        i16::from_be_bytes([b[0], b[1]])
+                    }
+                })
+                .collect();
+            DecodingResult::I16(values)
+        }
+        (2, 32) => {
+            let values = raster.chunks_exact(4)
+                .map(|b| {
+                    if little_endian {
+                        i32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                    } else {
+                        i32::from_be_bytes([b[0], b[1], b[2], b[3]])
+                    }
+                })
+                .collect();
+            DecodingResult::I32(values)
+        }
+        (3, 32) => {
+            let values = raster.chunks_exact(4)
+                .map(|b| {
+                    if little_endian {
+                        f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                    } else {
+                        f32::from_be_bytes([b[0], b[1], b[2], b[3]])
+                    }
+                })
+                .collect();
+            DecodingResult::F32(values)
+        }
+        (3, 64) => {
+            let values = raster.chunks_exact(8)
+                .map(|b| {
+                    if little_endian {
+                        f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+                    } else {
+                        f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+                    }
+                })
+                .collect();
+            DecodingResult::F64(values)
+        }
+        _ => return Ok(None),
+    };
+
+    Ok(Some(result))
 }
 
 /// Decode a ZSTD-compressed TIFF (compression 50000) using the pure-Rust
@@ -769,6 +1017,14 @@ fn decode_jpeg_ycbcr(
         // Data is now decoded RGB (or grayscale); report it as such.
         photometric_interpretation: if channels == 3 { 2 } else { 1 },
         planar_configuration: 1,
+        rows_per_strip: decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height),
+        strip_count: counts.len() as u32,
+        strip_byte_count_total: counts.iter().copied().sum::<u64>(),
+        strip_byte_count_max: counts.iter().copied().max().unwrap_or(0),
+        tile_width: 0,
+        tile_length: 0,
+        tile_count: 0,
+        direct_decode: false,
         data: rgb,
         data_f32: Vec::new(),
         min_value: min as f64,
@@ -878,6 +1134,13 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
     let compression = d.get_tag_u32(Tag::Compression).unwrap_or(1);
     let predictor = d.get_tag_u32(Tag::Predictor).unwrap_or(1);
     let planar = d.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
+    let rows_per_strip = d.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height);
+    let strip_byte_counts = d.get_tag_u64_vec(Tag::StripByteCounts).unwrap_or_default();
+    let tile_width = d.get_tag_u32(Tag::TileWidth).unwrap_or(0);
+    let tile_length = d.get_tag_u32(Tag::TileLength).unwrap_or(0);
+    let tile_count = d.get_tag_u64_vec(Tag::TileByteCounts)
+        .map(|counts| counts.len() as u32)
+        .unwrap_or(0);
 
     let indices: Vec<usize> = match d.read_image()
         .map_err(|e| JsValue::from_str(&format!("Palette: index decode failed: {}", e)))?
@@ -910,6 +1173,14 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
         predictor,
         photometric_interpretation: 2, // expanded to RGB
         planar_configuration: planar,
+        rows_per_strip,
+        strip_count: strip_byte_counts.len() as u32,
+        strip_byte_count_total: strip_byte_counts.iter().copied().sum::<u64>(),
+        strip_byte_count_max: strip_byte_counts.iter().copied().max().unwrap_or(0),
+        tile_width,
+        tile_length,
+        tile_count,
+        direct_decode: false,
         data: rgb,
         data_f32: Vec::new(),
         min_value: min as f64,
@@ -1055,6 +1326,14 @@ fn decode_ccitt(
         predictor,
         photometric_interpretation,
         planar_configuration,
+        rows_per_strip,
+        strip_count: counts.len() as u32,
+        strip_byte_count_total: counts.iter().copied().sum::<u64>(),
+        strip_byte_count_max: counts.iter().copied().max().unwrap_or(0),
+        tile_width: 0,
+        tile_length: 0,
+        tile_count: 0,
+        direct_decode: false,
         data: pixels,
         data_f32: Vec::new(),
         min_value: min as f64,

@@ -3,6 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
 import { PerfTrace } from './perf-trace.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -40,6 +41,7 @@ export class TiffProcessor {
 		this._lastStatistics = null; // Cache min/max statistics
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
 		this._lastRenderHistogram = null; // Histogram computed during render when requested
+		this._lastRenderUsedWebGL = false; // True when the latest render drew directly to the canvas
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		/** @type {AbortSignal|undefined} */
@@ -49,6 +51,7 @@ export class TiffProcessor {
 
 		// WASM decoder
 		this._wasmProcessor = new TiffWasmProcessor();
+		this._webglRenderer = new WebGL2FloatRenderer();
 		this._wasmAvailable = false;
 		this._wasmProcessor.init().then(available => {
 			this._wasmAvailable = available;
@@ -89,6 +92,59 @@ export class TiffProcessor {
 			return { r: 255, g: 0, b: 255 }; // Fuchsia
 		} else {
 			return { r: 0, g: 0, b: 0 }; // Black (default)
+		}
+	}
+
+	/**
+	 * @param {any} source
+	 * @returns {{rowsPerStrip?: number, stripCount?: number, stripByteCountTotal?: number, stripByteCountMax?: number, tileWidth?: number, tileLength?: number, tileCount?: number, directDecode?: boolean}}
+	 */
+	_getTiffLayoutInfo(source) {
+		if (!source) { return {}; }
+		if (source.fileDirectory) {
+			const fd = source.fileDirectory;
+			const byteCounts = (Array.isArray(fd.StripByteCounts) || ArrayBuffer.isView(fd.StripByteCounts)) ? fd.StripByteCounts : [];
+			const tileCounts = (Array.isArray(fd.TileByteCounts) || ArrayBuffer.isView(fd.TileByteCounts)) ? fd.TileByteCounts : [];
+			let stripByteCountTotal = 0;
+			let stripByteCountMax = 0;
+			for (const value of byteCounts) {
+				const numeric = Number(value || 0);
+				stripByteCountTotal += numeric;
+				if (numeric > stripByteCountMax) { stripByteCountMax = numeric; }
+			}
+			return {
+				rowsPerStrip: fd.RowsPerStrip,
+				stripCount: byteCounts.length || undefined,
+				stripByteCountTotal: byteCounts.length ? stripByteCountTotal : undefined,
+				stripByteCountMax: byteCounts.length ? stripByteCountMax : undefined,
+				tileWidth: fd.TileWidth,
+				tileLength: fd.TileLength,
+				tileCount: tileCounts.length || undefined
+			};
+		}
+		return {
+			rowsPerStrip: source.rowsPerStrip,
+			stripCount: source.stripCount,
+			stripByteCountTotal: source.stripByteCountTotal,
+			stripByteCountMax: source.stripByteCountMax,
+			tileWidth: source.tileWidth,
+			tileLength: source.tileLength,
+			tileCount: source.tileCount,
+			directDecode: source.directDecode
+		};
+	}
+
+	/** @param {{rowsPerStrip?: number, stripCount?: number, stripByteCountTotal?: number, stripByteCountMax?: number, tileWidth?: number, tileLength?: number, tileCount?: number, directDecode?: boolean}} layout */
+	_logTiffLayout(layout) {
+		const parts = [];
+		if (layout.rowsPerStrip) { parts.push(`rows/strip=${layout.rowsPerStrip}`); }
+		if (layout.stripCount) { parts.push(`strips=${layout.stripCount}`); }
+		if (layout.stripByteCountMax) { parts.push(`maxStripBytes=${layout.stripByteCountMax}`); }
+		if (layout.tileCount) { parts.push(`tiles=${layout.tileCount}`); }
+		if (layout.tileWidth && layout.tileLength) { parts.push(`tile=${layout.tileWidth}x${layout.tileLength}`); }
+		if (layout.directDecode) { parts.push('direct-uncompressed-path=yes'); }
+		if (parts.length) {
+			console.log(`[TiffProcessor] TIFF layout: ${parts.join(', ')}`);
 		}
 	}
 
@@ -234,7 +290,9 @@ export class TiffProcessor {
 					const predictor = wasmResult.predictor;
 					const photometricInterpretation = wasmResult.photometricInterpretation;
 					const planarConfig = wasmResult.planarConfiguration;
+					const layoutInfo = this._getTiffLayoutInfo(wasmResult);
 					console.log(`[TiffProcessor] Using metadata from WASM: compression=${compression}, predictor=${predictor}`);
+					this._logTiffLayout(layoutInfo);
 
 					// Store TIFF data for pixel inspection and re-rendering
 					// Create a minimal image-like object for compatibility
@@ -282,6 +340,7 @@ export class TiffProcessor {
 								planarConfig,
 								samplesPerPixel,
 								bitsPerSample,
+								...layoutInfo,
 								formatType,
 								isInitialLoad: true,
 								decodedWith: wasmResult.decodedWith || 'wasm'
@@ -331,6 +390,8 @@ export class TiffProcessor {
 			const predictor = fileDir.Predictor;
 			const photometricInterpretation = fileDir.PhotometricInterpretation;
 			const planarConfig = fileDir.PlanarConfiguration;
+			const layoutInfo = this._getTiffLayoutInfo(image);
+			this._logTiffLayout(layoutInfo);
 
 			const canvas = document.createElement('canvas');
 			canvas.width = width;
@@ -407,6 +468,7 @@ export class TiffProcessor {
 						planarConfig: planarConfig,
 						samplesPerPixel: image.getSamplesPerPixel(),
 						bitsPerSample: image.getBitsPerSample(),
+						...layoutInfo,
 						formatType: formatType, // For per-format settings
 						isInitialLoad: true, // Signal that this is the first load
 						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js'
@@ -437,6 +499,7 @@ export class TiffProcessor {
 	 */
 	async renderTiffWithSettings(image, rasters, renderOptions = {}) {
 		this._lastRenderHistogram = null;
+		this._lastRenderUsedWebGL = false;
 		const settings = this.settingsManager.settings;
 		const hasEnabledMasks = !!settings.maskFilters?.some(maskFilter => maskFilter.enabled && maskFilter.maskUri);
 
@@ -653,6 +716,35 @@ export class TiffProcessor {
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
 			collectHistogram: renderOptions.collectHistogram === true
 		};
+
+		const targetCanvas = renderOptions.targetCanvas;
+		const typeMax = isFloat ? 1.0 : (bitsPerSample === 16 ? 65535 : 255);
+		if (targetCanvas && this._webglRenderer.canRender({
+			data: interleavedData,
+			width,
+			height,
+			channels,
+			isFloat,
+			hasEnabledMasks,
+			settings,
+			collectHistogram: renderOptions.collectHistogram === true
+		})) {
+			const rendered = this._webglRenderer.render(targetCanvas, {
+				data: /** @type {Float32Array} */ (interleavedData),
+				width,
+				height,
+				min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+				max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
+				typeMax,
+				settings,
+				nanColor
+			});
+			if (rendered) {
+				this._lastRenderUsedWebGL = true;
+				this._lastRenderHistogram = null;
+				return renderOptions.placeholderImageData || new ImageData(width, height);
+			}
+		}
 
 		const imageData = ImageRenderer.render(
 			interleavedData,
