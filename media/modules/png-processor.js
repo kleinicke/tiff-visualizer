@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -37,6 +38,8 @@ export class PngProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
         this._lastRenderReusedOriginalImageData = false;
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {{image: HTMLImageElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, tempCanvas?: HTMLCanvasElement, tempCtx?: CanvasRenderingContext2D | null, width: number, height: number, format: string} | null} */
         this._lazyNativeReadback = null;
         /** @type {AbortSignal|undefined} */
@@ -273,9 +276,10 @@ export class PngProcessor {
      * Render raw image data to ImageData with gamma/brightness corrections
      * @returns {ImageData}
      */
-    _renderToImageData() {
+    _renderToImageData(renderOptions = {}) {
         if (!this._lastRaw) return new ImageData(1, 1);
         this._lastRenderReusedOriginalImageData = false;
+        this._lastRenderUsedWebGL = false;
 
         const { width, height, data, channels, bitDepth, maxValue, originalImageData } = this._lastRaw;
         const settings = this.settingsManager.settings;
@@ -303,7 +307,7 @@ export class PngProcessor {
         }
         /** @type {{min:number,max:number}|undefined} */
         let stats = this._cachedStats;
-        if (!stats && !isGammaMode) {
+        if (!stats && NormalizationHelper.needsStats(settings)) {
             stats = ImageStatsCalculator.calculateIntegerStats(/** @type {any} */ (data), width, height, channels, rgbAs24BitMode);
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
@@ -314,14 +318,40 @@ export class PngProcessor {
 
         // For gamma mode, provide dummy stats (renderer uses full type range)
         if (isGammaMode && !stats) {
-            stats = { min: 0, max: maxValue };
+            stats = { min: 0, max: rgbAs24BitMode ? 16777215 : maxValue };
         }
 
         // Create options object
         const options = {
             rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale && channels >= 3,
-            typeMax: maxValue
+            typeMax: rgbAs24BitMode ? 16777215 : maxValue
         };
+        const typeMax = rgbAs24BitMode ? 16777215 : maxValue;
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels,
+            isFloat: false,
+            settings
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data: /** @type {Uint16Array} */ (data),
+                width,
+                height,
+                channels,
+                isFloat: false,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
+                typeMax,
+                settings,
+                nanColor: { r: 0, g: 0, b: 0 }
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
 
         return ImageRenderer.render(
             data,
@@ -360,9 +390,26 @@ export class PngProcessor {
         return imageData;
     }
 
-    renderPngWithSettings() {
+    /** @param {number} [maxPixels] @returns {ImageData|null} */
+    getLazyNativeHistogramImageData(maxPixels = 1_000_000) {
+        if (!this._lazyNativeReadback) return null;
+        const { image, width, height } = this._lazyNativeReadback;
+        const pixelCount = width * height;
+        const scale = pixelCount > maxPixels ? Math.sqrt(maxPixels / pixelCount) : 1;
+        const sampleWidth = Math.max(1, Math.round(width * scale));
+        const sampleHeight = Math.max(1, Math.round(height * scale));
+        const sampleCanvas = document.createElement('canvas');
+        sampleCanvas.width = sampleWidth;
+        sampleCanvas.height = sampleHeight;
+        const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+        if (!sampleCtx) return null;
+        sampleCtx.drawImage(image, 0, 0, sampleWidth, sampleHeight);
+        return sampleCtx.getImageData(0, 0, sampleWidth, sampleHeight);
+    }
+
+    renderPngWithSettings(renderOptions = {}) {
         if (!this._lastRaw && !this._ensureLazyNativeImageData()) return null;
-        return this._renderToImageData();
+        return this._renderToImageData(renderOptions);
     }
 
     /**
@@ -508,7 +555,7 @@ export class PngProcessor {
      * Called when format-specific settings have been applied
      * @returns {ImageData|null} - The rendered image data, or null if no pending render
      */
-    performDeferredRender() {
+    performDeferredRender(renderOptions = {}) {
         if (!this._pendingRenderData || !this._lastRaw) {
             return null;
         }
@@ -517,7 +564,7 @@ export class PngProcessor {
         this._isInitialLoad = false;
 
         // Render with the correct format-specific settings
-        const imageData = this._renderToImageData();
+        const imageData = this._renderToImageData(renderOptions);
 
         // Force status refresh
         this.vscode.postMessage({ type: 'refresh-status' });

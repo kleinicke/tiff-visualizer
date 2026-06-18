@@ -806,7 +806,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
-			const ctx = npyProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			const ctx = ppmProcessor._pendingRenderData ? null : canvas.getContext('2d');
 			if (ctx && primaryImageData) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
@@ -840,7 +840,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = result.displayElement || canvas;
-			const ctx = canvas.getContext('2d');
+			const ctx = pngProcessor._pendingRenderData ? null : canvas.getContext('2d');
 			if (ctx && primaryImageData && !result.canvasAlreadyRendered) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
@@ -904,7 +904,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
+			const ctx = hdrProcessor._pendingRenderData ? null : canvas.getContext('2d');
 			if (ctx) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
@@ -1221,6 +1221,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			case 'PPM/PGM': return lastRawToLayer(ppmProcessor._lastRaw, { isFloat: false, typeMax: (ppmProcessor._lastRaw && ppmProcessor._lastRaw.maxval) || 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
+			case 'HDR': return lastRawToLayer(hdrProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
 			default: return baseFromCanvas(name, uri);
 		}
 	}
@@ -1622,10 +1623,19 @@ import { LayersPanel } from './modules/layers-panel.js';
 						});
 						deferredCanvasAlreadyRendered = npyProcessor._lastRenderUsedWebGL === true;
 					} else if (pngProcessor._pendingRenderData) {
-						deferredImageData = pngProcessor.performDeferredRender();
-						deferredCanvasAlreadyRendered = pngProcessor._lastRenderReusedOriginalImageData === true;
+						deferredImageData = pngProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = pngProcessor._lastRenderReusedOriginalImageData === true || pngProcessor._lastRenderUsedWebGL === true;
 					} else if (ppmProcessor._pendingRenderData) {
-						deferredImageData = ppmProcessor.performDeferredRender();
+						deferredImageData = ppmProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = ppmProcessor._lastRenderUsedWebGL === true;
 					} else if (pfmProcessor._pendingRenderData) {
 						deferredImageData = pfmProcessor.performDeferredRender({
 							collectHistogram: histogramOverlay.getVisibility(),
@@ -1641,7 +1651,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 						});
 						deferredCanvasAlreadyRendered = exrProcessor._lastRenderUsedWebGL === true;
 					} else if (hdrProcessor._pendingRenderData) {
-						deferredImageData = hdrProcessor.performDeferredRender();
+						deferredImageData = hdrProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = hdrProcessor._lastRenderUsedWebGL === true;
 					} else if (tgaProcessor._pendingRenderData) {
 						deferredImageData = tgaProcessor.performDeferredRender();
 					} else if (webImageProcessor._pendingRenderData) {
@@ -1888,6 +1903,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 				_deferredHistogramTimer = null;
 			}
 			if (pngProcessor && pngProcessor.hasLazyNativeReadback()) {
+				const sampledImageData = pngProcessor.getLazyNativeHistogramImageData(1_000_000);
+				if (sampledImageData) {
+					PerfTrace.mark('histogram-prepare');
+					histogramOverlay.update(sampledImageData, { settings: settingsManager.settings, sampleStep: 1 });
+					return;
+				}
 				const imageData = pngProcessor.renderPngWithSettings();
 				if (imageData) { primaryImageData = imageData; }
 			}
@@ -1913,6 +1934,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 			if (pfmProcessor._lastRaw && pfmProcessor._lastRenderHistogram) {
 				PerfTrace.mark('histogram-prepare');
 				histogramOverlay.updateFromPrecomputed(pfmProcessor._lastRenderHistogram);
+				PerfTrace.mark('histogram-from-render');
+				return;
+			}
+			if (hdrProcessor._lastRaw && hdrProcessor._lastRenderHistogram) {
+				PerfTrace.mark('histogram-prepare');
+				histogramOverlay.updateFromPrecomputed(hdrProcessor._lastRenderHistogram);
 				PerfTrace.mark('histogram-from-render');
 				return;
 			}
@@ -1994,6 +2021,19 @@ import { LayersPanel } from './modules/layers-panel.js';
 				// PFM raw data (always float)
 				const { width, height, data, channels } = pfmProcessor._lastRaw;
 				const stats = pfmProcessor._cachedStats || null;
+
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels: channels,
+					isFloat: true,
+					typeMax: 1.0,
+					stats: stats
+				};
+			} else if (hdrProcessor && hdrProcessor._lastRaw) {
+				// HDR raw data (float RGBA from parse-hdr; alpha is ignored by histogram stats)
+				const { width, height, data, channels } = hdrProcessor._lastRaw;
+				const stats = hdrProcessor._cachedStats || null;
 
 				histogramOptions = {
 					...histogramOptions,
@@ -2383,16 +2423,26 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
 			try {
 				// Re-render the PGM with current settings
-				const newImageData = ppmProcessor.renderPgmWithSettings();
+				const newImageData = ppmProcessor.renderPgmWithSettings({
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
 
 				if (newImageData) {
 					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (ppmProcessor._lastRenderUsedWebGL) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
-						swapImageElementToCanvas();
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) {
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							swapImageElementToCanvas();
+							updateHistogramData();
+						}
 					}
 				}
 			} catch (error) {
@@ -2467,16 +2517,26 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (pngProcessor && (pngProcessor._lastRaw || pngProcessor.hasLazyNativeReadback())) {
 			try {
 				// Re-render the PNG with current settings
-				const newImageData = pngProcessor.renderPngWithSettings();
+				const newImageData = pngProcessor.renderPngWithSettings({
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
 
 				if (newImageData) {
 					// Update the canvas with new image data
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (pngProcessor._lastRenderUsedWebGL) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
-						swapImageElementToCanvas();
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) {
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							swapImageElementToCanvas();
+							updateHistogramData();
+						}
 					}
 				}
 			} catch (error) {
@@ -2488,13 +2548,23 @@ import { LayersPanel } from './modules/layers-panel.js';
 		// For HDR images, re-render with new settings
 		if (primaryImageData && hdrProcessor && hdrProcessor._lastRaw) {
 			try {
-				const newImageData = hdrProcessor.renderHdrWithSettings();
+				const newImageData = hdrProcessor.renderHdrWithSettings({
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
 				if (newImageData) {
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
+					if (hdrProcessor._lastRenderUsedWebGL) {
+						PerfTrace.mark('canvas-upload-skipped');
 						primaryImageData = newImageData;
 						updateHistogramData();
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) {
+							await renderImageDataToCanvas(newImageData, ctx);
+							primaryImageData = newImageData;
+							updateHistogramData();
+						}
 					}
 				}
 			} catch (error) {

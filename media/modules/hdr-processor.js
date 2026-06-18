@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import parseHdr from 'parse-hdr';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -30,6 +31,9 @@ export class HdrProcessor {
         this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined;
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         /** @type {DecodeWorkerClient|null} */
@@ -60,7 +64,7 @@ export class HdrProcessor {
         const renderChannels = 4;
 
         this._cachedStats = undefined;
-        this._lastRaw = { width, height, data, channels };
+        this._lastRaw = { width, height, data, channels: renderChannels };
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -87,12 +91,14 @@ export class HdrProcessor {
      * @param {number} renderChannels - actual data stride (4 from parse-hdr)
      * @returns {ImageData}
      */
-    _toImageDataFloat(data, width, height, renderChannels) {
+    _toImageDataFloat(data, width, height, renderChannels, renderOptions = {}) {
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
         const settings = this.settingsManager.settings;
         const isGammaMode = settings.normalization?.gammaMode || false;
 
         let stats = this._cachedStats;
-        if (!stats && !isGammaMode) {
+        if (!stats && NormalizationHelper.needsStats(settings)) {
             // Calculate stats over RGB channels only (ignore alpha at index 3)
             stats = ImageStatsCalculator.calculateFloatStats(data, width, height, renderChannels);
             this._cachedStats = stats;
@@ -100,8 +106,39 @@ export class HdrProcessor {
                 this.vscode.postMessage({ type: 'stats', value: stats });
             }
         }
+        const nanColor = this._getNanColor(settings);
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels: renderChannels,
+            isFloat: true,
+            settings
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data,
+                width,
+                height,
+                channels: renderChannels,
+                isFloat: true,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
+                typeMax: 1.0,
+                settings,
+                nanColor
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
 
-        return ImageRenderer.render(
+        const options = {
+            nanColor,
+            collectHistogram: renderOptions.collectHistogram === true
+        };
+        
+        const imageData = ImageRenderer.render(
             data,
             width,
             height,
@@ -109,8 +146,10 @@ export class HdrProcessor {
             true, // isFloat
             stats || { min: 0, max: 1 },
             settings,
-            { nanColor: this._getNanColor(settings) }
+            options
         );
+        this._lastRenderHistogram = options.renderHistogramResult || null;
+        return imageData;
     }
 
     /**
@@ -179,12 +218,12 @@ export class HdrProcessor {
     }
 
     /** @returns {ImageData|null} */
-    performDeferredRender() {
+    performDeferredRender(renderOptions = {}) {
         if (!this._pendingRenderData) return null;
         const { data, width, height, renderChannels } = this._pendingRenderData;
         this._pendingRenderData = null;
         this._isInitialLoad = false;
-        const imageData = this._toImageDataFloat(data, width, height, renderChannels);
+        const imageData = this._toImageDataFloat(data, width, height, renderChannels, renderOptions);
         if (this.vscode) {
             this.vscode.postMessage({ type: 'refresh-status' });
         }
@@ -192,9 +231,9 @@ export class HdrProcessor {
     }
 
     /** @returns {ImageData|null} */
-    renderHdrWithSettings() {
+    renderHdrWithSettings(renderOptions = {}) {
         if (!this._lastRaw) return null;
         const { width, height, data } = this._lastRaw;
-        return this._toImageDataFloat(data, width, height, 4);
+        return this._toImageDataFloat(data, width, height, 4, renderOptions);
     }
 }
