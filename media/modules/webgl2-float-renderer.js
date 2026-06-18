@@ -69,7 +69,10 @@ export class WebGL2FloatRenderer {
 	 */
 	render(canvas, params) {
 		try {
+			const setupStart = performance.now();
 			if (!this._ensureContext(canvas)) { return false; }
+			PerfTrace.mark('webgl-context-setup');
+			PerfTrace.detail('webgl-context-setup-detail', performance.now() - setupStart);
 			const gl = /** @type {WebGL2RenderingContext} */ (this.gl);
 			const maxTextureSize = /** @type {number} */ (gl.getParameter(gl.MAX_TEXTURE_SIZE));
 			if (params.width > maxTextureSize || params.height > maxTextureSize) {

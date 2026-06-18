@@ -338,6 +338,38 @@ async function decodeExr(buffer) {
 	}
 }
 
+/** @param {ArrayBuffer} buffer */
+function decodePng16(buffer) {
+	const timings = [];
+	let phaseStart = performance.now();
+	const png = UPNG.decode(buffer);
+	let now = performance.now();
+	timings.push({ name: 'decode-png16-upng', durationMs: now - phaseStart });
+	if (png.depth === 16 && png.data) {
+		phaseStart = now;
+		const uint8Data = new Uint8Array(png.data);
+		const uint16Data = new Uint16Array(uint8Data.length / 2);
+		let src = 0;
+		for (let i = 0; i < uint16Data.length; i++, src += 2) {
+			uint16Data[i] = (uint8Data[src] << 8) | uint8Data[src + 1];
+		}
+		png.decodedData = uint16Data;
+		png.data = null;
+		now = performance.now();
+		timings.push({ name: 'decode-png16-byte-swap', durationMs: now - phaseStart });
+	}
+	png.decodeTimings = timings;
+	return png;
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodePpmWorker(buffer) {
+	const start = performance.now();
+	const result = ppmParser._parsePpm(buffer);
+	result.decodeTimings = [{ name: 'decode-ppm-parse', durationMs: performance.now() - start }];
+	return result;
+}
+
 /**
  * @param {string} format
  * @param {ArrayBuffer} buffer
@@ -359,9 +391,9 @@ async function decodeFormat(format, buffer) {
 		case 'pfm':
 			return pfmParser._parsePfm(buffer, { topDown: true });
 		case 'ppm':
-			return ppmParser._parsePpm(buffer);
+			return decodePpmWorker(buffer);
 		case 'png16':
-			return UPNG.decode(buffer);
+			return decodePng16(buffer);
 		case 'hdr':
 			return parseHdr(buffer);
 		default:

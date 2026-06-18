@@ -350,7 +350,7 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
         return Err(JsValue::from_str("EXR has empty dimensions"));
     }
 
-    let channels = layer.channel_data.list;
+    let mut channels = layer.channel_data.list;
     if channels.is_empty() {
         return Err(JsValue::from_str("EXR has no flat channels"));
     }
@@ -375,20 +375,28 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
     }
 
     let output_channels = selection.source_indices.len();
-    let mut interleaved = vec![0.0f32; pixel_count * output_channels];
-    for (out_channel, source_index) in selection.source_indices.iter().enumerate() {
-        if let Some(source_index) = source_index {
-            copy_exr_channel_to_interleaved(
-                &channels[*source_index].sample_data,
-                &mut interleaved,
-                out_channel,
-                output_channels,
-                pixel_count,
-            );
-        } else {
-            fill_exr_interleaved_channel(&mut interleaved, out_channel, output_channels, pixel_count, 1.0);
+    let interleaved = if output_channels == 1 {
+        let source_index = selection.source_indices[0]
+            .ok_or_else(|| JsValue::from_str("EXR grayscale selection unexpectedly has no source channel"))?;
+        let samples = mem::replace(&mut channels[source_index].sample_data, FlatSamples::F32(Vec::new()));
+        exr_samples_into_f32_vec(samples, pixel_count)
+    } else {
+        let mut interleaved = vec![0.0f32; pixel_count * output_channels];
+        for (out_channel, source_index) in selection.source_indices.iter().enumerate() {
+            if let Some(source_index) = source_index {
+                copy_exr_channel_to_interleaved(
+                    &channels[*source_index].sample_data,
+                    &mut interleaved,
+                    out_channel,
+                    output_channels,
+                    pixel_count,
+                );
+            } else {
+                fill_exr_interleaved_channel(&mut interleaved, out_channel, output_channels, pixel_count, 1.0);
+            }
         }
-    }
+        interleaved
+    };
 
     let format = if output_channels == 1 { 1028 } else { 1023 };
     let pack_time = js_sys::Date::now() - pack_start;
@@ -497,6 +505,29 @@ fn copy_exr_channel_to_interleaved(
             for i in 0..pixel_count {
                 out[i * output_channels + out_channel] = values[i] as f32;
             }
+        }
+    }
+}
+
+fn exr_samples_into_f32_vec(samples: FlatSamples, pixel_count: usize) -> Vec<f32> {
+    match samples {
+        FlatSamples::F16(values) => {
+            let mut out = Vec::with_capacity(pixel_count);
+            for value in values.into_iter().take(pixel_count) {
+                out.push(value.to_f32());
+            }
+            out
+        }
+        FlatSamples::F32(mut values) => {
+            values.truncate(pixel_count);
+            values
+        }
+        FlatSamples::U32(values) => {
+            let mut out = Vec::with_capacity(pixel_count);
+            for value in values.into_iter().take(pixel_count) {
+                out.push(value as f32);
+            }
+            out
         }
     }
 }

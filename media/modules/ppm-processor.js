@@ -3,6 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { PerfTrace } from './perf-trace.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
@@ -228,6 +229,7 @@ export class PpmProcessor {
                 data[i] = value;
             }
         } else {
+            const parseStart = performance.now();
             // Binary format (P5/P6)
             // PPM spec: after maxval, there is exactly ONE whitespace character (usually newline),
             // then the binary data starts immediately
@@ -248,16 +250,15 @@ export class PpmProcessor {
 
             if (use16bit) {
                 // 16-bit values (big-endian as per PPM spec)
-                const dataView = new DataView(arrayBuffer, offset);
-                for (let i = 0; i < totalValues; i++) {
-                    data[i] = dataView.getUint16(i * 2, false); // false = big-endian
+                let src = offset;
+                for (let i = 0; i < totalValues; i++, src += 2) {
+                    data[i] = (uint8Array[src] << 8) | uint8Array[src + 1];
                 }
             } else {
                 // 8-bit values
-                for (let i = 0; i < totalValues; i++) {
-                    data[i] = uint8Array[offset + i];
-                }
+                data.set(uint8Array.subarray(offset, offset + expectedBytes));
             }
+            PerfTrace.detail('ppm-binary-raster-copy', performance.now() - parseStart);
         }
 
         return { width, height, channels, data, maxval, format };
@@ -502,6 +503,7 @@ export class PpmProcessor {
         this._pendingRenderData = null;
         this._isInitialLoad = false;
 
+        PerfTrace.mark('ppm-deferred-render-start');
         // Now render with the correct format-specific settings
         const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels, renderOptions);
 

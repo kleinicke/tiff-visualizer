@@ -3,6 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { PerfTrace } from './perf-trace.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -133,19 +134,22 @@ export class PngProcessor {
             } else {
                 // Use raw data - may be uint8 or uint16!
                 if (pngBitDepth === 16) {
-                    // PNG stores uint16 in big-endian format, need to swap bytes
-                    const uint8Data = new Uint8Array(png.data);
-                    const uint16Data = new Uint16Array(uint8Data.length / 2);
+                    if (png.decodedData instanceof Uint16Array) {
+                        rawData = png.decodedData;
+                    } else {
+                        const swapStart = performance.now();
+                        // PNG stores uint16 in big-endian format, need to swap bytes
+                        const uint8Data = new Uint8Array(png.data);
+                        const uint16Data = new Uint16Array(uint8Data.length / 2);
 
-                    // Swap bytes from big-endian to little-endian
-                    for (let i = 0; i < uint16Data.length; i++) {
-                        const byteIdx = i * 2;
-                        const highByte = uint8Data[byteIdx];     // MSB (big-endian)
-                        const lowByte = uint8Data[byteIdx + 1];  // LSB
-                        uint16Data[i] = (highByte << 8) | lowByte;
+                        // Swap bytes from big-endian to little-endian
+                        let src = 0;
+                        for (let i = 0; i < uint16Data.length; i++, src += 2) {
+                            uint16Data[i] = (uint8Data[src] << 8) | uint8Data[src + 1];
+                        }
+                        PerfTrace.detail('png16-main-byte-swap', performance.now() - swapStart);
+                        rawData = uint16Data;
                     }
-
-                    rawData = uint16Data;
                 } else {
                     rawData = new Uint8Array(png.data);
                 }
@@ -563,6 +567,7 @@ export class PngProcessor {
         this._pendingRenderData = null;
         this._isInitialLoad = false;
 
+        PerfTrace.mark('png-deferred-render-start');
         // Render with the correct format-specific settings
         const imageData = this._renderToImageData(renderOptions);
 
