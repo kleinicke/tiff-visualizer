@@ -865,8 +865,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			const ctx = npyProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;

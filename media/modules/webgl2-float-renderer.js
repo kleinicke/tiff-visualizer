@@ -36,7 +36,7 @@ export class WebGL2FloatRenderer {
 	canRender(params) {
 		if (this.failed) { return false; }
 		if (params.channels !== 1 || !params.isFloat) { return false; }
-		if (!(params.data instanceof Float32Array)) { return false; }
+		if (!ArrayBuffer.isView(params.data) || params.data.BYTES_PER_ELEMENT !== 4) { return false; }
 		if (params.hasEnabledMasks) { return false; }
 		if (params.settings?.rgbAs24BitGrayscale) { return false; }
 		if (params.settings?.displayColormap && params.settings.displayColormap !== 'none') { return false; }
