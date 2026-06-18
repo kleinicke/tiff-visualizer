@@ -105,6 +105,7 @@ export class ExrProcessor {
 			}
 
 			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;
+			const flipY = exrResult.flipY !== false;
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028
@@ -136,7 +137,8 @@ export class ExrProcessor {
 				type, // 1015 = Float32, 1016 = HalfFloat
 				format,
 				isFloat: true, // EXR is always floating point
-				channelNames: channelNames || [] // Original EXR channel names
+				channelNames: channelNames || [], // Original EXR channel names
+				flipY
 			};
 
 			// Send format information to VS Code BEFORE rendering
@@ -197,7 +199,7 @@ export class ExrProcessor {
 			throw new Error('No EXR data loaded');
 		}
 
-		const { width, height, data, channels } = this.rawExrData;
+		const { width, height, data, channels, flipY } = this.rawExrData;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
@@ -241,7 +243,7 @@ export class ExrProcessor {
 				settings,
 				nanColor,
 				channels,
-				flipY: true
+				flipY
 			});
 			if (rendered) {
 				this._lastRenderUsedWebGL = true;
@@ -252,8 +254,7 @@ export class ExrProcessor {
 		// Create options object
 		const options = {
 			nanColor: nanColor,
-			// EXR data is typically bottom-up, so we need to flip it for display
-			flipY: true,
+			flipY,
 			collectHistogram: renderOptions.collectHistogram === true
 		};
 
@@ -284,8 +285,7 @@ export class ExrProcessor {
 		const { width, height, data, channels } = this.rawExrData;
 		if (x < 0 || x >= width || y < 0 || y >= height) return null;
 
-		// Apply Y-flip to match rendering (EXR uses bottom-left origin, canvas uses top-left)
-		const flippedY = height - 1 - y;
+		const flippedY = this.rawExrData.flipY ? height - 1 - y : y;
 		const dataIndex = (flippedY * width + x) * channels;
 		const values = [];
 		for (let i = 0; i < channels; i++) {

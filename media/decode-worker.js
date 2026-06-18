@@ -302,6 +302,7 @@ function decodeExrWasm(buffer) {
 		channelNames,
 		displayedChannels,
 		shape: [result.width, result.height],
+		flipY: false,
 		decodedWith: 'rust-exr-wasm (worker)',
 		decodeTimings: timings,
 	};
@@ -314,6 +315,7 @@ function decodeExrParseExr(buffer, wasmError = '') {
 	// @ts-ignore — parseExr is attached to the (shimmed) window by parse-exr.js
 	const result = globalThis.parseExr(buffer, 1015);
 	result.decodedWith = 'parse-exr.js (worker)';
+	result.flipY = true;
 	if (wasmError) {
 		result.wasmFallbackReason = wasmError;
 	}

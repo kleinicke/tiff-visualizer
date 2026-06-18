@@ -359,12 +359,12 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
         .checked_mul(height)
         .ok_or_else(|| JsValue::from_str("EXR dimensions overflow"))?;
     let channel_names: Vec<String> = channels.iter().map(|channel| channel.name.to_string()).collect();
-    let selected_indices = select_exr_display_channels(&channel_names);
-    if selected_indices.is_empty() {
+    let selection = select_exr_display_channels(&channel_names);
+    if selection.source_indices.is_empty() {
         return Err(JsValue::from_str("EXR has no displayable channels"));
     }
 
-    for &index in &selected_indices {
+    for &index in selection.source_indices.iter().flatten() {
         let channel = &channels[index];
         if channel.sampling.0 != 1 || channel.sampling.1 != 1 {
             return Err(JsValue::from_str("Subsampled EXR channels are not supported by the Rust fast path"));
@@ -374,21 +374,22 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
         }
     }
 
-    let output_channels = selected_indices.len();
+    let output_channels = selection.source_indices.len();
     let mut interleaved = vec![0.0f32; pixel_count * output_channels];
-    for (out_channel, &source_index) in selected_indices.iter().enumerate() {
-        copy_exr_channel_to_interleaved(
-            &channels[source_index].sample_data,
-            &mut interleaved,
-            out_channel,
-            output_channels,
-            pixel_count,
-        );
+    for (out_channel, source_index) in selection.source_indices.iter().enumerate() {
+        if let Some(source_index) = source_index {
+            copy_exr_channel_to_interleaved(
+                &channels[*source_index].sample_data,
+                &mut interleaved,
+                out_channel,
+                output_channels,
+                pixel_count,
+            );
+        } else {
+            fill_exr_interleaved_channel(&mut interleaved, out_channel, output_channels, pixel_count, 1.0);
+        }
     }
 
-    let displayed_names: Vec<String> = selected_indices.iter()
-        .map(|&index| channel_names[index].clone())
-        .collect();
     let format = if output_channels == 1 { 1028 } else { 1023 };
     let pack_time = js_sys::Date::now() - pack_start;
     let total_time = js_sys::Date::now() - start_time;
@@ -399,7 +400,7 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
         channels: output_channels as u32,
         data_f32: interleaved,
         channel_names_csv: channel_names.join(","),
-        displayed_channels_csv: displayed_names.join(","),
+        displayed_channels_csv: selection.displayed_names.join(","),
         format,
         data_type: 1015,
         timing_read_ms: read_time,
@@ -408,46 +409,70 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
     })
 }
 
-fn select_exr_display_channels(channel_names: &[String]) -> Vec<usize> {
-    let red = find_exr_channel(channel_names, &["R", "red"]);
-    let green = find_exr_channel(channel_names, &["G", "green"]);
-    let blue = find_exr_channel(channel_names, &["B", "blue"]);
-    if let (Some(r), Some(g), Some(b)) = (red, green, blue) {
-        let mut selected = vec![r, g, b];
-        if let Some(a) = find_exr_channel(channel_names, &["A", "alpha"]) {
-            selected.push(a);
-        }
-        return selected;
-    }
-
-    for candidates in [
-        &["Y", "luma", "luminance"][..],
-        &["Z", "depth", "Depth", "distance"][..],
-        &["R", "red"][..],
-        &["G", "green"][..],
-        &["B", "blue"][..],
-    ] {
-        if let Some(index) = find_exr_channel(channel_names, candidates) {
-            return vec![index];
-        }
-    }
-
-    vec![0]
+struct ExrChannelSelection {
+    source_indices: Vec<Option<usize>>,
+    displayed_names: Vec<String>,
 }
 
-fn find_exr_channel(channel_names: &[String], candidates: &[&str]) -> Option<usize> {
-    for candidate in candidates {
-        if let Some(index) = channel_names.iter().position(|name| name == candidate) {
-            return Some(index);
+fn select_exr_display_channels(channel_names: &[String]) -> ExrChannelSelection {
+    let mut y = None;
+    let mut r = None;
+    let mut g = None;
+    let mut b = None;
+    let mut a = None;
+
+    for (index, name) in channel_names.iter().enumerate() {
+        let base = exr_base_channel_name(name);
+        match base {
+            "Y" => y.get_or_insert(index),
+            "R" => r.get_or_insert(index),
+            "G" => g.get_or_insert(index),
+            "B" => b.get_or_insert(index),
+            "A" => a.get_or_insert(index),
+            "Z" | "z" | "depth" | "Depth" | "DEPTH" => y.get_or_insert(index),
+            _ if channel_names.len() == 1 => y.get_or_insert(index),
+            _ => continue,
+        };
+    }
+
+    if let (Some(r), Some(g), Some(b)) = (r, g, b) {
+        let mut source_indices = vec![Some(r), Some(g), Some(b)];
+        let mut displayed_names = vec![
+            channel_names[r].clone(),
+            channel_names[g].clone(),
+            channel_names[b].clone(),
+        ];
+        if let Some(a) = a {
+            source_indices.push(Some(a));
+            displayed_names.push(channel_names[a].clone());
+        } else {
+            source_indices.push(None);
+        }
+        return ExrChannelSelection { source_indices, displayed_names };
+    }
+
+    if let Some(index) = y {
+        return ExrChannelSelection {
+            source_indices: vec![Some(index)],
+            displayed_names: vec![channel_names[index].clone()],
+        };
+    }
+
+    for (index, name) in channel_names.iter().enumerate() {
+        let base = exr_base_channel_name(name);
+        if base == "R" || base == "G" || base == "B" {
+            return ExrChannelSelection {
+                source_indices: vec![Some(index)],
+                displayed_names: vec![channel_names[index].clone()],
+            };
         }
     }
-    for candidate in candidates {
-        let candidate_lower = candidate.to_ascii_lowercase();
-        if let Some(index) = channel_names.iter().position(|name| name.to_ascii_lowercase() == candidate_lower) {
-            return Some(index);
-        }
-    }
-    None
+
+    ExrChannelSelection { source_indices: Vec::new(), displayed_names: Vec::new() }
+}
+
+fn exr_base_channel_name(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }
 
 fn copy_exr_channel_to_interleaved(
@@ -473,6 +498,18 @@ fn copy_exr_channel_to_interleaved(
                 out[i * output_channels + out_channel] = values[i] as f32;
             }
         }
+    }
+}
+
+fn fill_exr_interleaved_channel(
+    out: &mut [f32],
+    out_channel: usize,
+    output_channels: usize,
+    pixel_count: usize,
+    value: f32,
+) {
+    for i in 0..pixel_count {
+        out[i * output_channels + out_channel] = value;
     }
 }
 
