@@ -345,31 +345,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Load image based on file extension
 		const src = settings.src ?? '';
-		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
-			handleTiff(src);
-		} else if (resourceUri.toLowerCase().endsWith('.exr')) {
-			handleExr(src);
-		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
-			handlePfm(src);
-		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
-			handlePpm(src);
-		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
-			handlePng(src);
-		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
-			handleNpy(src);
-		} else if (resourceUri.toLowerCase().endsWith('.hdr')) {
-			handleHdr(src);
-		} else if (resourceUri.toLowerCase().endsWith('.tga')) {
-			handleTga(src);
-		} else if (resourceUri.toLowerCase().match(/\.(webp|avif|bmp|ico)$/)) {
-			handleWebImage(src);
-		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
-			handleJxl(src);
-		} else if (isRawExtension(resourceUri.toLowerCase())) {
-			handleRaw(src);
-		} else {
-			image.src = src;
-		}
+		beginDirectLoadTrace('open', resourceUri);
+		loadImageByType(src, resourceUri, _loadGeneration);
 
 		// Restore comparison state if we have peer images
 		if (peerImageUris.length > 0) {
@@ -471,31 +448,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Load image based on file extension
 		const reloadSrc = settings.src ?? '';
-		if (resourceUri.toLowerCase().endsWith('.tif') || resourceUri.toLowerCase().endsWith('.tiff')) {
-			handleTiff(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.exr')) {
-			handleExr(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.pfm')) {
-			handlePfm(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.ppm') || resourceUri.toLowerCase().endsWith('.pgm') || resourceUri.toLowerCase().endsWith('.pbm')) {
-			handlePpm(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.png') || resourceUri.toLowerCase().endsWith('.jpg') || resourceUri.toLowerCase().endsWith('.jpeg')) {
-			handlePng(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.npy') || resourceUri.toLowerCase().endsWith('.npz')) {
-			handleNpy(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.hdr')) {
-			handleHdr(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.tga')) {
-			handleTga(reloadSrc);
-		} else if (resourceUri.toLowerCase().match(/\.(webp|avif|bmp|ico)$/)) {
-			handleWebImage(reloadSrc);
-		} else if (resourceUri.toLowerCase().endsWith('.jxl')) {
-			handleJxl(reloadSrc);
-		} else if (isRawExtension(resourceUri.toLowerCase())) {
-			handleRaw(reloadSrc);
-		} else {
-			image.src = reloadSrc;
-		}
+		beginDirectLoadTrace('reload', resourceUri);
+		loadImageByType(reloadSrc, resourceUri, _loadGeneration);
 	}
 
 	/**
@@ -526,6 +480,19 @@ import { LayersPanel } from './modules/layers-panel.js';
 		console.log(message);
 		logToOutput(message);
 	});
+
+	/**
+	 * Start a detailed trace for a direct image load. Collection switches and
+	 * layer adds have their own labels; this covers initial open and reload.
+	 * @param {string} action
+	 * @param {string} resourceUri
+	 */
+	function beginDirectLoadTrace(action, resourceUri) {
+		let name = resourceUri || 'image';
+		try { name = decodeURIComponent(name.split('/').pop() || name); }
+		catch { name = name.split('/').pop() || name; }
+		PerfTrace.begin(`${action} ${name}`);
+	}
 
 	/**
 	 * Helper to render ImageData to canvas using createImageBitmap for performance
