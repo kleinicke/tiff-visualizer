@@ -110,9 +110,10 @@ export class HdrProcessor {
             }
         }
         const nanColor = this._getNanColor(settings);
-        const webglData = renderOptions.targetCanvas && settings.gpuAcceleration !== false
-            ? this._getWebglRgbData(data, width, height, renderChannels)
-            : null;
+        // HDR arrives as RGBA floats, while the WebGL renderer needs RGB.
+        // On large images the extra pack + RGB32F upload has measured slower
+        // than the CPU path, so keep HDR on CPU until a no-copy GPU path exists.
+        const webglData = null;
         if (webglData && this._webglRenderer.canRender({
             data: webglData,
             width,

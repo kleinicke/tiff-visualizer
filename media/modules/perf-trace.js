@@ -68,6 +68,18 @@ export class PerfTrace {
 		trace.phases.push(`${name} ${Math.max(0, durationMs).toFixed(0)}ms`);
 	}
 
+	/**
+	 * Append a non-duration measurement such as bytes or throughput.
+	 * No-op when no trace is active.
+	 * @param {string} name
+	 * @param {string|number} value
+	 */
+	static note(name, value) {
+		const trace = PerfTrace._active;
+		if (!trace) { return; }
+		trace.phases.push(`${name} ${value}`);
+	}
+
 	/** Log the summary line and deactivate. No-op when no trace is active. */
 	static end() {
 		const trace = PerfTrace._active;

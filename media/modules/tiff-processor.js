@@ -159,8 +159,18 @@ export class TiffProcessor {
 		/** @type {{engine: string, durationMs: number}|null} */
 		let decodeInfo = null;
 		try {
+			const responseStart = performance.now();
 			const response = await fetch(src, { signal: loadSignal });
+			PerfTrace.detail('fetch-tiff-response', performance.now() - responseStart);
+			const readStart = performance.now();
 			const buffer = await response.arrayBuffer();
+			const readDuration = performance.now() - readStart;
+			PerfTrace.detail('fetch-tiff-arrayBuffer', readDuration);
+			const megabytes = buffer.byteLength / (1024 * 1024);
+			PerfTrace.note('fetch-tiff-bytes', `${megabytes.toFixed(1)}MB`);
+			if (readDuration > 0) {
+				PerfTrace.note('fetch-tiff-arrayBuffer-rate', `${(megabytes / (readDuration / 1000)).toFixed(0)}MB/s`);
+			}
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);

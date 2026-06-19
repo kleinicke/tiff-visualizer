@@ -254,7 +254,13 @@ export class DecodeWorkerClient {
 		PerfTrace.detail(`fetch-${format}-response`, performance.now() - responseStart);
 		const readStart = performance.now();
 		const buffer = await response.arrayBuffer();
-		PerfTrace.detail(`fetch-${format}-arrayBuffer`, performance.now() - readStart);
+		const readDuration = performance.now() - readStart;
+		PerfTrace.detail(`fetch-${format}-arrayBuffer`, readDuration);
+		const megabytes = buffer.byteLength / (1024 * 1024);
+		PerfTrace.note(`fetch-${format}-bytes`, `${megabytes.toFixed(1)}MB`);
+		if (readDuration > 0) {
+			PerfTrace.note(`fetch-${format}-arrayBuffer-rate`, `${(megabytes / (readDuration / 1000)).toFixed(0)}MB/s`);
+		}
 		PerfTrace.mark(`fetch(${format})`);
 		return buffer;
 	}

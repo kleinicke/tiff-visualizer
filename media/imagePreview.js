@@ -3205,7 +3205,19 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (!resourceUri || !hasLoadedImage) { return; }
 		const lower = resourceUri.toLowerCase();
 		let entry = null;
-		if (lower.endsWith('.exr') && exrProcessor.rawExrData) {
+		if ((lower.endsWith('.tif') || lower.endsWith('.tiff')) && tiffProcessor.rawTiffData) {
+			entry = {
+				resourceUri,
+				format: 'tiff',
+				raw: {
+					tiffData: tiffProcessor.rawTiffData,
+					lastStatistics: tiffProcessor._lastStatistics,
+					lastStatisticsRgb24Mode: tiffProcessor._lastStatisticsRgb24Mode,
+					convertedFloatData: tiffProcessor._convertedFloatData,
+					formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null
+				}
+			};
+		} else if (lower.endsWith('.exr') && exrProcessor.rawExrData) {
 			entry = { resourceUri, format: 'exr', raw: exrProcessor.rawExrData };
 		} else if ((lower.endsWith('.npy') || lower.endsWith('.npz')) && npyProcessor._lastRaw) {
 			entry = { resourceUri, format: 'npy', raw: npyProcessor._lastRaw };
@@ -3263,6 +3275,43 @@ import { LayersPanel } from './modules/layers-panel.js';
 		const raw = cache.raw;
 		currentLoadDecodeInfo = null;
 		switch (cache.format) {
+			case 'tiff': {
+				const tiffData = raw.tiffData;
+				const image = tiffData?.image;
+				const rasters = tiffData?.rasters;
+				if (!image || !rasters) { return false; }
+				currentLoadFormat = 'TIFF';
+				currentLoadDecodeInfo = { engine: 'decoded-cache', durationMs: 0 };
+				tiffProcessor.rawTiffData = tiffData;
+				tiffProcessor._lastStatistics = raw.lastStatistics || null;
+				tiffProcessor._lastStatisticsRgb24Mode = raw.lastStatisticsRgb24Mode === true;
+				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;
+				tiffProcessor._lastRenderHistogram = null;
+				tiffProcessor._lastRenderUsedWebGL = false;
+				tiffProcessor._isInitialLoad = true;
+				tiffProcessor._pendingRenderData = { image, rasters };
+				installCachedPlaceholder(image.getWidth(), image.getHeight());
+				const sampleFormat = image.getSampleFormat?.();
+				const bitsPerSample = image.getBitsPerSample?.();
+				const samplesPerPixel = image.getSamplesPerPixel?.();
+				const sampleFormatValue = Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat;
+				vscode.postMessage({
+					type: 'formatInfo',
+					value: {
+						width: image.getWidth(),
+						height: image.getHeight(),
+						sampleFormat,
+						samplesPerPixel,
+						bitsPerSample,
+						planarConfig: tiffData.ifd?.t284 ?? 1,
+						formatType: sampleFormatValue === 3 ? 'tiff-float' : 'tiff-int',
+						...(raw.formatInfo || {}),
+						isInitialLoad: true,
+						decodedWith: 'decoded-cache'
+					}
+				});
+				return true;
+			}
 			case 'exr':
 				currentLoadFormat = 'EXR';
 				exrProcessor.rawExrData = raw;
