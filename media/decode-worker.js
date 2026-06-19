@@ -28,7 +28,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_exr_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -339,7 +339,42 @@ async function decodeExr(buffer) {
 }
 
 /** @param {ArrayBuffer} buffer */
-function decodePng16(buffer) {
+function decodePng16Wasm(buffer) {
+	if (!tiffWasmReady || typeof decode_png16_fast !== 'function') {
+		throw new Error('PNG WASM decoder not initialized');
+	}
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = decode_png16_fast(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-png16-rust', durationMs: now - phaseStart });
+	if (Number.isFinite(result.timing_read_info_ms)) {
+		timings.push({ name: 'decode-png16-rust-info', durationMs: result.timing_read_info_ms });
+	}
+	if (Number.isFinite(result.timing_decode_ms)) {
+		timings.push({ name: 'decode-png16-rust-frame', durationMs: result.timing_decode_ms });
+	}
+	if (Number.isFinite(result.timing_convert_ms)) {
+		timings.push({ name: 'decode-png16-rust-to-u16', durationMs: result.timing_convert_ms });
+	}
+
+	phaseStart = now;
+	const decodedData = result.take_data_as_u16();
+	now = performance.now();
+	timings.push({ name: 'decode-png16-rust-transfer-u16', durationMs: now - phaseStart });
+	return {
+		width: result.width,
+		height: result.height,
+		depth: result.bit_depth,
+		ctype: result.color_type,
+		decodedData,
+		decodedWith: 'rust-png-wasm (worker)',
+		decodeTimings: timings
+	};
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodePng16Upng(buffer, wasmError = '') {
 	const timings = [];
 	let phaseStart = performance.now();
 	const png = UPNG.decode(buffer);
@@ -359,7 +394,26 @@ function decodePng16(buffer) {
 		timings.push({ name: 'decode-png16-byte-swap', durationMs: now - phaseStart });
 	}
 	png.decodeTimings = timings;
+	png.decodedWith = 'upng-js (worker)';
+	if (wasmError) {
+		png.wasmFallbackReason = wasmError;
+	}
 	return png;
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodePng16(buffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodePng16Wasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM PNG decode failed');
+		console.warn('[DecodeWorker] PNG WASM decode failed, using UPNG in worker:', message);
+		return decodePng16Upng(buffer, message);
+	}
 }
 
 /** @param {ArrayBuffer} buffer */

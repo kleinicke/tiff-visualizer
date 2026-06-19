@@ -88,6 +88,9 @@ export class PngProcessor {
                 this.decodeWorker, 'png16', arrayBuffer, src, loadSignal,
                 // @ts-ignore
                 (b) => UPNG.decode(b));
+            if (png.wasmFallbackReason) {
+                console.warn('[PngProcessor] Rust PNG decoder fell back to UPNG:', png.wasmFallbackReason);
+            }
 
             /*
             png = {

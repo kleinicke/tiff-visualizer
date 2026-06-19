@@ -65,6 +65,55 @@ pub struct ExrResult {
 }
 
 #[wasm_bindgen]
+pub struct PngResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    bit_depth: u32,
+    color_type: u32,
+    data_u16: Vec<u16>,
+    timing_read_info_ms: f64,
+    timing_decode_ms: f64,
+    timing_convert_ms: f64,
+    timing_total_ms: f64,
+}
+
+#[wasm_bindgen]
+impl PngResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 { self.channels }
+
+    #[wasm_bindgen(getter)]
+    pub fn bit_depth(&self) -> u32 { self.bit_depth }
+
+    #[wasm_bindgen(getter)]
+    pub fn color_type(&self) -> u32 { self.color_type }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_read_info_ms(&self) -> f64 { self.timing_read_info_ms }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_decode_ms(&self) -> f64 { self.timing_decode_ms }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_convert_ms(&self) -> f64 { self.timing_convert_ms }
+
+    #[wasm_bindgen(getter)]
+    pub fn timing_total_ms(&self) -> f64 { self.timing_total_ms }
+
+    #[wasm_bindgen]
+    pub fn take_data_as_u16(&mut self) -> Vec<u16> {
+        mem::take(&mut self.data_u16)
+    }
+}
+
+#[wasm_bindgen]
 impl ExrResult {
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 {
@@ -325,6 +374,82 @@ pub fn decode_exr_fast(data: &[u8]) -> Result<ExrResult, JsValue> {
     console_error_panic_hook::set_once();
 
     decode_exr_impl(data)
+}
+
+#[wasm_bindgen]
+pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    decode_png16_impl(data)
+}
+
+fn decode_png16_impl(data: &[u8]) -> Result<PngResult, JsValue> {
+    let start_time = js_sys::Date::now();
+    let cursor = Cursor::new(data);
+    let mut limits = png::Limits::default();
+    limits.bytes = 512 * 1024 * 1024;
+    let decoder = png::Decoder::new_with_limits(cursor, limits);
+    let mut reader = decoder.read_info()
+        .map_err(|e| JsValue::from_str(&format!("Failed to read PNG info: {}", e)))?;
+    let read_info_time = js_sys::Date::now() - start_time;
+
+    let decode_start = js_sys::Date::now();
+    let mut raw = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut raw)
+        .map_err(|e| JsValue::from_str(&format!("Failed to decode PNG frame: {}", e)))?;
+    raw.truncate(info.buffer_size());
+    let decode_time = js_sys::Date::now() - decode_start;
+
+    if info.bit_depth != png::BitDepth::Sixteen {
+        return Err(JsValue::from_str("Rust PNG fast path only supports 16-bit PNG output"));
+    }
+    let channels = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return Err(JsValue::from_str("Rust PNG fast path does not support indexed 16-bit PNG")),
+    };
+
+    let expected_values = (info.width as usize)
+        .checked_mul(info.height as usize)
+        .and_then(|v| v.checked_mul(channels as usize))
+        .ok_or_else(|| JsValue::from_str("PNG dimensions overflow"))?;
+    if raw.len() < expected_values * 2 {
+        return Err(JsValue::from_str("PNG decoded byte count is smaller than expected"));
+    }
+
+    let convert_start = js_sys::Date::now();
+    let mut values = Vec::with_capacity(expected_values);
+    for chunk in raw[..expected_values * 2].chunks_exact(2) {
+        values.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+    }
+    let convert_time = js_sys::Date::now() - convert_start;
+    let total_time = js_sys::Date::now() - start_time;
+
+    Ok(PngResult {
+        width: info.width,
+        height: info.height,
+        channels,
+        bit_depth: 16,
+        color_type: png_color_type_to_u32(info.color_type),
+        data_u16: values,
+        timing_read_info_ms: read_info_time,
+        timing_decode_ms: decode_time,
+        timing_convert_ms: convert_time,
+        timing_total_ms: total_time,
+    })
+}
+
+fn png_color_type_to_u32(color_type: png::ColorType) -> u32 {
+    match color_type {
+        png::ColorType::Grayscale => 0,
+        png::ColorType::Rgb => 2,
+        png::ColorType::Indexed => 3,
+        png::ColorType::GrayscaleAlpha => 4,
+        png::ColorType::Rgba => 6,
+    }
 }
 
 fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {

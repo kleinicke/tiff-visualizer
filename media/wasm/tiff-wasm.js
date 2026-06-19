@@ -125,25 +125,6 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 /**
- * Decode a TIFF file without eagerly computing min/max statistics.
- *
- * The webview render path computes stats lazily when a non-gamma mode needs
- * them. Skipping eager stats saves a full pass over large float TIFFs during
- * the common gamma-mode initial load.
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
  * @param {Uint8Array} data
  * @returns {ExrResult}
  */
@@ -171,6 +152,53 @@ export function decode_tiff(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {PngResult}
+ */
+export function decode_png16_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_png16_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PngResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a TIFF file without eagerly computing min/max statistics.
+ *
+ * The webview render path computes stats lazily when a non-gamma mode needs
+ * them. Skipping eager stats saves a full pass over large float TIFFs during
+ * the common gamma-mode initial load.
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+let cachedUint16ArrayMemory0 = null;
+
+function getUint16ArrayMemory0() {
+    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
+        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
+    }
+    return cachedUint16ArrayMemory0;
+}
+
+function getArrayU16FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
 }
 
 const ExrResultFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -295,6 +323,106 @@ export class ExrResult {
     }
 }
 if (Symbol.dispose) ExrResult.prototype[Symbol.dispose] = ExrResult.prototype.free;
+
+const PngResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_pngresult_free(ptr >>> 0, 1));
+
+export class PngResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(PngResult.prototype);
+        obj.__wbg_ptr = ptr;
+        PngResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PngResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_pngresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get color_type() {
+        const ret = wasm.pngresult_color_type(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_total_ms() {
+        const ret = wasm.pngresult_timing_total_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Uint16Array}
+     */
+    take_data_as_u16() {
+        const ret = wasm.pngresult_take_data_as_u16(this.__wbg_ptr);
+        var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_decode_ms() {
+        const ret = wasm.exrresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_convert_ms() {
+        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_read_info_ms() {
+        const ret = wasm.exrresult_timing_read_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.exrresult_format(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.exrresult_data_type(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get bit_depth() {
+        const ret = wasm.pngresult_bit_depth(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) PngResult.prototype[Symbol.dispose] = PngResult.prototype.free;
 
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -505,7 +633,7 @@ export class TiffResult {
      * @returns {number}
      */
     get max_value() {
-        const ret = wasm.tiffresult_max_value(this.__wbg_ptr);
+        const ret = wasm.pngresult_timing_total_ms(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -619,6 +747,7 @@ function __wbg_finalize_init(instance, module) {
     __wbg_init.__wbindgen_wasm_module = module;
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
+    cachedUint16ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 
