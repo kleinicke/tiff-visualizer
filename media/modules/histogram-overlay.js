@@ -1028,84 +1028,60 @@ export class HistogramOverlay {
 			return Math.round(value).toString();
 		};
 
-		const createCell = (/** @type {string} */ text, /** @type {string} */ className = '') => {
+		const createCell = (/** @type {string} */ text, /** @type {string} */ className = 'histogram-stat-item') => {
 			const span = document.createElement('span');
 			span.textContent = text;
 			if (className) span.className = className;
 			return span;
 		};
 
-		const createSingleRow = (/** @type {string} */ label, /** @type {string} */ value) => {
+		const createLine = (/** @type {string[]} */ values, /** @type {string[]} */ colors = []) => {
 			const row = document.createElement('div');
-			row.className = 'histogram-stat-row histogram-stat-row-single';
-			row.appendChild(createCell(label));
-			row.appendChild(createCell(value, 'histogram-stat-value'));
+			row.className = 'histogram-stat-line';
+			values.forEach((value, index) => {
+				const cell = createCell(value);
+				if (colors[index]) cell.style.color = colors[index];
+				row.appendChild(cell);
+			});
 			return row;
 		};
 
-		const createHeaderRow = () => {
+		const createNanLine = () => {
 			const row = document.createElement('div');
-			row.className = 'histogram-stat-row histogram-stat-row-header';
-			row.appendChild(createCell(''));
-			row.appendChild(createCell('Min', 'histogram-stat-value'));
-			row.appendChild(createCell('Max', 'histogram-stat-value'));
-			row.appendChild(createCell('Mean', 'histogram-stat-value'));
-			return row;
-		};
-
-		const createRgbRow = (
-			/** @type {string} */ label,
-			/** @type {{min:number,max:number,mean:number}} */ stat,
-			/** @type {string} */ color
-		) => {
-			const row = document.createElement('div');
-			row.className = 'histogram-stat-row';
-			row.style.color = color;
-			row.appendChild(createCell(label));
-			row.appendChild(createCell(formatStat(stat.min), 'histogram-stat-value'));
-			row.appendChild(createCell(formatStat(stat.max), 'histogram-stat-value'));
-			row.appendChild(createCell(formatStat(stat.mean), 'histogram-stat-value'));
+			row.className = 'histogram-stat-line histogram-stat-nan';
+			const cell = createCell(`NaN/Inf: ${this.histogramData ? this.histogramData.nanCount.toLocaleString() : '0'}`, 'histogram-stat-item histogram-stat-nan');
+			row.appendChild(cell);
+			if (!this.histogramData || this.histogramData.nanCount <= 0) {
+				row.style.visibility = 'hidden';
+			}
 			return row;
 		};
 
 		// For grayscale images, show single channel stats, otherwise show RGB
 		if (isGrayscale && origStats) {
 			const s = origStats.r;
-			statsEl.appendChild(createSingleRow('Min', formatStat(s.min)));
-			statsEl.appendChild(createSingleRow('Max', formatStat(s.max)));
-			statsEl.appendChild(createSingleRow('Mean', formatStat(s.mean)));
+			statsEl.appendChild(createLine([
+				`Min: ${formatStat(s.min)}`,
+				`Max: ${formatStat(s.max)}`,
+				`Mean: ${formatStat(s.mean)}`
+			]));
 		} else if (origStats) {
 			// Show RGB stats in original values
-			statsEl.appendChild(createHeaderRow());
-			statsEl.appendChild(createRgbRow('R', origStats.r, '#ff6666'));
-			statsEl.appendChild(createRgbRow('G', origStats.g, '#66ff66'));
-			statsEl.appendChild(createRgbRow('B', origStats.b, '#6666ff'));
+			statsEl.appendChild(createLine([
+				`R: ${formatStat(origStats.r.min)}-${formatStat(origStats.r.max)} μ=${formatStat(origStats.r.mean)}`,
+				`G: ${formatStat(origStats.g.min)}-${formatStat(origStats.g.max)} μ=${formatStat(origStats.g.mean)}`,
+				`B: ${formatStat(origStats.b.min)}-${formatStat(origStats.b.max)} μ=${formatStat(origStats.b.mean)}`
+			], ['#ff6666', '#66ff66', '#6666ff']));
 		} else {
 			// Fallback to bin-based stats (when no raw data available)
 			const stats = this.histogramData.stats;
-			const createBinRow = (/** @type {string} */ label, /** @type {{minBin:number,maxBin:number,meanBin:number}} */ stat, /** @type {string} */ color) => {
-				const row = document.createElement('div');
-				row.className = 'histogram-stat-row';
-				row.style.color = color;
-				row.appendChild(createCell(label));
-				row.appendChild(createCell(String(stat.minBin), 'histogram-stat-value'));
-				row.appendChild(createCell(String(stat.maxBin), 'histogram-stat-value'));
-				row.appendChild(createCell(formatStat(stat.meanBin), 'histogram-stat-value'));
-				return row;
-			};
-
-			statsEl.appendChild(createHeaderRow());
-			statsEl.appendChild(createBinRow('R', stats.r, '#ff6666'));
-			statsEl.appendChild(createBinRow('G', stats.g, '#66ff66'));
-			statsEl.appendChild(createBinRow('B', stats.b, '#6666ff'));
+			statsEl.appendChild(createLine([
+				`R: ${stats.r.minBin}-${stats.r.maxBin} μ=${formatStat(stats.r.meanBin)}`,
+				`G: ${stats.g.minBin}-${stats.g.maxBin} μ=${formatStat(stats.g.meanBin)}`,
+				`B: ${stats.b.minBin}-${stats.b.maxBin} μ=${formatStat(stats.b.meanBin)}`
+			], ['#ff6666', '#66ff66', '#6666ff']));
 		}
-
-		// Show NaN count if present
-		if (this.histogramData.nanCount > 0) {
-			statsEl.appendChild(createSingleRow('NaN', this.histogramData.nanCount.toLocaleString()));
-			const lastRow = statsEl.lastElementChild;
-			if (lastRow instanceof HTMLElement) lastRow.style.color = '#ffcc00';
-		}
+		statsEl.appendChild(createNanLine());
 
 		// Update picker background and position
 		const bgColor = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background') || '#1e1e1e';
