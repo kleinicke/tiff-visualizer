@@ -30,7 +30,7 @@ export class WebGL2FloatRenderer {
 		this.colormapTexture = null;
 		/** @type {WebGLVertexArrayObject|null} */
 		this.vao = null;
-		/** @type {Float32Array|null} */
+		/** @type {Float32Array|Uint16Array|null} */
 		this.textureData = null;
 		this.textureFormat = '';
 		this.colormapName = '';
@@ -39,12 +39,15 @@ export class WebGL2FloatRenderer {
 		this.failed = false;
 		this.rgb32fFailed = false;
 		this.uintTextureFailed = false;
+		/** @type {Map<string, number>} */
+		this.validatedUploadPixels = new Map();
 	}
 
 	/**
 	 * @param {{data: ArrayLike<number>, width: number, height: number, channels: number, isFloat: boolean, settings: any, collectHistogram?: boolean}} params
 	 */
 	canRender(params) {
+		if (params.settings?.gpuAcceleration === false) { return false; }
 		if (this.failed) { return false; }
 		if (!ArrayBuffer.isView(params.data)) { return false; }
 		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && params.channels === 3;
@@ -255,11 +258,18 @@ export class WebGL2FloatRenderer {
 				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
 		}
 		PerfTrace.detail(`webgl-texImage2D-${textureFormat}`, performance.now() - uploadStart);
-		const errorStart = performance.now();
-		const error = gl.getError();
-		PerfTrace.detail('webgl-texture-upload-error-check', performance.now() - errorStart);
-		if (error !== gl.NO_ERROR) {
-			throw new Error(`Float texture upload failed: WebGL error ${error}`);
+		const pixels = width * height;
+		const validatedPixels = this.validatedUploadPixels.get(textureFormat) || 0;
+		if (pixels > validatedPixels) {
+			const errorStart = performance.now();
+			const error = gl.getError();
+			PerfTrace.detail('webgl-texture-upload-error-check', performance.now() - errorStart);
+			if (error !== gl.NO_ERROR) {
+				throw new Error(`Float texture upload failed: WebGL error ${error}`);
+			}
+			this.validatedUploadPixels.set(textureFormat, pixels);
+		} else {
+			PerfTrace.detail('webgl-texture-upload-error-check-skipped', 0);
 		}
 		this.textureData = data;
 		this.textureWidth = width;

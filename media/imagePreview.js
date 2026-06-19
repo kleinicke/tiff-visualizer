@@ -183,6 +183,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 	let currentLoadDecodeInfo = null;
 	/** @type {number|null} */
 	let _deferredHistogramTimer = null;
+	/** @type {{resourceUri: string, format: string, raw: any}|null} */
+	let _previousDecodedImageCache = null;
+	/** @type {{resourceUri: string, format: string, raw: any}|null} */
+	let _restoreDecodedImageCandidate = null;
 
 	function formatDecodeInfo() {
 		return currentLoadDecodeInfo
@@ -3196,6 +3200,145 @@ import { LayersPanel } from './modules/layers-panel.js';
 		}
 	}
 
+	function cacheCurrentDecodedImage() {
+		const resourceUri = settingsManager.settings.resourceUri;
+		if (!resourceUri || !hasLoadedImage) { return; }
+		const lower = resourceUri.toLowerCase();
+		let entry = null;
+		if (lower.endsWith('.exr') && exrProcessor.rawExrData) {
+			entry = { resourceUri, format: 'exr', raw: exrProcessor.rawExrData };
+		} else if ((lower.endsWith('.npy') || lower.endsWith('.npz')) && npyProcessor._lastRaw) {
+			entry = { resourceUri, format: 'npy', raw: npyProcessor._lastRaw };
+		} else if (lower.endsWith('.pfm') && pfmProcessor._lastRaw) {
+			entry = { resourceUri, format: 'pfm', raw: pfmProcessor._lastRaw };
+		} else if ((lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) && ppmProcessor._lastRaw) {
+			entry = { resourceUri, format: 'ppm', raw: ppmProcessor._lastRaw };
+		} else if (lower.endsWith('.png') && pngProcessor._lastRaw && pngProcessor._lastRaw.bitDepth > 8) {
+			entry = { resourceUri, format: 'png', raw: pngProcessor._lastRaw };
+		} else if (lower.endsWith('.hdr') && hdrProcessor._lastRaw) {
+			entry = { resourceUri, format: 'hdr', raw: hdrProcessor._lastRaw };
+		}
+		_previousDecodedImageCache = entry;
+	}
+
+	/**
+	 * @param {number} width
+	 * @param {number} height
+	 */
+	function installCachedPlaceholder(width, height) {
+		canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		canvas.classList.add('scale-to-fit');
+		primaryImageData = new ImageData(width, height);
+		imageElement = canvas;
+		hasLoadedImage = true;
+		PerfTrace.mark('decoded-cache-hit');
+	}
+
+	/** @param {any} raw */
+	function postCachedExrFormatInfo(raw) {
+		vscode.postMessage({
+			type: 'formatInfo',
+			value: {
+				width: raw.width,
+				height: raw.height,
+				channels: raw.channels,
+				samplesPerPixel: raw.channels,
+				dataType: raw.type === 1016 ? 'float16' : 'float32',
+				isHdr: true,
+				formatLabel: 'EXR',
+				formatType: 'exr-float',
+				isInitialLoad: true,
+				channelNames: raw.channelNames || [],
+				displayedChannels: raw.displayedChannels || raw.channelNames || []
+			}
+		});
+	}
+
+	/** @param {string} resourceUri */
+	function tryRestoreDecodedImageFromCache(resourceUri) {
+		const cache = _restoreDecodedImageCandidate;
+		if (!cache || cache.resourceUri !== resourceUri) { return false; }
+		const raw = cache.raw;
+		currentLoadDecodeInfo = null;
+		switch (cache.format) {
+			case 'exr':
+				currentLoadFormat = 'EXR';
+				exrProcessor.rawExrData = raw;
+				exrProcessor._cachedStats = undefined;
+				exrProcessor._isInitialLoad = true;
+				exrProcessor._pendingRenderData = {
+					width: raw.width,
+					height: raw.height,
+					data: raw.data,
+					channels: raw.channels,
+					type: raw.type,
+					format: raw.format
+				};
+				installCachedPlaceholder(raw.width, raw.height);
+				postCachedExrFormatInfo(raw);
+				return true;
+			case 'npy':
+				currentLoadFormat = 'NPY/NPZ';
+				npyProcessor._lastRaw = raw;
+				npyProcessor._cachedStats = undefined;
+				npyProcessor._cachedStatsRgb24Mode = false;
+				npyProcessor._isInitialLoad = true;
+				npyProcessor._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height };
+				installCachedPlaceholder(raw.width, raw.height);
+				npyProcessor._postFormatInfo(raw.width, raw.height, 'NPY');
+				return true;
+			case 'pfm':
+				currentLoadFormat = 'PFM';
+				pfmProcessor._lastRaw = raw;
+				pfmProcessor._cachedStats = undefined;
+				pfmProcessor._isInitialLoad = true;
+				pfmProcessor._pendingRenderData = { displayData: raw.data, width: raw.width, height: raw.height, channels: raw.channels };
+				installCachedPlaceholder(raw.width, raw.height);
+				pfmProcessor._postFormatInfo(raw.width, raw.height, raw.channels, 'PFM');
+				return true;
+			case 'ppm':
+				currentLoadFormat = 'PPM/PGM';
+				ppmProcessor._lastRaw = raw;
+				ppmProcessor._cachedStats = undefined;
+				ppmProcessor._cachedStatsRgb24Mode = false;
+				ppmProcessor._isInitialLoad = true;
+				ppmProcessor._pendingRenderData = {
+					displayData: raw.data,
+					width: raw.width,
+					height: raw.height,
+					maxval: raw.maxval,
+					channels: raw.channels
+				};
+				installCachedPlaceholder(raw.width, raw.height);
+				ppmProcessor._postFormatInfo(raw.width, raw.height, raw.channels, raw.format || 'PPM/PGM', raw.maxval);
+				return true;
+			case 'png':
+				currentLoadFormat = 'PNG/JPEG';
+				pngProcessor._lastRaw = raw;
+				pngProcessor._cachedStats = undefined;
+				pngProcessor._cachedStatsRgb24Mode = false;
+				pngProcessor._isInitialLoad = true;
+				pngProcessor._pendingRenderData = true;
+				installCachedPlaceholder(raw.width, raw.height);
+				pngProcessor._postFormatInfo(raw.width, raw.height, raw.channels, raw.bitDepth, 'PNG');
+				return true;
+			case 'hdr':
+				currentLoadFormat = 'HDR';
+				hdrProcessor._lastRaw = raw;
+				hdrProcessor._cachedStats = undefined;
+				hdrProcessor._cachedWebglRgb = null;
+				hdrProcessor._isInitialLoad = true;
+				hdrProcessor._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height, renderChannels: raw.channels };
+				installCachedPlaceholder(raw.width, raw.height);
+				hdrProcessor._postFormatInfo(raw.width, raw.height, 3, 'HDR');
+				return true;
+			default:
+				return false;
+		}
+	}
+
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 * @param {string} uri
@@ -3209,6 +3352,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 		// Trace where this switch spends its time; the summary is logged from
 		// finalizeImageSetup once the final pixels are on screen.
 		PerfTrace.begin(`switch ${resourceUri.split('/').pop()}`);
+		_restoreDecodedImageCandidate = _previousDecodedImageCache;
+		cacheCurrentDecodedImage();
 
 		// Abort the previous in-flight load: cancels its network fetch and lets
 		// the processors stop before decoding, instead of the superseded load
@@ -3299,6 +3444,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (gen !== _loadGeneration) { return; }
 		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
+		if (tryRestoreDecodedImageFromCache(resourceUri)) {
+			return;
+		}
 		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
 			handleTiff(uri, gen);
 		} else if (lower.endsWith('.exr')) {

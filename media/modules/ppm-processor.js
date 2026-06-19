@@ -56,7 +56,7 @@ export class PpmProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        this._lastRaw = { width, height, data: displayData, maxval, channels };
+        this._lastRaw = { width, height, data: displayData, maxval, channels, format };
 
         const canvas = document.createElement('canvas');
         canvas.width = width;

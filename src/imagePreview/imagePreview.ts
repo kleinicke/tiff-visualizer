@@ -19,6 +19,7 @@ import type { ImageSettings } from './appStateManager';
 interface WebviewImageSettings extends ImageSettings {
 	nanColor: 'black' | 'fuchsia';
 	colorPickerShowModified: boolean;
+	gpuAcceleration: boolean;
 }
 
 export class ImagePreview extends MediaPreview {
@@ -146,7 +147,8 @@ export class ImagePreview extends MediaPreview {
 				scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
-				nanColor: this._manager.settingsManager.getNanColor()
+				nanColor: this._manager.settingsManager.getNanColor(),
+				gpuAcceleration: this.getGpuAccelerationEnabled()
 			};
 
 			// Send to webview once
@@ -161,6 +163,11 @@ export class ImagePreview extends MediaPreview {
 			// Only update if settings are for our format (prevents cross-format contamination)
 			if (this._currentFormat === this._manager.appStateManager.currentFormat) {
 				updateSettings('format-settings-changed');
+			}
+		}));
+		this._register(vscode.workspace.onDidChangeConfiguration(e => {
+			if (e.affectsConfiguration('tiffVisualizer.gpuAcceleration')) {
+				updateSettings('configuration-changed');
 			}
 		}));
 
@@ -303,11 +310,18 @@ export class ImagePreview extends MediaPreview {
 			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			nanColor: this._manager.settingsManager.getNanColor(),
-			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified()
+			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
+			gpuAcceleration: this.getGpuAccelerationEnabled()
 		};
 
 		// Send to webview
 		this.sendSettingsUpdate(webviewSettings, 'preview-refresh');
+	}
+
+	private getGpuAccelerationEnabled(): boolean {
+		return vscode.workspace
+			.getConfiguration('tiffVisualizer')
+			.get<boolean>('gpuAcceleration', true);
 	}
 
 	public setImageSize(size: string): void {
@@ -779,7 +793,8 @@ export class ImagePreview extends MediaPreview {
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
-			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer')
+			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer'),
+			gpuAcceleration: this.getGpuAccelerationEnabled()
 		};
 
 		const nonce = getNonce();

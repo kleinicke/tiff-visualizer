@@ -3,6 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { PerfTrace } from './perf-trace.js';
 import parseHdr from 'parse-hdr';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -33,6 +34,8 @@ export class HdrProcessor {
         this._cachedStats = undefined;
         this._lastRenderHistogram = null;
         this._lastRenderUsedWebGL = false;
+        /** @type {{source: Float32Array, data: Float32Array}|null} */
+        this._cachedWebglRgb = null;
         this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
@@ -63,6 +66,7 @@ export class HdrProcessor {
         const renderChannels = 4;
 
         this._cachedStats = undefined;
+        this._cachedWebglRgb = null;
         this._lastRaw = { width, height, data, channels: renderChannels };
 
         const canvas = document.createElement('canvas');
@@ -106,23 +110,22 @@ export class HdrProcessor {
             }
         }
         const nanColor = this._getNanColor(settings);
-        // parse-hdr currently exposes RGBA float data, with alpha fixed at 1.0.
-        // Uploading that 4-channel float texture is very expensive for large HDRs,
-        // so keep the CPU path until we can decode or pack HDR as RGB directly.
-        const canUseWebGL = renderChannels <= 3;
-        if (canUseWebGL && renderOptions.targetCanvas && this._webglRenderer.canRender({
-            data,
+        const webglData = renderOptions.targetCanvas && settings.gpuAcceleration !== false
+            ? this._getWebglRgbData(data, width, height, renderChannels)
+            : null;
+        if (webglData && this._webglRenderer.canRender({
+            data: webglData,
             width,
             height,
-            channels: renderChannels,
+            channels: 3,
             isFloat: true,
             settings
         })) {
             const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
-                data,
+                data: webglData,
                 width,
                 height,
-                channels: renderChannels,
+                channels: 3,
                 isFloat: true,
                 min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
                 max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
@@ -153,6 +156,34 @@ export class HdrProcessor {
         );
         this._lastRenderHistogram = options.renderHistogramResult || null;
         return imageData;
+    }
+
+    /**
+     * parse-hdr returns RGBA with alpha fixed at 1.0. The renderer only needs RGB,
+     * and uploading RGB avoids a large, useless alpha channel texture.
+     * @param {Float32Array} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} renderChannels
+     * @returns {Float32Array|null}
+     */
+    _getWebglRgbData(data, width, height, renderChannels) {
+        if (renderChannels === 3) return data;
+        if (renderChannels !== 4) return null;
+        if (this._cachedWebglRgb?.source === data) {
+            return this._cachedWebglRgb.data;
+        }
+        const start = performance.now();
+        const pixels = width * height;
+        const rgb = new Float32Array(pixels * 3);
+        for (let src = 0, dst = 0; dst < rgb.length; src += 4, dst += 3) {
+            rgb[dst] = data[src];
+            rgb[dst + 1] = data[src + 1];
+            rgb[dst + 2] = data[src + 2];
+        }
+        this._cachedWebglRgb = { source: data, data: rgb };
+        PerfTrace.detail('hdr-pack-rgb', performance.now() - start);
+        return rgb;
     }
 
     /**

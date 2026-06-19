@@ -421,9 +421,18 @@ fn decode_png16_impl(data: &[u8]) -> Result<PngResult, JsValue> {
     }
 
     let convert_start = js_sys::Date::now();
-    let mut values = Vec::with_capacity(expected_values);
-    for chunk in raw[..expected_values * 2].chunks_exact(2) {
-        values.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+    let mut values: Vec<u16> = Vec::with_capacity(expected_values);
+    let dst = values.as_mut_ptr();
+    for i in 0..expected_values {
+        let src = i * 2;
+        // SAFETY: `values` has capacity for `expected_values`, and each index
+        // is written exactly once before `set_len`.
+        unsafe {
+            dst.add(i).write(u16::from_be_bytes([raw[src], raw[src + 1]]));
+        }
+    }
+    unsafe {
+        values.set_len(expected_values);
     }
     let convert_time = js_sys::Date::now() - convert_start;
     let total_time = js_sys::Date::now() - start_time;

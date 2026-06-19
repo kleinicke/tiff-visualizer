@@ -258,6 +258,16 @@
           "group": "comparison@1"
         }
       ]
+    },
+    "configuration": {
+      "title": "TIFF Visualizer",
+      "properties": {
+        "tiffVisualizer.gpuAcceleration": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use GPU acceleration via WebGL2 for supported image rendering paths. Disable this if a GPU/driver causes incorrect output or slower rendering."
+        }
+      }
     }
   },
   "scripts": {
