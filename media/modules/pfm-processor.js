@@ -37,8 +37,7 @@ export class PfmProcessor {
     /** @param {string} src */
     async processPfm(src) {
         const loadSignal = this.loadSignal;
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'pfm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data } = await DecodeWorkerClient.decodeWithFallback(

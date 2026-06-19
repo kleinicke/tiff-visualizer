@@ -241,6 +241,25 @@ export class DecodeWorkerClient {
 	}
 
 	/**
+	 * Fetch a source as bytes with consistent performance breakdown for
+	 * worker-decoded formats.
+	 * @param {string} src
+	 * @param {AbortSignal|undefined} signal
+	 * @param {string} format
+	 * @returns {Promise<ArrayBuffer>}
+	 */
+	static async fetchArrayBuffer(src, signal, format) {
+		const responseStart = performance.now();
+		const response = await fetch(src, { signal });
+		PerfTrace.detail(`fetch-${format}-response`, performance.now() - responseStart);
+		const readStart = performance.now();
+		const buffer = await response.arrayBuffer();
+		PerfTrace.detail(`fetch-${format}-arrayBuffer`, performance.now() - readStart);
+		PerfTrace.mark(`fetch(${format})`);
+		return buffer;
+	}
+
+	/**
 	 * Decode `buffer` via the worker when possible, falling back to
 	 * `parseLocal` on the main thread. The buffer may have been transferred
 	 * to a failed worker decode; if it can't be recovered, the file is
@@ -260,8 +279,7 @@ export class DecodeWorkerClient {
 			throw new DOMException('Load superseded', 'AbortError');
 		}
 		if (response?.ok) {
-			// Spans the caller's fetch too (it runs just before this helper).
-			PerfTrace.mark(`fetch+decode-worker(${format})`);
+			PerfTrace.mark(`decode-worker(${format})`);
 			if (Array.isArray(response.result?.decodeTimings)) {
 				let measuredWorkerTime = 0;
 				let topLevelDecodeTime = 0;
@@ -270,7 +288,12 @@ export class DecodeWorkerClient {
 					if (!Number.isFinite(durationMs)) { continue; }
 					const name = String(timing.name || `${format}-decode-detail`);
 					measuredWorkerTime += durationMs;
-					if (name === `decode-${format}-rust` || name === `decode-${format}-parse-exr`) {
+					if (
+						name === `decode-${format}-rust` ||
+						name === `decode-${format}-parse-exr` ||
+						name === `decode-${format}-upng` ||
+						name === `decode-${format}-parse`
+					) {
 						topLevelDecodeTime += durationMs;
 					}
 					PerfTrace.detail(name, durationMs);
@@ -288,7 +311,7 @@ export class DecodeWorkerClient {
 			localBuffer = await refetched.arrayBuffer();
 		}
 		const result = await parseLocal(localBuffer);
-		PerfTrace.mark(`fetch+decode-local(${format})`);
+		PerfTrace.mark(`decode-local(${format})`);
 		return result;
 	}
 }

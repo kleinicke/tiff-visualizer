@@ -5,6 +5,8 @@ import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { PerfTrace } from './perf-trace.js';
 
+const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
+
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
 
@@ -38,8 +40,7 @@ export class PpmProcessor {
     /** @param {string} src */
     async processPpm(src) {
         const loadSignal = this.loadSignal;
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data, maxval, format } = await DecodeWorkerClient.decodeWithFallback(
@@ -179,7 +180,8 @@ export class PpmProcessor {
         // Determine data type based on maxval
         const use16bit = !isPbm && maxval > 255;
         const DataType = use16bit ? Uint16Array : Uint8Array;
-        const data = new DataType(totalValues);
+        /** @type {Uint8Array|Uint16Array} */
+        let data = new DataType(totalValues);
         decodeTimings.push({ name: 'decode-ppm-header', durationMs: performance.now() - parserStart });
 
         const rasterStart = performance.now();
@@ -256,19 +258,35 @@ export class PpmProcessor {
 
             const binaryCopyStart = performance.now();
             if (use16bit) {
-                // 16-bit values (big-endian as per PPM spec)
-                let src = offset;
-                for (let i = 0; i < totalValues; i++, src += 2) {
-                    data[i] = (uint8Array[src] << 8) | uint8Array[src + 1];
+                // 16-bit values are big-endian in NetPBM. Prefer a Uint16Array
+                // view plus in-place byte swap over byte-by-byte reconstruction.
+                const isAligned = offset % 2 === 0;
+                const rasterBuffer = isAligned ? arrayBuffer : arrayBuffer.slice(offset, offset + expectedBytes);
+                const rasterOffset = isAligned ? offset : 0;
+                data = new Uint16Array(rasterBuffer, rasterOffset, totalValues);
+                if (IS_LITTLE_ENDIAN) {
+                    for (let i = 0; i < totalValues; i++) {
+                        const value = data[i];
+                        data[i] = ((value & 0xff) << 8) | (value >>> 8);
+                    }
+                    decodeTimings.push({
+                        name: isAligned ? 'decode-ppm-byte-swap-u16-inplace' : 'decode-ppm-byte-swap-u16-slice',
+                        durationMs: performance.now() - binaryCopyStart
+                    });
+                } else {
+                    decodeTimings.push({
+                        name: isAligned ? 'decode-ppm-raster-view-u16' : 'decode-ppm-raster-slice-u16',
+                        durationMs: performance.now() - binaryCopyStart
+                    });
                 }
             } else {
-                // 8-bit values
-                data.set(uint8Array.subarray(offset, offset + expectedBytes));
+                // 8-bit binary raster can be used as a direct view.
+                data = uint8Array.subarray(offset, offset + expectedBytes);
+                decodeTimings.push({
+                    name: 'decode-ppm-raster-view-u8',
+                    durationMs: performance.now() - binaryCopyStart
+                });
             }
-            decodeTimings.push({
-                name: use16bit ? 'decode-ppm-byte-swap-u16' : 'decode-ppm-raster-copy-u8',
-                durationMs: performance.now() - binaryCopyStart
-            });
         }
         decodeTimings.push({ name: 'decode-ppm-raster-total', durationMs: performance.now() - rasterStart });
         for (const timing of decodeTimings) {

@@ -43,8 +43,7 @@ export class HdrProcessor {
     /** @param {string} src */
     async processHdr(src) {
         const loadSignal = this.loadSignal;
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'hdr');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // parse-hdr returns { shape:[width,height], exposure, gamma, data:Float32Array }

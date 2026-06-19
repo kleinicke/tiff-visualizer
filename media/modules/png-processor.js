@@ -70,8 +70,7 @@ export class PngProcessor {
             this._cachedStats = undefined;
             this._cachedStatsRgb24Mode = false;
 
-            const response = await fetch(src, { signal: loadSignal });
-            const arrayBuffer = await response.arrayBuffer();
+            const arrayBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'png');
             if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // Quick bit depth detection from PNG IHDR chunk (just reads byte 24)

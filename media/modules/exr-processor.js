@@ -84,8 +84,7 @@ export class ExrProcessor {
 				throw new Error('parseExr library not loaded. Make sure parse-exr is included.');
 			}
 
-			const response = await fetch(src, { signal: loadSignal });
-			const buffer = await response.arrayBuffer();
+			const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'exr');
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
 			// Invalidate stats cache for new image

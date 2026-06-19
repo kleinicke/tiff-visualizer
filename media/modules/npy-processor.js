@@ -68,8 +68,7 @@ export class NpyProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // Parse in the decode worker when available, locally otherwise.
