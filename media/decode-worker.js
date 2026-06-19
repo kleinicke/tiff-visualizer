@@ -420,7 +420,11 @@ async function decodePng16(buffer) {
 function decodePpmWorker(buffer) {
 	const start = performance.now();
 	const result = ppmParser._parsePpm(buffer);
-	result.decodeTimings = [{ name: 'decode-ppm-parse', durationMs: performance.now() - start }];
+	const parseTimings = Array.isArray(result.decodeTimings) ? result.decodeTimings : [];
+	result.decodeTimings = [
+		{ name: 'decode-ppm-parse', durationMs: performance.now() - start },
+		...parseTimings
+	];
 	return result;
 }
 

@@ -230,8 +230,11 @@ export class WebGL2FloatRenderer {
 			return;
 		}
 		const start = performance.now();
+		const setupStart = performance.now();
 		gl.bindTexture(gl.TEXTURE_2D, this.texture);
 		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+		PerfTrace.detail('webgl-texture-upload-setup', performance.now() - setupStart);
+		const uploadStart = performance.now();
 		switch (textureFormat) {
 			case 'rgb32f':
 				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB32F, width, height, 0, gl.RGB, gl.FLOAT, data);
@@ -251,7 +254,10 @@ export class WebGL2FloatRenderer {
 			default:
 				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
 		}
+		PerfTrace.detail(`webgl-texImage2D-${textureFormat}`, performance.now() - uploadStart);
+		const errorStart = performance.now();
 		const error = gl.getError();
+		PerfTrace.detail('webgl-texture-upload-error-check', performance.now() - errorStart);
 		if (error !== gl.NO_ERROR) {
 			throw new Error(`Float texture upload failed: WebGL error ${error}`);
 		}
@@ -284,6 +290,7 @@ export class WebGL2FloatRenderer {
 			return;
 		}
 		if (this.colormapName === colormapName) { return; }
+		const start = performance.now();
 		const lut = getColormapLut(colormapName);
 		if (!lut) {
 			this.colormapName = 'none';
@@ -299,6 +306,7 @@ export class WebGL2FloatRenderer {
 			throw new Error(`Colormap texture upload failed: WebGL error ${error}`);
 		}
 		this.colormapName = colormapName;
+		PerfTrace.detail('webgl-colormap-upload', performance.now() - start);
 	}
 
 	/** @param {{min:number,max:number,typeMax:number,settings:any,nanColor:{r:number,g:number,b:number},channels?:number}} params */
@@ -334,6 +342,7 @@ export class WebGL2FloatRenderer {
 		}
 		const range = displayMax - displayMin;
 
+		const stateStart = performance.now();
 		gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
 		gl.useProgram(program);
 		gl.bindVertexArray(this.vao);
@@ -363,8 +372,13 @@ export class WebGL2FloatRenderer {
 			params.nanColor.g / 255,
 			params.nanColor.b / 255
 		);
+		PerfTrace.detail('webgl-draw-state', performance.now() - stateStart);
+		const drawStart = performance.now();
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		PerfTrace.detail('webgl-draw-submit', performance.now() - drawStart);
+		const flushStart = performance.now();
 		gl.flush();
+		PerfTrace.detail('webgl-flush', performance.now() - flushStart);
 	}
 
 	/**

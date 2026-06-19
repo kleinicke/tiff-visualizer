@@ -41,6 +41,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 	// Format info tracking for context menu
 	/** @type {FormatInfo|null} */
 	let currentFormatInfo = null;
+	/** @type {{time: number, generation: number, formatType: string}|null} */
+	let lastFormatInfoPost = null;
 
 	// Wrap vscode.postMessage to track formatInfo
 	const vscode = {
@@ -49,6 +51,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 			// Track formatInfo when it's sent
 			if (message.type === 'formatInfo' && message.value) {
 				currentFormatInfo = message.value;
+				lastFormatInfoPost = {
+					time: performance.now(),
+					generation: _loadGeneration,
+					formatType: String(message.value.formatType || '')
+				};
 			}
 			return originalVscode.postMessage(message);
 		},
@@ -1596,9 +1603,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 				break;
 
 			case 'updateSettings':
+				const updateMessageStart = performance.now();
 				// Handle real-time settings updates
 				const oldResourceUri = settingsManager.settings.resourceUri;
+				const updateApplyStart = performance.now();
 				const changes = settingsManager.updateSettings(message.settings);
+				const updateApplyDuration = performance.now() - updateApplyStart;
 				const newResourceUri = settingsManager.settings.resourceUri;
 				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
 
@@ -1607,7 +1617,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 				// initial-settings response while that canvas is still in flight.
 				if (message.isInitialRender && currentLoadFormat === 'TIFF' && !canvas) {
 					const waitingGeneration = _loadGeneration;
+					const canvasWaitStart = performance.now();
 					await _tiffCanvasReadyPromise;
+					PerfTrace.detail('await-settings-tiff-canvas-wait', performance.now() - canvasWaitStart);
 					if (waitingGeneration !== _loadGeneration) {
 						break;
 					}
@@ -1617,6 +1629,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 				if (message.isInitialRender && canvas) {
 					// Time between formatInfo going out and per-format settings
 					// coming back — extension-host latency, not main-thread work.
+					if (lastFormatInfoPost && lastFormatInfoPost.generation === _loadGeneration) {
+						PerfTrace.detail('await-settings-roundtrip', updateMessageStart - lastFormatInfoPost.time);
+					}
+					PerfTrace.detail('settings-apply', updateApplyDuration);
 					PerfTrace.mark('await-settings');
 					// Trigger deferred rendering for the appropriate processor
 					let deferredImageData = null;

@@ -79,6 +79,9 @@ export class PpmProcessor {
 
     /** @param {ArrayBuffer} arrayBuffer */
     _parsePpm(arrayBuffer) {
+        const parserStart = performance.now();
+        /** @type {{name:string,durationMs:number}[]} */
+        const decodeTimings = [];
         const uint8Array = new Uint8Array(arrayBuffer);
         let offset = 0;
 
@@ -177,7 +180,9 @@ export class PpmProcessor {
         const use16bit = !isPbm && maxval > 255;
         const DataType = use16bit ? Uint16Array : Uint8Array;
         const data = new DataType(totalValues);
+        decodeTimings.push({ name: 'decode-ppm-header', durationMs: performance.now() - parserStart });
 
+        const rasterStart = performance.now();
         if (isPbm && isAscii) {
             // PBM ASCII format (P1) - read 0s and 1s
             for (let i = 0; i < totalValues; i++) {
@@ -229,7 +234,7 @@ export class PpmProcessor {
                 data[i] = value;
             }
         } else {
-            const parseStart = performance.now();
+            const binarySetupStart = performance.now();
             // Binary format (P5/P6)
             // PPM spec: after maxval, there is exactly ONE whitespace character (usually newline),
             // then the binary data starts immediately
@@ -247,7 +252,9 @@ export class PpmProcessor {
             if (offset + expectedBytes > uint8Array.length) {
                 throw new Error('Insufficient data for binary PPM/PGM');
             }
+            decodeTimings.push({ name: 'decode-ppm-binary-setup', durationMs: performance.now() - binarySetupStart });
 
+            const binaryCopyStart = performance.now();
             if (use16bit) {
                 // 16-bit values (big-endian as per PPM spec)
                 let src = offset;
@@ -258,10 +265,17 @@ export class PpmProcessor {
                 // 8-bit values
                 data.set(uint8Array.subarray(offset, offset + expectedBytes));
             }
-            PerfTrace.detail('ppm-binary-raster-copy', performance.now() - parseStart);
+            decodeTimings.push({
+                name: use16bit ? 'decode-ppm-byte-swap-u16' : 'decode-ppm-raster-copy-u8',
+                durationMs: performance.now() - binaryCopyStart
+            });
+        }
+        decodeTimings.push({ name: 'decode-ppm-raster-total', durationMs: performance.now() - rasterStart });
+        for (const timing of decodeTimings) {
+            PerfTrace.detail(timing.name, timing.durationMs);
         }
 
-        return { width, height, channels, data, maxval, format };
+        return { width, height, channels, data, maxval, format, decodeTimings };
     }
 
 

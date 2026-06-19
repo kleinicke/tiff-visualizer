@@ -451,7 +451,7 @@ body img {
 
 .histogram-labels {
 	width: 300px;
-	margin: -8px 12px 8px;
+	margin: 0 12px 8px;
 	box-sizing: border-box;
 	font-variant-numeric: tabular-nums;
 	font-feature-settings: "tnum";
