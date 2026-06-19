@@ -1552,20 +1552,30 @@ import { LayersPanel } from './modules/layers-panel.js';
 				break;
 
 			case 'addLayerImages': {
+				const images = message.images || [];
+				PerfTrace.begin(`add-layer ${images.length} image${images.length === 1 ? '' : 's'}`);
 				syncBaseLayer();
+				PerfTrace.mark('layers-base-sync');
 				layersPanel.show();
+				PerfTrace.mark('layers-panel-show');
 				let addedLayers = 0;
-				for (const im of (message.images || [])) {
+				for (const im of images) {
 					const layer = await decodeLayer(im.src, im.resourceUri);
+					PerfTrace.mark('layer-decode');
 					if (layer) { layerManager.addLayer(layer); addedLayers++; }
 				}
 				if (addedLayers > 0) {
 					layersPanel.refresh();
+					PerfTrace.mark('layers-panel-refresh');
 					recompositeLayers();
+					PerfTrace.mark('layers-recomposite-submit');
 					scheduleSaveState();
+					PerfTrace.mark('layers-state-save-scheduled');
 				} else {
 					vscode.postMessage({ type: 'show-error', message: 'Could not load the selected image(s) as layers.' });
+					PerfTrace.mark('layers-add-failed');
 				}
+				PerfTrace.end();
 				break;
 			}
 
