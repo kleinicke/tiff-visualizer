@@ -525,9 +525,18 @@ export class NpyProcessor {
      */
     _getNanColor(settings) {
         if (settings.nanColor) {
-            // Handle hex string
             if (typeof settings.nanColor === 'string') {
+                if (settings.nanColor === 'fuchsia') {
+                    return { r: 255, g: 0, b: 255 };
+                }
+                if (settings.nanColor === 'black') {
+                    return { r: 0, g: 0, b: 0 };
+                }
+                // Handle explicit hex string.
                 const hex = settings.nanColor.replace('#', '');
+                if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+                    return { r: 0, g: 0, b: 0 };
+                }
                 return {
                     r: parseInt(hex.substring(0, 2), 16),
                     g: parseInt(hex.substring(2, 4), 16),
@@ -537,6 +546,6 @@ export class NpyProcessor {
             // Handle object
             return settings.nanColor;
         }
-        return { r: 255, g: 0, b: 0 }; // Default red
+        return { r: 0, g: 0, b: 0 };
     }
 }
