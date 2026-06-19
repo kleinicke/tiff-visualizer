@@ -106,10 +106,8 @@ export class HistogramOverlay {
 		labels.className = 'histogram-labels';
 		labels.style.display = 'flex';
 		labels.style.justifyContent = 'space-between';
-		labels.style.padding = '0 5px';
 		labels.style.fontSize = '10px';
 		labels.style.color = '#cccccc';
-		labels.style.marginTop = '2px';
 
 		this.minLabel = document.createElement('span');
 		this.minLabel.textContent = '0';
@@ -1030,53 +1028,83 @@ export class HistogramOverlay {
 			return Math.round(value).toString();
 		};
 
+		const createCell = (/** @type {string} */ text, /** @type {string} */ className = '') => {
+			const span = document.createElement('span');
+			span.textContent = text;
+			if (className) span.className = className;
+			return span;
+		};
+
+		const createSingleRow = (/** @type {string} */ label, /** @type {string} */ value) => {
+			const row = document.createElement('div');
+			row.className = 'histogram-stat-row histogram-stat-row-single';
+			row.appendChild(createCell(label));
+			row.appendChild(createCell(value, 'histogram-stat-value'));
+			return row;
+		};
+
+		const createHeaderRow = () => {
+			const row = document.createElement('div');
+			row.className = 'histogram-stat-row histogram-stat-row-header';
+			row.appendChild(createCell(''));
+			row.appendChild(createCell('Min', 'histogram-stat-value'));
+			row.appendChild(createCell('Max', 'histogram-stat-value'));
+			row.appendChild(createCell('Mean', 'histogram-stat-value'));
+			return row;
+		};
+
+		const createRgbRow = (
+			/** @type {string} */ label,
+			/** @type {{min:number,max:number,mean:number}} */ stat,
+			/** @type {string} */ color
+		) => {
+			const row = document.createElement('div');
+			row.className = 'histogram-stat-row';
+			row.style.color = color;
+			row.appendChild(createCell(label));
+			row.appendChild(createCell(formatStat(stat.min), 'histogram-stat-value'));
+			row.appendChild(createCell(formatStat(stat.max), 'histogram-stat-value'));
+			row.appendChild(createCell(formatStat(stat.mean), 'histogram-stat-value'));
+			return row;
+		};
+
 		// For grayscale images, show single channel stats, otherwise show RGB
 		if (isGrayscale && origStats) {
 			const s = origStats.r;
-
-			const createSpan = (/** @type {string} */ text) => {
-				const span = document.createElement('span');
-				span.textContent = text;
-				return span;
-			};
-
-			statsEl.appendChild(createSpan(`Min: ${formatStat(s.min)}`));
-			statsEl.appendChild(createSpan(`Max: ${formatStat(s.max)}`));
-			statsEl.appendChild(createSpan(`Mean: ${formatStat(s.mean)}`));
+			statsEl.appendChild(createSingleRow('Min', formatStat(s.min)));
+			statsEl.appendChild(createSingleRow('Max', formatStat(s.max)));
+			statsEl.appendChild(createSingleRow('Mean', formatStat(s.mean)));
 		} else if (origStats) {
 			// Show RGB stats in original values
-			const createStatSpan = (/** @type {string} */ label, /** @type {{min:number,max:number,mean:number}} */ stat, /** @type {string} */ color) => {
-				const span = document.createElement('span');
-				span.style.color = color;
-				span.textContent = `${label}: ${formatStat(stat.min)}-${formatStat(stat.max)} (μ=${formatStat(stat.mean)})`;
-				return span;
-			};
-
-			statsEl.appendChild(createStatSpan('R', origStats.r, '#ff6666'));
-			statsEl.appendChild(createStatSpan('G', origStats.g, '#66ff66'));
-			statsEl.appendChild(createStatSpan('B', origStats.b, '#6666ff'));
+			statsEl.appendChild(createHeaderRow());
+			statsEl.appendChild(createRgbRow('R', origStats.r, '#ff6666'));
+			statsEl.appendChild(createRgbRow('G', origStats.g, '#66ff66'));
+			statsEl.appendChild(createRgbRow('B', origStats.b, '#6666ff'));
 		} else {
 			// Fallback to bin-based stats (when no raw data available)
 			const stats = this.histogramData.stats;
-			const createStatSpan = (/** @type {string} */ label, /** @type {{minBin:number,maxBin:number}} */ stat, /** @type {string} */ color) => {
-				const span = document.createElement('span');
-				span.style.color = color;
-				span.textContent = `${label}: ${stat.minBin}-${stat.maxBin}`;
-				return span;
+			const createBinRow = (/** @type {string} */ label, /** @type {{minBin:number,maxBin:number,meanBin:number}} */ stat, /** @type {string} */ color) => {
+				const row = document.createElement('div');
+				row.className = 'histogram-stat-row';
+				row.style.color = color;
+				row.appendChild(createCell(label));
+				row.appendChild(createCell(String(stat.minBin), 'histogram-stat-value'));
+				row.appendChild(createCell(String(stat.maxBin), 'histogram-stat-value'));
+				row.appendChild(createCell(formatStat(stat.meanBin), 'histogram-stat-value'));
+				return row;
 			};
 
-			statsEl.appendChild(createStatSpan('R', stats.r, '#ff6666'));
-			statsEl.appendChild(createStatSpan('G', stats.g, '#66ff66'));
-			statsEl.appendChild(createStatSpan('B', stats.b, '#6666ff'));
+			statsEl.appendChild(createHeaderRow());
+			statsEl.appendChild(createBinRow('R', stats.r, '#ff6666'));
+			statsEl.appendChild(createBinRow('G', stats.g, '#66ff66'));
+			statsEl.appendChild(createBinRow('B', stats.b, '#6666ff'));
 		}
 
 		// Show NaN count if present
 		if (this.histogramData.nanCount > 0) {
-			const nanSpan = document.createElement('span');
-			nanSpan.style.color = '#ffcc00';
-			nanSpan.style.marginLeft = '10px';
-			nanSpan.textContent = `NaN/Inf: ${this.histogramData.nanCount.toLocaleString()}`;
-			statsEl.appendChild(nanSpan);
+			statsEl.appendChild(createSingleRow('NaN', this.histogramData.nanCount.toLocaleString()));
+			const lastRow = statsEl.lastElementChild;
+			if (lastRow instanceof HTMLElement) lastRow.style.color = '#ffcc00';
 		}
 
 		// Update picker background and position
@@ -1098,23 +1126,10 @@ export class HistogramOverlay {
 		statsEl.style.backgroundColor = isDarkTheme ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
 		statsEl.style.color = isDarkTheme ? '#ffffff' : '#000000';
 
-		// Smart positioning
-		if (!this.overlay) return;
-		const overlayRect = this.overlay.getBoundingClientRect();
-		const windowWidth = window.innerWidth;
-
-		// If close to right edge, move to left
-		if (overlayRect.right > windowWidth - 200) { // Increased threshold
-			statsEl.style.left = 'auto';
-			statsEl.style.right = '100%';
-			statsEl.style.marginRight = '10px';
-			statsEl.style.marginLeft = '0';
-		} else {
-			statsEl.style.right = 'auto';
-			statsEl.style.left = '100%';
-			statsEl.style.marginLeft = '10px';
-			statsEl.style.marginRight = '0';
-		}
+		statsEl.style.left = 'auto';
+		statsEl.style.right = 'auto';
+		statsEl.style.marginLeft = '0';
+		statsEl.style.marginRight = '0';
 
 		// Update min/max labels at bottom of histogram
 		this.updateRangeLabels();
