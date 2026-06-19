@@ -360,6 +360,12 @@ export class NpyProcessor {
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const normalizedFloatMode = settings.normalizedFloatMode;
+        const formatNumber = (/** @type {number} */ n) => {
+            if (Number.isNaN(n)) return 'NaN';
+            if (n === Infinity) return 'Inf';
+            if (n === -Infinity) return '-Inf';
+            return parseFloat(n.toFixed(6)).toString();
+        };
 
         if (rgbAs24BitMode) {
             // RGB as 24-bit grayscale: show combined value
@@ -379,14 +385,7 @@ export class NpyProcessor {
             const r = data[srcIdx + 0];
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
-            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
-                const formatNumber = (/** @type {number} */ n) => {
-                    // Use fixed decimal notation to avoid scientific notation
-                    // Show up to 6 decimal places, but remove trailing zeros
-                    return parseFloat(n.toFixed(6)).toString();
-                };
-                return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
-            }
+            return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
         } else if (channels === 4) {
             // RGBA data - return space-separated values with α: prefix for alpha
             const srcIdx = pixelIdx * 4;
@@ -394,37 +393,23 @@ export class NpyProcessor {
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
             const a = data[srcIdx + 3];
-            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && Number.isFinite(a)) {
-                const formatNumber = (/** @type {number} */ n) => {
-                    // Use fixed decimal notation to avoid scientific notation
-                    // Show up to 6 decimal places, but remove trailing zeros
-                    return parseFloat(n.toFixed(6)).toString();
-                };
-                return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} α:${formatNumber(a)}`;
-            }
+            return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} α:${formatNumber(a)}`;
         } else {
             // Grayscale data
             const value = data[pixelIdx];
-            if (Number.isFinite(value)) {
-                const formatNumber = (/** @type {number} */ n) => {
-                    // Use fixed decimal notation to avoid scientific notation
-                    // Show up to 6 decimal places, but remove trailing zeros
-                    return parseFloat(n.toFixed(6)).toString();
-                };
-                // Check if normalized float mode is enabled for uint images
-                if (normalizedFloatMode && dtype && !dtype.includes('f')) {
-                    // Convert uint to normalized float (0-1)
-                    let maxValue = 255;
-                    if (dtype.includes('u2') || dtype.includes('i2')) {
-                        maxValue = dtype.includes('u') ? 65535 : 32767;
-                    } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                        maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
-                    }
-                    const normalized = value / maxValue;
-                    return formatNumber(normalized);
+            // Check if normalized float mode is enabled for uint images
+            if (normalizedFloatMode && dtype && !dtype.includes('f') && Number.isFinite(value)) {
+                // Convert uint to normalized float (0-1)
+                let maxValue = 255;
+                if (dtype.includes('u2') || dtype.includes('i2')) {
+                    maxValue = dtype.includes('u') ? 65535 : 32767;
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
                 }
-                return formatNumber(value);
+                const normalized = value / maxValue;
+                return formatNumber(normalized);
             }
+            return formatNumber(value);
         }
         return '';
     }
