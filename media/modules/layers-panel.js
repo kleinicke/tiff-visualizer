@@ -12,7 +12,7 @@ import { BLEND_MODES, MASK_CONDITIONS } from './layer-compositor.js';
 export class LayersPanel {
 	/**
 	 * @param {import('./layer-manager.js').LayerManager} manager
-	 * @param {{ onChange: () => void, onVisibilityChange?: (visible: boolean) => void, onPersist?: () => void, onAddLayer?: () => void }} callbacks
+	 * @param {{ onChange: (options?: {interactive?: boolean}) => void, onVisibilityChange?: (visible: boolean) => void, onPersist?: () => void, onAddLayer?: () => void }} callbacks
 	 * @param {{ closable?: boolean }} [options]
 	 */
 	constructor(manager, callbacks, options = {}) {
@@ -99,11 +99,15 @@ export class LayersPanel {
 		if (this.isVisible()) { this.hide(); } else { this.show(); }
 	}
 
-	show() {
+	/** @param {{notify?: boolean}} [options] */
+	show(options = {}) {
+		const wasVisible = this.isVisible();
 		this.mount();
 		this.root?.removeAttribute('hidden');
 		this.refresh();
-		this.onVisibilityChange?.(true);
+		if (!wasVisible && options.notify !== false) {
+			this.onVisibilityChange?.(true);
+		}
 	}
 
 	hide() {
@@ -228,6 +232,10 @@ export class LayersPanel {
 		opacity.title = 'Opacity';
 		opacity.disabled = layer.blendMode === 'mask';
 		opacity.addEventListener('input', () => {
+			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
+			this.onChange({ interactive: true });
+		});
+		opacity.addEventListener('change', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
 			this.onChange();
 		});

@@ -111,7 +111,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
-		onChange: () => { scheduleRecomposite(); scheduleSaveState(); },
+		onChange: (options = {}) => { scheduleRecomposite(options.interactive ? 180 : 0); scheduleSaveState(); },
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 		onVisibilityChange: (visible) => {
@@ -1337,10 +1337,26 @@ import { LayersPanel } from './modules/layers-panel.js';
 		return true;
 	}
 
-	// Coalesce rapid recomposite requests (e.g. dragging the opacity slider) into
-	// at most one composite per animation frame so the UI stays responsive.
+	// Coalesce rapid recomposite requests. Interactive drags get a short trailing
+	// debounce because a full large-layer composite can take hundreds of ms or
+	// seconds, and running one for every slider event makes the slider itself lag.
 	let _recompositeScheduled = false;
-	function scheduleRecomposite() {
+	/** @type {ReturnType<typeof setTimeout>|null} */
+	let _interactiveRecompositeTimer = null;
+	/** @param {number} [delayMs] */
+	function scheduleRecomposite(delayMs = 0) {
+		if (delayMs > 0) {
+			if (_interactiveRecompositeTimer) { clearTimeout(_interactiveRecompositeTimer); }
+			_interactiveRecompositeTimer = setTimeout(() => {
+				_interactiveRecompositeTimer = null;
+				scheduleRecomposite(0);
+			}, delayMs);
+			return;
+		}
+		if (_interactiveRecompositeTimer) {
+			clearTimeout(_interactiveRecompositeTimer);
+			_interactiveRecompositeTimer = null;
+		}
 		if (_recompositeScheduled) { return; }
 		_recompositeScheduled = true;
 		requestAnimationFrame(() => {
@@ -1523,7 +1539,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 				PerfTrace.begin(`add-layer ${images.length} image${images.length === 1 ? '' : 's'}`);
 				syncBaseLayer();
 				PerfTrace.mark('layers-base-sync');
-				layersPanel.show();
+				const wasLayerActive = layerManager.active;
+				layersPanel.show({ notify: false });
+				if (!wasLayerActive) {
+					layerManager.active = true;
+					vscode.postMessage({ type: 'layerModeChanged', active: true });
+				}
 				PerfTrace.mark('layers-panel-show');
 				let addedLayers = 0;
 				for (const im of images) {
