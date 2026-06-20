@@ -34,7 +34,20 @@ export class LayersPanel {
 		this.minimizeBtn = null;
 		/** id of the layer currently armed for drag-to-move, or null */
 		this.movingLayerId = null;
+		/** @type {string|null} id of the layer that needs a second remove click */
+		this._pendingRemoveId = null;
+		/** @type {ReturnType<typeof setTimeout>|null} */
+		this._pendingRemoveTimer = null;
 		this.collapsed = false;
+	}
+
+	_clearPendingRemove(refresh = false) {
+		if (this._pendingRemoveTimer) {
+			clearTimeout(this._pendingRemoveTimer);
+			this._pendingRemoveTimer = null;
+		}
+		this._pendingRemoveId = null;
+		if (refresh) { this.refresh(); }
 	}
 
 	/** Build the panel DOM (once) and attach it to the document body. */
@@ -309,9 +322,23 @@ export class LayersPanel {
 
 		const remove = document.createElement('button');
 		remove.className = 'layers-btn layer-remove';
-		remove.textContent = '🗑';
-		remove.title = 'Remove layer';
+		const pendingRemove = this._pendingRemoveId === id;
+		remove.textContent = pendingRemove ? 'again' : '🗑';
+		remove.title = pendingRemove ? 'Click again to remove this layer' : 'Remove layer';
+		remove.classList.toggle('pending', pendingRemove);
 		remove.addEventListener('click', () => {
+			if (this._pendingRemoveId !== id) {
+				this._clearPendingRemove(false);
+				this._pendingRemoveId = id;
+				remove.textContent = 'again';
+				remove.title = 'Click again to remove this layer';
+				remove.classList.add('pending');
+				this._pendingRemoveTimer = setTimeout(() => {
+					this._clearPendingRemove(true);
+				}, 1600);
+				return;
+			}
+			this._clearPendingRemove(false);
 			if (this.movingLayerId === id) { this.movingLayerId = null; }
 			this.manager.removeLayer(id);
 			this.refresh();
