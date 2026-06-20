@@ -237,8 +237,10 @@ export class LayersPanel {
 		});
 		opacity.addEventListener('change', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
-			this.onChange();
+			this.onChange({ interactive: true });
+			opacity.blur();
 		});
+		opacity.addEventListener('pointerup', () => opacity.blur());
 		controls.appendChild(opacity);
 		row.appendChild(controls);
 
