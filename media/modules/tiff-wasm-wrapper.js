@@ -58,6 +58,14 @@ async function initWasm() {
  * @property {number} predictor - TIFF predictor value
  * @property {number} photometricInterpretation - TIFF photometric interpretation
  * @property {number} planarConfiguration - TIFF planar configuration
+ * @property {number} [rowsPerStrip]
+ * @property {number} [stripCount]
+ * @property {number} [stripByteCountTotal]
+ * @property {number} [stripByteCountMax]
+ * @property {number} [tileWidth]
+ * @property {number} [tileLength]
+ * @property {number} [tileCount]
+ * @property {boolean} [directDecode]
  * @property {Float32Array} data - Pixel data as floats
  * @property {number} min - Minimum value
  * @property {number} max - Maximum value
@@ -112,6 +120,14 @@ export class TiffWasmProcessor {
             predictor: result.predictor,
             photometricInterpretation: result.photometric_interpretation,
             planarConfiguration: result.planar_configuration,
+            rowsPerStrip: result.rows_per_strip,
+            stripCount: result.strip_count,
+            stripByteCountTotal: Number(result.strip_byte_count_total || 0),
+            stripByteCountMax: Number(result.strip_byte_count_max || 0),
+            tileWidth: result.tile_width,
+            tileLength: result.tile_length,
+            tileCount: result.tile_count,
+            directDecode: result.direct_decode,
             data: new Float32Array(result.get_data_as_f32()),
             min: result.min_value,
             max: result.max_value

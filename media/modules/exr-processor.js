@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -34,6 +35,9 @@ export class ExrProcessor {
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
 		this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+		this._lastRenderHistogram = null;
+		this._lastRenderUsedWebGL = false;
+		this._webglRenderer = new WebGL2FloatRenderer();
 		/** @type {AbortSignal|undefined} */
 		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 		/** @type {DecodeWorkerClient|null} */
@@ -80,8 +84,7 @@ export class ExrProcessor {
 				throw new Error('parseExr library not loaded. Make sure parse-exr is included.');
 			}
 
-			const response = await fetch(src, { signal: loadSignal });
-			const buffer = await response.arrayBuffer();
+			const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'exr');
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
 			// Invalidate stats cache for new image
@@ -96,19 +99,25 @@ export class ExrProcessor {
 				this.decodeWorker, 'exr', buffer, src, loadSignal,
 				// @ts-ignore
 				(b) => parseExr(b, FloatType));
+			if (exrResult.wasmFallbackReason) {
+				console.warn('[ExrProcessor] Rust EXR decoder fell back to parse-exr:', exrResult.wasmFallbackReason);
+			}
 
 			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;
+			const flipY = exrResult.flipY !== false;
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028
 			let channels;
-			if (format === 1023) { // RGBA
+			const pixelCount = width * height;
+			if (Array.isArray(displayedChannels) && displayedChannels.length > 0 && data.length === pixelCount * displayedChannels.length) {
+				channels = displayedChannels.length;
+			} else if (format === 1023) { // RGBA
 				channels = 4;
 			} else if (format === 1028) { // Red (grayscale)
 				channels = 1;
 			} else {
 				// Fallback: try to detect from data length
-				const pixelCount = width * height;
 				const totalValues = data.length;
 				channels = totalValues / pixelCount;
 			}
@@ -127,7 +136,8 @@ export class ExrProcessor {
 				type, // 1015 = Float32, 1016 = HalfFloat
 				format,
 				isFloat: true, // EXR is always floating point
-				channelNames: channelNames || [] // Original EXR channel names
+				channelNames: channelNames || [], // Original EXR channel names
+				flipY
 			};
 
 			// Send format information to VS Code BEFORE rendering
@@ -181,18 +191,20 @@ export class ExrProcessor {
 	 * @param {ImageSettings} settings - Current rendering settings
 	 * @returns {ImageData} - Rendered image data
 	 */
-	renderExrToCanvas(settings) {
+	renderExrToCanvas(settings, renderOptions = {}) {
+		this._lastRenderHistogram = null;
+		this._lastRenderUsedWebGL = false;
 		if (!this.rawExrData) {
 			throw new Error('No EXR data loaded');
 		}
 
-		const { width, height, data, channels } = this.rawExrData;
+		const { width, height, data, channels, flipY } = this.rawExrData;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
 		// Calculate stats if needed (for auto-normalize or just to have them)
 		/** @type {{min: number, max: number} | undefined} */
 		let stats = this._cachedStats;
-		if (!stats && !isGammaMode) {
+		if (!stats && NormalizationHelper.needsStats(settings)) {
 			stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
 			this._cachedStats = stats;
 
@@ -211,11 +223,38 @@ export class ExrProcessor {
 
 		const nanColor = this._getNanColor(settings);
 
+		if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+			data,
+			width,
+			height,
+			channels,
+			isFloat: true,
+			settings,
+			collectHistogram: renderOptions.collectHistogram === true
+		})) {
+			const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+				data,
+				width,
+				height,
+				min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+				max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
+				typeMax: 1.0,
+				settings,
+				nanColor,
+				channels,
+				flipY
+			});
+			if (rendered) {
+				this._lastRenderUsedWebGL = true;
+				return renderOptions.placeholderImageData || new ImageData(width, height);
+			}
+		}
+
 		// Create options object
 		const options = {
 			nanColor: nanColor,
-			// EXR data is typically bottom-up, so we need to flip it for display
-			flipY: true
+			flipY,
+			collectHistogram: renderOptions.collectHistogram === true
 		};
 
 		const imageData = ImageRenderer.render(
@@ -228,6 +267,7 @@ export class ExrProcessor {
 			settings,
 			options
 		);
+		this._lastRenderHistogram = options.renderHistogramResult || null;
 
 		return imageData;
 	}
@@ -244,8 +284,7 @@ export class ExrProcessor {
 		const { width, height, data, channels } = this.rawExrData;
 		if (x < 0 || x >= width || y < 0 || y >= height) return null;
 
-		// Apply Y-flip to match rendering (EXR uses bottom-left origin, canvas uses top-left)
-		const flippedY = height - 1 - y;
+		const flippedY = this.rawExrData.flipY ? height - 1 - y : y;
 		const dataIndex = (flippedY * width + x) * channels;
 		const values = [];
 		for (let i = 0; i < channels; i++) {
@@ -259,11 +298,10 @@ export class ExrProcessor {
 	 * @param {ImageSettings} settings - New settings
 	 * @returns {ImageData|null} - Updated image data
 	 */
-	updateSettings(settings) {
+	updateSettings(settings, renderOptions = {}) {
 		if (this._pendingRenderData && this._isInitialLoad) {
 			// First render after initial load - use pending data
-			const { width, height } = this._pendingRenderData;
-			const imageData = this.renderExrToCanvas(settings);
+			const imageData = this.renderExrToCanvas(settings, renderOptions);
 			this._isInitialLoad = false;
 			this._pendingRenderData = null;
 

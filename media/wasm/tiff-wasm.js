@@ -125,6 +125,67 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 /**
+ * @param {Uint8Array} data
+ * @returns {PngResult}
+ */
+export function decode_png16_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_png16_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PngResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {HdrResult}
+ */
+export function decode_hdr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_hdr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a TIFF file without eagerly computing min/max statistics.
+ *
+ * The webview render path computes stats lazily when a non-gamma mode needs
+ * them. Skipping eager stats saves a full pass over large float TIFFs during
+ * the common gamma-mode initial load.
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
+}
+
+/**
  * Decode a TIFF file from an ArrayBuffer
  * Returns TiffResult with image data and metadata
  * @param {Uint8Array} data
@@ -139,6 +200,303 @@ export function decode_tiff(data) {
     }
     return TiffResult.__wrap(ret[0]);
 }
+
+let cachedFloat64ArrayMemory0 = null;
+
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
+}
+
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+
+let cachedUint16ArrayMemory0 = null;
+
+function getUint16ArrayMemory0() {
+    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
+        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
+    }
+    return cachedUint16ArrayMemory0;
+}
+
+function getArrayU16FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
+}
+
+const ExrResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_exrresult_free(ptr >>> 0, 1));
+
+export class ExrResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ExrResult.prototype);
+        obj.__wbg_ptr = ptr;
+        ExrResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ExrResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_exrresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_pack_ms() {
+        const ret = wasm.exrresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_read_ms() {
+        const ret = wasm.exrresult_timing_read_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_total_ms() {
+        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_data_as_f32() {
+        const ret = wasm.exrresult_take_data_as_f32(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get channel_names_csv() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.exrresult_channel_names_csv(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {string}
+     */
+    get displayed_channels_csv() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.exrresult_displayed_channels_csv(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.exrresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get format() {
+        const ret = wasm.exrresult_format(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.exrresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_type() {
+        const ret = wasm.exrresult_data_type(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) ExrResult.prototype[Symbol.dispose] = ExrResult.prototype.free;
+
+const HdrResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_hdrresult_free(ptr >>> 0, 1));
+
+export class HdrResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(HdrResult.prototype);
+        obj.__wbg_ptr = ptr;
+        HdrResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        HdrResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_hdrresult_free(ptr, 0);
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_data_as_f32() {
+        const ret = wasm.hdrresult_take_data_as_f32(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    take_metadata_as_f64() {
+        const ret = wasm.hdrresult_take_metadata_as_f64(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+}
+if (Symbol.dispose) HdrResult.prototype[Symbol.dispose] = HdrResult.prototype.free;
+
+const PngResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_pngresult_free(ptr >>> 0, 1));
+
+export class PngResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(PngResult.prototype);
+        obj.__wbg_ptr = ptr;
+        PngResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PngResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_pngresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get color_type() {
+        const ret = wasm.pngresult_color_type(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_total_ms() {
+        const ret = wasm.pngresult_timing_total_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Uint16Array}
+     */
+    take_data_as_u16() {
+        const ret = wasm.pngresult_take_data_as_u16(this.__wbg_ptr);
+        var v1 = getArrayU16FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 2, 2);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_decode_ms() {
+        const ret = wasm.exrresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_convert_ms() {
+        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_read_info_ms() {
+        const ret = wasm.exrresult_timing_read_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.exrresult_format(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.exrresult_data_type(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get bit_depth() {
+        const ret = wasm.pngresult_bit_depth(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) PngResult.prototype[Symbol.dispose] = PngResult.prototype.free;
 
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -170,9 +528,44 @@ export class TiffResult {
     /**
      * @returns {number}
      */
+    get tile_count() {
+        const ret = wasm.tiffresult_tile_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get tile_width() {
+        const ret = wasm.tiffresult_tile_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
     get compression() {
         const ret = wasm.tiffresult_compression(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_count() {
+        const ret = wasm.tiffresult_strip_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get tile_length() {
+        const ret = wasm.tiffresult_tile_length(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get direct_decode() {
+        const ret = wasm.tiffresult_direct_decode(this.__wbg_ptr);
+        return ret !== 0;
     }
     /**
      * @returns {number}
@@ -194,6 +587,20 @@ export class TiffResult {
     /**
      * @returns {number}
      */
+    get rows_per_strip() {
+        const ret = wasm.tiffresult_rows_per_strip(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_pack_ms() {
+        const ret = wasm.tiffresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
     get bits_per_sample() {
         const ret = wasm.tiffresult_bits_per_sample(this.__wbg_ptr);
         return ret >>> 0;
@@ -211,9 +618,62 @@ export class TiffResult {
     /**
      * @returns {number}
      */
+    get timing_stats_ms() {
+        const ret = wasm.tiffresult_timing_stats_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Move float data out of the result when possible. This avoids cloning the
+     * decoded f32 vector before wasm-bindgen copies it into JS-owned memory.
+     * @returns {Float32Array}
+     */
+    take_data_as_f32() {
+        const ret = wasm.tiffresult_take_data_as_f32(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_decode_ms() {
+        const ret = wasm.tiffresult_timing_decode_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_convert_ms() {
+        const ret = wasm.tiffresult_timing_convert_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get timing_metadata_ms() {
+        const ret = wasm.tiffresult_timing_metadata_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
     get planar_configuration() {
         const ret = wasm.tiffresult_planar_configuration(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_byte_count_max() {
+        const ret = wasm.tiffresult_strip_byte_count_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_byte_count_total() {
+        const ret = wasm.tiffresult_strip_byte_count_total(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {number}
@@ -247,14 +707,14 @@ export class TiffResult {
      * @returns {number}
      */
     get max_value() {
-        const ret = wasm.tiffresult_max_value(this.__wbg_ptr);
+        const ret = wasm.pngresult_timing_total_ms(this.__wbg_ptr);
         return ret;
     }
     /**
      * @returns {number}
      */
     get min_value() {
-        const ret = wasm.tiffresult_min_value(this.__wbg_ptr);
+        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -361,6 +821,8 @@ function __wbg_finalize_init(instance, module) {
     __wbg_init.__wbindgen_wasm_module = module;
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
+    cachedFloat64ArrayMemory0 = null;
+    cachedUint16ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

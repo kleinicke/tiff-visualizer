@@ -28,7 +28,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_tiff } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -94,12 +94,43 @@ function decodeTiffWasm(buffer) {
 	if (!tiffWasmReady) {
 		throw new Error('TIFF WASM decoder not initialized');
 	}
-	const result = decode_tiff(new Uint8Array(buffer));
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = typeof decode_tiff_fast === 'function'
+		? decode_tiff_fast(new Uint8Array(buffer))
+		: decode_tiff(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-wasm-rust', durationMs: now - phaseStart });
+	if (Number.isFinite(result.timing_metadata_ms)) {
+		timings.push({ name: 'decode-rust-metadata', durationMs: result.timing_metadata_ms });
+	}
+	if (Number.isFinite(result.timing_decode_ms)) {
+		timings.push({ name: 'decode-rust-read-image', durationMs: result.timing_decode_ms });
+	}
+	if (Number.isFinite(result.timing_convert_ms)) {
+		timings.push({ name: 'decode-rust-convert-pack', durationMs: result.timing_convert_ms });
+	}
+	if (Number.isFinite(result.timing_stats_ms)) {
+		timings.push({ name: 'decode-rust-stats', durationMs: result.timing_stats_ms });
+	}
+	if (Number.isFinite(result.timing_pack_ms)) {
+		timings.push({ name: 'decode-rust-pack', durationMs: result.timing_pack_ms });
+	}
+	if (result.direct_decode) {
+		timings.push({ name: 'decode-rust-direct', durationMs: 1 });
+	}
+
+	phaseStart = now;
 	const width = result.width;
 	const height = result.height;
 	const channels = result.channels;
-	const data = new Float32Array(result.get_data_as_f32());
+	const data = typeof result.take_data_as_f32 === 'function'
+		? result.take_data_as_f32()
+		: result.get_data_as_f32();
+	now = performance.now();
+	timings.push({ name: 'decode-wasm-to-f32', durationMs: now - phaseStart });
 
+	phaseStart = now;
 	/** @type {Float32Array[]} */
 	const rasters = [];
 	if (channels === 1) {
@@ -114,6 +145,8 @@ function decodeTiffWasm(buffer) {
 			rasters.push(channel);
 		}
 	}
+	now = performance.now();
+	timings.push({ name: 'decode-wasm-deinterleave', durationMs: now - phaseStart });
 
 	return {
 		width,
@@ -125,11 +158,20 @@ function decodeTiffWasm(buffer) {
 		predictor: result.predictor,
 		photometricInterpretation: result.photometric_interpretation,
 		planarConfiguration: result.planar_configuration,
+		rowsPerStrip: result.rows_per_strip,
+		stripCount: result.strip_count,
+		stripByteCountTotal: Number(result.strip_byte_count_total || 0),
+		stripByteCountMax: Number(result.strip_byte_count_max || 0),
+		tileWidth: result.tile_width,
+		tileLength: result.tile_length,
+		tileCount: result.tile_count,
+		directDecode: result.direct_decode,
 		data,
 		rasters,
 		min: result.min_value,
 		max: result.max_value,
 		decodedWith: 'wasm (worker)',
+		decodeTimings: timings,
 	};
 }
 
@@ -140,8 +182,17 @@ function decodeTiffWasm(buffer) {
  * @param {string} wasmError
  */
 async function decodeTiffGeotiff(buffer, wasmError) {
+	const timings = [];
+	let phaseStart = performance.now();
 	const tiff = await WorkerGeoTIFF.fromArrayBuffer(buffer);
+	let now = performance.now();
+	timings.push({ name: 'decode-geotiff-open', durationMs: now - phaseStart });
+
+	phaseStart = now;
 	const image = await tiff.getImage();
+	now = performance.now();
+	timings.push({ name: 'decode-geotiff-ifd', durationMs: now - phaseStart });
+
 	const width = image.getWidth();
 	const height = image.getHeight();
 	const samplesPerPixel = image.getSamplesPerPixel();
@@ -149,7 +200,10 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 	const rawSampleFormat = image.getSampleFormat();
 	const bitsPerSample = Array.isArray(rawBitsPerSample) ? rawBitsPerSample[0] : rawBitsPerSample;
 	const sampleFormat = Array.isArray(rawSampleFormat) ? rawSampleFormat[0] : rawSampleFormat;
+	phaseStart = performance.now();
 	const decodedRasters = await image.readRasters();
+	now = performance.now();
+	timings.push({ name: 'decode-geotiff-rasters', durationMs: now - phaseStart });
 	const fileDirectory = image.fileDirectory || {};
 
 	/** @type {Float32Array} */
@@ -157,9 +211,13 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 	/** @type {Float32Array[]|any[]} */
 	let rasters;
 	if (samplesPerPixel === 1) {
+		phaseStart = performance.now();
 		data = new Float32Array(decodedRasters[0]);
 		rasters = [data];
+		now = performance.now();
+		timings.push({ name: 'decode-geotiff-copy', durationMs: now - phaseStart });
 	} else {
+		phaseStart = performance.now();
 		const pixelCount = width * height;
 		data = new Float32Array(pixelCount * samplesPerPixel);
 		for (let i = 0; i < pixelCount; i++) {
@@ -168,6 +226,8 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 			}
 		}
 		rasters = decodedRasters;
+		now = performance.now();
+		timings.push({ name: 'decode-geotiff-interleave', durationMs: now - phaseStart });
 	}
 
 	return {
@@ -184,6 +244,7 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 		rasters,
 		decodedWith: 'geotiff.js (worker)',
 		wasmFallbackReason: wasmError,
+		decodeTimings: timings,
 	};
 }
 
@@ -205,6 +266,243 @@ async function decodeTiff(buffer) {
 }
 
 /**
+ * Decode an EXR with the Rust/WASM decoder, returning a parse-exr-compatible
+ * shape for the existing EXR processor.
+ * @param {ArrayBuffer} buffer
+ */
+function decodeExrWasm(buffer) {
+	if (!tiffWasmReady || typeof decode_exr_fast !== 'function') {
+		throw new Error('EXR WASM decoder not initialized');
+	}
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = decode_exr_fast(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-exr-rust', durationMs: now - phaseStart });
+	if (Number.isFinite(result.timing_read_ms)) {
+		timings.push({ name: 'decode-exr-read-image', durationMs: result.timing_read_ms });
+	}
+	if (Number.isFinite(result.timing_pack_ms)) {
+		timings.push({ name: 'decode-exr-pack', durationMs: result.timing_pack_ms });
+	}
+
+	phaseStart = now;
+	const data = result.take_data_as_f32();
+	now = performance.now();
+	timings.push({ name: 'decode-exr-to-f32', durationMs: now - phaseStart });
+
+	const channelNames = String(result.channel_names_csv || '').split(',').filter(Boolean);
+	const displayedChannels = String(result.displayed_channels_csv || '').split(',').filter(Boolean);
+	return {
+		width: result.width,
+		height: result.height,
+		data,
+		format: result.format,
+		type: result.data_type,
+		channelNames,
+		displayedChannels,
+		shape: [result.width, result.height],
+		flipY: false,
+		decodedWith: 'rust-exr-wasm (worker)',
+		decodeTimings: timings,
+	};
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodeExrParseExr(buffer, wasmError = '') {
+	const phaseStart = performance.now();
+	// FloatType (1015): decoded Float32Array values, matching exr-processor.
+	// @ts-ignore — parseExr is attached to the (shimmed) window by parse-exr.js
+	const result = globalThis.parseExr(buffer, 1015);
+	result.decodedWith = 'parse-exr.js (worker)';
+	result.flipY = true;
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
+	result.decodeTimings = [{ name: 'decode-exr-parse-exr', durationMs: performance.now() - phaseStart }];
+	return result;
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodeExr(buffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodeExrWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM EXR decode failed');
+		console.warn('[DecodeWorker] EXR WASM decode failed, using parse-exr in worker:', message);
+		return decodeExrParseExr(buffer, message);
+	}
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodeHdrWasm(buffer) {
+	if (!tiffWasmReady || typeof decode_hdr_fast !== 'function') {
+		throw new Error('HDR WASM decoder not initialized');
+	}
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = decode_hdr_fast(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-hdr-rust', durationMs: now - phaseStart });
+
+	phaseStart = now;
+	const data = result.take_data_as_f32();
+	const metadata = result.take_metadata_as_f64();
+	now = performance.now();
+	timings.push({ name: 'decode-hdr-transfer-f32', durationMs: now - phaseStart });
+	const [
+		width = 0,
+		height = 0,
+		exposure = 1,
+		gamma = 1,
+		timingHeader = NaN,
+		timingDecode = NaN,
+		timingConvert = NaN,
+	] = metadata;
+	if (Number.isFinite(timingHeader)) {
+		timings.push({ name: 'decode-hdr-header', durationMs: timingHeader });
+	}
+	if (Number.isFinite(timingDecode)) {
+		timings.push({ name: 'decode-hdr-rle', durationMs: timingDecode });
+	}
+	if (Number.isFinite(timingConvert)) {
+		timings.push({ name: 'decode-hdr-to-f32', durationMs: timingConvert });
+	}
+	return {
+		shape: [width, height],
+		exposure,
+		gamma,
+		data,
+		decodedWith: 'rust-hdr-wasm (worker)',
+		decodeTimings: timings,
+	};
+}
+
+/**
+ * @param {ArrayBuffer} buffer
+ * @param {string} [wasmError]
+ */
+function decodeHdrParseHdr(buffer, wasmError = '') {
+	const phaseStart = performance.now();
+	const result = parseHdr(buffer);
+	result.decodedWith = 'parse-hdr (worker)';
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
+	result.decodeTimings = [{ name: 'decode-hdr-parse-hdr', durationMs: performance.now() - phaseStart }];
+	return result;
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodeHdr(buffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodeHdrWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM HDR decode failed');
+		console.warn('[DecodeWorker] HDR WASM decode failed, using parse-hdr in worker:', message);
+		return decodeHdrParseHdr(buffer, message);
+	}
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodePng16Wasm(buffer) {
+	if (!tiffWasmReady || typeof decode_png16_fast !== 'function') {
+		throw new Error('PNG WASM decoder not initialized');
+	}
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = decode_png16_fast(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-png16-rust', durationMs: now - phaseStart });
+	if (Number.isFinite(result.timing_read_info_ms)) {
+		timings.push({ name: 'decode-png16-rust-info', durationMs: result.timing_read_info_ms });
+	}
+	if (Number.isFinite(result.timing_decode_ms)) {
+		timings.push({ name: 'decode-png16-rust-frame', durationMs: result.timing_decode_ms });
+	}
+	if (Number.isFinite(result.timing_convert_ms)) {
+		timings.push({ name: 'decode-png16-rust-to-u16', durationMs: result.timing_convert_ms });
+	}
+
+	phaseStart = now;
+	const decodedData = result.take_data_as_u16();
+	now = performance.now();
+	timings.push({ name: 'decode-png16-rust-transfer-u16', durationMs: now - phaseStart });
+	return {
+		width: result.width,
+		height: result.height,
+		depth: result.bit_depth,
+		ctype: result.color_type,
+		decodedData,
+		decodedWith: 'rust-png-wasm (worker)',
+		decodeTimings: timings
+	};
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodePng16Upng(buffer, wasmError = '') {
+	const timings = [];
+	let phaseStart = performance.now();
+	const png = UPNG.decode(buffer);
+	let now = performance.now();
+	timings.push({ name: 'decode-png16-upng', durationMs: now - phaseStart });
+	if (png.depth === 16 && png.data) {
+		phaseStart = now;
+		const uint8Data = new Uint8Array(png.data);
+		const uint16Data = new Uint16Array(uint8Data.length / 2);
+		let src = 0;
+		for (let i = 0; i < uint16Data.length; i++, src += 2) {
+			uint16Data[i] = (uint8Data[src] << 8) | uint8Data[src + 1];
+		}
+		png.decodedData = uint16Data;
+		png.data = null;
+		now = performance.now();
+		timings.push({ name: 'decode-png16-byte-swap', durationMs: now - phaseStart });
+	}
+	png.decodeTimings = timings;
+	png.decodedWith = 'upng-js (worker)';
+	if (wasmError) {
+		png.wasmFallbackReason = wasmError;
+	}
+	return png;
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodePng16(buffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodePng16Wasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM PNG decode failed');
+		console.warn('[DecodeWorker] PNG WASM decode failed, using UPNG in worker:', message);
+		return decodePng16Upng(buffer, message);
+	}
+}
+
+/** @param {ArrayBuffer} buffer */
+function decodePpmWorker(buffer) {
+	const start = performance.now();
+	const result = ppmParser._parsePpm(buffer);
+	const parseTimings = Array.isArray(result.decodeTimings) ? result.decodeTimings : [];
+	result.decodeTimings = [
+		{ name: 'decode-ppm-parse', durationMs: performance.now() - start },
+		...parseTimings
+	];
+	return result;
+}
+
+/**
  * @param {string} format
  * @param {ArrayBuffer} buffer
  */
@@ -213,9 +511,7 @@ async function decodeFormat(format, buffer) {
 		case 'tiff':
 			return decodeTiff(buffer);
 		case 'exr':
-			// FloatType (1015): decoded Float32Array values, matching exr-processor.
-			// @ts-ignore — parseExr is attached to the (shimmed) window by parse-exr.js
-			return globalThis.parseExr(buffer, 1015);
+			return decodeExr(buffer);
 		case 'npy': {
 			const view = new DataView(buffer);
 			// NPZ (ZIP) signature 0x04034b50
@@ -225,13 +521,13 @@ async function decodeFormat(format, buffer) {
 			return npyParser._parseNpy(buffer);
 		}
 		case 'pfm':
-			return pfmParser._parsePfm(buffer);
+			return pfmParser._parsePfm(buffer, { topDown: true });
 		case 'ppm':
-			return ppmParser._parsePpm(buffer);
+			return decodePpmWorker(buffer);
 		case 'png16':
-			return UPNG.decode(buffer);
+			return decodePng16(buffer);
 		case 'hdr':
-			return parseHdr(buffer);
+			return decodeHdr(buffer);
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}

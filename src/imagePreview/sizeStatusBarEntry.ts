@@ -17,6 +17,14 @@ interface FormatInfo {
 	channels?: number; // Alternative to samplesPerPixel
 	channelNames?: string[]; // All channel names in file (e.g., for EXR: ['R', 'G', 'B', 'A'] or ['ViewLayer.Combined.R', ...])
 	displayedChannels?: string[]; // Channels actually being displayed (subset of channelNames for multi-layer EXR)
+	rowsPerStrip?: number;
+	stripCount?: number;
+	stripByteCountTotal?: number;
+	stripByteCountMax?: number;
+	tileWidth?: number;
+	tileLength?: number;
+	tileCount?: number;
+	directDecode?: boolean;
 }
 
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
@@ -120,6 +128,8 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			if (formatInfo.planarConfig !== undefined) {
 				info += `**Planar Config:** ${formatInfo.planarConfig === 1 ? 'Chunky' : 'Planar'}\n\n`;
 			}
+
+			info += this.getTiffLayoutMarkdown(formatInfo);
 		}
 
 		// Add color picker mode info
@@ -200,6 +210,8 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			if (info.planarConfig !== undefined) {
 				tooltip.appendMarkdown(`**Planar Config:** ${info.planarConfig === 1 ? 'Chunky' : 'Planar'}\n\n`);
 			}
+
+			tooltip.appendMarkdown(this.getTiffLayoutMarkdown(info));
 		}
 
 		// Add color picker mode info
@@ -266,5 +278,50 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			8: 'CIE L*a*b*'
 		};
 		return photometricMap[photometric] || `Unknown (${photometric})`;
+	}
+
+	private getTiffLayoutMarkdown(info: FormatInfo): string {
+		let text = '';
+		if (info.rowsPerStrip !== undefined || info.stripCount !== undefined || info.tileCount !== undefined) {
+			text += '**TIFF Storage:** ';
+			const parts: string[] = [];
+			if (info.stripCount !== undefined) {
+				parts.push(`${info.stripCount} strip${info.stripCount === 1 ? '' : 's'}`);
+			}
+			if (info.rowsPerStrip !== undefined) {
+				parts.push(`${info.rowsPerStrip} rows/strip`);
+			}
+			if (info.stripByteCountMax !== undefined) {
+				parts.push(`max strip ${this.formatBytes(info.stripByteCountMax)}`);
+			}
+			if (info.tileCount !== undefined && info.tileCount > 0) {
+				parts.push(`${info.tileCount} tile${info.tileCount === 1 ? '' : 's'}`);
+			}
+			if (info.tileWidth && info.tileLength) {
+				parts.push(`${info.tileWidth}×${info.tileLength} tile size`);
+			}
+			text += `${parts.join(', ')}\n\n`;
+		}
+		if (info.directDecode) {
+			text += '**Decode Path:** Direct uncompressed strip parser\n\n';
+		}
+		return text;
+	}
+
+	private formatBytes(bytes: number): string {
+		if (!Number.isFinite(bytes) || bytes < 0) {
+			return 'unknown';
+		}
+		if (bytes < 1024) {
+			return `${bytes} B`;
+		}
+		const units = ['KB', 'MB', 'GB'];
+		let value = bytes / 1024;
+		let unitIndex = 0;
+		while (value >= 1024 && unitIndex < units.length - 1) {
+			value /= 1024;
+			unitIndex++;
+		}
+		return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 	}
 }

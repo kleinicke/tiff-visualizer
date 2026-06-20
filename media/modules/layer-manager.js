@@ -12,6 +12,7 @@
 
 import { composite, centeredOffset, BLEND_MODES } from './layer-compositor.js';
 import { ImageRenderer } from './normalization-helper.js';
+import { PerfTrace } from './perf-trace.js';
 
 /**
  * @typedef {Object} LayerInput
@@ -147,10 +148,13 @@ export class LayerManager {
 	 * @returns {ImageData|null}
 	 */
 	renderToImageData(settings, options = {}) {
+		const compositeStart = performance.now();
 		const c = this.getComposite();
 		if (!c) { return null; }
+		PerfTrace.detail('layer-composite', performance.now() - compositeStart);
 		this._lastComposite = c; // cache for pixel inspection
-		return ImageRenderer.render(
+		const renderStart = performance.now();
+		const imageData = ImageRenderer.render(
 			c.data,
 			c.width,
 			c.height,
@@ -160,6 +164,8 @@ export class LayerManager {
 			settings,
 			{ nanColor: options.nanColor, typeMax: c.typeMax }
 		);
+		PerfTrace.detail('layer-render-total', performance.now() - renderStart);
+		return imageData;
 	}
 
 	/**

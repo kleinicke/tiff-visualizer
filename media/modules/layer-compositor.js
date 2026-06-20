@@ -168,6 +168,122 @@ function sampleLayer(layer, lx, ly, outChannels, out) {
 }
 
 /**
+ * Fast path for the overwhelmingly common interactive case: display-style
+ * normal blending. Avoids per-pixel scratch arrays and per-channel dispatch.
+ * @param {Layer} layer
+ * @param {Float32Array} data
+ * @param {Uint8Array} covered
+ * @param {number} outChannels
+ * @param {number} canvasWidth
+ * @param {number} xStart
+ * @param {number} yStart
+ * @param {number} xEnd
+ * @param {number} yEnd
+ * @param {number} offsetX
+ * @param {number} offsetY
+ * @param {number} opacity
+ * @param {number} coveredCount
+ * @returns {number}
+ */
+function compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth, xStart, yStart, xEnd, yEnd, offsetX, offsetY, opacity, coveredCount) {
+	const srcData = layer.data;
+	const layerChannels = layer.channels;
+	const opaque = opacity >= 1;
+
+	if (outChannels === 1 && layerChannels === 1) {
+		for (let y = yStart; y < yEnd; y++) {
+			let pixel = y * canvasWidth + xStart;
+			let si = (y - offsetY) * layer.width + (xStart - offsetX);
+			for (let x = xStart; x < xEnd; x++, pixel++, si++) {
+				const s = srcData[si];
+				if (!covered[pixel]) {
+					data[pixel] = s;
+					covered[pixel] = 1;
+					coveredCount++;
+				} else if (Number.isFinite(s)) {
+					const below = data[pixel];
+					data[pixel] = opaque || !Number.isFinite(below)
+						? s
+						: below + (s - below) * opacity;
+				}
+			}
+		}
+		return coveredCount;
+	}
+
+	if (outChannels === 3 && layerChannels === 1) {
+		for (let y = yStart; y < yEnd; y++) {
+			let pixel = y * canvasWidth + xStart;
+			let di = pixel * 3;
+			let si = (y - offsetY) * layer.width + (xStart - offsetX);
+			for (let x = xStart; x < xEnd; x++, pixel++, di += 3, si++) {
+				const s = srcData[si];
+				if (!covered[pixel]) {
+					data[di] = s;
+					data[di + 1] = s;
+					data[di + 2] = s;
+					covered[pixel] = 1;
+					coveredCount++;
+				} else if (Number.isFinite(s)) {
+					if (opaque) {
+						data[di] = s;
+						data[di + 1] = s;
+						data[di + 2] = s;
+					} else {
+						const b0 = data[di];
+						const b1 = data[di + 1];
+						const b2 = data[di + 2];
+						data[di] = Number.isFinite(b0) ? b0 + (s - b0) * opacity : s;
+						data[di + 1] = Number.isFinite(b1) ? b1 + (s - b1) * opacity : s;
+						data[di + 2] = Number.isFinite(b2) ? b2 + (s - b2) * opacity : s;
+					}
+				}
+			}
+		}
+		return coveredCount;
+	}
+
+	if (outChannels === 3 && layerChannels >= 3) {
+		for (let y = yStart; y < yEnd; y++) {
+			let pixel = y * canvasWidth + xStart;
+			let di = pixel * 3;
+			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * layerChannels;
+			for (let x = xStart; x < xEnd; x++, pixel++, di += 3, si += layerChannels) {
+				const s0 = srcData[si];
+				const s1 = srcData[si + 1];
+				const s2 = srcData[si + 2];
+				if (!covered[pixel]) {
+					data[di] = s0;
+					data[di + 1] = s1;
+					data[di + 2] = s2;
+					covered[pixel] = 1;
+					coveredCount++;
+				} else if (opaque) {
+					if (Number.isFinite(s0)) data[di] = s0;
+					if (Number.isFinite(s1)) data[di + 1] = s1;
+					if (Number.isFinite(s2)) data[di + 2] = s2;
+				} else {
+					if (Number.isFinite(s0)) {
+						const b = data[di];
+						data[di] = Number.isFinite(b) ? b + (s0 - b) * opacity : s0;
+					}
+					if (Number.isFinite(s1)) {
+						const b = data[di + 1];
+						data[di + 1] = Number.isFinite(b) ? b + (s1 - b) * opacity : s1;
+					}
+					if (Number.isFinite(s2)) {
+						const b = data[di + 2];
+						data[di + 2] = Number.isFinite(b) ? b + (s2 - b) * opacity : s2;
+					}
+				}
+			}
+		}
+	}
+
+	return coveredCount;
+}
+
+/**
  * Composite an ordered layer stack (index 0 = bottom / background) into a single
  * float buffer of the given canvas size.
  *
@@ -201,6 +317,11 @@ export function composite(layers, canvasWidth, canvasHeight) {
 		const yStart = Math.max(0, offsetY);
 		const xEnd = Math.min(canvasWidth, offsetX + layer.width);
 		const yEnd = Math.min(canvasHeight, offsetY + layer.height);
+
+		if (!arithmetic && !isMask && (outChannels === 1 || outChannels === 3)) {
+			coveredCount = compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth, xStart, yStart, xEnd, yEnd, offsetX, offsetY, opacity, coveredCount);
+			continue;
+		}
 
 		for (let y = yStart; y < yEnd; y++) {
 			const ly = y - offsetY;

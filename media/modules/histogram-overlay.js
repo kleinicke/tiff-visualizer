@@ -1,11 +1,13 @@
 // @ts-check
 "use strict";
 
+import { PerfTrace } from './perf-trace.js';
+
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
 /** @typedef {{r: Uint32Array, g: Uint32Array, b: Uint32Array, luminance: Uint32Array, nanCount: number, stats: {r: {minBin:number,maxBin:number,meanBin:number,total:number}, g: {minBin:number,maxBin:number,meanBin:number,total:number}, b: {minBin:number,maxBin:number,meanBin:number,total:number}, luminance: {minBin:number,maxBin:number,meanBin:number,total:number}}}} HistogramData */
-/** @typedef {{rawData?: ArrayLike<number>|null, planarData?: ArrayLike<number>[]|null, channels?: number, settings?: ImageSettings, isFloat?: boolean, typeMax?: number, stats?: {min:number,max:number}|null, lut?: Uint8Array|null}} HistogramOptions */
+/** @typedef {{rawData?: ArrayLike<number>|null, planarData?: ArrayLike<number>[]|null, channels?: number, settings?: ImageSettings, isFloat?: boolean, typeMax?: number, stats?: {min:number,max:number}|null, lut?: Uint8Array|null, sampleStep?: number}} HistogramOptions */
 
 /**
  * Histogram Overlay Module
@@ -104,10 +106,8 @@ export class HistogramOverlay {
 		labels.className = 'histogram-labels';
 		labels.style.display = 'flex';
 		labels.style.justifyContent = 'space-between';
-		labels.style.padding = '0 5px';
 		labels.style.fontSize = '10px';
 		labels.style.color = '#cccccc';
-		labels.style.marginTop = '2px';
 
 		this.minLabel = document.createElement('span');
 		this.minLabel.textContent = '0';
@@ -431,6 +431,7 @@ export class HistogramOverlay {
 		if (!imageData && !options.rawData && !options.planarData) return null;
 
 		const startTime = performance.now();
+		const sampleStep = Math.max(1, Math.floor(options.sampleStep || 1));
 
 		// Use TypedArrays for bins (much faster than regular arrays)
 		const histR = new Uint32Array(256);
@@ -489,9 +490,11 @@ export class HistogramOverlay {
 		
 		if (useIntegerLUT && !lut) {
 			lut = this.generateTransformLUT(settings, intTypeMax);
+			PerfTrace.mark('histogram-lut');
 		} else if (useFloatLUT && !lut) {
 			// For float, use 16-bit quantization LUT (same as image rendering)
 			lut = this.generateFloatLUT(settings);
+			PerfTrace.mark('histogram-lut');
 		}
 		// Non-null assertion: lut is only accessed inside useIntegerLUT/useFloatLUT branches above
 		const safeLut = /** @type {Uint8Array} */ (lut);
@@ -505,7 +508,47 @@ export class HistogramOverlay {
 			const channels = options.channels || 3;
 			const isGrayscale = channels === 1 || (planarData && planarData.length === 1);
 
-			if (planarData) {
+			if (isGrayscale) {
+				const grayData = planarData ? planarData[0] : rawData;
+				if (grayData) {
+					const len = grayData.length;
+					if (useIntegerLUT) {
+						for (let i = 0; i < len; i += sampleStep) {
+							const value = grayData[i];
+							if (!Number.isFinite(value)) { nanCount++; continue; }
+							histR[safeLut[Math.max(0, Math.min(intTypeMax, value | 0))]]++;
+							if (value < origMinR) origMinR = value;
+							if (value > origMaxR) origMaxR = value;
+							origSumR += value;
+							origCountR++;
+						}
+					} else if (useFloatLUT) {
+						for (let i = 0; i < len; i += sampleStep) {
+							const value = grayData[i];
+							if (!Number.isFinite(value)) { nanCount++; continue; }
+							const lutIdx = Math.max(0, Math.min(65535, ((value - normMin) * floatToLutScale) | 0));
+							histR[safeLut[lutIdx]]++;
+							if (value < origMinR) origMinR = value;
+							if (value > origMaxR) origMaxR = value;
+							origSumR += value;
+							origCountR++;
+						}
+					} else {
+						for (let i = 0; i < len; i += sampleStep) {
+							const value = grayData[i];
+							if (!Number.isFinite(value)) { nanCount++; continue; }
+							const bin = Math.max(0, Math.min(255, ((value - normMin) * invRange * 255) | 0));
+							histR[bin]++;
+							if (value < origMinR) origMinR = value;
+							if (value > origMaxR) origMaxR = value;
+							origSumR += value;
+							origCountR++;
+						}
+					}
+					histG.set(histR);
+					histB.set(histR);
+				}
+			} else if (planarData) {
 				const len = planarData[0].length;
 				const rCh = planarData[0];
 				const gCh = planarData.length > 1 ? planarData[1] : rCh;
@@ -513,7 +556,7 @@ export class HistogramOverlay {
 
 				if (useIntegerLUT) {
 					// Fast path: integer data with LUT - process ALL pixels
-				for (let i = 0; i < len; i++) {
+				for (let i = 0; i < len; i += sampleStep) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
@@ -535,7 +578,7 @@ export class HistogramOverlay {
 					}
 				} else if (useFloatLUT) {
 					// Float data with LUT - quantize to 16-bit and lookup
-					for (let i = 0; i < len; i++) {
+					for (let i = 0; i < len; i += sampleStep) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
@@ -562,7 +605,7 @@ export class HistogramOverlay {
 				}
 			} else {
 					// Non-gamma mode (no transformation needed) - process ALL pixels
-					for (let i = 0; i < len; i++) {
+					for (let i = 0; i < len; i += sampleStep) {
 						const rv = rCh[i], gv = gCh[i], bv = bCh[i];
 						if (!Number.isFinite(rv) || !Number.isFinite(gv) || !Number.isFinite(bv)) { nanCount++; continue; }
 						
@@ -593,7 +636,7 @@ export class HistogramOverlay {
 
 				if (useIntegerLUT) {
 					// Fast path with LUT - process ALL pixels
-				for (let i = 0; i < len; i += channels) {
+				for (let i = 0; i < len; i += channels * sampleStep) {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
@@ -619,7 +662,7 @@ export class HistogramOverlay {
 			}
 				} else if (useFloatLUT) {
 					// Float data with LUT - quantize and lookup
-					for (let i = 0; i < len; i += channels) {
+					for (let i = 0; i < len; i += channels * sampleStep) {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
@@ -649,7 +692,7 @@ export class HistogramOverlay {
 					}
 				} else {
 					// Non-gamma mode - just normalize to bins
-					for (let i = 0; i < len; i += channels) {
+					for (let i = 0; i < len; i += channels * sampleStep) {
 						const rv = rawData[i];
 						const gv = channels > 1 ? rawData[i + 1] : rv;
 						const bv = channels > 2 ? rawData[i + 2] : rv;
@@ -694,7 +737,7 @@ export class HistogramOverlay {
 			const len = data.length;
 			
 			// Process ALL pixels
-			for (let i = 0; i < len; i += 4) {
+			for (let i = 0; i < len; i += 4 * sampleStep) {
 				if (data[i + 3] === 0) continue;
 				const rv = data[i], gv = data[i + 1], bv = data[i + 2];
 				histR[rv]++; histG[gv]++; histB[bv]++;
@@ -710,6 +753,8 @@ export class HistogramOverlay {
 				origSumB += bv; origCountB++;
 			}
 		}
+
+		PerfTrace.mark(sampleStep > 1 ? 'histogram-sampled-scan' : 'histogram-scan');
 
 		// Calculate bin-based stats
 		const calculateBinStats = (/** @type {Uint32Array} */ hist) => {
@@ -742,7 +787,8 @@ export class HistogramOverlay {
 			}
 		}
 
-		console.log(`[Histogram] ${(performance.now() - startTime).toFixed(1)}ms (${totalPixels} pixels)`);
+		console.log(`[Histogram] ${(performance.now() - startTime).toFixed(1)}ms (${totalPixels} pixels${sampleStep > 1 ? `, sampled every ${sampleStep}` : ''})`);
+		PerfTrace.mark('histogram-stats');
 
 		return {
 			r: histR, g: histG, b: histB, luminance: histLum,
@@ -763,6 +809,23 @@ export class HistogramOverlay {
 	 */
 	update(imageData, options = {}) {
 		this.histogramData = this.computeHistogram(imageData, options);
+		if (this.isVisible) {
+			this.render();
+		}
+	}
+
+	/**
+	 * Use a histogram computed during image rendering.
+	 * @param {{histogramData: HistogramData, originalStats?: any, valueRange?: {min:number,max:number,isFloat:boolean}}} precomputed
+	 */
+	updateFromPrecomputed(precomputed) {
+		this.histogramData = precomputed.histogramData;
+		if (precomputed.originalStats) {
+			this.originalStats = precomputed.originalStats;
+		}
+		if (precomputed.valueRange) {
+			this.valueRange = precomputed.valueRange;
+		}
 		if (this.isVisible) {
 			this.render();
 		}
@@ -928,6 +991,7 @@ export class HistogramOverlay {
 
 		// Update stats display
 		this.updateStatsDisplay();
+		PerfTrace.mark('histogram-draw');
 	}
 
 	/**
@@ -964,54 +1028,60 @@ export class HistogramOverlay {
 			return Math.round(value).toString();
 		};
 
+		const createCell = (/** @type {string} */ text, /** @type {string} */ className = 'histogram-stat-item') => {
+			const span = document.createElement('span');
+			span.textContent = text;
+			if (className) span.className = className;
+			return span;
+		};
+
+		const createLine = (/** @type {string[]} */ values, /** @type {string[]} */ colors = []) => {
+			const row = document.createElement('div');
+			row.className = 'histogram-stat-line';
+			values.forEach((value, index) => {
+				const cell = createCell(value);
+				if (colors[index]) cell.style.color = colors[index];
+				row.appendChild(cell);
+			});
+			return row;
+		};
+
+		const createNanLine = () => {
+			const row = document.createElement('div');
+			row.className = 'histogram-stat-line histogram-stat-nan';
+			const cell = createCell(`NaN/Inf: ${this.histogramData ? this.histogramData.nanCount.toLocaleString() : '0'}`, 'histogram-stat-item histogram-stat-nan');
+			row.appendChild(cell);
+			if (!this.histogramData || this.histogramData.nanCount <= 0) {
+				row.style.visibility = 'hidden';
+			}
+			return row;
+		};
+
 		// For grayscale images, show single channel stats, otherwise show RGB
 		if (isGrayscale && origStats) {
 			const s = origStats.r;
-
-			const createSpan = (/** @type {string} */ text) => {
-				const span = document.createElement('span');
-				span.textContent = text;
-				return span;
-			};
-
-			statsEl.appendChild(createSpan(`Min: ${formatStat(s.min)}`));
-			statsEl.appendChild(createSpan(`Max: ${formatStat(s.max)}`));
-			statsEl.appendChild(createSpan(`Mean: ${formatStat(s.mean)}`));
+			statsEl.appendChild(createLine([
+				`Min: ${formatStat(s.min)}`,
+				`Max: ${formatStat(s.max)}`,
+				`Mean: ${formatStat(s.mean)}`
+			]));
 		} else if (origStats) {
 			// Show RGB stats in original values
-			const createStatSpan = (/** @type {string} */ label, /** @type {{min:number,max:number,mean:number}} */ stat, /** @type {string} */ color) => {
-				const span = document.createElement('span');
-				span.style.color = color;
-				span.textContent = `${label}: ${formatStat(stat.min)}-${formatStat(stat.max)} (μ=${formatStat(stat.mean)})`;
-				return span;
-			};
-
-			statsEl.appendChild(createStatSpan('R', origStats.r, '#ff6666'));
-			statsEl.appendChild(createStatSpan('G', origStats.g, '#66ff66'));
-			statsEl.appendChild(createStatSpan('B', origStats.b, '#6666ff'));
+			statsEl.appendChild(createLine([
+				`R: ${formatStat(origStats.r.min)}-${formatStat(origStats.r.max)} μ=${formatStat(origStats.r.mean)}`,
+				`G: ${formatStat(origStats.g.min)}-${formatStat(origStats.g.max)} μ=${formatStat(origStats.g.mean)}`,
+				`B: ${formatStat(origStats.b.min)}-${formatStat(origStats.b.max)} μ=${formatStat(origStats.b.mean)}`
+			], ['#ff6666', '#66ff66', '#6666ff']));
 		} else {
 			// Fallback to bin-based stats (when no raw data available)
 			const stats = this.histogramData.stats;
-			const createStatSpan = (/** @type {string} */ label, /** @type {{minBin:number,maxBin:number}} */ stat, /** @type {string} */ color) => {
-				const span = document.createElement('span');
-				span.style.color = color;
-				span.textContent = `${label}: ${stat.minBin}-${stat.maxBin}`;
-				return span;
-			};
-
-			statsEl.appendChild(createStatSpan('R', stats.r, '#ff6666'));
-			statsEl.appendChild(createStatSpan('G', stats.g, '#66ff66'));
-			statsEl.appendChild(createStatSpan('B', stats.b, '#6666ff'));
+			statsEl.appendChild(createLine([
+				`R: ${stats.r.minBin}-${stats.r.maxBin} μ=${formatStat(stats.r.meanBin)}`,
+				`G: ${stats.g.minBin}-${stats.g.maxBin} μ=${formatStat(stats.g.meanBin)}`,
+				`B: ${stats.b.minBin}-${stats.b.maxBin} μ=${formatStat(stats.b.meanBin)}`
+			], ['#ff6666', '#66ff66', '#6666ff']));
 		}
-
-		// Show NaN count if present
-		if (this.histogramData.nanCount > 0) {
-			const nanSpan = document.createElement('span');
-			nanSpan.style.color = '#ffcc00';
-			nanSpan.style.marginLeft = '10px';
-			nanSpan.textContent = `NaN/Inf: ${this.histogramData.nanCount.toLocaleString()}`;
-			statsEl.appendChild(nanSpan);
-		}
+		statsEl.appendChild(createNanLine());
 
 		// Update picker background and position
 		const bgColor = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background') || '#1e1e1e';
@@ -1032,23 +1102,10 @@ export class HistogramOverlay {
 		statsEl.style.backgroundColor = isDarkTheme ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.8)';
 		statsEl.style.color = isDarkTheme ? '#ffffff' : '#000000';
 
-		// Smart positioning
-		if (!this.overlay) return;
-		const overlayRect = this.overlay.getBoundingClientRect();
-		const windowWidth = window.innerWidth;
-
-		// If close to right edge, move to left
-		if (overlayRect.right > windowWidth - 200) { // Increased threshold
-			statsEl.style.left = 'auto';
-			statsEl.style.right = '100%';
-			statsEl.style.marginRight = '10px';
-			statsEl.style.marginLeft = '0';
-		} else {
-			statsEl.style.right = 'auto';
-			statsEl.style.left = '100%';
-			statsEl.style.marginLeft = '10px';
-			statsEl.style.marginRight = '0';
-		}
+		statsEl.style.left = 'auto';
+		statsEl.style.right = 'auto';
+		statsEl.style.marginLeft = '0';
+		statsEl.style.marginRight = '0';
 
 		// Update min/max labels at bottom of histogram
 		this.updateRangeLabels();

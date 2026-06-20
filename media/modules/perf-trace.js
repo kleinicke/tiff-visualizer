@@ -1,6 +1,11 @@
 // @ts-check
 "use strict";
 
+// Code-only diagnostic flag. Keep disabled for normal builds so users see the
+// concise [Perf] load summaries without the full per-phase trace. Temporarily
+// enable this while profiling image loading, rendering, or collection switches.
+const DETAILED_PERF_TRACING = false;
+
 /**
  * Lightweight phase timer for diagnosing where an image switch spends time.
  *
@@ -13,13 +18,17 @@
  * un-instrumented work between two marks is attributed to the later mark —
  * nothing is hidden from the total.
  *
+ * detail(name, durationMs) appends a measured sub-phase without advancing the
+ * main timeline. Use it for timings collected inside workers or libraries
+ * after the parent wall-clock phase has already been marked.
+ *
  * Output is a single line per traced load, e.g.:
  *   [PerfTrace] switch img_004.tif: paint-yield 18ms | fetch 12ms |
  *   decode-worker 85ms | raster-copy 41ms | stats 33ms | interleave 58ms |
  *   render 122ms | canvas-upload 9ms | finalize 6ms | total 384ms
  */
 export class PerfTrace {
-	/** @type {{label: string, start: number, last: number, phases: string[]}|null} */
+	/** @type {{label: string, start: number, last: number, phases: string[], detailed: boolean, conciseLabel: string}|null} */
 	static _active = null;
 
 	/** @type {(message: string) => void} */
@@ -34,10 +43,22 @@ export class PerfTrace {
 		if (fn) { PerfTrace._log = fn; }
 	}
 
-	/** @param {string} label */
-	static begin(label) {
+	/**
+	 * @param {string} label
+	 * @param {{conciseLabel?: string}} [options]
+	 */
+	static begin(label, options = {}) {
+		const conciseLabel = String(options.conciseLabel || '');
+		if (!DETAILED_PERF_TRACING && !conciseLabel) { return; }
 		const now = performance.now();
-		PerfTrace._active = { label, start: now, last: now, phases: [] };
+		PerfTrace._active = {
+			label,
+			start: now,
+			last: now,
+			phases: [],
+			detailed: DETAILED_PERF_TRACING,
+			conciseLabel,
+		};
 	}
 
 	/**
@@ -46,10 +67,34 @@ export class PerfTrace {
 	 */
 	static mark(name) {
 		const trace = PerfTrace._active;
-		if (!trace) { return; }
+		if (!trace?.detailed) { return; }
 		const now = performance.now();
 		trace.phases.push(`${name} ${(now - trace.last).toFixed(0)}ms`);
 		trace.last = now;
+	}
+
+	/**
+	 * Append an externally measured detail without changing the active timer.
+	 * No-op when no trace is active.
+	 * @param {string} name
+	 * @param {number} durationMs
+	 */
+	static detail(name, durationMs) {
+		const trace = PerfTrace._active;
+		if (!trace?.detailed || !Number.isFinite(durationMs)) { return; }
+		trace.phases.push(`${name} ${Math.max(0, durationMs).toFixed(0)}ms`);
+	}
+
+	/**
+	 * Append a non-duration measurement such as bytes or throughput.
+	 * No-op when no trace is active.
+	 * @param {string} name
+	 * @param {string|number} value
+	 */
+	static note(name, value) {
+		const trace = PerfTrace._active;
+		if (!trace?.detailed) { return; }
+		trace.phases.push(`${name} ${value}`);
 	}
 
 	/** Log the summary line and deactivate. No-op when no trace is active. */
@@ -58,7 +103,11 @@ export class PerfTrace {
 		if (!trace) { return; }
 		PerfTrace._active = null;
 		const total = (performance.now() - trace.start).toFixed(0);
-		PerfTrace._log(`[PerfTrace] ${trace.label}: ${trace.phases.join(' | ')} | total ${total}ms`);
+		if (trace.detailed) {
+			PerfTrace._log(`[PerfTrace] ${trace.label}: ${trace.phases.join(' | ')} | total ${total}ms`);
+		} else if (trace.conciseLabel) {
+			PerfTrace._log(`[Perf] ${trace.conciseLabel} in ${total}ms`);
+		}
 	}
 
 	/** Drop the active trace without logging (e.g. load failed or superseded). */

@@ -21,25 +21,17 @@
  */
 
 /**
- * @typedef {Object} MaskFilterSettings
- * @property {string} maskUri
- * @property {number} threshold
- * @property {boolean} filterHigher
- * @property {boolean} enabled
- */
-
-/**
  * @typedef {Object} ImageSettings
  * @property {NormalizationSettings} [normalization]
  * @property {GammaSettings} [gamma]
  * @property {BrightnessSettings} [brightness]
- * @property {MaskFilterSettings[]} [maskFilters]
  * @property {string} [nanColor]
  * @property {string} [displayColormap]
  * @property {boolean} [rgbAs24BitGrayscale]
  * @property {number} [scale24BitFactor]
  * @property {boolean} [normalizedFloatMode]
  * @property {boolean} [colorPickerShowModified]
+ * @property {boolean} [gpuAcceleration]
  * @property {boolean} [plyVisualizerInstalled]
  * @property {string} [resourceUri]
  * @property {string} [src]
@@ -116,19 +108,18 @@ export class SettingsManager {
   /**
    * Update settings from new data (for real-time updates)
    * @param {ImageSettings} newSettings - New settings object
-   * @returns {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} - What changed
+   * @returns {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedStructure: boolean}} - What changed
    */
   updateSettings(newSettings) {
     if (!newSettings) {
-      return { changed: false, changedKeys: [], parametersOnly: false, changedMasks: false, changedStructure: false };
+      return { changed: false, changedKeys: [], parametersOnly: false, changedStructure: false };
     }
 
     // Track what changed
-    const changes = /** @type {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedMasks: boolean, changedStructure: boolean}} */ ({
+    const changes = /** @type {{changed: boolean, changedKeys: string[], parametersOnly: boolean, changedStructure: boolean}} */ ({
       changed: false,
       changedKeys: [],
       parametersOnly: false,
-      changedMasks: false,
       changedStructure: false
     });
 
@@ -149,8 +140,6 @@ export class SettingsManager {
       oldSettings.normalization?.gammaMode !== newSettings.normalization.gammaMode;
 
     // Check structural changes
-    const masksChanged = newSettings.maskFilters !== undefined &&
-      JSON.stringify(oldSettings.maskFilters || []) !== JSON.stringify(newSettings.maskFilters);
     const rgbModeChanged = newSettings.rgbAs24BitGrayscale !== undefined &&
       oldSettings.rgbAs24BitGrayscale !== newSettings.rgbAs24BitGrayscale;
     const scaleModeChanged = newSettings.scale24BitFactor !== undefined &&
@@ -172,7 +161,6 @@ export class SettingsManager {
       [normRangeChanged, 'normalization.range'],
       [normAutoChanged, 'normalization.auto'],
       [normGammaModeChanged, 'normalization.gammaMode'],
-      [masksChanged, 'maskFilters'],
       [rgbModeChanged, 'rgbAs24BitGrayscale'],
       [scaleModeChanged, 'scale24BitFactor'],
       [floatModeChanged, 'normalizedFloatMode'],
@@ -183,11 +171,6 @@ export class SettingsManager {
     changes.changedKeys = changedFields.filter(([changed]) => changed).map(([, key]) => key);
     changes.changed = changes.changedKeys.length > 0;
 
-    // Determine change type
-    if (masksChanged) {
-      changes.changedMasks = true;
-    }
-
     if (rgbModeChanged || scaleModeChanged || floatModeChanged) {
       changes.changedStructure = true;
     }
@@ -195,11 +178,10 @@ export class SettingsManager {
     // If only gamma, brightness, normalization ranges, nanColor, or colorPickerMode changed, it's parameters-only
     if (changes.changed &&
       ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || displayColormapChanged || colorPickerModeChanged) &&
-        !masksChanged && !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
+        !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
       changes.parametersOnly = true;
-    } else if (changes.changedStructure || changes.changedMasks) {
+    } else if (changes.changedStructure) {
       console.log('⚠️ Structural changes detected:', {
-        masksChanged,
         rgbModeChanged,
         scaleModeChanged,
         floatModeChanged,
@@ -220,9 +202,6 @@ export class SettingsManager {
       brightness: newSettings.brightness
         ? { ...newSettings.brightness }
         : this._settings.brightness,
-      maskFilters: newSettings.maskFilters
-        ? [...newSettings.maskFilters]
-        : this._settings.maskFilters,
     };
 
     return changes;

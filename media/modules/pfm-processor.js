@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
@@ -24,6 +25,9 @@ export class PfmProcessor {
         this._isInitialLoad = true; // Track if this is the first render
         /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         /** @type {DecodeWorkerClient|null} */
@@ -33,17 +37,12 @@ export class PfmProcessor {
     /** @param {string} src */
     async processPfm(src) {
         const loadSignal = this.loadSignal;
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'pfm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'pfm', buffer, src, loadSignal, (b) => this._parsePfm(b));
-        // Keep color data for RGB PFM files
-        let displayData = data;
-
-        // PFM format stores rows from bottom to top, so we need to flip vertically
-        displayData = this._flipImageVertically(displayData, width, height, channels);
+            this.decodeWorker, 'pfm', buffer, src, loadSignal, (b) => this._parsePfm(b, { topDown: true }));
+        const displayData = data;
 
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
@@ -71,34 +70,66 @@ export class PfmProcessor {
     }
 
     /** @param {ArrayBuffer} arrayBuffer */
-    _parsePfm(arrayBuffer) {
-        const text = new TextDecoder('ascii').decode(arrayBuffer);
-        // Read header lines
-        const lines = text.split(/\n/);
-        let idx = 0;
-        while (idx < lines.length && lines[idx].trim() === '') idx++;
-        const type = lines[idx++].trim();
+    _parsePfm(arrayBuffer, options = {}) {
+        const bytes = new Uint8Array(arrayBuffer);
+        let offset = 0;
+        const readLine = () => {
+            while (offset < bytes.length && (bytes[offset] === 10 || bytes[offset] === 13)) { offset++; }
+            const start = offset;
+            while (offset < bytes.length && bytes[offset] !== 10 && bytes[offset] !== 13) { offset++; }
+            let end = offset;
+            while (end > start && (bytes[end - 1] === 32 || bytes[end - 1] === 9)) { end--; }
+            const line = String.fromCharCode(...bytes.subarray(start, end)).trim();
+            while (offset < bytes.length && (bytes[offset] === 10 || bytes[offset] === 13)) { offset++; }
+            return line;
+        };
+        let type = readLine();
+        while (type === '') { type = readLine(); }
         if (type !== 'PF' && type !== 'Pf') throw new Error('Invalid PFM magic');
-        // Skip comments
-        while (idx < lines.length && lines[idx].trim().startsWith('#')) idx++;
-        const dims = lines[idx++].trim().split(/\s+/).map(n => parseInt(n, 10));
+        let dimsLine = readLine();
+        while (dimsLine.startsWith('#') || dimsLine === '') { dimsLine = readLine(); }
+        const dims = dimsLine.split(/\s+/).map(n => parseInt(n, 10));
         const width = dims[0];
         const height = dims[1];
-        const scale = parseFloat(lines[idx++].trim());
+        let scaleLine = readLine();
+        while (scaleLine.startsWith('#') || scaleLine === '') { scaleLine = readLine(); }
+        const scale = parseFloat(scaleLine);
         const littleEndian = scale < 0;
         const channels = type === 'PF' ? 3 : 1;
-        // Find start byte offset of pixel data
-        const headerUpTo = lines.slice(0, idx).join('\n') + '\n';
-        const headerBytes = new TextEncoder().encode(headerUpTo).length;
-        const bytesPerPixel = 4 * channels;
-        const dv = new DataView(arrayBuffer, headerBytes);
+        const valuesPerRow = width * channels;
         const pixels = width * height;
         const out = new Float32Array(pixels * channels);
-        let o = 0;
-        for (let i = 0; i < pixels; i++) {
-            for (let c = 0; c < channels; c++) {
-                const v = dv.getFloat32((i * channels + c) * 4, littleEndian);
-                out[o++] = v;
+        const topDown = options.topDown === true;
+        const nativeLittleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+        const canViewDirectly = littleEndian === nativeLittleEndian && (offset % 4) === 0 && offset + out.byteLength <= arrayBuffer.byteLength;
+
+        if (canViewDirectly) {
+            const source = new Float32Array(arrayBuffer, offset, out.length);
+            if (topDown) {
+                for (let y = 0; y < height; y++) {
+                    const srcStart = (height - 1 - y) * valuesPerRow;
+                    out.set(source.subarray(srcStart, srcStart + valuesPerRow), y * valuesPerRow);
+                }
+            } else {
+                out.set(source);
+            }
+            return { width, height, channels, data: out };
+        }
+
+        const dv = new DataView(arrayBuffer, offset);
+        if (topDown) {
+            for (let y = 0; y < height; y++) {
+                const srcRow = height - 1 - y;
+                let srcByte = srcRow * valuesPerRow * 4;
+                let dst = y * valuesPerRow;
+                for (let x = 0; x < valuesPerRow; x++) {
+                    out[dst++] = dv.getFloat32(srcByte, littleEndian);
+                    srcByte += 4;
+                }
+            }
+        } else {
+            for (let i = 0; i < out.length; i++) {
+                out[i] = dv.getFloat32(i * 4, littleEndian);
             }
         }
         return { width, height, channels, data: out };
@@ -110,14 +141,16 @@ export class PfmProcessor {
      * @param {number} height
      * @param {number} [channels]
      */
-    _toImageDataFloat(data, width, height, channels = 1) {
+    _toImageDataFloat(data, width, height, channels = 1, renderOptions = {}) {
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
         const settings = this.settingsManager.settings;
         const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Calculate stats if needed (for auto-normalize or just to have them)
         /** @type {{min: number, max: number} | undefined} */
         let stats = this._cachedStats;
-        if (!stats && !isGammaMode) {
+        if (!stats && NormalizationHelper.needsStats(settings)) {
             stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             this._cachedStats = stats;
 
@@ -126,8 +159,39 @@ export class PfmProcessor {
             }
         }
 
+        const nanColor = this._getNanColor(settings);
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels,
+            isFloat: true,
+            settings,
+            collectHistogram: renderOptions.collectHistogram === true
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data,
+                width,
+                height,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
+                typeMax: 1.0,
+                settings,
+                nanColor,
+                channels
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
+
         // Use centralized ImageRenderer
-        return ImageRenderer.render(
+        const options = {
+            nanColor,
+            collectHistogram: renderOptions.collectHistogram === true
+        };
+        const imageData = ImageRenderer.render(
             data,
             width,
             height,
@@ -135,8 +199,10 @@ export class PfmProcessor {
             true, // isFloat (float32)
             stats || { min: 0, max: 1 },
             settings,
-            { nanColor: this._getNanColor(settings) }
+            options
         );
+        this._lastRenderHistogram = options.renderHistogramResult || null;
+        return imageData;
     }
 
     /**
@@ -223,7 +289,7 @@ export class PfmProcessor {
      * Called when format-specific settings have been applied
      * @returns {ImageData|null} - The rendered image data, or null if no pending render
      */
-    performDeferredRender() {
+    performDeferredRender(renderOptions = {}) {
         if (!this._pendingRenderData) {
             return null;
         }
@@ -233,7 +299,7 @@ export class PfmProcessor {
         this._isInitialLoad = false;
 
         // Now render with the correct format-specific settings
-        const imageData = this._toImageDataFloat(displayData, width, height, channels);
+        const imageData = this._toImageDataFloat(displayData, width, height, channels, renderOptions);
 
         // Force status refresh
         this.vscode.postMessage({ type: 'refresh-status' });
@@ -245,10 +311,10 @@ export class PfmProcessor {
      * Re-render PFM with current settings (for real-time updates)
      * @returns {ImageData | null}
      */
-    renderPfmWithSettings() {
+    renderPfmWithSettings(renderOptions = {}) {
         if (!this._lastRaw) return null;
         const { width, height, data, channels } = this._lastRaw;
-        return this._toImageDataFloat(data, width, height, channels);
+        return this._toImageDataFloat(data, width, height, channels, renderOptions);
     }
 
     /**
@@ -295,4 +361,3 @@ export class PfmProcessor {
         return flipped;
     }
 }
-

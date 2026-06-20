@@ -2,6 +2,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
@@ -51,6 +52,9 @@ export class NpyProcessor {
         /** @type {{min: number, max: number} | undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         /** @type {DecodeWorkerClient|null} */
@@ -64,8 +68,7 @@ export class NpyProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
         // Parse in the decode worker when available, locally otherwise.
@@ -240,7 +243,9 @@ export class NpyProcessor {
      * @param {number} width
      * @param {number} height
      */
-    _toImageDataFloat(data, width, height) {
+    _toImageDataFloat(data, width, height, renderOptions = {}) {
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
         const channels = this._lastRaw?.channels || 1;
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
@@ -255,7 +260,7 @@ export class NpyProcessor {
         }
         let stats = this._cachedStats;
 
-        if (!stats && !isGammaMode) {
+        if (!stats && NormalizationHelper.needsStats(settings)) {
             if (isFloat) {
                 stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             } else {
@@ -278,16 +283,44 @@ export class NpyProcessor {
             else if (dtype.includes('2')) typeMax = 65535;
             else if (dtype.includes('4')) typeMax = 4294967295; // 32-bit
         }
+        const effectiveTypeMax = typeMax ?? 1.0;
+
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels,
+            isFloat,
+            settings,
+            collectHistogram: renderOptions.collectHistogram === true
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data,
+                width,
+                height,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : effectiveTypeMax,
+                typeMax: effectiveTypeMax,
+                settings,
+                nanColor,
+                channels
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
 
         // Create options object
         const options = {
             nanColor: nanColor,
             rgbAs24BitGrayscale: rgbAs24BitMode,
             flipY: false, // NPY is usually top-down
-            typeMax: typeMax
+            typeMax: typeMax,
+            collectHistogram: renderOptions.collectHistogram === true
         };
 
-        return ImageRenderer.render(
+        const imageData = ImageRenderer.render(
             data,
             width,
             height,
@@ -297,6 +330,8 @@ export class NpyProcessor {
             settings,
             options
         );
+        this._lastRenderHistogram = options.renderHistogramResult || null;
+        return imageData;
     }
 
 
@@ -304,10 +339,10 @@ export class NpyProcessor {
      * Re-render NPY with current settings (for real-time updates)
      * @returns {ImageData | null}
      */
-    renderNpyWithSettings() {
+    renderNpyWithSettings(renderOptions = {}) {
         if (!this._lastRaw) return null;
         const { width, height, data } = this._lastRaw;
-        return this._toImageDataFloat(data, width, height);
+        return this._toImageDataFloat(data, width, height, renderOptions);
     }
 
     /**
@@ -325,6 +360,12 @@ export class NpyProcessor {
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const normalizedFloatMode = settings.normalizedFloatMode;
+        const formatNumber = (/** @type {number} */ n) => {
+            if (Number.isNaN(n)) return 'NaN';
+            if (n === Infinity) return 'Inf';
+            if (n === -Infinity) return '-Inf';
+            return parseFloat(n.toFixed(6)).toString();
+        };
 
         if (rgbAs24BitMode) {
             // RGB as 24-bit grayscale: show combined value
@@ -344,14 +385,7 @@ export class NpyProcessor {
             const r = data[srcIdx + 0];
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
-            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
-                const formatNumber = (/** @type {number} */ n) => {
-                    // Use fixed decimal notation to avoid scientific notation
-                    // Show up to 6 decimal places, but remove trailing zeros
-                    return parseFloat(n.toFixed(6)).toString();
-                };
-                return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
-            }
+            return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
         } else if (channels === 4) {
             // RGBA data - return space-separated values with α: prefix for alpha
             const srcIdx = pixelIdx * 4;
@@ -359,37 +393,23 @@ export class NpyProcessor {
             const g = data[srcIdx + 1];
             const b = data[srcIdx + 2];
             const a = data[srcIdx + 3];
-            if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && Number.isFinite(a)) {
-                const formatNumber = (/** @type {number} */ n) => {
-                    // Use fixed decimal notation to avoid scientific notation
-                    // Show up to 6 decimal places, but remove trailing zeros
-                    return parseFloat(n.toFixed(6)).toString();
-                };
-                return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} α:${formatNumber(a)}`;
-            }
+            return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} α:${formatNumber(a)}`;
         } else {
             // Grayscale data
             const value = data[pixelIdx];
-            if (Number.isFinite(value)) {
-                const formatNumber = (/** @type {number} */ n) => {
-                    // Use fixed decimal notation to avoid scientific notation
-                    // Show up to 6 decimal places, but remove trailing zeros
-                    return parseFloat(n.toFixed(6)).toString();
-                };
-                // Check if normalized float mode is enabled for uint images
-                if (normalizedFloatMode && dtype && !dtype.includes('f')) {
-                    // Convert uint to normalized float (0-1)
-                    let maxValue = 255;
-                    if (dtype.includes('u2') || dtype.includes('i2')) {
-                        maxValue = dtype.includes('u') ? 65535 : 32767;
-                    } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                        maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
-                    }
-                    const normalized = value / maxValue;
-                    return formatNumber(normalized);
+            // Check if normalized float mode is enabled for uint images
+            if (normalizedFloatMode && dtype && !dtype.includes('f') && Number.isFinite(value)) {
+                // Convert uint to normalized float (0-1)
+                let maxValue = 255;
+                if (dtype.includes('u2') || dtype.includes('i2')) {
+                    maxValue = dtype.includes('u') ? 65535 : 32767;
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
                 }
-                return formatNumber(value);
+                const normalized = value / maxValue;
+                return formatNumber(normalized);
             }
+            return formatNumber(value);
         }
         return '';
     }
@@ -465,7 +485,7 @@ export class NpyProcessor {
      * Called when format-specific settings have been applied
      * @returns {ImageData|null} - The rendered image data, or null if no pending render
      */
-    performDeferredRender() {
+    performDeferredRender(renderOptions = {}) {
         if (!this._pendingRenderData) {
             return null;
         }
@@ -475,7 +495,7 @@ export class NpyProcessor {
         this._isInitialLoad = false;
 
         // Now render with the correct format-specific settings
-        const imageData = this._toImageDataFloat(data, width, height);
+        const imageData = this._toImageDataFloat(data, width, height, renderOptions);
 
         // Force status refresh so normalization UI appears
         this.vscode.postMessage({ type: 'refresh-status' });
@@ -490,9 +510,18 @@ export class NpyProcessor {
      */
     _getNanColor(settings) {
         if (settings.nanColor) {
-            // Handle hex string
             if (typeof settings.nanColor === 'string') {
+                if (settings.nanColor === 'fuchsia') {
+                    return { r: 255, g: 0, b: 255 };
+                }
+                if (settings.nanColor === 'black') {
+                    return { r: 0, g: 0, b: 0 };
+                }
+                // Handle explicit hex string.
                 const hex = settings.nanColor.replace('#', '');
+                if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+                    return { r: 0, g: 0, b: 0 };
+                }
                 return {
                     r: parseInt(hex.substring(0, 2), 16),
                     g: parseInt(hex.substring(2, 4), 16),
@@ -502,7 +531,6 @@ export class NpyProcessor {
             // Handle object
             return settings.nanColor;
         }
-        return { r: 255, g: 0, b: 0 }; // Default red
+        return { r: 0, g: 0, b: 0 };
     }
 }
-

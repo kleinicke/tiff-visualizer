@@ -313,40 +313,7 @@ suite('TIFF Visualizer Behavioral Tests', () => {
         });
     });
 
-    suite('6. Mask Filter Tests', () => {
-        test('Mask filter settings are properly configured', () => {
-            console.log('Testing mask filter settings configuration');
-            
-            const { ImageSettingsManager } = require('../src/imagePreview/imageSettings');
-            const settingsManager = new ImageSettingsManager();
-            
-            // Test default mask filter settings
-            const defaultSettings = settingsManager.getMaskFilterSettings();
-            assert.strictEqual(defaultSettings.enabled, false, 'Default should be disabled');
-            assert.strictEqual(defaultSettings.threshold, 0.5, 'Default threshold should be 0.5');
-            assert.strictEqual(defaultSettings.filterHigher, true, 'Default should filter higher values');
-            
-            console.log('✅ Default mask filter settings are correct');
-        });
-
-        test('Mask filter settings can be updated', () => {
-            console.log('Testing mask filter settings updates');
-            
-            const { ImageSettingsManager } = require('../src/imagePreview/imageSettings');
-            const settingsManager = new ImageSettingsManager();
-            
-            // Test updating mask filter settings
-            settingsManager.setMaskFilter(true, 'file:///test/mask.tif', 0.8, false);
-            
-            const updatedSettings = settingsManager.getMaskFilterSettings();
-            assert.strictEqual(updatedSettings.enabled, true, 'Should be enabled');
-            assert.strictEqual(updatedSettings.maskUri, 'file:///test/mask.tif', 'Mask URI should be set');
-            assert.strictEqual(updatedSettings.threshold, 0.8, 'Threshold should be updated');
-            assert.strictEqual(updatedSettings.filterHigher, false, 'Should filter lower values');
-            
-            console.log('✅ Mask filter settings can be updated correctly');
-        });
-
+    suite('6. Layers Tests', () => {
         test('Layers status bar entry works correctly', () => {
             console.log('Testing layers status bar entry');
 
@@ -365,35 +332,5 @@ suite('TIFF Visualizer Behavioral Tests', () => {
 
             console.log('✅ Layers status bar entry works correctly');
         });
-
-        	// Test multiple mask filter functionality
-	test('Multiple mask filter management works correctly', () => {
-		const manager = new AppStateManager();
-		const imageUri = 'file:///test/image.tif';
-		
-		// Test that the manager can handle multiple mask filters
-		// Note: Actual mask filter management is handled by ImageSettingsManager
-		// This test verifies the AppStateManager integration
-		
-		// Test UI state management for mask filters
-		manager.setImageSize('100x100');
-		assert.strictEqual(manager.uiState.imageSize, '100x100');
-		
-		// Test settings management
-		manager.updateNormalization(0.1, 0.9);
-		assert.strictEqual(manager.imageSettings.normalization.min, 0.1);
-		assert.strictEqual(manager.imageSettings.normalization.max, 0.9);
-		
-		// Test gamma settings
-		manager.updateGamma(1.5, 2.5);
-		assert.strictEqual(manager.imageSettings.gamma.in, 1.5);
-		assert.strictEqual(manager.imageSettings.gamma.out, 2.5);
-		
-		// Test brightness settings
-		manager.updateBrightness(0.2);
-		assert.strictEqual(manager.imageSettings.brightness.offset, 0.2);
-		
-		console.log('✅ Multiple mask filter integration works correctly');
-	});
     });
 }); 

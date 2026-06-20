@@ -3,6 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
 import { PerfTrace } from './perf-trace.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -34,11 +35,12 @@ export class TiffProcessor {
 		this.rawTiffData = null;
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
-		this._maskCache = new Map(); // Cache loaded mask images by URI
 		this._lastImageData = null; // Store the last rendered image data for fast parameter updates
 		/** @type {{min:number,max:number}|null} */
 		this._lastStatistics = null; // Cache min/max statistics
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+		this._lastRenderHistogram = null; // Histogram computed during render when requested
+		this._lastRenderUsedWebGL = false; // True when the latest render drew directly to the canvas
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		/** @type {AbortSignal|undefined} */
@@ -48,6 +50,7 @@ export class TiffProcessor {
 
 		// WASM decoder
 		this._wasmProcessor = new TiffWasmProcessor();
+		this._webglRenderer = new WebGL2FloatRenderer();
 		this._wasmAvailable = false;
 		this._wasmProcessor.init().then(available => {
 			this._wasmAvailable = available;
@@ -92,18 +95,82 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * @param {any} source
+	 * @returns {{rowsPerStrip?: number, stripCount?: number, stripByteCountTotal?: number, stripByteCountMax?: number, tileWidth?: number, tileLength?: number, tileCount?: number, directDecode?: boolean}}
+	 */
+	_getTiffLayoutInfo(source) {
+		if (!source) { return {}; }
+		if (source.fileDirectory) {
+			const fd = source.fileDirectory;
+			const byteCounts = (Array.isArray(fd.StripByteCounts) || ArrayBuffer.isView(fd.StripByteCounts)) ? fd.StripByteCounts : [];
+			const tileCounts = (Array.isArray(fd.TileByteCounts) || ArrayBuffer.isView(fd.TileByteCounts)) ? fd.TileByteCounts : [];
+			let stripByteCountTotal = 0;
+			let stripByteCountMax = 0;
+			for (const value of byteCounts) {
+				const numeric = Number(value || 0);
+				stripByteCountTotal += numeric;
+				if (numeric > stripByteCountMax) { stripByteCountMax = numeric; }
+			}
+			return {
+				rowsPerStrip: fd.RowsPerStrip,
+				stripCount: byteCounts.length || undefined,
+				stripByteCountTotal: byteCounts.length ? stripByteCountTotal : undefined,
+				stripByteCountMax: byteCounts.length ? stripByteCountMax : undefined,
+				tileWidth: fd.TileWidth,
+				tileLength: fd.TileLength,
+				tileCount: tileCounts.length || undefined
+			};
+		}
+		return {
+			rowsPerStrip: source.rowsPerStrip,
+			stripCount: source.stripCount,
+			stripByteCountTotal: source.stripByteCountTotal,
+			stripByteCountMax: source.stripByteCountMax,
+			tileWidth: source.tileWidth,
+			tileLength: source.tileLength,
+			tileCount: source.tileCount,
+			directDecode: source.directDecode
+		};
+	}
+
+	/** @param {{rowsPerStrip?: number, stripCount?: number, stripByteCountTotal?: number, stripByteCountMax?: number, tileWidth?: number, tileLength?: number, tileCount?: number, directDecode?: boolean}} layout */
+	_logTiffLayout(layout) {
+		const parts = [];
+		if (layout.rowsPerStrip) { parts.push(`rows/strip=${layout.rowsPerStrip}`); }
+		if (layout.stripCount) { parts.push(`strips=${layout.stripCount}`); }
+		if (layout.stripByteCountMax) { parts.push(`maxStripBytes=${layout.stripByteCountMax}`); }
+		if (layout.tileCount) { parts.push(`tiles=${layout.tileCount}`); }
+		if (layout.tileWidth && layout.tileLength) { parts.push(`tile=${layout.tileWidth}x${layout.tileLength}`); }
+		if (layout.directDecode) { parts.push('direct-uncompressed-path=yes'); }
+		if (parts.length) {
+			console.log(`[TiffProcessor] TIFF layout: ${parts.join(', ')}`);
+		}
+	}
+
+	/**
 	 * Process TIFF file from URL
 	 * @param {string} src - TIFF file URL
 	 * @returns {Promise<{canvas: HTMLCanvasElement, imageData: ImageData, tiffData: Object, decodeInfo: {engine: string, durationMs: number}}>}
 	 */
 	async processTiff(src) {
 		const startTime = performance.now();
+		this._lastRenderHistogram = null;
 		const loadSignal = this.loadSignal;
 		/** @type {{engine: string, durationMs: number}|null} */
 		let decodeInfo = null;
 		try {
+			const responseStart = performance.now();
 			const response = await fetch(src, { signal: loadSignal });
+			PerfTrace.detail('fetch-tiff-response', performance.now() - responseStart);
+			const readStart = performance.now();
 			const buffer = await response.arrayBuffer();
+			const readDuration = performance.now() - readStart;
+			PerfTrace.detail('fetch-tiff-arrayBuffer', readDuration);
+			const megabytes = buffer.byteLength / (1024 * 1024);
+			PerfTrace.note('fetch-tiff-bytes', `${megabytes.toFixed(1)}MB`);
+			if (readDuration > 0) {
+				PerfTrace.note('fetch-tiff-arrayBuffer-rate', `${(megabytes / (readDuration / 1000)).toFixed(0)}MB/s`);
+			}
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
@@ -153,6 +220,16 @@ export class TiffProcessor {
 						});
 					}
 					PerfTrace.mark(decodedWith.startsWith('geotiff.js') ? 'decode-geotiff-worker' : 'decode-wasm-worker');
+					if (Array.isArray(wasmResult.decodeTimings)) {
+						let measuredWorkerTime = 0;
+						for (const timing of wasmResult.decodeTimings) {
+							const durationMs = Number(timing?.durationMs);
+							if (!Number.isFinite(durationMs)) { continue; }
+							measuredWorkerTime += durationMs;
+							PerfTrace.detail(String(timing.name || 'decode-worker-detail'), durationMs);
+						}
+						PerfTrace.detail('decode-worker-transfer+overhead', decodeInfo.durationMs - measuredWorkerTime);
+					}
 				} else {
 					workerTiffFailed = true;
 					localBuffer = (workerResponse?.buffer && workerResponse.buffer.byteLength > 0) ? workerResponse.buffer : null;
@@ -222,7 +299,9 @@ export class TiffProcessor {
 					const predictor = wasmResult.predictor;
 					const photometricInterpretation = wasmResult.photometricInterpretation;
 					const planarConfig = wasmResult.planarConfiguration;
+					const layoutInfo = this._getTiffLayoutInfo(wasmResult);
 					console.log(`[TiffProcessor] Using metadata from WASM: compression=${compression}, predictor=${predictor}`);
+					this._logTiffLayout(layoutInfo);
 
 					// Store TIFF data for pixel inspection and re-rendering
 					// Create a minimal image-like object for compatibility
@@ -247,6 +326,10 @@ export class TiffProcessor {
 						},
 						data: data
 					};
+					if (Number.isFinite(wasmResult.min) && Number.isFinite(wasmResult.max)) {
+						this._lastStatistics = { min: wasmResult.min, max: wasmResult.max };
+						this._lastStatisticsRgb24Mode = false;
+					}
 
 					// Send format information to VS Code
 					if (this.vscode && this._isInitialLoad) {
@@ -266,6 +349,7 @@ export class TiffProcessor {
 								planarConfig,
 								samplesPerPixel,
 								bitsPerSample,
+								...layoutInfo,
 								formatType,
 								isInitialLoad: true,
 								decodedWith: wasmResult.decodedWith || 'wasm'
@@ -315,6 +399,8 @@ export class TiffProcessor {
 			const predictor = fileDir.Predictor;
 			const photometricInterpretation = fileDir.PhotometricInterpretation;
 			const planarConfig = fileDir.PlanarConfiguration;
+			const layoutInfo = this._getTiffLayoutInfo(image);
+			this._logTiffLayout(layoutInfo);
 
 			const canvas = document.createElement('canvas');
 			canvas.width = width;
@@ -391,6 +477,7 @@ export class TiffProcessor {
 						planarConfig: planarConfig,
 						samplesPerPixel: image.getSamplesPerPixel(),
 						bitsPerSample: image.getBitsPerSample(),
+						...layoutInfo,
 						formatType: formatType, // For per-format settings
 						isInitialLoad: true, // Signal that this is the first load
 						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js'
@@ -419,39 +506,12 @@ export class TiffProcessor {
 	 * @param {*} rasters - Raster data
 	 * @returns {Promise<ImageData>}
 	 */
-	async renderTiffWithSettings(image, rasters) {
-		// Create copies of rasters to avoid modifying the original data
-		const rastersCopy = [];
-		for (let i = 0; i < rasters.length; i++) {
-			rastersCopy.push(new Float32Array(rasters[i]));
-		}
-		PerfTrace.mark('raster-copy');
-
-		// Apply mask filtering if enabled
+	async renderTiffWithSettings(image, rasters, renderOptions = {}) {
+		this._lastRenderHistogram = null;
+		this._lastRenderUsedWebGL = false;
 		const settings = this.settingsManager.settings;
-		if (settings.maskFilters && settings.maskFilters.length > 0) {
-			try {
-				// Apply all enabled masks in sequence
-				for (const maskFilter of settings.maskFilters) {
-					if (maskFilter.enabled && maskFilter.maskUri) {
-						const maskData = await this.loadMaskImage(maskFilter.maskUri);
-						// Apply mask filter to each band
-						for (let band = 0; band < rastersCopy.length; band++) {
-							const filteredData = this.applyMaskFilter(
-								rastersCopy[band],
-								maskData,
-								maskFilter.threshold,
-								maskFilter.filterHigher
-							);
-							rastersCopy[band] = filteredData;
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error applying mask filters:', error);
-				// Continue without mask filtering if there's an error
-			}
-		}
+		const rastersCopy = rasters;
+		PerfTrace.mark('raster-copy-skipped');
 
 		const width = image.getWidth();
 		const height = image.getHeight();
@@ -487,7 +547,7 @@ export class TiffProcessor {
 		let stats = this._lastStatistics;
 		const isGammaMode = settings.normalization?.gammaMode || false;
 
-		if (!stats && !isGammaMode) {
+		if (!stats && NormalizationHelper.needsStats(settings)) {
 			if (isFloat) {
 				// Use centralized float stats calculator
 				// We need to interleave data for the calculator if it's planar
@@ -515,28 +575,28 @@ export class TiffProcessor {
 				// Use the first 3 channels to determine the image stats
 				if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
 					// Calculate min/max of combined 24-bit values
+					const r0 = rastersCopy[0];
+					const r1 = rastersCopy[1];
+					const r2 = rastersCopy[2];
 					for (let j = 0; j < rastersCopy[0].length; j++) {
-						const values = [];
-						for (let i = 0; i < 3; i++) {
-							const value = rastersCopy[i][j];
-							if (!isNaN(value) && isFinite(value)) {
-								values.push(Math.round(Math.max(0, Math.min(255, value))));
-							} else {
-								values.push(0);
-							}
-						}
-						const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-						min = Math.min(min, combined24bit);
-						max = Math.max(max, combined24bit);
+						const rv = r0[j], gv = r1[j], bv = r2[j];
+						const r = (rv === rv && rv !== Infinity && rv !== -Infinity) ? Math.round(Math.max(0, Math.min(255, rv))) : 0;
+						const g = (gv === gv && gv !== Infinity && gv !== -Infinity) ? Math.round(Math.max(0, Math.min(255, gv))) : 0;
+						const b = (bv === bv && bv !== Infinity && bv !== -Infinity) ? Math.round(Math.max(0, Math.min(255, bv))) : 0;
+						const combined24bit = (r << 16) | (g << 8) | b;
+						if (combined24bit < min) min = combined24bit;
+						if (combined24bit > max) max = combined24bit;
 					}
 				} else {
 					// Normal mode: use individual channel values
-					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-						for (let j = 0; j < rastersCopy[i].length; j++) {
-							const value = rastersCopy[i][j];
-							if (!isNaN(value) && isFinite(value)) {
-								min = Math.min(min, value);
-								max = Math.max(max, value);
+					const scanChannels = Math.min(rastersCopy.length, 3);
+					for (let i = 0; i < scanChannels; i++) {
+						const raster = rastersCopy[i];
+						for (let j = 0; j < raster.length; j++) {
+							const value = raster[j];
+							if (value === value && value !== Infinity && value !== -Infinity) {
+								if (value < min) min = value;
+								if (value > max) max = value;
 							}
 						}
 					}
@@ -550,23 +610,26 @@ export class TiffProcessor {
 
 				if (settings.rgbAs24BitGrayscale && rastersCopy.length >= 3) {
 					// Same 24-bit logic
+					const r0 = rastersCopy[0];
+					const r1 = rastersCopy[1];
+					const r2 = rastersCopy[2];
 					for (let j = 0; j < rastersCopy[0].length; j++) {
-						const values = [];
-						for (let i = 0; i < 3; i++) {
-							const value = rastersCopy[i][j];
-							values.push(Math.round(Math.max(0, Math.min(255, value))));
-						}
-						const combined24bit = (values[0] << 16) | (values[1] << 8) | values[2];
-						min = Math.min(min, combined24bit);
-						max = Math.max(max, combined24bit);
+						const r = Math.round(Math.max(0, Math.min(255, r0[j])));
+						const g = Math.round(Math.max(0, Math.min(255, r1[j])));
+						const b = Math.round(Math.max(0, Math.min(255, r2[j])));
+						const combined24bit = (r << 16) | (g << 8) | b;
+						if (combined24bit < min) min = combined24bit;
+						if (combined24bit > max) max = combined24bit;
 					}
 				} else {
-					for (let i = 0; i < Math.min(rastersCopy.length, 3); i++) {
-						for (let j = 0; j < rastersCopy[i].length; j++) {
-							const value = rastersCopy[i][j];
-							if (!isNaN(value) && isFinite(value)) {
-								min = Math.min(min, value);
-								max = Math.max(max, value);
+					const scanChannels = Math.min(rastersCopy.length, 3);
+					for (let i = 0; i < scanChannels; i++) {
+						const raster = rastersCopy[i];
+						for (let j = 0; j < raster.length; j++) {
+							const value = raster[j];
+							if (value === value && value !== Infinity && value !== -Infinity) {
+								if (value < min) min = value;
+								if (value > max) max = value;
 							}
 						}
 					}
@@ -593,34 +656,76 @@ export class TiffProcessor {
 
 		let interleavedData;
 		const len = width * height;
+		const storedData = this.rawTiffData?.data;
+		const canUseStoredInterleaved =
+			storedData &&
+			storedData.length === len * channels &&
+			(isFloat ||
+				(bitsPerSample === 16 && storedData instanceof Uint16Array) ||
+				(bitsPerSample !== 16 && (storedData instanceof Uint8Array || storedData instanceof Uint8ClampedArray)));
 
-		if (isFloat) {
-			interleavedData = new Float32Array(len * channels);
-		} else if (bitsPerSample === 16) {
-			interleavedData = new Uint16Array(len * channels);
+		if (canUseStoredInterleaved) {
+			interleavedData = storedData;
+			PerfTrace.mark('interleave-skipped');
 		} else {
-			interleavedData = new Uint8Array(len * channels);
-		}
+			if (isFloat) {
+				interleavedData = new Float32Array(len * channels);
+			} else if (bitsPerSample === 16) {
+				interleavedData = new Uint16Array(len * channels);
+			} else {
+				interleavedData = new Uint8Array(len * channels);
+			}
 
-		// Interleave
-		if (channels === 1) {
-			interleavedData.set(rastersCopy[0]);
-		} else {
-			for (let i = 0; i < len; i++) {
-				for (let c = 0; c < channels; c++) {
-					interleavedData[i * channels + c] = rastersCopy[c][i];
+			// Interleave
+			if (channels === 1) {
+				interleavedData.set(rastersCopy[0]);
+			} else {
+				for (let i = 0; i < len; i++) {
+					for (let c = 0; c < channels; c++) {
+						interleavedData[i * channels + c] = rastersCopy[c][i];
+					}
 				}
 			}
+			PerfTrace.mark('interleave');
 		}
-		PerfTrace.mark('interleave');
 
 		// Create options object
 		const options = {
 			nanColor: nanColor,
-			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale
+			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
+			collectHistogram: renderOptions.collectHistogram === true
 		};
 
-		return ImageRenderer.render(
+		const targetCanvas = renderOptions.targetCanvas;
+		const typeMax = isFloat ? 1.0 : (bitsPerSample === 16 ? 65535 : 255);
+		if (targetCanvas && this._webglRenderer.canRender({
+			data: interleavedData,
+			width,
+			height,
+			channels,
+			isFloat,
+			settings,
+			collectHistogram: renderOptions.collectHistogram === true
+		})) {
+			const rendered = this._webglRenderer.render(targetCanvas, {
+				data: /** @type {Float32Array} */ (interleavedData),
+				width,
+				height,
+				min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+				max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
+				typeMax,
+				settings,
+				nanColor,
+				channels
+			});
+			if (rendered) {
+				this._lastRenderUsedWebGL = true;
+				this._lastRenderHistogram = null;
+				return renderOptions.placeholderImageData || new ImageData(width, height);
+			}
+		}
+
+		const imageData = ImageRenderer.render(
 			interleavedData,
 			width,
 			height,
@@ -630,93 +735,23 @@ export class TiffProcessor {
 			settings,
 			options
 		);
+		this._lastRenderHistogram = options.renderHistogramResult || null;
+		return imageData;
 	}
 
 	/**
-	 * Fast render TIFF data with current settings (skips mask loading and uses cached statistics)
+	 * Fast render TIFF data with current settings.
 	 * @param {*} image - GeoTIFF image object
 	 * @param {*} rasters - Raster data
-	 * @param {boolean} _skipMasks - Whether to skip mask filtering
 	 * @returns {Promise<ImageData>}
 	 */
-	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, _skipMasks = true) {
+	async renderTiffWithSettingsFast(/** @type {any} */ image, /** @type {any} */ rasters, renderOptions = {}) {
 		// Redirect to main render method for now to ensure correctness and use centralized ImageRenderer
-		// TODO: Re-implement optimization for skipMasks if needed
-		return this.renderTiffWithSettings(image, rasters);
+		return this.renderTiffWithSettings(image, rasters, renderOptions);
 	}
 
-	async renderTiff(/** @type {any} */ image, /** @type {any} */ rasters) {
-		return this.renderTiffWithSettings(image, rasters);
-	}
-
-	/**
-	 * Load mask image for filtering
-	 * @param {string} maskSrc - Mask TIFF file URL
-	 * @returns {Promise<Float32Array>}
-	 */
-	async loadMaskImage(maskSrc) {
-		// Check cache first
-		if (this._maskCache.has(maskSrc)) {
-			return this._maskCache.get(maskSrc);
-		}
-
-		try {
-			const response = await fetch(maskSrc);
-			const buffer = await response.arrayBuffer();
-			const tiff = await GeoTIFF.fromArrayBuffer(buffer);
-			const image = await tiff.getImage();
-			const rasters = await image.readRasters();
-
-			// Return the first band as a Float32Array
-			const maskData = new Float32Array(rasters[0]);
-
-			// Cache the mask data
-			this._maskCache.set(maskSrc, maskData);
-
-			return maskData;
-		} catch (error) {
-			console.error('Error loading mask image:', error);
-			throw error;
-		}
-	}
-
-	/**
-	 * Clear the mask cache (call when mask URIs change)
-	 */
-	clearMaskCache() {
-		this._maskCache.clear();
-	}
-
-	/**
-	 * Apply mask filtering to image data
-	 * @param {Float32Array} imageData - Original image data
-	 * @param {Float32Array} maskData - Mask data
-	 * @param {number} threshold - Threshold value
-	 * @param {boolean} filterHigher - Whether to filter higher or lower values
-	 * @returns {Float32Array} - Filtered image data
-	 */
-	applyMaskFilter(imageData, maskData, threshold, filterHigher) {
-		const filteredData = new Float32Array(imageData.length);
-
-		for (let i = 0; i < imageData.length; i++) {
-			const maskValue = maskData[i];
-			const imageValue = imageData[i];
-
-			let shouldFilter = false;
-			if (filterHigher) {
-				shouldFilter = maskValue > threshold;
-			} else {
-				shouldFilter = maskValue < threshold;
-			}
-
-			if (shouldFilter) {
-				filteredData[i] = NaN;
-			} else {
-				filteredData[i] = imageValue;
-			}
-		}
-
-		return filteredData;
+	async renderTiff(/** @type {any} */ image, /** @type {any} */ rasters, renderOptions = {}) {
+		return this.renderTiffWithSettings(image, rasters, renderOptions);
 	}
 
 	/**
@@ -819,7 +854,7 @@ export class TiffProcessor {
 	 * Called when format-specific settings have been applied
 	 * @returns {Promise<ImageData|null>} - The rendered image data, or null if no pending render
 	 */
-	async performDeferredRender() {
+	async performDeferredRender(renderOptions = {}) {
 		const perfStart = performance.now();
 		if (!this._pendingRenderData) {
 			return null;
@@ -830,7 +865,7 @@ export class TiffProcessor {
 		this._isInitialLoad = false;
 
 		// Now render with the correct format-specific settings
-		const imageData = await this.renderTiff(image, rasters);
+		const imageData = await this.renderTiff(image, rasters, renderOptions);
 		console.log(`[TiffProcessor] Deferred render took ${(performance.now() - perfStart).toFixed(2)}ms`);
 		return imageData;
 	}

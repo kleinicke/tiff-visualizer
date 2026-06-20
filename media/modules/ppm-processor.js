@@ -2,6 +2,10 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { PerfTrace } from './perf-trace.js';
+
+const IS_LITTLE_ENDIAN = new Uint8Array(new Uint16Array([1]).buffer)[0] === 1;
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
@@ -25,6 +29,8 @@ export class PpmProcessor {
         /** @type {{min:number,max:number}|undefined} */
         this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
         this._cachedStatsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         /** @type {DecodeWorkerClient|null} */
@@ -34,8 +40,7 @@ export class PpmProcessor {
     /** @param {string} src */
     async processPpm(src) {
         const loadSignal = this.loadSignal;
-        const response = await fetch(src, { signal: loadSignal });
-        const buffer = await response.arrayBuffer();
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data, maxval, format } = await DecodeWorkerClient.decodeWithFallback(
@@ -51,7 +56,7 @@ export class PpmProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        this._lastRaw = { width, height, data: displayData, maxval, channels };
+        this._lastRaw = { width, height, data: displayData, maxval, channels, format };
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -75,6 +80,9 @@ export class PpmProcessor {
 
     /** @param {ArrayBuffer} arrayBuffer */
     _parsePpm(arrayBuffer) {
+        const parserStart = performance.now();
+        /** @type {{name:string,durationMs:number}[]} */
+        const decodeTimings = [];
         const uint8Array = new Uint8Array(arrayBuffer);
         let offset = 0;
 
@@ -172,8 +180,11 @@ export class PpmProcessor {
         // Determine data type based on maxval
         const use16bit = !isPbm && maxval > 255;
         const DataType = use16bit ? Uint16Array : Uint8Array;
-        const data = new DataType(totalValues);
+        /** @type {Uint8Array|Uint16Array} */
+        let data = new DataType(totalValues);
+        decodeTimings.push({ name: 'decode-ppm-header', durationMs: performance.now() - parserStart });
 
+        const rasterStart = performance.now();
         if (isPbm && isAscii) {
             // PBM ASCII format (P1) - read 0s and 1s
             for (let i = 0; i < totalValues; i++) {
@@ -225,6 +236,7 @@ export class PpmProcessor {
                 data[i] = value;
             }
         } else {
+            const binarySetupStart = performance.now();
             // Binary format (P5/P6)
             // PPM spec: after maxval, there is exactly ONE whitespace character (usually newline),
             // then the binary data starts immediately
@@ -242,22 +254,46 @@ export class PpmProcessor {
             if (offset + expectedBytes > uint8Array.length) {
                 throw new Error('Insufficient data for binary PPM/PGM');
             }
+            decodeTimings.push({ name: 'decode-ppm-binary-setup', durationMs: performance.now() - binarySetupStart });
 
+            const binaryCopyStart = performance.now();
             if (use16bit) {
-                // 16-bit values (big-endian as per PPM spec)
-                const dataView = new DataView(arrayBuffer, offset);
-                for (let i = 0; i < totalValues; i++) {
-                    data[i] = dataView.getUint16(i * 2, false); // false = big-endian
+                // 16-bit values are big-endian in NetPBM. Prefer a Uint16Array
+                // view plus in-place byte swap over byte-by-byte reconstruction.
+                const isAligned = offset % 2 === 0;
+                const rasterBuffer = isAligned ? arrayBuffer : arrayBuffer.slice(offset, offset + expectedBytes);
+                const rasterOffset = isAligned ? offset : 0;
+                data = new Uint16Array(rasterBuffer, rasterOffset, totalValues);
+                if (IS_LITTLE_ENDIAN) {
+                    for (let i = 0; i < totalValues; i++) {
+                        const value = data[i];
+                        data[i] = ((value & 0xff) << 8) | (value >>> 8);
+                    }
+                    decodeTimings.push({
+                        name: isAligned ? 'decode-ppm-byte-swap-u16-inplace' : 'decode-ppm-byte-swap-u16-slice',
+                        durationMs: performance.now() - binaryCopyStart
+                    });
+                } else {
+                    decodeTimings.push({
+                        name: isAligned ? 'decode-ppm-raster-view-u16' : 'decode-ppm-raster-slice-u16',
+                        durationMs: performance.now() - binaryCopyStart
+                    });
                 }
             } else {
-                // 8-bit values
-                for (let i = 0; i < totalValues; i++) {
-                    data[i] = uint8Array[offset + i];
-                }
+                // 8-bit binary raster can be used as a direct view.
+                data = uint8Array.subarray(offset, offset + expectedBytes);
+                decodeTimings.push({
+                    name: 'decode-ppm-raster-view-u8',
+                    durationMs: performance.now() - binaryCopyStart
+                });
             }
         }
+        decodeTimings.push({ name: 'decode-ppm-raster-total', durationMs: performance.now() - rasterStart });
+        for (const timing of decodeTimings) {
+            PerfTrace.detail(timing.name, timing.durationMs);
+        }
 
-        return { width, height, channels, data, maxval, format };
+        return { width, height, channels, data, maxval, format, decodeTimings };
     }
 
 
@@ -269,7 +305,8 @@ export class PpmProcessor {
      * @param {number} maxval
      * @param {number} [channels]
      */
-    _toImageDataWithNormalization(data, width, height, maxval, channels = 1) {
+    _toImageDataWithNormalization(data, width, height, maxval, channels = 1, renderOptions = {}) {
+        this._lastRenderUsedWebGL = false;
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
         const isGammaMode = settings.normalization?.gammaMode || false;
@@ -281,7 +318,7 @@ export class PpmProcessor {
 
         // Calculate stats if needed
         let stats = this._cachedStats;
-        if (!stats && !isGammaMode) {
+        if (!stats && NormalizationHelper.needsStats(settings)) {
             if (rgbAs24BitMode) {
                 // For 24-bit mode, compute stats from combined 24-bit values
                 let min = Infinity;
@@ -325,6 +362,32 @@ export class PpmProcessor {
             rgbAs24BitGrayscale: rgbAs24BitMode,
             typeMax: rgbAs24BitMode ? 16777215 : maxval
         };
+        const typeMax = rgbAs24BitMode ? 16777215 : maxval;
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels,
+            isFloat: false,
+            settings
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data,
+                width,
+                height,
+                channels,
+                isFloat: false,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
+                typeMax,
+                settings,
+                nanColor: { r: 0, g: 0, b: 0 }
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
 
         return ImageRenderer.render(
             data,
@@ -342,10 +405,10 @@ export class PpmProcessor {
     /**
      * Re-render PPM/PGM with current settings (for real-time updates)
      */
-    renderPgmWithSettings() {
+    renderPgmWithSettings(renderOptions = {}) {
         if (!this._lastRaw) return null;
         const { width, height, data, maxval, channels } = this._lastRaw;
-        return this._toImageDataWithNormalization(data, width, height, maxval, channels);
+        return this._toImageDataWithNormalization(data, width, height, maxval, channels, renderOptions);
     }
 
     /**
@@ -463,7 +526,7 @@ export class PpmProcessor {
      * Perform deferred rendering using stored data and current settings
      * @returns {ImageData|null} Rendered image data or null
      */
-    performDeferredRender() {
+    performDeferredRender(renderOptions = {}) {
         if (!this._pendingRenderData) {
             return null;
         }
@@ -472,8 +535,9 @@ export class PpmProcessor {
         this._pendingRenderData = null;
         this._isInitialLoad = false;
 
+        PerfTrace.mark('ppm-deferred-render-start');
         // Now render with the correct format-specific settings
-        const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels);
+        const imageData = this._toImageDataWithNormalization(displayData, width, height, maxval, channels, renderOptions);
 
         // Force status refresh
         this.vscode.postMessage({ type: 'refresh-status' });

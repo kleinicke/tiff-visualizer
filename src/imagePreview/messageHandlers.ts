@@ -27,7 +27,6 @@ export class MessageRouter {
 		this.handlers.set('ready', new ReadyMessageHandler());
 		this.handlers.set('didExportAsPng', new ExportPngMessageHandler());
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
-		this.handlers.set('mask-filter-request', new MaskFilterRequestMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
 		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
 		this.handlers.set('comparisonStateResponse', new ComparisonStateResponseMessageHandler());
@@ -182,19 +181,6 @@ class InitialDataMessageHandler implements MessageHandler {
 		preview.syncHistogramStatusBar(histogramState.isVisible);
 	}
 }
-
-class MaskFilterRequestMessageHandler implements MessageHandler {
-	handle(message: any, preview: ImagePreview): void {
-		if (preview.isPreviewActive()) {
-			const imageUri = preview.resource.toString();
-			const maskSettings = preview.getManager().settingsManager.getMaskFilterSettings(imageUri);
-			preview.getWebview().postMessage({
-				type: 'mask-filter-settings',
-				settings: maskSettings
-			});
-		}
-	}
-} 
 
 class RefreshStatusMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {

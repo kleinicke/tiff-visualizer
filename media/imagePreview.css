@@ -374,8 +374,10 @@ body img {
 	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 	display: flex;
 	flex-direction: column;
-	min-width: 320px;
-	max-width: 500px;
+	width: 326px;
+	min-width: 326px;
+	max-width: 326px;
+	box-sizing: border-box;
 	user-select: none;
 }
 
@@ -441,21 +443,83 @@ body img {
 	display: block;
 	margin: 12px;
 	border-radius: 3px;
+	width: 300px;
+	height: 150px;
+	flex: 0 0 auto;
+	box-sizing: border-box;
+}
+
+.histogram-labels {
+	width: 300px;
+	margin: 0 12px 8px;
+	box-sizing: border-box;
+	font-variant-numeric: tabular-nums;
+	font-feature-settings: "tnum";
+}
+
+.histogram-labels span {
+	display: inline-block;
+	max-width: 48%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.histogram-labels span:last-child {
+	text-align: right;
 }
 
 .histogram-stats {
 	display: flex;
-	justify-content: space-around;
+	flex-direction: column;
+	justify-content: center;
 	padding: 8px 12px;
 	font-size: 11px;
-	gap: 8px;
+	line-height: 1.35;
+	gap: 4px;
 	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 	background: var(--vscode-sideBarSectionHeader-background, #252526);
 	border-radius: 0 0 6px 6px;
+	width: 100%;
+	min-height: 50px;
+	box-sizing: border-box;
+	overflow: hidden;
+	font-family: var(--vscode-editor-font-family, 'Consolas', 'Monaco', monospace);
+	font-variant-numeric: tabular-nums;
+	font-feature-settings: "tnum";
+}
+
+.histogram-stat-line {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+
+.histogram-stat-item {
+	flex: 1 1 0;
+	text-align: center;
+}
+
+.histogram-stat-item:first-child {
+	text-align: left;
+}
+
+.histogram-stat-item:last-child {
+	text-align: right;
+}
+
+.histogram-stat-nan {
+	color: #ffcc00;
+	text-align: center;
 }
 
 .histogram-stats span {
 	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
 }
 
 /* Light theme adjustments for histogram */
