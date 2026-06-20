@@ -1,6 +1,11 @@
 // @ts-check
 "use strict";
 
+// Code-only diagnostic flag. Keep disabled for normal builds so users see the
+// concise [Perf] load summaries without the full per-phase trace. Temporarily
+// enable this while profiling image loading, rendering, or collection switches.
+const DETAILED_PERF_TRACING = false;
+
 /**
  * Lightweight phase timer for diagnosing where an image switch spends time.
  *
@@ -40,6 +45,7 @@ export class PerfTrace {
 
 	/** @param {string} label */
 	static begin(label) {
+		if (!DETAILED_PERF_TRACING) { return; }
 		const now = performance.now();
 		PerfTrace._active = { label, start: now, last: now, phases: [] };
 	}
