@@ -1536,7 +1536,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			case 'addLayerImages': {
 				const images = message.images || [];
-				PerfTrace.begin(`add-layer ${images.length} image${images.length === 1 ? '' : 's'}`);
+				const imageLabel = `${images.length} image${images.length === 1 ? '' : 's'}`;
+				PerfTrace.begin(`add-layer ${imageLabel}`, { conciseLabel: `Layer add (${imageLabel}) completed` });
 				syncBaseLayer();
 				PerfTrace.mark('layers-base-sync');
 				const wasLayerActive = layerManager.active;
@@ -3398,7 +3399,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Trace where this switch spends its time; the summary is logged from
 		// finalizeImageSetup once the final pixels are on screen.
-		PerfTrace.begin(`switch ${resourceUri.split('/').pop()}`);
+		let switchName = resourceUri.split('/').pop() || 'image';
+		try { switchName = decodeURIComponent(switchName); } catch { /* keep encoded name */ }
+		PerfTrace.begin(`switch ${switchName}`, { conciseLabel: `Collection switch ${switchName} completed` });
 		_restoreDecodedImageCandidate = _previousDecodedImageCache;
 		cacheCurrentDecodedImage();
 
