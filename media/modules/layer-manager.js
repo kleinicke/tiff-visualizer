@@ -32,6 +32,8 @@ export class LayerManager {
 	constructor() {
 		/** @type {import('./layer-compositor.js').Layer[]} */
 		this.layers = [];
+		/** @type {{name:string, visible:boolean}[]} */
+		this.groups = [];
 		this.active = false;
 		this.canvasWidth = 0;
 		this.canvasHeight = 0;
@@ -137,7 +139,8 @@ export class LayerManager {
 	 */
 	getComposite() {
 		if (!this.canvasWidth || !this.canvasHeight) { return null; }
-		return composite(this.layers, this.canvasWidth, this.canvasHeight);
+		const layers = this.layers.filter(layer => this.isGroupVisible(layer.group));
+		return composite(layers, this.canvasWidth, this.canvasHeight);
 	}
 
 	/**
@@ -200,6 +203,11 @@ export class LayerManager {
 		l.visible = settings.visible !== false;
 		l.maskCondition = settings.maskCondition;
 		l.name = settings.name ?? input.name;
+		l.group = settings.group || '';
+		l.transformEnabled = settings.transformEnabled === true;
+		l.transformMin = Number.isFinite(settings.transformMin) ? Number(settings.transformMin) : l.rawMin;
+		l.transformMax = Number.isFinite(settings.transformMax) ? Number(settings.transformMax) : l.rawMax;
+		l.transformInvert = settings.transformInvert === true;
 		return l;
 	}
 
@@ -215,6 +223,61 @@ export class LayerManager {
 		this.canvasHeight = canvasHeight;
 	}
 
+	/** @returns {string[]} */
+	groupNames() {
+		return this.groups.map(g => g.name);
+	}
+
+	/** @param {string} name */
+	addGroup(name) {
+		const trimmed = name.trim();
+		if (!trimmed || this.groups.some(g => g.name === trimmed)) { return; }
+		this.groups.push({ name: trimmed, visible: true });
+	}
+
+	/** @param {{name:string, visible?:boolean}[]} groups */
+	setGroups(groups) {
+		this.groups = [];
+		for (const group of groups || []) {
+			const name = String(group.name || '').trim();
+			if (!name || this.groups.some(g => g.name === name)) { continue; }
+			this.groups.push({ name, visible: group.visible !== false });
+		}
+	}
+
+	/**
+	 * @param {string|undefined} name
+	 * @returns {boolean}
+	 */
+	isGroupVisible(name) {
+		if (!name) { return true; }
+		const group = this.groups.find(g => g.name === name);
+		return group ? group.visible !== false : true;
+	}
+
+	/**
+	 * @param {string} name
+	 * @param {boolean} visible
+	 */
+	setGroupVisible(name, visible) {
+		const group = this.groups.find(g => g.name === name);
+		if (group) { group.visible = visible; }
+	}
+
+	/** @returns {{min:number,max:number}} */
+	_calculateStats(data) {
+		let min = Infinity;
+		let max = -Infinity;
+		for (let i = 0; i < data.length; i++) {
+			const value = data[i];
+			if (Number.isFinite(value)) {
+				if (value < min) { min = value; }
+				if (value > max) { max = value; }
+			}
+		}
+		return min === Infinity ? { min: 0, max: 1 } : { min, max };
+	}
+
 	/**
 	 * Build an internal layer object with a fresh id and default appearance.
 	 * @param {LayerInput} layer
@@ -223,6 +286,7 @@ export class LayerManager {
 	 * @returns {import('./layer-compositor.js').Layer}
 	 */
 	_toLayer(layer, offsetX, offsetY) {
+		const stats = this._calculateStats(layer.data);
 		return {
 			id: `layer-${_nextLayerId++}`,
 			data: layer.data,
@@ -238,6 +302,13 @@ export class LayerManager {
 			visible: true,
 			name: layer.name,
 			uri: layer.uri,
+			group: '',
+			rawMin: stats.min,
+			rawMax: stats.max,
+			transformEnabled: false,
+			transformMin: stats.min,
+			transformMax: stats.max,
+			transformInvert: false,
 		};
 	}
 }

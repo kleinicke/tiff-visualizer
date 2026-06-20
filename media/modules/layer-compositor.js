@@ -38,6 +38,13 @@
  * @property {string} [blendMode]           One of BLEND_MODES, default 'normal'.
  * @property {boolean} [visible]            Default true.
  * @property {{op:string, threshold?:number}} [maskCondition]  Only for blendMode 'mask'.
+ * @property {string} [group]               Optional flat group name.
+ * @property {number} [rawMin]              Finite source minimum, used by UI defaults.
+ * @property {number} [rawMax]              Finite source maximum, used by UI defaults.
+ * @property {boolean} [transformEnabled]   Whether to normalize this layer before blending.
+ * @property {number} [transformMin]        Per-layer normalization input minimum.
+ * @property {number} [transformMax]        Per-layer normalization input maximum.
+ * @property {boolean} [transformInvert]    Invert the normalized layer value before blending.
  */
 
 /**
@@ -157,14 +164,31 @@ function compositeChannels(visibleLayers) {
 function sampleLayer(layer, lx, ly, outChannels, out) {
 	const base = (ly * layer.width + lx) * layer.channels;
 	if (layer.channels === 1) {
-		const v = layer.data[base];
+		const v = transformLayerValue(layer, layer.data[base]);
 		for (let c = 0; c < outChannels; c++) out[c] = v;
 	} else {
 		for (let c = 0; c < outChannels; c++) {
 			// If the layer has fewer channels than the composite, replicate the last.
-			out[c] = layer.data[base + Math.min(c, layer.channels - 1)];
+			out[c] = transformLayerValue(layer, layer.data[base + Math.min(c, layer.channels - 1)]);
 		}
 	}
+}
+
+/**
+ * Apply the optional per-layer value transform before compositing.
+ * @param {Layer} layer
+ * @param {number} value
+ * @returns {number}
+ */
+function transformLayerValue(layer, value) {
+	if (!layer.transformEnabled || !Number.isFinite(value)) { return value; }
+	const min = Number.isFinite(layer.transformMin) ? Number(layer.transformMin) : Number(layer.rawMin ?? 0);
+	const max = Number.isFinite(layer.transformMax) ? Number(layer.transformMax) : Number(layer.rawMax ?? 1);
+	const denom = max - min;
+	let v = denom === 0 ? 0 : (value - min) / denom;
+	if (v < 0) { v = 0; }
+	else if (v > 1) { v = 1; }
+	return layer.transformInvert ? 1 - v : v;
 }
 
 /**
@@ -189,13 +213,14 @@ function compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth
 	const srcData = layer.data;
 	const layerChannels = layer.channels;
 	const opaque = opacity >= 1;
+	const transform = layer.transformEnabled === true;
 
 	if (outChannels === 1 && layerChannels === 1) {
 		for (let y = yStart; y < yEnd; y++) {
 			let pixel = y * canvasWidth + xStart;
 			let si = (y - offsetY) * layer.width + (xStart - offsetX);
 			for (let x = xStart; x < xEnd; x++, pixel++, si++) {
-				const s = srcData[si];
+				const s = transform ? transformLayerValue(layer, srcData[si]) : srcData[si];
 				if (!covered[pixel]) {
 					data[pixel] = s;
 					covered[pixel] = 1;
@@ -217,7 +242,7 @@ function compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth
 			let di = pixel * 3;
 			let si = (y - offsetY) * layer.width + (xStart - offsetX);
 			for (let x = xStart; x < xEnd; x++, pixel++, di += 3, si++) {
-				const s = srcData[si];
+				const s = transform ? transformLayerValue(layer, srcData[si]) : srcData[si];
 				if (!covered[pixel]) {
 					data[di] = s;
 					data[di + 1] = s;
@@ -249,9 +274,9 @@ function compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth
 			let di = pixel * 3;
 			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * layerChannels;
 			for (let x = xStart; x < xEnd; x++, pixel++, di += 3, si += layerChannels) {
-				const s0 = srcData[si];
-				const s1 = srcData[si + 1];
-				const s2 = srcData[si + 2];
+				const s0 = transform ? transformLayerValue(layer, srcData[si]) : srcData[si];
+				const s1 = transform ? transformLayerValue(layer, srcData[si + 1]) : srcData[si + 1];
+				const s2 = transform ? transformLayerValue(layer, srcData[si + 2]) : srcData[si + 2];
 				if (!covered[pixel]) {
 					data[di] = s0;
 					data[di + 1] = s1;

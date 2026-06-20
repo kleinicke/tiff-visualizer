@@ -248,6 +248,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (Array.isArray(savedLayers) && (savedLayers.length > 1 || persistedState.layerActive)) {
 			_pendingLayerRestore = {
 				layers: savedLayers,
+				groups: persistedState.layerGroups || [],
 				active: !!persistedState.layerActive,
 				collapsed: !!persistedState.layerCollapsed,
 			};
@@ -296,8 +297,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 				blendMode: l.blendMode,
 				visible: l.visible,
 				maskCondition: l.maskCondition,
+				group: l.group,
+				transformEnabled: l.transformEnabled,
+				transformMin: l.transformMin,
+				transformMax: l.transformMax,
+				transformInvert: l.transformInvert,
 				isBase: i === 0,
 			})),
+			layerGroups: layerManager.groups.map(g => ({ name: g.name, visible: g.visible })),
 			layerActive: layerManager.active,
 			layerCollapsed: layersPanel.collapsed,
 			timestamp: Date.now()
@@ -1403,6 +1410,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (!pending) { return; }
 
 		syncBaseLayer();
+		layerManager.setGroups(pending.groups || pending.layerGroups || []);
 		const baseLayer = layerManager.layers.find(l => l.uri === settingsManager.settings.resourceUri) || layerManager.layers[0];
 		const rebuilt = [];
 		for (const meta of pending.layers) {
@@ -1412,6 +1420,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 						offsetX: meta.offsetX ?? 0, offsetY: meta.offsetY ?? 0,
 						opacity: meta.opacity ?? 1, blendMode: meta.blendMode ?? 'normal',
 						visible: meta.visible !== false, maskCondition: meta.maskCondition,
+						group: meta.group || '',
+						transformEnabled: meta.transformEnabled === true,
+						transformMin: Number.isFinite(meta.transformMin) ? Number(meta.transformMin) : baseLayer.rawMin,
+						transformMax: Number.isFinite(meta.transformMax) ? Number(meta.transformMax) : baseLayer.rawMax,
+						transformInvert: meta.transformInvert === true,
 					});
 					rebuilt.push(baseLayer);
 				}

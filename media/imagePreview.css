@@ -754,7 +754,9 @@ body img {
 
 .layer-controls,
 .layer-position,
-.layer-actions {
+.layer-actions,
+.layer-transform,
+.layer-group-assign {
 	grid-column: 1 / -1;
 	display: flex;
 	align-items: center;
@@ -783,6 +785,47 @@ body img {
 
 .layer-offset-input {
 	width: 54px;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #ccc);
+	border: 1px solid var(--vscode-input-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 1px 3px;
+}
+
+.layer-groups {
+	margin: 2px 0 6px;
+	padding: 5px;
+	background: var(--vscode-list-inactiveSelectionBackground, #2a2d2e);
+	border-radius: 4px;
+}
+
+.layer-group-row,
+.layer-transform-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	opacity: 0.85;
+}
+
+.layer-group-row {
+	margin-right: 8px;
+}
+
+.layer-group-assign span {
+	opacity: 0.8;
+}
+
+.layer-group-select {
+	flex: 1;
+	background: var(--vscode-dropdown-background, #3c3c3c);
+	color: var(--vscode-dropdown-foreground, #ccc);
+	border: 1px solid var(--vscode-dropdown-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 2px;
+}
+
+.layer-transform-input {
+	width: 64px;
 	background: var(--vscode-input-background, #3c3c3c);
 	color: var(--vscode-input-foreground, #ccc);
 	border: 1px solid var(--vscode-input-border, #3c3c3c);

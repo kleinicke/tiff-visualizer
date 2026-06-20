@@ -71,6 +71,22 @@ export class LayersPanel {
 		addBtn.textContent = '+';
 		addBtn.addEventListener('click', () => this.onAddLayer?.());
 
+		const addGroupBtn = document.createElement('button');
+		addGroupBtn.className = 'layers-btn layers-add-group';
+		addGroupBtn.title = 'Add group';
+		addGroupBtn.textContent = 'G+';
+		addGroupBtn.addEventListener('click', () => {
+			let index = this.manager.groups.length + 1;
+			let name = `Group ${index}`;
+			while (this.manager.groupNames().includes(name)) {
+				index++;
+				name = `Group ${index}`;
+			}
+			this.manager.addGroup(name);
+			this.refresh();
+			this.onPersist?.();
+		});
+
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
 		minimizeBtn.title = 'Minimize / expand panel';
@@ -80,6 +96,7 @@ export class LayersPanel {
 
 		header.appendChild(title);
 		header.appendChild(addBtn);
+		header.appendChild(addGroupBtn);
 		header.appendChild(minimizeBtn);
 		if (this.closable) {
 			const closeBtn = document.createElement('button');
@@ -152,6 +169,9 @@ export class LayersPanel {
 	refresh() {
 		if (!this.listEl) { return; }
 		this.listEl.textContent = '';
+		if (this.manager.groups.length > 0) {
+			this.listEl.appendChild(this._buildGroupsBlock());
+		}
 		const layers = this.manager.layers;
 		for (let i = layers.length - 1; i >= 0; i--) {
 			this.listEl.appendChild(this._buildRow(layers[i], i));
@@ -257,6 +277,11 @@ export class LayersPanel {
 		controls.appendChild(opacity);
 		row.appendChild(controls);
 
+		const groupRow = this._buildGroupAssignmentRow(layer, id);
+		if (groupRow) { row.appendChild(groupRow); }
+
+		row.appendChild(this._buildTransformRow(layer, id));
+
 		// Mask condition row (only when this layer is a mask).
 		if (layer.blendMode === 'mask') {
 			row.appendChild(this._buildMaskRow(layer, id));
@@ -353,6 +378,133 @@ export class LayersPanel {
 		return row;
 	}
 
+	/** @returns {HTMLElement} */
+	_buildGroupsBlock() {
+		const block = document.createElement('div');
+		block.className = 'layer-groups';
+		for (const group of this.manager.groups) {
+			const row = document.createElement('label');
+			row.className = 'layer-group-row';
+			const checkbox = document.createElement('input');
+			checkbox.type = 'checkbox';
+			checkbox.checked = group.visible !== false;
+			checkbox.title = 'Toggle group visibility';
+			checkbox.addEventListener('change', () => {
+				this.manager.setGroupVisible(group.name, checkbox.checked);
+				this.onChange();
+				this.onPersist?.();
+			});
+			const name = document.createElement('span');
+			name.textContent = group.name;
+			row.appendChild(checkbox);
+			row.appendChild(name);
+			block.appendChild(row);
+		}
+		return block;
+	}
+
+	/**
+	 * @param {import('./layer-compositor.js').Layer} layer
+	 * @param {string} id
+	 * @returns {HTMLElement|null}
+	 */
+	_buildGroupAssignmentRow(layer, id) {
+		const groups = this.manager.groupNames();
+		if (groups.length === 0) { return null; }
+		const row = document.createElement('div');
+		row.className = 'layer-group-assign';
+		const label = document.createElement('span');
+		label.textContent = 'Group';
+		const select = document.createElement('select');
+		select.className = 'layer-group-select';
+		const none = document.createElement('option');
+		none.value = '';
+		none.textContent = 'None';
+		select.appendChild(none);
+		for (const group of groups) {
+			const option = document.createElement('option');
+			option.value = group;
+			option.textContent = group;
+			if ((layer.group || '') === group) { option.selected = true; }
+			select.appendChild(option);
+		}
+		select.addEventListener('change', () => {
+			this.manager.updateLayer(id, { group: select.value });
+			this.onChange();
+			this.onPersist?.();
+		});
+		row.appendChild(label);
+		row.appendChild(select);
+		return row;
+	}
+
+	/**
+	 * @param {import('./layer-compositor.js').Layer} layer
+	 * @param {string} id
+	 * @returns {HTMLElement}
+	 */
+	_buildTransformRow(layer, id) {
+		const row = document.createElement('div');
+		row.className = 'layer-transform';
+		const enabled = document.createElement('label');
+		enabled.className = 'layer-transform-toggle';
+		const checkbox = document.createElement('input');
+		checkbox.type = 'checkbox';
+		checkbox.checked = layer.transformEnabled === true;
+		const enabledText = document.createElement('span');
+		enabledText.textContent = 'Norm';
+		enabled.appendChild(checkbox);
+		enabled.appendChild(enabledText);
+
+		const minInput = this._numberInput(layer.transformMin ?? layer.rawMin ?? 0, 'Layer normalization min');
+		const maxInput = this._numberInput(layer.transformMax ?? layer.rawMax ?? 1, 'Layer normalization max');
+		const invert = document.createElement('label');
+		invert.className = 'layer-transform-toggle';
+		const invertBox = document.createElement('input');
+		invertBox.type = 'checkbox';
+		invertBox.checked = layer.transformInvert === true;
+		const invertText = document.createElement('span');
+		invertText.textContent = 'Inv';
+		invert.appendChild(invertBox);
+		invert.appendChild(invertText);
+
+		const auto = document.createElement('button');
+		auto.className = 'layers-btn';
+		auto.textContent = 'auto';
+		auto.title = 'Use this layer range';
+
+		const readPatch = () => ({
+			transformEnabled: checkbox.checked,
+			transformMin: parseFloat(minInput.value),
+			transformMax: parseFloat(maxInput.value),
+			transformInvert: invertBox.checked
+		});
+		const apply = (interactive = false) => {
+			const patch = readPatch();
+			if (!Number.isFinite(patch.transformMin) || !Number.isFinite(patch.transformMax)) { return; }
+			this.manager.updateLayer(id, patch);
+			this.onChange({ interactive });
+			this.onPersist?.();
+		};
+		checkbox.addEventListener('change', () => apply(false));
+		minInput.addEventListener('change', () => apply(false));
+		maxInput.addEventListener('change', () => apply(false));
+		invertBox.addEventListener('change', () => apply(false));
+		auto.addEventListener('click', () => {
+			minInput.value = this._formatNumber(layer.rawMin ?? 0);
+			maxInput.value = this._formatNumber(layer.rawMax ?? 1);
+			checkbox.checked = true;
+			apply(false);
+		});
+
+		row.appendChild(enabled);
+		row.appendChild(minInput);
+		row.appendChild(maxInput);
+		row.appendChild(invert);
+		row.appendChild(auto);
+		return row;
+	}
+
 	/**
 	 * Show only the selected layer and redraw the composite.
 	 * @param {string} id
@@ -413,6 +565,31 @@ export class LayersPanel {
 		});
 
 		return row;
+	}
+
+	/** @param {number} value */
+	_formatNumber(value) {
+		if (!Number.isFinite(value)) { return '0'; }
+		const abs = Math.abs(value);
+		if (abs !== 0 && (abs < 0.001 || abs >= 100000)) {
+			return value.toExponential(4);
+		}
+		return parseFloat(value.toFixed(6)).toString();
+	}
+
+	/**
+	 * @param {number} value
+	 * @param {string} title
+	 * @returns {HTMLInputElement}
+	 */
+	_numberInput(value, title) {
+		const input = document.createElement('input');
+		input.type = 'number';
+		input.className = 'layer-transform-input';
+		input.value = this._formatNumber(value);
+		input.title = title;
+		input.step = 'any';
+		return input;
 	}
 
 	/**
