@@ -1328,9 +1328,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 			canvas.width = imageData.width;
 			canvas.height = imageData.height;
 		}
-		const ctx = canvas.getContext('2d');
+		const ctx = ensure2dCanvasContext();
 		if (ctx) {
-			renderImageDataToCanvas(imageData, ctx);
+			void renderImageDataToCanvas(imageData, ctx);
 			primaryImageData = imageData;
 			updateHistogramData();
 		}
