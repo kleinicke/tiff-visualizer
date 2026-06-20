@@ -75,7 +75,7 @@
     "customEditors": [
       {
         "viewType": "tiffVisualizer.previewEditor",
-        "displayName": "TIFF Visualizer",
+        "displayName": "Scientific Image Visualizer",
         "priority": "default",
         "selector": [
           {

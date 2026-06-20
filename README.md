@@ -41,7 +41,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 ## How to Use
 
-Open a supported image file in VS Code and choose **TIFF Visualizer** if VS Code asks which editor to use.
+Open a supported image file in VS Code and choose **Scientific Image Visualizer** if VS Code asks which editor to use.
 
 Use the status bar or right-click menu to change normalization, gamma, brightness, histogram visibility, mask filters, and export options.
 
