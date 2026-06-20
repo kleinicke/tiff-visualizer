@@ -5,6 +5,11 @@ import { NormalizationHelper } from './normalization-helper.js';
 import { PerfTrace } from './perf-trace.js';
 import { getColormapLut } from './colormaps.js';
 
+/** @type {Map<string, number>} */
+const validatedUploadPixelsByFormat = new Map();
+/** @type {Set<string>} */
+const validatedColormapUploads = new Set();
+
 /**
  * Small WebGL2 renderer for the hot scientific-image paths:
  * scalar/float RGB/uint16 data rendered directly to the visible canvas.
@@ -39,8 +44,6 @@ export class WebGL2FloatRenderer {
 		this.failed = false;
 		this.rgb32fFailed = false;
 		this.uintTextureFailed = false;
-		/** @type {Map<string, number>} */
-		this.validatedUploadPixels = new Map();
 	}
 
 	/**
@@ -259,7 +262,7 @@ export class WebGL2FloatRenderer {
 		}
 		PerfTrace.detail(`webgl-texImage2D-${textureFormat}`, performance.now() - uploadStart);
 		const pixels = width * height;
-		const validatedPixels = this.validatedUploadPixels.get(textureFormat) || 0;
+		const validatedPixels = validatedUploadPixelsByFormat.get(textureFormat) || 0;
 		if (pixels > validatedPixels) {
 			const errorStart = performance.now();
 			const error = gl.getError();
@@ -267,7 +270,7 @@ export class WebGL2FloatRenderer {
 			if (error !== gl.NO_ERROR) {
 				throw new Error(`Float texture upload failed: WebGL error ${error}`);
 			}
-			this.validatedUploadPixels.set(textureFormat, pixels);
+			validatedUploadPixelsByFormat.set(textureFormat, pixels);
 		} else {
 			PerfTrace.detail('webgl-texture-upload-error-check-skipped', 0);
 		}
@@ -311,9 +314,12 @@ export class WebGL2FloatRenderer {
 		gl.bindTexture(gl.TEXTURE_2D, this.colormapTexture);
 		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, 256, 1, 0, gl.RGB, gl.UNSIGNED_BYTE, lut);
-		const error = gl.getError();
-		if (error !== gl.NO_ERROR) {
-			throw new Error(`Colormap texture upload failed: WebGL error ${error}`);
+		if (!validatedColormapUploads.has(colormapName)) {
+			const error = gl.getError();
+			if (error !== gl.NO_ERROR) {
+				throw new Error(`Colormap texture upload failed: WebGL error ${error}`);
+			}
+			validatedColormapUploads.add(colormapName);
 		}
 		this.colormapName = colormapName;
 		PerfTrace.detail('webgl-colormap-upload', performance.now() - start);

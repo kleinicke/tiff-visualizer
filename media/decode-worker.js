@@ -28,7 +28,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_exr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -339,6 +339,80 @@ async function decodeExr(buffer) {
 }
 
 /** @param {ArrayBuffer} buffer */
+function decodeHdrWasm(buffer) {
+	if (!tiffWasmReady || typeof decode_hdr_fast !== 'function') {
+		throw new Error('HDR WASM decoder not initialized');
+	}
+	const timings = [];
+	let phaseStart = performance.now();
+	const result = decode_hdr_fast(new Uint8Array(buffer));
+	let now = performance.now();
+	timings.push({ name: 'decode-hdr-rust', durationMs: now - phaseStart });
+
+	phaseStart = now;
+	const data = result.take_data_as_f32();
+	const metadata = result.take_metadata_as_f64();
+	now = performance.now();
+	timings.push({ name: 'decode-hdr-transfer-f32', durationMs: now - phaseStart });
+	const [
+		width = 0,
+		height = 0,
+		exposure = 1,
+		gamma = 1,
+		timingHeader = NaN,
+		timingDecode = NaN,
+		timingConvert = NaN,
+	] = metadata;
+	if (Number.isFinite(timingHeader)) {
+		timings.push({ name: 'decode-hdr-header', durationMs: timingHeader });
+	}
+	if (Number.isFinite(timingDecode)) {
+		timings.push({ name: 'decode-hdr-rle', durationMs: timingDecode });
+	}
+	if (Number.isFinite(timingConvert)) {
+		timings.push({ name: 'decode-hdr-to-f32', durationMs: timingConvert });
+	}
+	return {
+		shape: [width, height],
+		exposure,
+		gamma,
+		data,
+		decodedWith: 'rust-hdr-wasm (worker)',
+		decodeTimings: timings,
+	};
+}
+
+/**
+ * @param {ArrayBuffer} buffer
+ * @param {string} [wasmError]
+ */
+function decodeHdrParseHdr(buffer, wasmError = '') {
+	const phaseStart = performance.now();
+	const result = parseHdr(buffer);
+	result.decodedWith = 'parse-hdr (worker)';
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
+	result.decodeTimings = [{ name: 'decode-hdr-parse-hdr', durationMs: performance.now() - phaseStart }];
+	return result;
+}
+
+/** @param {ArrayBuffer} buffer */
+async function decodeHdr(buffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodeHdrWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM HDR decode failed');
+		console.warn('[DecodeWorker] HDR WASM decode failed, using parse-hdr in worker:', message);
+		return decodeHdrParseHdr(buffer, message);
+	}
+}
+
+/** @param {ArrayBuffer} buffer */
 function decodePng16Wasm(buffer) {
 	if (!tiffWasmReady || typeof decode_png16_fast !== 'function') {
 		throw new Error('PNG WASM decoder not initialized');
@@ -453,7 +527,7 @@ async function decodeFormat(format, buffer) {
 		case 'png16':
 			return decodePng16(buffer);
 		case 'hdr':
-			return parseHdr(buffer);
+			return decodeHdr(buffer);
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}

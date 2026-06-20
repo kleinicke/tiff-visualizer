@@ -79,6 +79,25 @@ pub struct PngResult {
 }
 
 #[wasm_bindgen]
+pub struct HdrResult {
+    data_f32: Vec<f32>,
+    metadata_f64: Vec<f64>,
+}
+
+#[wasm_bindgen]
+impl HdrResult {
+    #[wasm_bindgen]
+    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
+        mem::take(&mut self.data_f32)
+    }
+
+    #[wasm_bindgen]
+    pub fn take_metadata_as_f64(&mut self) -> Vec<f64> {
+        mem::take(&mut self.metadata_f64)
+    }
+}
+
+#[wasm_bindgen]
 impl PngResult {
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 { self.width }
@@ -422,13 +441,14 @@ fn decode_png16_impl(data: &[u8]) -> Result<PngResult, JsValue> {
 
     let convert_start = js_sys::Date::now();
     let mut values: Vec<u16> = Vec::with_capacity(expected_values);
+    let src_ptr = raw.as_ptr();
     let dst = values.as_mut_ptr();
     for i in 0..expected_values {
-        let src = i * 2;
-        // SAFETY: `values` has capacity for `expected_values`, and each index
-        // is written exactly once before `set_len`.
+        // SAFETY: `raw` was checked to contain at least `expected_values * 2`
+        // bytes, and `values` has capacity for every output sample.
         unsafe {
-            dst.add(i).write(u16::from_be_bytes([raw[src], raw[src + 1]]));
+            let be = (src_ptr.add(i * 2) as *const u16).read_unaligned();
+            dst.add(i).write(u16::from_be(be));
         }
     }
     unsafe {
@@ -459,6 +479,173 @@ fn png_color_type_to_u32(color_type: png::ColorType) -> u32 {
         png::ColorType::GrayscaleAlpha => 4,
         png::ColorType::Rgba => 6,
     }
+}
+
+#[wasm_bindgen]
+pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    decode_hdr_impl(data)
+}
+
+fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
+    let start_time = js_sys::Date::now();
+    let mut offset = 0usize;
+    let mut width = 0usize;
+    let mut height = 0usize;
+    let mut exposure = 1.0f32;
+    let mut gamma = 1.0f32;
+    let mut rle = false;
+
+    for _ in 0..128 {
+        let line_start = offset;
+        while offset < data.len() && data[offset] != b'\n' {
+            offset += 1;
+        }
+        if offset >= data.len() {
+            return Err(JsValue::from_str("HDR header ended before resolution line"));
+        }
+        let line_bytes = &data[line_start..offset];
+        offset += 1;
+        let line = std::str::from_utf8(line_bytes)
+            .map_err(|_| JsValue::from_str("HDR header is not UTF-8"))?
+            .trim();
+        if line == "FORMAT=32-bit_rle_rgbe" {
+            rle = true;
+        } else if let Some(value) = line.strip_prefix("EXPOSURE=") {
+            exposure = value.trim().parse::<f32>().unwrap_or(1.0);
+        } else if let Some(value) = line.strip_prefix("GAMMA=") {
+            gamma = value.trim().parse::<f32>().unwrap_or(1.0);
+        } else if line.starts_with("-Y ") && line.contains(" +X ") {
+            let mut parts = line.split_whitespace();
+            if parts.next() == Some("-Y") {
+                height = parts.next()
+                    .ok_or_else(|| JsValue::from_str("Missing HDR height"))?
+                    .parse::<usize>()
+                    .map_err(|_| JsValue::from_str("Invalid HDR height"))?;
+                if parts.next() != Some("+X") {
+                    return Err(JsValue::from_str("Unsupported HDR orientation"));
+                }
+                width = parts.next()
+                    .ok_or_else(|| JsValue::from_str("Missing HDR width"))?
+                    .parse::<usize>()
+                    .map_err(|_| JsValue::from_str("Invalid HDR width"))?;
+                break;
+            }
+        }
+    }
+
+    let header_time = js_sys::Date::now() - start_time;
+    if width == 0 || height == 0 {
+        return Err(JsValue::from_str("HDR resolution line not found"));
+    }
+    if !rle {
+        return Err(JsValue::from_str("Only FORMAT=32-bit_rle_rgbe HDR files are supported"));
+    }
+    if width > 0x7fff {
+        return Err(JsValue::from_str("HDR scanline is too wide for RLE"));
+    }
+
+    let pixel_count = width.checked_mul(height)
+        .ok_or_else(|| JsValue::from_str("HDR dimensions overflow"))?;
+    let mut scanline = vec![0u8; width * 4];
+    let mut output = vec![0f32; pixel_count * 4];
+    let mut scales = [0f32; 256];
+    for e in 1..256 {
+        scales[e] = 2f32.powi(e as i32 - 128) / 255.0;
+    }
+    let mut rle_time = 0.0;
+    let mut convert_time = 0.0;
+
+    for y in 0..height {
+        let rle_start = js_sys::Date::now();
+        if offset + 4 > data.len() {
+            return Err(JsValue::from_str("Unexpected EOF in HDR scanline header"));
+        }
+        let b0 = data[offset];
+        let b1 = data[offset + 1];
+        let b2 = data[offset + 2];
+        let b3 = data[offset + 3];
+        offset += 4;
+        if b0 != 2 || b1 != 2 || (b2 & 0x80) != 0 {
+            return Err(JsValue::from_str("HDR file is not new-style RLE encoded"));
+        }
+        let scanline_width = ((b2 as usize) << 8) | b3 as usize;
+        if scanline_width != width {
+            return Err(JsValue::from_str("HDR scanline width mismatch"));
+        }
+        for channel in 0..4 {
+            let mut ptr = channel * width;
+            let end = ptr + width;
+            while ptr < end {
+                if offset + 2 > data.len() {
+                    return Err(JsValue::from_str("Unexpected EOF in HDR RLE data"));
+                }
+                let count_byte = data[offset];
+                let value = data[offset + 1];
+                offset += 2;
+                if count_byte > 128 {
+                    let count = (count_byte - 128) as usize;
+                    if count == 0 || ptr + count > end {
+                        return Err(JsValue::from_str("Bad HDR RLE run"));
+                    }
+                    scanline[ptr..ptr + count].fill(value);
+                    ptr += count;
+                } else {
+                    let count = count_byte as usize;
+                    if count == 0 || ptr + count > end {
+                        return Err(JsValue::from_str("Bad HDR RLE literal"));
+                    }
+                    scanline[ptr] = value;
+                    ptr += 1;
+                    if count > 1 {
+                        let remaining = count - 1;
+                        if offset + remaining > data.len() {
+                            return Err(JsValue::from_str("Unexpected EOF in HDR literal"));
+                        }
+                        scanline[ptr..ptr + remaining].copy_from_slice(&data[offset..offset + remaining]);
+                        ptr += remaining;
+                        offset += remaining;
+                    }
+                }
+            }
+        }
+        rle_time += js_sys::Date::now() - rle_start;
+
+        let convert_start = js_sys::Date::now();
+        let row_offset = y * width * 4;
+        for x in 0..width {
+            let e = scanline[x + width * 3] as usize;
+            let out = row_offset + x * 4;
+            if e == 0 {
+                output[out] = 0.0;
+                output[out + 1] = 0.0;
+                output[out + 2] = 0.0;
+            } else {
+                let scale = scales[e];
+                output[out] = scanline[x] as f32 * scale;
+                output[out + 1] = scanline[x + width] as f32 * scale;
+                output[out + 2] = scanline[x + width * 2] as f32 * scale;
+            }
+            output[out + 3] = 1.0;
+        }
+        convert_time += js_sys::Date::now() - convert_start;
+    }
+
+    Ok(HdrResult {
+        data_f32: output,
+        metadata_f64: vec![
+            width as f64,
+            height as f64,
+            exposure as f64,
+            gamma as f64,
+            header_time,
+            rle_time,
+            convert_time,
+            js_sys::Date::now() - start_time,
+        ],
+    })
 }
 
 fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
