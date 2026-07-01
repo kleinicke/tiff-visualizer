@@ -74,6 +74,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
 	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
 	const pngProcessor = new PngProcessor(settingsManager, vscode);
+	pngProcessor.onMetadataTagsReady = () => updateMetadataData();
 	const hdrProcessor = new HdrProcessor(settingsManager, vscode);
 	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
@@ -1966,6 +1967,14 @@ import { LayersPanel } from './modules/layers-panel.js';
 				'Channel Names': (r.channelNames || []).join(', ') || 'n/a',
 				'Precision': r.type === 1016 ? 'half (float16)' : 'float32'
 			};
+			tags = exrProcessor._lastAllTags || [];
+			data = r.data;
+		} else if (rawProcessor._lastRaw) {
+			const r = rawProcessor._lastRaw;
+			width = r.width; height = r.height; channels = r.channels || 3;
+			formatLabel = 'Camera RAW';
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Bit Depth': String(r.bitDepth || 8) };
+			tags = rawProcessor._lastAllTags || [];
 			data = r.data;
 		} else if (npyProcessor._lastRaw) {
 			const r = npyProcessor._lastRaw;
@@ -1984,6 +1993,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			width = r.width; height = r.height; channels = r.channels || 3;
 			formatLabel = 'HDR (Radiance)';
 			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels) };
+			tags = hdrProcessor._lastAllTags || [];
 			data = r.data;
 		} else if (ppmProcessor._lastRaw) {
 			const r = ppmProcessor._lastRaw;
@@ -1991,12 +2001,21 @@ import { LayersPanel } from './modules/layers-panel.js';
 			formatLabel = r.format || 'PPM/PGM/PBM';
 			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Max Value': String(r.maxval) };
 			data = r.data;
-		} else if (pngProcessor._lastRaw) {
+		} else if (pngProcessor._lastRaw || pngProcessor._lazyNativeReadback) {
 			const r = pngProcessor._lastRaw;
-			width = r.width; height = r.height; channels = r.channels || 4;
-			formatLabel = 'PNG';
-			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Bit Depth': String(r.bitDepth || 8) };
-			data = r.data;
+			const lazy = pngProcessor._lazyNativeReadback;
+			const isJpeg = currentFormatInfo?.formatType === 'jpg';
+			formatLabel = isJpeg ? 'JPEG' : 'PNG';
+			if (r) {
+				width = r.width; height = r.height; channels = r.channels || 4;
+				fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Bit Depth': String(r.bitDepth || 8) };
+				data = r.data;
+			} else {
+				// Large JPEGs skip pixel-array storage (lazy native-Image
+				// readback) — still show file info and any embedded Exif tags.
+				fileFields = { 'Dimensions': `${lazy.width} x ${lazy.height}` };
+			}
+			tags = pngProcessor._lastAllTags || [];
 		} else {
 			return null;
 		}

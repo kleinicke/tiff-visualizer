@@ -5,6 +5,7 @@ import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { PerfTrace } from './perf-trace.js';
 import parseHdr from 'parse-hdr';
+import { parseAllTagsJson } from './tiff-tag-utils.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
@@ -28,6 +29,8 @@ export class HdrProcessor {
         this.vscode = vscode;
         /** @type {{width:number, height:number, data:Float32Array, channels:number}|null} */
         this._lastRaw = null;
+        /** @type {import('./tiff-tag-utils.js').TagEntry[]} HDR header lines, for the Metadata panel (Rust decode path only) */
+        this._lastAllTags = [];
         this._pendingRenderData = null;
         this._isInitialLoad = true;
         /** @type {{min:number,max:number}|undefined} */
@@ -56,6 +59,7 @@ export class HdrProcessor {
             this.decodeWorker, 'hdr', buffer, src, loadSignal, (b) => parseHdr(b));
         const width = parsed.shape[0];
         const height = parsed.shape[1];
+        this._lastAllTags = parseAllTagsJson(parsed.allTagsJson);
 
         /** @type {Float32Array} */
         const data = parsed.data;

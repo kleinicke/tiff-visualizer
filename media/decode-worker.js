@@ -306,6 +306,7 @@ function decodeExrWasm(buffer) {
 		displayedChannels,
 		shape: [result.width, result.height],
 		flipY: false,
+		allTagsJson: result.all_tags_json,
 		decodedWith: 'rust-exr-wasm (worker)',
 		decodeTimings: timings,
 	};
@@ -380,6 +381,7 @@ function decodeHdrWasm(buffer) {
 		exposure,
 		gamma,
 		data,
+		allTagsJson: result.all_tags_json,
 		decodedWith: 'rust-hdr-wasm (worker)',
 		decodeTimings: timings,
 	};

@@ -3,6 +3,7 @@
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { parseAllTagsJson } from './tiff-tag-utils.js';
 
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
@@ -32,6 +33,8 @@ export class ExrProcessor {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
 		this._lastRaw = null; // { width, height, data: Float32Array }
+		/** @type {import('./tiff-tag-utils.js').TagEntry[]} EXR header attributes, for the Metadata panel (Rust decode path only) */
+		this._lastAllTags = [];
 		this._pendingRenderData = null; // Store data waiting for format-specific settings
 		this._isInitialLoad = true; // Track if this is the first render
 		this._cachedStats = undefined; // Cache for min/max stats (only used in stats mode)
@@ -105,6 +108,7 @@ export class ExrProcessor {
 
 			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;
 			const flipY = exrResult.flipY !== false;
+			this._lastAllTags = parseAllTagsJson(exrResult.allTagsJson);
 
 			// Determine channels based on format
 			// RGBAFormat = 1023, RedFormat = 1028

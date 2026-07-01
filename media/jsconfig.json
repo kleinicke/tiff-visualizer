@@ -8,7 +8,8 @@
         "paths": {
             "tga-js": ["./types/tga-js.d.ts"],
             "parse-hdr": ["./types/parse-hdr.d.ts"],
-            "libraw-wasm": ["./types/libraw-wasm.d.ts"]
+            "libraw-wasm": ["./types/libraw-wasm.d.ts"],
+            "pako": ["./types/pako.d.ts"]
         },
         "typeRoots": ["./types", "../node_modules/@types"],
         "noImplicitAny": true,
