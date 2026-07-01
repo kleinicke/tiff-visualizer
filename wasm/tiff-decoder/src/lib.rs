@@ -47,6 +47,9 @@ pub struct TiffResult {
     timing_convert_ms: f64,
     timing_stats_ms: f64,
     timing_pack_ms: f64,
+    // JSON array of every tag found in the main IFD, plus any Exif/GPS sub-IFD,
+    // as `{"tag":<u16>,"name":"<Tag debug name>","group":"TIFF"|"Exif"|"GPS","value":"<string>"}`.
+    all_tags_json: String,
 }
 
 #[wasm_bindgen]
@@ -310,6 +313,11 @@ impl TiffResult {
     #[wasm_bindgen(getter)]
     pub fn direct_decode(&self) -> bool {
         self.direct_decode
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn all_tags_json(&self) -> String {
+        self.all_tags_json.clone()
     }
 
     /// Get raw data as bytes (for transferring to JS)
@@ -865,6 +873,120 @@ fn fill_exr_interleaved_channel(
     }
 }
 
+/// Escape a string for embedding as a JSON string literal.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Render any TIFF tag value as a human-readable string, regardless of its
+/// underlying type. Falls back to `Debug` for the rarer/deprecated variants
+/// (e.g. `RationalBig`) so this stays correct as the `tiff` crate's
+/// `#[non_exhaustive]` `Value` enum grows.
+fn value_to_display_string(value: &tiff::decoder::ifd::Value) -> String {
+    use tiff::decoder::ifd::Value;
+    match value {
+        Value::Byte(v) => v.to_string(),
+        Value::Short(v) => v.to_string(),
+        Value::SignedByte(v) => v.to_string(),
+        Value::SignedShort(v) => v.to_string(),
+        Value::Signed(v) => v.to_string(),
+        Value::SignedBig(v) => v.to_string(),
+        Value::Unsigned(v) => v.to_string(),
+        Value::UnsignedBig(v) => v.to_string(),
+        Value::Float(v) => v.to_string(),
+        Value::Double(v) => v.to_string(),
+        Value::Rational(n, d) if *d != 0 => format!("{}/{} ({:.6})", n, d, *n as f64 / *d as f64),
+        Value::Rational(n, d) => format!("{}/{}", n, d),
+        Value::SRational(n, d) if *d != 0 => format!("{}/{} ({:.6})", n, d, *n as f64 / *d as f64),
+        Value::SRational(n, d) => format!("{}/{}", n, d),
+        Value::Ascii(s) => s.trim_end_matches('\0').to_string(),
+        Value::Ifd(v) => format!("IFD@{}", v),
+        Value::IfdBig(v) => format!("IFD@{}", v),
+        Value::List(items) => {
+            // Cap display of very long lists (e.g. StripOffsets/StripByteCounts on a
+            // multi-thousand-strip TIFF) — the summarized strip/tile counts are
+            // already surfaced separately, so this is purely for readability.
+            const MAX_SHOWN: usize = 16;
+            let shown: Vec<String> = items.iter().take(MAX_SHOWN).map(value_to_display_string).collect();
+            if items.len() > MAX_SHOWN {
+                format!("{}, … ({} more)", shown.join(", "), items.len() - MAX_SHOWN)
+            } else {
+                shown.join(", ")
+            }
+        }
+        other => format!("{:?}", other),
+    }
+}
+
+/// Recursively serialize every tag in `entries` (and, for `ExifDirectory` /
+/// `GpsDirectory` pointer tags, the sub-IFD they point to) into `out` as JSON
+/// object fragments. This walks the raw tag map generically, so it surfaces
+/// every tag present in the file rather than a curated subset.
+fn append_ifd_tags(
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    entries: Vec<(tiff::tags::Tag, tiff::decoder::ifd::Value)>,
+    group: &str,
+    out: &mut Vec<String>,
+) {
+    use tiff::tags::Tag;
+
+    for (tag, value) in entries {
+        if matches!(tag, Tag::ExifDirectory | Tag::GpsDirectory) {
+            if let Ok(ptr) = value.clone().into_ifd_pointer() {
+                if let Ok(subdir) = decoder.read_directory(ptr) {
+                    let sub_entries: Vec<_> = decoder
+                        .read_directory_tags(&subdir)
+                        .tag_iter()
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    let sub_group = if matches!(tag, Tag::ExifDirectory) { "Exif" } else { "GPS" };
+                    append_ifd_tags(decoder, sub_entries, sub_group, out);
+                    continue;
+                }
+            }
+        }
+
+        out.push(format!(
+            "{{\"tag\":{},\"name\":\"{}\",\"group\":\"{}\",\"value\":\"{}\"}}",
+            tag.to_u16(),
+            json_escape(&format!("{:?}", tag)),
+            json_escape(group),
+            json_escape(&value_to_display_string(&value))
+        ));
+    }
+}
+
+/// Dump every tag in the file's main IFD (plus any Exif/GPS sub-IFD) as a JSON
+/// array. Independent of whichever specialized pixel-decode path is used, so
+/// it's recomputed cheaply (a handful of IFD entries, not the pixel data)
+/// wherever a `TiffResult` is built.
+fn extract_all_tags_json(data: &[u8]) -> String {
+    let mut decoder = match Decoder::new(Cursor::new(data)) {
+        Ok(d) => d,
+        Err(_) => return "[]".to_string(),
+    };
+    let main_entries: Vec<_> = decoder
+        .image_ifd()
+        .tag_iter()
+        .filter_map(|r| r.ok())
+        .collect();
+    let mut out = Vec::new();
+    append_ifd_tags(&mut decoder, main_entries, "TIFF", &mut out);
+    format!("[{}]", out.join(","))
+}
+
 fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
@@ -1229,6 +1351,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         timing_convert_ms: convert_time,
         timing_stats_ms: stats_time,
         timing_pack_ms: pack_time,
+        all_tags_json: extract_all_tags_json(data),
     });
 
     web_sys::console::log_1(&format!(
@@ -1654,6 +1777,7 @@ fn decode_jpeg_ycbcr(
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
     })
 }
 
@@ -1810,6 +1934,7 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
     })
 }
 
@@ -1963,6 +2088,7 @@ fn decode_ccitt(
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
     })
 }
 

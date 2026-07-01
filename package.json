@@ -176,6 +176,11 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleMetadata",
+        "title": "Toggle Metadata Panel",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.convertColormapToFloat",
         "title": "Decode Colormap Image to Float",
         "category": "TIFF Visualizer"
@@ -216,6 +221,12 @@
         "command": "tiffVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+      },
+      {
+        "command": "tiffVisualizer.toggleMetadata",
+        "key": "ctrl+m",
+        "mac": "cmd+m",
         "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       },
       {

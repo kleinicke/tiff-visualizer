@@ -289,6 +289,56 @@ export class ImageStatsCalculator {
         PerfTrace.mark('stats');
         return { min: minVal, max: maxVal };
     }
+
+    /**
+     * On-demand extended statistics (mean/std/valid & non-finite counts) for
+     * the Metadata panel. Not part of the hot render path — computed once
+     * when the panel is opened, using the same first-3-channels scan
+     * convention as calculateFloatStats/calculateIntegerStats above.
+     * @param {ArrayLike<number>} data
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @returns {{min:number,max:number,mean:number,std:number,validCount:number,nonFiniteCount:number,totalCount:number}}
+     */
+    static calculateExtendedStats(data, width, height, channels) {
+        let minVal = Infinity;
+        let maxVal = -Infinity;
+        let sum = 0;
+        let sumSq = 0;
+        let validCount = 0;
+        let nonFiniteCount = 0;
+
+        const len = width * height;
+        const scanChannels = channels === 1 ? 1 : Math.min(channels, 3);
+        for (let i = 0; i < len; i++) {
+            const base = i * channels;
+            for (let c = 0; c < scanChannels; c++) {
+                const val = data[base + c];
+                if (Number.isFinite(val)) {
+                    if (val < minVal) minVal = val;
+                    if (val > maxVal) maxVal = val;
+                    sum += val;
+                    sumSq += val * val;
+                    validCount++;
+                } else {
+                    nonFiniteCount++;
+                }
+            }
+        }
+
+        const mean = validCount > 0 ? sum / validCount : NaN;
+        const variance = validCount > 0 ? Math.max(0, sumSq / validCount - mean * mean) : NaN;
+        return {
+            min: validCount > 0 ? minVal : NaN,
+            max: validCount > 0 ? maxVal : NaN,
+            mean,
+            std: Math.sqrt(variance),
+            validCount,
+            nonFiniteCount,
+            totalCount: len * scanChannels
+        };
+    }
 }
 
 /**

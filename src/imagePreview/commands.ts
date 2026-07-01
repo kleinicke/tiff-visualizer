@@ -1328,6 +1328,16 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleMetadata', () => {
+		logCommand('toggleMetadata', 'start');
+		try {
+			previewManager.activePreview?.toggleMetadata();
+			logCommand('toggleMetadata', 'success');
+		} catch (error) {
+			logCommand('toggleMetadata', 'error', String(error));
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.convertColormapToFloat', async () => {
 		logCommand('convertColormapToFloat', 'start');
 		const activePreview = previewManager.activePreview;

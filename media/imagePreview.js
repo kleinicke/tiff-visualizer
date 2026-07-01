@@ -16,6 +16,7 @@ import { RawProcessor } from './modules/raw-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
+import { MetadataPanel } from './modules/metadata-panel.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
@@ -88,6 +89,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
+	const metadataPanel = new MetadataPanel(settingsManager, vscode);
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
@@ -1853,6 +1855,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 				});
 				break;
 
+			case 'toggleMetadata':
+				metadataPanel.toggle();
+				updateMetadataData();
+				break;
+
 			case 'restoreHistogramState':
 				// Restore histogram state from extension (global state)
 				// Skip notification since extension already knows the state
@@ -1918,10 +1925,116 @@ import { LayersPanel } from './modules/layers-panel.js';
 	}
 
 	/**
+	 * Gather the currently active image's metadata/tags/statistics for the
+	 * Metadata panel, checking each processor's stored raw data in the same
+	 * priority order as updateHistogramData below.
+	 * @returns {import('./modules/metadata-panel.js').MetadataInfo|null}
+	 */
+	function gatherActiveMetadataInfo() {
+		/** @type {string} */
+		let formatLabel;
+		/** @type {Record<string,string>} */
+		let fileFields;
+		/** @type {import('./modules/tiff-tag-utils.js').TagEntry[]} */
+		let tags = [];
+		/** @type {ArrayLike<number>|null} */
+		let data = null;
+		let width = 0, height = 0, channels = 1;
+
+		if (tiffProcessor.rawTiffData) {
+			const ifd = tiffProcessor.rawTiffData.ifd;
+			width = ifd.width; height = ifd.height; channels = ifd.t277 || 1;
+			const bitsPerSample = ifd.t258 || 8;
+			const sampleFormat = ifd.t339;
+			const sampleFormatLabel = sampleFormat === 3 ? 'IEEE float' : (sampleFormat === 2 ? 'signed int' : 'unsigned int');
+			formatLabel = 'TIFF';
+			fileFields = {
+				'Dimensions': `${width} x ${height}`,
+				'Channels': String(channels),
+				'Bits/Sample': String(bitsPerSample),
+				'Sample Format': sampleFormatLabel
+			};
+			tags = tiffProcessor._lastAllTags || [];
+			data = tiffProcessor.rawTiffData.data;
+		} else if (exrProcessor.rawExrData) {
+			const r = exrProcessor.rawExrData;
+			width = r.width; height = r.height; channels = r.channels || 1;
+			formatLabel = 'EXR';
+			fileFields = {
+				'Dimensions': `${width} x ${height}`,
+				'Channels': String(channels),
+				'Channel Names': (r.channelNames || []).join(', ') || 'n/a',
+				'Precision': r.type === 1016 ? 'half (float16)' : 'float32'
+			};
+			data = r.data;
+		} else if (npyProcessor._lastRaw) {
+			const r = npyProcessor._lastRaw;
+			width = r.width; height = r.height; channels = r.channels || 1;
+			formatLabel = 'NPY/NPZ';
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Dtype': r.dtype || 'n/a' };
+			data = r.data;
+		} else if (pfmProcessor._lastRaw) {
+			const r = pfmProcessor._lastRaw;
+			width = r.width; height = r.height; channels = r.channels || 1;
+			formatLabel = 'PFM';
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels) };
+			data = r.data;
+		} else if (hdrProcessor._lastRaw) {
+			const r = hdrProcessor._lastRaw;
+			width = r.width; height = r.height; channels = r.channels || 3;
+			formatLabel = 'HDR (Radiance)';
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels) };
+			data = r.data;
+		} else if (ppmProcessor._lastRaw) {
+			const r = ppmProcessor._lastRaw;
+			width = r.width; height = r.height; channels = r.channels || 1;
+			formatLabel = r.format || 'PPM/PGM/PBM';
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Max Value': String(r.maxval) };
+			data = r.data;
+		} else if (pngProcessor._lastRaw) {
+			const r = pngProcessor._lastRaw;
+			width = r.width; height = r.height; channels = r.channels || 4;
+			formatLabel = 'PNG';
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Bit Depth': String(r.bitDepth || 8) };
+			data = r.data;
+		} else {
+			return null;
+		}
+
+		/** @type {import('./modules/metadata-panel.js').MetadataInfo['stats']} */
+		let stats = null;
+		if (data && width && height) {
+			try {
+				stats = ImageStatsCalculator.calculateExtendedStats(data, width, height, channels || 1);
+			} catch {
+				stats = null;
+			}
+		}
+
+		return { formatLabel, fileFields, tags, stats };
+	}
+
+	/**
+	 * Refresh the Metadata panel, if visible, from the currently active image.
+	 * Cheap no-op when the panel is closed.
+	 */
+	function updateMetadataData() {
+		if (!canvas || !hasLoadedImage || !metadataPanel.getVisibility()) {
+			return;
+		}
+		try {
+			metadataPanel.render(gatherActiveMetadataInfo());
+		} catch (error) {
+			console.warn('[MetadataPanel] Failed to gather metadata:', error);
+		}
+	}
+
+	/**
 	 * Update histogram with current image data.
 	 * Uses raw image data when available for accurate value representation.
 	 */
 	function updateHistogramData() {
+		updateMetadataData();
 		if (!canvas || !hasLoadedImage) {
 			return;
 		}

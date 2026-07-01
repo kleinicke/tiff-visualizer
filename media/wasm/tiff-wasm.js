@@ -140,6 +140,20 @@ export function decode_png16_fast(data) {
 
 /**
  * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
  * @returns {HdrResult}
  */
 export function decode_hdr_fast(data) {
@@ -150,6 +164,22 @@ export function decode_hdr_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a TIFF file from an ArrayBuffer
+ * Returns TiffResult with image data and metadata
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
 }
 
 /**
@@ -165,36 +195,6 @@ export function decode_tiff_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_tiff_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrResult}
- */
-export function decode_exr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ExrResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a TIFF file from an ArrayBuffer
- * Returns TiffResult with image data and metadata
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -559,6 +559,21 @@ export class TiffResult {
     get tile_length() {
         const ret = wasm.tiffresult_tile_length(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {string}
+     */
+    get all_tags_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.tiffresult_all_tags_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
      * @returns {boolean}

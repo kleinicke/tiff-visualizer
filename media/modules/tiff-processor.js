@@ -4,6 +4,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { parseAllTagsJson, buildTagsFromGeotiffImage } from './tiff-tag-utils.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -40,6 +41,8 @@ export class TiffProcessor {
 		this._lastStatistics = null; // Cache min/max statistics
 		this._lastStatisticsRgb24Mode = false; // Track whether cached stats were computed in rgb24 mode
 		this._lastRenderHistogram = null; // Histogram computed during render when requested
+		/** @type {import('./tiff-tag-utils.js').TagEntry[]} */
+		this._lastAllTags = []; // Every TIFF/Exif/GPS tag found in the current file, for the Metadata panel
 		this._lastRenderUsedWebGL = false; // True when the latest render drew directly to the canvas
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
@@ -330,6 +333,7 @@ export class TiffProcessor {
 						this._lastStatistics = { min: wasmResult.min, max: wasmResult.max };
 						this._lastStatisticsRgb24Mode = false;
 					}
+					this._lastAllTags = parseAllTagsJson(wasmResult.allTagsJson);
 
 					// Send format information to VS Code
 					if (this.vscode && this._isInitialLoad) {
@@ -456,6 +460,7 @@ export class TiffProcessor {
 				},
 				data: data
 			};
+			this._lastAllTags = buildTagsFromGeotiffImage(image);
 
 			// Send format information to VS Code BEFORE rendering
 			// This allows the extension to apply format-specific settings first

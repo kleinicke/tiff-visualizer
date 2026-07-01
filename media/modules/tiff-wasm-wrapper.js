@@ -69,6 +69,7 @@ async function initWasm() {
  * @property {Float32Array} data - Pixel data as floats
  * @property {number} min - Minimum value
  * @property {number} max - Maximum value
+ * @property {string} allTagsJson - JSON array of every tag found in the file (TIFF/Exif/GPS), see tiff-tag-utils.js
  */
 
 /**
@@ -130,7 +131,8 @@ export class TiffWasmProcessor {
             directDecode: result.direct_decode,
             data: new Float32Array(result.get_data_as_f32()),
             min: result.min_value,
-            max: result.max_value
+            max: result.max_value,
+            allTagsJson: result.all_tags_json
         };
 
         return decodeResult;

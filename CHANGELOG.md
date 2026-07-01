@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- Add a Metadata panel (`Toggle Metadata Panel` command, `Ctrl+M`/`Cmd+M`) showing file info, image statistics (min/max/mean/std), and — for TIFF/GeoTIFF — every tag found in the file, including Exif/GPS sub-IFD tags, plus a "Copy as JSON" export.
+
 ## 1.8.0
 
 - Add more compression support
