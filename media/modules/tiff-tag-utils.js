@@ -32,8 +32,6 @@ export function parseAllTagsJson(json) {
 	}
 }
 
-const MAX_SHOWN_ARRAY_VALUES = 16;
-
 /**
  * @param {any} value
  * @returns {string}
@@ -41,11 +39,7 @@ const MAX_SHOWN_ARRAY_VALUES = 16;
 function stringifyTagValue(value) {
 	if (value === null || value === undefined) { return ''; }
 	if (Array.isArray(value) || ArrayBuffer.isView(value)) {
-		const arr = Array.from(/** @type {ArrayLike<any>} */ (value));
-		const shown = arr.slice(0, MAX_SHOWN_ARRAY_VALUES).join(', ');
-		return arr.length > MAX_SHOWN_ARRAY_VALUES
-			? `${shown}, … (${arr.length - MAX_SHOWN_ARRAY_VALUES} more)`
-			: shown;
+		return Array.from(/** @type {ArrayLike<any>} */ (value)).join(', ');
 	}
 	if (typeof value === 'object') {
 		try { return JSON.stringify(value); } catch { return String(value); }

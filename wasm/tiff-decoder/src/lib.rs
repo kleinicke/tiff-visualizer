@@ -1049,18 +1049,11 @@ fn value_to_display_string(value: &tiff::decoder::ifd::Value) -> String {
         Value::Ascii(s) => s.trim_end_matches('\0').to_string(),
         Value::Ifd(v) => format!("IFD@{}", v),
         Value::IfdBig(v) => format!("IFD@{}", v),
-        Value::List(items) => {
-            // Cap display of very long lists (e.g. StripOffsets/StripByteCounts on a
-            // multi-thousand-strip TIFF) — the summarized strip/tile counts are
-            // already surfaced separately, so this is purely for readability.
-            const MAX_SHOWN: usize = 16;
-            let shown: Vec<String> = items.iter().take(MAX_SHOWN).map(value_to_display_string).collect();
-            if items.len() > MAX_SHOWN {
-                format!("{}, … ({} more)", shown.join(", "), items.len() - MAX_SHOWN)
-            } else {
-                shown.join(", ")
-            }
-        }
+        Value::List(items) => items
+            .iter()
+            .map(value_to_display_string)
+            .collect::<Vec<_>>()
+            .join(", "),
         other => format!("{:?}", other),
     }
 }
@@ -1156,7 +1149,6 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         }
     };
 
-    const MAX_SHOWN: usize = 16;
     let u16_at = |i: usize| -> u16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) } };
     let i16_at = |i: usize| -> i16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { i16::from_be_bytes([b[0], b[1]]) } else { i16::from_le_bytes([b[0], b[1]]) } };
     let u32_at = |i: usize| -> u32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
@@ -1164,9 +1156,8 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
     let f32_at = |i: usize| -> f32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { f32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { f32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
     let f64_at = |i: usize| -> f64 { let b = &bytes[i * 8..i * 8 + 8]; let a = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]; if big_endian { f64::from_be_bytes(a) } else { f64::from_le_bytes(a) } };
 
-    let join_capped = |n: usize, render: &dyn Fn(usize) -> String| -> String {
-        let shown: Vec<String> = (0..n.min(MAX_SHOWN)).map(render).collect();
-        if n > MAX_SHOWN { format!("{}, … ({} more)", shown.join(", "), n - MAX_SHOWN) } else { shown.join(", ") }
+    let join_all = |n: usize, render: &dyn Fn(usize) -> String| -> String {
+        (0..n).map(render).collect::<Vec<_>>().join(", ")
     };
 
     let n = count as usize;
@@ -1175,19 +1166,19 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
             let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             String::from_utf8_lossy(&bytes[..end]).to_string()
         }
-        1 | 7 => join_capped(bytes.len(), &|i| bytes[i].to_string()), // BYTE, UNDEFINED
-        6 => join_capped(bytes.len(), &|i| (bytes[i] as i8).to_string()), // SBYTE
-        3 => join_capped(n, &|i| u16_at(i).to_string()),
-        8 => join_capped(n, &|i| i16_at(i).to_string()),
-        4 => join_capped(n, &|i| u32_at(i).to_string()),
-        9 => join_capped(n, &|i| i32_at(i).to_string()),
-        11 => join_capped(n, &|i| f32_at(i).to_string()),
-        12 => join_capped(n, &|i| f64_at(i).to_string()),
-        5 => join_capped(n, &|i| { // RATIONAL: pairs of u32
+        1 | 7 => join_all(bytes.len(), &|i| bytes[i].to_string()), // BYTE, UNDEFINED
+        6 => join_all(bytes.len(), &|i| (bytes[i] as i8).to_string()), // SBYTE
+        3 => join_all(n, &|i| u16_at(i).to_string()),
+        8 => join_all(n, &|i| i16_at(i).to_string()),
+        4 => join_all(n, &|i| u32_at(i).to_string()),
+        9 => join_all(n, &|i| i32_at(i).to_string()),
+        11 => join_all(n, &|i| f32_at(i).to_string()),
+        12 => join_all(n, &|i| f64_at(i).to_string()),
+        5 => join_all(n, &|i| { // RATIONAL: pairs of u32
             let (num, den) = (u32_at(i * 2), u32_at(i * 2 + 1));
             if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
         }),
-        10 => join_capped(n, &|i| { // SRATIONAL: pairs of i32
+        10 => join_all(n, &|i| { // SRATIONAL: pairs of i32
             let (num, den) = (i32_at(i * 2), i32_at(i * 2 + 1));
             if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
         }),
