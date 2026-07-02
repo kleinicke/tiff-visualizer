@@ -267,11 +267,6 @@
           "command": "tiffVisualizer.compareWithSelected",
           "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
           "group": "comparison@1"
-        },
-        {
-          "command": "tiffVisualizer.toggleMetadata",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
-          "group": "metadata@1"
         }
       ]
     },

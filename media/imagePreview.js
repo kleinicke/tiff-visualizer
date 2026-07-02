@@ -3042,6 +3042,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 				}));
 			}
 
+			// Add Toggle Metadata Panel option
+			menu.appendChild(createMenuItem('Toggle Metadata Panel', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMetadata' });
+			}));
+
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
 			const plyFormats = ['tiff-float', 'tiff-int', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
 			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
