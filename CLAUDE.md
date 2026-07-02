@@ -443,6 +443,9 @@ The extension handles diverse image formats with minimal processor code. Each fo
   - Detects actual bit depth and converts to Float32Array
   - Uses LUT optimization for gamma/brightness in 8-bit mode
 
+- **Raw**
+  - Ignore the implemented raw images support for now. It's too slow to be useful. Therefore we ignore it for now.
+
 ### Library Integration
 - **geotiff.min.js**: Browser build automatically copied from node_modules during build
 - **parse-exr.js**: Bundled with extension for OpenEXR support

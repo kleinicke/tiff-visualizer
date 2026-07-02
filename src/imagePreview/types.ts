@@ -48,4 +48,5 @@ export interface IImagePreview {
 	removeCurrentFromCollection(): void;
 	getManager(): IImagePreviewManager;
 	toggleHistogram(): void;
+	toggleMetadata(): void;
 } 

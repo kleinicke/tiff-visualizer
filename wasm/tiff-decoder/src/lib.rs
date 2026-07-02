@@ -47,6 +47,9 @@ pub struct TiffResult {
     timing_convert_ms: f64,
     timing_stats_ms: f64,
     timing_pack_ms: f64,
+    // JSON array of every tag found in the main IFD, plus any Exif/GPS sub-IFD,
+    // as `{"tag":<u16>,"name":"<Tag debug name>","group":"TIFF"|"Exif"|"GPS","value":"<string>"}`.
+    all_tags_json: String,
 }
 
 #[wasm_bindgen]
@@ -62,6 +65,10 @@ pub struct ExrResult {
     timing_read_ms: f64,
     timing_pack_ms: f64,
     timing_total_ms: f64,
+    // JSON array of every EXR header attribute (image + layer, named fields
+    // plus the crate's generic "other"/custom-attribute bags), in the same
+    // {"tag","name","group","value"} shape as TiffResult.all_tags_json.
+    all_tags_json: String,
 }
 
 #[wasm_bindgen]
@@ -82,10 +89,16 @@ pub struct PngResult {
 pub struct HdrResult {
     data_f32: Vec<f32>,
     metadata_f64: Vec<f64>,
+    all_tags_json: String,
 }
 
 #[wasm_bindgen]
 impl HdrResult {
+    #[wasm_bindgen(getter)]
+    pub fn all_tags_json(&self) -> String {
+        self.all_tags_json.clone()
+    }
+
     #[wasm_bindgen]
     pub fn take_data_as_f32(&mut self) -> Vec<f32> {
         mem::take(&mut self.data_f32)
@@ -182,6 +195,11 @@ impl ExrResult {
     #[wasm_bindgen(getter)]
     pub fn timing_total_ms(&self) -> f64 {
         self.timing_total_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn all_tags_json(&self) -> String {
+        self.all_tags_json.clone()
     }
 
     #[wasm_bindgen]
@@ -312,6 +330,11 @@ impl TiffResult {
         self.direct_decode
     }
 
+    #[wasm_bindgen(getter)]
+    pub fn all_tags_json(&self) -> String {
+        self.all_tags_json.clone()
+    }
+
     /// Get raw data as bytes (for transferring to JS)
     #[wasm_bindgen]
     pub fn get_data_bytes(&self) -> Vec<u8> {
@@ -375,6 +398,22 @@ impl TiffResult {
 #[wasm_bindgen]
 pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     decode_tiff_impl(data, true)
+}
+
+/// Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
+/// prefix already stripped, or a PNG eXIf chunk's raw bytes) and return
+/// every tag as JSON, in the same shape as `TiffResult.all_tags_json`.
+///
+/// These blobs are TIFF-*structured* (byte order + magic 42 + IFD entries)
+/// but are not full TIFF files — they carry no ImageWidth/PhotometricInterpretation/
+/// etc., so the `tiff` crate's `Decoder::new()` (which always validates a
+/// full image directory) rejects them. `extract_bare_ifd_tags_json` reads
+/// the IFD structure directly instead, bypassing `Decoder` entirely; real
+/// `.tif`/`.tiff` files keep using the `Decoder`-based `extract_all_tags_json`
+/// via `decode_tiff`/`decode_tiff_fast` above.
+#[wasm_bindgen]
+pub fn extract_exif_tags(data: &[u8]) -> String {
+    extract_bare_ifd_tags_json(data)
 }
 
 /// Decode a TIFF file without eagerly computing min/max statistics.
@@ -489,6 +528,24 @@ pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, JsValue> {
     decode_hdr_impl(data)
 }
 
+/// Turn Radiance HDR header lines into generic {name, value} tags: `KEY=VALUE`
+/// lines split on the first `=`, `#`-prefixed lines become "Comment" rows,
+/// anything else (e.g. the resolution line) is kept verbatim under "Header".
+fn hdr_header_lines_to_json(lines: &[String]) -> String {
+    let mut out = Vec::new();
+    for line in lines {
+        let (name, value) = if let Some(rest) = line.strip_prefix('#') {
+            ("Comment", rest.trim())
+        } else if let Some(eq_pos) = line.find('=') {
+            (&line[..eq_pos], &line[eq_pos + 1..])
+        } else {
+            ("Header", line.as_str())
+        };
+        push_generic_attr_row(&mut out, "HDR", name, value.to_string());
+    }
+    format!("[{}]", out.join(","))
+}
+
 fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
     let start_time = js_sys::Date::now();
     let mut offset = 0usize;
@@ -497,6 +554,9 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
     let mut exposure = 1.0f32;
     let mut gamma = 1.0f32;
     let mut rle = false;
+    // Every non-empty header line (comments, SOFTWARE=, VIEW=, custom fields,
+    // and the recognized ones below), kept generically for the Metadata panel.
+    let mut header_lines: Vec<String> = Vec::new();
 
     for _ in 0..128 {
         let line_start = offset;
@@ -511,6 +571,9 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
         let line = std::str::from_utf8(line_bytes)
             .map_err(|_| JsValue::from_str("HDR header is not UTF-8"))?
             .trim();
+        if !line.is_empty() {
+            header_lines.push(line.to_string());
+        }
         if line == "FORMAT=32-bit_rle_rgbe" {
             rle = true;
         } else if let Some(value) = line.strip_prefix("EXPOSURE=") {
@@ -645,7 +708,85 @@ fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
             convert_time,
             js_sys::Date::now() - start_time,
         ],
+        all_tags_json: hdr_header_lines_to_json(&header_lines),
     })
+}
+
+/// Push one `{"tag":null,"name":...,"group":...,"value":...}` JSON fragment.
+fn push_generic_attr_row(out: &mut Vec<String>, group: &str, name: &str, value_debug: String) {
+    out.push(format!(
+        "{{\"tag\":null,\"name\":\"{}\",\"group\":\"{}\",\"value\":\"{}\"}}",
+        json_escape(name), json_escape(group), json_escape(&value_debug)
+    ));
+}
+
+/// Dump every EXR header attribute (image + layer) as JSON, generically:
+/// each named `Option<T>` field on `ImageAttributes`/`LayerAttributes` plus
+/// the crate's own catch-all `other` maps for custom/vendor attributes, so
+/// nothing an EXR file carries is left out.
+fn extract_exr_tags_json(
+    image_attrs: &exr::meta::header::ImageAttributes,
+    layer_attrs: &exr::meta::header::LayerAttributes,
+) -> String {
+    let mut out = Vec::new();
+    const GROUP: &str = "EXR";
+
+    macro_rules! opt_field {
+        ($field:expr, $name:expr) => {
+            if let Some(v) = &$field {
+                push_generic_attr_row(&mut out, GROUP, $name, format!("{:?}", v));
+            }
+        };
+    }
+
+    push_generic_attr_row(&mut out, GROUP, "displayWindow", format!("{:?}", image_attrs.display_window));
+    push_generic_attr_row(&mut out, GROUP, "pixelAspect", format!("{}", image_attrs.pixel_aspect));
+    opt_field!(image_attrs.chromaticities, "chromaticities");
+    opt_field!(image_attrs.time_code, "timeCode");
+    for (key, value) in image_attrs.other.iter() {
+        push_generic_attr_row(&mut out, GROUP, &key.to_string(), format!("{:?}", value));
+    }
+
+    opt_field!(layer_attrs.layer_name, "layerName");
+    push_generic_attr_row(&mut out, GROUP, "layerPosition", format!("{:?}", layer_attrs.layer_position));
+    push_generic_attr_row(&mut out, GROUP, "screenWindowCenter", format!("{:?}", layer_attrs.screen_window_center));
+    push_generic_attr_row(&mut out, GROUP, "screenWindowWidth", format!("{}", layer_attrs.screen_window_width));
+    opt_field!(layer_attrs.white_luminance, "whiteLuminance");
+    opt_field!(layer_attrs.adopted_neutral, "adoptedNeutral");
+    opt_field!(layer_attrs.rendering_transform_name, "renderingTransformName");
+    opt_field!(layer_attrs.look_modification_transform_name, "lookModificationTransformName");
+    opt_field!(layer_attrs.horizontal_density, "horizontalDensity");
+    opt_field!(layer_attrs.owner, "owner");
+    opt_field!(layer_attrs.comments, "comments");
+    opt_field!(layer_attrs.capture_date, "captureDate");
+    opt_field!(layer_attrs.utc_offset, "utcOffset");
+    opt_field!(layer_attrs.longitude, "longitude");
+    opt_field!(layer_attrs.latitude, "latitude");
+    opt_field!(layer_attrs.altitude, "altitude");
+    opt_field!(layer_attrs.focus, "focus");
+    opt_field!(layer_attrs.exposure, "exposure");
+    opt_field!(layer_attrs.aperture, "aperture");
+    opt_field!(layer_attrs.iso_speed, "isoSpeed");
+    opt_field!(layer_attrs.environment_map, "environmentMap");
+    opt_field!(layer_attrs.film_key_code, "filmKeyCode");
+    opt_field!(layer_attrs.wrap_mode_name, "wrapModeName");
+    opt_field!(layer_attrs.frames_per_second, "framesPerSecond");
+    opt_field!(layer_attrs.multi_view_names, "multiViewNames");
+    opt_field!(layer_attrs.world_to_camera, "worldToCamera");
+    opt_field!(layer_attrs.world_to_normalized_device, "worldToNormalizedDevice");
+    opt_field!(layer_attrs.deep_image_state, "deepImageState");
+    opt_field!(layer_attrs.original_data_window, "originalDataWindow");
+    opt_field!(layer_attrs.view_name, "viewName");
+    opt_field!(layer_attrs.software_name, "softwareName");
+    opt_field!(layer_attrs.near_clip_plane, "nearClipPlane");
+    opt_field!(layer_attrs.far_clip_plane, "farClipPlane");
+    opt_field!(layer_attrs.horizontal_field_of_view, "horizontalFieldOfView");
+    opt_field!(layer_attrs.vertical_field_of_view, "verticalFieldOfView");
+    for (key, value) in layer_attrs.other.iter() {
+        push_generic_attr_row(&mut out, GROUP, &key.to_string(), format!("{:?}", value));
+    }
+
+    format!("[{}]", out.join(","))
 }
 
 fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
@@ -722,6 +863,7 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
     let format = if output_channels == 1 { 1028 } else { 1023 };
     let pack_time = js_sys::Date::now() - pack_start;
     let total_time = js_sys::Date::now() - start_time;
+    let all_tags_json = extract_exr_tags_json(&image.attributes, &layer.attributes);
 
     Ok(ExrResult {
         width: width as u32,
@@ -735,6 +877,7 @@ fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
         timing_read_ms: read_time,
         timing_pack_ms: pack_time,
         timing_total_ms: total_time,
+        all_tags_json,
     })
 }
 
@@ -863,6 +1006,255 @@ fn fill_exr_interleaved_channel(
     for i in 0..pixel_count {
         out[i * output_channels + out_channel] = value;
     }
+}
+
+/// Escape a string for embedding as a JSON string literal.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Render any TIFF tag value as a human-readable string, regardless of its
+/// underlying type. Falls back to `Debug` for the rarer/deprecated variants
+/// (e.g. `RationalBig`) so this stays correct as the `tiff` crate's
+/// `#[non_exhaustive]` `Value` enum grows.
+fn value_to_display_string(value: &tiff::decoder::ifd::Value) -> String {
+    use tiff::decoder::ifd::Value;
+    match value {
+        Value::Byte(v) => v.to_string(),
+        Value::Short(v) => v.to_string(),
+        Value::SignedByte(v) => v.to_string(),
+        Value::SignedShort(v) => v.to_string(),
+        Value::Signed(v) => v.to_string(),
+        Value::SignedBig(v) => v.to_string(),
+        Value::Unsigned(v) => v.to_string(),
+        Value::UnsignedBig(v) => v.to_string(),
+        Value::Float(v) => v.to_string(),
+        Value::Double(v) => v.to_string(),
+        Value::Rational(n, d) if *d != 0 => format!("{}/{} ({:.6})", n, d, *n as f64 / *d as f64),
+        Value::Rational(n, d) => format!("{}/{}", n, d),
+        Value::SRational(n, d) if *d != 0 => format!("{}/{} ({:.6})", n, d, *n as f64 / *d as f64),
+        Value::SRational(n, d) => format!("{}/{}", n, d),
+        Value::Ascii(s) => s.trim_end_matches('\0').to_string(),
+        Value::Ifd(v) => format!("IFD@{}", v),
+        Value::IfdBig(v) => format!("IFD@{}", v),
+        Value::List(items) => items
+            .iter()
+            .map(value_to_display_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+        other => format!("{:?}", other),
+    }
+}
+
+/// Recursively serialize every tag in `entries` (and, for `ExifDirectory` /
+/// `GpsDirectory` pointer tags, the sub-IFD they point to) into `out` as JSON
+/// object fragments. This walks the raw tag map generically, so it surfaces
+/// every tag present in the file rather than a curated subset.
+fn append_ifd_tags(
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    entries: Vec<(tiff::tags::Tag, tiff::decoder::ifd::Value)>,
+    group: &str,
+    out: &mut Vec<String>,
+) {
+    use tiff::tags::Tag;
+
+    for (tag, value) in entries {
+        if matches!(tag, Tag::ExifDirectory | Tag::GpsDirectory) {
+            if let Ok(ptr) = value.clone().into_ifd_pointer() {
+                if let Ok(subdir) = decoder.read_directory(ptr) {
+                    let sub_entries: Vec<_> = decoder
+                        .read_directory_tags(&subdir)
+                        .tag_iter()
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    let sub_group = if matches!(tag, Tag::ExifDirectory) { "Exif" } else { "GPS" };
+                    append_ifd_tags(decoder, sub_entries, sub_group, out);
+                    continue;
+                }
+            }
+        }
+
+        out.push(format!(
+            "{{\"tag\":{},\"name\":\"{}\",\"group\":\"{}\",\"value\":\"{}\"}}",
+            tag.to_u16(),
+            json_escape(&format!("{:?}", tag)),
+            json_escape(group),
+            json_escape(&value_to_display_string(&value))
+        ));
+    }
+}
+
+/// Dump every tag in the file's main IFD (plus any Exif/GPS sub-IFD) as a JSON
+/// array. Independent of whichever specialized pixel-decode path is used, so
+/// it's recomputed cheaply (a handful of IFD entries, not the pixel data)
+/// wherever a `TiffResult` is built.
+fn extract_all_tags_json(data: &[u8]) -> String {
+    let mut decoder = match Decoder::new(Cursor::new(data)) {
+        Ok(d) => d,
+        Err(_) => return "[]".to_string(),
+    };
+    let main_entries: Vec<_> = decoder
+        .image_ifd()
+        .tag_iter()
+        .filter_map(|r| r.ok())
+        .collect();
+    let mut out = Vec::new();
+    append_ifd_tags(&mut decoder, main_entries, "TIFF", &mut out);
+    format!("[{}]", out.join(","))
+}
+
+/// TIFF/Exif field type sizes in bytes, per the TIFF6/Exif spec (type IDs 1-12).
+fn ifd_type_size(type_id: u16) -> usize {
+    match type_id {
+        1 | 2 | 6 | 7 => 1,  // BYTE, ASCII, SBYTE, UNDEFINED
+        3 | 8 => 2,          // SHORT, SSHORT
+        4 | 9 | 11 => 4,     // LONG, SLONG, FLOAT
+        5 | 10 | 12 => 8,    // RATIONAL, SRATIONAL, DOUBLE
+        _ => 0,
+    }
+}
+
+/// Render one IFD entry's value bytes as a human-readable string, generically
+/// across all twelve standard TIFF/Exif field types. Caps very long arrays at
+/// 16 shown elements, mirroring `value_to_display_string`'s `List` handling.
+fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[u8], big_endian: bool) -> String {
+    let elem_size = ifd_type_size(type_id);
+    if elem_size == 0 {
+        return format!("<unsupported field type {}>", type_id);
+    }
+    let total_size = elem_size.saturating_mul(count as usize);
+    let bytes: &[u8] = if total_size <= 4 {
+        &inline_bytes[..total_size.min(inline_bytes.len())]
+    } else {
+        let offset = if big_endian {
+            u32::from_be_bytes([inline_bytes[0], inline_bytes[1], inline_bytes[2], inline_bytes[3]])
+        } else {
+            u32::from_le_bytes([inline_bytes[0], inline_bytes[1], inline_bytes[2], inline_bytes[3]])
+        } as usize;
+        match data.get(offset..offset.saturating_add(total_size)) {
+            Some(b) => b,
+            None => return "<value out of range>".to_string(),
+        }
+    };
+
+    let u16_at = |i: usize| -> u16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) } };
+    let i16_at = |i: usize| -> i16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { i16::from_be_bytes([b[0], b[1]]) } else { i16::from_le_bytes([b[0], b[1]]) } };
+    let u32_at = |i: usize| -> u32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
+    let i32_at = |i: usize| -> i32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { i32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { i32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
+    let f32_at = |i: usize| -> f32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { f32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { f32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
+    let f64_at = |i: usize| -> f64 { let b = &bytes[i * 8..i * 8 + 8]; let a = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]; if big_endian { f64::from_be_bytes(a) } else { f64::from_le_bytes(a) } };
+
+    let join_all = |n: usize, render: &dyn Fn(usize) -> String| -> String {
+        (0..n).map(render).collect::<Vec<_>>().join(", ")
+    };
+
+    let n = count as usize;
+    match type_id {
+        2 => { // ASCII: NUL-terminated string
+            let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+            String::from_utf8_lossy(&bytes[..end]).to_string()
+        }
+        1 | 7 => join_all(bytes.len(), &|i| bytes[i].to_string()), // BYTE, UNDEFINED
+        6 => join_all(bytes.len(), &|i| (bytes[i] as i8).to_string()), // SBYTE
+        3 => join_all(n, &|i| u16_at(i).to_string()),
+        8 => join_all(n, &|i| i16_at(i).to_string()),
+        4 => join_all(n, &|i| u32_at(i).to_string()),
+        9 => join_all(n, &|i| i32_at(i).to_string()),
+        11 => join_all(n, &|i| f32_at(i).to_string()),
+        12 => join_all(n, &|i| f64_at(i).to_string()),
+        5 => join_all(n, &|i| { // RATIONAL: pairs of u32
+            let (num, den) = (u32_at(i * 2), u32_at(i * 2 + 1));
+            if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
+        }),
+        10 => join_all(n, &|i| { // SRATIONAL: pairs of i32
+            let (num, den) = (i32_at(i * 2), i32_at(i * 2 + 1));
+            if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
+        }),
+        _ => "<unsupported field type>".to_string(),
+    }
+}
+
+/// Recursively walk a raw IFD's entries (byte-level, no `tiff` crate
+/// `Decoder`) starting at `ifd_offset`, pushing each as a JSON tag row and
+/// following the Exif (0x8769) / GPS (0x8825) sub-IFD pointer tags.
+fn walk_bare_ifd(data: &[u8], ifd_offset: usize, big_endian: bool, group: &str, out: &mut Vec<String>, depth: u32) {
+    if depth > 4 { return; } // guard against absurd/cyclic offsets in malformed input
+    let read_u16 = |offset: usize| -> Option<u16> {
+        let b = data.get(offset..offset + 2)?;
+        Some(if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) })
+    };
+    let read_u32 = |offset: usize| -> Option<u32> {
+        let b = data.get(offset..offset + 4)?;
+        Some(if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) })
+    };
+
+    let entry_count = match read_u16(ifd_offset) { Some(c) => c as usize, None => return };
+    for i in 0..entry_count {
+        let entry_offset = ifd_offset + 2 + i * 12;
+        let (Some(tag_id), Some(type_id), Some(count)) = (
+            read_u16(entry_offset),
+            read_u16(entry_offset + 2),
+            read_u32(entry_offset + 4),
+        ) else { continue };
+        let value_bytes = match data.get(entry_offset + 8..entry_offset + 12) {
+            Some(b) => b,
+            None => continue,
+        };
+
+        // Exif (0x8769) / GPS (0x8825) sub-IFD pointer tags: a single LONG offset.
+        if (tag_id == 0x8769 || tag_id == 0x8825) && type_id == 4 && count == 1 {
+            if let Some(sub_offset) = read_u32(entry_offset + 8) {
+                let sub_group = if tag_id == 0x8769 { "Exif" } else { "GPS" };
+                walk_bare_ifd(data, sub_offset as usize, big_endian, sub_group, out, depth + 1);
+                continue;
+            }
+        }
+
+        let tag_name = format!("{:?}", tiff::tags::Tag::from_u16_exhaustive(tag_id));
+        let value_str = format_bare_ifd_value(data, type_id, count, value_bytes, big_endian);
+        push_generic_attr_row(out, group, &tag_name, value_str);
+    }
+}
+
+/// Entry point for `extract_exif_tags`: parse a bare Exif-structured blob
+/// (JPEG APP1 payload sans "Exif\0\0", or a PNG eXIf chunk) into JSON tags.
+fn extract_bare_ifd_tags_json(data: &[u8]) -> String {
+    if data.len() < 8 {
+        return "[]".to_string();
+    }
+    let big_endian = match &data[0..2] {
+        b"II" => false,
+        b"MM" => true,
+        _ => return "[]".to_string(),
+    };
+    let read_u16 = |offset: usize| -> u16 {
+        let b = &data[offset..offset + 2];
+        if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) }
+    };
+    let read_u32 = |offset: usize| -> u32 {
+        let b = &data[offset..offset + 4];
+        if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
+    };
+    if read_u16(2) != 42 {
+        return "[]".to_string();
+    }
+    let ifd0_offset = read_u32(4) as usize;
+
+    let mut out = Vec::new();
+    walk_bare_ifd(data, ifd0_offset, big_endian, "Exif", &mut out, 0);
+    format!("[{}]", out.join(","))
 }
 
 fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsValue> {
@@ -1229,6 +1621,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         timing_convert_ms: convert_time,
         timing_stats_ms: stats_time,
         timing_pack_ms: pack_time,
+        all_tags_json: extract_all_tags_json(data),
     });
 
     web_sys::console::log_1(&format!(
@@ -1654,6 +2047,7 @@ fn decode_jpeg_ycbcr(
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
     })
 }
 
@@ -1810,6 +2204,7 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
     })
 }
 
@@ -1963,6 +2358,7 @@ fn decode_ccitt(
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
+        all_tags_json: extract_all_tags_json(data),
     })
 }
 

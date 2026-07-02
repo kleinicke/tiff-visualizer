@@ -4,6 +4,8 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { PerfTrace } from './perf-trace.js';
+import { findJpegExifBlob, parsePngChunks } from './tiff-tag-utils.js';
+import { extractExifTagsFromBlob } from './tiff-wasm-wrapper.js';
 
 /**
  * @typedef {Object} RawImageData
@@ -47,6 +49,10 @@ export class PngProcessor {
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         /** @type {DecodeWorkerClient|null} */
         this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
+        /** @type {import('./tiff-tag-utils.js').TagEntry[]} Embedded Exif/text tags, for the Metadata panel */
+        this._lastAllTags = [];
+        /** @type {(() => void)|null} Set by imagePreview.js; called when an async embedded-metadata fetch (JPEG Exif) resolves after the image is already displayed */
+        this.onMetadataTagsReady = null;
     }
 
     /**
@@ -60,7 +66,12 @@ export class PngProcessor {
         // JPEG files always use native browser Image API (they don't support 16-bit)
         const isJpeg = src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg');
 
+        this._lastAllTags = [];
         if (isJpeg) {
+            // Don't block the visible decode/display on this: fetch bytes and
+            // scan for an embedded Exif APP1 segment separately, refreshing the
+            // Metadata panel (if open) once it resolves.
+            this._loadJpegExifTags(src, loadSignal);
             return this._processWithNativeAPI(src);
         }
 
@@ -71,6 +82,12 @@ export class PngProcessor {
             this._cachedStatsRgb24Mode = false;
 
             const arrayBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'png');
+            const { exifBlob, textEntries } = parsePngChunks(new Uint8Array(arrayBuffer));
+            /** @type {import('./tiff-tag-utils.js').TagEntry[]} */
+            this._lastAllTags = textEntries.map(({ name, value }) => ({ tag: null, name, group: 'PNG', value }));
+            if (exifBlob) {
+                this._lastAllTags.push(...await extractExifTagsFromBlob(exifBlob));
+            }
             if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // Quick bit depth detection from PNG IHDR chunk (just reads byte 24)
@@ -189,6 +206,28 @@ export class PngProcessor {
         } catch (error) {
             console.error('UPNG.js processing failed, falling back to browser Image API:', error);
             return this._processWithNativeAPI(src);
+        }
+    }
+
+    /**
+     * Fetch a JPEG's bytes and, if it carries an Exif APP1 segment, decode it
+     * into tags for the Metadata panel. Runs independently of (and doesn't
+     * delay) the visible native-Image decode/display path above.
+     * @param {string} src
+     * @param {AbortSignal|undefined} loadSignal
+     */
+    async _loadJpegExifTags(src, loadSignal) {
+        try {
+            const arrayBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'jpeg-exif');
+            if (loadSignal?.aborted) { return; }
+            const exifBlob = findJpegExifBlob(new Uint8Array(arrayBuffer));
+            if (!exifBlob) { return; }
+            const tags = await extractExifTagsFromBlob(exifBlob);
+            if (loadSignal?.aborted) { return; }
+            this._lastAllTags = tags;
+            this.onMetadataTagsReady?.();
+        } catch (error) {
+            console.warn('[PngProcessor] Failed to read JPEG Exif tags:', error);
         }
     }
 

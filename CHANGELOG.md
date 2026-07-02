@@ -1,9 +1,15 @@
 # Change Log
 
-## 1.8.0
+## 1.9.0
 
-- Add more compression support
+- Add a Metadata panel
+
+## 1.8.0 (2026-06-20)
+
+- Support more tiff compression formats
 - Improve colormap support
+- Speed up loading and decoding by in average 30% by using WebGL2/GPU
+- Use Rust/WASM for HDR, 16bit PNG, EXR and TIFF
 
 ## 1.7.0 (2026-06-14)
 

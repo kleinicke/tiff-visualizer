@@ -32,6 +32,7 @@ import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_png16_fast, deco
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
+import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 
 // Parser-only instances: the constructors just assign fields, and the
 // _parse* methods used here touch no DOM or vscode APIs.
@@ -170,6 +171,7 @@ function decodeTiffWasm(buffer) {
 		rasters,
 		min: result.min_value,
 		max: result.max_value,
+		allTagsJson: result.all_tags_json,
 		decodedWith: 'wasm (worker)',
 		decodeTimings: timings,
 	};
@@ -242,6 +244,7 @@ async function decodeTiffGeotiff(buffer, wasmError) {
 		planarConfiguration: fileDirectory.PlanarConfiguration || 1,
 		data,
 		rasters,
+		allTagsJson: JSON.stringify(buildTagsFromGeotiffImage(image)),
 		decodedWith: 'geotiff.js (worker)',
 		wasmFallbackReason: wasmError,
 		decodeTimings: timings,
@@ -303,6 +306,7 @@ function decodeExrWasm(buffer) {
 		displayedChannels,
 		shape: [result.width, result.height],
 		flipY: false,
+		allTagsJson: result.all_tags_json,
 		decodedWith: 'rust-exr-wasm (worker)',
 		decodeTimings: timings,
 	};
@@ -377,6 +381,7 @@ function decodeHdrWasm(buffer) {
 		exposure,
 		gamma,
 		data,
+		allTagsJson: result.all_tags_json,
 		decodedWith: 'rust-hdr-wasm (worker)',
 		decodeTimings: timings,
 	};

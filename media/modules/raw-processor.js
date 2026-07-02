@@ -3,6 +3,7 @@
 
 import LibRaw from 'libraw-wasm';
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { flattenObjectToTags } from './tiff-tag-utils.js';
 
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
@@ -28,6 +29,8 @@ export class RawProcessor {
         this._workerBootstrapUrl = null;
         /** @type {ArrayBuffer|null} Cached file bytes to avoid re-fetching for full decode */
         this._arrayBuffer = null;
+        /** @type {import('./tiff-tag-utils.js').TagEntry[]} Every field from libraw's metadata(), for the Metadata panel */
+        this._lastAllTags = [];
         /** @type {AbortSignal|undefined} */
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
@@ -447,7 +450,7 @@ export class RawProcessor {
             );
 
             const meta = await this._withTimeout(
-                this._libRaw.metadata(),
+                this._libRaw.metadata(true), // fullOutput: include vendor-specific blocks (canon/nikon/fuji/sony/...)
                 20000,
                 'RAW decode (metadata)'
             );
@@ -456,6 +459,7 @@ export class RawProcessor {
             if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
                 throw new Error(`Invalid RAW dimensions from decoder: ${width}x${height}`);
             }
+            this._lastAllTags = flattenObjectToTags(meta, 'RAW');
             // fetch RGB or RGBA array from libraw
             const rawOutput = await this._withTimeout(
                 this._libRaw.imageData(),
