@@ -1,13 +1,15 @@
 # Change Log
 
-## Unreleased
+## 1.9.0
 
-- Add a Metadata panel (`Toggle Metadata Panel` command, `Ctrl+M`/`Cmd+M`) showing file info, image statistics (min/max/mean/std), and — for TIFF/GeoTIFF — every tag found in the file, including Exif/GPS sub-IFD tags, plus a "Copy as JSON" export.
+- Add a Metadata panel
 
-## 1.8.0
+## 1.8.0 (2026-06-20)
 
-- Add more compression support
+- Support more tiff compression formats
 - Improve colormap support
+- Speed up loading and decoding by in average 30% by using WebGL2/GPU
+- Use Rust/WASM for HDR, 16bit PNG, EXR and TIFF
 
 ## 1.7.0 (2026-06-14)
 

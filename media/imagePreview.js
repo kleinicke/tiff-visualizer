@@ -3058,6 +3058,22 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 			document.body.appendChild(menu);
 
+			// Keep the menu inside the viewport: if it would overflow the right or
+			// bottom edge, shift it back so it isn't clipped by the webview bounds.
+			// (An over-tall menu is capped and made scrollable via CSS max-height.)
+			const edgeMargin = 8;
+			const menuRect = menu.getBoundingClientRect();
+			let menuLeft = e.clientX;
+			let menuTop = e.clientY;
+			if (menuLeft + menuRect.width > window.innerWidth - edgeMargin) {
+				menuLeft = Math.max(edgeMargin, window.innerWidth - menuRect.width - edgeMargin);
+			}
+			if (menuTop + menuRect.height > window.innerHeight - edgeMargin) {
+				menuTop = Math.max(edgeMargin, window.innerHeight - menuRect.height - edgeMargin);
+			}
+			menu.style.left = `${menuLeft}px`;
+			menu.style.top = `${menuTop}px`;
+
 			// Remove menu when clicking outside
 			const removeMenu = (/** @type {MouseEvent} */ event) => {
 				if (!menu.contains(/** @type {Node} */ (event.target))) {

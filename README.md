@@ -38,6 +38,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.
 - **Export and Copy**: Export the current visualization as PNG, copy the image, or copy image zoom level to the clipboard to paste onto other image.
 - **VS Code Native Controls**: Most options are available from the right-click menu, command palette, or clickable status bar entries.
+- **Metadata panel** shows file info, image statistics (min/max/mean/std) and Exif/GPS sub-IFD tags.
 
 ## How to Use
 

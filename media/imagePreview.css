@@ -789,6 +789,10 @@ body img {
 	z-index: 3000;
 	min-width: 120px;
 	user-select: none;
+	/* Never let the menu exceed the viewport: scroll if it is too tall. */
+	max-height: calc(100vh - 16px);
+	overflow-y: auto;
+	overflow-x: hidden;
 }
 
 .context-menu-item {
