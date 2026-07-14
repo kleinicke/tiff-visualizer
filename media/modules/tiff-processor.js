@@ -4,7 +4,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
-import { parseAllTagsJson, buildTagsFromGeotiffImage } from './tiff-tag-utils.js';
+import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata } from './tiff-tag-utils.js';
 
 /**
  * @typedef {Object} GeoTIFFGlobal
@@ -20,6 +20,65 @@ const GeoTIFF = window.GeoTIFF;
 /** @typedef {import('./settings-manager.js').SettingsManager} SettingsManager */
 /** @typedef {import('./settings-manager.js').ImageSettings} ImageSettings */
 /** @typedef {{postMessage: (msg: any) => any}} VsCodeApi */
+
+/**
+ * First entry of a possibly per-channel SampleFormat tag value.
+ * @param {number|number[]} sampleFormat
+ * @returns {number}
+ */
+function primarySampleFormat(sampleFormat) {
+	return Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat;
+}
+
+/**
+ * Typed array used to carry interleaved TIFF pixel data. IEEE float (3) and
+ * signed integer (2) samples are both carried as Float32Array — signed
+ * values would corrupt an unsigned typed array (e.g. -1 wraps to
+ * 255/65535). Unsigned integer samples (1) use the smallest unsigned array
+ * that can hold the full bit depth without truncating (e.g. 12-bit needs
+ * Uint16Array, not Uint8Array, or values above 255 wrap mod 256).
+ * @param {number|number[]} sampleFormat
+ * @param {number} bitsPerSample
+ * @returns {Float32ArrayConstructor|Uint16ArrayConstructor|Uint8ArrayConstructor}
+ */
+function pickTiffArrayCtor(sampleFormat, bitsPerSample) {
+	const format = primarySampleFormat(sampleFormat);
+	if (format === 3 || format === 2) { return Float32Array; }
+	return bitsPerSample > 8 ? Uint16Array : Uint8Array;
+}
+
+/**
+ * "Full range" upper bound for a TIFF sample format/bit depth: 1.0 for
+ * float, the largest positive value for signed integers (e.g. 32767 for
+ * 16-bit — gamma mode's [0, typeMax] full-range convention only covers the
+ * positive half of signed data), and 2^bits - 1 for unsigned integers.
+ * @param {number|number[]} sampleFormat
+ * @param {number} bitsPerSample
+ * @returns {number}
+ */
+export function tiffTypeMax(sampleFormat, bitsPerSample) {
+	const format = primarySampleFormat(sampleFormat);
+	if (format === 3) { return 1.0; }
+	if (format === 2) { return Math.pow(2, bitsPerSample - 1) - 1; }
+	return Math.pow(2, bitsPerSample) - 1;
+}
+
+/**
+ * Per-format settings key (AppStateManager.ImageFormatType) for a TIFF's
+ * SampleFormat. IEEE float and unsigned integer keep their existing
+ * defaults (float range controls / gamma mode over the full type range).
+ * Signed integer gets its own key defaulting to data-driven auto-normalize,
+ * since signed scientific data (e.g. a depth map around an arbitrary zero)
+ * rarely fits gamma mode's [0, typeMax] assumption.
+ * @param {number|number[]} sampleFormat
+ * @returns {'tiff-float'|'tiff-int-signed'|'tiff-int'}
+ */
+export function tiffFormatTypeFor(sampleFormat) {
+	const format = primarySampleFormat(sampleFormat);
+	if (format === 3) { return 'tiff-float'; }
+	if (format === 2) { return 'tiff-int-signed'; }
+	return 'tiff-int';
+}
 
 /**
  * TIFF Processor Module
@@ -44,6 +103,8 @@ export class TiffProcessor {
 		/** @type {import('./tiff-tag-utils.js').TagEntry[]} */
 		this._lastAllTags = []; // Every TIFF/Exif/GPS tag found in the current file, for the Metadata panel
 		this._lastRenderUsedWebGL = false; // True when the latest render drew directly to the canvas
+		/** @type {number|undefined} */
+		this._gdalNodata = undefined; // GDAL_NODATA sentinel (tag 42113), excluded from auto-normalize stats
 		/** @type {{ floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null} */
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		/** @type {AbortSignal|undefined} */
@@ -334,11 +395,19 @@ export class TiffProcessor {
 						this._lastStatisticsRgb24Mode = false;
 					}
 					this._lastAllTags = parseAllTagsJson(wasmResult.allTagsJson);
+					this._gdalNodata = parseGdalNodata(this._lastAllTags);
+					if (this._gdalNodata !== undefined && this._lastStatistics &&
+						(this._lastStatistics.min === this._gdalNodata || this._lastStatistics.max === this._gdalNodata)) {
+						// WASM's fast min/max scan doesn't know about GDAL_NODATA, so the
+						// sentinel can end up reported as the image's min or max. Drop the
+						// cached stats so renderTiffWithSettings recomputes them below with
+						// the nodata value excluded.
+						this._lastStatistics = null;
+					}
 
 					// Send format information to VS Code
 					if (this.vscode && this._isInitialLoad) {
-						const showNormTiff = sampleFormat === 3;
-						const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
+						const formatType = tiffFormatTypeFor(sampleFormat);
 						this._pendingRenderData = { image, rasters };
 
 						this.vscode.postMessage({
@@ -423,15 +492,8 @@ export class TiffProcessor {
 			const bitsPerSample = image.getBitsPerSample();
 
 			// Choose the correct typed array based on sample format and bits per sample
-			let data;
-			const showNormFormat = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-			if (showNormFormat) {
-				data = new Float32Array(width * height * samplesPerPixel);
-			} else if (bitsPerSample === 16) {
-				data = new Uint16Array(width * height * samplesPerPixel);
-			} else {
-				data = new Uint8Array(width * height * samplesPerPixel);
-			}
+			const ArrayCtor = pickTiffArrayCtor(sampleFormat, bitsPerSample);
+			const data = new ArrayCtor(width * height * samplesPerPixel);
 
 			// Store data properly based on samples per pixel
 			if (samplesPerPixel === 1) {
@@ -461,13 +523,12 @@ export class TiffProcessor {
 				data: data
 			};
 			this._lastAllTags = buildTagsFromGeotiffImage(image);
+			this._gdalNodata = parseGdalNodata(this._lastAllTags);
 
 			// Send format information to VS Code BEFORE rendering
 			// This allows the extension to apply format-specific settings first
 			if (this.vscode && this._isInitialLoad) {
-				// Determine if this is a float TIFF or int TIFF
-				const showNormTiff = sampleFormat === 3; // 3 = IEEE floating point
-				const formatType = showNormTiff ? 'tiff-float' : 'tiff-int';
+				const formatType = tiffFormatTypeFor(sampleFormat);
 				this._pendingRenderData = { image, rasters };
 
 				this.vscode.postMessage({
@@ -525,7 +586,11 @@ export class TiffProcessor {
 		const channels = rastersCopy.length;
 
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		let isFloat = showNorm;
+		const isSignedInt = !showNorm && (Array.isArray(sampleFormat) ? sampleFormat.includes(2) : sampleFormat === 2);
+		// Signed integer samples are carried in a Float32Array (see pickTiffArrayCtor) —
+		// an unsigned Uint16/Uint8 carrier can't represent negative values — so they
+		// route through the same float rendering path as true IEEE float data.
+		let isFloat = showNorm || isSignedInt;
 
 		// Check if non-float data contains non-finite values (Infinity/-Infinity).
 		// If so, force float rendering path which handles them correctly with nanColor.
@@ -551,6 +616,10 @@ export class TiffProcessor {
 		/** @type {{min:number,max:number}|null} */
 		let stats = this._lastStatistics;
 		const isGammaMode = settings.normalization?.gammaMode || false;
+		// GDAL_NODATA sentinel (e.g. -32768), if the file declares one — excluded
+		// from auto-normalize stats below so it can't drag the visible range down
+		// to a value that never actually appears in the rendered image.
+		const nodata = this._gdalNodata;
 
 		if (!stats && NormalizationHelper.needsStats(settings)) {
 			if (isFloat) {
@@ -599,7 +668,7 @@ export class TiffProcessor {
 						const raster = rastersCopy[i];
 						for (let j = 0; j < raster.length; j++) {
 							const value = raster[j];
-							if (value === value && value !== Infinity && value !== -Infinity) {
+							if (value === value && value !== Infinity && value !== -Infinity && value !== nodata) {
 								if (value < min) min = value;
 								if (value > max) max = value;
 							}
@@ -632,7 +701,7 @@ export class TiffProcessor {
 						const raster = rastersCopy[i];
 						for (let j = 0; j < raster.length; j++) {
 							const value = raster[j];
-							if (value === value && value !== Infinity && value !== -Infinity) {
+							if (value === value && value !== Infinity && value !== -Infinity && value !== nodata) {
 								if (value < min) min = value;
 								if (value > max) max = value;
 							}
@@ -662,12 +731,17 @@ export class TiffProcessor {
 		let interleavedData;
 		const len = width * height;
 		const storedData = this.rawTiffData?.data;
+		// Unsigned integer carriers use Uint16Array for any bit depth above 8 (not
+		// just exactly 16) so 9-15 bit samples (e.g. 12-bit) don't truncate — see
+		// pickTiffArrayCtor.
 		const canUseStoredInterleaved =
 			storedData &&
 			storedData.length === len * channels &&
-			(isFloat ||
-				(bitsPerSample === 16 && storedData instanceof Uint16Array) ||
-				(bitsPerSample !== 16 && (storedData instanceof Uint8Array || storedData instanceof Uint8ClampedArray)));
+			(isFloat
+				? storedData instanceof Float32Array
+				: (bitsPerSample > 8
+					? storedData instanceof Uint16Array
+					: (storedData instanceof Uint8Array || storedData instanceof Uint8ClampedArray)));
 
 		if (canUseStoredInterleaved) {
 			interleavedData = storedData;
@@ -675,7 +749,7 @@ export class TiffProcessor {
 		} else {
 			if (isFloat) {
 				interleavedData = new Float32Array(len * channels);
-			} else if (bitsPerSample === 16) {
+			} else if (bitsPerSample > 8) {
 				interleavedData = new Uint16Array(len * channels);
 			} else {
 				interleavedData = new Uint8Array(len * channels);
@@ -694,15 +768,19 @@ export class TiffProcessor {
 			PerfTrace.mark('interleave');
 		}
 
-		// Create options object
+		// Create options object. typeMax must be passed explicitly: the carrier
+		// array alone would make ImageRenderer assume 65535 for any Uint16Array,
+		// but a 12-bit image's full range is 4095 (and signed data rides in a
+		// Float32Array with an integer typeMax).
+		const typeMax = tiffTypeMax(sampleFormat, bitsPerSample);
 		const options = {
 			nanColor: nanColor,
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
+			typeMax: typeMax,
 			collectHistogram: renderOptions.collectHistogram === true
 		};
 
 		const targetCanvas = renderOptions.targetCanvas;
-		const typeMax = isFloat ? 1.0 : (bitsPerSample === 16 ? 65535 : 255);
 		if (targetCanvas && this._webglRenderer.canRender({
 			data: interleavedData,
 			width,
@@ -794,24 +872,26 @@ export class TiffProcessor {
 			// Check if normalized float mode is enabled for uint images
 			if (settings.normalizedFloatMode && format !== 3) {
 				// Convert uint to normalized float (0-1)
-				const maxValue = bitsPerSample === 16 ? 65535 : 255;
+				const maxValue = tiffTypeMax(format, bitsPerSample);
 				const normalized = value / maxValue;
 				return normalized.toPrecision(4);
 			}
 
 			return format === 3 ? value.toPrecision(4) : value.toString();
 		} else if (samples >= 3) {
+			// Integers stay plain integer strings; zero-padding is only safe for
+			// unsigned values (padStart would mangle a negative like -5 to "0-5").
+			const formatSample = (/** @type {number} */ value) =>
+				format === 3 ? value.toPrecision(4) : (format === 2 ? value.toString() : value.toString().padStart(3, '0'));
 			const values = [];
 			if (planarConfig === 2) { // Planar data
 				const planeSize = naturalWidth * naturalHeight;
 				for (let i = 0; i < samples; i++) {
-					const value = data[pixelIndex + i * planeSize];
-					values.push(format === 3 ? value.toPrecision(4) : value.toString().padStart(3, '0'));
+					values.push(formatSample(data[pixelIndex + i * planeSize]));
 				}
 			} else { // Interleaved data
 				for (let i = 0; i < samples; i++) {
-					const value = data[pixelIndex * samples + i];
-					values.push(format === 3 ? value.toPrecision(4) : value.toString().padStart(3, '0'));
+					values.push(formatSample(data[pixelIndex * samples + i]));
 				}
 			}
 

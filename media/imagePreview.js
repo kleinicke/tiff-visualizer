@@ -2,7 +2,7 @@
 "use strict";
 
 import { SettingsManager } from './modules/settings-manager.js';
-import { TiffProcessor } from './modules/tiff-processor.js';
+import { TiffProcessor, tiffFormatTypeFor, tiffTypeMax } from './modules/tiff-processor.js';
 import { ExrProcessor } from './modules/exr-processor.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
@@ -1166,8 +1166,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 	function tiffRawToLayer(raw, name, uri) {
 		if (!raw || !raw.data || !raw.ifd) { return null; }
 		const ifd = raw.ifd;
-		const isFloat = ifd.t339 === 3;
-		const typeMax = isFloat ? 1.0 : (ifd.t258 === 16 ? 65535 : 255);
+		// Signed integer samples (t339 === 2) are carried in a Float32Array too
+		// (see tiff-processor.js pickTiffArrayCtor), so they route through the
+		// same float compositing path as true IEEE float data.
+		const isFloat = ifd.t339 === 3 || ifd.t339 === 2;
+		const typeMax = tiffTypeMax(ifd.t339, ifd.t258);
 		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, name, uri };
 	}
 
@@ -1708,7 +1711,18 @@ import { LayersPanel } from './modules/layers-panel.js';
 							PerfTrace.mark('canvas-upload-skipped');
 							primaryImageData = deferredImageData;
 						} else {
-							const ctx = canvas.getContext('2d', { willReadFrequently: true });
+							// Use ensure2dCanvasContext(), not a raw canvas.getContext('2d', ...):
+							// the WebGL attempt just above (canRender()==true but render()
+							// failing after _ensureContext() already called
+							// canvas.getContext('webgl2', ...)) can leave this exact canvas
+							// permanently locked to the webgl2 context type — getContext('2d')
+							// on it then returns null forever, silently skipping the paint
+							// below and leaving the placeholder canvas visibly black until an
+							// unrelated settings change routes through updateImageWithNewSettings
+							// (which already calls ensure2dCanvasContext()) and swaps in a fresh
+							// canvas. Doing the same swap here on the very first deferred render
+							// avoids ever showing that black canvas.
+							const ctx = ensure2dCanvasContext();
 							if (ctx) {
 								await renderImageDataToCanvas(deferredImageData, ctx);
 								primaryImageData = deferredImageData;
@@ -2123,17 +2137,10 @@ import { LayersPanel } from './modules/layers-panel.js';
 				const format = ifd.t339; // SampleFormat: 1=uint, 2=int, 3=float
 				const bitsPerSample = ifd.t258 || 8;
 				const samples = ifd.t277 || 1;
-				const isFloat = format === 3;
-				
-				// Determine typeMax based on format
-				let typeMax;
-				if (isFloat) {
-					typeMax = 1.0;
-				} else if (bitsPerSample === 16) {
-					typeMax = 65535;
-				} else {
-					typeMax = 255;
-				}
+				// Signed ints are carried as Float32Array too (see tiff-processor.js
+				// pickTiffArrayCtor), so they're binned through the float path.
+				const isFloat = format === 3 || format === 2;
+				const typeMax = tiffTypeMax(format, bitsPerSample);
 
 				// Get stats if available
 				const stats = tiffProcessor._lastStatistics || null;
@@ -3048,7 +3055,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			}));
 
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
-			const plyFormats = ['tiff-float', 'tiff-int', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
+			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
 			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
 				menu.appendChild(createSeparator());
 				menu.appendChild(createMenuItem('Open as Point Cloud', () => {
@@ -3456,7 +3463,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 						samplesPerPixel,
 						bitsPerSample,
 						planarConfig: tiffData.ifd?.t284 ?? 1,
-						formatType: sampleFormatValue === 3 ? 'tiff-float' : 'tiff-int',
+						formatType: tiffFormatTypeFor(sampleFormatValue),
 						...(raw.formatInfo || {}),
 						isInitialLoad: true,
 						decodedWith: 'decoded-cache'

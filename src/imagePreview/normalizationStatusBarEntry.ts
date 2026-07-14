@@ -32,13 +32,12 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 		const isFloat = this._sampleFormat === 3;
 		let typeMaxValue = 1;
 		if (!isFloat) {
-			if (this._bitsPerSample === 16) {
-				typeMaxValue = 65535;
-			} else if (this._bitsPerSample === 8) {
-				typeMaxValue = 255;
-			} else {
-				typeMaxValue = 255; // fallback
-			}
+			// Full type range from the actual bit depth (255, 1023, 4095, 16383,
+			// 65535, ...); signed samples only cover the positive half.
+			const bits = this._bitsPerSample ?? 8;
+			typeMaxValue = this._sampleFormat === 2
+				? Math.pow(2, bits - 1) - 1
+				: Math.pow(2, bits) - 1;
 		}
 
 		if (autoNormalize) {

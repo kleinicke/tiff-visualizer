@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'raw';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'raw';
 
 export interface ImageStats {
 	min: number;
@@ -341,9 +341,11 @@ export class AppStateManager {
 			defaults.normalization.min = 0;
 			defaults.normalization.max = 1;
 		}
-		// Rule 3: Float data (NPY) → Auto-normalize to actual data range
-		// (Scientific data can have any range, needs auto-detection)
-		else if (format === 'npy-float') {
+		// Rule 3: Float data (NPY) and signed-integer TIFFs → Auto-normalize to
+		// actual data range. (Scientific data can have any range — signed data
+		// especially never fits gamma mode's unsigned [0, typeMax] assumption,
+		// e.g. an int16 elevation map with values 0..2 would render black.)
+		else if (format === 'npy-float' || format === 'tiff-int-signed') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

@@ -367,7 +367,11 @@ impl TiffResult {
                 // Convert integers to float
                 match self.bits_per_sample {
                     8 => self.data.iter().map(|&v| v as f32).collect(),
-                    16 => self.data
+                    // 9..=15 covers the sub-16-bit direct decode path
+                    // (try_decode_subbit_strips): those samples are still
+                    // packed as 2 bytes each (via convert_u16_to_bytes_simd),
+                    // just with a smaller reported bits_per_sample.
+                    9..=16 => self.data
                         .chunks_exact(2)
                         .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) as f32)
                         .collect(),
@@ -1371,6 +1375,19 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     let mut direct_decode = false;
     let decode_result = if compression == 50000 {
         decode_zstd(data, &mut decoder)?
+    } else if let Some(result) = try_decode_subbit_strips(
+        data,
+        &mut decoder,
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        planar_configuration,
+    )? {
+        direct_decode = true;
+        result
     } else if let Some(result) = try_decode_uncompressed_strips(
         data,
         &mut decoder,
@@ -1797,6 +1814,180 @@ fn try_decode_uncompressed_strips(
     };
 
     Ok(Some(result))
+}
+
+/// Decode chunky, strip-based, unsigned-integer samples whose bit depth is
+/// non-byte-aligned (9..=15 bits, e.g. 10/12/14-bit RGB or grayscale, common
+/// for RAW-derived TIFFs). The tiff crate's read_image() only supports 8/16/
+/// 32/64-bit samples for multi-sample color types (1/2/4-bit for single-
+/// channel Gray), so it rejects these with "color type RGB(14) is
+/// unsupported" before decompression is even attempted. Fetch the strips,
+/// decompress them ourselves (None/LZW/Deflate), unpack the MSB-first
+/// bit-packed samples (each row padded to a byte boundary), and apply the
+/// horizontal predictor if present. Values are left in their native range
+/// (0..2^bits-1), not rescaled to 16-bit.
+///
+/// Returns `Ok(None)` when the bit depth is outside 9..=15 or the layout is
+/// otherwise not handled here (e.g. PlanarConfiguration 2), so the caller
+/// falls through to the tiff crate, which still produces its usual error for
+/// genuinely unsupported cases (planar sub-16-bit is a separate, parked
+/// issue). Returns `Err` for cases within this path's scope that are known
+/// to not be decodable (tiled layout, LSB fill order, non-unsigned sample
+/// format, unsupported predictor).
+#[allow(clippy::too_many_arguments)]
+fn try_decode_subbit_strips(
+    data: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    predictor: u32,
+    planar_configuration: u32,
+) -> Result<Option<DecodingResult>, JsValue> {
+    use std::io::Read;
+    use tiff::tags::Tag;
+
+    if !(9..=15).contains(&bits_per_sample) {
+        return Ok(None);
+    }
+    if planar_configuration != 1 {
+        // Planar sub-16-bit is a separate, parked issue: fall through so the
+        // tiff crate produces its usual (clear) "unsupported color type" error.
+        return Ok(None);
+    }
+    if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
+        return Ok(None);
+    }
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return Err(JsValue::from_str(
+            "Sub-16-bit TIFF: tiled layout is not supported by the direct decode path",
+        ));
+    }
+    if predictor != 1 && predictor != 2 {
+        return Err(JsValue::from_str(&format!(
+            "Sub-16-bit TIFF: predictor {} is not supported", predictor
+        )));
+    }
+    let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
+    if fill_order != 1 {
+        return Err(JsValue::from_str(
+            "Sub-16-bit TIFF: FillOrder 2 (LSB-first) is not supported",
+        ));
+    }
+    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .unwrap_or(1) as u32;
+    if sample_format != 1 {
+        return Err(JsValue::from_str(&format!(
+            "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)", sample_format
+        )));
+    }
+
+    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
+        Ok(value) if !value.is_empty() => value,
+        _ => return Ok(None),
+    };
+    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
+        Ok(value) if value.len() == offsets.len() => value,
+        _ => return Ok(None),
+    };
+    let rows_per_strip = decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height).max(1);
+
+    let samples_per_row = (width as usize).saturating_mul(channels as usize);
+    let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
+    let max_value = (1u32 << bits_per_sample) - 1;
+
+    let mut out: Vec<u16> = Vec::with_capacity(samples_per_row.saturating_mul(height as usize));
+    let mut rows_decoded: u32 = 0;
+
+    for (&offset, &count) in offsets.iter().zip(counts.iter()) {
+        if rows_decoded >= height {
+            break;
+        }
+        let start = offset as usize;
+        let end = start.saturating_add(count as usize);
+        if end > data.len() {
+            return Err(JsValue::from_str("Sub-16-bit TIFF: strip byte range out of bounds"));
+        }
+        let strip = &data[start..end];
+
+        let decompressed: Vec<u8> = match compression {
+            1 => strip.to_vec(),
+            5 => {
+                let mut lzw = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+                lzw.decode(strip)
+                    .map_err(|e| JsValue::from_str(&format!("Sub-16-bit TIFF: LZW decode failed: {}", e)))?
+            }
+            8 | 32946 => {
+                let mut zd = flate2::read::ZlibDecoder::new(strip);
+                let mut buf = Vec::new();
+                zd.read_to_end(&mut buf)
+                    .map_err(|e| JsValue::from_str(&format!("Sub-16-bit TIFF: Deflate decode failed: {}", e)))?;
+                buf
+            }
+            _ => unreachable!(),
+        };
+
+        let rows_in_strip = rows_per_strip.min(height - rows_decoded) as usize;
+        let expected_bytes = row_bytes.saturating_mul(rows_in_strip);
+        if decompressed.len() < expected_bytes {
+            return Err(JsValue::from_str(&format!(
+                "Sub-16-bit TIFF: strip decompressed to {} bytes, expected at least {}",
+                decompressed.len(), expected_bytes
+            )));
+        }
+
+        for row_idx in 0..rows_in_strip {
+            let row = &decompressed[row_idx * row_bytes..(row_idx + 1) * row_bytes];
+
+            // MSB-first bit reader: samples are packed continuously within a
+            // row (not padded per-sample), only the row as a whole is padded
+            // to a byte boundary.
+            let mut bit_buf: u64 = 0;
+            let mut bit_count: u32 = 0;
+            let mut byte_idx = 0usize;
+            let row_start = out.len();
+            for _ in 0..samples_per_row {
+                while bit_count < bits_per_sample {
+                    let byte = row.get(byte_idx).copied().unwrap_or(0);
+                    byte_idx += 1;
+                    bit_buf = (bit_buf << 8) | byte as u64;
+                    bit_count += 8;
+                }
+                let shift = bit_count - bits_per_sample;
+                let value = ((bit_buf >> shift) & (max_value as u64)) as u16;
+                out.push(value);
+                bit_count -= bits_per_sample;
+                bit_buf &= (1u64 << bit_count) - 1;
+            }
+
+            if predictor == 2 {
+                // Horizontal differencing predictor, per channel, wrapping
+                // modulo 2^bits_per_sample.
+                let row_values = &mut out[row_start..row_start + samples_per_row];
+                for x in 1..(width as usize) {
+                    for c in 0..channels as usize {
+                        let idx = x * channels as usize + c;
+                        let prev = row_values[idx - channels as usize] as u32;
+                        let cur = row_values[idx] as u32;
+                        row_values[idx] = ((cur + prev) & max_value) as u16;
+                    }
+                }
+            }
+        }
+        rows_decoded += rows_in_strip as u32;
+    }
+
+    if rows_decoded != height {
+        return Err(JsValue::from_str(&format!(
+            "Sub-16-bit TIFF: decoded {} of {} rows", rows_decoded, height
+        )));
+    }
+
+    Ok(Some(DecodingResult::U16(out)))
 }
 
 /// Decode a ZSTD-compressed TIFF (compression 50000) using the pure-Rust

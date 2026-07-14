@@ -33,6 +33,31 @@ export function parseAllTagsJson(json) {
 }
 
 /**
+ * Extract the GDAL_NODATA sentinel (TIFF tag 42113) from a parsed tag list,
+ * if present. The Rust/WASM path carries the numeric tag id (42113, printed
+ * as "GdalNodata" by the tiff crate, or "Unknown(42113)" if unrecognized);
+ * the geotiff.js fallback path has no numeric ids (`buildTagsFromGeotiffImage`
+ * sets tag: null) but names it "GDAL_NODATA" after its fileDirectory key —
+ * so match the id when present and otherwise the name (case-insensitive
+ * "nodata", or the id embedded in the Unknown(id) fallback form).
+ * @param {TagEntry[]} tags
+ * @returns {number|undefined}
+ */
+export function parseGdalNodata(tags) {
+	if (!Array.isArray(tags)) { return undefined; }
+	for (const tag of tags) {
+		const name = String(tag?.name || '');
+		const unknownMatch = /unknown\((\d+)\)/i.exec(name);
+		const matchesByNumber = tag?.tag === 42113 ||
+			(!!unknownMatch && Number(unknownMatch[1]) === 42113);
+		if (!/nodata/i.test(name) && !matchesByNumber) { continue; }
+		const value = parseFloat(String(tag.value));
+		if (Number.isFinite(value)) { return value; }
+	}
+	return undefined;
+}
+
+/**
  * @param {any} value
  * @returns {string}
  */

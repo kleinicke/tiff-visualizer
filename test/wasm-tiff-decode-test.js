@@ -169,6 +169,49 @@ async function main() {
 		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
 	}
 
+	// 5c. Sub-16-bit unsigned chunky samples (10/12/14-bit RGB), the non-byte-
+	//     aligned bit depths that tiff crate's read_image() rejects with
+	//     "color type RGB(n) is unsupported" before decompression is even
+	//     attempted (see try_decode_subbit_strips in wasm/tiff-decoder). These
+	//     shapes_lzw_*bps.tif files are LZW-compressed, chunky, single-strip,
+	//     Predictor absent (=1), unsigned. Ground truth values were extracted
+	//     independently by parsing an uncompressed twin (`tiffcp -c none`) and
+	//     manually bit-unpacking the raw strip bytes.
+	for (const [file, bits, expected] of [
+		['shapes_lzw_12bps.tif', 12, {
+			'0,0': [4095, 4095, 4095],
+			'1,0': [4095, 4095, 4095],
+			'0,1': [4095, 4095, 4095],
+			'64,36': [4014, 79, 0],
+			'127,71': [4095, 4095, 4095],
+			'50,20': [4095, 4095, 4095],
+			'10,60': [4095, 4095, 4095],
+		}],
+		['shapes_lzw_14bps.tif', 14, {
+			'0,0': [16383, 16383, 16383],
+			'1,0': [16383, 16383, 16383],
+			'0,1': [16383, 16383, 16383],
+			'64,36': [16061, 320, 0],
+			'127,71': [16383, 16383, 16383],
+			'50,20': [16383, 16383, 16383],
+			'10,60': [16383, 16383, 16383],
+		}],
+	]) {
+		const img = decode(mod, file);
+		assert.strictEqual(img.width, 128, `${file}: width`);
+		assert.strictEqual(img.height, 72, `${file}: height`);
+		assert.strictEqual(img.channels, 3, `${file}: channels`);
+		assert.strictEqual(img.bitsPerSample, bits, `${file}: bits_per_sample must report the true bit depth (not 16)`);
+		assert.strictEqual(img.data.length, 128 * 72 * 3, `${file}: data length`);
+		for (const [coord, rgb] of Object.entries(expected)) {
+			const [x, y] = coord.split(',').map(Number);
+			const idx = (y * 128 + x) * 3;
+			const got = img.data.slice(idx, idx + 3);
+			assert.deepStrictEqual(got, rgb, `${file}: pixel (${x},${y}) must match ground truth`);
+		}
+		console.log(`✅ ${bits}-bit sub-16-bit LZW RGB (${file}) decodes to exact ground-truth pixel values`);
+	}
+
 	// 6. WebP-compressed (compression 50001) decodes to RGB.
 	{
 		const webp = decode(mod, 'webp_rgb.tif');
