@@ -4,7 +4,7 @@ Inspect high-bit-depth, floating-point, scientific, and camera image files direc
 
 Supports TIFF, EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM.
 
-The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export the current visualization as PNG. Uses rust for decoding several formats and the gpu for rendering to provide the fastest possible extension.
+The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export the current visualization as PNG. Uses Rust for decoding several formats and the GPU for rendering to provide the fastest possible extension.
 
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 

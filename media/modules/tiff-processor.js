@@ -662,8 +662,10 @@ export class TiffProcessor {
 						if (combined24bit > max) max = combined24bit;
 					}
 				} else {
-					// Normal mode: use individual channel values
-					const scanChannels = Math.min(rastersCopy.length, 3);
+					// Normal mode: use individual channel values. channels === 2
+					// is gray+alpha: scan only the gray raster (index 0), not
+					// alpha, so it doesn't skew the normalization range.
+					const scanChannels = rastersCopy.length === 2 ? 1 : Math.min(rastersCopy.length, 3);
 					for (let i = 0; i < scanChannels; i++) {
 						const raster = rastersCopy[i];
 						for (let j = 0; j < raster.length; j++) {
@@ -696,7 +698,8 @@ export class TiffProcessor {
 						if (combined24bit > max) max = combined24bit;
 					}
 				} else {
-					const scanChannels = Math.min(rastersCopy.length, 3);
+					// channels === 2 is gray+alpha: scan only the gray raster.
+					const scanChannels = rastersCopy.length === 2 ? 1 : Math.min(rastersCopy.length, 3);
 					for (let i = 0; i < scanChannels; i++) {
 						const raster = rastersCopy[i];
 						for (let j = 0; j < raster.length; j++) {
@@ -878,6 +881,25 @@ export class TiffProcessor {
 			}
 
 			return format === 3 ? value.toPrecision(4) : value.toString();
+		} else if (samples === 2) { // Gray + alpha
+			const formatSample = (/** @type {number} */ value) =>
+				format === 3 ? value.toPrecision(4) : value.toString();
+			let gray, alpha;
+			if (planarConfig === 2) { // Planar data
+				const planeSize = naturalWidth * naturalHeight;
+				gray = data[pixelIndex];
+				alpha = data[pixelIndex + planeSize];
+			} else { // Interleaved data
+				gray = data[pixelIndex * 2];
+				alpha = data[pixelIndex * 2 + 1];
+			}
+
+			if (settings.normalizedFloatMode && format !== 3) {
+				const maxValue = tiffTypeMax(format, bitsPerSample);
+				return `${(gray / maxValue).toPrecision(4)} ${(alpha / maxValue).toPrecision(4)}`;
+			}
+
+			return `${formatSample(gray)} ${formatSample(alpha)}`;
 		} else if (samples >= 3) {
 			// Integers stay plain integer strings; zero-padding is only safe for
 			// unsigned values (padStart would mangle a negative like -5 to "0-5").

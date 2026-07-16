@@ -230,7 +230,11 @@ export class ImageStatsCalculator {
                 }
             }
         } else {
-            const scanChannels = Math.min(channels, 3);
+            // channels === 2 is gray+alpha: scan only the gray sample (channel
+            // 0), not the alpha channel, so alpha values don't skew the data
+            // range used for normalization. channels >= 3 scans the first 3
+            // (RGB, ignoring any alpha/extra samples beyond that).
+            const scanChannels = channels === 2 ? 1 : Math.min(channels, 3);
             for (let i = 0; i < len; i++) {
                 const base = i * channels;
                 for (let c = 0; c < scanChannels; c++) {
@@ -275,7 +279,9 @@ export class ImageStatsCalculator {
                 if (val > maxVal) maxVal = val;
             }
         } else {
-            const scanChannels = Math.min(channels, 3);
+            // See calculateFloatStats: channels === 2 is gray+alpha, scan only
+            // the gray sample so alpha doesn't skew the normalization range.
+            const scanChannels = channels === 2 ? 1 : Math.min(channels, 3);
             for (let i = 0; i < len; i++) {
                 const base = i * channels;
                 for (let c = 0; c < scanChannels; c++) {
@@ -310,7 +316,8 @@ export class ImageStatsCalculator {
         let nonFiniteCount = 0;
 
         const len = width * height;
-        const scanChannels = channels === 1 ? 1 : Math.min(channels, 3);
+        // channels === 2 is gray+alpha: scan only the gray sample (channel 0).
+        const scanChannels = (channels === 1 || channels === 2) ? 1 : Math.min(channels, 3);
         for (let i = 0; i < len; i++) {
             const base = i * channels;
             for (let c = 0; c < scanChannels; c++) {
@@ -692,6 +699,45 @@ export class ImageRenderer {
                 out[p + 2] = b;
                 out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
                 continue;
+            } else if (channels === 2) {
+                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                const idx = i * 2;
+                const value = data[idx];
+                const aVal = data[idx + 1];
+                const p = i * 4;
+                if (!Number.isFinite(value)) {
+                    out[p] = nanColor.r;
+                    out[p + 1] = nanColor.g;
+                    out[p + 2] = nanColor.b;
+                    out[p + 3] = 255;
+                    continue;
+                }
+                const intensity = Math.round(Math.max(0, Math.min(1, (value - min) * invRange)) * 255);
+                out[p] = intensity;
+                out[p + 1] = intensity;
+                out[p + 2] = intensity;
+                out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
+                continue;
+            } else if (channels > 4) {
+                // Extra samples beyond the first 3 are display-ignored (but
+                // remain in `data` for pixel inspection); use the first 3 as
+                // RGB with stride `channels`, rendered opaque.
+                const idx = i * channels;
+                const rVal = data[idx];
+                const gVal = data[idx + 1];
+                const bVal = data[idx + 2];
+                const p = i * 4;
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r;
+                    out[p + 1] = nanColor.g;
+                    out[p + 2] = nanColor.b;
+                } else {
+                    out[p] = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
+                    out[p + 1] = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
+                    out[p + 2] = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
+                }
+                out[p + 3] = 255;
+                continue;
             }
 
             const p = i * 4;
@@ -857,6 +903,49 @@ export class ImageRenderer {
                 out[p + 2] = b;
                 out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
                 continue;
+            } else if (channels === 2) {
+                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                const idx = i * 2;
+                const value = data[idx];
+                const aVal = data[idx + 1];
+                const p = i * 4;
+                if (!Number.isFinite(value)) {
+                    out[p] = nanColor.r;
+                    out[p + 1] = nanColor.g;
+                    out[p + 2] = nanColor.b;
+                    out[p + 3] = 255;
+                    continue;
+                }
+                const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
+                const intensity = lut[lutIdx];
+                out[p] = intensity;
+                out[p + 1] = intensity;
+                out[p + 2] = intensity;
+                out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
+                continue;
+            } else if (channels > 4) {
+                // Extra samples beyond the first 3 are display-ignored (but
+                // remain in `data` for pixel inspection); use the first 3 as
+                // RGB with stride `channels`, rendered opaque.
+                const idx = i * channels;
+                const rVal = data[idx];
+                const gVal = data[idx + 1];
+                const bVal = data[idx + 2];
+                const p = i * 4;
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r;
+                    out[p + 1] = nanColor.g;
+                    out[p + 2] = nanColor.b;
+                } else {
+                    const rIdx = Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)));
+                    const gIdx = Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)));
+                    const bIdx = Math.round(Math.max(0, Math.min(65535, (bVal - vMin) * invVRange)));
+                    out[p] = lut[rIdx];
+                    out[p + 1] = lut[gIdx];
+                    out[p + 2] = lut[bIdx];
+                }
+                out[p + 3] = 255;
+                continue;
             }
 
             const p = i * 4;
@@ -966,6 +1055,37 @@ export class ImageRenderer {
                 out[p + 2] = b;
                 out[p + 3] = Math.round(data[idx + 3] / 257); // 65535 -> 255
                 continue;
+            } else if (channels === 2) {
+                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                const idx = i * 2;
+                const value = data[idx], aVal = data[idx + 1];
+                const p = i * 4;
+                if (!Number.isFinite(value)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                const intensity = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
+                out[p] = intensity;
+                out[p + 1] = intensity;
+                out[p + 2] = intensity;
+                out[p + 3] = Number.isFinite(aVal) ? Math.round(aVal / 257) : 255; // 65535 -> 255
+                continue;
+            } else if (channels > 4) {
+                // Extra samples beyond the first 3 are display-ignored (but
+                // remain in `data` for pixel inspection); use the first 3 as
+                // RGB with stride `channels`, rendered opaque.
+                const idx = i * channels;
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                const p = i * 4;
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                out[p] = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
+                out[p + 1] = Math.round((Math.max(min, Math.min(max, gVal)) - min) * invRange);
+                out[p + 2] = Math.round((Math.max(min, Math.min(max, bVal)) - min) * invRange);
+                out[p + 3] = 255;
+                continue;
             }
 
             const p = i * 4;
@@ -1071,6 +1191,37 @@ export class ImageRenderer {
                 out[p + 2] = b;
                 out[p + 3] = Math.round(data[idx + 3] / 257); // 65535 -> 255
                 continue;
+            } else if (channels === 2) {
+                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                const idx = i * 2;
+                const value = data[idx], aVal = data[idx + 1];
+                const p = i * 4;
+                if (!Number.isFinite(value)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                const intensity = lut[Math.min(65535, value)];
+                out[p] = intensity;
+                out[p + 1] = intensity;
+                out[p + 2] = intensity;
+                out[p + 3] = Number.isFinite(aVal) ? Math.round(aVal / 257) : 255; // 65535 -> 255
+                continue;
+            } else if (channels > 4) {
+                // Extra samples beyond the first 3 are display-ignored (but
+                // remain in `data` for pixel inspection); use the first 3 as
+                // RGB with stride `channels`, rendered opaque.
+                const idx = i * channels;
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                const p = i * 4;
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                out[p] = lut[Math.min(65535, rVal)];
+                out[p + 1] = lut[Math.min(65535, gVal)];
+                out[p + 2] = lut[Math.min(65535, bVal)];
+                out[p + 3] = 255;
+                continue;
             }
 
             const p = i * 4;
@@ -1157,6 +1308,30 @@ export class ImageRenderer {
                     out[p + 2] = bVal;
                     out[p + 3] = data[idx + 3];
                     continue;
+                } else if (channels === 2) {
+                    // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                    const idx = i * 2;
+                    const value = data[idx], aVal = data[idx + 1];
+                    if (!Number.isFinite(value)) {
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    out[p] = out[p + 1] = out[p + 2] = value;
+                    out[p + 3] = aVal;
+                    continue;
+                } else if (channels > 4) {
+                    // Extra samples beyond the first 3 are display-ignored
+                    // (but remain in `data` for pixel inspection); use the
+                    // first 3 as RGB with stride `channels`, rendered opaque.
+                    const idx = i * channels;
+                    const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    out[p] = rVal;
+                    out[p + 1] = gVal;
+                    out[p + 2] = bVal;
                 }
                 out[p + 3] = 255;
             }
@@ -1205,6 +1380,36 @@ export class ImageRenderer {
                     out[p + 2] = b;
                     out[p + 3] = data[idx + 3];
                     continue;
+                } else if (channels === 2) {
+                    // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                    const idx = i * 2;
+                    const value = data[idx], aVal = data[idx + 1];
+                    if (!Number.isFinite(value)) {
+                        const p = i * 4;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    r = g = b = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
+                    const p = i * 4;
+                    out[p] = r;
+                    out[p + 1] = g;
+                    out[p + 2] = b;
+                    out[p + 3] = aVal;
+                    continue;
+                } else if (channels > 4) {
+                    // Extra samples beyond the first 3 are display-ignored
+                    // (but remain in `data` for pixel inspection); use the
+                    // first 3 as RGB with stride `channels`, rendered opaque.
+                    const idx = i * channels;
+                    const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                        const p = i * 4;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        continue;
+                    }
+                    r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
+                    g = Math.round((Math.max(min, Math.min(max, gVal)) - min) * invRange);
+                    b = Math.round((Math.max(min, Math.min(max, bVal)) - min) * invRange);
                 }
 
                 const p = i * 4;
@@ -1306,6 +1511,37 @@ export class ImageRenderer {
                 out[p + 2] = b;
                 out[p + 3] = data[idx + 3];
                 continue;
+            } else if (channels === 2) {
+                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                const idx = i * 2;
+                const value = data[idx], aVal = data[idx + 1];
+                if (!Number.isFinite(value)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = g = b = lut[value];
+
+                const p = i * 4;
+                out[p] = r;
+                out[p + 1] = g;
+                out[p + 2] = b;
+                out[p + 3] = aVal;
+                continue;
+            } else if (channels > 4) {
+                // Extra samples beyond the first 3 are display-ignored (but
+                // remain in `data` for pixel inspection); use the first 3 as
+                // RGB with stride `channels`, rendered opaque.
+                const idx = i * channels;
+                const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    const p = i * 4;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    continue;
+                }
+                r = lut[rVal];
+                g = lut[gVal];
+                b = lut[bVal];
             }
 
             const p = i * 4;

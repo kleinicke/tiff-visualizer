@@ -212,6 +212,69 @@ async function main() {
 		console.log(`✅ ${bits}-bit sub-16-bit LZW RGB (${file}) decodes to exact ground-truth pixel values`);
 	}
 
+	// 5d. Planar (PlanarConfiguration 2) and tiled-LZW images. These previously
+	//     either decoded WRONG with no error (planar: the `tiff` crate's own
+	//     read_image() doc comment admits its planar handling is "not
+	//     correct" -- it reads only the first plane, or concatenates planes
+	//     sequentially into one buffer instead of interleaving per sample) or
+	//     failed outright ("no lzw end code found" for tiled LZW whose final
+	//     tile omits the EOI code, which libtiff tolerates but the `tiff`
+	//     crate's LZW reader does not). See try_decode_general_strips_tiles in
+	//     wasm/tiff-decoder for the fix: a direct strip/tile reader that
+	//     always produces chunky interleaved output regardless of on-disk
+	//     planar configuration.
+	//
+	//     Ground truth for every sample of every file below was produced
+	//     independently of this decoder: via `tiffcp -p contig -c none`
+	//     (planar/tiled -> chunky, uncompressed) followed by tifffile
+	//     (imagecodecs) decoding, cross-checked file-for-file against a
+	//     direct tifffile read of the original planar/tiled/compressed file.
+	//     The two 10-bit/planar files that `tiffcp` itself cannot convert
+	//     (libtiff: "Compression algorithm does not support random access"
+	//     and "Cannot handle different planar configuration w/ bits/sample !=
+	//     8") were verified purely via the direct tifffile read; that read
+	//     path was itself validated by the tiffcp cross-check on the other
+	//     four files. Ground truth is stored as raw little-endian binary
+	//     fixtures (`*.gt.u8.bin` / `*.gt.u16.bin`), one sample per pixel per
+	//     channel, row-major, chunky (H, W, C).
+	for (const [file, gtFile, gtDtype, expectPlanar] of [
+		['shapes_lzw_planar.tif', 'shapes_lzw_planar.gt.u8.bin', 'u8', 2],
+		['shapes_uncompressed_tiled_planar.tif', 'shapes_uncompressed_tiled_planar.gt.u8.bin', 'u8', 2],
+		['shapes_lzw_planar_10bps.tif', 'shapes_lzw_planar_10bps.gt.u16.bin', 'u16', 2],
+		['shapes_lzw_tiled.tif', 'shapes_lzw_tiled.gt.u8.bin', 'u8', 1],
+		['shapes_lzw_tiled_planar.tif', 'shapes_lzw_tiled_planar.gt.u8.bin', 'u8', 2],
+		['shapes_tiled_multi.tif', 'shapes_tiled_multi.gt.u8.bin', 'u8', 1],
+	]) {
+		const buffer = fs.readFileSync(path.join(samplesDir, file));
+		const result = mod.decode_tiff(new Uint8Array(buffer));
+		const data = result.get_data_as_f32();
+
+		const gtBuffer = fs.readFileSync(path.join(samplesDir, gtFile));
+		const gt = gtDtype === 'u16'
+			? new Uint16Array(gtBuffer.buffer, gtBuffer.byteOffset, gtBuffer.length / 2)
+			: new Uint8Array(gtBuffer.buffer, gtBuffer.byteOffset, gtBuffer.length);
+
+		assert.strictEqual(result.width, 128, `${file}: width`);
+		assert.strictEqual(result.height, 72, `${file}: height`);
+		assert.strictEqual(result.channels, 3, `${file}: channels`);
+		assert.strictEqual(result.planar_configuration, expectPlanar,
+			`${file}: must still report the true on-disk PlanarConfiguration tag in metadata`);
+		assert.strictEqual(data.length, gt.length, `${file}: sample count`);
+
+		let mismatches = 0;
+		let firstMismatchIndex = -1;
+		for (let i = 0; i < data.length; i++) {
+			if (data[i] !== gt[i]) {
+				mismatches++;
+				if (firstMismatchIndex === -1) firstMismatchIndex = i;
+			}
+		}
+		assert.strictEqual(mismatches, 0,
+			`${file}: ${mismatches}/${data.length} samples differ from ground truth ` +
+			`(first at index ${firstMismatchIndex}: got ${data[firstMismatchIndex]}, expected ${gt[firstMismatchIndex]})`);
+		console.log(`✅ ${file} (planar=${result.planar_configuration}, tiled=${result.tile_width > 0}) matches ground truth exactly, every sample`);
+	}
+
 	// 6. WebP-compressed (compression 50001) decodes to RGB.
 	{
 		const webp = decode(mod, 'webp_rgb.tif');
@@ -224,6 +287,73 @@ async function main() {
 		const max = webp.data.reduce((m, v) => Math.max(m, v), 0);
 		assert.ok(max > 0, 'WebP image should contain non-zero pixels');
 		console.log('✅ WebP (compression 50001) decodes to 3-channel RGB');
+	}
+
+	// 7. Gray+alpha (SamplesPerPixel=2). house.tif is an 8-bit grayscale image
+	//    with an unassociated-alpha extra sample whose ExtraSamples tag value
+	//    (999) is not a valid TIFF ExtraSamples enum entry, so the tiff crate's
+	//    colortype() falls back to `ColorType::Multiband { num_samples: 2, .. }`
+	//    instead of `ColorType::GrayA` - a `channels` value the old hand-rolled
+	//    match in decode_tiff_impl didn't handle and silently reported as 1,
+	//    corrupting the stride of every decoded row ("subpixel artifacts").
+	//    Ground truth extracted independently via tifffile.
+	{
+		const img = decode(mod, 'house.tif');
+		assert.strictEqual(img.width, 512, 'house.tif: width');
+		assert.strictEqual(img.height, 512, 'house.tif: height');
+		assert.strictEqual(img.channels, 2, 'house.tif: channels must be truthful (gray + alpha)');
+		assert.strictEqual(img.bitsPerSample, 8, 'house.tif: bits_per_sample');
+		assert.strictEqual(img.data.length, 512 * 512 * 2, 'house.tif: data length must equal width*height*channels');
+		for (const [coord, grayAlpha] of Object.entries({
+			'0,0': [203, 255],
+			'10,10': [205, 255],
+			'100,200': [147, 255],
+			'511,511': [163, 255],
+			'50,300': [204, 255],
+			'1,1': [203, 255],
+			'400,400': [188, 255],
+		})) {
+			const [x, y] = coord.split(',').map(Number);
+			const idx = (y * 512 + x) * 2;
+			const got = img.data.slice(idx, idx + 2);
+			assert.deepStrictEqual(got, grayAlpha, `house.tif: pixel (${x},${y}) must match ground truth`);
+		}
+		console.log('✅ house.tif (gray+alpha, SamplesPerPixel=2) decodes to exact ground-truth pixel values with the correct stride');
+	}
+
+	// 8. RGB with 4 extra unspecified samples (SamplesPerPixel=7). shapes_hyper.tif
+	//    is a float32 image with PhotometricInterpretation RGB (photometric_samples
+	//    = 3) but SamplesPerPixel = 7; `tiff::ColorType::RGB(_).num_samples()` is
+	//    3, so the old channels match silently reported 3 while every raw pixel
+	//    is actually 7 samples wide, scrambling every channel/row after the first
+	//    ("scrambled/red-shifted"). Ground truth extracted independently via
+	//    tifffile; channels 3-6 are constant (0.1, 0.2, 0.3, 0.5) across the
+	//    whole image, channels 0-2 vary with the RGB shape pattern.
+	{
+		const img = decode(mod, 'shapes_hyper.tif');
+		assert.strictEqual(img.width, 128, 'shapes_hyper.tif: width');
+		assert.strictEqual(img.height, 72, 'shapes_hyper.tif: height');
+		assert.strictEqual(img.channels, 7, 'shapes_hyper.tif: channels must be truthful (RGB + 4 extra samples)');
+		assert.strictEqual(img.bitsPerSample, 32, 'shapes_hyper.tif: bits_per_sample');
+		assert.strictEqual(img.data.length, 128 * 72 * 7, 'shapes_hyper.tif: data length must equal width*height*channels');
+		const closeEnough = (a, b) => Math.abs(a - b) < 1e-5;
+		for (const [coord, samples] of Object.entries({
+			'0,0': [1, 1, 1, 0.1, 0.2, 0.3, 0.5],
+			'64,36': [0.9803921580314636, 0.019607843831181526, 0, 0.1, 0.2, 0.3, 0.5],
+			'127,71': [1, 1, 1, 0.1, 0.2, 0.3, 0.5],
+			'10,10': [1, 1, 1, 0.1, 0.2, 0.3, 0.5],
+			'20,50': [0.72156864, 0.87058824, 0.25882354, 0.1, 0.2, 0.3, 0.5],
+			'90,15': [0.03137255, 0.96862745, 0.011764706, 0.1, 0.2, 0.3, 0.5],
+		})) {
+			const [x, y] = coord.split(',').map(Number);
+			const idx = (y * 128 + x) * 7;
+			const got = img.data.slice(idx, idx + 7);
+			for (let c = 0; c < 7; c++) {
+				assert.ok(closeEnough(got[c], samples[c]),
+					`shapes_hyper.tif: pixel (${x},${y}) channel ${c} must match ground truth (got ${got[c]}, expected ${samples[c]})`);
+			}
+		}
+		console.log('✅ shapes_hyper.tif (RGB + 4 extra samples, SamplesPerPixel=7) decodes to exact ground-truth pixel values with the correct stride');
 	}
 
 	console.log('\n🎉 All WASM TIFF decoder tests passed.\n');
