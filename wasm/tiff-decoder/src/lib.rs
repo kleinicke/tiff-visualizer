@@ -1431,6 +1431,52 @@ fn apply_orientation<T: Copy>(
     (out, out_w as u32, out_h as u32)
 }
 
+/// Shared post-decode finalization for the decode paths that produce their
+/// own complete `TiffResult` early (`decode_ccitt`, `decode_jpeg_ycbcr`,
+/// `decode_palette`) rather than flowing through `decode_tiff_impl`'s main
+/// pipeline: CMYK->RGB conversion (a no-op unless `photometric_interpretation`
+/// is 5 - none of the three callers ever produce genuine 4-sample CMYK data,
+/// but the call is kept uniform so a future photometric-interpretation fix-up
+/// only needs to be added once) followed by the Orientation tag transform.
+/// `data` is always plain one-byte-per-sample interleaved bytes for these
+/// callers (CCITT/palette are already 8-bit grayscale/RGB, JPEG-YCbCr is
+/// decoded straight to 8-bit RGB), so `bytes_per_pixel` doubles as the sample
+/// stride here, unlike the main pipeline's `data_bytes` where it can be a
+/// packed multi-byte sample width. Returns the finalized buffer plus the
+/// (possibly transposed) width/height and (possibly CMYK-converted) channel
+/// count. `decode_tiff_impl`'s own main pipeline applies the same two
+/// building blocks (`convert_cmyk_to_rgb` / `apply_orientation`) itself
+/// rather than through this helper, since its CMYK step has to run on typed
+/// samples before they are packed into bytes/f32 (see the comment there).
+fn finalize_decode_bytes(
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+    channels: u32,
+    photometric_interpretation: u32,
+    orientation: TiffOrientation,
+) -> (Vec<u8>, u32, u32, u32) {
+    let (data, channels) = if photometric_interpretation == 5 {
+        match convert_cmyk_to_rgb(DecodingResult::U8(data), channels) {
+            (DecodingResult::U8(converted), converted_channels) => (converted, converted_channels),
+            _ => unreachable!("convert_cmyk_to_rgb preserves the U8 variant for U8 input"),
+        }
+    } else {
+        (data, channels)
+    };
+
+    if orientation == TiffOrientation::TopLeft {
+        return (data, width, height, channels);
+    }
+    let pixel_count = (width as usize) * (height as usize);
+    let bytes_per_pixel = if pixel_count > 0 { data.len() / pixel_count } else { 0 };
+    if bytes_per_pixel == 0 {
+        return (data, width, height, channels);
+    }
+    let (oriented, w, h) = apply_orientation(&data, width, height, bytes_per_pixel as u32, orientation);
+    (oriented, w, h, channels)
+}
+
 fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
@@ -1502,11 +1548,11 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
 
     // Orientation tag (274, default 1 = top-left / no transform). Applied as a
     // pixel-buffer transform near the end of this function (after the decode
-    // path produces its final interleaved bytes/floats) so it's shared by
-    // every decode path uniformly; the raw tag value is preserved here for
-    // `extract_all_tags_json` to report in the Metadata panel. Not applied to
-    // the CCITT/JPEG-YCbCr early-return paths below (rare combination with
-    // orientation; out of scope for this pass).
+    // path produces its final interleaved bytes/floats), and via
+    // `finalize_decode_bytes` for the CCITT/JPEG-YCbCr/palette early-return
+    // paths below, so it's shared by every decode path uniformly. The raw tag
+    // value is preserved here for `extract_all_tags_json` to report in the
+    // Metadata panel.
     let orientation = TiffOrientation::from_tag(
         decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1)
     );
@@ -1538,7 +1584,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         return decode_ccitt(
             data, width, height, compression, predictor,
             photometric_interpretation, planar_configuration,
-            &offsets, &counts, fill_order, t4_options, rows_per_strip,
+            &offsets, &counts, fill_order, t4_options, rows_per_strip, orientation,
         );
     }
 
@@ -1547,7 +1593,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     // converted RGB output (a double conversion), which tints grayscale-stored
     // images. Decode the JPEG strips directly with zune-jpeg, which is correct.
     if compression == 7 && photometric_interpretation == 6 {
-        return decode_jpeg_ycbcr(data, &mut decoder, width, height);
+        return decode_jpeg_ycbcr(data, &mut decoder, width, height, orientation);
     }
 
     let decode_start = js_sys::Date::now();
@@ -2681,6 +2727,7 @@ fn decode_jpeg_ycbcr(
     decoder: &mut Decoder<Cursor<&[u8]>>,
     width: u32,
     height: u32,
+    orientation: TiffOrientation,
 ) -> Result<TiffResult, JsValue> {
     use tiff::tags::Tag;
     use zune_jpeg::JpegDecoder;
@@ -2720,6 +2767,13 @@ fn decode_jpeg_ycbcr(
         return Err(JsValue::from_str("JPEG: unexpected channel count"));
     }
 
+    // Data is now decoded RGB (or grayscale), never CMYK, so
+    // `finalize_decode_bytes`'s CMYK step is a no-op here and only the
+    // Orientation transform actually does anything.
+    let photometric_interpretation = if channels == 3 { 2 } else { 1 };
+    let (rgb, width, height, channels) =
+        finalize_decode_bytes(rgb, width, height, channels, photometric_interpretation, orientation);
+
     let (min, max) = compute_stats_u8(&rgb);
     Ok(TiffResult {
         width,
@@ -2729,8 +2783,7 @@ fn decode_jpeg_ycbcr(
         sample_format: 1,
         compression: 7,
         predictor: 1,
-        // Data is now decoded RGB (or grayscale); report it as such.
-        photometric_interpretation: if channels == 3 { 2 } else { 1 },
+        photometric_interpretation,
         planar_configuration: 1,
         rows_per_strip: decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height),
         strip_count: counts.len() as u32,
@@ -2857,6 +2910,11 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
     let tile_count = d.get_tag_u64_vec(Tag::TileByteCounts)
         .map(|counts| counts.len() as u32)
         .unwrap_or(0);
+    // Orientation tag (274): the early-return palette path bypasses
+    // `decode_tiff_impl`'s own Orientation-tag read (it returns before that
+    // point), so read it here off the same patched decoder and finalize
+    // through `finalize_decode_bytes` below like every other path.
+    let orientation = TiffOrientation::from_tag(d.get_tag_u32(Tag::Orientation).unwrap_or(1));
 
     let indices: Vec<usize> = match d.read_image()
         .map_err(|e| JsValue::from_str(&format!("Palette: index decode failed: {}", e)))?
@@ -2878,11 +2936,16 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
         }
     }
 
+    // Palette output is already expanded RGB (photometric_interpretation 2,
+    // never 5/CMYK), so `finalize_decode_bytes`'s CMYK step is a no-op here
+    // and only the Orientation transform actually does anything.
+    let (rgb, width, height, channels) = finalize_decode_bytes(rgb, width, height, 3, 2, orientation);
+
     let (min, max) = compute_stats_u8(&rgb);
     Ok(TiffResult {
         width,
         height,
-        channels: 3,
+        channels,
         bits_per_sample: 8,
         sample_format: 1,
         compression,
@@ -2929,6 +2992,7 @@ fn decode_ccitt(
     fill_order: u32,
     t4_options: u32,
     rows_per_strip: u32,
+    orientation: TiffOrientation,
 ) -> Result<TiffResult, JsValue> {
     use hayro_ccitt::{decode, DecodeSettings, DecoderContext, EncodingMode, Decoder as CcittDecoder};
 
@@ -3031,12 +3095,18 @@ fn decode_ccitt(
     let mut pixels = collector.pixels;
     pixels.resize(expected, white_pel_value);
 
+    // CCITT data is always bilevel grayscale (photometric_interpretation is 0
+    // or 1 here, never 5), so `finalize_decode_bytes`'s CMYK step is a no-op
+    // and only the Orientation transform actually does anything.
+    let (pixels, width, height, channels) =
+        finalize_decode_bytes(pixels, width, height, 1, photometric_interpretation, orientation);
+
     let (min, max) = compute_stats_u8(&pixels);
 
     Ok(TiffResult {
         width,
         height,
-        channels: 1,
+        channels,
         bits_per_sample: 8,
         sample_format: 1,
         compression,

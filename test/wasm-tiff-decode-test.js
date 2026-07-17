@@ -436,6 +436,54 @@ async function main() {
 		console.log('✅ Orientation tag (274) values 1-8: every orientation normalizes to the identical visual pixel layout');
 	}
 
+	// 11b. The Orientation tag must also be honored by the CCITT and
+	//      JPEG-YCbCr early-return decode paths (decode_ccitt /
+	//      decode_jpeg_ycbcr in wasm/tiff-decoder), which used to bypass the
+	//      main pipeline's Orientation handling entirely - an oriented fax or
+	//      JPEG-in-TIFF would decode un-rotated. `ccitt_g4_orientation4.tif`
+	//      and `jpeg_ycbcr_color_orientation4.tif` are byte-for-byte copies of
+	//      their untagged originals with an Orientation=4 (bottom-left) tag
+	//      spliced in via `tiffset -s 274 4`, so no on-disk pixel data
+	//      changed - only the decoder's interpretation should. Orientation 4
+	//      is a pure vertical flip (row 0 <-> row H-1, no transpose), so the
+	//      expected result is computed by flipping the untagged decode here,
+	//      making the assertion self-verifying without external ground truth.
+	function flipVertical(data, width, height, channels) {
+		const out = new Array(data.length);
+		for (let y = 0; y < height; y++) {
+			const srcRow = (height - 1 - y) * width * channels;
+			const dstRow = y * width * channels;
+			for (let i = 0; i < width * channels; i++) {
+				out[dstRow + i] = data[srcRow + i];
+			}
+		}
+		return out;
+	}
+	{
+		const untagged = decode(mod, 'ccitt_g4.tif');
+		const tagged = decode(mod, 'ccitt_g4_orientation4.tif');
+		assert.strictEqual(tagged.compression, 4, 'ccitt_g4_orientation4.tif: compression tag');
+		assert.strictEqual(tagged.width, untagged.width, 'ccitt_g4_orientation4.tif: width must not be swapped (orientation 4 does not transpose)');
+		assert.strictEqual(tagged.height, untagged.height, 'ccitt_g4_orientation4.tif: height must not be swapped');
+		assert.strictEqual(tagged.channels, untagged.channels, 'ccitt_g4_orientation4.tif: channels');
+		const expected = flipVertical(untagged.data, untagged.width, untagged.height, untagged.channels);
+		assert.deepStrictEqual(tagged.data, expected,
+			'ccitt_g4_orientation4.tif: Orientation=4 must vertically flip the CCITT-decoded pixels');
+		console.log('✅ CCITT (compression 4) honors the Orientation tag: orientation 4 vertically flips the decoded fax image');
+	}
+	{
+		const untagged = decode(mod, 'jpeg_ycbcr_color.tif');
+		const tagged = decode(mod, 'jpeg_ycbcr_color_orientation4.tif');
+		assert.strictEqual(tagged.compression, 7, 'jpeg_ycbcr_color_orientation4.tif: compression tag');
+		assert.strictEqual(tagged.width, untagged.width, 'jpeg_ycbcr_color_orientation4.tif: width must not be swapped (orientation 4 does not transpose)');
+		assert.strictEqual(tagged.height, untagged.height, 'jpeg_ycbcr_color_orientation4.tif: height must not be swapped');
+		assert.strictEqual(tagged.channels, untagged.channels, 'jpeg_ycbcr_color_orientation4.tif: channels');
+		const expected = flipVertical(untagged.data, untagged.width, untagged.height, untagged.channels);
+		assert.deepStrictEqual(tagged.data, expected,
+			'jpeg_ycbcr_color_orientation4.tif: Orientation=4 must vertically flip the decoded JPEG-YCbCr pixels');
+		console.log('✅ JPEG-YCbCr (photometric 6) honors the Orientation tag: orientation 4 vertically flips the decoded image');
+	}
+
 	// 12. BigTIFF (8-byte offsets) regression guards: an uncompressed BigTIFF
 	//     and a Deflate-compressed tiled BigTIFF must decode with the correct
 	//     dimensions and exact pixel values. Ground truth extracted
