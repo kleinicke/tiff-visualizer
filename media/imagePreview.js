@@ -2,7 +2,7 @@
 "use strict";
 
 import { SettingsManager } from './modules/settings-manager.js';
-import { TiffProcessor, tiffFormatTypeFor, tiffTypeMax } from './modules/tiff-processor.js';
+import { TiffProcessor, tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-processor.js';
 import { ExrProcessor } from './modules/exr-processor.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
@@ -1166,10 +1166,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 	function tiffRawToLayer(raw, name, uri) {
 		if (!raw || !raw.data || !raw.ifd) { return null; }
 		const ifd = raw.ifd;
-		// Signed integer samples (t339 === 2) are carried in a Float32Array too
-		// (see tiff-processor.js pickTiffArrayCtor), so they route through the
-		// same float compositing path as true IEEE float data.
-		const isFloat = ifd.t339 === 3 || ifd.t339 === 2;
+		// Signed integer samples and wide (>16-bit) unsigned integer samples
+		// (t339 === 2, or bitsPerSample > 16) are carried in a Float32Array too
+		// (see tiff-processor.js tiffNeedsFloatCarrier/pickTiffArrayCtor), so
+		// they route through the same float compositing path as true IEEE
+		// float data.
+		const isFloat = tiffNeedsFloatCarrier(ifd.t339, ifd.t258);
 		const typeMax = tiffTypeMax(ifd.t339, ifd.t258);
 		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, name, uri };
 	}
@@ -2137,9 +2139,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 				const format = ifd.t339; // SampleFormat: 1=uint, 2=int, 3=float
 				const bitsPerSample = ifd.t258 || 8;
 				const samples = ifd.t277 || 1;
-				// Signed ints are carried as Float32Array too (see tiff-processor.js
-				// pickTiffArrayCtor), so they're binned through the float path.
-				const isFloat = format === 3 || format === 2;
+				// Signed ints and wide (>16-bit) unsigned ints are carried as
+				// Float32Array too (see tiff-processor.js
+				// tiffNeedsFloatCarrier/pickTiffArrayCtor), so they're binned
+				// through the float path.
+				const isFloat = tiffNeedsFloatCarrier(format, bitsPerSample);
 				const typeMax = tiffTypeMax(format, bitsPerSample);
 
 				// Get stats if available
@@ -3055,7 +3059,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			}));
 
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
-			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
+			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
 			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
 				menu.appendChild(createSeparator());
 				menu.appendChild(createMenuItem('Open as Point Cloud', () => {
@@ -3463,7 +3467,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 						samplesPerPixel,
 						bitsPerSample,
 						planarConfig: tiffData.ifd?.t284 ?? 1,
-						formatType: tiffFormatTypeFor(sampleFormatValue),
+						formatType: tiffFormatTypeFor(sampleFormatValue, bitsPerSample),
 						...(raw.formatInfo || {}),
 						isInitialLoad: true,
 						decodedWith: 'decoded-cache'

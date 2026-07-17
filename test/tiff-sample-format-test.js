@@ -13,6 +13,12 @@
  *      plain integers.
  *   3. A GDAL_NODATA sentinel (tag 42113, e.g. "-32768") must be excluded
  *      from auto-normalize min/max statistics without altering pixel values.
+ *   4. Wide unsigned-integer samples (bitsPerSample > 16, e.g. uint32) must
+ *      also be carried in a Float32Array — a Uint16Array carrier wraps
+ *      values above 65535 mod 65536 — must be routed to the 'tiff-int-wide'
+ *      per-format settings key (auto-normalize defaults, since gamma mode's
+ *      full [0, 2^32-1] range would render typical data essentially black),
+ *      and pixel inspection must keep showing plain integers.
  *
  * Fixtures:
  *   - test-samples/shapes_lzw_12bps.tif — 12-bit chunky LZW RGB (values up
@@ -35,6 +41,7 @@ const path = require('path');
 const samplesDir = path.join(__dirname, '..', 'test-samples');
 const twelveBitFixture = path.join(samplesDir, 'shapes_lzw_12bps.tif');
 const syntheticInt16Path = 'synthetic-int16-nodata.tif';
+const syntheticUint32Path = 'synthetic-uint32.tif';
 
 // ---------------------------------------------------------------------------
 // Browser shims tiff-processor.js needs at import/construct/render time.
@@ -135,6 +142,67 @@ function makeInt16Tiff() {
 }
 
 /**
+ * Build a minimal classic little-endian TIFF: 4x3 grayscale, uncompressed
+ * uint32 (BitsPerSample=32, SampleFormat=1), one strip.
+ * Values: 0, 1, 2 plus one value above the 16-bit range (70000, which a
+ * Uint16Array carrier would wrap mod 65536) and one near u32::MAX
+ * (4294967040 = 0xFFFFFF00 - chosen, instead of the true max 4294967295,
+ * because it has 8 trailing zero bits and so is one of the still-exactly-
+ * representable-in-float32 values above 2^24; float32 only carries 24
+ * mantissa bits, so an odd value like 4294967295 itself would round to
+ * 4294967296 on the Float32Array carrier - an accepted display-only
+ * approximation documented in tiffNeedsFloatCarrier, not something this
+ * "survives exactly" test should exercise).
+ * @returns {{buffer: ArrayBuffer, pixels: number[], width: number, height: number}}
+ */
+function makeUint32Tiff() {
+	const width = 4, height = 3;
+	const pixels = [
+		0, 1, 2, 0,
+		1, 70000, 2, 1,
+		4294967040, 0, 1, 3000000000,
+	];
+	const pixelBytes = width * height * 4;
+	const entries = 10;
+	const ifdOffset = 8 + pixelBytes;
+	const buf = Buffer.alloc(ifdOffset + 2 + entries * 12 + 4);
+
+	buf.write('II', 0, 'ascii');
+	buf.writeUInt16LE(42, 2);
+	buf.writeUInt32LE(ifdOffset, 4);
+
+	for (let i = 0; i < pixels.length; i++) {
+		buf.writeUInt32LE(pixels[i], 8 + i * 4);
+	}
+
+	buf.writeUInt16LE(entries, ifdOffset);
+	let entry = ifdOffset + 2;
+	const writeEntry = (tag, type, count, value) => {
+		buf.writeUInt16LE(tag, entry);
+		buf.writeUInt16LE(type, entry + 2);
+		buf.writeUInt32LE(count, entry + 4);
+		buf.writeUInt32LE(value, entry + 8);
+		entry += 12;
+	};
+	writeEntry(256, 3, 1, width);              // ImageWidth (SHORT)
+	writeEntry(257, 3, 1, height);             // ImageLength (SHORT)
+	writeEntry(258, 3, 1, 32);                 // BitsPerSample (SHORT)
+	writeEntry(259, 3, 1, 1);                  // Compression: none
+	writeEntry(262, 3, 1, 1);                  // Photometric: MinIsBlack
+	writeEntry(273, 4, 1, 8);                  // StripOffsets (LONG)
+	writeEntry(277, 3, 1, 1);                  // SamplesPerPixel
+	writeEntry(278, 3, 1, height);             // RowsPerStrip
+	writeEntry(279, 4, 1, pixelBytes);         // StripByteCounts (LONG)
+	writeEntry(339, 3, 1, 1);                  // SampleFormat: unsigned int
+	buf.writeUInt32LE(0, entry);               // next IFD: none
+
+	return {
+		buffer: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength),
+		pixels, width, height,
+	};
+}
+
+/**
  * TiffProcessor wired for node: WASM decode disabled (forces the geotiff.js
  * fallback), no extension host unless a vscode stub is passed.
  * @param {any} TiffProcessor
@@ -176,7 +244,7 @@ async function main() {
 
 	console.log('🧪 Running TIFF sample-format tests...\n');
 
-	const { TiffProcessor, tiffTypeMax, tiffFormatTypeFor } = await import(
+	const { TiffProcessor, tiffTypeMax, tiffFormatTypeFor, tiffNeedsFloatCarrier } = await import(
 		path.join('..', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
 	);
 	const { parseGdalNodata } = await import(
@@ -196,6 +264,23 @@ async function main() {
 	assert.strictEqual(tiffFormatTypeFor(2), 'tiff-int-signed');
 	assert.strictEqual(tiffFormatTypeFor(3), 'tiff-float');
 	console.log('✅ tiffTypeMax / tiffFormatTypeFor: 2^bits - 1 per depth, signed → tiff-int-signed');
+
+	// Wide (>16-bit) unsigned integer: its own routing key ('tiff-int-wide'),
+	// full-range typeMax of 2^32-1, and a Float32Array carrier requirement
+	// (tiffNeedsFloatCarrier) alongside signed int and float.
+	assert.strictEqual(tiffTypeMax(1, 32), 4294967295);
+	assert.strictEqual(tiffFormatTypeFor(1, 8), 'tiff-int', '<=16-bit unsigned stays tiff-int regardless of bitsPerSample param');
+	assert.strictEqual(tiffFormatTypeFor(1, 16), 'tiff-int', '16-bit unsigned is not "wide"');
+	assert.strictEqual(tiffFormatTypeFor(1, 32), 'tiff-int-wide');
+	assert.strictEqual(tiffFormatTypeFor(1), 'tiff-int', 'bitsPerSample omitted defaults to the non-wide bucket');
+	assert.strictEqual(tiffFormatTypeFor(2, 32), 'tiff-int-signed', 'signed always wins over wide, regardless of bit depth');
+	assert.strictEqual(tiffFormatTypeFor(3, 32), 'tiff-float', 'float always wins over wide, regardless of bit depth');
+	assert.strictEqual(tiffNeedsFloatCarrier(1, 8), false);
+	assert.strictEqual(tiffNeedsFloatCarrier(1, 16), false);
+	assert.strictEqual(tiffNeedsFloatCarrier(1, 32), true, 'unsigned >16-bit needs a Float32Array carrier');
+	assert.strictEqual(tiffNeedsFloatCarrier(2, 16), true, 'signed always needs a Float32Array carrier');
+	assert.strictEqual(tiffNeedsFloatCarrier(3, 32), true, 'float always needs a Float32Array carrier');
+	console.log('✅ tiffTypeMax / tiffFormatTypeFor / tiffNeedsFloatCarrier: wide (>16-bit) unsigned int → tiff-int-wide, Float32Array carrier');
 
 	// GDAL_NODATA extraction from both decoder paths' tag spellings:
 	// geotiff.js fileDirectory key, the Rust tiff crate's named variant, and
@@ -341,6 +426,93 @@ async function main() {
 		assert.strictEqual(imageData.data[5 * 4], 0, 'value -5 renders black (not wrapped to 65531)');
 		assert.strictEqual(p.getColorAtPixel(1, 1, synthetic.width, synthetic.height), '-5');
 		console.log('✅ Signed int16 (WASM path): Float32 data reused, nodata-tainted stats recomputed');
+	}
+
+	// --- 4. Wide unsigned integer (uint32) via the geotiff.js path --------
+	{
+		const synthetic = makeUint32Tiff();
+		syntheticFiles.set(syntheticUint32Path, synthetic.buffer);
+
+		/** @type {any[]} */
+		const messages = [];
+		const vscodeStub = { postMessage: (msg) => messages.push(msg) };
+		const p = makeProcessor(TiffProcessor, autoNormalizeSettings, vscodeStub);
+		await p.processTiff(syntheticUint32Path);
+
+		// Wide unsigned int must be routed to the 'tiff-int-wide' per-format
+		// settings key (auto-normalize defaults), not gamma-mode 'tiff-int' -
+		// gamma mode's full [0, 2^32-1] range would render this data black.
+		const formatInfo = messages.find(m => m.type === 'formatInfo');
+		assert.ok(formatInfo, 'formatInfo must be posted on initial load');
+		assert.strictEqual(formatInfo.value.formatType, 'tiff-int-wide');
+		assert.strictEqual(formatInfo.value.sampleFormat, 1);
+		assert.strictEqual(formatInfo.value.bitsPerSample, 32);
+		console.log('✅ Wide uint32: formatType is tiff-int-wide');
+
+		// Values above 65535 must survive in the Float32Array carrier (a
+		// Uint16Array carrier would wrap 70000 mod 65536 to 4464).
+		const data = p.rawTiffData.data;
+		assert.ok(data instanceof Float32Array,
+			`wide unsigned samples need a Float32Array carrier, got ${data.constructor.name}`);
+		assert.deepStrictEqual(Array.from(data), synthetic.pixels,
+			'uint32 pixel values must survive decode + interleave exactly');
+		console.log('✅ Wide uint32: Float32Array carrier, values above 65535 intact (no 16-bit wrap)');
+
+		const imageData = await p.performDeferredRender();
+		assert.deepStrictEqual(p._lastStatistics, { min: 0, max: 4294967040 },
+			'auto-normalize stats must reflect the true uint32 data range');
+
+		// Rendered intensities: max value (4294967040) maps to 255, the
+		// minimum (0) to 0.
+		const intensityAt = (i) => imageData.data[i * 4];
+		assert.strictEqual(intensityAt(8), 255, 'max uint32 value renders full white');
+		assert.strictEqual(intensityAt(0), 0, 'zero value renders black');
+		console.log('✅ Wide uint32: auto-normalize stats span the true data range, renders correctly');
+
+		// Pixel inspection keeps plain integer formatting (no decimals).
+		assert.strictEqual(p.getColorAtPixel(1, 1, synthetic.width, synthetic.height), '70000');
+		assert.strictEqual(p.getColorAtPixel(0, 2, synthetic.width, synthetic.height), '4294967040');
+		console.log('✅ Wide uint32: pixel inspection shows plain integers');
+	}
+
+	// --- 5. Wide unsigned integer (uint32) via the WASM decoder path ------
+	// Mirrors section 3 (signed int16 via WASM): the Rust decoder returns the
+	// wide unsigned samples as interleaved Float32 data directly (see
+	// wasm/tiff-decoder/src/lib.rs's get_data_as_f32 32-bit branch), and the
+	// processor must reuse that Float32Array as-is rather than re-interleaving
+	// it into a Uint16Array (which would wrap every value above 65535).
+	{
+		const synthetic = makeUint32Tiff();
+		const wasmResult = {
+			width: synthetic.width,
+			height: synthetic.height,
+			channels: 1,
+			bitsPerSample: 32,
+			sampleFormat: 1,
+			compression: 1,
+			predictor: 1,
+			photometricInterpretation: 1,
+			planarConfiguration: 1,
+			data: new Float32Array(synthetic.pixels),
+			min: 0,
+			max: 4294967040,
+			allTagsJson: '[]',
+			decodedWith: 'wasm (stub)',
+		};
+		wasmResult.rasters = [wasmResult.data];
+
+		const p = makeProcessor(TiffProcessor, autoNormalizeSettings);
+		p._wasmAvailable = true;
+		p._wasmProcessor = { init: async () => true, decode: async () => wasmResult };
+		syntheticFiles.set(syntheticUint32Path, synthetic.buffer);
+		const { imageData } = await p.processTiff(syntheticUint32Path);
+
+		assert.strictEqual(p.rawTiffData.data, wasmResult.data,
+			'the WASM path must keep the decoded Float32Array as the stored carrier');
+		assert.strictEqual(imageData.data[8 * 4], 255, 'max uint32 value renders full white');
+		assert.strictEqual(imageData.data[0], 0, 'zero value renders black');
+		assert.strictEqual(p.getColorAtPixel(1, 1, synthetic.width, synthetic.height), '70000');
+		console.log('✅ Wide uint32 (WASM path): Float32 data reused as-is, no 16-bit wrap');
 	}
 
 	console.log('\n🎉 All TIFF sample-format tests passed.\n');

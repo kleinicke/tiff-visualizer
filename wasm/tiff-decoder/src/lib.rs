@@ -1279,6 +1279,158 @@ fn decoding_result_len(result: &DecodingResult) -> usize {
     }
 }
 
+/// Naive, uncalibrated CMYK -> RGB conversion (no ICC profile applied):
+/// `R = (max-C)*(max-K)/max`, and likewise for G/B from M/Y. `max` is the
+/// full-scale value for the sample's numeric range (2^bits-1 for integer
+/// data, 1.0 for float data already stored in a normalized 0..1 range).
+fn cmyk_to_rgb_f64(c: f64, m: f64, y: f64, k: f64, max: f64) -> (f64, f64, f64) {
+    if max <= 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+    let r = (max - c) * (max - k) / max;
+    let g = (max - m) * (max - k) / max;
+    let b = (max - y) * (max - k) / max;
+    (r, g, b)
+}
+
+/// Convert CMYK (4 samples/pixel) or CMYKA (5 samples/pixel) interleaved
+/// pixel data to RGB / RGBA, sharing the same conversion regardless of which
+/// decode path (`try_decode_uncompressed_strips`, `try_decode_general_strips_tiles`,
+/// or the `decoder.read_image()` fallback) produced `result` - all of them
+/// hand back raw, unconverted C,M,Y,K(,A) samples. A CMYKA alpha sample is
+/// passed through unchanged (not treated as a fifth color channel). Sample
+/// kinds this doesn't have a defined conversion for (signed integers, 64-bit
+/// float/int) are passed through unconverted - CMYK TIFFs in practice are
+/// unsigned-integer or float32.
+fn convert_cmyk_to_rgb(result: DecodingResult, channels: u32) -> (DecodingResult, u32) {
+    if channels != 4 && channels != 5 {
+        return (result, channels);
+    }
+    let has_alpha = channels == 5;
+    let out_channels = if has_alpha { 4 } else { 3 };
+    let stride = channels as usize;
+
+    macro_rules! convert_int {
+        ($data:expr, $max:expr) => {{
+            let max = $max as f64;
+            let pixel_count = $data.len() / stride;
+            let mut out = Vec::with_capacity(pixel_count * out_channels as usize);
+            for px in $data.chunks_exact(stride) {
+                let (r, g, b) = cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, max);
+                out.push(r.round().clamp(0.0, max) as _);
+                out.push(g.round().clamp(0.0, max) as _);
+                out.push(b.round().clamp(0.0, max) as _);
+                if has_alpha {
+                    out.push(px[4]);
+                }
+            }
+            out
+        }};
+    }
+
+    match result {
+        DecodingResult::U8(data) => (DecodingResult::U8(convert_int!(data, u8::MAX)), out_channels),
+        DecodingResult::U16(data) => (DecodingResult::U16(convert_int!(data, u16::MAX)), out_channels),
+        DecodingResult::U32(data) => (DecodingResult::U32(convert_int!(data, u32::MAX)), out_channels),
+        DecodingResult::F32(data) => {
+            let pixel_count = data.len() / stride;
+            let mut out = Vec::with_capacity(pixel_count * out_channels as usize);
+            for px in data.chunks_exact(stride) {
+                let (r, g, b) = cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, 1.0);
+                out.push(r as f32);
+                out.push(g as f32);
+                out.push(b as f32);
+                if has_alpha {
+                    out.push(px[4]);
+                }
+            }
+            (DecodingResult::F32(out), out_channels)
+        }
+        // No defined CMYK conversion for these sample kinds (signed data
+        // doesn't fit the [0, max] ink-coverage model, and 64-bit CMYK TIFFs
+        // aren't a thing in practice) - leave the raw samples/channel count
+        // untouched rather than silently mis-converting them.
+        other => (other, channels),
+    }
+}
+
+/// Orientation tag (274) values 2-8 the TIFF spec defines beyond the default
+/// (1, top-left/no transform). Rows/columns below assume the interleaved
+/// buffer's natural row-major layout (row 0 first, left-to-right).
+#[derive(Clone, Copy, PartialEq)]
+enum TiffOrientation {
+    TopLeft = 1,
+    TopRight = 2,
+    BottomRight = 3,
+    BottomLeft = 4,
+    LeftTop = 5,
+    RightTop = 6,
+    RightBottom = 7,
+    LeftBottom = 8,
+}
+
+impl TiffOrientation {
+    fn from_tag(value: u32) -> Self {
+        match value {
+            2 => TiffOrientation::TopRight,
+            3 => TiffOrientation::BottomRight,
+            4 => TiffOrientation::BottomLeft,
+            5 => TiffOrientation::LeftTop,
+            6 => TiffOrientation::RightTop,
+            7 => TiffOrientation::RightBottom,
+            8 => TiffOrientation::LeftBottom,
+            _ => TiffOrientation::TopLeft,
+        }
+    }
+
+    /// True for the transpose variants (5-8), which swap width and height.
+    fn transposes(self) -> bool {
+        matches!(
+            self,
+            TiffOrientation::LeftTop | TiffOrientation::RightTop | TiffOrientation::RightBottom | TiffOrientation::LeftBottom
+        )
+    }
+}
+
+/// Apply a TIFF Orientation tag transform to an interleaved pixel buffer,
+/// generic over sample type (`T: Copy`) and channel count, so it works for
+/// every `DecodingResult` variant (bytes, u16, f32, ...) without duplicating
+/// the geometry per type. Returns the (possibly swapped) output width/height
+/// alongside the transformed buffer. `TopLeft` (the default / no tag) is a
+/// no-op handled by the caller before this is invoked.
+fn apply_orientation<T: Copy>(
+    data: &[T],
+    width: u32,
+    height: u32,
+    channels: u32,
+    orientation: TiffOrientation,
+) -> (Vec<T>, u32, u32) {
+    let (w, h, c) = (width as usize, height as usize, channels as usize);
+    let (out_w, out_h) = if orientation.transposes() { (h, w) } else { (w, h) };
+    let mut out = Vec::with_capacity(w * h * c);
+    // SAFETY-free: just push in the destination's row-major order, reading
+    // whichever source pixel maps to that destination position.
+    for out_y in 0..out_h {
+        for out_x in 0..out_w {
+            // For each orientation, (src_x, src_y) is the source pixel that
+            // belongs at destination (out_x, out_y).
+            let (src_x, src_y) = match orientation {
+                TiffOrientation::TopLeft => (out_x, out_y),
+                TiffOrientation::TopRight => (w - 1 - out_x, out_y),
+                TiffOrientation::BottomRight => (w - 1 - out_x, h - 1 - out_y),
+                TiffOrientation::BottomLeft => (out_x, h - 1 - out_y),
+                TiffOrientation::LeftTop => (out_y, out_x),
+                TiffOrientation::RightTop => (out_y, h - 1 - out_x),
+                TiffOrientation::RightBottom => (w - 1 - out_y, h - 1 - out_x),
+                TiffOrientation::LeftBottom => (w - 1 - out_y, out_x),
+            };
+            let src_index = (src_y * w + src_x) * c;
+            out.extend_from_slice(&data[src_index..src_index + c]);
+        }
+    }
+    (out, out_w as u32, out_h as u32)
+}
+
 fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
@@ -1348,6 +1500,17 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     let planar_configuration = decoder.get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1);
 
+    // Orientation tag (274, default 1 = top-left / no transform). Applied as a
+    // pixel-buffer transform near the end of this function (after the decode
+    // path produces its final interleaved bytes/floats) so it's shared by
+    // every decode path uniformly; the raw tag value is preserved here for
+    // `extract_all_tags_json` to report in the Metadata panel. Not applied to
+    // the CCITT/JPEG-YCbCr early-return paths below (rare combination with
+    // orientation; out of scope for this pass).
+    let orientation = TiffOrientation::from_tag(
+        decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1)
+    );
+
     let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
     let strip_byte_counts = decoder.get_tag_u64_vec(tiff::tags::Tag::StripByteCounts).unwrap_or_default();
     let strip_count = strip_byte_counts.len() as u32;
@@ -1395,7 +1558,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     // into an uncompressed TIFF and handed back to the tiff crate, which still
     // performs predictor un-application and type/endianness handling.
     let mut direct_decode = false;
-    let decode_result = if compression == 50000 {
+    let mut decode_result = if compression == 50000 {
         decode_zstd(data, &mut decoder)?
     } else if let Some(result) = try_decode_general_strips_tiles(
         data,
@@ -1464,13 +1627,29 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         }
     }
 
+    // CMYK (PhotometricInterpretation 5): both direct-decode paths above and
+    // the `read_image()` fallback hand back raw C,M,Y,K (or C,M,Y,K,A)
+    // samples untouched. The webview render pipeline only understands
+    // grayscale/RGB(A), so without this it treats 4-sample CMYK as RGBA -
+    // wrong colors, and the K (black) channel misread as alpha (dark areas
+    // turn transparent). Convert to RGB(A) once here, shared by every decode
+    // path, and re-derive `channels` from the conversion's actual output
+    // rather than assuming 3. `photometric_interpretation` reported in
+    // TiffResult/metadata below is intentionally left as the raw tag value
+    // (5) - only the pixel data changes.
+    if photometric_interpretation == 5 {
+        let (converted, converted_channels) = convert_cmyk_to_rgb(decode_result, channels);
+        decode_result = converted;
+        channels = converted_channels;
+    }
+
     let decompress_time = js_sys::Date::now() - decode_start;
     let convert_start = js_sys::Date::now();
     let mut stats_time = 0.0;
     let mut pack_time = 0.0;
 
     // Determine sample format and convert data to bytes
-    let (data_bytes, data_f32, sample_format, min_val, max_val) = match decode_result {
+    let (mut data_bytes, mut data_f32, sample_format, min_val, max_val) = match decode_result {
         DecodingResult::U8(data) => {
             if bits_per_sample == 1 {
                 // Uncompressed (or LZW/PackBits/Deflate) bilevel images are
@@ -1663,6 +1842,34 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
             let max = if compute_stats { max_val as f64 } else { f64::NAN };
             (Vec::new(), values, 3u32, min, max)
         }
+    };
+
+    // Orientation tag (274): apply here, once, to whichever final buffer the
+    // decode path produced (bytes for integer samples, f32 for float) - this
+    // is after bilevel unpacking above so every buffer at this point is a
+    // plain one-sample-per-element interleaved raster, regardless of which
+    // decode path produced it. `bytes_per_pixel` is measured from the actual
+    // buffer rather than trusted from `bits_per_sample`, since sub-16-bit
+    // direct-decoded samples (9-15 bit) are packed as 2 bytes/sample even
+    // though `bits_per_sample` reports the true (smaller) bit depth.
+    let (width, height) = if orientation == TiffOrientation::TopLeft {
+        (width, height)
+    } else if !data_bytes.is_empty() {
+        let pixel_count = (width as usize) * (height as usize);
+        let bytes_per_pixel = if pixel_count > 0 { data_bytes.len() / pixel_count } else { 0 };
+        if bytes_per_pixel > 0 {
+            let (oriented, w, h) = apply_orientation(&data_bytes, width, height, bytes_per_pixel as u32, orientation);
+            data_bytes = oriented;
+            (w, h)
+        } else {
+            (width, height)
+        }
+    } else if !data_f32.is_empty() {
+        let (oriented, w, h) = apply_orientation(&data_f32, width, height, channels, orientation);
+        data_f32 = oriented;
+        (w, h)
+    } else {
+        (width, height)
     };
 
     let convert_time = js_sys::Date::now() - convert_start;

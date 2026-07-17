@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'raw';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'raw';
 
 export interface ImageStats {
 	min: number;
@@ -341,11 +341,16 @@ export class AppStateManager {
 			defaults.normalization.min = 0;
 			defaults.normalization.max = 1;
 		}
-		// Rule 3: Float data (NPY) and signed-integer TIFFs → Auto-normalize to
-		// actual data range. (Scientific data can have any range — signed data
-		// especially never fits gamma mode's unsigned [0, typeMax] assumption,
-		// e.g. an int16 elevation map with values 0..2 would render black.)
-		else if (format === 'npy-float' || format === 'tiff-int-signed') {
+		// Rule 3: Float data (NPY), signed-integer TIFFs, and wide (>16-bit)
+		// unsigned-integer TIFFs (e.g. uint32) → Auto-normalize to actual data
+		// range. (Scientific data can have any range — signed data especially
+		// never fits gamma mode's unsigned [0, typeMax] assumption, e.g. an
+		// int16 elevation map with values 0..2 would render black. Wide
+		// unsigned data hits the same problem from the other direction:
+		// gamma mode's full range there is [0, 2^32-1], and typical data,
+		// which rarely spans anywhere near that, would render essentially
+		// black too.)
+		else if (format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

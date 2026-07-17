@@ -31,19 +31,36 @@ function primarySampleFormat(sampleFormat) {
 }
 
 /**
- * Typed array used to carry interleaved TIFF pixel data. IEEE float (3) and
- * signed integer (2) samples are both carried as Float32Array — signed
- * values would corrupt an unsigned typed array (e.g. -1 wraps to
- * 255/65535). Unsigned integer samples (1) use the smallest unsigned array
- * that can hold the full bit depth without truncating (e.g. 12-bit needs
- * Uint16Array, not Uint8Array, or values above 255 wrap mod 256).
+ * Whether a TIFF sample needs a Float32Array carrier end-to-end rather than
+ * an unsigned integer typed array. True for IEEE float (3) and signed
+ * integer (2) samples — an unsigned Uint16/Uint8 carrier can't represent
+ * negative values (e.g. -1 wraps to 255/65535) — and also for unsigned (1)
+ * samples wider than 16 bits (e.g. uint32), since there's no unsigned
+ * TypedArray between Uint16Array and Float64Array that JS typed-array-backed
+ * rendering/compositing code here understands. Float32 only represents
+ * integers exactly up to 2^24 (16,777,216); values above that lose precision
+ * once carried this way, which is accepted as a display-only approximation.
+ * @param {number|number[]} sampleFormat
+ * @param {number} bitsPerSample
+ * @returns {boolean}
+ */
+export function tiffNeedsFloatCarrier(sampleFormat, bitsPerSample) {
+	const format = primarySampleFormat(sampleFormat);
+	return format === 3 || format === 2 || bitsPerSample > 16;
+}
+
+/**
+ * Typed array used to carry interleaved TIFF pixel data. See
+ * `tiffNeedsFloatCarrier` for which sample kinds require a Float32Array
+ * carrier. Remaining unsigned integer samples (<=16 bit) use the smallest
+ * unsigned array that can hold the full bit depth without truncating (e.g.
+ * 12-bit needs Uint16Array, not Uint8Array, or values above 255 wrap mod 256).
  * @param {number|number[]} sampleFormat
  * @param {number} bitsPerSample
  * @returns {Float32ArrayConstructor|Uint16ArrayConstructor|Uint8ArrayConstructor}
  */
 function pickTiffArrayCtor(sampleFormat, bitsPerSample) {
-	const format = primarySampleFormat(sampleFormat);
-	if (format === 3 || format === 2) { return Float32Array; }
+	if (tiffNeedsFloatCarrier(sampleFormat, bitsPerSample)) { return Float32Array; }
 	return bitsPerSample > 8 ? Uint16Array : Uint8Array;
 }
 
@@ -65,18 +82,24 @@ export function tiffTypeMax(sampleFormat, bitsPerSample) {
 
 /**
  * Per-format settings key (AppStateManager.ImageFormatType) for a TIFF's
- * SampleFormat. IEEE float and unsigned integer keep their existing
- * defaults (float range controls / gamma mode over the full type range).
- * Signed integer gets its own key defaulting to data-driven auto-normalize,
- * since signed scientific data (e.g. a depth map around an arbitrary zero)
- * rarely fits gamma mode's [0, typeMax] assumption.
+ * SampleFormat/bit depth. IEEE float and <=16-bit unsigned integer keep
+ * their existing defaults (float range controls / gamma mode over the full
+ * type range). Signed integer gets its own key defaulting to data-driven
+ * auto-normalize, since signed scientific data (e.g. a depth map around an
+ * arbitrary zero) rarely fits gamma mode's [0, typeMax] assumption. Wide
+ * (>16-bit) unsigned integer — e.g. uint32 — gets its own key for the same
+ * reason from the other direction: gamma mode's full range there is
+ * [0, 2^32-1], and typical data (which rarely spans anywhere near that) would
+ * render essentially black.
  * @param {number|number[]} sampleFormat
- * @returns {'tiff-float'|'tiff-int-signed'|'tiff-int'}
+ * @param {number} [bitsPerSample]
+ * @returns {'tiff-float'|'tiff-int-signed'|'tiff-int-wide'|'tiff-int'}
  */
-export function tiffFormatTypeFor(sampleFormat) {
+export function tiffFormatTypeFor(sampleFormat, bitsPerSample) {
 	const format = primarySampleFormat(sampleFormat);
 	if (format === 3) { return 'tiff-float'; }
 	if (format === 2) { return 'tiff-int-signed'; }
+	if ((bitsPerSample || 0) > 16) { return 'tiff-int-wide'; }
 	return 'tiff-int';
 }
 
@@ -407,7 +430,7 @@ export class TiffProcessor {
 
 					// Send format information to VS Code
 					if (this.vscode && this._isInitialLoad) {
-						const formatType = tiffFormatTypeFor(sampleFormat);
+						const formatType = tiffFormatTypeFor(sampleFormat, bitsPerSample);
 						this._pendingRenderData = { image, rasters };
 
 						this.vscode.postMessage({
@@ -528,7 +551,7 @@ export class TiffProcessor {
 			// Send format information to VS Code BEFORE rendering
 			// This allows the extension to apply format-specific settings first
 			if (this.vscode && this._isInitialLoad) {
-				const formatType = tiffFormatTypeFor(sampleFormat);
+				const formatType = tiffFormatTypeFor(sampleFormat, bitsPerSample);
 				this._pendingRenderData = { image, rasters };
 
 				this.vscode.postMessage({
@@ -586,11 +609,12 @@ export class TiffProcessor {
 		const channels = rastersCopy.length;
 
 		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
-		const isSignedInt = !showNorm && (Array.isArray(sampleFormat) ? sampleFormat.includes(2) : sampleFormat === 2);
-		// Signed integer samples are carried in a Float32Array (see pickTiffArrayCtor) —
-		// an unsigned Uint16/Uint8 carrier can't represent negative values — so they
+		// Signed integer samples and wide (>16-bit) unsigned integer samples are
+		// both carried in a Float32Array (see tiffNeedsFloatCarrier/pickTiffArrayCtor)
+		// — an unsigned Uint16/Uint8 carrier can't represent negative values, and
+		// there's no unsigned carrier wider than Uint16Array in use here — so they
 		// route through the same float rendering path as true IEEE float data.
-		let isFloat = showNorm || isSignedInt;
+		let isFloat = showNorm || tiffNeedsFloatCarrier(sampleFormat, bitsPerSample);
 
 		// Check if non-float data contains non-finite values (Infinity/-Infinity).
 		// If so, force float rendering path which handles them correctly with nanColor.
