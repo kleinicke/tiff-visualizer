@@ -143,7 +143,7 @@ function testMessageFlowReplaysOnSameFormatTypeSwitch() {
 }
 
 function testDeferredRenderUsesSafeCanvasContextHelper() {
-	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.js'), 'utf8');
+	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
 
 	// Isolate the deferred-render completion branch inside the
 	// `case 'updateSettings':` handler: the `if (deferredImageData) { if

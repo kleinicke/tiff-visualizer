@@ -33,3 +33,5 @@ media/imagePreview.bundle.js
 media/imagePreview.bundle.js.map
 media/decodeWorker.bundle.js
 media/decodeWorker.bundle.js.map
+media/comparisonPanel.bundle.js
+media/comparisonPanel.bundle.js.map

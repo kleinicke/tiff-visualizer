@@ -1,0 +1,306 @@
+"use strict";
+
+import type { SettingsManager } from './settings-manager.js';
+
+type VsCodeApi = { postMessage: (msg: any) => any, getState: () => any, setState: (s: any) => void };
+
+type Scale = number | 'fit';
+
+/**
+ * Zoom Controller Module
+ * Handles zoom, scale, pan, and viewport management
+ */
+export class ZoomController {
+	settingsManager: SettingsManager;
+	vscode: VsCodeApi;
+	scale: Scale;
+	initialState: any;
+	container: HTMLElement;
+	imageElement: HTMLElement | null;
+	canvas: HTMLCanvasElement | null;
+	hasLoadedImage: boolean;
+
+	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
+		this.settingsManager = settingsManager;
+		this.vscode = vscode;
+
+		// Initialize state from VS Code
+		const initialState = vscode.getState() || { scale: 'fit', offsetX: 0, offsetY: 0 };
+		this.scale = initialState.scale;
+		this.initialState = initialState;
+
+		// DOM elements
+		this.container = document.body;
+		this.imageElement = null;
+		this.canvas = null;
+		this.hasLoadedImage = false;
+	}
+
+	/**
+	 * Set the image element reference
+	 */
+	setImageElement(element: HTMLElement) {
+		this.imageElement = element;
+	}
+
+	/**
+	 * Set the canvas reference
+	 */
+	setCanvas(canvas: HTMLCanvasElement) {
+		this.canvas = canvas;
+	}
+
+	_getNaturalSize(element: HTMLElement): { width: number, height: number } {
+		const anyElement = element as any;
+		return {
+			width: anyElement.naturalWidth || anyElement.width || 0,
+			height: anyElement.naturalHeight || anyElement.height || 0
+		};
+	}
+
+	/**
+	 * Mark that image has been loaded
+	 */
+	setImageLoaded() {
+		this.hasLoadedImage = true;
+	}
+
+	/**
+	 * Update scale with new value
+	 */
+	updateScale(newScale: number | string) {
+		if (!this.imageElement || !this.hasLoadedImage || !this.imageElement.parentElement) {
+			return;
+		}
+
+		const constants = this.settingsManager.constants;
+		const wasInFitMode = this.scale === 'fit';
+
+		if (newScale === 'fit') {
+			this.scale = 'fit';
+			this.imageElement.classList.add('scale-to-fit');
+			this.imageElement.classList.remove('pixelated');
+			// Clear inline sizing and transforms when returning to fit
+			this.imageElement.style.transform = '';
+			this.imageElement.style.transformOrigin = '';
+			this.imageElement.style.width = '';
+			this.imageElement.style.height = '';
+			this.imageElement.style.margin = '';
+			// Clear zoom fields but keep other state (peerImageUris, etc.)
+			const existing = this.vscode.getState() || {};
+			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
+		} else {
+			const oldScale = this.scale;
+			this.scale = this._clamp(newScale as number, constants.MIN_SCALE, constants.MAX_SCALE);
+			if (this.scale >= constants.PIXELATION_THRESHOLD) {
+				this.imageElement.classList.add('pixelated');
+			} else {
+				this.imageElement.classList.remove('pixelated');
+			}
+
+			// Compute the image-space point under the viewport center before scaling
+			const { width: naturalWidth, height: naturalHeight } = this._getNaturalSize(this.imageElement);
+			const prevScale = (wasInFitMode)
+				? (this.imageElement.clientWidth / naturalWidth)
+				: (oldScale as number);
+
+			// Viewport center in document coordinates
+			const viewportCenterX = window.scrollX + this.container.clientWidth / 2;
+			const viewportCenterY = window.scrollY + this.container.clientHeight / 2;
+			// Element top-left in document coordinates
+			const rectBefore = this.imageElement.getBoundingClientRect();
+			const elemLeftDoc = window.scrollX + rectBefore.left;
+			const elemTopDoc = window.scrollY + rectBefore.top;
+			// Image-space center point
+			const centerXImage = (viewportCenterX - elemLeftDoc) / prevScale;
+			const centerYImage = (viewportCenterY - elemTopDoc) / prevScale;
+
+			// Switch to layout-based scaling: remove fit class and set explicit size
+			this.imageElement.classList.remove('scale-to-fit');
+			this.imageElement.style.transform = '';
+			this.imageElement.style.transformOrigin = '';
+			this.imageElement.style.width = `${naturalWidth * this.scale}px`;
+			this.imageElement.style.height = `${naturalHeight * this.scale}px`;
+
+			// Center when smaller than viewport, remove margins when scrollable
+			const canScrollX = this.container.scrollWidth > this.container.clientWidth + 1;
+			const canScrollY = this.container.scrollHeight > this.container.clientHeight + 1;
+			this.imageElement.style.marginLeft = canScrollX ? '0' : 'auto';
+			this.imageElement.style.marginRight = canScrollX ? '0' : 'auto';
+			this.imageElement.style.marginTop = canScrollY ? '0' : 'auto';
+			this.imageElement.style.marginBottom = canScrollY ? '0' : 'auto';
+
+			// Recalculate element position after layout change
+			const rectAfter = this.imageElement.getBoundingClientRect();
+			const elemLeftDocAfter = window.scrollX + rectAfter.left;
+			const elemTopDocAfter = window.scrollY + rectAfter.top;
+
+			// Calculate new scroll position to keep the same image point centered
+			let newScrollX = centerXImage * this.scale + elemLeftDocAfter - this.container.clientWidth / 2;
+			let newScrollY = centerYImage * this.scale + elemTopDocAfter - this.container.clientHeight / 2;
+
+			// Clamp scroll positions to valid ranges
+			const maxScrollX = Math.max(0, this.container.scrollWidth - this.container.clientWidth);
+			const maxScrollY = Math.max(0, this.container.scrollHeight - this.container.clientHeight);
+			newScrollX = Math.min(Math.max(0, newScrollX), maxScrollX);
+			newScrollY = Math.min(Math.max(0, newScrollY), maxScrollY);
+
+			window.scrollTo(newScrollX, newScrollY);
+
+			// Merge zoom fields into existing state to avoid erasing app-level fields
+			const existing = this.vscode.getState() || {};
+			this.vscode.setState({ ...existing, scale: this.scale, offsetX: newScrollX, offsetY: newScrollY });
+		}
+
+		this.vscode.postMessage({
+			type: 'zoom',
+			value: this.scale
+		});
+	}
+
+	/**
+	 * Zoom in to next level
+	 */
+	zoomIn() {
+		if (!this.imageElement || !this.hasLoadedImage) {
+			return;
+		}
+
+		if (this.scale === 'fit') {
+			this.firstZoom();
+		}
+
+		const zoomLevels = this.settingsManager.constants.ZOOM_LEVELS;
+		let i = 0;
+		for (; i < zoomLevels.length; ++i) {
+			if (zoomLevels[i] > (this.scale as number)) {
+				break;
+			}
+		}
+		this.updateScale(zoomLevels[i] || this.settingsManager.constants.MAX_SCALE);
+	}
+
+	/**
+	 * Zoom out to previous level
+	 */
+	zoomOut() {
+		if (!this.imageElement || !this.hasLoadedImage) {
+			return;
+		}
+
+		if (this.scale === 'fit') {
+			this.firstZoom();
+		}
+
+		const zoomLevels = this.settingsManager.constants.ZOOM_LEVELS;
+		let i = zoomLevels.length - 1;
+		for (; i >= 0; --i) {
+			if (zoomLevels[i] < (this.scale as number)) {
+				break;
+			}
+		}
+		this.updateScale(zoomLevels[i] || this.settingsManager.constants.MIN_SCALE);
+	}
+
+	/**
+	 * Calculate first zoom level based on current display size
+	 */
+	firstZoom() {
+		if (!this.imageElement || !this.hasLoadedImage) {
+			return;
+		}
+		const { width } = this._getNaturalSize(this.imageElement);
+		this.scale = this.imageElement.clientWidth / width;
+		this.updateScale(this.scale);
+	}
+
+	/**
+	 * Reset zoom to fit
+	 */
+	resetZoom() {
+		this.updateScale('fit');
+	}
+
+	/**
+	 * Handle mouse wheel events for zooming
+	 */
+	handleWheelZoom(e: WheelEvent, ctrlPressed: boolean, altPressed: boolean) {
+		if (!this.imageElement || !this.hasLoadedImage) {
+			return;
+		}
+
+		const isScrollWheelKeyPressed = this.settingsManager.isMac ? altPressed : ctrlPressed;
+		if (!isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
+			return;
+		}
+
+		e.preventDefault();
+		e.stopPropagation();
+
+		if (this.scale === 'fit') {
+			this.firstZoom();
+		}
+
+		const delta = e.deltaY > 0 ? 1 : -1;
+		this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
+	}
+
+	/**
+	 * Apply initial zoom and scroll position
+	 */
+	applyInitialZoom() {
+		this.updateScale(this.scale);
+
+		if (this.initialState.scale !== 'fit') {
+			window.scrollTo(this.initialState.offsetX, this.initialState.offsetY);
+		}
+	}
+
+	/**
+	 * Save current state
+	 */
+	saveState() {
+		const existing = this.vscode.getState() || {};
+		this.vscode.setState({
+			...existing,
+			scale: this.scale,
+			offsetX: window.scrollX,
+			offsetY: window.scrollY
+		});
+	}
+
+	/**
+	 * Get current zoom state for image switching
+	 */
+	getCurrentState() {
+		return {
+			scale: this.scale,
+			x: window.scrollX,
+			y: window.scrollY
+		};
+	}
+
+	/**
+	 * Restore zoom state after image switching
+	 */
+	restoreState(state: any) {
+		if (state && state.scale !== undefined) {
+			this.updateScale(state.scale);
+			if (state.x !== undefined && state.y !== undefined) {
+				// Use requestAnimationFrame so the scroll fires after the browser
+				// has reflowed the new element dimensions, without a visible delay
+				requestAnimationFrame(() => {
+					window.scrollTo(state.x, state.y);
+				});
+			}
+		}
+	}
+
+	/**
+	 * Clamp a value between min and max
+	 * @private
+	 */
+	_clamp(value: number, min: number, max: number): number {
+		return Math.min(Math.max(value, min), max);
+	}
+}

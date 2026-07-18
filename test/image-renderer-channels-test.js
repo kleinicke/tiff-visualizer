@@ -71,7 +71,7 @@ async function main() {
 	console.log('🧪 Running ImageRenderer channel-count tests...\n');
 
 	const { ImageRenderer } = await import(
-		path.join('..', 'media', 'modules', 'normalization-helper.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'normalization-helper.js').replace(/\\/g, '/')
 	);
 
 	// ---------------------------------------------------------------------
@@ -175,7 +175,7 @@ async function main() {
 	// ---------------------------------------------------------------------
 	{
 		const { ImageStatsCalculator } = await import(
-			path.join('..', 'media', 'modules', 'normalization-helper.js').replace(/\\/g, '/')
+			path.join('..', 'out', 'media', 'modules', 'normalization-helper.js').replace(/\\/g, '/')
 		);
 		const floatData = new Float32Array([0.2, 0.9, 0.4, 0.9]); // gray: 0.2, 0.4 ; alpha: 0.9, 0.9
 		const floatStats = ImageStatsCalculator.calculateFloatStats(floatData, 2, 1, 2);

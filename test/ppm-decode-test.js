@@ -21,7 +21,7 @@ function bufferToArrayBuffer(buf) {
 
 async function main() {
 	const { PpmProcessor } = await import(
-		path.join('..', 'media', 'modules', 'ppm-processor.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'ppm-processor.js').replace(/\\/g, '/')
 	);
 	const parser = new PpmProcessor(/** @type {any} */ (null), null);
 

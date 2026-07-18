@@ -35,4 +35,7 @@ scripts/build-wasm.sh
 
 # Exclude source files for webview (using bundle instead)
 media/modules/**
-media/imagePreview.js
+media/imagePreview.ts
+media/decode-worker.ts
+media/comparisonPanel.ts
+media/tsconfig.json

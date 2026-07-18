@@ -292,9 +292,9 @@ async function testVisualizationPipeline() {
     
     // Test 2: Check if webview assets exist
     const webviewAssets = [
-        '../media/imagePreview.js',
+        '../media/imagePreview.ts',
         '../media/imagePreview.css',
-        '../media/modules/tiff-processor.js'
+        '../media/modules/tiff-processor.ts'
     ];
     
     for (const asset of webviewAssets) {

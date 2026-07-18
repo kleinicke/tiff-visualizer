@@ -27,9 +27,9 @@ const mockVscode = {
 async function runTests() {
     try {
         // Dynamic imports to ensure globals are set first
-        const { TiffProcessor } = await import('../media/modules/tiff-processor.js');
-        const { ExrProcessor } = await import('../media/modules/exr-processor.js');
-        const { PngProcessor } = await import('../media/modules/png-processor.js');
+        const { TiffProcessor } = await import('../out/media/modules/tiff-processor.js');
+        const { ExrProcessor } = await import('../out/media/modules/exr-processor.js');
+        const { PngProcessor } = await import('../out/media/modules/png-processor.js');
 
         console.log('📋 Testing TiffProcessor...');
         const tiffSettingsManager = new MockSettingsManager();

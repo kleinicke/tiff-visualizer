@@ -28,10 +28,10 @@ function ab(file) {
 
 async function main() {
 	const { NpyProcessor } = await import(
-		path.join('..', 'media', 'modules', 'npy-processor.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'npy-processor.js').replace(/\\/g, '/')
 	);
 	const { PfmProcessor } = await import(
-		path.join('..', 'media', 'modules', 'pfm-processor.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'pfm-processor.js').replace(/\\/g, '/')
 	);
 	const npy = new NpyProcessor(/** @type {any} */ (null), null);
 	const pfm = new PfmProcessor(/** @type {any} */ (null), null);

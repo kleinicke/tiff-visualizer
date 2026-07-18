@@ -245,10 +245,10 @@ async function main() {
 	console.log('🧪 Running TIFF sample-format tests...\n');
 
 	const { TiffProcessor, tiffTypeMax, tiffFormatTypeFor, tiffNeedsFloatCarrier } = await import(
-		path.join('..', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
 	);
 	const { parseGdalNodata } = await import(
-		path.join('..', 'media', 'modules', 'tiff-tag-utils.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'tiff-tag-utils.js').replace(/\\/g, '/')
 	);
 
 	// --- Helper contracts -------------------------------------------------

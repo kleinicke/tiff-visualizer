@@ -74,7 +74,7 @@ async function main() {
 	console.log('🧪 Running TIFF multi-page decode tests...\n');
 
 	const { TiffProcessor } = await import(
-		path.join('..', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
+		path.join('..', 'out', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
 	);
 	const p = new TiffProcessor(/** @type {any} */ (null), null);
 

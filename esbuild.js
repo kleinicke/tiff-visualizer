@@ -42,7 +42,7 @@ const appStateManagerBuildOptions = {
 
 // Build webview scripts
 const webviewBuildOptions = {
-  entryPoints: ['media/imagePreview.js'],
+  entryPoints: ['media/imagePreview.ts'],
   bundle: true,
   outfile: 'media/imagePreview.bundle.js',
   platform: 'browser',
@@ -54,9 +54,58 @@ const webviewBuildOptions = {
 // Build the decode worker (runs format decoders off the webview UI thread).
 // ESM preserves import.meta.url used by bundled WASM/worker dependencies.
 const decodeWorkerBuildOptions = {
-  entryPoints: ['media/decode-worker.js'],
+  entryPoints: ['media/decode-worker.ts'],
   bundle: true,
   outfile: 'media/decodeWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
+// Build the comparison panel webview script (classic script, no imports/exports).
+const comparisonPanelBuildOptions = {
+  entryPoints: ['media/comparisonPanel.ts'],
+  bundle: true,
+  outfile: 'media/comparisonPanel.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'iife',
+};
+
+// Compile each media module individually (no bundling) to out/media/ so
+// Node-based tests under test/ can `import` them directly without pulling in
+// the browser-bundled versions.
+function findMediaTsFiles(dir) {
+  let files = [];
+  if (fs.existsSync(dir)) {
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) {
+        files = files.concat(findMediaTsFiles(fullPath));
+      } else if (item.endsWith('.ts')) {
+        files.push(fullPath);
+      }
+    }
+  }
+  return files;
+}
+
+const mediaModuleTsFiles = [
+  ...findMediaTsFiles('media/modules'),
+  'media/imagePreview.ts',
+  'media/decode-worker.ts',
+  'media/comparisonPanel.ts',
+];
+
+const mediaModulesBuildOptions = {
+  entryPoints: mediaModuleTsFiles,
+  bundle: false,
+  outdir: 'out/media',
+  outbase: 'media',
   platform: 'browser',
   target: 'es2020',
   sourcemap: true,
@@ -153,6 +202,16 @@ if (isWatch) {
       }
     },
   };
+
+  comparisonPanelBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('comparison panel watch build failed:', error);
+      } else {
+        console.log('comparison panel watch build succeeded');
+      }
+    },
+  };
 }
 
 function copyMediaAssets() {
@@ -212,6 +271,16 @@ async function buildAll() {
     // Build decode worker
     await build(decodeWorkerBuildOptions);
     console.log('Decode worker built successfully');
+
+    // Build comparison panel webview script
+    await build(comparisonPanelBuildOptions);
+    console.log('Comparison panel built successfully');
+
+    // Compile individual media modules (unbundled) for Node-based tests
+    await build(mediaModulesBuildOptions);
+    // Mark the output as ESM so Node doesn't have to sniff/reparse each file
+    fs.writeFileSync(path.join(__dirname, 'out/media/package.json'), JSON.stringify({ type: 'module' }, null, 2) + '\n');
+    console.log('Media modules (unbundled) built successfully');
 
     // Build tests if they exist
     if (testBuildOptions.entryPoints.length > 0) {

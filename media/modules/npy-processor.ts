@@ -1,0 +1,539 @@
+"use strict";
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
+import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import type { SettingsManager, ImageSettings } from './settings-manager.js';
+import type { DeferredRenderOptions } from './types.js';
+
+type VsCodeApi = { postMessage: (msg: any) => any };
+
+interface RawImageData {
+    width: number;
+    height: number;
+    data: Float32Array;
+    dtype: string;
+    showNorm: boolean;
+    channels: number;
+}
+
+interface PendingRenderData {
+    data: Float32Array;
+    width: number;
+    height: number;
+}
+
+/**
+ * Convert IEEE 754 half-precision (float16) to single-precision (float32)
+ * @param uint16 - The 16-bit representation
+ * @returns The float32 value
+ */
+function float16ToFloat32(uint16: number): number {
+    const sign = (uint16 & 0x8000) >> 15;
+    const exponent = (uint16 & 0x7C00) >> 10;
+    const fraction = uint16 & 0x03FF;
+
+    if (exponent === 0) {
+        // Subnormal or zero
+        if (fraction === 0) {
+            return sign ? -0.0 : 0.0;
+        }
+        // Subnormal numbers
+        return (sign ? -1 : 1) * Math.pow(2, -14) * (fraction / 1024);
+    } else if (exponent === 0x1F) {
+        // Infinity or NaN
+        return fraction ? NaN : (sign ? -Infinity : Infinity);
+    }
+
+    // Normalized number
+    return (sign ? -1 : 1) * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
+}
+
+/**
+ * NPY/NPZ Processor for TIFF Visualizer
+ * Parses NumPy .npy and .npz files and renders them to ImageData
+ */
+export class NpyProcessor {
+    settingsManager: SettingsManager;
+    vscode: VsCodeApi;
+    _lastRaw: RawImageData | null; // { width, height, data: Float32Array, dtype: string, showNorm: boolean }
+    _pendingRenderData: PendingRenderData | null; // Store data waiting for format-specific settings
+    _isInitialLoad: boolean; // Track if this is the first render
+    _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
+    _cachedStatsRgb24Mode: boolean; // Track whether cached stats were computed in rgb24 mode
+    _lastRenderHistogram: any;
+    _lastRenderUsedWebGL: boolean;
+    _webglRenderer: WebGL2FloatRenderer;
+    /** Set before each load; aborts the fetch when a newer image switch supersedes it */
+    loadSignal: AbortSignal | undefined;
+    /** Off-thread decoder, set by imagePreview.js; null falls back to local decoding */
+    decodeWorker: DecodeWorkerClient | null;
+
+    constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
+        this.settingsManager = settingsManager;
+        this.vscode = vscode;
+        this._lastRaw = null;
+        this._pendingRenderData = null;
+        this._isInitialLoad = true;
+        this._cachedStats = undefined;
+        this._cachedStatsRgb24Mode = false;
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
+        this._webglRenderer = new WebGL2FloatRenderer();
+        this.loadSignal = undefined;
+        this.decodeWorker = null;
+    }
+
+    async processNpy(src: string) {
+        const loadSignal = this.loadSignal;
+        // Invalidate stats cache for new image
+        this._cachedStats = undefined;
+        this._cachedStatsRgb24Mode = false;
+
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+
+        // Parse in the decode worker when available, locally otherwise.
+        // NPY and NPZ (ZIP signature 0x04034b50) share the same result shape.
+        const parsed = await DecodeWorkerClient.decodeWithFallback(
+            this.decodeWorker, 'npy', buffer, src, loadSignal,
+            (b: ArrayBuffer) => {
+                const view = new DataView(b);
+                return (b.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50)
+                    ? this._parseNpz(b)
+                    : this._parseNpy(b);
+            });
+        const { data, width, height, dtype, showNorm, channels } = parsed;
+        this._lastRaw = { width, height, data, dtype, showNorm, channels };
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        // Send format info BEFORE rendering (for deferred rendering)
+        if (this._isInitialLoad) {
+            this._postFormatInfo(width, height, 'NPY');
+            this._pendingRenderData = { data, width, height };
+            // Return placeholder
+            const placeholderImageData = new ImageData(width, height);
+            return { canvas, imageData: placeholderImageData };
+        }
+
+        // Non-initial loads - render immediately
+        const imageData = this._toImageDataFloat(data, width, height);
+        this.vscode.postMessage({ type: 'refresh-status' });
+        return { canvas, imageData };
+    }
+
+    _parseNpy(arrayBuffer: ArrayBuffer) {
+        const view = new DataView(arrayBuffer);
+        // Magic '\x93NUMPY'
+        const magic = new Uint8Array(arrayBuffer, 0, 6);
+        const expected = [0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59];
+        for (let i = 0; i < 6; i++) {
+            if (magic[i] !== expected[i]) {
+                throw new Error('Invalid NPY file');
+            }
+        }
+        const major = view.getUint8(6);
+        const minor = view.getUint8(7);
+        if (major !== 1 && major !== 2) {
+            throw new Error(`Unsupported NPY version ${major}.${minor}`);
+        }
+        const headerLen = major === 1 ? view.getUint16(8, true) : view.getUint32(8, true);
+        const headerStart = major === 1 ? 10 : 12;
+        const headerBytes = new Uint8Array(arrayBuffer, headerStart, headerLen);
+        const header = new TextDecoder('latin1').decode(headerBytes);
+        const shapeMatch = header.match(/'shape':\s*\(([^)]+)\)/);
+        if (!shapeMatch) throw new Error('NPY missing shape');
+        const dims = shapeMatch[1].split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
+        const dtypeMatch = header.match(/'descr':\s*'([^']+)'/);
+        if (!dtypeMatch) throw new Error('NPY missing dtype');
+        const dtype = dtypeMatch[1];
+
+        // Determine if this is a float type
+        const showNorm = dtype.includes('f');
+
+        let height, width, channels = 1;
+        if (dims.length === 2) {
+            height = dims[0];
+            width = dims[1];
+        } else if (dims.length === 3) {
+            height = dims[0];
+            width = dims[1];
+            channels = dims[2];
+        } else {
+            throw new Error(`Unsupported NPY dims ${dims.length}`);
+        }
+        const elems = width * height * channels;
+        const off = headerStart + headerLen;
+        let raw;
+        if (dtype === '<f4' || dtype === '=f4') {
+            raw = new Float32Array(arrayBuffer, off, elems);
+        } else if (dtype === '>f4') {
+            const bytes = new Uint8Array(arrayBuffer, off, elems * 4);
+            raw = new Float32Array(elems);
+            for (let i = 0; i < elems; i++) {
+                const j = i * 4;
+                const b0 = bytes[j + 3];
+                const b1 = bytes[j + 2];
+                const b2 = bytes[j + 1];
+                const b3 = bytes[j + 0];
+                raw[i] = new Float32Array(new Uint8Array([b0, b1, b2, b3]).buffer)[0];
+            }
+        } else if (dtype.endsWith('f8')) {
+            const src = new Float64Array(arrayBuffer, off, elems);
+            raw = new Float32Array(elems);
+            for (let i = 0; i < elems; i++) raw[i] = src[i];
+        } else if (dtype.includes('f2')) {
+            // Float16 (half precision) - JavaScript doesn't have native Float16Array
+            // We need to decode manually
+            const bytes = new Uint8Array(arrayBuffer, off, elems * 2);
+            const little = dtype.startsWith('<') || dtype.startsWith('=');
+            raw = new Float32Array(elems);
+            for (let i = 0; i < elems; i++) {
+                const p = i * 2;
+                const uint16 = little ?
+                    bytes[p] | (bytes[p + 1] << 8) :
+                    (bytes[p] << 8) | bytes[p + 1];
+                raw[i] = float16ToFloat32(uint16);
+            }
+        } else {
+            // Fallback for integers
+            const bytes = parseInt(dtype.slice(-1), 10);
+            const little = dtype.startsWith('<') || dtype.startsWith('=');
+            const dv = new DataView(arrayBuffer, off);
+            raw = new Float32Array(elems);
+            for (let i = 0; i < elems; i++) {
+                const p = i * bytes;
+                let v = 0;
+                if (bytes === 1) v = dtype.includes('u') ? dv.getUint8(p) : dv.getInt8(p);
+                else if (bytes === 2) v = dtype.includes('u') ? dv.getUint16(p, little) : dv.getInt16(p, little);
+                else if (bytes === 4) v = dtype.includes('u') ? dv.getUint32(p, little) : dv.getInt32(p, little);
+                else v = Number(dtype.includes('u') ? dv.getBigUint64(p, little) : dv.getBigInt64(p, little));
+                raw[i] = v;
+            }
+        }
+        let data;
+        if (channels === 1) {
+            data = raw;
+        } else if (channels === 3 || channels === 4) {
+            // Keep RGB/RGBA data intact
+            data = raw;
+        } else {
+            // For other channel counts, take first channel only
+            data = new Float32Array(width * height);
+            for (let i = 0; i < width * height; i++) data[i] = raw[i * channels + 0];
+        }
+        return { data, width, height, dtype, showNorm, channels };
+    }
+
+    _parseNpz(arrayBuffer: ArrayBuffer) {
+        const view = new DataView(arrayBuffer);
+        let offset = 0;
+        const arrays: { [key: string]: any } = {};
+        while (offset < arrayBuffer.byteLength - 4) {
+            const sig = view.getUint32(offset, true);
+            if (sig !== 0x04034b50) { offset++; continue; }
+            const comp = view.getUint16(offset + 8, true);
+            const nameLen = view.getUint16(offset + 26, true);
+            const extraLen = view.getUint16(offset + 28, true);
+            const compSize = view.getUint32(offset + 18, true);
+            const fileName = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset + 30, nameLen));
+            const dataOffset = offset + 30 + nameLen + extraLen;
+            if (fileName.endsWith('.npy') && comp === 0) {
+                const slice = arrayBuffer.slice(dataOffset, dataOffset + compSize);
+                const { data, width, height, dtype, showNorm, channels } = this._parseNpy(slice);
+                arrays[fileName.replace('.npy', '')] = { data, width, height, dtype, showNorm, channels };
+            }
+            offset = dataOffset + compSize;
+        }
+        // Choose best candidate
+        const keys = Object.keys(arrays);
+        if (keys.length === 0) throw new Error('NPZ contains no uncompressed .npy arrays');
+        let pick = keys.find(k => /depth|dispar|inv|z|range/i.test(k));
+        if (!pick) pick = keys[0];
+        const a = arrays[pick];
+        return { data: a.data, width: a.width, height: a.height, dtype: a.dtype, showNorm: a.showNorm, channels: a.channels };
+    }
+
+    _toImageDataFloat(data: Float32Array, width: number, height: number, renderOptions: DeferredRenderOptions = {}): ImageData {
+        this._lastRenderHistogram = null;
+        this._lastRenderUsedWebGL = false;
+        const channels = this._lastRaw?.channels || 1;
+        const settings = this.settingsManager.settings;
+        const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
+        const dtype = this._lastRaw?.dtype || 'f4';
+        const isFloat = dtype.includes('f');
+        const isGammaMode = settings.normalization?.gammaMode || false;
+
+        // Calculate stats if needed (for auto-normalize or just to have them)
+        if (this._cachedStatsRgb24Mode !== rgbAs24BitMode) {
+            this._cachedStats = undefined;
+        }
+        let stats: { min: number, max: number } | undefined = this._cachedStats;
+
+        if (!stats && NormalizationHelper.needsStats(settings)) {
+            if (isFloat) {
+                stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
+            } else {
+                stats = ImageStatsCalculator.calculateIntegerStats(data as any, width, height, channels, rgbAs24BitMode);
+            }
+            this._cachedStats = stats;
+            this._cachedStatsRgb24Mode = rgbAs24BitMode;
+
+            if (this.vscode) {
+                this.vscode.postMessage({ type: 'stats', value: stats });
+            }
+        }
+
+        const nanColor = this._getNanColor(settings);
+
+        // Determine typeMax for integer types
+        let typeMax;
+        if (!isFloat) {
+            if (dtype.includes('1')) typeMax = 255;
+            else if (dtype.includes('2')) typeMax = 65535;
+            else if (dtype.includes('4')) typeMax = 4294967295; // 32-bit
+        }
+        const effectiveTypeMax = typeMax ?? 1.0;
+
+        if (renderOptions.targetCanvas && this._webglRenderer.canRender({
+            data,
+            width,
+            height,
+            channels,
+            isFloat,
+            settings,
+            collectHistogram: renderOptions.collectHistogram === true
+        })) {
+            const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
+                data,
+                width,
+                height,
+                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+                max: (stats && Number.isFinite(stats.max)) ? stats.max : effectiveTypeMax,
+                typeMax: effectiveTypeMax,
+                settings,
+                nanColor,
+                channels
+            });
+            if (rendered) {
+                this._lastRenderUsedWebGL = true;
+                return renderOptions.placeholderImageData || new ImageData(width, height);
+            }
+        }
+
+        // Create options object
+        const options: { nanColor: { r: number, g: number, b: number }, rgbAs24BitGrayscale: boolean, flipY: boolean, typeMax: number | undefined, collectHistogram: boolean, renderHistogramResult?: any } = {
+            nanColor: nanColor,
+            rgbAs24BitGrayscale: rgbAs24BitMode,
+            flipY: false, // NPY is usually top-down
+            typeMax: typeMax,
+            collectHistogram: renderOptions.collectHistogram === true
+        };
+
+        const imageData = ImageRenderer.render(
+            data,
+            width,
+            height,
+            channels,
+            true, // Always true since NPY stores everything as Float32Array
+            stats || { min: 0, max: 1 },
+            settings,
+            options
+        );
+        this._lastRenderHistogram = options.renderHistogramResult || null;
+        return imageData;
+    }
+
+
+    /**
+     * Re-render NPY with current settings (for real-time updates)
+     */
+    renderNpyWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+        if (!this._lastRaw) return null;
+        const { width, height, data } = this._lastRaw;
+        return this._toImageDataFloat(data, width, height, renderOptions);
+    }
+
+    getColorAtPixel(x: number, y: number, naturalWidth: number, naturalHeight: number): string {
+        if (!this._lastRaw) return '';
+        const { width, height, data, channels, dtype } = this._lastRaw;
+        if (width !== naturalWidth || height !== naturalHeight) return '';
+
+        const pixelIdx = y * width + x;
+        const settings = this.settingsManager.settings;
+        const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
+        const normalizedFloatMode = settings.normalizedFloatMode;
+        const formatNumber = (n: number) => {
+            if (Number.isNaN(n)) return 'NaN';
+            if (n === Infinity) return 'Inf';
+            if (n === -Infinity) return '-Inf';
+            return parseFloat(n.toFixed(6)).toString();
+        };
+
+        if (rgbAs24BitMode) {
+            // RGB as 24-bit grayscale: show combined value
+            const srcIdx = pixelIdx * 3;
+            const rVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 0])));
+            const gVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 1])));
+            const bVal = Math.round(Math.max(0, Math.min(255, data[srcIdx + 2])));
+            const combined24bit = (rVal << 16) | (gVal << 8) | bVal;
+
+            // Apply scale factor for display
+            const scaleFactor = settings.scale24BitFactor || 1000;
+            const scaledValue = (combined24bit / scaleFactor).toFixed(3);
+            return scaledValue;
+        } else if (channels === 3) {
+            // RGB data - return space-separated values (avoid scientific notation)
+            const srcIdx = pixelIdx * 3;
+            const r = data[srcIdx + 0];
+            const g = data[srcIdx + 1];
+            const b = data[srcIdx + 2];
+            return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
+        } else if (channels === 4) {
+            // RGBA data - return space-separated values with α: prefix for alpha
+            const srcIdx = pixelIdx * 4;
+            const r = data[srcIdx + 0];
+            const g = data[srcIdx + 1];
+            const b = data[srcIdx + 2];
+            const a = data[srcIdx + 3];
+            return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} α:${formatNumber(a)}`;
+        } else {
+            // Grayscale data
+            const value = data[pixelIdx];
+            // Check if normalized float mode is enabled for uint images
+            if (normalizedFloatMode && dtype && !dtype.includes('f') && Number.isFinite(value)) {
+                // Convert uint to normalized float (0-1)
+                let maxValue = 255;
+                if (dtype.includes('u2') || dtype.includes('i2')) {
+                    maxValue = dtype.includes('u') ? 65535 : 32767;
+                } else if (dtype.includes('u4') || dtype.includes('i4')) {
+                    maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
+                }
+                const normalized = value / maxValue;
+                return formatNumber(normalized);
+            }
+            return formatNumber(value);
+        }
+        return '';
+    }
+
+    /**
+     * Send format info to VS Code
+     * @param width - Image width
+     * @param height - Image height
+     * @param formatLabel - Format label
+     */
+    _postFormatInfo(width: number, height: number, formatLabel: string): void {
+        if (!this.vscode) return;
+
+        // Determine actual bit depth and sample format from dtype
+        let bitsPerSample = 32;
+        let sampleFormat = 3; // Float
+
+        if (this._lastRaw && this._lastRaw.dtype) {
+            const dtype = this._lastRaw.dtype;
+
+            // Determine sample format: 1=uint, 2=int, 3=float
+            if (dtype.includes('f')) {
+                sampleFormat = 3; // Float
+                if (dtype.includes('f2')) bitsPerSample = 16;
+                else if (dtype.includes('f4')) bitsPerSample = 32;
+                else if (dtype.includes('f8')) bitsPerSample = 64;
+            } else if (dtype.includes('u')) {
+                sampleFormat = 1; // Unsigned int
+                if (dtype.includes('u1')) bitsPerSample = 8;
+                else if (dtype.includes('u2')) bitsPerSample = 16;
+                else if (dtype.includes('u4')) bitsPerSample = 32;
+                else if (dtype.includes('u8')) bitsPerSample = 64;
+            } else if (dtype.includes('i')) {
+                sampleFormat = 2; // Signed int
+                if (dtype.includes('i1')) bitsPerSample = 8;
+                else if (dtype.includes('i2')) bitsPerSample = 16;
+                else if (dtype.includes('i4')) bitsPerSample = 32;
+                else if (dtype.includes('i8')) bitsPerSample = 64;
+            }
+        }
+
+        const channels = this._lastRaw?.channels || 1;
+
+        // Determine specific NPY format type for per-format settings
+        let formatType = 'npy';
+        if (sampleFormat === 3) {
+            formatType = 'npy-float';
+        } else if (sampleFormat === 1 || sampleFormat === 2) {
+            formatType = 'npy-uint';
+        }
+
+        this.vscode.postMessage({
+            type: 'formatInfo',
+            value: {
+                width,
+                height,
+                compression: '1',
+                predictor: 3,
+                photometricInterpretation: channels >= 3 ? 2 : 1,
+                planarConfig: 1,
+                samplesPerPixel: channels,
+                bitsPerSample,
+                sampleFormat,
+                formatLabel,
+                formatType, // For per-format settings: 'npy-float' or 'npy-uint'
+                isInitialLoad: this._isInitialLoad // Signal that this is the first load
+            }
+        });
+    }
+
+    /**
+     * Perform the initial render if it was deferred
+     * Called when format-specific settings have been applied
+     * @returns The rendered image data, or null if no pending render
+     */
+    performDeferredRender(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+        if (!this._pendingRenderData) {
+            return null;
+        }
+
+        const { data, width, height } = this._pendingRenderData;
+        this._pendingRenderData = null;
+        this._isInitialLoad = false;
+
+        // Now render with the correct format-specific settings
+        const imageData = this._toImageDataFloat(data, width, height, renderOptions);
+
+        // Force status refresh so normalization UI appears
+        this.vscode.postMessage({ type: 'refresh-status' });
+
+        return imageData;
+    }
+
+    /**
+     * Get NaN color from settings
+     */
+    _getNanColor(settings: any): { r: number, g: number, b: number } {
+        if (settings.nanColor) {
+            if (typeof settings.nanColor === 'string') {
+                if (settings.nanColor === 'fuchsia') {
+                    return { r: 255, g: 0, b: 255 };
+                }
+                if (settings.nanColor === 'black') {
+                    return { r: 0, g: 0, b: 0 };
+                }
+                // Handle explicit hex string.
+                const hex = settings.nanColor.replace('#', '');
+                if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
+                    return { r: 0, g: 0, b: 0 };
+                }
+                return {
+                    r: parseInt(hex.substring(0, 2), 16),
+                    g: parseInt(hex.substring(2, 4), 16),
+                    b: parseInt(hex.substring(4, 6), 16)
+                };
+            }
+            // Handle object
+            return settings.nanColor;
+        }
+        return { r: 0, g: 0, b: 0 };
+    }
+}

@@ -124,7 +124,7 @@ export class ComparisonPanel extends Disposable {
 
 	private _getHtmlForWebview(webview: vscode.Webview): string {
 		// Local path to main script run in the webview
-		const scriptPathOnDisk = vscode.Uri.joinPath(this._extensionRoot, 'media', 'comparisonPanel.js');
+		const scriptPathOnDisk = vscode.Uri.joinPath(this._extensionRoot, 'media', 'comparisonPanel.bundle.js');
 		const scriptUri = webview.asWebviewUri(scriptPathOnDisk);
 
 		// Local path to css styles

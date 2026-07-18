@@ -13,7 +13,7 @@ function approx(a, b, eps = 1e-6) {
 }
 
 async function main() {
-	const mod = await import(path.join('..', 'media', 'modules', 'layer-compositor.js').replace(/\\/g, '/'));
+	const mod = await import(path.join('..', 'out', 'media', 'modules', 'layer-compositor.js').replace(/\\/g, '/'));
 	const { composite, blendValue, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
 
 	console.log('🧪 Running Layer Compositor tests...\n');

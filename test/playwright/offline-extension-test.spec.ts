@@ -147,7 +147,7 @@ test.describe('Offline TIFF Visualizer Extension Tests', () => {
       expect(mediaFiles.length).toBeGreaterThan(0);
       
       // Check for key files
-      const keyFiles = ['geotiff.min.js', 'imagePreview.css', 'imagePreview.js'];
+      const keyFiles = ['geotiff.min.js', 'imagePreview.css', 'imagePreview.bundle.js'];
       for (const file of keyFiles) {
         expect(fs.existsSync(path.join(mediaPath, file))).toBe(true);
       }
