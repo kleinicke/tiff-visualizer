@@ -3,6 +3,8 @@
 ## 1.9.0
 
 - Add a Metadata panel
+- Add some minor Tiff formats and edge cases
+- Add multi-page support for OME-TIFF, FITS, DICOM and NetCDF
 
 ## 1.8.0 (2026-06-20)
 

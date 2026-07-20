@@ -22,6 +22,7 @@ export class MouseHandler {
 	webImageProcessor: any;
 	jxlProcessor: any;
 	rawProcessor: any;
+	scientificProcessors: any[];
 
 	// State
 	ctrlPressed: boolean;
@@ -63,6 +64,7 @@ export class MouseHandler {
 		this.webImageProcessor = null;
 		this.jxlProcessor = null;
 		this.rawProcessor = null;
+		this.scientificProcessors = [];
 
 		// State
 		this.ctrlPressed = false;
@@ -103,6 +105,7 @@ export class MouseHandler {
 	setWebImageProcessor(proc: any) { this.webImageProcessor = proc; }
 	setJxlProcessor(proc: any) { this.jxlProcessor = proc; }
 	setRawProcessor(proc: any) { this.rawProcessor = proc; }
+	setScientificProcessors(processors: any[]) { this.scientificProcessors = processors || []; }
 
 	/**
 	 * Set active state
@@ -362,6 +365,19 @@ export class MouseHandler {
 		}
 		if (this.pfmProcessor) {
 			const v = this.pfmProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (v) {
+				if (showModified) {
+					const values = this._parseFloatColor(v);
+					if (values) {
+						const transformed = values.map(val => this._applyGammaBrightness(val));
+						return this._formatColorValues(transformed, values.length);
+					}
+				}
+				return v;
+			}
+		}
+		for (const processor of this.scientificProcessors) {
+			const v = processor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (v) {
 				if (showModified) {
 					const values = this._parseFloatColor(v);

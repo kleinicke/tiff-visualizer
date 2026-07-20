@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'raw';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'raw' | 'fits' | 'dicom' | 'netcdf';
 
 export interface ImageStats {
 	min: number;
@@ -350,7 +350,7 @@ export class AppStateManager {
 		// gamma mode's full range there is [0, 2^32-1], and typical data,
 		// which rarely spans anywhere near that, would render essentially
 		// black too.)
-		else if (format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide') {
+		else if (format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

@@ -32,6 +32,7 @@ import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
+import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
 // media/tsconfig.json) types `self` as `Window & typeof globalThis`, which
@@ -536,6 +537,12 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodePng16(buffer);
 		case 'hdr':
 			return decodeHdr(buffer);
+		case 'fits':
+			return parseFits(buffer);
+		case 'dicom':
+			return parseDicom(buffer);
+		case 'netcdf':
+			return parseNetCdf(buffer);
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}

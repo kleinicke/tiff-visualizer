@@ -28,6 +28,8 @@ import { LayerManager } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
+import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
+import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
 
 /**
  * Main Image Preview Application
@@ -80,14 +82,18 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	const rawProcessor = new RawProcessor(settingsManager, vscode);
+	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: parseFits });
+	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: parseDicom });
+	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: parseNetCdf });
+	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor];
 	// All format processors, for bulk per-switch state resets and load cancellation.
-	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor];
+	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, ...scientificProcessors];
 	// Off-thread decode worker, pre-warmed in the background. Processors fall
 	// back to their local (main-thread) decoders until it is ready or if it
 	// is unavailable, so worker failures never break image loading.
 	const decodeWorkerClient = new DecodeWorkerClient();
 	decodeWorkerClient.start();
-	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor];
+	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const metadataPanel = new MetadataPanel(settingsManager, vscode);
@@ -102,6 +108,7 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 	mouseHandler.setJxlProcessor(jxlProcessor);
 	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
+	mouseHandler.setScientificProcessors(scientificProcessors);
 
 	function disposeWebglRenderers() {
 		for (const p of allProcessors) {
@@ -755,6 +762,26 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 		}
 	}
 
+	async function handleScientificArray(processor: ScientificArrayProcessor, src: string, gen: number = _loadGeneration) {
+		currentLoadFormat = processor.config.formatLabel;
+		currentLoadDecodeInfo = null;
+		try {
+			const result = await processor.process(src);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = processor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) { await renderImageDataToCanvas(primaryImageData, ctx); }
+			hasLoadedImage = true;
+			if (!processor._pendingRenderData) { finalizeImageSetup(); }
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error(`Error handling ${processor.config.formatLabel}:`, error);
+			onImageError(`Failed to load ${processor.config.formatLabel}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
 	/**
 	 * Handle PPM/PGM file loading
 	 */
@@ -1064,7 +1091,8 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 			tgaProcessor._pendingRenderData ||
 			webImageProcessor._pendingRenderData ||
 			jxlProcessor._pendingRenderData ||
-			rawProcessor._pendingRenderData;
+			rawProcessor._pendingRenderData ||
+			scientificProcessors.some(processor => !!processor._pendingRenderData);
 		if (!hasPendingDeferred) {
 			clearCollectionLoadingState();
 		}
@@ -1188,6 +1216,9 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
 			case 'HDR': return lastRawToLayer(hdrProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
 			default: return baseFromCanvas(name, uri);
 		}
 	}
@@ -1233,6 +1264,13 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 			if (lower.match(/\.(npy|npz)$/)) {
 				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
+			}
+			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
+				lower.match(/\.(dcm|dicom)$/) ? dicomProcessor.config :
+				lower.match(/\.(nc|cdf)$/) ? netcdfProcessor.config : null;
+			if (scientificConfig) {
+				const p = new ScientificArrayProcessor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.process(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
 			}
 			return decodeViaImage(src, name, resourceUri);
 		} catch (err) {
@@ -1674,6 +1712,7 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 					// Trigger deferred rendering for the appropriate processor
 					let deferredImageData = null;
 					let deferredCanvasAlreadyRendered = false;
+					const pendingScientific = scientificProcessors.find(processor => !!processor._pendingRenderData);
 
 					if (tiffProcessor._pendingRenderData) {
 						deferredImageData = await tiffProcessor.performDeferredRender({
@@ -1710,6 +1749,13 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 							placeholderImageData: primaryImageData
 						});
 						deferredCanvasAlreadyRendered = pfmProcessor._lastRenderUsedWebGL === true;
+					} else if (pendingScientific) {
+						deferredImageData = pendingScientific.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
+						deferredCanvasAlreadyRendered = pendingScientific._lastRenderUsedWebGL === true;
 					} else if (exrProcessor._pendingRenderData) {
 						deferredImageData = exrProcessor.updateSettings(settingsManager.settings, {
 							collectHistogram: histogramOverlay.getVisibility(),
@@ -1804,7 +1850,8 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 						(tgaProcessor && tgaProcessor._pendingRenderData) ||
 						(webImageProcessor && webImageProcessor._pendingRenderData) ||
 						(jxlProcessor && jxlProcessor._pendingRenderData) ||
-						(rawProcessor && rawProcessor._pendingRenderData);
+						(rawProcessor && rawProcessor._pendingRenderData) ||
+						scientificProcessors.some(processor => !!processor._pendingRenderData);
 
 					if (hasLoadedImage && !hasPendingRender && changes.changed) {
 						const startTime = performance.now();
@@ -2050,6 +2097,17 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 			formatLabel = 'PFM';
 			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels) };
 			data = r.data;
+		} else if (scientificProcessors.some(processor => !!processor._lastRaw)) {
+			const processor = scientificProcessors.find(candidate => !!candidate._lastRaw)!;
+			const r = processor._lastRaw!;
+			width = r.width; height = r.height; channels = r.channels || 1;
+			formatLabel = processor.config.formatLabel;
+			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels) };
+			for (const [key, value] of Object.entries(processor.metadata)) {
+				if (value === undefined || value === null || typeof value === 'object') { continue; }
+				fileFields[key.replace(/([a-z])([A-Z])/g, '$1 $2')] = String(value);
+			}
+			data = r.data;
 		} else if (hdrProcessor._lastRaw) {
 			const r = hdrProcessor._lastRaw;
 			width = r.width; height = r.height; channels = r.channels || 3;
@@ -2163,6 +2221,13 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 				PerfTrace.mark('histogram-from-render');
 				return;
 			}
+			const scientificWithHistogram = scientificProcessors.find(processor => processor._lastRaw && processor._lastRenderHistogram);
+			if (scientificWithHistogram) {
+				PerfTrace.mark('histogram-prepare');
+				histogramOverlay.updateFromPrecomputed(scientificWithHistogram._lastRenderHistogram);
+				PerfTrace.mark('histogram-from-render');
+				return;
+			}
 			if (hdrProcessor._lastRaw && hdrProcessor._lastRenderHistogram) {
 				PerfTrace.mark('histogram-prepare');
 				histogramOverlay.updateFromPrecomputed(hdrProcessor._lastRenderHistogram);
@@ -2249,6 +2314,17 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 					isFloat: true,
 					typeMax: 1.0,
 					stats: stats
+				};
+			} else if (scientificProcessors.some(processor => !!processor._lastRaw)) {
+				const processor = scientificProcessors.find(candidate => !!candidate._lastRaw)!;
+				const { data, channels } = processor._lastRaw!;
+				histogramOptions = {
+					...histogramOptions,
+					rawData: data,
+					channels,
+					isFloat: true,
+					typeMax: 1.0,
+					stats: processor._cachedStats || null
 				};
 			} else if (hdrProcessor && hdrProcessor._lastRaw) {
 				// HDR raw data (float RGBA from parse-hdr; alpha is ignored by histogram stats)
@@ -2347,6 +2423,7 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 		if (webImageProcessor) webImageProcessor._lastRaw = null;
 		if (jxlProcessor) jxlProcessor._lastRaw = null;
 		if (rawProcessor) rawProcessor._lastRaw = null;
+		for (const processor of scientificProcessors) { processor._lastRaw = null; }
 		disposeWebglRenderers();
 	}
 
@@ -2702,6 +2779,29 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 				}
 			} catch (error) {
 				console.error('Error updating PFM image with new settings:', error);
+			}
+			return;
+		}
+
+		const activeScientific = scientificProcessors.find(processor => !!processor._lastRaw);
+		if (primaryImageData && activeScientific) {
+			try {
+				const newImageData = activeScientific.renderWithSettings({
+					collectHistogram: histogramOverlay.getVisibility(),
+					targetCanvas: canvas,
+					placeholderImageData: primaryImageData
+				});
+				if (newImageData) {
+					if (activeScientific._lastRenderUsedWebGL) {
+						primaryImageData = newImageData;
+					} else {
+						const ctx = ensure2dCanvasContext();
+						if (ctx) { await renderImageDataToCanvas(newImageData, ctx); primaryImageData = newImageData; }
+					}
+					updateHistogramData();
+				}
+			} catch (error) {
+				console.error(`Error updating ${activeScientific.config.formatLabel} with new settings:`, error);
 			}
 			return;
 		}
@@ -3836,7 +3936,7 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 		tiffProcessor._convertedFloatData = null;
 		exrProcessor.rawExrData = undefined;
 		exrProcessor._cachedStats = undefined;
-		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor];
+		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, ...scientificProcessors];
 		for (const p of rawDataProcessors) { p._lastRaw = null; }
 		rawProcessor._arrayBuffer = null;
 
@@ -3895,6 +3995,12 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 			handleWebImage(uri, gen);
 		} else if (lower.endsWith('.jxl')) {
 			handleJxl(uri, gen);
+		} else if (lower.endsWith('.fits') || lower.endsWith('.fit') || lower.endsWith('.fts')) {
+			handleScientificArray(fitsProcessor, uri, gen);
+		} else if (lower.endsWith('.dcm') || lower.endsWith('.dicom')) {
+			handleScientificArray(dicomProcessor, uri, gen);
+		} else if (lower.endsWith('.nc') || lower.endsWith('.cdf')) {
+			handleScientificArray(netcdfProcessor, uri, gen);
 		} else if (isRawExtension(lower)) {
 			handleRaw(uri, gen);
 		} else {

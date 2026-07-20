@@ -79,7 +79,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
+            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,nc,cdf,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
           }
         ]
       },
@@ -251,7 +251,7 @@
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "title": "Add Image to Visualizer Collection",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl)$/i && tiffVisualizer.activeMode != 'layers'",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf)$/i && tiffVisualizer.activeMode != 'layers'",
           "group": "navigation@1"
         },
         {
@@ -263,7 +263,7 @@
         {
           "command": "tiffVisualizer.addLayer",
           "title": "Add Image as Layer",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
           "group": "navigation@1"
         }
       ],
@@ -304,10 +304,11 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:scientific-formats && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
     "test:unit": "mocha out/test/unit/**/*.test.js",
     "test:integration": "vscode-test",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
+    "test:scientific-formats": "node test/scientific-formats-test.js",
     "test:visualization": "node test/visualization-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:wasm": "node test/wasm-tiff-decode-test.js",

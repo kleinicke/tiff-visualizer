@@ -2,7 +2,8 @@
 
 Inspect high-bit-depth, floating-point, scientific, and camera image files directly inside Visual Studio Code.
 
-Supports TIFF, EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM.
+Supports TIFF/OME-TIFF, FITS, uncompressed DICOM, classic NetCDF, EXR, NPY/NPZ,
+PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM.
 
 The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export the current visualization as PNG. Uses Rust for decoding several formats and the GPU for rendering to provide the fastest possible extension.
 
@@ -15,11 +16,17 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | TIFF                           |   Yes |    Yes |     Yes |     Yes | Decoded by a Rust/WASM decoder by default (uint8/16/32, int, float16/32/64) |
 | EXR                            |    No |     No |     Yes |     Yes | HDR floating-point format                                                   |
 | NPY/NPZ                        |   Yes |    Yes |     Yes |     Yes | Also supports float64 and int8/16/32/64, uint32/64                          |
+| FITS                           |   Yes |    Yes |      No |     Yes | Numeric image HDUs; also int32/int64 and float64                            |
+| DICOM                          |   Yes |    Yes |      No |     Yes | Native uncompressed transfer syntaxes; first frame                          |
+| NetCDF                         |   Yes |    Yes |      No |     Yes | Classic CDF-1/CDF-2 numeric variables; first 2D slice                       |
 | PFM                            |    No |     No |      No |     Yes | Portable Float Map                                                          |
 | HDR                            |    No |     No |      No |     Yes | Radiance RGBE, decoded to float32                                           |
 | PNG                            |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA                                              |
 | PPM/PGM/PBM                    |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                |
 | JPEG/WebP/AVIF/BMP/ICO/TGA/JXL |   Yes |     No |      No |      No | Decoded as 8-bit image data in the extension                                |
+
+NetCDF-4/HDF5 and compressed DICOM transfer syntaxes are not yet supported.
+Small synthetic files for manual checks live in `test-samples/scientific/`.
 
 ## Features
 

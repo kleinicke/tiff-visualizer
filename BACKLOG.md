@@ -80,7 +80,70 @@ compositing, series selection, file resolution, and lazy-loading behavior
 respectively; they are not required for ordinary single-series, single-file
 C/Z/T OME-TIFF navigation.
 
-- Afterwards: Implement FITS, DICOM and NetCDF see below since they are also straight forward.
+### Future: complete multi-file OME datasets and companion OME-XML
+
+OME-XML is the dataset manifest, not another pixel format. It can be embedded
+in the first TIFF's `ImageDescription`, repeated in every member of a fileset,
+or stored as a companion `.ome.xml` file. Its `Image`/`Pixels` metadata defines
+the logical dimensions and each `TiffData` entry can contain a `UUID` with a
+`FileName` that identifies which physical TIFF contains a particular
+`(series, c, z, t)` plane. A fileset such as two channels × 43 timepoints ×
+ten Z planes may therefore be 86 TIFF files even though it should appear as one
+dataset in the viewer.
+
+The future implementation should load and navigate that complete logical
+dataset as follows:
+
+- Extend the OME parser so a plane mapping is
+  `(series, c, z, t) -> { fileName, uuid, ifd }`, rather than only
+  `(c, z, t) -> ifd`. Preserve `Image`/`Pixels` IDs and support both explicit
+  `TiffData` mappings and dimension-order-derived contiguous ranges.
+- When any member TIFF is opened, parse its embedded OME-XML and build a
+  dataset manifest. Resolve relative `FileName` references against the opened
+  file's directory through the extension host, match available siblings, and
+  validate UUIDs when present. Do not require the user to add the files to an
+  ordinary image collection manually.
+- Support a companion `.ome.xml` entry point as well: opening it should resolve
+  its referenced TIFFs and open the logical dataset. Standalone OME-XML without
+  resolvable pixel files remains useful as metadata, but cannot render an
+  image.
+- Keep one dataset-level C/Z/T/series selection. Changing Z commonly selects a
+  different IFD in the current file; changing C or T may transparently switch
+  to another TIFF and then select its mapped IFD. The controls must reflect the
+  selected logical coordinate, not whichever mapping happened to be parsed
+  last.
+- Reuse the collection switching infrastructure for byte preloading and smooth
+  visual transitions, while keeping dataset navigation semantically separate
+  from user-created collections. Continue showing the current plane while the
+  target file decodes, show a small dataset-loading indicator, discard stale
+  navigation results, and atomically replace the image when ready.
+- Cache the current decoded plane and nearby C/Z/T neighbors with a bounded
+  memory policy. Prefer the likely next file/IFD based on navigation direction;
+  avoid eagerly loading an entire large fileset into memory.
+- Present the fileset as one item with useful context such as
+  `C 1/2 · Z 4/10 · T 12/43` and, where helpful, the current physical
+  filename. Add a dataset/series selector only when the OME-XML contains more
+  than one `Image`/`Pixels` series.
+- Handle incomplete or moved datasets explicitly. Missing, unsafe, or
+  inaccessible referenced files should mark only the affected coordinates as
+  unavailable and produce a clear diagnostic listing the unresolved names,
+  rather than silently displaying a plane from the wrong channel/timepoint.
+- Until this resolution path exists, detect external `FileName` references and
+  expose only the coordinates available in the current physical TIFF (with C/T
+  read-only where appropriate). Do not show apparently interactive global
+  sliders backed by ambiguous local IFD numbers.
+
+**Acceptance test:** opening any member of the `tubhiswt-4D` sample discovers
+the two-channel, 43-timepoint, ten-Z-plane fileset; Z navigation changes local
+IFDs, C/T navigation switches referenced TIFFs without a blank-frame jump, and
+opening the companion metadata (when present) produces the same logical
+dataset. Tests must also cover repeated local IFD numbers, a missing member,
+UUID mismatch, rapid navigation cancellation, and session restore to a plane
+stored in a different member file.
+
+- [x] FITS, uncompressed DICOM, and classic NetCDF (CDF-1/CDF-2) image decoding.
+  NetCDF-4/HDF5 and compressed DICOM transfer syntaxes remain part of the
+  heavier codec/container follow-up described below.
 
 ---
 
