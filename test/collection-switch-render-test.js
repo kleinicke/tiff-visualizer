@@ -173,10 +173,49 @@ function testDeferredRenderUsesSafeCanvasContextHelper() {
 	console.log('✅ deferred-render completion branch uses ensure2dCanvasContext() (webview canvas-context safety)');
 }
 
+function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
+	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
+	const cssSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.css'), 'utf8');
+
+	assert.match(webviewSource, /function switchToNewImage[\s\S]*?beginSeamlessImageTransition\(true\)/,
+		'collection switches must start an in-place visual transition');
+	assert.match(webviewSource, /function navigateTiffToPage[\s\S]*?beginSeamlessImageTransition\(false\)/,
+		'multi-page TIFF navigation must keep the outgoing page visible while decoding');
+	assert.match(webviewSource, /_outgoingImageElement\.replaceWith\(nextImageElement\)/,
+		'the completed frame must atomically replace the outgoing frame');
+	assert.match(webviewSource, /function updateImageCollectionOverlay[\s\S]*?renderCollectionLoadingState\(\)/,
+		'host overlay updates must preserve the collection loading state');
+	assert.doesNotMatch(webviewSource, /function switchToNewImage[\s\S]*?zoomController\.scale = 'fit'/,
+		'the outgoing frame zoom must not be reset while a collection replacement loads');
+	assert.match(cssSource, /\.container\.image-transition-pending \.loading-indicator\s*{\s*display:\s*none;/,
+		'the global loading wheel must stay hidden during an in-place transition');
+	assert.match(webviewSource, /function requestCollectionNavigation[\s\S]*?toggleImageReverse/,
+		'collection navigation must use a shared guarded switch request');
+	assert.match(webviewSource, /bindNavigationButton\('\.collection-prev-btn', 'previous'\)/,
+		'the visible previous button must be wired to collection navigation');
+	assert.match(webviewSource, /bindNavigationButton\('\.collection-next-btn', 'next'\)/,
+		'the visible next button must be wired to collection navigation');
+	assert.match(webviewSource, /addEventListener\('pointerdown',[\s\S]*?e\.stopPropagation\(\)/,
+		'collection button presses must not bubble into canvas click/zoom handling');
+	assert.match(webviewSource, /window\.addEventListener\('keydown',[\s\S]*?requestCollectionNavigation\(isRightArrow \? 'next' : 'previous'\)[\s\S]*?}, true\)/,
+		'physical arrow keys must be captured before focused webview controls consume them');
+	assert.match(webviewSource, /collection-prev-btn[^>]*tabindex="-1"[\s\S]*collection-next-btn[^>]*tabindex="-1"/,
+		'collection arrow controls must not enter the keyboard tab order');
+	assert.match(webviewSource, /imageCollection\.totalImages > 1 \|\| tiffProcessor\.pageCount > 1[\s\S]*?navigateTiffPage\(isRightArrow \? 1 : -1\)/,
+		'physical arrow keys must navigate multi-page and OME-TIFF planes instead of panning');
+	assert.match(webviewSource, /tiff-page-prev[^>]*tabindex="-1"[\s\S]*tiff-page-next[^>]*tabindex="-1"/,
+		'TIFF page arrow controls must not enter the keyboard tab order');
+	assert.match(webviewSource, /bindTiffPageButton\('\.tiff-page-prev', -1\)[\s\S]*bindTiffPageButton\('\.tiff-page-next', 1\)/,
+		'TIFF page buttons must use isolated mouse navigation handlers');
+
+	console.log('✅ collection switches retain the outgoing frame, persistent loading UI, and isolated navigation controls');
+}
+
 function main() {
 	console.log('🧪 Running collection-switch render regression tests...\n');
 	testMessageFlowReplaysOnSameFormatTypeSwitch();
 	testDeferredRenderUsesSafeCanvasContextHelper();
+	testSwitchKeepsOutgoingFrameUntilReplacementIsReady();
 	console.log('\n🎉 All collection-switch render tests passed.\n');
 }
 

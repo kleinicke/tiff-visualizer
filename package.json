@@ -79,7 +79,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
+            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
           }
         ]
       },
@@ -304,7 +304,7 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:tiff-sample-formats && npm run test:image-renderer-channels && npm run test:collection-switch",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
     "test:unit": "mocha out/test/unit/**/*.test.js",
     "test:integration": "vscode-test",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
@@ -314,6 +314,7 @@
     "test:ppm": "node test/ppm-decode-test.js",
     "test:formats": "node test/format-decode-test.js",
     "test:tiff-sample-formats": "node test/tiff-sample-format-test.js",
+    "test:ome-tiff": "node test/ome-tiff-test.js",
     "test:image-renderer-channels": "node test/image-renderer-channels-test.js",
     "test:collection-switch": "tsc -p tsconfig.json && node test/collection-switch-render-test.js",
     "test:ui": "npm run compile && extest setup-and-run out/test/ui/**/*.js",

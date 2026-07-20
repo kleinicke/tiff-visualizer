@@ -186,6 +186,7 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 		min: result.min_value,
 		max: result.max_value,
 		allTagsJson: result.all_tags_json,
+		omeXml: result.ome_xml || undefined,
 		decodedWith: 'wasm (worker)',
 		decodeTimings: timings,
 	};
@@ -205,6 +206,9 @@ async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string, pageInd
 	phaseStart = now;
 	const pageCount = await tiff.getImageCount();
 	const image = await tiff.getImage(pageIndex);
+	const firstImage = pageIndex === 0 ? image : await tiff.getImage(0);
+	const firstDescription = String(firstImage?.fileDirectory?.ImageDescription || '').trim();
+	const omeXml = /<(?:[\w.-]+:)?OME\b/i.test(firstDescription) ? firstDescription : undefined;
 	now = performance.now();
 	timings.push({ name: 'decode-geotiff-ifd', durationMs: now - phaseStart });
 
@@ -258,6 +262,7 @@ async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string, pageInd
 		data,
 		rasters,
 		allTagsJson: JSON.stringify(buildTagsFromGeotiffImage(image)),
+		omeXml,
 		decodedWith: 'geotiff.js (worker)',
 		wasmFallbackReason: wasmError,
 		decodeTimings: timings,

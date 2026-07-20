@@ -7,6 +7,7 @@ import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, TagEntry 
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { findOmeXmlInTags, OmeMetadata, parseOmeXml } from './ome-tiff.js';
 
 // GeoTIFF is loaded globally via script tag; the geotiff npm library isn't a
 // real TS-typed dependency in this project, so it's treated as `any`.
@@ -122,6 +123,7 @@ export class TiffProcessor {
 	pageCount: number;
 	_sourceBuffer: ArrayBuffer | null;
 	_sourceBufferSrc: string | null;
+	omeMetadata: OmeMetadata | null;
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -148,6 +150,7 @@ export class TiffProcessor {
 		this.pageCount = 1;
 		this._sourceBuffer = null;
 		this._sourceBufferSrc = null;
+		this.omeMetadata = null;
 		this._wasmProcessor.init().then(available => {
 			this._wasmAvailable = available;
 			if (available) {
@@ -237,6 +240,9 @@ export class TiffProcessor {
 		const loadSignal = this.loadSignal;
 		let decodeInfo: { engine: string, durationMs: number } | null = null;
 		try {
+			if (this._sourceBufferSrc !== src) {
+				this.omeMetadata = null;
+			}
 			let buffer: ArrayBuffer;
 			let readDuration = 0;
 			if (this._sourceBufferSrc === src && this._sourceBuffer) {
@@ -422,6 +428,8 @@ export class TiffProcessor {
 						this._lastStatisticsRgb24Mode = false;
 					}
 					this._lastAllTags = parseAllTagsJson(wasmResult.allTagsJson);
+					this.omeMetadata = parseOmeXml(wasmResult.omeXml || findOmeXmlInTags(this._lastAllTags)) || this.omeMetadata;
+					this.rawTiffData.ome = this.omeMetadata;
 					this._gdalNodata = parseGdalNodata(this._lastAllTags);
 					if (this._gdalNodata !== undefined && this._lastStatistics &&
 						(this._lastStatistics.min === this._gdalNodata || this._lastStatistics.max === this._gdalNodata)) {
@@ -454,7 +462,8 @@ export class TiffProcessor {
 								isInitialLoad: true,
 								decodedWith: wasmResult.decodedWith || 'wasm',
 								pageIndex: this.pageIndex,
-								pageCount: this.pageCount
+								pageCount: this.pageCount,
+								...this._omeFormatInfo()
 							}
 						});
 
@@ -500,6 +509,9 @@ export class TiffProcessor {
 			}
 			this.pageIndex = pageIndex;
 			const image = await tiff.getImage(pageIndex);
+			const firstImage = pageIndex === 0 ? image : await tiff.getImage(0);
+			const firstDescription = String(firstImage?.fileDirectory?.ImageDescription || '');
+			this.omeMetadata = parseOmeXml(firstDescription) || this.omeMetadata;
 			const sampleFormat = image.getSampleFormat();
 
 			// Post format info to VS Code
@@ -564,6 +576,8 @@ export class TiffProcessor {
 				data: data
 			};
 			this._lastAllTags = buildTagsFromGeotiffImage(image);
+			this.omeMetadata = parseOmeXml(findOmeXmlInTags(this._lastAllTags)) || this.omeMetadata;
+			this.rawTiffData.ome = this.omeMetadata;
 			this._gdalNodata = parseGdalNodata(this._lastAllTags);
 
 			// Send format information to VS Code BEFORE rendering
@@ -589,7 +603,8 @@ export class TiffProcessor {
 						isInitialLoad: true, // Signal that this is the first load
 						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js',
 						pageIndex: this.pageIndex,
-						pageCount: this.pageCount
+						pageCount: this.pageCount,
+						...this._omeFormatInfo()
 					}
 				});
 
@@ -607,6 +622,26 @@ export class TiffProcessor {
 			console.error('Error processing TIFF:', error);
 			throw error;
 		}
+	}
+
+	_omeFormatInfo(): Record<string, any> {
+		const ome = this.omeMetadata;
+		if (!ome) { return {}; }
+		return {
+			isOmeTiff: true,
+			formatLabel: 'OME-TIFF',
+			omeSizeC: ome.planeSizeC,
+			omeSizeZ: ome.sizeZ,
+			omeSizeT: ome.sizeT,
+			dimensionOrder: ome.dimensionOrder,
+			channelNames: ome.channels.map(channel => channel.name),
+			physicalSizeX: ome.physicalSizeX,
+			physicalSizeXUnit: ome.physicalSizeXUnit,
+			physicalSizeY: ome.physicalSizeY,
+			physicalSizeYUnit: ome.physicalSizeYUnit,
+			physicalSizeZ: ome.physicalSizeZ,
+			physicalSizeZUnit: ome.physicalSizeZUnit,
+		};
 	}
 
 	/**

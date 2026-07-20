@@ -27,6 +27,7 @@ import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
+import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 
 /**
  * Main Image Preview Application
@@ -149,6 +150,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/** Camera RAW file extensions supported by RawProcessor */
 	const RAW_EXTENSIONS = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
 	const isRawExtension = (lower: string): boolean => RAW_EXTENSIONS.some(ext => lower.endsWith(ext));
+	const isTiffExtension = (lower: string): boolean => /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
 
 	// Application state
 	let hasLoadedImage = false;
@@ -174,6 +176,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 	let _deferredHistogramTimer: number | null = null;
 	let _previousDecodedImageCache: { resourceUri: string, format: string, raw: any } | null = null;
 	let _restoreDecodedImageCandidate: { resourceUri: string, format: string, raw: any } | null = null;
+	let _outgoingImageElement: HTMLElement | null = null;
+	let _imageTransitionActive = false;
+	let _collectionSwitchLoading = false;
 
 	function formatDecodeInfo() {
 		return currentLoadDecodeInfo
@@ -387,6 +392,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		imageElement = null;
 		primaryImageData = null;
 		peerImageData = null;
+		mouseHandler.setPhysicalPixelSize(null);
 		disposeWebglRenderers();
 
 		// Reset each processor's initial-load flag so the reload re-sends
@@ -608,6 +614,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 		PerfTrace.cancel();
 		hasLoadedImage = true;
 		signalTiffCanvasReady();
+		finishSeamlessImageTransition();
+		clearCollectionLoadingState();
 		// Remove previous image/canvas so the error message shows on a clean background
 		container.querySelectorAll('img, canvas').forEach(el => {
 			if (!el.closest('.histogram-overlay')) {
@@ -631,6 +639,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 		try {
 			const result = await tiffProcessor.processTiff(src, pageIndex);
 			if (gen !== _loadGeneration) { return; }
+			const ome = tiffProcessor.omeMetadata;
+			mouseHandler.setPhysicalPixelSize(ome ? {
+				x: ome.physicalSizeX,
+				y: ome.physicalSizeY,
+				xUnit: ome.physicalSizeXUnit,
+				yUnit: ome.physicalSizeYUnit,
+			} : null);
 			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 
@@ -981,14 +996,20 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 */
 	function finalizeImageSetup() {
 		if (!imageElement || !canvas) return;
+		const nextImageElement = imageElement;
+		if (_imageTransitionActive) {
+			// The outgoing frame remains interactive while decoding; carry any pan or
+			// zoom made during that interval into the replacement frame as well.
+			_pendingZoomState = zoomController.getCurrentState();
+		}
 		// Update all controllers with references
-		zoomController.setImageElement(imageElement);
+		zoomController.setImageElement(nextImageElement);
 		zoomController.setCanvas(canvas);
 		zoomController.setImageLoaded();
-		mouseHandler.setImageElement(imageElement);
+		mouseHandler.setImageElement(nextImageElement);
 
 		// Send size information to VS Code
-		const sizeElement = imageElement as any;
+		const sizeElement = nextImageElement as any;
 		const sizeWidth = canvas?.width || sizeElement.naturalWidth || sizeElement.width;
 		const sizeHeight = canvas?.height || sizeElement.naturalHeight || sizeElement.height;
 		vscode.postMessage({
@@ -996,11 +1017,21 @@ import { LayersPanel } from './modules/layers-panel.js';
 			value: `${sizeWidth}x${sizeHeight}`,
 		});
 
-		// Remove any previous image/canvas elements now that the new one is ready,
-		// but preserve the histogram overlay canvas
+		// Put the completed frame into the DOM before removing any stale elements.
+		// replaceWith() makes collection/page changes atomic from the browser's
+		// perspective: the outgoing frame remains visible until this exact point.
+		if (_outgoingImageElement &&
+			_outgoingImageElement !== nextImageElement &&
+			_outgoingImageElement.parentElement === container) {
+			_outgoingImageElement.replaceWith(nextImageElement);
+		} else if (!nextImageElement.isConnected) {
+			container.append(nextImageElement);
+		}
+
+		// Remove any other stale image/canvas elements, but preserve the histogram.
 		const existingImages = container.querySelectorAll('img, canvas');
 		existingImages.forEach(el => {
-			if (!el.closest('.histogram-overlay')) {
+			if (el !== nextImageElement && !el.closest('.histogram-overlay')) {
 				el.remove();
 			}
 		});
@@ -1009,7 +1040,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 		container.classList.remove('loading');
 		container.classList.remove('error');
 		container.classList.add('ready');
-		container.append(imageElement);
 
 		// Apply zoom: restore saved state from before the switch, or fit if none
 		if (_pendingZoomState && _pendingZoomState.scale !== 'fit') {
@@ -1018,6 +1048,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			zoomController.applyInitialZoom();
 		}
 		_pendingZoomState = null;
+		finishSeamlessImageTransition();
 
 		// Restore overlay counter from loading state — but only if no deferred render is still pending.
 		// Deferred renders (EXR, NPY, TIFF with per-format settings, etc.) call finalizeImageSetup
@@ -1177,7 +1208,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			getState: (): any => undefined,
 		};
 		try {
-			if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+			if (isTiffExtension(lower)) {
 				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
 			}
@@ -1441,12 +1472,71 @@ import { LayersPanel } from './modules/layers-panel.js';
 	 * finalizeImageSetup (no deferred render) or after performDeferredRender completes.
 	 */
 	function clearCollectionLoadingState() {
-		if (overlayElement && imageCollection.show) {
-			const counter = overlayElement.querySelector('.image-counter');
-			if (counter) counter.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+		if (overlayElement) {
+			if (imageCollection.show) {
+				const counter = overlayElement.querySelector('.image-counter');
+				if (counter) {
+					counter.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+					counter.removeAttribute('aria-label');
+				}
+			}
+			overlayElement.classList.remove('image-collection-overlay--loading');
 		}
 		if (filenameBadge) filenameBadge.classList.remove('filename-badge--loading');
+		_collectionSwitchLoading = false;
 		updateTiffPageOverlay(false);
+	}
+
+	function getDisplayedImageElement(): HTMLElement | null {
+		for (const child of Array.from(container.children)) {
+			if (child instanceof HTMLElement && (child.tagName === 'IMG' || child.tagName === 'CANVAS')) {
+				return child;
+			}
+		}
+		return null;
+	}
+
+	/** Keep the current frame on screen while its replacement is decoded. */
+	function beginSeamlessImageTransition(isCollectionSwitch: boolean = false) {
+		_outgoingImageElement = getDisplayedImageElement();
+		_imageTransitionActive = _outgoingImageElement !== null;
+		_collectionSwitchLoading = isCollectionSwitch;
+
+		if (_imageTransitionActive) {
+			container.classList.remove('loading', 'error');
+			container.classList.add('ready', 'image-transition-pending');
+			container.setAttribute('aria-busy', 'true');
+		} else {
+			container.classList.add('loading');
+		}
+	}
+
+	function finishSeamlessImageTransition() {
+		_outgoingImageElement = null;
+		_imageTransitionActive = false;
+		container.classList.remove('image-transition-pending');
+		container.removeAttribute('aria-busy');
+	}
+
+	function renderCollectionLoadingState() {
+		if (!overlayElement || !imageCollection.show || !_collectionSwitchLoading) { return; }
+		const counter = overlayElement.querySelector('.image-counter');
+		if (counter && !activeCounterInput) {
+			const position = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
+			counter.innerHTML = `<span class="collection-loading-dot" aria-hidden="true"></span><span class="collection-loading-label">Loading</span> ${position}`;
+			counter.setAttribute('aria-label', `Loading image ${position}`);
+		}
+		overlayElement.classList.add('image-collection-overlay--loading');
+	}
+
+	function requestCollectionNavigation(direction: 'next' | 'previous') {
+		if (imageCollection.totalImages <= 1) { return; }
+		_collectionSwitchLoading = true;
+		renderCollectionLoadingState();
+		if (filenameBadge) filenameBadge.classList.add('filename-badge--loading');
+		vscode.postMessage({
+			type: direction === 'next' ? 'toggleImage' : 'toggleImageReverse'
+		});
 	}
 
 	/**
@@ -1777,6 +1867,11 @@ import { LayersPanel } from './modules/layers-panel.js';
 				break;
 
 			case 'switchToImage':
+				// The target position travels with the switch so the loading badge never
+				// flashes the outgoing image number before the separate overlay update.
+				if (message.collection) {
+					imageCollection = message.collection;
+				}
 				// Prefer zoom state injected by the extension (set before the webview
 				// reloaded, so it's always accurate). Fall back to live state on the
 				// first switch in a rapid in-session burst.
@@ -1901,6 +1996,27 @@ import { LayersPanel } from './modules/layers-panel.js';
 				'Bits/Sample': String(bitsPerSample),
 				'Sample Format': sampleFormatLabel
 			};
+			const ome = tiffProcessor.omeMetadata;
+			if (ome) {
+				const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+				fileFields['OME Dimensions'] = `C ${ome.planeSizeC} × Z ${ome.sizeZ} × T ${ome.sizeT}`;
+				fileFields['Current Plane'] = `C ${coordinates.c + 1}, Z ${coordinates.z + 1}, T ${coordinates.t + 1} (IFD ${tiffProcessor.pageIndex})`;
+				fileFields['Dimension Order'] = ome.dimensionOrder;
+				if (ome.imageName) { fileFields['Image Name'] = ome.imageName; }
+				if (ome.pixelType) { fileFields['OME Pixel Type'] = ome.pixelType; }
+				if (ome.channels.length) { fileFields['OME Channels'] = ome.channels.map(channel => channel.name).join(', '); }
+				if (ome.physicalSizeX !== undefined) { fileFields['Physical Size X'] = `${ome.physicalSizeX} ${ome.physicalSizeXUnit || ''}`.trim(); }
+				if (ome.physicalSizeY !== undefined) { fileFields['Physical Size Y'] = `${ome.physicalSizeY} ${ome.physicalSizeYUnit || ''}`.trim(); }
+				if (ome.physicalSizeZ !== undefined) { fileFields['Physical Size Z'] = `${ome.physicalSizeZ} ${ome.physicalSizeZUnit || ''}`.trim(); }
+				if (ome.timeIncrement !== undefined) { fileFields['Time Increment'] = `${ome.timeIncrement} ${ome.timeIncrementUnit || ''}`.trim(); }
+				if (ome.objective) {
+					const objective = ome.objective;
+					fileFields['Objective'] = [objective.manufacturer, objective.model].filter(Boolean).join(' ') || objective.id || 'n/a';
+					if (objective.nominalMagnification !== undefined) { fileFields['Magnification'] = `${objective.nominalMagnification}×`; }
+					if (objective.lensNA !== undefined) { fileFields['Objective NA'] = String(objective.lensNA); }
+					if (objective.immersion) { fileFields['Immersion'] = objective.immersion; }
+				}
+			}
 			tags = tiffProcessor._lastAllTags || [];
 			data = tiffProcessor.rawTiffData.data;
 		} else if (exrProcessor.rawExrData) {
@@ -3084,10 +3200,25 @@ import { LayersPanel } from './modules/layers-panel.js';
 			vscode.postMessage({ type: 'reopen-as-text' });
 		});
 
-		// Keyboard handling for image toggling
+		// Capture collection and multi-page TIFF navigation before image panning or
+		// VS Code's webview focus handling can consume the physical arrow key.
 		window.addEventListener('keydown', (e) => {
 			const target = e.target as HTMLElement | null;
 			const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+			const isPlainKey = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+			const isRightArrow = e.key === 'ArrowRight' || e.code === 'ArrowRight';
+			const isLeftArrow = e.key === 'ArrowLeft' || e.code === 'ArrowLeft';
+			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) &&
+				(imageCollection.totalImages > 1 || tiffProcessor.pageCount > 1)) {
+				e.preventDefault();
+				e.stopPropagation();
+				if (imageCollection.totalImages > 1) {
+					requestCollectionNavigation(isRightArrow ? 'next' : 'previous');
+				} else {
+					void navigateTiffPage(isRightArrow ? 1 : -1);
+				}
+				return;
+			}
 			if (!isTyping && tiffProcessor.pageCount > 1) {
 				if (e.key === ']' || e.code === 'PageDown') {
 					e.preventDefault();
@@ -3099,16 +3230,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 					return;
 				}
 			}
-			if (imageCollection.totalImages > 1) {
-				if (e.code === 'ArrowRight') {
-					e.preventDefault();
-					vscode.postMessage({ type: 'toggleImage' });
-				} else if (e.code === 'ArrowLeft') {
-					e.preventDefault();
-					vscode.postMessage({ type: 'toggleImageReverse' });
-				}
-			}
-		});
+		}, true);
 
 		// Window beforeunload
 		window.addEventListener('beforeunload', () => {
@@ -3127,12 +3249,38 @@ import { LayersPanel } from './modules/layers-panel.js';
 		overlayElement.innerHTML = `
 			<div class="overlay-content">
 				<div class="overlay-controls">
+					<button class="collection-nav-btn collection-prev-btn" type="button" tabindex="-1" title="Previous image (Left Arrow)" aria-label="Previous image">&#x2039;</button>
 					<span class="image-counter" title="Click to jump to image">1 of 1</span>
+					<button class="collection-nav-btn collection-next-btn" type="button" tabindex="-1" title="Next image (Right Arrow)" aria-label="Next image">&#x203a;</button>
 					<button class="collection-remove-btn" title="Remove from collection">&#x2715;</button>
 				</div>
-				<span class="toggle-hint">← → to navigate</span>
+				<span class="toggle-hint">Left / Right Arrow keys to navigate</span>
 			</div>
 		`;
+
+		const bindNavigationButton = (selector: string, direction: 'next' | 'previous') => {
+			const button = overlayElement?.querySelector(selector) as HTMLButtonElement | null;
+			button?.addEventListener('pointerdown', (e) => {
+				// The overlay lives inside the body container, which also owns image
+				// zoom/click handling. Keep navigation clicks out of that pipeline.
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			button?.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				button.blur();
+				requestCollectionNavigation(direction);
+			});
+			button?.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+			});
+		};
+		bindNavigationButton('.collection-prev-btn', 'previous');
+		bindNavigationButton('.collection-next-btn', 'next');
 
 		// Click on counter → inline number input to jump to any image
 		const counterEl = overlayElement.querySelector('.image-counter') as HTMLElement;
@@ -3231,12 +3379,42 @@ import { LayersPanel } from './modules/layers-panel.js';
 		tiffPageOverlay.className = 'tiff-page-overlay';
 		tiffPageOverlay.style.display = 'none';
 		tiffPageOverlay.innerHTML = `
-			<button class="tiff-page-prev" title="Previous TIFF page ([ or Page Up)" aria-label="Previous TIFF page">&#x2039;</button>
-			<span class="tiff-page-counter">Page 1 / 1</span>
-			<button class="tiff-page-next" title="Next TIFF page (] or Page Down)" aria-label="Next TIFF page">&#x203a;</button>
+			<div class="tiff-page-basic">
+				<button class="tiff-page-prev" type="button" tabindex="-1" title="Previous TIFF page (Left Arrow, [ or Page Up)" aria-label="Previous TIFF page">&#x2039;</button>
+				<span class="tiff-page-counter">Page 1 / 1</span>
+				<button class="tiff-page-next" type="button" tabindex="-1" title="Next TIFF page (Right Arrow, ] or Page Down)" aria-label="Next TIFF page">&#x203a;</button>
+			</div>
+			<div class="ome-axis-controls" aria-label="OME-TIFF dimensions">
+				<label class="ome-axis ome-axis-c"><span class="ome-axis-label">C</span><input type="range"><span class="ome-axis-value"></span></label>
+				<label class="ome-axis ome-axis-z"><span class="ome-axis-label">Z</span><input type="range"><span class="ome-axis-value"></span></label>
+				<label class="ome-axis ome-axis-t"><span class="ome-axis-label">T</span><input type="range"><span class="ome-axis-value"></span></label>
+			</div>
 		`;
-		tiffPageOverlay.querySelector('.tiff-page-prev')?.addEventListener('click', () => void navigateTiffPage(-1));
-		tiffPageOverlay.querySelector('.tiff-page-next')?.addEventListener('click', () => void navigateTiffPage(1));
+		const bindTiffPageButton = (selector: string, delta: number) => {
+			const button = tiffPageOverlay?.querySelector(selector) as HTMLButtonElement | null;
+			button?.addEventListener('pointerdown', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+			});
+			button?.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				button.blur();
+				void navigateTiffPage(delta);
+			});
+			button?.addEventListener('keydown', (e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+			});
+		};
+		bindTiffPageButton('.tiff-page-prev', -1);
+		bindTiffPageButton('.tiff-page-next', 1);
+		for (const axis of ['C', 'Z', 'T'] as OmeAxis[]) {
+			const input = tiffPageOverlay.querySelector(`.ome-axis-${axis.toLowerCase()} input`) as HTMLInputElement | null;
+			input?.addEventListener('input', () => void navigateOmeAxis(axis, Number(input.value)));
+		}
 		document.body.appendChild(tiffPageOverlay);
 	}
 
@@ -3247,8 +3425,29 @@ import { LayersPanel } from './modules/layers-panel.js';
 			return;
 		}
 		const counter = tiffPageOverlay.querySelector('.tiff-page-counter');
-		if (counter) {
-			counter.textContent = `Page ${tiffProcessor.pageIndex + 1} / ${tiffProcessor.pageCount}`;
+		const ome = tiffProcessor.omeMetadata;
+		const basic = tiffPageOverlay.querySelector('.tiff-page-basic') as HTMLElement | null;
+		const axes = tiffPageOverlay.querySelector('.ome-axis-controls') as HTMLElement | null;
+		if (counter) { counter.textContent = `${ome ? 'IFD' : 'Page'} ${tiffProcessor.pageIndex + 1} / ${tiffProcessor.pageCount}`; }
+		if (basic) { basic.classList.toggle('tiff-page-basic--ome', !!ome); }
+		if (axes) { axes.style.display = ome ? 'flex' : 'none'; }
+		if (ome) {
+			const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+			const values: Record<OmeAxis, number> = { C: coordinates.c, Z: coordinates.z, T: coordinates.t };
+			const sizes: Record<OmeAxis, number> = { C: ome.planeSizeC, Z: ome.sizeZ, T: ome.sizeT };
+			for (const axis of ['C', 'Z', 'T'] as OmeAxis[]) {
+				const row = tiffPageOverlay.querySelector(`.ome-axis-${axis.toLowerCase()}`) as HTMLElement | null;
+				const input = row?.querySelector('input') as HTMLInputElement | null;
+				const label = row?.querySelector('.ome-axis-value') as HTMLElement | null;
+				if (!row || !input || !label) { continue; }
+				const size = sizes[axis];
+				row.style.display = size > 1 || axis === 'C' && ome.channels.length > 0 ? 'grid' : 'none';
+				input.min = '0'; input.max = String(Math.max(0, size - 1)); input.step = '1'; input.value = String(values[axis]);
+				const channel = axis === 'C' ? ome.channels[values.C] : undefined;
+				label.textContent = `${values[axis] + 1} / ${size}${channel ? ` · ${channel.name}` : ''}`;
+				if (channel?.colorCss) { row.style.setProperty('--ome-channel-color', channel.colorCss.slice(0, 7)); }
+				else { row.style.removeProperty('--ome-channel-color'); }
+			}
 		}
 		tiffPageOverlay.classList.toggle('tiff-page-overlay--loading', loading);
 		tiffPageOverlay.style.display = 'flex';
@@ -3258,6 +3457,22 @@ import { LayersPanel } from './modules/layers-panel.js';
 		const total = tiffProcessor.pageCount;
 		if (total <= 1) { return; }
 		const target = (tiffProcessor.pageIndex + delta + total) % total;
+		await navigateTiffToPage(target);
+	}
+
+	async function navigateOmeAxis(axis: OmeAxis, value: number): Promise<void> {
+		const ome = tiffProcessor.omeMetadata;
+		if (!ome) { return; }
+		const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+		if (axis === 'C') { coordinates.c = value; }
+		else if (axis === 'Z') { coordinates.z = value; }
+		else { coordinates.t = value; }
+		await navigateTiffToPage(omeCoordinatesToIfd(ome, coordinates));
+	}
+
+	async function navigateTiffToPage(target: number): Promise<void> {
+		const total = tiffProcessor.pageCount;
+		if (target < 0 || target >= total) { return; }
 		if (target === tiffProcessor.pageIndex) { return; }
 
 		const src = settingsManager.settings.src || '';
@@ -3270,6 +3485,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
 		resetTiffCanvasReady();
+		beginSeamlessImageTransition(false);
 
 		tiffProcessor.pageIndex = target;
 		tiffProcessor._isInitialLoad = true;
@@ -3281,7 +3497,6 @@ import { LayersPanel } from './modules/layers-panel.js';
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
-		container.classList.add('loading');
 		updateTiffPageOverlay(true);
 		saveState();
 		await handleTiff(src, gen, target);
@@ -3357,6 +3572,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			}
 			overlayElement.style.display = 'block';
 			if (filenameBadge) filenameBadge.style.display = 'block';
+			renderCollectionLoadingState();
 		} else {
 			overlayElement.style.display = 'none';
 			if (filenameBadge) filenameBadge.style.display = 'none';
@@ -3368,7 +3584,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (!resourceUri || !hasLoadedImage) { return; }
 		const lower = resourceUri.toLowerCase();
 		let entry: { resourceUri: string, format: string, raw: any } | null = null;
-		if ((lower.endsWith('.tif') || lower.endsWith('.tiff')) && tiffProcessor.rawTiffData) {
+		if (isTiffExtension(lower) && tiffProcessor.rawTiffData) {
 			entry = {
 				resourceUri,
 				format: 'tiff',
@@ -3447,6 +3663,12 @@ import { LayersPanel } from './modules/layers-panel.js';
 				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;
 				tiffProcessor.pageIndex = Number(raw.pageIndex || 0);
 				tiffProcessor.pageCount = Math.max(1, Number(raw.pageCount || 1));
+				tiffProcessor.omeMetadata = tiffData.ome || null;
+				const cachedOme = tiffProcessor.omeMetadata;
+				mouseHandler.setPhysicalPixelSize(cachedOme ? {
+					x: cachedOme.physicalSizeX, y: cachedOme.physicalSizeY,
+					xUnit: cachedOme.physicalSizeXUnit, yUnit: cachedOme.physicalSizeYUnit,
+				} : null);
 				updateTiffPageOverlay();
 				tiffProcessor._lastRenderHistogram = null;
 				tiffProcessor._lastRenderUsedWebGL = false;
@@ -3469,7 +3691,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 						formatType: tiffFormatTypeFor(sampleFormatValue, bitsPerSample),
 						...(raw.formatInfo || {}),
 						isInitialLoad: true,
-						decodedWith: 'decoded-cache'
+						decodedWith: 'decoded-cache',
+						...tiffProcessor._omeFormatInfo()
 					}
 				});
 				return true;
@@ -3565,6 +3788,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		PerfTrace.begin(`switch ${switchName}`, { conciseLabel: `Collection switch ${switchName} completed` });
 		_restoreDecodedImageCandidate = _previousDecodedImageCache;
 		cacheCurrentDecodedImage();
+		beginSeamlessImageTransition(true);
 
 		// Abort the previous in-flight load: cancels its network fetch and lets
 		// the processors stop before decoding, instead of the superseded load
@@ -3583,17 +3807,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 		updateTiffPageOverlay();
 		updateFilenameBadge(resourceUri);
 
-		// Reset zoom to fit so applyInitialZoom uses a clean state while the
-		// correct zoom is restored via restoreZoomState once the image is ready.
-		// Also reset initialState so applyInitialZoom doesn't scroll to stale offsets.
-		zoomController.scale = 'fit';
-		zoomController.initialState = { scale: 'fit', offsetX: 0, offsetY: 0 };
-
-		// Show loading indicator in the overlay badge (dot before counter text) and badge
-		if (overlayElement && imageCollection.show) {
-			const counter = overlayElement.querySelector('.image-counter');
-			if (counter) counter.innerHTML = `<span class="collection-loading-dot"></span>${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
-		}
+		// Keep the live zoom untouched while the old frame remains visible. The
+		// captured state is applied to the completed replacement in finalizeImageSetup.
+		renderCollectionLoadingState();
 		if (filenameBadge) filenameBadge.classList.add('filename-badge--loading');
 
 		// Reset the state
@@ -3601,6 +3817,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		canvas = null;
 		imageElement = null;
 		primaryImageData = null;
+		mouseHandler.setPhysicalPixelSize(null);
 		disposeWebglRenderers();
 
 		// Reset each processor's initial-load flag so they re-send formatInfo and
@@ -3658,7 +3875,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		if (tryRestoreDecodedImageFromCache(resourceUri)) {
 			return;
 		}
-		if (lower.endsWith('.tif') || lower.endsWith('.tiff')) {
+		if (isTiffExtension(lower)) {
 			handleTiff(uri, gen);
 		} else if (lower.endsWith('.exr')) {
 			handleExr(uri, gen);

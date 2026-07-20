@@ -43,6 +43,7 @@ export class MouseHandler {
 	 * finite value, the pixel inspector shows that scalar.
 	 */
 	decodedValueProvider: ((x: number, y: number) => number | null) | null;
+	physicalPixelSize: { x?: number; y?: number; xUnit?: string; yUnit?: string } | null;
 
 	// DOM elements
 	container: HTMLElement;
@@ -72,6 +73,7 @@ export class MouseHandler {
 		this.compositeValueProvider = null;
 
 		this.decodedValueProvider = null;
+		this.physicalPixelSize = null;
 
 		// DOM elements
 		this.container = document.body;
@@ -85,6 +87,10 @@ export class MouseHandler {
 	 */
 	setImageElement(element: HTMLElement) {
 		this.imageElement = element;
+	}
+
+	setPhysicalPixelSize(spacing: { x?: number; y?: number; xUnit?: string; yUnit?: string } | null): void {
+		this.physicalPixelSize = spacing;
 	}
 
 	setExrProcessor(proc: any) { this.exrProcessor = proc; }
@@ -194,6 +200,17 @@ export class MouseHandler {
 		y = Math.min(Math.max(0, y), Math.max(0, naturalHeight - 1));
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
+		const spacing = this.physicalPixelSize;
+		if (spacing && Number.isFinite(spacing.x) && Number.isFinite(spacing.y)) {
+			const physicalX = x * Number(spacing.x);
+			const physicalY = y * Number(spacing.y);
+			const xUnit = spacing.xUnit || '';
+			const yUnit = spacing.yUnit || xUnit;
+			const physical = xUnit === yUnit
+				? `${physicalX.toPrecision(5)}×${physicalY.toPrecision(5)} ${xUnit}`.trim()
+				: `${physicalX.toPrecision(5)} ${xUnit} × ${physicalY.toPrecision(5)} ${yUnit}`.trim();
+			return `${x}x${y} (${physical}) ${color}`;
+		}
 		return `${x}x${y} ${color}`;
 	}
 

@@ -9,24 +9,16 @@ with.
 
 ---
 
-## Foundational unlock: multi-IFD decoding (do this first)
+## Foundational unlock: multi-IFD decoding — implemented
 
-Almost everything scientific below depends on one missing primitive. Today the
-Rust/WASM decoder reads only the **main IFD** (`image_ifd()` in
-`wasm/tiff-decoder/src/lib.rs`), so the extension treats every TIFF as a single
-image. The `image-tiff` crate already exposes `next_image()` / `more_images()`
-to walk every IFD in the file.
+The Rust/WASM decoder now enumerates top-level IFDs and decodes arbitrary pages;
+the wrapper, worker, and geotiff.js fallback all carry `pageIndex`/`pageCount`.
 
-**The primitive to build:** teach the decoder to (a) enumerate all IFDs and
-report a page count, and (b) decode an arbitrary page by index, not just the
-first. Expose this through `tiff-wasm-wrapper.ts` and the decode worker.
-
-Once this exists, both **multi-page navigation** and **OME-TIFF** become mostly
-UI + metadata work. Build it once, reuse it everywhere. **Difficulty: 2–3.**
+This primitive is shared by plain multi-page navigation and OME-TIFF.
 
 ---
 
-## 1. Multi-page / N-dimensional TIFF navigation
+## 1. Multi-page / N-dimensional TIFF navigation — implemented (core)
 
 > `← Slice 12 / 325 →`, Time 4, Channel 2
 
@@ -35,17 +27,13 @@ channels) instead of showing only page 0.
 
 **Prerequisites:** the multi-IFD primitive above.
 
-**Implementation sketch:**
+**Implementation notes:**
 
-- Reuse the existing image-collection navigation UI in
-  `src/imagePreview/imagePreview.ts` (the `_imageCollection` / `_currentImageIndex`
-  logic and the "2 / 5" overlay). Generalize it from "list of file URIs" to
-  "list of pages within one decoded file," or run a second parallel index.
-- Add prev/next keybindings for the page axis (the t/r keys are already taken by
-  the file collection — pick new ones, or make the collection navigation
-  page-aware when the current file is multi-page).
-- Cache decoded pages; preload neighbors for smooth scrubbing (the collection
-  already has a preload pattern to copy).
+- A separate top-center page overlay avoids conflating pages with the file
+  collection. `[`/`]` and Page Up/Page Down navigate pages.
+- The source byte buffer is cached so page changes do not refetch the file.
+- **Follow-up:** cache decoded pages and preload neighbors for smoother
+  scrubbing through large stacks.
 - Plain multi-page TIFFs have no semantic axis labels — so this first version
   shows "Page N / M." The Channel/Z/Time _labels_ come from OME metadata (item 2).
 
@@ -54,7 +42,7 @@ item — it makes the tool useful for microscopy/medical stacks immediately.
 
 ---
 
-## 2. OME-TIFF support
+## 2. OME-TIFF support — implemented (single-file datasets)
 
 > `cell_image.ome.tif` should expose Channels (GFP/DAPI/RFP), Z slices, Time
 > points, Objectives, Voxel spacing.
@@ -64,9 +52,11 @@ regular multi-page TIFF whose **first IFD's `ImageDescription` tag (270)**
 contains an **OME-XML** document describing how the flat list of pages maps onto
 the (Channel, Z, Time) dimensions, plus physical metadata.
 
-**Prerequisites:** multi-IFD primitive (item 0) + multi-page navigation (item 1)
-for the UI. We already read tag 270 for metadata display in `tiff-tag-utils.ts`
-/ the metadata panel, so the tag is in hand — we just don't parse it as OME-XML.
+The first single-file implementation is now present: namespace-tolerant OME-XML
+parsing, `DimensionOrder` plus explicit `TiffData` mappings, C/Z/T sliders,
+channel names/colors, physical sizes/units, objective metadata, physical-unit
+pixel readouts, later-page session restore, and `.ome.tif`/`.ome.tiff` plus
+OME-BigTIFF extensions (`.ome.tf2`, `.ome.tf8`, `.ome.btf`).
 
 **Implementation sketch:**
 
@@ -77,16 +67,18 @@ for the UI. We already read tag 270 for metadata display in `tiff-tag-utils.ts`
   objective/instrument info.
 - Map a `(c, z, t)` selection → flat IFD index using `DimensionOrder`. This is
   the whole trick; it turns item 1's "Page N" slider into three labeled sliders.
-- Surface channel names as **layers** — the layer system
-  (`layer-manager.ts` / `layer-compositor.ts`) already composites single-channel
-  images with per-channel colormaps, which is exactly how you'd render GFP+DAPI+RFP
-  as a merged pseudo-color image. This is a strong existing fit.
+- **Follow-up:** surface simultaneously visible channels as **layers**. The
+  layer system already handles compositing, but needs per-layer tint/colormap
+  settings before GFP+DAPI+RFP can be merged correctly.
 - Show voxel spacing / objective in the metadata panel; feed spacing into the
   size/pixel-position readout for real-world units.
 
-**Difficulty: 4.** The XML parsing and dimension mapping are moderate; the payoff
-is large. Split it: (a) parse + labeled sliders, (b) channel→layer compositing,
-(c) physical units.
+**Remaining scope:** channel→layer merged compositing, multiple `Image`/`Pixels`
+series in one file, multi-file OME-TIFF filesets/companion XML, and pyramidal
+SubIFD viewport loading. These should stay separate because they change
+compositing, series selection, file resolution, and lazy-loading behavior
+respectively; they are not required for ordinary single-series, single-file
+C/Z/T OME-TIFF navigation.
 
 - Afterwards: Implement FITS, DICOM and NetCDF see below since they are also straight forward.
 

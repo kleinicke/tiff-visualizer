@@ -658,7 +658,12 @@ export class ImagePreview extends MediaPreview {
 		this._webviewEditor.webview.postMessage({
 			type: 'switchToImage',
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
-			resourceUri: newResource.toString()
+			resourceUri: newResource.toString(),
+			collection: {
+				currentIndex: this._currentImageIndex,
+				totalImages: this._imageCollection.length,
+				show: this._imageCollection.length > 1
+			}
 		});
 
 		// Update overlay
@@ -773,7 +778,7 @@ export class ImagePreview extends MediaPreview {
 		// Note: We do NOT call setImageFormat() here to avoid premature format switching
 		// The webview will report the actual format via formatInfo message
 		const lower = this.resource.path.toLowerCase();
-		const isTiff = lower.endsWith('.tif') || lower.endsWith('.tiff');
+		const isTiff = /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
 		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm');
 		const isPng = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
 		const isPfm = lower.endsWith('.pfm');

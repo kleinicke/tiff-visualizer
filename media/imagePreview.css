@@ -107,6 +107,11 @@ body img {
 	display: block;
 }
 
+/* Never cover an outgoing frame with the global spinner during an in-place switch. */
+.container.image-transition-pending .loading-indicator {
+	display: none;
+}
+
 .image-load-error {
 	margin: 1em;
 }
@@ -149,7 +154,8 @@ body img {
 	left: 50%;
 	transform: translateX(-50%);
 	display: flex;
-	align-items: center;
+	align-items: stretch;
+	flex-direction: column;
 	gap: 7px;
 	background: var(--vscode-editor-background, #1e1e1e);
 	border: 1px solid var(--vscode-panel-border, #3c3c3c);
@@ -161,6 +167,51 @@ body img {
 	color: var(--vscode-editor-foreground, #cccccc);
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 	user-select: none;
+}
+
+.tiff-page-basic {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+}
+
+.tiff-page-basic--ome .tiff-page-counter {
+	font-weight: 400;
+	color: var(--vscode-descriptionForeground, #999);
+}
+
+.ome-axis-controls {
+	display: none;
+	flex-direction: column;
+	gap: 4px;
+	min-width: min(310px, 70vw);
+	padding-top: 4px;
+	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.ome-axis {
+	display: grid;
+	grid-template-columns: 1.4em minmax(90px, 1fr) minmax(7em, auto);
+	align-items: center;
+	gap: 6px;
+}
+
+.ome-axis-label {
+	font-weight: 700;
+	color: var(--ome-channel-color, var(--vscode-editor-foreground, #ccc));
+}
+
+.ome-axis input[type='range'] {
+	min-width: 0;
+	accent-color: var(--ome-channel-color, var(--vscode-focusBorder, #007acc));
+}
+
+.ome-axis-value {
+	overflow: hidden;
+	text-align: left;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .tiff-page-overlay button {
@@ -236,6 +287,7 @@ body img {
 	margin-left: 5px;
 	vertical-align: middle;
 	flex-shrink: 0;
+	animation: collection-dot-pulse 0.9s ease-in-out infinite;
 }
 
 /* RAW decoding in-progress badge — shown over the thumbnail while libraw runs */
@@ -303,6 +355,32 @@ body img {
 
 .image-collection-overlay .image-counter:hover {
 	text-decoration: underline;
+}
+
+.collection-nav-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	padding: 0;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, #3794ff);
+	cursor: pointer;
+	font: inherit;
+	font-size: 20px;
+	line-height: 1;
+}
+
+.collection-nav-btn:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+}
+
+.collection-nav-btn:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder, #3794ff);
+	outline-offset: -1px;
 }
 
 .image-counter-input {
@@ -390,6 +468,16 @@ body img {
 	margin-right: 5px;
 	vertical-align: middle;
 	animation: collection-dot-pulse 0.9s ease-in-out infinite;
+}
+
+.image-collection-overlay--loading .image-counter {
+	cursor: progress;
+	text-decoration: none;
+}
+
+.collection-loading-label {
+	font-weight: 400;
+	color: var(--vscode-descriptionForeground, #aaa);
 }
 
 @keyframes collection-dot-pulse {

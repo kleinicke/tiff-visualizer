@@ -50,6 +50,10 @@ pub struct TiffResult {
     // JSON array of every tag found in the main IFD, plus any Exif/GPS sub-IFD,
     // as `{"tag":<u16>,"name":"<Tag debug name>","group":"TIFF"|"Exif"|"GPS","value":"<string>"}`.
     all_tags_json: String,
+    // OME-XML always lives in the first IFD's ImageDescription. Carry it with
+    // every page result so restoring directly to a later page still has the
+    // dataset's C/Z/T semantics without decoding page zero first.
+    ome_xml: String,
 }
 
 #[wasm_bindgen]
@@ -328,6 +332,11 @@ impl TiffResult {
     #[wasm_bindgen(getter)]
     pub fn direct_decode(&self) -> bool {
         self.direct_decode
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn ome_xml(&self) -> String {
+        self.ome_xml.clone()
     }
 
     #[wasm_bindgen(getter)]
@@ -1132,6 +1141,24 @@ fn append_ifd_tags(
 /// wherever a `TiffResult` is built.
 fn extract_all_tags_json(data: &[u8]) -> String {
     extract_page_tags_json(data, 0)
+}
+
+fn extract_ome_xml(data: &[u8]) -> String {
+    let mut decoder = match Decoder::new(Cursor::new(data)) {
+        Ok(d) => d,
+        Err(_) => return String::new(),
+    };
+    let description = decoder
+        .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
+        .unwrap_or_default();
+    let trimmed = description.trim_start_matches('\u{feff}').trim_start();
+	// The recommended OME-TIFF header includes a warning XML comment before
+	// the OME root, so detection must not require OME to be the first token.
+    if trimmed.contains("<OME") || trimmed.contains(":OME") {
+        description
+    } else {
+        String::new()
+    }
 }
 
 fn extract_page_tags_json(data: &[u8], page_index: u32) -> String {
@@ -2001,6 +2028,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
         timing_stats_ms: stats_time,
         timing_pack_ms: pack_time,
         all_tags_json: extract_page_tags_json(data, page_index),
+        ome_xml: extract_ome_xml(data),
     });
 
     web_sys::console::log_1(&format!(
@@ -2854,6 +2882,7 @@ fn decode_jpeg_ycbcr(
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
         all_tags_json: extract_all_tags_json(data),
+        ome_xml: extract_ome_xml(data),
     })
 }
 
@@ -3041,6 +3070,7 @@ fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Resu
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
         all_tags_json: extract_page_tags_json(data, page_index),
+        ome_xml: extract_ome_xml(data),
     })
 }
 
@@ -3202,6 +3232,7 @@ fn decode_ccitt(
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
         all_tags_json: extract_all_tags_json(data),
+        ome_xml: extract_ome_xml(data),
     })
 }
 

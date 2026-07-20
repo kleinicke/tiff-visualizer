@@ -25,6 +25,17 @@ interface FormatInfo {
 	tileLength?: number;
 	tileCount?: number;
 	directDecode?: boolean;
+	isOmeTiff?: boolean;
+	omeSizeC?: number;
+	omeSizeZ?: number;
+	omeSizeT?: number;
+	dimensionOrder?: string;
+	physicalSizeX?: number;
+	physicalSizeXUnit?: string;
+	physicalSizeY?: number;
+	physicalSizeYUnit?: string;
+	physicalSizeZ?: number;
+	physicalSizeZUnit?: string;
 }
 
 export class SizeStatusBarEntry extends PreviewStatusBarEntry {
@@ -95,6 +106,11 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			}
 
 			info += `**Samples per Pixel:** ${formatInfo.channels ?? formatInfo.samplesPerPixel}\n\n`;
+			if (formatInfo.isOmeTiff) {
+				info += `**OME Dimensions:** C ${formatInfo.omeSizeC} × Z ${formatInfo.omeSizeZ} × T ${formatInfo.omeSizeT}\n\n`;
+				info += `**Dimension Order:** ${formatInfo.dimensionOrder}\n\n`;
+				info += this.getPhysicalSizeMarkdown(formatInfo);
+			}
 
 			// Show channel names if available (for EXR and other formats with named channels)
 			if (formatInfo.channelNames && formatInfo.channelNames.length > 0) {
@@ -177,6 +193,11 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			}
 
 			tooltip.appendMarkdown(`**Samples per Pixel:** ${info.channels ?? info.samplesPerPixel}\n\n`);
+			if (info.isOmeTiff) {
+				tooltip.appendMarkdown(`**OME Dimensions:** C ${info.omeSizeC} × Z ${info.omeSizeZ} × T ${info.omeSizeT}\n\n`);
+				tooltip.appendMarkdown(`**Dimension Order:** ${info.dimensionOrder}\n\n`);
+				tooltip.appendMarkdown(this.getPhysicalSizeMarkdown(info));
+			}
 
 			// Show channel names if available (for EXR and other formats with named channels)
 			if (info.channelNames && info.channelNames.length > 0) {
@@ -229,6 +250,14 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 		tooltip.appendMarkdown('*Press **Ctrl+Shift+I** (Cmd+Shift+I on Mac) to copy this information to clipboard*');
 
 		this.entry.tooltip = tooltip;
+	}
+
+	private getPhysicalSizeMarkdown(info: FormatInfo): string {
+		const axes: string[] = [];
+		if (info.physicalSizeX !== undefined) { axes.push(`X ${info.physicalSizeX} ${info.physicalSizeXUnit || ''}`.trim()); }
+		if (info.physicalSizeY !== undefined) { axes.push(`Y ${info.physicalSizeY} ${info.physicalSizeYUnit || ''}`.trim()); }
+		if (info.physicalSizeZ !== undefined) { axes.push(`Z ${info.physicalSizeZ} ${info.physicalSizeZUnit || ''}`.trim()); }
+		return axes.length ? `**Physical Pixel Size:** ${axes.join(', ')}\n\n` : '';
 	}
 
 	private getCompressionName(compression: string | number): string {

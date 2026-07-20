@@ -78,6 +78,8 @@ export interface TiffDecodeResult {
     max: number;
     /** JSON array of every tag found in the file (TIFF/Exif/GPS), see tiff-tag-utils.js */
     allTagsJson: string;
+	/** OME-XML from the first IFD, present even when another page was decoded. */
+	omeXml?: string;
 }
 
 /**
@@ -149,7 +151,8 @@ export class TiffWasmProcessor {
             data: new Float32Array(result.get_data_as_f32()),
             min: result.min_value,
             max: result.max_value,
-            allTagsJson: result.all_tags_json
+            allTagsJson: result.all_tags_json,
+			omeXml: result.ome_xml || undefined
         };
 
         return decodeResult;
