@@ -158,7 +158,7 @@ export class DecodeWorkerClient {
 	 * Returns null — synchronously, with `buffer` untouched — when the worker
 	 * can't handle this format or isn't available.
 	 */
-	decode(format: string, buffer: ArrayBuffer): Promise<any> | null {
+	decode(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}): Promise<any> | null {
 		if (!this.canDecode(format)) {
 			return null;
 		}
@@ -176,7 +176,7 @@ export class DecodeWorkerClient {
 				resolve(response);
 			});
 			try {
-				worker.postMessage({ id, format, buffer }, [buffer]);
+				worker.postMessage({ id, format, buffer, options }, [buffer]);
 			} catch (error) {
 				clearTimeout(timer);
 				this._pending.delete(id);

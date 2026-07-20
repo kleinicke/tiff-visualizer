@@ -125,6 +125,22 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 /**
+ * Decode an arbitrary zero-based TIFF page and compute min/max statistics.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
  * Decode a TIFF file without eagerly computing min/max statistics.
  *
  * The webview render path computes stats lazily when a non-gamma mode needs
@@ -145,16 +161,16 @@ export function decode_tiff_fast(data) {
 
 /**
  * @param {Uint8Array} data
- * @returns {PngResult}
+ * @returns {HdrResult}
  */
-export function decode_png16_fast(data) {
+export function decode_hdr_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_png16_fast(ptr0, len0);
+    const ret = wasm.decode_hdr_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return PngResult.__wrap(ret[0]);
+    return HdrResult.__wrap(ret[0]);
 }
 
 /**
@@ -188,20 +204,6 @@ export function decode_exr_fast(data) {
 }
 
 /**
- * @param {Uint8Array} data
- * @returns {HdrResult}
- */
-export function decode_hdr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_hdr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return HdrResult.__wrap(ret[0]);
-}
-
-/**
  * Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
  * prefix already stripped, or a PNG eXIf chunk's raw bytes) and return
  * every tag as JSON, in the same shape as `TiffResult.all_tags_json`.
@@ -229,6 +231,51 @@ export function extract_exif_tags(data) {
     } finally {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
+}
+
+/**
+ * Decode an arbitrary zero-based TIFF page without eagerly computing stats.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page_fast(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {PngResult}
+ */
+export function decode_png16_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_png16_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PngResult.__wrap(ret[0]);
+}
+
+/**
+ * Return the number of top-level image file directories (pages) in a TIFF.
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+export function tiff_page_count(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_page_count(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
 }
 
 let cachedFloat64ArrayMemory0 = null;

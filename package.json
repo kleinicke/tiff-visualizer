@@ -79,7 +79,17 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,png,jpeg,jpg,bmp,ico,hdr,tga,webp,avif,jxl,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
+            "filenamePattern": "*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
+          }
+        ]
+      },
+      {
+        "viewType": "tiffVisualizer.previewEditor.option",
+        "displayName": "Scientific Image Visualizer",
+        "priority": "option",
+        "selector": [
+          {
+            "filenamePattern": "*.{png,jpeg,jpg,bmp,ico,webp,avif}"
           }
         ]
       }
@@ -221,19 +231,19 @@
         "command": "tiffVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
       },
       {
         "command": "tiffVisualizer.toggleMetadata",
         "key": "ctrl+m",
         "mac": "cmd+m",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
       },
       {
         "command": "tiffVisualizer.copyImageInfo",
         "key": "ctrl+shift+i",
         "mac": "cmd+shift+i",
-        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
+        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
       }
     ],
     "menus": {
@@ -260,12 +270,12 @@
       "editor/context": [
         {
           "command": "tiffVisualizer.selectForCompare",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
+          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
           "group": "comparison@1"
         },
         {
           "command": "tiffVisualizer.compareWithSelected",
-          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
+          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/ && tiffVisualizer.hasComparisonImage",
           "group": "comparison@1"
         }
       ]

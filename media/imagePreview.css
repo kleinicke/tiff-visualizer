@@ -142,6 +142,61 @@ body img {
 	gap: 4px;
 }
 
+/* Navigation for pages (top-level IFDs) inside one TIFF file. */
+.tiff-page-overlay {
+	position: fixed;
+	top: 10px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px;
+	padding: 5px 8px;
+	z-index: 1000;
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: var(--vscode-editor-font-size, 12px);
+	color: var(--vscode-editor-foreground, #cccccc);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	user-select: none;
+}
+
+.tiff-page-overlay button {
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, #3794ff);
+	font-size: 20px;
+	line-height: 20px;
+	cursor: pointer;
+}
+
+.tiff-page-overlay button:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+}
+
+.tiff-page-counter {
+	min-width: 7em;
+	text-align: center;
+	font-weight: 600;
+}
+
+.tiff-page-overlay--loading .tiff-page-counter::before {
+	content: '';
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-right: 6px;
+	border-radius: 50%;
+	background: var(--vscode-textLink-foreground, #3794ff);
+	animation: raw-badge-pulse 1.2s ease-in-out infinite;
+}
+
 /* Filename badge — bottom-left, always visible */
 .filename-badge {
 	position: fixed;

@@ -67,9 +67,11 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		supportsMultipleEditorsPerDocument: true,
 	}));
 
-	// Register option-priority provider for formats that have a built-in VS Code viewer
-	// (TGA, WebP, AVIF) — users can still pick "TIFF Visualizer" from the open-with menu
-	const viewTypeOption = `${viewType}.option`;
+	// Register the option-priority provider contributed for formats handled by
+	// VS Code's built-in image viewer. Keeping the built-in viewer as the default
+	// is important because it provides Git's old/new image diff experience;
+	// users can still select Scientific Image Visualizer from Open With.
+	const viewTypeOption = ImagePreviewManager.optionViewType;
 	disposables.push(vscode.window.registerCustomEditorProvider(viewTypeOption, previewManager, {
 		supportsMultipleEditorsPerDocument: true,
 	}));
@@ -95,4 +97,4 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 
 	outputChannel.appendLine('Image preview support registered successfully');
 	return vscode.Disposable.from(...disposables);
-} 
+}

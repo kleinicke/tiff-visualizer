@@ -1166,7 +1166,7 @@ export function registerImagePreviewCommands(
 	 * once registered. Used to bootstrap a collection when no preview is open yet.
 	 */
 	async function openPreviewForResource(uri: vscode.Uri) {
-		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.viewType);
+		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.getViewTypeForResource(uri));
 		// resolveCustomEditor runs asynchronously — wait briefly for the preview to register.
 		for (let i = 0; i < 60; i++) {
 			const preview = previewManager.getPreviewFor(uri) ?? previewManager.activePreview;

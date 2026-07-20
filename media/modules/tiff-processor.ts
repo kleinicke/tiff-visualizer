@@ -118,6 +118,10 @@ export class TiffProcessor {
 	_wasmProcessor: TiffWasmProcessor;
 	_webglRenderer: WebGL2FloatRenderer;
 	_wasmAvailable: boolean;
+	pageIndex: number;
+	pageCount: number;
+	_sourceBuffer: ArrayBuffer | null;
+	_sourceBufferSrc: string | null;
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -140,6 +144,10 @@ export class TiffProcessor {
 		this._wasmProcessor = new TiffWasmProcessor();
 		this._webglRenderer = new WebGL2FloatRenderer();
 		this._wasmAvailable = false;
+		this.pageIndex = 0;
+		this.pageCount = 1;
+		this._sourceBuffer = null;
+		this._sourceBufferSrc = null;
 		this._wasmProcessor.init().then(available => {
 			this._wasmAvailable = available;
 			if (available) {
@@ -223,19 +231,31 @@ export class TiffProcessor {
 	 * Process TIFF file from URL
 	 * @param src - TIFF file URL
 	 */
-	async processTiff(src: string): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
+	async processTiff(src: string, pageIndex = 0): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
 		const startTime = performance.now();
 		this._lastRenderHistogram = null;
 		const loadSignal = this.loadSignal;
 		let decodeInfo: { engine: string, durationMs: number } | null = null;
 		try {
-			const responseStart = performance.now();
-			const response = await fetch(src, { signal: loadSignal });
-			PerfTrace.detail('fetch-tiff-response', performance.now() - responseStart);
-			const readStart = performance.now();
-			const buffer = await response.arrayBuffer();
-			const readDuration = performance.now() - readStart;
-			PerfTrace.detail('fetch-tiff-arrayBuffer', readDuration);
+			let buffer: ArrayBuffer;
+			let readDuration = 0;
+			if (this._sourceBufferSrc === src && this._sourceBuffer) {
+				buffer = this._sourceBuffer.slice(0);
+				PerfTrace.mark('tiff-source-cache-hit');
+			} else {
+				const responseStart = performance.now();
+				const response = await fetch(src, { signal: loadSignal });
+				PerfTrace.detail('fetch-tiff-response', performance.now() - responseStart);
+				const readStart = performance.now();
+				const sourceBuffer = await response.arrayBuffer();
+				readDuration = performance.now() - readStart;
+				PerfTrace.detail('fetch-tiff-arrayBuffer', readDuration);
+				// Keep one immutable source copy so changing pages never refetches the
+				// whole TIFF. The per-decode slice can safely be transferred to the worker.
+				this._sourceBuffer = sourceBuffer;
+				this._sourceBufferSrc = src;
+				buffer = sourceBuffer.slice(0);
+			}
 			const megabytes = buffer.byteLength / (1024 * 1024);
 			PerfTrace.note('fetch-tiff-bytes', `${megabytes.toFixed(1)}MB`);
 			if (readDuration > 0) {
@@ -272,7 +292,7 @@ export class TiffProcessor {
 			// Rust/WASM decoder can decode these images like any other RGB TIFF.
 			if (this.decodeWorker?.canDecode('tiff')) {
 				const workerStart = performance.now();
-				const workerResponse = await this.decodeWorker.decode('tiff', buffer);
+				const workerResponse = await this.decodeWorker.decode('tiff', buffer, { pageIndex });
 				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 				if (workerResponse?.ok) {
 					wasmResult = workerResponse.result;
@@ -314,7 +334,7 @@ export class TiffProcessor {
 					const decodeStart = performance.now();
 					// Use a copy so a WASM failure/memory-growth cannot invalidate the
 					// original buffer that the geotiff.js fallback path needs below.
-					wasmResult = await this._wasmProcessor.decode(localBuffer.slice(0));
+					wasmResult = await this._wasmProcessor.decode(localBuffer.slice(0), pageIndex);
 					const decodeTime = performance.now() - decodeStart;
 					decodeInfo = { engine: 'wasm (main thread)', durationMs: decodeTime };
 					console.log(`[TiffProcessor] WASM decode time: ${decodeTime.toFixed(2)}ms`);
@@ -330,6 +350,8 @@ export class TiffProcessor {
 
 			if (wasmResult) {
 				try {
+					this.pageIndex = Number(wasmResult.pageIndex ?? pageIndex);
+					this.pageCount = Math.max(1, Number(wasmResult.pageCount ?? 1));
 
 					// Convert WASM result to format compatible with existing code
 					const width = wasmResult.width;
@@ -389,7 +411,9 @@ export class TiffProcessor {
 							t339: sampleFormat,
 							t277: samplesPerPixel,
 							t284: 1, // Planar config (chunky)
-							t258: bitsPerSample
+							t258: bitsPerSample,
+							pageIndex: this.pageIndex,
+							pageCount: this.pageCount
 						},
 						data: data
 					};
@@ -428,7 +452,9 @@ export class TiffProcessor {
 								...layoutInfo,
 								formatType,
 								isInitialLoad: true,
-								decodedWith: wasmResult.decodedWith || 'wasm'
+								decodedWith: wasmResult.decodedWith || 'wasm',
+								pageIndex: this.pageIndex,
+								pageCount: this.pageCount
 							}
 						});
 
@@ -457,13 +483,23 @@ export class TiffProcessor {
 
 			// Fallback to geotiff.js (or if WASM not available/failed)
 			if (!localBuffer || localBuffer.byteLength === 0) {
-				// The bytes were transferred to the worker; refetch (rare error path).
-				const refetched = await fetch(src, { signal: loadSignal });
-				localBuffer = await refetched.arrayBuffer();
+				// The bytes were transferred to the worker. Reuse the immutable source
+				// cache; refetch only if it was cleared (rare error path).
+				if (this._sourceBufferSrc === src && this._sourceBuffer) {
+					localBuffer = this._sourceBuffer.slice(0);
+				} else {
+					const refetched = await fetch(src, { signal: loadSignal });
+					localBuffer = await refetched.arrayBuffer();
+				}
 			}
 			const decodeStart = performance.now();
 			const tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
-			const image = await tiff.getImage();
+			this.pageCount = Math.max(1, await tiff.getImageCount());
+			if (pageIndex < 0 || pageIndex >= this.pageCount) {
+				throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${this.pageCount})`);
+			}
+			this.pageIndex = pageIndex;
+			const image = await tiff.getImage(pageIndex);
 			const sampleFormat = image.getSampleFormat();
 
 			// Post format info to VS Code
@@ -521,7 +557,9 @@ export class TiffProcessor {
 					t339: Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat, // SampleFormat
 					t277: samplesPerPixel, // SamplesPerPixel
 					t284: 1, // PlanarConfiguration (chunky)
-					t258: bitsPerSample // BitsPerSample
+					t258: bitsPerSample, // BitsPerSample
+					pageIndex: this.pageIndex,
+					pageCount: this.pageCount
 				},
 				data: data
 			};
@@ -549,7 +587,9 @@ export class TiffProcessor {
 						...layoutInfo,
 						formatType: formatType, // For per-format settings
 						isInitialLoad: true, // Signal that this is the first load
-						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js'
+						decodedWith: use24BitMode ? 'geotiff.js (24-bit mode)' : 'geotiff.js',
+						pageIndex: this.pageIndex,
+						pageCount: this.pageCount
 					}
 				});
 

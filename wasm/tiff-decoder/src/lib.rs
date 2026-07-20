@@ -401,7 +401,27 @@ impl TiffResult {
 /// Returns TiffResult with image data and metadata
 #[wasm_bindgen]
 pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
-    decode_tiff_impl(data, true)
+    decode_tiff_impl(data, true, 0)
+}
+
+/// Return the number of top-level image file directories (pages) in a TIFF.
+#[wasm_bindgen]
+pub fn tiff_page_count(data: &[u8]) -> Result<u32, JsValue> {
+    let mut decoder = Decoder::new(Cursor::new(data))
+        .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
+    let mut count = 1u32;
+    while decoder.more_images() {
+        decoder.next_image()
+            .map_err(|e| JsValue::from_str(&format!("Failed to enumerate TIFF pages: {}", e)))?;
+        count = count.saturating_add(1);
+    }
+    Ok(count)
+}
+
+/// Decode an arbitrary zero-based TIFF page and compute min/max statistics.
+#[wasm_bindgen]
+pub fn decode_tiff_page(data: &[u8], page_index: u32) -> Result<TiffResult, JsValue> {
+    decode_tiff_impl(data, true, page_index)
 }
 
 /// Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
@@ -427,7 +447,13 @@ pub fn extract_exif_tags(data: &[u8]) -> String {
 /// the common gamma-mode initial load.
 #[wasm_bindgen]
 pub fn decode_tiff_fast(data: &[u8]) -> Result<TiffResult, JsValue> {
-    decode_tiff_impl(data, false)
+    decode_tiff_impl(data, false, 0)
+}
+
+/// Decode an arbitrary zero-based TIFF page without eagerly computing stats.
+#[wasm_bindgen]
+pub fn decode_tiff_page_fast(data: &[u8], page_index: u32) -> Result<TiffResult, JsValue> {
+    decode_tiff_impl(data, false, page_index)
 }
 
 #[wasm_bindgen]
@@ -1105,10 +1131,19 @@ fn append_ifd_tags(
 /// it's recomputed cheaply (a handful of IFD entries, not the pixel data)
 /// wherever a `TiffResult` is built.
 fn extract_all_tags_json(data: &[u8]) -> String {
+    extract_page_tags_json(data, 0)
+}
+
+fn extract_page_tags_json(data: &[u8], page_index: u32) -> String {
     let mut decoder = match Decoder::new(Cursor::new(data)) {
         Ok(d) => d,
         Err(_) => return "[]".to_string(),
     };
+    for _ in 0..page_index {
+        if decoder.next_image().is_err() {
+            return "[]".to_string();
+        }
+    }
     let main_entries: Vec<_> = decoder
         .image_ifd()
         .tag_iter()
@@ -1477,7 +1512,7 @@ fn finalize_decode_bytes(
     (oriented, w, h, channels)
 }
 
-fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsValue> {
+fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result<TiffResult, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -1487,6 +1522,18 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     let mut decoder = Decoder::new(cursor)
         .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
 
+    for current in 0..page_index {
+        if !decoder.more_images() {
+            return Err(JsValue::from_str(&format!(
+                "TIFF page index {} is out of range (only {} page(s))",
+                page_index,
+                current + 1
+            )));
+        }
+        decoder.next_image()
+            .map_err(|e| JsValue::from_str(&format!("Failed to select TIFF page {}: {}", page_index, e)))?;
+    }
+
     let (width, height) = decoder.dimensions()
         .map_err(|e| JsValue::from_str(&format!("Failed to get dimensions: {}", e)))?;
 
@@ -1495,7 +1542,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     // index + ColorMap path before those calls error out.
     let photometric_early = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation).unwrap_or(1);
     if photometric_early == 3 {
-        return decode_palette(data, width, height);
+        return decode_palette(data, width, height, page_index);
     }
 
     // Get color type and bits per sample
@@ -1581,11 +1628,13 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         let t4_options = decoder.get_tag_u32(tiff::tags::Tag::Unknown(292)).unwrap_or(0);
         // Each strip is an independent CCITT stream; default to a single strip.
         let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
-        return decode_ccitt(
+        let mut result = decode_ccitt(
             data, width, height, compression, predictor,
             photometric_interpretation, planar_configuration,
             &offsets, &counts, fill_order, t4_options, rows_per_strip, orientation,
-        );
+        )?;
+        result.all_tags_json = extract_page_tags_json(data, page_index);
+        return Ok(result);
     }
 
     // JPEG-compressed YCbCr (compression 7, PhotometricInterpretation 6). The
@@ -1593,7 +1642,9 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
     // converted RGB output (a double conversion), which tints grayscale-stored
     // images. Decode the JPEG strips directly with zune-jpeg, which is correct.
     if compression == 7 && photometric_interpretation == 6 {
-        return decode_jpeg_ycbcr(data, &mut decoder, width, height, orientation);
+        let mut result = decode_jpeg_ycbcr(data, &mut decoder, width, height, orientation)?;
+        result.all_tags_json = extract_page_tags_json(data, page_index);
+        return Ok(result);
     }
 
     let decode_start = js_sys::Date::now();
@@ -1949,7 +2000,7 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool) -> Result<TiffResult, JsVa
         timing_convert_ms: convert_time,
         timing_stats_ms: stats_time,
         timing_pack_ms: pack_time,
-        all_tags_json: extract_all_tags_json(data),
+        all_tags_json: extract_page_tags_json(data, page_index),
     });
 
     web_sys::console::log_1(&format!(
@@ -2828,12 +2879,12 @@ fn unpack_bilevel(data: &[u8], width: u32, height: u32, photometric: u32) -> Vec
     out
 }
 
-/// Rewrite the first IFD's PhotometricInterpretation (tag 262) from
+/// Rewrite one IFD's PhotometricInterpretation (tag 262) from
 /// RGBPalette (3) to BlackIsZero (1), in place, so the tiff crate will decode
 /// the raw palette indices instead of refusing the image. Returns false (and
 /// leaves the buffer untouched) for anything it does not understand, e.g.
 /// BigTIFF.
-fn patch_photometric_to_grayscale(buf: &mut [u8]) -> bool {
+fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) -> bool {
     if buf.len() < 8 {
         return false;
     }
@@ -2852,7 +2903,21 @@ fn patch_photometric_to_grayscale(buf: &mut [u8]) -> bool {
     if rd16(&buf[2..4]) != 42 {
         return false;
     }
-    let ifd = rd32(&buf[4..8]) as usize;
+    let mut ifd = rd32(&buf[4..8]) as usize;
+    for _ in 0..page_index {
+        if ifd + 2 > buf.len() {
+            return false;
+        }
+        let count = rd16(&buf[ifd..ifd + 2]) as usize;
+        let next_offset_pos = ifd + 2 + count * 12;
+        if next_offset_pos + 4 > buf.len() {
+            return false;
+        }
+        ifd = rd32(&buf[next_offset_pos..next_offset_pos + 4]) as usize;
+        if ifd == 0 {
+            return false;
+        }
+    }
     if ifd + 2 > buf.len() {
         return false;
     }
@@ -2875,7 +2940,7 @@ fn patch_photometric_to_grayscale(buf: &mut [u8]) -> bool {
 
 /// Decode a palette (RGBPalette) TIFF by reading the raw indices and expanding
 /// them through the ColorMap tag into interleaved 8-bit RGB.
-fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, JsValue> {
+fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Result<TiffResult, JsValue> {
     use tiff::tags::Tag;
 
     // ColorMap (tag 320): 3 * 2^bits 16-bit entries, laid out as all reds, then
@@ -2883,6 +2948,9 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
     let cmap = {
         let mut d = Decoder::new(Cursor::new(data))
             .map_err(|e| JsValue::from_str(&format!("Palette: decoder init: {}", e)))?;
+        for _ in 0..page_index {
+            d.next_image().map_err(|e| JsValue::from_str(&format!("Palette: page select: {}", e)))?;
+        }
         d.get_tag_u16_vec(Tag::Unknown(320))
             .map_err(|e| JsValue::from_str(&format!("Palette: missing ColorMap: {}", e)))?
     };
@@ -2894,12 +2962,15 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
     // Patch the photometric tag so the tiff crate decodes the indices for us,
     // reusing all of its compression / predictor / strip handling.
     let mut patched = data.to_vec();
-    if !patch_photometric_to_grayscale(&mut patched) {
+    if !patch_photometric_to_grayscale(&mut patched, page_index) {
         return Err(JsValue::from_str("Palette: could not patch photometric tag"));
     }
 
     let mut d = Decoder::new(Cursor::new(patched.as_slice()))
         .map_err(|e| JsValue::from_str(&format!("Palette: patched decoder init: {}", e)))?;
+    for _ in 0..page_index {
+        d.next_image().map_err(|e| JsValue::from_str(&format!("Palette: patched page select: {}", e)))?;
+    }
     let compression = d.get_tag_u32(Tag::Compression).unwrap_or(1);
     let predictor = d.get_tag_u32(Tag::Predictor).unwrap_or(1);
     let planar = d.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
@@ -2969,7 +3040,7 @@ fn decode_palette(data: &[u8], width: u32, height: u32) -> Result<TiffResult, Js
         timing_convert_ms: 0.0,
         timing_stats_ms: 0.0,
         timing_pack_ms: 0.0,
-        all_tags_json: extract_all_tags_json(data),
+        all_tags_json: extract_page_tags_json(data, page_index),
     })
 }
 

@@ -512,6 +512,25 @@ async function main() {
 		console.log('✅ bigtiff_deflate_tiled.tif (Deflate-compressed tiled BigTIFF): decodes with correct dimensions and exact pixel values');
 	}
 
+	// 13. Multi-page TIFFs expose their page count and decode the selected IFD,
+	//     including page-local sample types and metadata.
+	{
+		const bytes = new Uint8Array(fs.readFileSync(path.join(samplesDir, 'multipage_rgb_depth_mask.tif')));
+		assert.strictEqual(mod.tiff_page_count(bytes), 3, 'multipage fixture page count');
+
+		const color = mod.decode_tiff_page_fast(bytes, 0);
+		const depth = mod.decode_tiff_page_fast(bytes, 1);
+		const mask = mod.decode_tiff_page_fast(bytes, 2);
+		assert.deepStrictEqual([color.width, color.height, color.channels, color.sample_format], [48, 32, 3, 1]);
+		assert.deepStrictEqual([depth.width, depth.height, depth.channels, depth.sample_format], [48, 32, 1, 3]);
+		assert.deepStrictEqual([mask.width, mask.height, mask.channels, mask.sample_format], [48, 32, 1, 1]);
+		assert.ok(depth.get_data_as_f32().some(v => v > 0 && v < 10), 'depth page should expose float values');
+		assert.ok(mask.get_data_as_f32().every(v => v === 0 || v === 255), 'mask page should contain only its binary samples');
+		assert.ok(depth.all_tags_json.includes('depth'), 'page 2 metadata should come from page 2 IFD');
+		assert.throws(() => mod.decode_tiff_page_fast(bytes, 3), /out of range/i);
+		console.log('✅ Multi-page TIFF: page count, arbitrary IFD decoding, sample types, and page-local metadata');
+	}
+
 	console.log('\n🎉 All WASM TIFF decoder tests passed.\n');
 }
 

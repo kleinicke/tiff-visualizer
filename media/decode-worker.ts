@@ -27,7 +27,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -95,15 +95,24 @@ async function initTiffDecoder(buffer: ArrayBuffer | null | undefined, urls: str
  * Decode a TIFF with the Rust/WASM decoder, mirroring TiffWasmProcessor.decode
  * and additionally deinterleaving the per-channel rasters off-thread.
  */
-function decodeTiffWasm(buffer: ArrayBuffer) {
+function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 	if (!tiffWasmReady) {
 		throw new Error('TIFF WASM decoder not initialized');
 	}
 	const timings = [];
 	let phaseStart = performance.now();
-	const result = typeof decode_tiff_fast === 'function'
-		? decode_tiff_fast(new Uint8Array(buffer))
-		: decode_tiff(new Uint8Array(buffer));
+	const bytes = new Uint8Array(buffer);
+	const pageCount = typeof tiff_page_count === 'function' ? tiff_page_count(bytes) : 1;
+	if (pageIndex < 0 || pageIndex >= pageCount) {
+		throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${pageCount})`);
+	}
+	const result = pageIndex > 0 && typeof decode_tiff_page_fast === 'function'
+		? decode_tiff_page_fast(bytes, pageIndex)
+		: pageIndex > 0 && typeof decode_tiff_page === 'function'
+			? decode_tiff_page(bytes, pageIndex)
+			: typeof decode_tiff_fast === 'function'
+				? decode_tiff_fast(bytes)
+				: decode_tiff(bytes);
 	let now = performance.now();
 	timings.push({ name: 'decode-wasm-rust', durationMs: now - phaseStart });
 	if (Number.isFinite(result.timing_metadata_ms)) {
@@ -153,6 +162,8 @@ function decodeTiffWasm(buffer: ArrayBuffer) {
 	timings.push({ name: 'decode-wasm-deinterleave', durationMs: now - phaseStart });
 
 	return {
+		pageIndex,
+		pageCount,
 		width,
 		height,
 		channels,
@@ -184,7 +195,7 @@ function decodeTiffWasm(buffer: ArrayBuffer) {
  * Decode TIFF variants unsupported by the Rust decoder without blocking the
  * webview thread.
  */
-async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string) {
+async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string, pageIndex = 0) {
 	const timings = [];
 	let phaseStart = performance.now();
 	const tiff = await WorkerGeoTIFF.fromArrayBuffer(buffer);
@@ -192,7 +203,8 @@ async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string) {
 	timings.push({ name: 'decode-geotiff-open', durationMs: now - phaseStart });
 
 	phaseStart = now;
-	const image = await tiff.getImage();
+	const pageCount = await tiff.getImageCount();
+	const image = await tiff.getImage(pageIndex);
 	now = performance.now();
 	timings.push({ name: 'decode-geotiff-ifd', durationMs: now - phaseStart });
 
@@ -232,6 +244,8 @@ async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string) {
 	}
 
 	return {
+		pageIndex,
+		pageCount,
 		width,
 		height,
 		channels: samplesPerPixel,
@@ -250,7 +264,7 @@ async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string) {
 	};
 }
 
-async function decodeTiff(buffer: ArrayBuffer) {
+async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0) {
 	if (tiffWasmInitPromise) {
 		// WASM is preferred, but a slow or wedged initialization must never
 		// prevent the worker's GeoTIFF compatibility decoder from running.
@@ -258,11 +272,11 @@ async function decodeTiff(buffer: ArrayBuffer) {
 			.catch(error => console.warn('[DecodeWorker]', error));
 	}
 	try {
-		return decodeTiffWasm(buffer);
+		return decodeTiffWasm(buffer, pageIndex);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'WASM decode failed');
 		console.warn('[DecodeWorker] TIFF WASM decode failed, using geotiff.js in worker:', message);
-		return decodeTiffGeotiff(buffer, message);
+		return decodeTiffGeotiff(buffer, message, pageIndex);
 	}
 }
 
@@ -495,10 +509,10 @@ function decodePpmWorker(buffer: ArrayBuffer) {
 	return result;
 }
 
-async function decodeFormat(format: string, buffer: ArrayBuffer) {
+async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	switch (format) {
 		case 'tiff':
-			return decodeTiff(buffer);
+			return decodeTiff(buffer, Number(options.pageIndex || 0));
 		case 'exr':
 			return decodeExr(buffer);
 		case 'npy': {
@@ -561,9 +575,9 @@ self.onmessage = async (event: MessageEvent<any>) => {
 		return;
 	}
 
-	const { id, format, buffer } = msg;
+	const { id, format, buffer, options } = msg;
 	try {
-		const result = await decodeFormat(format, buffer);
+		const result = await decodeFormat(format, buffer, options);
 		self.postMessage({ id, ok: true, result }, collectTransferables(result));
 	} catch (error) {
 		// Send the input bytes back (transferred) so the caller can fall back

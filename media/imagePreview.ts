@@ -222,6 +222,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
 		colormapConversionState = persistedState.colormapConversionState || null;
+		tiffProcessor.pageIndex = Math.max(0, Number(persistedState.tiffPageIndex || 0));
 		if (persistedState.displayColormap) {
 			settingsManager.settings.displayColormap = persistedState.displayColormap;
 		}
@@ -244,6 +245,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 		show: false
 	};
 	let overlayElement: HTMLElement | null = null;
+	let tiffPageOverlay: HTMLElement | null = null;
 	let filenameBadge: HTMLElement | null = null;
 	let activeCounterInput: HTMLInputElement | null = null;
 
@@ -280,6 +282,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			})),
 			layerActive: layerManager.active,
 			layerCollapsed: layersPanel.collapsed,
+			tiffPageIndex: tiffProcessor.pageIndex,
 			timestamp: Date.now()
 		};
 		vscode.setState(state);
@@ -312,7 +315,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
-	createFilenameBadge();
+		createTiffPageOverlay();
+		createFilenameBadge();
 
 		// Save state when webview might be disposed
 		window.addEventListener('beforeunload', saveState);
@@ -621,12 +625,13 @@ import { LayersPanel } from './modules/layers-panel.js';
 	/**
 	 * Handle TIFF file loading
 	 */
-	async function handleTiff(src: string, gen: number = _loadGeneration) {
+	async function handleTiff(src: string, gen: number = _loadGeneration, pageIndex: number = tiffProcessor.pageIndex) {
 		currentLoadFormat = 'TIFF';
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await tiffProcessor.processTiff(src);
+			const result = await tiffProcessor.processTiff(src, pageIndex);
 			if (gen !== _loadGeneration) { return; }
+			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 
 			canvas = result.canvas;
@@ -1441,6 +1446,7 @@ import { LayersPanel } from './modules/layers-panel.js';
 			if (counter) counter.textContent = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
 		}
 		if (filenameBadge) filenameBadge.classList.remove('filename-badge--loading');
+		updateTiffPageOverlay(false);
 	}
 
 	/**
@@ -3080,6 +3086,19 @@ import { LayersPanel } from './modules/layers-panel.js';
 
 		// Keyboard handling for image toggling
 		window.addEventListener('keydown', (e) => {
+			const target = e.target as HTMLElement | null;
+			const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+			if (!isTyping && tiffProcessor.pageCount > 1) {
+				if (e.key === ']' || e.code === 'PageDown') {
+					e.preventDefault();
+					void navigateTiffPage(1);
+					return;
+				} else if (e.key === '[' || e.code === 'PageUp') {
+					e.preventDefault();
+					void navigateTiffPage(-1);
+					return;
+				}
+			}
 			if (imageCollection.totalImages > 1) {
 				if (e.code === 'ArrowRight') {
 					e.preventDefault();
@@ -3207,6 +3226,67 @@ import { LayersPanel } from './modules/layers-panel.js';
 		document.body.appendChild(overlayElement);
 	}
 
+	function createTiffPageOverlay() {
+		tiffPageOverlay = document.createElement('div');
+		tiffPageOverlay.className = 'tiff-page-overlay';
+		tiffPageOverlay.style.display = 'none';
+		tiffPageOverlay.innerHTML = `
+			<button class="tiff-page-prev" title="Previous TIFF page ([ or Page Up)" aria-label="Previous TIFF page">&#x2039;</button>
+			<span class="tiff-page-counter">Page 1 / 1</span>
+			<button class="tiff-page-next" title="Next TIFF page (] or Page Down)" aria-label="Next TIFF page">&#x203a;</button>
+		`;
+		tiffPageOverlay.querySelector('.tiff-page-prev')?.addEventListener('click', () => void navigateTiffPage(-1));
+		tiffPageOverlay.querySelector('.tiff-page-next')?.addEventListener('click', () => void navigateTiffPage(1));
+		document.body.appendChild(tiffPageOverlay);
+	}
+
+	function updateTiffPageOverlay(loading = false) {
+		if (!tiffPageOverlay) { return; }
+		if (tiffProcessor.pageCount <= 1) {
+			tiffPageOverlay.style.display = 'none';
+			return;
+		}
+		const counter = tiffPageOverlay.querySelector('.tiff-page-counter');
+		if (counter) {
+			counter.textContent = `Page ${tiffProcessor.pageIndex + 1} / ${tiffProcessor.pageCount}`;
+		}
+		tiffPageOverlay.classList.toggle('tiff-page-overlay--loading', loading);
+		tiffPageOverlay.style.display = 'flex';
+	}
+
+	async function navigateTiffPage(delta: number): Promise<void> {
+		const total = tiffProcessor.pageCount;
+		if (total <= 1) { return; }
+		const target = (tiffProcessor.pageIndex + delta + total) % total;
+		if (target === tiffProcessor.pageIndex) { return; }
+
+		const src = settingsManager.settings.src || '';
+		if (!src) { return; }
+		const gen = ++_loadGeneration;
+		initialLoadStartTime = performance.now();
+		_pendingZoomState = zoomController.getCurrentState();
+		_loadAbortController?.abort();
+		decodeWorkerClient.cancelActiveDecodes();
+		_loadAbortController = new AbortController();
+		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
+		resetTiffCanvasReady();
+
+		tiffProcessor.pageIndex = target;
+		tiffProcessor._isInitialLoad = true;
+		tiffProcessor._pendingRenderData = null;
+		tiffProcessor.rawTiffData = null;
+		tiffProcessor._lastStatistics = null;
+		tiffProcessor._convertedFloatData = null;
+		hasLoadedImage = false;
+		canvas = null;
+		imageElement = null;
+		primaryImageData = null;
+		container.classList.add('loading');
+		updateTiffPageOverlay(true);
+		saveState();
+		await handleTiff(src, gen, target);
+	}
+
 	/**
 	 * Create filename badge (bottom-left, hidden until collection has >1 image)
 	 */
@@ -3297,6 +3377,8 @@ import { LayersPanel } from './modules/layers-panel.js';
 					lastStatistics: tiffProcessor._lastStatistics,
 					lastStatisticsRgb24Mode: tiffProcessor._lastStatisticsRgb24Mode,
 					convertedFloatData: tiffProcessor._convertedFloatData,
+					pageIndex: tiffProcessor.pageIndex,
+					pageCount: tiffProcessor.pageCount,
 					formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null
 				}
 			};
@@ -3363,6 +3445,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 				tiffProcessor._lastStatistics = raw.lastStatistics || null;
 				tiffProcessor._lastStatisticsRgb24Mode = raw.lastStatisticsRgb24Mode === true;
 				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;
+				tiffProcessor.pageIndex = Number(raw.pageIndex || 0);
+				tiffProcessor.pageCount = Math.max(1, Number(raw.pageCount || 1));
+				updateTiffPageOverlay();
 				tiffProcessor._lastRenderHistogram = null;
 				tiffProcessor._lastRenderUsedWebGL = false;
 				tiffProcessor._isInitialLoad = true;
@@ -3493,6 +3578,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
+		tiffProcessor.pageIndex = 0;
+		tiffProcessor.pageCount = 1;
+		updateTiffPageOverlay();
 		updateFilenameBadge(resourceUri);
 
 		// Reset zoom to fit so applyInitialZoom uses a clean state while the

@@ -27,12 +27,24 @@ export interface CopiedPositionState {
 export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
+	public static readonly optionViewType = 'tiffVisualizer.previewEditor.option';
 	// Standalone webview panel type for the dedicated Layers window.
 	public static readonly layerViewType = 'tiffVisualizer.layerView';
 
 	// Export the viewType to ensure it's preserved in the build
 	public static getViewType() {
 		return this.viewType;
+	}
+
+	/**
+	 * Standard web image formats default to VS Code's built-in preview so Git
+	 * diffs can render both revisions. Explicit visualizer opens use the
+	 * option-priority contribution for those formats.
+	 */
+	public static getViewTypeForResource(resource: vscode.Uri): string {
+		return /\.(?:png|jpe?g|bmp|ico|webp|avif)$/i.test(resource.path)
+			? this.optionViewType
+			: this.viewType;
 	}
 
 	private readonly _previews = new Set<IImagePreview>();
