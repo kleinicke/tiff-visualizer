@@ -3,7 +3,8 @@
 Inspect high-bit-depth, floating-point, scientific, and camera image files directly inside Visual Studio Code.
 
 Supports TIFF/OME-TIFF (including embedded multi-file filesets), FITS, DICOM, classic NetCDF, EXR, NPY/NPZ,
-PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM.
+PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM. Layered creative documents
+are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
 The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export the current visualization as PNG. Uses Rust for decoding several formats and the GPU for rendering to provide the fastest possible extension.
 
@@ -25,6 +26,18 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | PPM/PGM/PBM                    |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                |
 | JPEG/WebP/AVIF/BMP/ICO/TGA/JXL |   Yes |     No |      No |      No | Decoded as 8-bit image data in the extension                                |
 
+## Layered Creative Documents
+
+| Format | Initial preview | Current layer compatibility |
+| ------ | --------------- | --------------------------- |
+| OpenRaster (`.ora`) | Full-size `mergedimage.png`, with an Integrated/Reconstructed comparison | PNG layers, groups, names, order, visibility, opacity, offsets, and alpha are imported into the Layers View; non-normal operators are reported and approximated |
+| Krita (`.kra`) | Full-size `mergedimage.png` (`preview.png` fallback) | Paint and mask nodes are not reconstructed yet |
+| Photoshop (`.psd`, `.psb`) | Stored composite, including 8/16/32-bit data supported by the decoder | Layer tree, bounds, visibility, opacity, kind, and blend mode are inspected; the composite remains the displayed source |
+| GIMP (`.xcf`) | Reconstructed from common 8-bit RGB, grayscale, and indexed raster layers | Raw, RLE, and bounded zlib tiles are decoded; unsupported blend modes are visibly reported and approximated as normal |
+| Affinity Photo (`.afphoto`, `.af`) | Largest valid embedded PNG | Proprietary layer data is not decoded; this preview is explicitly marked non-authoritative |
+
+The metadata panel reports whether a preview is authoritative, reconstructed, or heuristic and lists compatibility warnings. ORA documents expose their individual raster nodes in the Layers View; other formats currently enter it as flattened inputs. The format-neutral layered-document model keeps the compositor independent from PSD, XCF, ORA, or Krita-specific structures.
+
 NetCDF-4/HDF5 and DICOM compression other than JPEG Baseline are not yet supported.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
 Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as DICOM Dataset**. The viewer scans technical headers, groups images by series, removes duplicate SOP instances, and orders slices spatially.
@@ -41,7 +54,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 - **Histogram View**: Show a histogram overlay to inspect the current image distribution while tuning the visualization.
 - **Image Collections**: Group related images in one preview and quickly move between them without opening a tab for every file. Add individual images, folders, paths, or wildcard matches from the command palette and editor context menu.
   ![collection](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/Collection.gif)
-- **Layers View**: Open one or more images in a dedicated Layers window for compositing and visual comparison.
+- **Layers View**: Open one or more images in a dedicated Layers window for compositing and visual comparison. Imported layered documents retain collapsible nested groups, group visibility and Shift-solo controls, source-compatibility badges, inline renaming, and persistent group expansion state.
   Easily get the difference between two images or apply a mask onto one. This layer view allows dedicated compositions between multiple images.
 - **NaN Color**: Choose how NaN values are displayed.
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.
@@ -77,6 +90,7 @@ Float Image Visualization Options:
 - **DICOM:** A lightweight TypeScript parser reads the container, technical headers, series metadata, and native pixel data. Encapsulated JPEG Baseline frames are extracted in TypeScript and decoded in Rust/WebAssembly with `zune-jpeg`; browser JPEG decoding is the fallback.
 - **FITS and classic NetCDF:** Dependency-free TypeScript parsers run in the decode worker. The NetCDF path understands regular multidimensional rasters and MPAS cell geometry; NetCDF-4/HDF5 remains separate future work.
 - **EXR and other formats:** The viewer uses a mixture of Rust/WebAssembly, focused JavaScript libraries, and browser-native codecs according to the format.
+- **Layered documents:** ZIP preview extraction handles ORA/Krita, `ag-psd` reads PSD/PSB composites and structure, a bounded parser reconstructs the common 8-bit XCF raster subset, and Affinity support scans validated embedded PNG streams. Decode work runs in the existing worker with explicit size and pointer bounds.
 
 ## Feature Requests and Issues
 

@@ -106,6 +106,24 @@ Used for decoding 16-bit PNG images.
 
 ---
 
+## ag-psd
+
+Used for decoding Photoshop PSD and PSB composite images and document structure.
+
+- **Homepage**: https://github.com/Agamnentzar/ag-psd
+- **License**: MIT
+
+---
+
+## fflate
+
+Used for selective extraction of OpenRaster and Krita ZIP containers.
+
+- **Homepage**: https://github.com/101arrowz/fflate
+- **License**: MIT
+
+---
+
 ## tslib
 
 TypeScript runtime helpers.

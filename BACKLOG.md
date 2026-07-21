@@ -212,7 +212,382 @@ specifically ask, since each is a large reverse-engineering effort for one vendo
 
 ---
 
-## 5. Lens undistortion (Fisheye624 and other camera models)
+## 5. Layered creative-document formats and professional Layer View
+
+> Open an authored image document in two complementary ways: show the
+> application's authoritative integrated preview immediately, and also expose
+> its layer tree so the visualizer can reconstruct the document as faithfully
+> as the supported layer features allow.
+
+Target formats, in suggested implementation order:
+
+1. **OpenRaster (`.ora`)** — open interchange format used by GIMP, Krita,
+   MyPaint, and Scribus; the best first format for a true layer import.
+2. **Krita (`.kra`)** — easy authoritative preview via `mergedimage.png`, then
+   progressively import ordinary paint layers and masks.
+3. **Photoshop (`.psd`, later `.psb`)** — broadest interchange value; import
+   the composite and all rasterizable/cached layers, while preserving
+   unsupported document nodes in the tree.
+4. **GIMP (`.xcf`)** — documented but evolving native format; decode tiled
+   pixel layers, hierarchy, masks, visibility, offsets, and opacity before
+   expanding into GIMP-specific effects and blend semantics.
+5. **Affinity Photo (`.afphoto`, and version-dependent `.af`)** — initially
+   expose only a clearly labelled embedded preview and basic metadata. Its
+   proprietary, unpublished document model makes native layer support a
+   demand-driven reverse-engineering project rather than a compatibility
+   promise.
+
+The feature must not conflate **preview fidelity** with **reconstruction
+fidelity**. A file-provided merged/composite image is the authoritative
+reference and should remain available even when the Layer View cannot yet
+reproduce every operation. The reconstructed view must say which nodes were
+used, approximated, rasterized from cached pixels, or ignored.
+
+### Shared layered-document model
+
+Introduce a format-neutral `LayeredDocument` representation between format
+decoders and the Layer View. Format processors populate this model instead of
+directly mutating `LayerManager`:
+
+```text
+LayeredDocument
+├── canvas: size, resolution, color model/profile, bit depth
+├── authoritativePreview: pixels + origin/source + freshness diagnostics
+├── root: LayerNode[]
+│   ├── group: children, isolation/pass-through, clipping scope
+│   ├── raster: pixels/cached pixels, bounds, alpha, masks
+│   ├── text/vector/smart-object: semantic metadata + optional cached pixels
+│   ├── adjustment/fill/filter: operation parameters + affected scope
+│   └── unsupported: preserved metadata and reason
+├── resources: ICC profiles, linked/embedded assets, fonts, patterns
+└── warnings: unsupported, approximated, missing, or unsafe features
+```
+
+Each `LayerNode` needs a stable document ID, name, type, parent, order,
+visibility, opacity, fill opacity, blend mode, bounds, transform, clipping
+relationship, masks, and a support state:
+
+- **native** — represented and composed by the visualizer;
+- **cached-raster** — displayed from pixels stored by the source application;
+- **approximate** — mapped to the closest available operation;
+- **inspect-only** — metadata and/or raw pixels can be inspected but not
+  included faithfully in the reconstruction;
+- **unsupported** — retained in the tree with a concrete explanation.
+
+Decoders should be able to parse document structure without decoding every
+pixel buffer. Pixel payloads must be lazy and cancellable so opening a large
+PSD/XCF/KRA does not allocate the integrated preview plus every layer at once.
+
+### Dual-view workflow and UI
+
+Add an explicit document-view selector:
+
+- **Integrated Preview** — the embedded merged/composite image authored by the
+  source application. This is the default when present and the fidelity
+  reference for comparison.
+- **Layer Reconstruction** — the result produced by our compositor from all
+  currently supported nodes.
+- **Difference** — absolute or signed pixel difference between the integrated
+  preview and reconstruction, with error statistics and a heatmap. This makes
+  missing semantics visible and gives development a measurable compatibility
+  target.
+- **Solo Layer / Solo Group** — display a layer's raw or cached pixels without
+  requiring the complete document to be composable.
+
+The layer tree now supports nested groups, persistent expand/collapse, layer and
+group visibility, Shift-solo, source support-state badges, inline renaming, and
+live opacity feedback for imported ORA nodes. Remaining tree work is thumbnails,
+lock indicators, clipping/mask relationships, search/filter, selection, and a
+node-details view. Selecting an unsupported node should show its parsed metadata
+and why it cannot currently be rendered; unsupported nodes must never be
+silently dropped.
+
+Keep the source document read-only. Visibility, order, transforms, blend
+settings, and temporary edits are session overlays until a deliberate export
+format is designed. Preserve those overlays in webview state without implying
+that the original PSD/XCF/KRA/Affinity document has been modified.
+
+### Layer View changes required for compatibility
+
+The current compositor is optimized for scientific arithmetic and explicitly
+ignores the fourth channel in value-space composition. Professional document
+compatibility requires a second, color-compositing path while retaining the
+existing exact raw-value path.
+
+#### Alpha, masks, and coverage
+
+- Implement straight/premultiplied alpha conversion explicitly and carry
+  per-pixel alpha through composition. Do not use NaN as the general-purpose
+  transparency representation for authored documents.
+- Combine per-pixel alpha, layer opacity, fill opacity, raster masks, vector
+  masks, and group masks in the correct order.
+- Support mask bounds, offsets, inversion, density/opacity, enable/disable,
+  and independent mask inspection. Feathering can follow later.
+- Preserve RGB values under zero alpha for inspection and round-tripping where
+  the source format does so.
+
+#### Blend modes and color math
+
+- Split the blend-mode registry into **scientific/raw arithmetic** and
+  **color/document** modes so additions for PSD/XCF/ORA do not change current
+  float-image results.
+- Add the common W3C/Photoshop/GIMP families: normal, dissolve where feasible,
+  darken/lighten, multiply/screen, color dodge/burn, overlay, soft/hard light,
+  difference/exclusion, subtract/divide, and component modes such as hue,
+  saturation, color, and luminosity.
+- Define whether each mode operates in encoded, linear-light, perceptual, or
+  application-specific blend space. Preserve source blend/composite-space
+  metadata and warn when falling back.
+- Add deterministic CPU reference implementations and optional GPU kernels;
+  both paths must pass the same golden tests within a documented tolerance.
+
+#### Hierarchy, clipping, and transforms
+
+- Make groups first-class compositing surfaces rather than a flat UI-only
+  list. Support isolated groups and pass-through groups with group opacity and
+  blend mode.
+- Implement clipping chains and knockout/isolation semantics incrementally.
+  Initially mark unsupported combinations rather than flattening them
+  invisibly.
+- Extend layer placement beyond integer `offsetX/offsetY`: affine transforms,
+  subpixel translation, resampling choice, crop/bounds, and canvas clipping.
+  Perspective/warp transforms can be a later capability shared with smart
+  objects.
+- Allow canvases to be defined by the document rather than the bottom layer,
+  including layers wholly or partially outside the canvas.
+
+#### Rich layer types
+
+- Treat pixel layers as the baseline native type.
+- Show cached raster data for text, vector, shape, and smart-object layers
+  whenever the file provides it. Keep their semantic data in the inspector
+  even before native rendering exists.
+- Add reusable non-destructive adjustment nodes, starting with operations that
+  overlap existing visualization controls: exposure/brightness, gamma, levels,
+  curves, invert, threshold, and channel mixing. Then add hue/saturation,
+  color balance, gradient maps, LUTs, and common blur/sharpen filters.
+- Model adjustment scope correctly: the layer stack below, a clipped target,
+  or a group. An adjustment layer without an input image is inspect-only, not
+  a standalone raster layer.
+- Add fill layers (solid, gradient, pattern) and vector masks only after the
+  shared color/transform/mask infrastructure is stable.
+- For smart objects and linked assets, expose embedded previews and metadata
+  first. Recursive document rendering needs cycle detection, depth limits,
+  missing-resource diagnostics, and a bounded cache.
+
+#### Color management and precision
+
+- Preserve source bit depth and channel precision through decode and
+  composition; avoid forcing 16/32-bit authored documents through 8-bit
+  canvas pixels before analysis.
+- Parse and expose ICC profiles, document color mode, transfer function, and
+  rendering intent. Introduce a color-management service used by the CPU and
+  GPU render paths.
+- Start with RGB and grayscale. CMYK, Lab, indexed, duotone, spot channels,
+  and application-specific blend spaces require explicit conversion and
+  should fail or fall back visibly until validated.
+- Distinguish auxiliary/spot channels from image alpha and make them available
+  for solo inspection even when they are not part of the composite.
+
+#### Performance and safety
+
+- Decode containers and large pixel payloads in workers. Transfer typed arrays
+  zero-copy where practical.
+- Add lazy layer decode, thumbnail-first UI, visibility-driven loading,
+  cancellation, decoded-layer LRU caching, and memory budgets. Report when a
+  layer is unloaded or skipped because of a configured safety limit.
+- Stream/unzip individual ORA/KRA entries instead of expanding the complete
+  archive. Defend against path traversal, zip bombs, deeply nested groups,
+  malicious dimensions, cyclic linked documents, and excessive allocation.
+- Composite dirty regions only after layer edits; cache stable group results.
+  Add GPU color compositing only after the CPU reference path is correct.
+
+### Format implementation plans
+
+#### OpenRaster (`.ora`) — first full layered format
+
+Specification: <https://www.openraster.org/>. ORA is intentionally simple: a
+ZIP container with XML stack metadata and PNG/SVG layer assets.
+
+**Implementation status:** the worker now validates and parses `stack.xml`,
+selectively extracts referenced PNG layers, retains groups and source-node
+properties, reconstructs normal alpha compositions, measures them against
+`mergedimage.png`, and exposes an Integrated/Reconstructed switch. Compatible
+raster nodes can be expanded into the existing Layers View. Remaining ORA work
+is lazy per-node extraction, non-normal SVG blend operators, SVG assets, masks,
+color management, editable group properties with isolated group compositing,
+and the remaining professional layer-tree features listed above.
+
+- Register `.ora` in the editor, collection, comparison, and add-layer paths.
+- Parse the MIME marker and `stack.xml` safely in the decode worker.
+- Load the merged image as the authoritative preview and PNG layer entries
+  lazily through the existing PNG decoder.
+- Import names, nesting, order, visibility, opacity, offsets, alpha, and
+  composite operation. Import thumbnails when present.
+- Initially rasterize or mark SVG/vector entries as cached/unsupported;
+  integrate native SVG rendering only after its CSP and external-resource
+  behavior is constrained.
+- Map supported blend modes exactly and retain unknown mode identifiers for
+  future support.
+
+**Acceptance:** ordinary GIMP/Krita/MyPaint ORA fixtures reproduce the merged
+preview within the agreed pixel tolerance; every source node remains visible
+in the tree; solo raster layers match their stored PNGs exactly.
+
+**Difficulty: 3** for robust raster-layer support, **4** with broad blend,
+mask, vector, and color-management fidelity.
+
+#### Krita (`.kra`, preview-first)
+
+Reference: <https://docs.krita.org/en/general_concepts/file_formats/file_kra.html>.
+A normal KRA is ZIP-based and contains `mergedimage.png`, the rendered canvas.
+
+- Phase 1: safely extract `mergedimage.png`, preview/thumbnail, document info,
+  and basic metadata; route the preview through the existing PNG pipeline.
+- Phase 2: parse the document/layer XML and import ordinary paint layers,
+  bounds, groups, visibility, opacity, masks, and cached projections lazily.
+- Phase 3: support selected Krita blend modes, filter/adjustment masks,
+  generator layers, vector layers, and animation frames as demand warrants.
+- Treat `.krz` separately: it intentionally omits `mergedimage.png`, so do not
+  register it until reconstruction support can produce a useful result.
+
+**Acceptance:** every supported KRA opens immediately from `mergedimage.png`;
+ordinary paint-layer fixtures reconstruct closely; unsupported Krita nodes are
+listed with their type and do not disappear.
+
+**Difficulty: 2** for integrated preview, **4–5** for increasingly native KRA
+composition.
+
+#### Photoshop (`.psd`, later `.psb`)
+
+Reference: <https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/>.
+Evaluate a maintained browser/worker-capable decoder (currently `ag-psd` is a
+candidate) against representative fixtures before committing to it. Pin and
+document the exact supported bit depths, color modes, compression types, PSD
+features, maximum sizes, and PSB behavior; library claims and limitations have
+changed across releases.
+
+- Phase 1: decode the composite image, dimensions, bit depth, color mode,
+  profile, image resources, and basic metadata in the worker.
+- Phase 2: expose the complete layer/group tree and lazily decode raster layer
+  pixels, cached representations, masks, bounds, visibility, opacity, fill
+  opacity, blend modes, clipping relationships, and thumbnails.
+- Phase 3: implement common Photoshop blend/group semantics and adjustments;
+  use cached pixels for text, shape, vector, and smart-object nodes while
+  preserving their semantic descriptors for inspection.
+- Phase 4: add selected layer effects and smart-object transforms. Keep
+  unsupported descriptors intact and diagnostic rather than guessing.
+- Add `.psb` only after 64-bit lengths/large-document behavior and strict
+  memory limits are tested. Its potential size makes lazy decode mandatory.
+
+**Acceptance:** the authoritative composite matches Photoshop's saved result;
+solo pixel/cached layers match stored data; the reconstruction comparison
+identifies and quantifies every unsupported source of visual difference.
+
+**Difficulty: 3** for composite + basic raster inspection, **5** and ongoing
+for high Photoshop composition fidelity.
+
+#### GIMP (`.xcf`)
+
+Reference: <https://developer.gimp.org/core/standards/xcf/>. XCF is documented,
+but it is a living native format whose implementation remains the ultimate
+reference.
+
+- Implement or adopt a bounded worker-side parser for the image header,
+  properties, offset-based structures, tile hierarchies, uncompressed/RLE/zlib
+  pixel payloads, layers, channels, masks, groups, text/vectors, and effects.
+- Decode pixel tiles lazily and preserve straight-alpha RGB values.
+- Import canvas properties, color model/precision/profile, layer positions,
+  visibility, opacity, blend/composite spaces, groups, masks, selection, and
+  auxiliary channels.
+- If no authoritative full-resolution merged projection is stored, show a
+  thumbnail/preview only as such and default to our reconstruction. Never
+  present a low-resolution preview as pixel-accurate source data.
+- Track XCF version support explicitly and add fixtures generated by multiple
+  supported GIMP releases.
+
+**Acceptance:** representative RGB/grayscale XCF files with paint layers,
+groups, alpha, masks, offsets, and common blend modes reconstruct within
+tolerance; newer unsupported properties are reported without corrupting the
+rest of the document.
+
+**Difficulty: 4** for common raster documents, **5** for broad current-GIMP
+fidelity.
+
+#### Affinity Photo (`.afphoto`, `.af`) — embedded preview only initially
+
+Affinity's native format is proprietary and has no public specification.
+Support must therefore be intentionally modest and version-gated.
+
+- Spike existing preview extractors against Affinity versions and platforms.
+  Validate preview presence, dimensions, color profile, alpha, orientation,
+  freshness, and whether it is full resolution.
+- Register the format only when a reliable signature can be detected. Label
+  the result **Embedded Affinity Preview**, including its actual dimensions;
+  do not imply that layers or the full-resolution document were decoded.
+- Extract safe basic metadata when understood, retaining unknown blocks as
+  counts/sizes rather than attempting unstable interpretation.
+- Recommend PSD/TIFF export for interoperable full-resolution use.
+- Native Affinity layers remain a separate reverse-engineering effort and
+  should start only with stable fixtures, explicit maintenance appetite, and a
+  legal/licensing review. Reuse the shared `LayeredDocument` model if that work
+  later becomes viable.
+
+**Acceptance:** supported versions either produce an accurately labelled,
+validated embedded preview or a clear unsupported-version message—never a
+silent, possibly stale substitute for the document.
+
+**Difficulty: 2** for a version-limited embedded preview, **5+ / unbounded**
+for native layer reconstruction.
+
+### Testing and fidelity programme
+
+- Build a redistributable fixture matrix for every format: transparent pixel
+  layers, partial opacity, offsets/out-of-canvas bounds, nested groups, masks,
+  clipping, every supported blend mode, color profiles, 8/16/32-bit channels,
+  malformed containers, and very large declared dimensions.
+- Generate authoritative reference renders with GIMP, Krita, Photoshop, and
+  Affinity where licensing/automation permits. Record the application/version
+  that produced each golden image.
+- Compare integrated preview, source-application golden, CPU reconstruction,
+  and GPU reconstruction. Track maximum/mean channel error, differing-pixel
+  percentage, and perceptual difference; set exact versus tolerance-based
+  thresholds per operation/color space.
+- Unit-test every blend/mask/alpha/transform primitive independently before it
+  is enabled for imported documents.
+- Fuzz all container/descriptor parsers and enforce nesting, dimension,
+  decompression, time, and memory limits.
+- Maintain a visible compatibility report per opened document and a versioned
+  support matrix in the README. "Opens" must state whether it means embedded
+  preview, solo-layer inspection, approximate reconstruction, or validated
+  composition.
+
+### Suggested delivery phases
+
+1. **Layered-document contract + dual-view UI:** integrated preview,
+   reconstruction, difference view, support diagnostics, lazy payload API.
+2. **Professional compositor foundation:** alpha, masks, group surfaces,
+   clipping, common color blend modes, affine transforms, CPU goldens.
+3. **ORA end-to-end:** first format validating the complete architecture.
+4. **KRA preview + paint layers:** quick broad value, then progressive native
+   imports.
+5. **PSD composite + inspection:** decoder spike, composite, full tree, lazy
+   raster/cached layers; expand fidelity by measured impact.
+6. **XCF common raster subset:** build on the compositor proven by ORA/PSD.
+7. **Advanced shared features:** adjustments, effects, vector/text rendering,
+   smart/linked documents, color-management expansion, GPU acceleration.
+8. **Affinity embedded preview:** opportunistic and explicitly not native
+   document support.
+
+This is a **Difficulty: 5 programme**, not one feature. The first useful
+increments (KRA integrated preview or ORA raster layers) are Difficulty 2–3;
+professional-tool-level reconstruction is an ongoing compatibility effort that
+should ship format and operation support incrementally behind honest per-node
+diagnostics.
+
+---
+
+## 6. Lens undistortion (Fisheye624 and other camera models)
 
 > Toggle between raw fisheye/distorted capture and a rectified view, using a
 > real camera model instead of a generic lens-correction filter.
@@ -293,3 +668,11 @@ largely already written and tested in the neighboring project).
 4. **FITS + DICOM** (item 4) — broad, tractable audiences.
 5. **OME-Zarr** (item 3, local then remote) — deferring HDF5 and the proprietary
    microscopy formats until there's demand.
+6. **Layered-document foundation + ORA** (item 5) — introduce the dual preview/
+   reconstruction model and validate alpha, masks, groups, and professional
+   blend modes against the simplest open interchange format.
+7. **KRA preview, then PSD and XCF layer inspection** (item 5) — take the cheap
+   authoritative-preview wins first and expand reconstruction fidelity by
+   measured visual impact; keep Affinity limited to validated embedded previews.
+8. **Lens undistortion** (item 6) — independent of the format sequencing and
+   suitable to schedule whenever camera workflows become the priority.

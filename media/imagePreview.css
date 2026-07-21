@@ -301,6 +301,40 @@ body img {
 	background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
 }
 
+.layered-preview-overlay {
+	position: fixed;
+	top: 12px;
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 18;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	padding: 5px 7px;
+	border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.45));
+	border-radius: 5px;
+	background: var(--vscode-editorWidget-background, rgba(32, 32, 32, 0.94));
+	color: var(--vscode-editorWidget-foreground, #ddd);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+	font-size: 11px;
+}
+
+.layered-preview-overlay[hidden] { display: none; }
+
+.layered-preview-overlay button {
+	border: 0;
+	border-radius: 3px;
+	padding: 3px 7px;
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	color: var(--vscode-button-secondaryForeground, #ddd);
+	cursor: pointer;
+}
+
+.layered-preview-overlay button:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+.layered-preview-overlay button.active { background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); }
+.layered-preview-label { opacity: 0.78; margin-right: 2px; }
+.layered-preview-fidelity { opacity: 0.72; margin-left: 3px; font-variant-numeric: tabular-nums; }
+
 .dataset-series-row,
 .dataset-axis {
 	display: grid;
@@ -1093,7 +1127,7 @@ body img {
 	position: fixed;
 	top: 12px;
 	right: 12px;
-	width: 320px;
+	width: 352px;
 	max-height: 70vh;
 	display: flex;
 	flex-direction: column;
@@ -1148,6 +1182,11 @@ body img {
 	background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }
 
+.layers-btn:disabled {
+	opacity: 0.35;
+	cursor: default;
+}
+
 .layers-btn.active {
 	background: var(--vscode-button-background, #0e639c);
 	color: var(--vscode-button-foreground, #fff);
@@ -1167,6 +1206,13 @@ body img {
 	margin-bottom: 4px;
 	background: var(--vscode-list-inactiveSelectionBackground, #2a2d2e);
 	border-radius: 4px;
+	margin-left: calc(var(--layer-depth, 0) * 14px);
+	border-left: 2px solid transparent;
+}
+
+.layer-row:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+	border-left-color: var(--vscode-focusBorder, #007acc);
 }
 
 .layer-row-base {
@@ -1174,9 +1220,92 @@ body img {
 }
 
 .layer-name {
+	min-width: 0;
+	font-weight: 500;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.layer-title-line {
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.layer-dimensions {
+	flex: none;
+	opacity: 0.58;
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+}
+
+.layer-name-input {
+	min-width: 0;
+	width: 100%;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #ccc);
+	border: 1px solid var(--vscode-focusBorder, #007acc);
+	border-radius: 2px;
+	padding: 1px 3px;
+}
+
+.layer-support-badge {
+	flex: none;
+	padding: 1px 4px;
+	border-radius: 8px;
+	font-size: 9px;
+	line-height: 1.25;
+	text-transform: uppercase;
+	background: var(--vscode-badge-background, #4d4d4d);
+	color: var(--vscode-badge-foreground, #fff);
+}
+
+.layer-support-native { opacity: 0.58; }
+.layer-support-approximate { background: var(--vscode-editorWarning-foreground, #cca700); color: #111; }
+.layer-support-unsupported { background: var(--vscode-editorError-foreground, #f14c4c); }
+
+.layer-group-row {
+	display: grid;
+	grid-template-columns: 18px auto minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 5px;
+	min-height: 26px;
+	margin: 2px 0 3px calc(var(--layer-depth, 0) * 14px);
+	padding: 2px 6px 2px 3px;
+	border-radius: 3px;
+	background: var(--vscode-sideBarSectionHeader-background, #333);
+	background: color-mix(in srgb, var(--vscode-sideBarSectionHeader-background, #333) 76%, transparent);
+}
+
+.layer-group-toggle {
+	width: 18px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	cursor: pointer;
+}
+
+.layer-group-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.layer-group-count {
+	min-width: 18px;
+	padding: 0 4px;
+	border-radius: 8px;
+	text-align: center;
+	font-size: 10px;
+	background: var(--vscode-badge-background, #4d4d4d);
+	color: var(--vscode-badge-foreground, #fff);
 }
 
 .layer-base-tag {
@@ -1207,6 +1336,14 @@ body img {
 
 .layer-opacity {
 	flex: 1;
+}
+
+.layer-opacity-value {
+	width: 31px;
+	text-align: right;
+	opacity: 0.72;
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
 }
 
 .layer-pos-label {

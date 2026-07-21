@@ -152,6 +152,29 @@ async function main() {
 		console.log('✅ Mask mode hides below where condition is false');
 	}
 
+	// 13. RGBA layers use per-pixel alpha in addition to layer opacity.
+	{
+		const bg = layer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const top = layer({ data: new Uint8Array([110, 120, 130, 128]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const r = composite([bg, top], 1, 1);
+		assert.strictEqual(r.channels, 4);
+		assert.ok(approx(r.data[0], 10 + 100 * (128 / 255), 1e-5), `red alpha blend: ${r.data[0]}`);
+		assert.ok(approx(r.data[1], 20 + 100 * (128 / 255), 1e-5), `green alpha blend: ${r.data[1]}`);
+		assert.ok(approx(r.data[2], 30 + 100 * (128 / 255), 1e-5), `blue alpha blend: ${r.data[2]}`);
+		assert.strictEqual(r.data[3], 255, 'opaque background keeps the result opaque');
+		console.log('✅ RGBA layers honor per-pixel alpha');
+	}
+
+	// 14. Arithmetic comparisons keep their historical RGB value-space behavior.
+	{
+		const a = layer({ data: new Uint8Array([10, 20, 30, 128]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const b = layer({ data: new Uint8Array([1, 2, 3, 64]), width: 1, height: 1, channels: 4, typeMax: 255, blendMode: 'subtract' });
+		const r = composite([a, b], 1, 1);
+		assert.strictEqual(r.channels, 3);
+		assert.deepStrictEqual(Array.from(r.data), [9, 18, 27]);
+		console.log('✅ RGBA arithmetic remains RGB value-space math');
+	}
+
 	console.log('\n🎉 All layer compositor tests passed.\n');
 }
 

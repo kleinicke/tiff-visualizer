@@ -29,6 +29,8 @@ import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
+import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
+import type { LayeredDocumentFormat } from './modules/layered-document.js';
 import { extractDicomJpegFrame, parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
 import type { ScientificDecodedImage } from './modules/scientific-format-parsers.js';
 
@@ -137,14 +139,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => parseDicomForBrowser(buffer, Number(options?.frameIndex || 0)) });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => parseNetCdf(buffer, options) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor];
+	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
-	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, ...scientificProcessors];
+	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	// Off-thread decode worker, pre-warmed in the background. Processors fall
 	// back to their local (main-thread) decoders until it is ready or if it
 	// is unavailable, so worker failures never break image loading.
 	const decodeWorkerClient = new DecodeWorkerClient();
 	decodeWorkerClient.start();
-	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, ...scientificProcessors];
+	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const metadataPanel = new MetadataPanel(settingsManager, vscode);
@@ -160,6 +163,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 	mouseHandler.setScientificProcessors(scientificProcessors);
+	mouseHandler.setLayeredPreviewProcessor(layeredPreviewProcessor);
 
 	function disposeWebglRenderers() {
 		for (const p of allProcessors) {
@@ -183,7 +187,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			// Tell the extension so it can track layer mode (and block collection ops).
 			vscode.postMessage({ type: 'layerModeChanged', active: visible });
 			if (visible) {
-				syncBaseLayer();
+				if (!installLayeredDocumentLayers()) { syncBaseLayer(); }
 				recompositeLayers();
 			} else {
 				// Restore the normal single-image render.
@@ -194,7 +198,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	}, { closable: settingsManager.settings.surfaceMode !== 'layers' });
 	// Pixel inspector reads the composite value when compositing is active.
 	mouseHandler.compositeValueProvider = (x: number, y: number) =>
-		(layerManager.active && layerManager.hasExtraLayers()) ? layerManager.getCompositeValueAt(x, y) : null;
+		(layerManager.active && layerManager.hasCompositeStack()) ? layerManager.getCompositeValueAt(x, y) : null;
 	// Pixel inspector reads the decoded scalar when a colormap has been decoded.
 	mouseHandler.decodedValueProvider = (x: number, y: number) => {
 		if (!decodedColormapSource) { return null; }
@@ -204,11 +208,21 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	};
 	/** URI of the image currently used as the base layer. */
 	let _layerBaseUri: string | undefined;
+	let _expandedLayerDocumentUri: string | undefined;
 
 	/** Camera RAW file extensions supported by RawProcessor */
 	const RAW_EXTENSIONS = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
 	const isRawExtension = (lower: string): boolean => RAW_EXTENSIONS.some(ext => lower.endsWith(ext));
 	const isTiffExtension = (lower: string): boolean => /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
+	const layeredFormatForPath = (lower: string): LayeredDocumentFormat | null => {
+		if (lower.endsWith('.ora')) { return 'ora'; }
+		if (lower.endsWith('.kra')) { return 'kra'; }
+		if (lower.endsWith('.psd')) { return 'psd'; }
+		if (lower.endsWith('.psb')) { return 'psb'; }
+		if (lower.endsWith('.xcf')) { return 'xcf'; }
+		if (lower.endsWith('.afphoto') || lower.endsWith('.af')) { return 'affinity'; }
+		return null;
+	};
 
 	// Application state
 	let hasLoadedImage = false;
@@ -289,6 +303,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (persistedState.displayColormap) {
 			settingsManager.settings.displayColormap = persistedState.displayColormap;
 		}
+		if (Array.isArray(persistedState.layerGroupCollapsed)) {
+			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
+		}
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
 		const savedLayers = persistedState.layers;
@@ -311,6 +328,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let tiffPageOverlay: HTMLElement | null = null;
 	let datasetOverlay: HTMLElement | null = null;
 	let netcdfOverlay: HTMLElement | null = null;
+	let layeredPreviewOverlay: HTMLElement | null = null;
 	let netcdfSelection: { variableName?: string; indices: Record<string, number> } = persistedState?.netcdfSelection && typeof persistedState.netcdfSelection === 'object'
 		? { variableName: persistedState.netcdfSelection.variableName, indices: { ...(persistedState.netcdfSelection.indices || {}) } }
 		: { indices: {} };
@@ -352,10 +370,16 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				blendMode: l.blendMode,
 				visible: l.visible,
 				maskCondition: l.maskCondition,
+				groupPath: l.groupPath,
+				groupIds: l.groupIds,
+				sourceNodeId: l.sourceNodeId,
+				sourceSupport: l.sourceSupport,
+				sourceBlendMode: l.sourceBlendMode,
 				isBase: i === 0,
 			})),
 			layerActive: layerManager.active,
 			layerCollapsed: layersPanel.collapsed,
+			layerGroupCollapsed: [...layersPanel.collapsedGroups],
 			tiffPageIndex: tiffProcessor.pageIndex,
 			timestamp: Date.now()
 		};
@@ -392,6 +416,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		createTiffPageOverlay();
 		createDatasetOverlay();
 		createNetCdfOverlay();
+		createLayeredPreviewOverlay();
 		createFilenameBadge();
 
 		// Save state when webview might be disposed
@@ -897,6 +922,27 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 	}
 
+	async function handleLayeredPreview(format: LayeredDocumentFormat, src: string, gen: number = _loadGeneration) {
+		currentLoadFormat = 'Layered Document';
+		currentLoadDecodeInfo = null;
+		try {
+			const result = await layeredPreviewProcessor.process(src, format);
+			if (gen !== _loadGeneration) { return; }
+			canvas = result.canvas;
+			primaryImageData = result.imageData;
+			imageElement = canvas;
+			const ctx = layeredPreviewProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData) { await renderImageDataToCanvas(primaryImageData, ctx); }
+			hasLoadedImage = true;
+			updateLayeredPreviewOverlay();
+			if (!layeredPreviewProcessor._pendingRenderData) { finalizeImageSetup(); }
+		} catch (error) {
+			if (gen !== _loadGeneration) { return; }
+			console.error(`Error handling layered ${format} document:`, error);
+			onImageError(`Failed to load ${format.toUpperCase()}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
 	/**
 	 * Handle PPM/PGM file loading
 	 */
@@ -1197,6 +1243,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// with a placeholder canvas; the real render happens later in the updateSettings handler.
 		// Clearing the loading indicator here would make it disappear before the actual image shows.
 		const hasPendingDeferred = tiffProcessor._pendingRenderData ||
+			layeredPreviewProcessor._pendingRenderData ||
 			npyProcessor._pendingRenderData ||
 			pngProcessor._pendingRenderData ||
 			ppmProcessor._pendingRenderData ||
@@ -1241,7 +1288,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				vscode.postMessage({ type: 'requestInitialLayers' });
 			}
 		}
-		if (layerManager.active && layerManager.hasExtraLayers()) {
+		if (layerManager.active && layerManager.hasCompositeStack()) {
 			recompositeLayers();
 			PerfTrace.mark('layers-recomposite');
 		}
@@ -1334,6 +1381,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
 			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
 			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'Layered Document': {
+				const raw = layeredPreviewProcessor._lastRaw;
+				const activeRaw = raw ? { ...raw, data: layeredPreviewProcessor.activeData() } : null;
+				return lastRawToLayer(activeRaw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, uri) || baseFromCanvas(name, uri);
+			}
 			default: return baseFromCanvas(name, uri);
 		}
 	}
@@ -1354,6 +1406,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			getState: (): any => undefined,
 		};
 		try {
+			const layeredFormat = layeredFormatForPath(lower);
+			if (layeredFormat) {
+				const p = new LayeredPreviewProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await p.process(src, layeredFormat);
+				const raw = p._lastRaw;
+				return lastRawToLayer(raw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, resourceUri);
+			}
 			if (isTiffExtension(lower)) {
 				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
@@ -1423,6 +1482,37 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			!!_pendingLayerRestore ||
 			settingsManager.settings.surfaceMode === 'layers' ||
 			layerManager.hasExtraLayers();
+	}
+
+	/** Expand native ORA raster nodes into the existing editable layer stack. */
+	function installLayeredDocumentLayers(): boolean {
+		const raw = layeredPreviewProcessor._lastRaw;
+		const uri = settingsManager.settings.resourceUri || '';
+		if (raw?.formatType !== 'ora' || !raw.layerAssets?.length) { return false; }
+		if (_expandedLayerDocumentUri === uri && layerManager.layers.length === raw.layerAssets.length) { return true; }
+		const layers = [...raw.layerAssets].reverse().map(asset => layerManager.createLayer({
+			data: asset.data, width: asset.width, height: asset.height, channels: 4,
+			isFloat: false, typeMax: 255,
+			name: asset.name,
+			groupPath: asset.groupPath,
+			groupIds: asset.groupIds,
+			sourceNodeId: asset.nodeId,
+			sourceSupport: asset.support,
+			sourceBlendMode: asset.blendMode,
+		}, {
+			offsetX: asset.x, offsetY: asset.y, opacity: asset.opacity,
+			visible: asset.visible,
+			// Unsupported ORA compositing operators remain editable but are
+			// deliberately approximated as normal in this first native import.
+			blendMode: 'normal',
+		}));
+		if (!layers.length) { return false; }
+		layerManager.setLayers(layers, raw.document.width, raw.document.height);
+		layerManager.documentExpanded = true;
+		_expandedLayerDocumentUri = uri;
+		_layerBaseUri = uri;
+		layersPanel.refresh();
+		return true;
 	}
 
 	function syncBaseLayer() {
@@ -1838,6 +1928,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 							placeholderImageData: primaryImageData
 						});
 						deferredCanvasAlreadyRendered = tiffProcessor._lastRenderUsedWebGL === true;
+					} else if (layeredPreviewProcessor._pendingRenderData) {
+						deferredImageData = layeredPreviewProcessor.performDeferredRender({
+							collectHistogram: histogramOverlay.getVisibility(),
+							targetCanvas: canvas,
+							placeholderImageData: primaryImageData
+						});
 					} else if (npyProcessor._pendingRenderData) {
 						deferredImageData = npyProcessor.performDeferredRender({
 							collectHistogram: histogramOverlay.getVisibility(),
@@ -1958,6 +2054,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					// Update rendering with new settings, using optimization hints
 					// Only re-render if we have an image loaded AND it's not waiting for a deferred render
 					const hasPendingRender = tiffProcessor._pendingRenderData ||
+						layeredPreviewProcessor._pendingRenderData ||
 						(npyProcessor && npyProcessor._pendingRenderData) ||
 						(pngProcessor && pngProcessor._pendingRenderData) ||
 						(ppmProcessor && ppmProcessor._pendingRenderData) ||
@@ -2228,6 +2325,29 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			};
 			tags = exrProcessor._lastAllTags || [];
 			data = r.data;
+		} else if (layeredPreviewProcessor._lastRaw) {
+			const r = layeredPreviewProcessor._lastRaw;
+			const doc = r.document;
+			width = r.width; height = r.height; channels = r.channels;
+			formatLabel = r.formatLabel;
+			fileFields = {
+				'Dimensions': `${width} x ${height}`,
+				'Channels': String(channels),
+				'Bit Depth': String(r.bitDepth),
+				'Layers': String(doc.layerCount),
+				'Preview': `${doc.previewKind} (${layeredPreviewProcessor.previewMode})`,
+				'Preview Fidelity': doc.previewIsAuthoritative ? 'authoritative embedded preview' : 'reconstructed or heuristic',
+			};
+			if (doc.warnings.length) { fileFields['Compatibility Notes'] = doc.warnings.join(' · '); }
+			for (const [key, value] of Object.entries(layeredPreviewProcessor.metadata)) {
+				fileFields[key.replace(/([a-z])([A-Z])/g, '$1 $2')] = String(value);
+			}
+			if (doc.reconstruction?.available) {
+				fileFields['Reconstruction Difference'] = doc.reconstruction.differentPixelRatio === undefined
+					? 'available; integrated preview dimensions differ'
+					: `${(doc.reconstruction.differentPixelRatio * 100).toFixed(3)}% pixels`;
+			}
+			data = layeredPreviewProcessor.activeData();
 		} else if (rawProcessor._lastRaw) {
 			const r = rawProcessor._lastRaw;
 			width = r.width; height = r.height; channels = r.channels || 3;
@@ -2416,6 +2536,16 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					typeMax: typeMax,
 					stats: stats
 				};
+			} else if (layeredPreviewProcessor._lastRaw) {
+				const raw = layeredPreviewProcessor._lastRaw;
+				histogramOptions = {
+					...histogramOptions,
+					rawData: layeredPreviewProcessor.activeData(),
+					channels: raw.channels,
+					isFloat: raw.sampleFormat === 3,
+					typeMax: raw.sampleFormat === 3 ? 1.0 : raw.bitDepth === 16 ? 65535 : 255,
+					stats: layeredPreviewProcessor._cachedStats || null
+				};
 			} else if (exrProcessor && exrProcessor.rawExrData) {
 				// EXR raw data (always float)
 				const { width, height, data, channels } = exrProcessor.rawExrData;
@@ -2573,6 +2703,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (webImageProcessor) webImageProcessor._lastRaw = null;
 		if (jxlProcessor) jxlProcessor._lastRaw = null;
 		if (rawProcessor) rawProcessor._lastRaw = null;
+		layeredPreviewProcessor.reset();
+		updateLayeredPreviewOverlay();
 		for (const processor of scientificProcessors) { processor._lastRaw = null; }
 		disposeWebglRenderers();
 	}
@@ -2747,7 +2879,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// When compositing is active with extra layers, the composite owns the
 		// canvas — re-render it through the central pipeline and skip the
 		// per-processor paths below.
-		if (layerManager.active && layerManager.hasExtraLayers()) {
+		if (layerManager.active && layerManager.hasCompositeStack()) {
 			if (recompositeLayers()) { return; }
 		}
 
@@ -2755,6 +2887,17 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// source — re-render it (so normalization / gamma / display-colormap apply).
 		if (decodedColormapSource) {
 			await renderDecodedColormapSource();
+			return;
+		}
+
+		if (primaryImageData && layeredPreviewProcessor._lastRaw) {
+			const newImageData = layeredPreviewProcessor.renderWithSettings({ collectHistogram: histogramOverlay.getVisibility() });
+			const ctx = ensure2dCanvasContext();
+			if (newImageData && ctx) {
+				await renderImageDataToCanvas(newImageData, ctx);
+				primaryImageData = newImageData;
+				updateHistogramData();
+			}
 			return;
 		}
 
@@ -3779,6 +3922,52 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		document.body.appendChild(netcdfOverlay);
 	}
 
+	function createLayeredPreviewOverlay() {
+		if (layeredPreviewOverlay) { return; }
+		const overlay = document.createElement('div');
+		overlay.className = 'layered-preview-overlay';
+		overlay.setAttribute('hidden', '');
+		overlay.innerHTML = `
+			<span class="layered-preview-label">Document preview</span>
+			<button type="button" data-preview-mode="integrated">Integrated</button>
+			<button type="button" data-preview-mode="reconstructed">Reconstructed</button>
+			<span class="layered-preview-fidelity"></span>`;
+		overlay.querySelectorAll<HTMLButtonElement>('button[data-preview-mode]').forEach(button => {
+			button.addEventListener('click', async event => {
+				event.preventDefault(); event.stopPropagation(); button.blur();
+				const mode = button.dataset.previewMode as 'integrated' | 'reconstructed';
+				if (!layeredPreviewProcessor.setPreviewMode(mode)) { return; }
+				updateLayeredPreviewOverlay();
+				await updateImageWithNewSettings(null);
+				if (!layerManager.active) { syncBaseLayer(); }
+				updateMetadataData();
+			});
+		});
+		document.body.appendChild(overlay);
+		layeredPreviewOverlay = overlay;
+	}
+
+	function updateLayeredPreviewOverlay() {
+		if (!layeredPreviewOverlay) { return; }
+		const raw = layeredPreviewProcessor._lastRaw;
+		if (!raw?.reconstructedData) {
+			layeredPreviewOverlay.setAttribute('hidden', '');
+			return;
+		}
+		layeredPreviewOverlay.removeAttribute('hidden');
+		layeredPreviewOverlay.querySelectorAll<HTMLButtonElement>('button[data-preview-mode]').forEach(button => {
+			const selected = button.dataset.previewMode === layeredPreviewProcessor.previewMode;
+			button.classList.toggle('active', selected);
+			button.setAttribute('aria-pressed', String(selected));
+		});
+		const fidelity = layeredPreviewOverlay.querySelector<HTMLElement>('.layered-preview-fidelity');
+		const difference = raw.document.reconstruction?.differentPixelRatio;
+		if (fidelity) {
+			fidelity.textContent = difference === undefined ? '' : `${(difference * 100).toFixed(2)}% differ`;
+			fidelity.title = difference === undefined ? '' : 'Pixels differing by more than one channel value from the integrated preview';
+		}
+	}
+
 	function reloadNetCdfSelection() {
 		const src = settingsManager.settings.src || '';
 		const resourceUri = settingsManager.settings.resourceUri || '';
@@ -4275,6 +4464,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, ...scientificProcessors];
 		for (const p of rawDataProcessors) { p._lastRaw = null; }
 		rawProcessor._arrayBuffer = null;
+		layeredPreviewProcessor.reset();
+		_expandedLayerDocumentUri = undefined;
+		updateLayeredPreviewOverlay();
 
 		// Drop any pending deferred-render data from the previous image. Otherwise a
 		// late updateSettings(isInitialRender) for the old image could draw it onto
@@ -4308,11 +4500,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (gen !== _loadGeneration) { return; }
 		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
+		const layeredFormat = layeredFormatForPath(lower);
 		if (!lower.endsWith('.nc') && !lower.endsWith('.cdf') && netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
 		if (tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
 			return;
 		}
-		if (formatHint === 'tiff' || isTiffExtension(lower)) {
+		if (layeredFormat) {
+			handleLayeredPreview(layeredFormat, uri, gen);
+		} else if (formatHint === 'tiff' || isTiffExtension(lower)) {
 			handleTiff(uri, gen, pageIndex);
 		} else if (lower.endsWith('.exr')) {
 			handleExr(uri, gen);

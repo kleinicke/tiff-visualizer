@@ -24,11 +24,17 @@ export interface Layer {
 	id?: string;
 	name?: string;
 	uri?: string;
+	/** Source-document hierarchy metadata used by the Layers panel. */
+	groupPath?: string[];
+	groupIds?: string[];
+	sourceNodeId?: string;
+	sourceSupport?: 'native' | 'cached-raster' | 'approximate' | 'inspect-only' | 'unsupported';
+	sourceBlendMode?: string;
 	/** Raw pixel data (interleaved by channel). */
 	data: ArrayLike<number>;
 	width: number;
 	height: number;
-	/** 1, 3 or 4 (alpha is ignored in value space). */
+	/** 1, 3 or 4. RGBA alpha participates in normal display compositing. */
 	channels: number;
 	/** Whether the source was floating point. */
 	isFloat?: boolean;
@@ -52,7 +58,7 @@ export interface CompositeResult {
 	data: Float32Array;
 	width: number;
 	height: number;
-	/** 1 or 3. */
+	/** 1, 3 or 4. */
 	channels: number;
 	isFloat: boolean;
 	typeMax: number;
@@ -144,7 +150,11 @@ export function blendValue(below: number, src: number, mode: string): number {
  * otherwise 1.
  */
 function compositeChannels(visibleLayers: Layer[]): number {
-	return visibleLayers.some(l => l.channels >= 3) ? 3 : 1;
+	if (visibleLayers.some(layer => ARITHMETIC_MODES.has(layer.blendMode ?? 'normal'))) {
+		return visibleLayers.some(layer => layer.channels >= 3) ? 3 : 1;
+	}
+	if (visibleLayers.some(layer => layer.channels === 4)) { return 4; }
+	return visibleLayers.some(layer => layer.channels >= 3) ? 3 : 1;
 }
 
 /**
@@ -169,10 +179,37 @@ function sampleLayer(layer: Layer, lx: number, ly: number, outChannels: number, 
  * Fast path for the overwhelmingly common interactive case: display-style
  * normal blending. Avoids per-pixel scratch arrays and per-channel dispatch.
  */
-function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Uint8Array, outChannels: number, canvasWidth: number, xStart: number, yStart: number, xEnd: number, yEnd: number, offsetX: number, offsetY: number, opacity: number, coveredCount: number): number {
+function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Float32Array, outChannels: number, canvasWidth: number, xStart: number, yStart: number, xEnd: number, yEnd: number, offsetX: number, offsetY: number, opacity: number, coveredCount: number): number {
 	const srcData = layer.data;
 	const layerChannels = layer.channels;
 	const opaque = opacity >= 1;
+
+	if (outChannels === 4 && layerChannels >= 3) {
+		for (let y = yStart; y < yEnd; y++) {
+			let pixel = y * canvasWidth + xStart;
+			let di = pixel * 4;
+			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * layerChannels;
+			for (let x = xStart; x < xEnd; x++, pixel++, di += 4, si += layerChannels) {
+				const sourceAlpha = layerChannels === 4 ? Number(srcData[si + 3]) / (layer.typeMax || 255) : 1;
+				const sa = Math.max(0, Math.min(1, sourceAlpha * opacity));
+				if (sa <= 0) { continue; }
+				const da = covered[pixel];
+				const oa = sa + da * (1 - sa);
+				const s0 = srcData[si], s1 = srcData[si + 1], s2 = srcData[si + 2];
+				if (da <= 0) {
+					data[di] = s0; data[di + 1] = s1; data[di + 2] = s2;
+					coveredCount++;
+				} else {
+					data[di] = (s0 * sa + data[di] * da * (1 - sa)) / oa;
+					data[di + 1] = (s1 * sa + data[di + 1] * da * (1 - sa)) / oa;
+					data[di + 2] = (s2 * sa + data[di + 2] * da * (1 - sa)) / oa;
+				}
+				covered[pixel] = oa;
+				data[di + 3] = oa; // normalized until the final typeMax is known
+			}
+		}
+		return coveredCount;
+	}
 
 	if (outChannels === 1 && layerChannels === 1) {
 		for (let y = yStart; y < yEnd; y++) {
@@ -221,6 +258,29 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Uin
 						data[di + 1] = Number.isFinite(b1) ? b1 + (s - b1) * opacity : s;
 						data[di + 2] = Number.isFinite(b2) ? b2 + (s - b2) * opacity : s;
 					}
+				}
+			}
+		}
+		return coveredCount;
+	}
+
+	if (outChannels === 3 && layerChannels === 4) {
+		for (let y = yStart; y < yEnd; y++) {
+			let pixel = y * canvasWidth + xStart;
+			let di = pixel * 3;
+			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * 4;
+			for (let x = xStart; x < xEnd; x++, pixel++, di += 3, si += 4) {
+				const alpha = Math.max(0, Math.min(1, (Number(srcData[si + 3]) / (layer.typeMax || 255)) * opacity));
+				if (alpha <= 0) { continue; }
+				const s0 = srcData[si], s1 = srcData[si + 1], s2 = srcData[si + 2];
+				if (!covered[pixel]) {
+					data[di] = s0; data[di + 1] = s1; data[di + 2] = s2;
+					covered[pixel] = 1; coveredCount++;
+				} else {
+					const b0 = data[di], b1 = data[di + 1], b2 = data[di + 2];
+					data[di] = Number.isFinite(b0) ? b0 + (s0 - b0) * alpha : s0;
+					data[di + 1] = Number.isFinite(b1) ? b1 + (s1 - b1) * alpha : s1;
+					data[di + 2] = Number.isFinite(b2) ? b2 + (s2 - b2) * alpha : s2;
 				}
 			}
 		}
@@ -277,7 +337,7 @@ export function composite(layers: Layer[], canvasWidth: number, canvasHeight: nu
 	const pixelCount = canvasWidth * canvasHeight;
 	const data = new Float32Array(pixelCount * outChannels);
 	data.fill(NaN); // No-data until covered.
-	const covered = new Uint8Array(pixelCount);
+	const covered = new Float32Array(pixelCount);
 
 	const src = new Float32Array(outChannels);
 	let coveredCount = 0;
@@ -297,7 +357,7 @@ export function composite(layers: Layer[], canvasWidth: number, canvasHeight: nu
 		const xEnd = Math.min(canvasWidth, offsetX + layer.width);
 		const yEnd = Math.min(canvasHeight, offsetY + layer.height);
 
-		if (!arithmetic && !isMask && (outChannels === 1 || outChannels === 3)) {
+		if (!arithmetic && !isMask && (outChannels === 1 || outChannels === 3 || outChannels === 4)) {
 			coveredCount = compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth, xStart, yStart, xEnd, yEnd, offsetX, offsetY, opacity, coveredCount);
 			continue;
 		}
@@ -354,10 +414,18 @@ export function composite(layers: Layer[], canvasWidth: number, canvasHeight: nu
 		}
 	}
 
-	// Composite statistics over finite values.
+	const base = visibleLayers[0];
+	const isFloat = visibleLayers.some(l => l.isFloat) || visibleLayers.some(l => ARITHMETIC_MODES.has(l.blendMode ?? 'normal'));
+	const typeMax = base?.typeMax ?? 1.0;
+	if (outChannels === 4 && !isFloat) {
+		for (let pixel = 0; pixel < pixelCount; pixel++) { data[pixel * 4 + 3] *= typeMax; }
+	}
+
+	// Composite statistics over finite color values (alpha does not affect range).
 	let min = Infinity;
 	let max = -Infinity;
 	for (let i = 0; i < data.length; i++) {
+		if (outChannels === 4 && i % 4 === 3) { continue; }
 		const v = data[i];
 		if (Number.isFinite(v)) {
 			if (v < min) min = v;
@@ -365,10 +433,6 @@ export function composite(layers: Layer[], canvasWidth: number, canvasHeight: nu
 		}
 	}
 	if (min === Infinity) { min = 0; max = 0; }
-
-	const base = visibleLayers[0];
-	const isFloat = visibleLayers.some(l => l.isFloat) || visibleLayers.some(l => ARITHMETIC_MODES.has(l.blendMode ?? 'normal'));
-	const typeMax = base?.typeMax ?? 1.0;
 
 	return { data, width: canvasWidth, height: canvasHeight, channels: outChannels, isFloat, typeMax, stats: { min, max }, coveredCount };
 }

@@ -20,6 +20,42 @@ export interface LayersPanelOptions {
 	closable?: boolean;
 }
 
+export type LayerDisplayItem = { kind: 'layer'; layer: Layer; index: number };
+export type GroupDisplayItem = {
+	kind: 'group';
+	key: string;
+	name: string;
+	path: string[];
+	items: DisplayItem[];
+	layers: Layer[];
+};
+export type DisplayItem = LayerDisplayItem | GroupDisplayItem;
+
+/** Build the visual hierarchy while keeping the manager's compositing stack flat. */
+export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
+	const rootItems: DisplayItem[] = [];
+	const groups = new Map<string, GroupDisplayItem>();
+	for (let i = layers.length - 1; i >= 0; i--) {
+		const layer = layers[i];
+		let items = rootItems;
+		const path = layer.groupPath || [];
+		const ids = layer.groupIds || [];
+		for (let depth = 0; depth < path.length; depth++) {
+			const key = ids[depth] || `group:${path.slice(0, depth + 1).join('/')}`;
+			let group = groups.get(key);
+			if (!group) {
+				group = { kind: 'group', key, name: path[depth], path: path.slice(0, depth + 1), items: [], layers: [] };
+				groups.set(key, group);
+				items.push(group);
+			}
+			group.layers.push(layer);
+			items = group.items;
+		}
+		items.push({ kind: 'layer', layer, index: i });
+	}
+	return rootItems;
+}
+
 export class LayersPanel {
 	manager: LayerManager;
 	onChange: (options?: { interactive?: boolean }) => void;
@@ -31,12 +67,14 @@ export class LayersPanel {
 	listEl: HTMLElement | null;
 	titleEl: HTMLElement | null;
 	minimizeBtn: HTMLButtonElement | null;
+	groupsBtn: HTMLButtonElement | null;
 	/** id of the layer currently armed for drag-to-move, or null */
 	movingLayerId: string | null;
 	/** id of the layer that needs a second remove click */
 	_pendingRemoveId: string | null;
 	_pendingRemoveTimer: ReturnType<typeof setTimeout> | null;
 	collapsed: boolean;
+	collapsedGroups: Set<string>;
 
 	constructor(manager: LayerManager, callbacks: LayersPanelCallbacks, options: LayersPanelOptions = {}) {
 		this.manager = manager;
@@ -51,10 +89,12 @@ export class LayersPanel {
 		this.listEl = null;
 		this.titleEl = null;
 		this.minimizeBtn = null;
+		this.groupsBtn = null;
 		this.movingLayerId = null;
 		this._pendingRemoveId = null;
 		this._pendingRemoveTimer = null;
 		this.collapsed = false;
+		this.collapsedGroups = new Set();
 	}
 
 	_clearPendingRemove(refresh = false): void {
@@ -94,8 +134,29 @@ export class LayersPanel {
 		minimizeBtn.addEventListener('click', () => this.toggleCollapsed());
 		this.minimizeBtn = minimizeBtn;
 
+		const groupsBtn = document.createElement('button');
+		groupsBtn.className = 'layers-btn layers-groups';
+		groupsBtn.title = 'Collapse or expand all document groups';
+		groupsBtn.textContent = '▦';
+		groupsBtn.addEventListener('click', () => {
+			const ids: string[] = [];
+			const collect = (items: DisplayItem[]) => {
+				for (const item of items) {
+					if (item.kind !== 'group') { continue; }
+					ids.push(item.key);
+					collect(item.items);
+				}
+			};
+			collect(buildLayerDisplayTree(this.manager.layers));
+			if (this.collapsedGroups.size) { this.collapsedGroups.clear(); }
+			else { for (const id of ids) { this.collapsedGroups.add(id); } }
+			this.refresh(); this.onPersist?.();
+		});
+		this.groupsBtn = groupsBtn;
+
 		header.appendChild(title);
 		header.appendChild(addBtn);
+		header.appendChild(groupsBtn);
 		header.appendChild(minimizeBtn);
 		if (this.closable) {
 			const closeBtn = document.createElement('button');
@@ -158,8 +219,9 @@ export class LayersPanel {
 		}
 		if (this.titleEl) {
 			const n = this.manager.layers.length;
-			this.titleEl.textContent = this.collapsed ? `Layers (${n})` : 'Layers';
+			this.titleEl.textContent = this.collapsed ? `Layers (${n})` : `Layers · ${n}`;
 		}
+		if (this.groupsBtn) { this.groupsBtn.disabled = !this.manager.layers.some(layer => layer.groupPath?.length); }
 	}
 
 	/** Rebuild the layer rows from the manager state (top layer shown first). */
@@ -167,21 +229,83 @@ export class LayersPanel {
 		if (!this.listEl) { return; }
 		this.listEl.textContent = '';
 		const layers = this.manager.layers;
-		for (let i = layers.length - 1; i >= 0; i--) {
-			this.listEl.appendChild(this._buildRow(layers[i], i));
-		}
+		const rootItems = buildLayerDisplayTree(layers);
+		const fragment = document.createDocumentFragment();
+		const render = (items: DisplayItem[], depth: number) => {
+			for (const item of items) {
+				if (item.kind === 'layer') { fragment.appendChild(this._buildRow(item.layer, item.index, depth)); continue; }
+				fragment.appendChild(this._buildGroupRow(item, depth));
+				if (!this.collapsedGroups.has(item.key)) { render(item.items, depth + 1); }
+			}
+		};
+		render(rootItems, 0);
+		this.listEl.appendChild(fragment);
 		this._applyCollapsed(); // keep the collapsed "(n)" count in sync
+	}
+
+	_buildGroupRow(group: GroupDisplayItem, depth: number): HTMLElement {
+		const row = document.createElement('div');
+		row.className = 'layer-group-row';
+		row.style.setProperty('--layer-depth', String(depth));
+		row.title = group.path.join(' / ');
+
+		const toggle = document.createElement('button');
+		toggle.className = 'layer-group-toggle';
+		toggle.textContent = this.collapsedGroups.has(group.key) ? '▸' : '▾';
+		toggle.title = this.collapsedGroups.has(group.key) ? 'Expand group' : 'Collapse group';
+		toggle.addEventListener('click', event => {
+			event.stopPropagation();
+			if (this.collapsedGroups.has(group.key)) { this.collapsedGroups.delete(group.key); }
+			else { this.collapsedGroups.add(group.key); }
+			this.refresh();
+			this.onPersist?.();
+		});
+		row.appendChild(toggle);
+
+		const visibleCount = group.layers.filter(layer => layer.visible !== false).length;
+		const visibility = document.createElement('input');
+		visibility.type = 'checkbox';
+		visibility.className = 'layer-visible layer-group-visible';
+		visibility.checked = visibleCount === group.layers.length;
+		visibility.indeterminate = visibleCount > 0 && visibleCount < group.layers.length;
+		visibility.title = 'Toggle all layers in this group (Shift-click to solo group)';
+		visibility.addEventListener('click', event => {
+			if (!event.shiftKey) { return; }
+			event.preventDefault(); event.stopPropagation();
+			const ids = new Set(group.layers.map(layer => layer.id));
+			for (const layer of this.manager.layers) { layer.visible = ids.has(layer.id); }
+			this.refresh(); this.onChange();
+		});
+		visibility.addEventListener('change', () => {
+			const next = visibleCount !== group.layers.length;
+			for (const layer of group.layers) { layer.visible = next; }
+			this.refresh(); this.onChange();
+		});
+		row.appendChild(visibility);
+
+		const name = document.createElement('span');
+		name.className = 'layer-group-name';
+		name.textContent = group.name;
+		name.addEventListener('click', () => toggle.click());
+		row.appendChild(name);
+
+		const count = document.createElement('span');
+		count.className = 'layer-group-count';
+		count.textContent = String(group.layers.length);
+		row.appendChild(count);
+		return row;
 	}
 
 	/**
 	 * @param index 0 = base/background.
 	 */
-	_buildRow(layer: Layer, index: number): HTMLElement {
+	_buildRow(layer: Layer, index: number, depth = 0): HTMLElement {
 		const id = layer.id as string;
-		const isBase = index === 0;
+		const isBase = index === 0 && !this.manager.documentExpanded;
 		const row = document.createElement('div');
 		row.className = 'layer-row' + (isBase ? ' layer-row-base' : '');
 		row.dataset.id = id;
+		row.style.setProperty('--layer-depth', String(depth));
 
 		// Visibility toggle.
 		const vis = document.createElement('input');
@@ -201,12 +325,58 @@ export class LayersPanel {
 		});
 		row.appendChild(vis);
 
-		// Name + dimensions.
+		// Name, dimensions, and source-document compatibility.
+		const titleLine = document.createElement('div');
+		titleLine.className = 'layer-title-line';
 		const name = document.createElement('span');
 		name.className = 'layer-name';
-		name.textContent = `${layer.name || id} (${layer.width}×${layer.height})`;
-		name.title = `${layer.uri || layer.name || id}\nShift-click to show only this layer`;
-		row.appendChild(name);
+		name.textContent = layer.name || id;
+		name.title = `${layer.uri || layer.name || id}\nDouble-click to rename · Shift-click to show only`;
+		name.addEventListener('dblclick', event => {
+			event.preventDefault(); event.stopPropagation();
+			const input = document.createElement('input');
+			input.className = 'layer-name-input';
+			input.value = layer.name || id;
+			name.replaceWith(input);
+			input.focus(); input.select();
+			let committed = false;
+			const commit = () => {
+				if (committed) { return; }
+				committed = true;
+				const value = input.value.trim();
+				if (value && value !== layer.name) {
+					this.manager.updateLayer(id, { name: value });
+					this.onPersist?.();
+				}
+				this.refresh();
+			};
+			input.addEventListener('blur', commit);
+			input.addEventListener('keydown', keyEvent => {
+				if (keyEvent.key === 'Enter') { input.blur(); }
+				else if (keyEvent.key === 'Escape') { committed = true; this.refresh(); }
+			});
+		});
+		titleLine.appendChild(name);
+
+		const dimensions = document.createElement('span');
+		dimensions.className = 'layer-dimensions';
+		dimensions.textContent = `${layer.width}×${layer.height}`;
+		titleLine.appendChild(dimensions);
+
+		if (layer.sourceSupport && layer.sourceSupport !== 'native') {
+			const badge = document.createElement('span');
+			badge.className = `layer-support-badge layer-support-${layer.sourceSupport}`;
+			badge.textContent = layer.sourceSupport === 'approximate' ? '≈' : layer.sourceSupport === 'cached-raster' ? 'cached' : layer.sourceSupport;
+			badge.title = `Source compatibility: ${layer.sourceSupport}${layer.sourceBlendMode ? ` · ${layer.sourceBlendMode}` : ''}`;
+			titleLine.appendChild(badge);
+		} else if (this.manager.documentExpanded) {
+			const badge = document.createElement('span');
+			badge.className = 'layer-support-badge layer-support-native';
+			badge.textContent = 'native';
+			badge.title = 'This source layer is represented natively';
+			titleLine.appendChild(badge);
+		}
+		row.appendChild(titleLine);
 
 		row.addEventListener('click', (event) => {
 			if (!event.shiftKey) { return; }
@@ -256,8 +426,12 @@ export class LayersPanel {
 		opacity.value = String(Math.round((layer.opacity ?? 1) * 100));
 		opacity.title = 'Opacity';
 		opacity.disabled = layer.blendMode === 'mask';
+		const opacityValue = document.createElement('span');
+		opacityValue.className = 'layer-opacity-value';
+		opacityValue.textContent = `${opacity.value}%`;
 		opacity.addEventListener('input', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
+			opacityValue.textContent = `${opacity.value}%`;
 			this.onChange({ interactive: true });
 		});
 		opacity.addEventListener('change', () => {
@@ -267,6 +441,7 @@ export class LayersPanel {
 		});
 		opacity.addEventListener('pointerup', () => opacity.blur());
 		controls.appendChild(opacity);
+		controls.appendChild(opacityValue);
 		row.appendChild(controls);
 
 		// Mask condition row (only when this layer is a mask).

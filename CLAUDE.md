@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is a VS Code extension that provides advanced image visualization for scientific imagery. It supports TIFF (including floating-point), OpenEXR, NumPy arrays (.npy), NetPBM formats (PPM, PGM, PBM, PFM), and standard formats (PNG, JPG), with interactive analysis features including normalization, gamma/brightness correction, pixel inspection, and image comparison.
+This VS Code extension visualizes scientific, HDR, camera, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, camera RAW (RAW should be ignored), and browser image formats. The exact user-facing matrix belongs in `README.md`; `package.json` selectors are the registration source of truth.
 
 ## Development Commands
 
@@ -29,7 +29,7 @@ npm run pretest          # Compile and lint before testing
 ### Extension Testing
 - Press **F5** in VS Code to launch Extension Development Host
 - Test files in `example/` directory (various TIFF formats)
-- The extension auto-registers for: `.tif`, `.tiff`, `.exr`, `.pfm`, `.npy`, `.npz`, `.ppm`, `.pgm`, `.pbm`, `.png`, `.jpg`, `.jpeg`
+- Registered extensions are defined by `contributes.customEditors` in `package.json`; do not duplicate the full list here.
 
 ### Packaging
 ```bash
@@ -39,20 +39,20 @@ vsce package            # Creates .vsix file for distribution
 
 ## Architecture Overview
 
-### Triple Build System
-The extension uses a sophisticated three-bundle build approach:
+### Four-Bundle Build System
+The extension uses four build targets:
 
 1. **Extension bundle** (`out/extension.js`) - Node.js target for VS Code desktop API integration
 2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
 3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
-4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Web Worker running the pure-data format decoders (TIFF via WASM, EXR, NPY/NPZ, PFM, PPM, 16-bit PNG, HDR) off the webview UI thread. File bytes and decoded typed arrays cross the thread boundary as zero-copy transfers. Booted from a blob URL by [media/modules/decode-worker-client.js](media/modules/decode-worker-client.js); every format keeps its main-thread decoder as an automatic fallback, so an unavailable worker never breaks loading.
+4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Runs pure-data decoders, including TIFF/WASM, EXR, NPY/NPZ, NetPBM, HDR, FITS, DICOM, and NetCDF, off the UI thread. Bytes and typed arrays cross as zero-copy transfers; every path retains a main-thread fallback.
 
 This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).
 
 ### Custom Editor Pattern
 Uses VS Code's `CustomReadonlyEditorProvider` API:
 - **View Type**: `tiffVisualizer.previewEditor`
-- **File associations**: `*.{tif,tiff,exr,pfm,npy,npz,ppm,pgm,pbm,png,jpeg,jpg}`
+- **File associations**: See `contributes.customEditors` in `package.json` (the canonical list).
 - **Registration**: Handled in [src/imagePreview/index.ts](src/imagePreview/index.ts)
 - **Provider Implementation**: [src/imagePreview/imagePreviewManager.ts](src/imagePreview/imagePreviewManager.ts)
 
@@ -84,6 +84,7 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
   - **PfmProcessor**: Portable Float Map
   - **PpmProcessor**: Portable PixMap formats (PPM/PGM/PBM)
   - **PngProcessor**: PNG with uint8/16 and float16/32 support
+  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF lifecycle; parsers live in `scientific-format-parsers.ts`
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
@@ -410,7 +411,7 @@ return ImageRenderer.render(
 The extension handles diverse image formats with minimal processor code. Each format processor converts to Float32Array and delegates rendering to the central pipeline:
 
 - **TIFF** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)):
-  - Uses geotiff.js library for decoding
+  - Uses Rust/WASM by default, with geotiff.js as a compatibility fallback (to be removed)
   - Supports LZW/Deflate compression, predictors, multi-channel
   - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
   - Sets `typeMax` based on bit depth for proper gamma mode normalization

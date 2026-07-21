@@ -23,6 +23,11 @@ export interface LayerInput {
 	typeMax: number;
 	name?: string;
 	uri?: string;
+	groupPath?: string[];
+	groupIds?: string[];
+	sourceNodeId?: string;
+	sourceSupport?: Layer['sourceSupport'];
+	sourceBlendMode?: string;
 }
 
 let _nextLayerId = 1;
@@ -33,6 +38,7 @@ export class LayerManager {
 	canvasWidth: number;
 	canvasHeight: number;
 	_lastComposite: CompositeResult | null;
+	documentExpanded: boolean;
 
 	constructor() {
 		this.layers = [];
@@ -40,11 +46,17 @@ export class LayerManager {
 		this.canvasWidth = 0;
 		this.canvasHeight = 0;
 		this._lastComposite = null;
+		this.documentExpanded = false;
 	}
 
 	/** True if there is more than just the base layer. */
 	hasExtraLayers(): boolean {
 		return this.layers.length > 1;
+	}
+
+	/** True when the canvas should be owned by the layer compositor. */
+	hasCompositeStack(): boolean {
+		return this.hasExtraLayers() || this.documentExpanded;
 	}
 
 	isEmpty(): boolean {
@@ -61,6 +73,7 @@ export class LayerManager {
 		this.canvasWidth = layer.width;
 		this.canvasHeight = layer.height;
 		this.layers = [base];
+		this.documentExpanded = false;
 	}
 
 	/**
@@ -181,6 +194,11 @@ export class LayerManager {
 		l.visible = settings.visible !== false;
 		l.maskCondition = settings.maskCondition;
 		l.name = settings.name ?? input.name;
+		l.groupPath = settings.groupPath ?? input.groupPath;
+		l.groupIds = settings.groupIds ?? input.groupIds;
+		l.sourceNodeId = settings.sourceNodeId ?? input.sourceNodeId;
+		l.sourceSupport = settings.sourceSupport ?? input.sourceSupport;
+		l.sourceBlendMode = settings.sourceBlendMode ?? input.sourceBlendMode;
 		return l;
 	}
 
@@ -212,6 +230,11 @@ export class LayerManager {
 			visible: true,
 			name: layer.name,
 			uri: layer.uri,
+			groupPath: layer.groupPath,
+			groupIds: layer.groupIds,
+			sourceNodeId: layer.sourceNodeId,
+			sourceSupport: layer.sourceSupport,
+			sourceBlendMode: layer.sourceBlendMode,
 		};
 	}
 }

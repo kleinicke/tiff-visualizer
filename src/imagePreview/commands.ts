@@ -8,7 +8,7 @@ import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
 import { getOutputChannel } from '../extension';
 import { scanDicomFolder } from './dicomDataset';
 
-const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf'];
+const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
 
 /**
  * Expand a file path that may contain * and ? wildcards into a list of URIs.

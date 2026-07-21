@@ -79,7 +79,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
+            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw,ora,kra,psd,psb,xcf,afphoto,af}"
           }
         ]
       },
@@ -256,7 +256,7 @@
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "title": "Add Image to Visualizer Collection",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf)$/i && tiffVisualizer.activeMode != 'layers'",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf|ora|kra|psd|psb|xcf|afphoto|af)$/i && tiffVisualizer.activeMode != 'layers'",
           "group": "navigation@1"
         },
         {
@@ -268,7 +268,7 @@
         {
           "command": "tiffVisualizer.addLayer",
           "title": "Add Image as Layer",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf|ora|kra|psd|psb|xcf|afphoto|af)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
           "group": "navigation@1"
         }
       ],
@@ -309,7 +309,7 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
     "test:unit": "mocha out/test/unit/**/*.test.js",
     "test:integration": "vscode-test",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
@@ -317,9 +317,11 @@
 	"test:dicom-dataset": "node test/dicom-dataset-test.js",
     "test:visualization": "node test/visualization-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
+    "test:layers-panel": "node test/layers-panel-tree-test.js",
     "test:wasm": "node test/wasm-tiff-decode-test.js",
     "test:ppm": "node test/ppm-decode-test.js",
     "test:formats": "node test/format-decode-test.js",
+    "test:layered-formats": "node test/layered-preview-test.js",
     "test:tiff-sample-formats": "node test/tiff-sample-format-test.js",
     "test:ome-tiff": "node test/ome-tiff-test.js",
     "test:image-renderer-channels": "node test/image-renderer-channels-test.js",
@@ -332,6 +334,8 @@
   },
   "dependencies": {
     "@jsquash/jxl": "^1.3.0",
+    "ag-psd": "^31.0.2",
+    "fflate": "^0.8.3",
     "geotiff": "^2.1.3",
     "libraw-wasm": "^1.1.2",
     "pako": "^2.1.0",

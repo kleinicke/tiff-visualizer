@@ -33,6 +33,7 @@ import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { extractDicomJpegFrame, parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
+import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
 // media/tsconfig.json) types `self` as `Window & typeof globalThis`, which
@@ -579,6 +580,13 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		}
 		case 'netcdf':
 			return parseNetCdf(buffer, options);
+		case 'ora':
+		case 'kra':
+		case 'psd':
+		case 'psb':
+		case 'xcf':
+		case 'affinity':
+			return decodeLayeredPreview(format, buffer);
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}

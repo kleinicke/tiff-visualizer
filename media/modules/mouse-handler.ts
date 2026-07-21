@@ -23,6 +23,7 @@ export class MouseHandler {
 	jxlProcessor: any;
 	rawProcessor: any;
 	scientificProcessors: any[];
+	layeredPreviewProcessor: any;
 
 	// State
 	ctrlPressed: boolean;
@@ -65,6 +66,7 @@ export class MouseHandler {
 		this.jxlProcessor = null;
 		this.rawProcessor = null;
 		this.scientificProcessors = [];
+		this.layeredPreviewProcessor = null;
 
 		// State
 		this.ctrlPressed = false;
@@ -106,6 +108,7 @@ export class MouseHandler {
 	setJxlProcessor(proc: any) { this.jxlProcessor = proc; }
 	setRawProcessor(proc: any) { this.rawProcessor = proc; }
 	setScientificProcessors(processors: any[]) { this.scientificProcessors = processors || []; }
+	setLayeredPreviewProcessor(processor: any) { this.layeredPreviewProcessor = processor; }
 
 	/**
 	 * Set active state
@@ -287,6 +290,11 @@ export class MouseHandler {
 		// ONLY allow showing modified values if we are in Gamma Mode
 		const isGammaMode = this.settingsManager.settings.normalization && this.settingsManager.settings.normalization.gammaMode;
 		const showModified = isGammaMode && (this.settingsManager.settings.colorPickerShowModified || false);
+
+		if (this.layeredPreviewProcessor?._lastRaw) {
+			const value = this.layeredPreviewProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
+			if (value) { return value; }
+		}
 
 		// Try TIFF processor first
 		if (this.tiffProcessor) {
