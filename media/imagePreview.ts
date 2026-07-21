@@ -13,7 +13,6 @@ import { HdrProcessor } from './modules/hdr-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
 import { WebImageProcessor } from './modules/web-image-processor.js';
 import { JxlProcessor } from './modules/jxl-processor.js';
-import { RawProcessor } from './modules/raw-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
@@ -134,14 +133,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
-	const rawProcessor = new RawProcessor(settingsManager, vscode);
 	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: parseFits });
 	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => parseDicomForBrowser(buffer, Number(options?.frameIndex || 0)) });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => parseNetCdf(buffer, options) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
-	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, layeredPreviewProcessor, ...scientificProcessors];
+	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	// Off-thread decode worker, pre-warmed in the background. Processors fall
 	// back to their local (main-thread) decoders until it is ready or if it
 	// is unavailable, so worker failures never break image loading.
@@ -160,7 +158,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	mouseHandler.setTgaProcessor(tgaProcessor);
 	mouseHandler.setWebImageProcessor(webImageProcessor);
 	mouseHandler.setJxlProcessor(jxlProcessor);
-	mouseHandler.setRawProcessor(rawProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 	mouseHandler.setScientificProcessors(scientificProcessors);
 	mouseHandler.setLayeredPreviewProcessor(layeredPreviewProcessor);
@@ -210,9 +207,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let _layerBaseUri: string | undefined;
 	let _expandedLayerDocumentUri: string | undefined;
 
-	/** Camera RAW file extensions supported by RawProcessor */
-	const RAW_EXTENSIONS = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
-	const isRawExtension = (lower: string): boolean => RAW_EXTENSIONS.some(ext => lower.endsWith(ext));
 	const isTiffExtension = (lower: string): boolean => /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
 	const layeredFormatForPath = (lower: string): LayeredDocumentFormat | null => {
 		if (lower.endsWith('.ora')) { return 'ora'; }
@@ -1151,34 +1145,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 	}
 
-	async function handleRaw(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'Camera RAW';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await rawProcessor.processRaw(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!rawProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] Camera RAW Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
-			}
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling Camera RAW:', error);
-			onImageError(`Failed to load RAW: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-
 	/**
 	 * Finalize image setup after loading
 	 */
@@ -1253,7 +1219,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			tgaProcessor._pendingRenderData ||
 			webImageProcessor._pendingRenderData ||
 			jxlProcessor._pendingRenderData ||
-			rawProcessor._pendingRenderData ||
 			scientificProcessors.some(processor => !!processor._pendingRenderData);
 		if (!hasPendingDeferred) {
 			clearCollectionLoadingState();
@@ -1989,8 +1954,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 						deferredImageData = webImageProcessor.performDeferredRender();
 					} else if (jxlProcessor._pendingRenderData) {
 						deferredImageData = jxlProcessor.performDeferredRender();
-					} else if (rawProcessor._pendingRenderData) {
-						deferredImageData = rawProcessor.performDeferredRender();
 					}
 
 					if (deferredImageData) {
@@ -2064,7 +2027,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 						(tgaProcessor && tgaProcessor._pendingRenderData) ||
 						(webImageProcessor && webImageProcessor._pendingRenderData) ||
 						(jxlProcessor && jxlProcessor._pendingRenderData) ||
-						(rawProcessor && rawProcessor._pendingRenderData) ||
 						scientificProcessors.some(processor => !!processor._pendingRenderData);
 
 					if (hasLoadedImage && !hasPendingRender && changes.changed) {
@@ -2348,13 +2310,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					: `${(doc.reconstruction.differentPixelRatio * 100).toFixed(3)}% pixels`;
 			}
 			data = layeredPreviewProcessor.activeData();
-		} else if (rawProcessor._lastRaw) {
-			const r = rawProcessor._lastRaw;
-			width = r.width; height = r.height; channels = r.channels || 3;
-			formatLabel = 'Camera RAW';
-			fileFields = { 'Dimensions': `${width} x ${height}`, 'Channels': String(channels), 'Bit Depth': String(r.bitDepth || 8) };
-			tags = rawProcessor._lastAllTags || [];
-			data = r.data;
 		} else if (npyProcessor._lastRaw) {
 			const r = npyProcessor._lastRaw;
 			width = r.width; height = r.height; channels = r.channels || 1;
@@ -2702,7 +2657,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (tgaProcessor) tgaProcessor._lastRaw = null;
 		if (webImageProcessor) webImageProcessor._lastRaw = null;
 		if (jxlProcessor) jxlProcessor._lastRaw = null;
-		if (rawProcessor) rawProcessor._lastRaw = null;
 		layeredPreviewProcessor.reset();
 		updateLayeredPreviewOverlay();
 		for (const processor of scientificProcessors) { processor._lastRaw = null; }
@@ -3240,24 +3194,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				}
 			} catch (error) {
 				console.error('Error updating JXL image with new settings:', error);
-			}
-			return;
-		}
-
-		// For Camera RAW images, re-render with new settings
-		if (primaryImageData && rawProcessor && rawProcessor._lastRaw) {
-			try {
-				const newImageData = rawProcessor.renderRawWithSettings();
-				if (newImageData) {
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
-						primaryImageData = newImageData;
-						updateHistogramData();
-					}
-				}
-			} catch (error) {
-				console.error('Error updating Camera RAW image with new settings:', error);
 			}
 			return;
 		}
@@ -4461,9 +4397,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		tiffProcessor._convertedFloatData = null;
 		exrProcessor.rawExrData = undefined;
 		exrProcessor._cachedStats = undefined;
-		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, ...scientificProcessors];
+		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, ...scientificProcessors];
 		for (const p of rawDataProcessors) { p._lastRaw = null; }
-		rawProcessor._arrayBuffer = null;
 		layeredPreviewProcessor.reset();
 		_expandedLayerDocumentUri = undefined;
 		updateLayeredPreviewOverlay();
@@ -4533,8 +4468,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			handleScientificArray(dicomProcessor, uri, gen, { frameIndex: Number(frameIndex || 0) });
 		} else if (lower.endsWith('.nc') || lower.endsWith('.cdf')) {
 			handleScientificArray(netcdfProcessor, uri, gen, netcdfOptions || netcdfSelection);
-		} else if (isRawExtension(lower)) {
-			handleRaw(uri, gen);
 		} else {
 			// Fallback to regular image loading
 			const newImage = document.createElement('img');

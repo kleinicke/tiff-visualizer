@@ -32,8 +32,6 @@ export interface ImageSettings {
   src?: string;
   loadStartTime?: number;
   jxlWasmSrc?: string;
-  rawWorkerSrc?: string;
-  rawWasmSrc?: string;
   surfaceMode?: 'editor' | 'layers';
 }
 

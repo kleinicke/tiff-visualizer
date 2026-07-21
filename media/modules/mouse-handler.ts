@@ -21,7 +21,6 @@ export class MouseHandler {
 	tgaProcessor: any;
 	webImageProcessor: any;
 	jxlProcessor: any;
-	rawProcessor: any;
 	scientificProcessors: any[];
 	layeredPreviewProcessor: any;
 
@@ -64,7 +63,6 @@ export class MouseHandler {
 		this.tgaProcessor = null;
 		this.webImageProcessor = null;
 		this.jxlProcessor = null;
-		this.rawProcessor = null;
 		this.scientificProcessors = [];
 		this.layeredPreviewProcessor = null;
 
@@ -106,7 +104,6 @@ export class MouseHandler {
 	setTgaProcessor(proc: any) { this.tgaProcessor = proc; }
 	setWebImageProcessor(proc: any) { this.webImageProcessor = proc; }
 	setJxlProcessor(proc: any) { this.jxlProcessor = proc; }
-	setRawProcessor(proc: any) { this.rawProcessor = proc; }
 	setScientificProcessors(processors: any[]) { this.scientificProcessors = processors || []; }
 	setLayeredPreviewProcessor(processor: any) { this.layeredPreviewProcessor = processor; }
 
@@ -487,23 +484,6 @@ export class MouseHandler {
 				return v;
 			}
 		}
-		if (this.rawProcessor) {
-			const v = this.rawProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseIntColor(v);
-					if (values) {
-						// RAW has no alpha - all channels are RGB
-						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map(val => this._applyGammaBrightness(val));
-						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
-						return this._formatColorValues(scaled, values.length, true);
-					}
-				}
-				return v;
-			}
-		}
-
 		// Fallback to canvas pixel reading for standard images
 		if (this.imageElement) {
 			const canvas = this.imageElement as unknown as HTMLCanvasElement;

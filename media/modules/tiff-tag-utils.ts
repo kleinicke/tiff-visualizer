@@ -90,7 +90,7 @@ export function buildTagsFromGeotiffImage(image: any): TagEntry[] {
 }
 
 /**
- * Flatten an arbitrary nested metadata object (e.g. libraw-wasm's `Metadata`)
+ * Flatten an arbitrary nested metadata object
  * into {tag,name,group,value} rows, generically — nested plain objects
  * become dotted name prefixes (e.g. "lens.MinFocal"), so every field the
  * decoder returns is included, however deeply nested, without a curated list

@@ -986,9 +986,7 @@ export class ImagePreview extends MediaPreview {
 		const isJxl = lower.endsWith('.jxl');
 		const isScientificArray = /\.(?:fits|fit|fts|dcm|dicom|nc|cdf)$/.test(lower);
 		const isLayeredDocument = /\.(?:ora|kra|psd|psb|xcf|afphoto|af)$/.test(lower);
-		const rawExtensions = ['.dng', '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.orf', '.pef', '.srw', '.3fr', '.rwl', '.nrw', '.raw'];
-		const isRaw = rawExtensions.some(ext => lower.endsWith(ext));
-		this._isTiff = isTiff || isPpm || isPng || isPfm || isNpy || isExr || isHdr || isTga || isWebImage || isJxl || isScientificArray || isLayeredDocument || isRaw;
+		this._isTiff = isTiff || isPpm || isPng || isPfm || isNpy || isExr || isHdr || isTga || isWebImage || isJxl || isScientificArray || isLayeredDocument;
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)

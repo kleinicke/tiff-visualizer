@@ -4,20 +4,6 @@ This extension incorporates components from the following open source projects.
 
 ---
 
-## LibRaw
-
-Used via `libraw-wasm` for decoding camera RAW formats (CR2, NEF, ARW, DNG, etc.).
-
-- **Homepage**: https://www.libraw.org/
-- **License**: GNU Lesser General Public License v2.1 (LGPL-2.1)
-
-LibRaw is Copyright (C) 2008-2024 LibRaw LLC (info@libraw.org)
-
-The full LGPL-2.1 license text is included in this distribution at:
-`LICENSES/LGPL-2.1-LibRaw.txt`
-
----
-
 ## libjxl (JPEG XL Reference Implementation)
 
 Used via `@jsquash/jxl` for decoding JPEG XL (`.jxl`) images.

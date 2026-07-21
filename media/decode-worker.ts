@@ -10,7 +10,7 @@
  *
  * Only pure-data decoders live here. Formats whose decode path needs DOM APIs
  * (8-bit PNG/JPEG and WebP/AVIF/BMP/ICO via the native Image element, TGA,
- * JXL) or that already decode off-thread (camera RAW via the libraw worker)
+ * JXL) or that already decode off-thread
  * keep their existing processors. Every format handled here also keeps its
  * local decoder as a fallback: on any worker error the input bytes are
  * transferred back so the caller can decode locally without refetching.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This VS Code extension visualizes scientific, HDR, camera, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, camera RAW (RAW should be ignored), and browser image formats. The exact user-facing matrix belongs in `README.md`; `package.json` selectors are the registration source of truth.
+This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md`; `package.json` selectors are the registration source of truth.
 
 ## Development Commands
 
@@ -444,8 +444,6 @@ The extension handles diverse image formats with minimal processor code. Each fo
   - Detects actual bit depth and converts to Float32Array
   - Uses LUT optimization for gamma/brightness in 8-bit mode
 
-- **Raw**
-  - Ignore the implemented raw images support for now. It's too slow to be useful. Therefore we ignore it for now.
 
 ### Library Integration
 - **geotiff.min.js**: Browser build automatically copied from node_modules during build
