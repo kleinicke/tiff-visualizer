@@ -468,8 +468,13 @@ class NetCdfReader {
 	}
 }
 
-/** Decode classic NetCDF CDF-1/CDF-2 and select the first numeric 2D+ variable. */
-export function parseNetCdf(buffer: ArrayBuffer): ScientificDecodedImage {
+export interface NetCdfDecodeOptions {
+	variableName?: string;
+	indices?: Record<string, number>;
+}
+
+/** Decode classic NetCDF CDF-1/CDF-2 as either a regular raster or an MPAS cell mesh. */
+export function parseNetCdf(buffer: ArrayBuffer, options: NetCdfDecodeOptions = {}): ScientificDecodedImage {
 	const started = performance.now();
 	const bytes = new Uint8Array(buffer);
 	if (buffer.byteLength < 8 || ascii(bytes, 0, 3) !== 'CDF') {
@@ -484,12 +489,16 @@ export function parseNetCdf(buffer: ArrayBuffer): ScientificDecodedImage {
 	reader.offset = 4;
 	const numRecords = reader.u32();
 	const dimTag = reader.u32();
-	const dimensions: { name: string, size: number }[] = [];
+	const dimensions: { name: string, size: number, unlimited: boolean }[] = [];
 	if (dimTag === 0) { reader.u32(); }
 	else {
 		if (dimTag !== NC_DIMENSION) { throw new Error('Invalid NetCDF dimension list'); }
 		const count = reader.u32();
-		for (let i = 0; i < count; i++) { dimensions.push({ name: reader.name(), size: reader.u32() }); }
+		for (let i = 0; i < count; i++) {
+			const name = reader.name();
+			const declaredSize = reader.u32();
+			dimensions.push({ name, size: declaredSize || numRecords, unlimited: declaredSize === 0 });
+		}
 	}
 	reader.attributes();
 	const varTag = reader.u32();
@@ -508,46 +517,170 @@ export function parseNetCdf(buffer: ArrayBuffer): ScientificDecodedImage {
 		const begin = version === 1 ? reader.u32() : reader.u64();
 		variables.push({ name, dimIds, attrs, type, vsize, begin });
 	}
-	const selected = variables.find(variable =>
-		variable.type !== 2 && variable.dimIds.length >= 2 &&
-		dimensions[variable.dimIds[variable.dimIds.length - 1]]?.size > 0 &&
-		dimensions[variable.dimIds[variable.dimIds.length - 2]]?.size > 0
-	);
-	if (!selected) { throw new Error('NetCDF file contains no plottable numeric variable with at least two dimensions'); }
-	const variableDimensions = selected.dimIds.map(id => dimensions[id]);
-	const width = variableDimensions[variableDimensions.length - 1].size;
-	const height = variableDimensions[variableDimensions.length - 2].size;
-	const typeSize = NC_TYPE_SIZE[selected.type];
-	const count = width * height;
-	if (selected.begin + count * typeSize > buffer.byteLength) { throw new Error('Truncated NetCDF variable data'); }
-	const fillValues = [selected.attrs._FillValue, selected.attrs.missing_value]
-		.flat().filter((value: any) => typeof value === 'number');
-	const scale = finiteNumber(selected.attrs.scale_factor, 1);
-	const addOffset = finiteNumber(selected.attrs.add_offset, 0);
-	const data = new Float32Array(count);
 	const view = new DataView(buffer);
-	for (let i = 0; i < count; i++) {
-		const p = selected.begin + i * typeSize;
+	const recordSize = variables
+		.filter(variable => dimensions[variable.dimIds[0]]?.unlimited)
+		.reduce((sum, variable) => sum + Math.ceil(variable.vsize / 4) * 4, 0);
+	const variableByName = new Map(variables.map(variable => [variable.name, variable]));
+	const variableDimensions = (variable: (typeof variables)[number]) => variable.dimIds.map(id => dimensions[id]);
+	const storedValue = (variable: (typeof variables)[number], indices: number[]): number => {
+		const dims = variableDimensions(variable);
+		const typeSize = NC_TYPE_SIZE[variable.type];
+		const isRecord = dims[0]?.unlimited;
+		let linear = 0;
+		for (let i = isRecord ? 1 : 0; i < dims.length; i++) {
+			linear = linear * dims[i].size + Math.max(0, Math.min(dims[i].size - 1, Math.trunc(indices[i] || 0)));
+		}
+		const recordIndex = isRecord ? Math.max(0, Math.min(dims[0].size - 1, Math.trunc(indices[0] || 0))) : 0;
+		const p = variable.begin + recordIndex * recordSize + linear * typeSize;
+		if (p < 0 || p + typeSize > buffer.byteLength) { throw new Error(`Truncated NetCDF variable data: ${variable.name}`); }
 		let stored: number;
-		switch (selected.type) {
+		switch (variable.type) {
 			case 1: stored = view.getInt8(p); break;
 			case 3: stored = view.getInt16(p, false); break;
 			case 4: stored = view.getInt32(p, false); break;
 			case 5: stored = view.getFloat32(p, false); break;
 			case 6: stored = view.getFloat64(p, false); break;
-			default: throw new Error(`Unsupported NetCDF variable type: ${selected.type}`);
+			default: throw new Error(`Unsupported NetCDF variable type: ${variable.type}`);
 		}
-		data[i] = fillValues.some((value: number) => stored === value) ? NaN : stored * scale + addOffset;
+		const fillValues = [variable.attrs._FillValue, variable.attrs.missing_value]
+			.flat().filter((value: any) => typeof value === 'number');
+		if (fillValues.some((value: number) => stored === value)) { return NaN; }
+		return stored * finiteNumber(variable.attrs.scale_factor, 1) + finiteNumber(variable.attrs.add_offset, 0);
+	};
+
+	const isNumeric = (variable: (typeof variables)[number]) => variable.type !== 2 && !!NC_TYPE_SIZE[variable.type];
+	const cellDimension = dimensions.findIndex(dimension => dimension.name === 'nCells');
+	const hasMpasGeometry = cellDimension >= 0 && ['latVertex', 'lonVertex', 'verticesOnCell', 'nEdgesOnCell']
+		.every(name => variableByName.has(name));
+	const topologyName = /^(?:lat|lon|x|y|z)Cell$|^indexToCellID$|^(?:cells|edges|vertices)OnCell$|^nEdgesOnCell$/i;
+	const meshVariables = hasMpasGeometry ? variables.filter(variable =>
+		isNumeric(variable) && variable.dimIds.includes(cellDimension) && !topologyName.test(variable.name)
+	) : [];
+	const rasterVariables = variables.filter(variable => {
+		if (!isNumeric(variable) || variable.dimIds.length < 2 || topologyName.test(variable.name)) { return false; }
+		const dims = variableDimensions(variable);
+		return dims[dims.length - 1]?.size > 1 && dims[dims.length - 2]?.size > 1;
+	});
+	const candidates = meshVariables.length > 0 ? meshVariables : rasterVariables;
+	if (candidates.length === 0) {
+		throw new Error('NetCDF file contains no supported raster or MPAS cell variable');
+	}
+	const preferredMeshNames = ['areaCell', 'h_s', 'h', 'ke', 'tracers'];
+	const selected = candidates.find(variable => variable.name === options.variableName)
+		|| (meshVariables.length > 0 ? preferredMeshNames.map(name => variableByName.get(name)).find(variable => variable && meshVariables.includes(variable)) : undefined)
+		|| candidates[0];
+	const selectedDimensions = variableDimensions(selected);
+	const selectedIndices = Object.fromEntries(selectedDimensions.map(dimension => [
+		dimension.name,
+		Math.max(0, Math.min(dimension.size - 1, Math.trunc(options.indices?.[dimension.name] || 0))),
+	]));
+	const variableChoices = candidates.map(variable => ({
+		name: variable.name,
+		label: String(variable.attrs.long_name || variable.name),
+		dimensions: variableDimensions(variable).map(dimension => ({ name: dimension.name, size: dimension.size })),
+		unit: variable.attrs.units,
+	}));
+
+	if (meshVariables.includes(selected)) {
+		const cellAxis = selected.dimIds.indexOf(cellDimension);
+		const selectors = selectedDimensions.filter((_, index) => index !== cellAxis).map(dimension => ({
+			name: dimension.name, size: dimension.size, value: selectedIndices[dimension.name],
+		}));
+		const cellValues = new Float32Array(dimensions[cellDimension].size);
+		for (let cell = 0; cell < cellValues.length; cell++) {
+			const indices = selectedDimensions.map((dimension, index) => index === cellAxis ? cell : selectedIndices[dimension.name]);
+			cellValues[cell] = storedValue(selected, indices);
+		}
+		const latVertexVariable = variableByName.get('latVertex')!;
+		const lonVertexVariable = variableByName.get('lonVertex')!;
+		const verticesOnCellVariable = variableByName.get('verticesOnCell')!;
+		const nEdgesOnCellVariable = variableByName.get('nEdgesOnCell')!;
+		const vertexCount = variableDimensions(latVertexVariable)[0].size;
+		const maxEdges = variableDimensions(verticesOnCellVariable)[1].size;
+		const latitudes = new Float64Array(vertexCount);
+		const longitudes = new Float64Array(vertexCount);
+		for (let vertex = 0; vertex < vertexCount; vertex++) {
+			latitudes[vertex] = storedValue(latVertexVariable, [vertex]);
+			longitudes[vertex] = storedValue(lonVertexVariable, [vertex]);
+		}
+		const angularScale = Math.max(...Array.from(latitudes, Math.abs)) > Math.PI ? Math.PI / 180 : 1;
+		const width = 720, height = 360;
+		const data = new Float32Array(width * height); data.fill(NaN);
+		const fillPolygon = (points: Array<{ x: number, y: number }>, value: number) => {
+			if (points.length < 3 || !Number.isFinite(value)) { return; }
+			for (const shift of [-width, 0, width]) {
+				const shifted = points.map(point => ({ x: point.x + shift, y: point.y }));
+				const minY = Math.max(0, Math.floor(Math.min(...shifted.map(point => point.y))));
+				const maxY = Math.min(height - 1, Math.ceil(Math.max(...shifted.map(point => point.y))));
+				for (let y = minY; y <= maxY; y++) {
+					const scanY = y + 0.5;
+					const intersections: number[] = [];
+					for (let i = 0, previous = shifted.length - 1; i < shifted.length; previous = i++) {
+						const a = shifted[previous], b = shifted[i];
+						if ((a.y > scanY) !== (b.y > scanY)) { intersections.push(a.x + (scanY - a.y) * (b.x - a.x) / (b.y - a.y)); }
+					}
+					intersections.sort((a, b) => a - b);
+					for (let pair = 0; pair + 1 < intersections.length; pair += 2) {
+						const from = Math.max(0, Math.ceil(intersections[pair]));
+						const to = Math.min(width - 1, Math.floor(intersections[pair + 1]));
+						for (let x = from; x <= to; x++) { data[y * width + x] = value; }
+					}
+				}
+			}
+		};
+		for (let cell = 0; cell < cellValues.length; cell++) {
+			const edgeCount = Math.max(0, Math.min(maxEdges, Math.trunc(storedValue(nEdgesOnCellVariable, [cell]))));
+			const points: Array<{ x: number, y: number }> = [];
+			for (let edge = 0; edge < edgeCount; edge++) {
+				const vertex = Math.trunc(storedValue(verticesOnCellVariable, [cell, edge])) - 1;
+				if (vertex < 0 || vertex >= vertexCount) { continue; }
+				const lon = longitudes[vertex] * angularScale;
+				const lat = latitudes[vertex] * angularScale;
+				let x = ((lon + Math.PI) / (2 * Math.PI)) * width;
+				const y = ((Math.PI / 2 - lat) / Math.PI) * height;
+				if (points.length > 0) {
+					while (x - points[0].x > width / 2) { x -= width; }
+					while (x - points[0].x < -width / 2) { x += width; }
+				}
+				points.push({ x, y });
+			}
+			fillPolygon(points, cellValues[cell]);
+		}
+		return {
+			width, height, channels: 1, data,
+			metadata: {
+				format: `NetCDF CDF-${version}`, variable: selected.name,
+				unit: selected.attrs.units, longName: selected.attrs.long_name,
+				viewMode: 'mpas-mesh', projection: 'Equirectangular', meshLocation: 'nCells',
+				variables: variableChoices, selectors, selectedIndices,
+			},
+			decodeTimings: [{ name: 'decode-netcdf-parse', durationMs: performance.now() - started }]
+		};
+	}
+
+	const width = selectedDimensions[selectedDimensions.length - 1].size;
+	const height = selectedDimensions[selectedDimensions.length - 2].size;
+	const selectors = selectedDimensions.slice(0, -2).map(dimension => ({
+		name: dimension.name, size: dimension.size, value: selectedIndices[dimension.name],
+	}));
+	const data = new Float32Array(width * height);
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			const indices = selectedDimensions.map((dimension, index) => index === selectedDimensions.length - 2 ? y
+				: index === selectedDimensions.length - 1 ? x : selectedIndices[dimension.name]);
+			data[y * width + x] = storedValue(selected, indices);
+		}
 	}
 	return {
 		width, height, channels: 1, data,
 		metadata: {
 			format: `NetCDF CDF-${version}`,
 			variable: selected.name,
-			dimensions: variableDimensions.map(dimension => ({ ...dimension, size: dimension.size || numRecords })),
+			dimensions: selectedDimensions.map(dimension => ({ name: dimension.name, size: dimension.size })),
 			unit: selected.attrs.units,
 			longName: selected.attrs.long_name,
-			firstSliceOnly: selected.dimIds.length > 2,
+			viewMode: 'raster', variables: variableChoices, selectors, selectedIndices,
 		},
 		decodeTimings: [{ name: 'decode-netcdf-parse', durationMs: performance.now() - started }]
 	};

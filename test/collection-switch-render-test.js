@@ -213,11 +213,23 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 	console.log('✅ collection switches retain the outgoing frame, persistent loading UI, and isolated navigation controls');
 }
 
+function testNetCdfControlsUseSeamlessReloads() {
+	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
+	assert.match(webviewSource, /function createNetCdfOverlay[\s\S]*netcdf-variable[\s\S]*netcdf-dimension-controls/,
+		'NetCDF must expose variable and non-spatial dimension controls');
+	assert.match(webviewSource, /function reloadNetCdfSelection[\s\S]*switchToNewImage\(src, resourceUri, \{ netcdfOptions:/,
+		'NetCDF selection changes must use the seamless image replacement path');
+	assert.match(webviewSource, /handleScientificArray\(netcdfProcessor, uri, gen, netcdfOptions \|\| netcdfSelection\)/,
+		'NetCDF variable/dimension options must reach its decoder');
+	console.log('✅ NetCDF variable and dimension controls use seamless decoder reloads');
+}
+
 function main() {
 	console.log('🧪 Running collection-switch render regression tests...\n');
 	testMessageFlowReplaysOnSameFormatTypeSwitch();
 	testDeferredRenderUsesSafeCanvasContextHelper();
 	testSwitchKeepsOutgoingFrameUntilReplacementIsReady();
+	testNetCdfControlsUseSeamlessReloads();
 	console.log('\n🎉 All collection-switch render tests passed.\n');
 }
 

@@ -578,7 +578,7 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			}
 		}
 		case 'netcdf':
-			return parseNetCdf(buffer);
+			return parseNetCdf(buffer, options);
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}

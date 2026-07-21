@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is a VS Code extension that provides advanced image visualization for scientific and HDR imagery. It supports TIFF (including floating-point), OpenEXR, NumPy arrays (.npy), NetPBM formats (PPM, PGM, PBM, PFM), and standard formats (PNG, JPG), with interactive analysis features including normalization, gamma/brightness correction, pixel inspection, and image comparison.
+This is a VS Code extension that provides advanced image visualization for scientific imagery. It supports TIFF (including floating-point), OpenEXR, NumPy arrays (.npy), NetPBM formats (PPM, PGM, PBM, PFM), and standard formats (PNG, JPG), with interactive analysis features including normalization, gamma/brightness correction, pixel inspection, and image comparison.
 
 ## Development Commands
 

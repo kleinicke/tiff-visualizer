@@ -140,7 +140,9 @@ UUID mismatch, rapid navigation cancellation, and session restore to a plane
 stored in a different member file.
 
 - [x] FITS, native/uncompressed DICOM, DICOM JPEG Baseline, and classic NetCDF
-  (CDF-1/CDF-2) image decoding. NetCDF-4/HDF5 and additional DICOM transfer
+  (CDF-1/CDF-2) decoding. NetCDF includes variable selection, non-spatial
+  dimension controls, regular raster views, and MPAS `nCells` polygon-mesh
+  projection. NetCDF-4/HDF5 and additional DICOM transfer
   syntaxes (JPEG Lossless, JPEG-LS, JPEG 2000, RLE, and video) remain part of
   the heavier codec/container follow-up described below.
 - [x] DICOM folder datasets: an **Open Folder as DICOM Dataset** command detects

@@ -12,7 +12,7 @@ export interface ScientificArrayProcessorConfig {
 	workerFormat: 'fits' | 'dicom' | 'netcdf';
 	formatLabel: string;
 	formatType: 'fits' | 'dicom' | 'netcdf';
-	parse: (buffer: ArrayBuffer, frameIndex?: number) => ScientificDecodedImage | Promise<ScientificDecodedImage>;
+	parse: (buffer: ArrayBuffer, options?: Record<string, any>) => ScientificDecodedImage | Promise<ScientificDecodedImage>;
 }
 
 /** Shared renderer/lifecycle adapter for self-describing scientific arrays. */
@@ -25,7 +25,7 @@ export class ScientificArrayProcessor extends PfmProcessor {
 		this.config = config;
 	}
 
-	async process(src: string, frameIndex = 0) {
+	async process(src: string, decodeOptions: Record<string, any> = {}) {
 		const signal = this.loadSignal;
 		const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, this.config.workerFormat);
 		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
@@ -35,8 +35,8 @@ export class ScientificArrayProcessor extends PfmProcessor {
 			buffer,
 			src,
 			signal,
-			(localBuffer, options) => this.config.parse(localBuffer, Number(options?.frameIndex || 0)),
-			{ frameIndex },
+			(localBuffer, options) => this.config.parse(localBuffer, options),
+			decodeOptions,
 		);
 		this._cachedStats = undefined;
 		this.metadata = decoded.metadata || {};

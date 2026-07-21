@@ -34,7 +34,7 @@ function testDicom() {
 }
 
 async function testJpegBaselineDicom() {
-	const fixture = '/Users/florian/Projects/cursor/test_data/testfiles/MRI/0002.DCM';
+	const fixture = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/0002.DCM';
 	if (!fs.existsSync(fixture)) { return; }
 	const bytes = fs.readFileSync(fixture);
 	const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
@@ -68,12 +68,35 @@ function testNetCdf() {
 	assert.ok(Math.abs(image.data[767] - 287.75) < 0.001);
 }
 
+function testMpasNetCdf() {
+	const fixture = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/x16.2562.grid.nc';
+	if (!fs.existsSync(fixture)) { return; }
+	const bytes = fs.readFileSync(fixture);
+	const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+	const mesh = parseNetCdf(buffer);
+	assert.deepStrictEqual([mesh.width, mesh.height, mesh.channels], [720, 360, 1]);
+	assert.strictEqual(mesh.metadata.viewMode, 'mpas-mesh');
+	assert.strictEqual(mesh.metadata.variable, 'areaCell');
+	assert.deepStrictEqual(mesh.metadata.variables.map(variable => variable.name), ['areaCell', 'h_s', 'h', 'ke', 'tracers']);
+	const finite = Array.from(mesh.data).filter(Number.isFinite);
+	assert.ok(finite.length > 200000, 'MPAS polygons should cover most projection pixels');
+	const range = finite.reduce((current, value) => ({ min: Math.min(current.min, value), max: Math.max(current.max, value) }), { min: Infinity, max: -Infinity });
+	assert.ok(range.min > 0 && range.max > range.min);
+
+	const field = parseNetCdf(buffer, { variableName: 'h', indices: { Time: 0, nVertLevels: 0 } });
+	assert.strictEqual(field.metadata.variable, 'h');
+	assert.deepStrictEqual(field.metadata.selectors.map(selector => selector.name), ['Time', 'nVertLevels']);
+	assert.ok(Array.from(field.data).some(value => value === 1000));
+	console.log('✅ Real MPAS NetCDF: variable selection and nCells mesh projection');
+}
+
 async function main() {
 	console.log('Running FITS/DICOM/NetCDF parser tests...');
 	testFits();
 	testDicom();
 	await testJpegBaselineDicom();
 	testNetCdf();
+	testMpasNetCdf();
 	console.log('FITS, DICOM, and NetCDF parser tests passed.');
 }
 

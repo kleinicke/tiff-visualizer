@@ -134,8 +134,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	const rawProcessor = new RawProcessor(settingsManager, vscode);
 	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: parseFits });
-	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: parseDicomForBrowser });
-	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: parseNetCdf });
+	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => parseDicomForBrowser(buffer, Number(options?.frameIndex || 0)) });
+	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => parseNetCdf(buffer, options) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor];
 	// All format processors, for bulk per-switch state resets and load cancellation.
 	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, rawProcessor, ...scientificProcessors];
@@ -310,6 +310,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let overlayElement: HTMLElement | null = null;
 	let tiffPageOverlay: HTMLElement | null = null;
 	let datasetOverlay: HTMLElement | null = null;
+	let netcdfOverlay: HTMLElement | null = null;
+	let netcdfSelection: { variableName?: string; indices: Record<string, number> } = persistedState?.netcdfSelection && typeof persistedState.netcdfSelection === 'object'
+		? { variableName: persistedState.netcdfSelection.variableName, indices: { ...(persistedState.netcdfSelection.indices || {}) } }
+		: { indices: {} };
 	let datasetManifest: DatasetManifest | null = null;
 	let datasetSeriesIndex = 0;
 	let datasetCoordinates: Record<string, number> = {};
@@ -331,6 +335,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			colormapConversionState: colormapConversionState,
 			displayColormap: settingsManager.settings.displayColormap,
 			isHistogramVisible: histogramOverlay.getVisibility(),
+			netcdfSelection,
 			// Include zoom so it isn't erased when the app-level state is written
 			scale: zoomState.scale,
 			offsetX: zoomState.x,
@@ -386,6 +391,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		createImageCollectionOverlay();
 		createTiffPageOverlay();
 		createDatasetOverlay();
+		createNetCdfOverlay();
 		createFilenameBadge();
 
 		// Save state when webview might be disposed
@@ -860,14 +866,21 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 	}
 
-	async function handleScientificArray(processor: ScientificArrayProcessor, src: string, gen: number = _loadGeneration, frameIndex = 0) {
+	async function handleScientificArray(processor: ScientificArrayProcessor, src: string, gen: number = _loadGeneration, decodeOptions: Record<string, any> = {}) {
 		currentLoadFormat = processor.config.formatLabel;
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await processor.process(src, frameIndex);
+			const result = await processor.process(src, decodeOptions);
 			if (gen !== _loadGeneration) { return; }
 			if (processor === dicomProcessor && !datasetManifest && Number(processor.metadata.frames || 1) > 1) {
 				vscode.postMessage({ type: 'registerDicomFrames', frames: Number(processor.metadata.frames) });
+			}
+			if (processor === netcdfProcessor) {
+				netcdfSelection = {
+					variableName: String(processor.metadata.variable || ''),
+					indices: { ...(processor.metadata.selectedIndices || {}) },
+				};
+				updateNetCdfOverlay(processor.metadata, false);
 			}
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
@@ -878,6 +891,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			if (!processor._pendingRenderData) { finalizeImageSetup(); }
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
+			if (processor === netcdfProcessor) { netcdfOverlay?.classList.remove('dataset-overlay--loading'); }
 			console.error(`Error handling ${processor.config.formatLabel}:`, error);
 			onImageError(`Failed to load ${processor.config.formatLabel}: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -3747,6 +3761,69 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (filenameBadge) filenameBadge.style.display = 'block';
 	}
 
+	function createNetCdfOverlay() {
+		netcdfOverlay = document.createElement('div');
+		netcdfOverlay.className = 'dataset-overlay netcdf-overlay';
+		netcdfOverlay.style.display = 'none';
+		netcdfOverlay.innerHTML = `
+			<div class="dataset-title">NetCDF</div>
+			<label class="dataset-series-row"><span>Variable</span><select class="dataset-series netcdf-variable"></select></label>
+			<div class="dataset-axis-controls netcdf-dimension-controls"></div>
+			<div class="netcdf-view-info"></div>
+		`;
+		const select = netcdfOverlay.querySelector('.netcdf-variable') as HTMLSelectElement;
+		select.addEventListener('change', () => {
+			netcdfSelection = { variableName: select.value, indices: {} };
+			reloadNetCdfSelection();
+		});
+		document.body.appendChild(netcdfOverlay);
+	}
+
+	function reloadNetCdfSelection() {
+		const src = settingsManager.settings.src || '';
+		const resourceUri = settingsManager.settings.resourceUri || '';
+		if (!src || !resourceUri) { return; }
+		netcdfOverlay?.classList.add('dataset-overlay--loading');
+		switchToNewImage(src, resourceUri, { netcdfOptions: { ...netcdfSelection, indices: { ...netcdfSelection.indices } } });
+	}
+
+	function updateNetCdfOverlay(metadata: Record<string, any>, loading = false) {
+		if (!netcdfOverlay || !Array.isArray(metadata.variables)) { return; }
+		const select = netcdfOverlay.querySelector('.netcdf-variable') as HTMLSelectElement;
+		if (select.options.length !== metadata.variables.length || Array.from(select.options).some((option, index) => option.value !== metadata.variables[index].name)) {
+			select.replaceChildren(...metadata.variables.map((variable: any) => {
+				const option = document.createElement('option');
+				option.value = variable.name;
+				option.text = `${variable.label}${variable.unit ? ` · ${variable.unit}` : ''}`;
+				return option;
+			}));
+		}
+		select.value = String(metadata.variable || '');
+		const controls = netcdfOverlay.querySelector('.netcdf-dimension-controls') as HTMLElement;
+		const selectors = Array.isArray(metadata.selectors) ? metadata.selectors : [];
+		controls.replaceChildren(...selectors.map((selector: any) => {
+			const row = document.createElement('label'); row.className = 'dataset-axis';
+			const label = document.createElement('span'); label.className = 'dataset-axis-label'; label.textContent = selector.name;
+			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, Number(selector.size) - 1)); input.step = '1'; input.value = String(selector.value || 0);
+			const value = document.createElement('span'); value.className = 'dataset-axis-value'; value.textContent = `${Number(selector.value || 0) + 1} / ${selector.size}`;
+			input.addEventListener('input', () => { value.textContent = `${Number(input.value) + 1} / ${selector.size}`; });
+			input.addEventListener('change', () => {
+				netcdfSelection.indices = { ...netcdfSelection.indices, [selector.name]: Number(input.value) };
+				reloadNetCdfSelection();
+			});
+			row.append(label, input, value); return row;
+		}));
+		controls.style.display = selectors.some((selector: any) => Number(selector.size) > 1) ? 'flex' : 'none';
+		const info = netcdfOverlay.querySelector('.netcdf-view-info') as HTMLElement;
+		info.textContent = metadata.viewMode === 'mpas-mesh'
+			? `MPAS ${metadata.meshLocation || 'mesh'} · ${metadata.projection || 'projected'}`
+			: 'Regular raster';
+		netcdfOverlay.classList.toggle('dataset-overlay--loading', loading);
+		netcdfOverlay.style.display = 'flex';
+		if (datasetOverlay) { datasetOverlay.style.display = 'none'; }
+		if (tiffPageOverlay) { tiffPageOverlay.style.display = 'none'; }
+	}
+
 	function updateTiffPageOverlay(loading = false) {
 		if (!tiffPageOverlay) { return; }
 		if (datasetManifest) {
@@ -4135,7 +4212,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
-	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number } = {}) {
+	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any> } = {}) {
 		// Every switch gets a new generation so any in-flight load from a
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
@@ -4210,13 +4287,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// image is ready to be shown.
 
 		// Load the new image based on file type
-		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex);
+		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex, options.netcdfOptions);
 	}
 
 	/**
 	 * Load image by type (wrapper function)
 	 */
-	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number) {
+	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>) {
 		// Wait until the browser has painted the loading UI (counter, filename
 		// badge, loading dot) before starting synchronous decode work, so every
 		// switch gives immediate visual feedback. This also lets a burst of
@@ -4231,6 +4308,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (gen !== _loadGeneration) { return; }
 		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
+		if (!lower.endsWith('.nc') && !lower.endsWith('.cdf') && netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
 		if (tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
 			return;
 		}
@@ -4257,9 +4335,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		} else if (lower.endsWith('.fits') || lower.endsWith('.fit') || lower.endsWith('.fts')) {
 			handleScientificArray(fitsProcessor, uri, gen);
 		} else if (formatHint === 'dicom' || lower.endsWith('.dcm') || lower.endsWith('.dicom') || !resourceUri.split('/').pop()?.includes('.')) {
-			handleScientificArray(dicomProcessor, uri, gen, Number(frameIndex || 0));
+			handleScientificArray(dicomProcessor, uri, gen, { frameIndex: Number(frameIndex || 0) });
 		} else if (lower.endsWith('.nc') || lower.endsWith('.cdf')) {
-			handleScientificArray(netcdfProcessor, uri, gen);
+			handleScientificArray(netcdfProcessor, uri, gen, netcdfOptions || netcdfSelection);
 		} else if (isRawExtension(lower)) {
 			handleRaw(uri, gen);
 		} else {

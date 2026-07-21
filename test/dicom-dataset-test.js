@@ -50,7 +50,7 @@ async function main() {
 	assert.ok(header?.hasPixelData);
 	assert.strictEqual(header.transferSyntax, '1.2.840.10008.1.2.1');
 
-	const realFolder = '/Users/florian/Projects/cursor/test_data/testfiles/MRI/MRT OSG Februar 2023';
+	const realFolder = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/MRT OSG Februar 2023';
 	if (fs.existsSync(realFolder)) {
 		const firstReal = fs.readdirSync(realFolder).map(name => path.join(realFolder, name)).find(file => fs.statSync(file).isFile());
 		const realHeader = parseDicomImageHeader(fs.readFileSync(firstReal));
@@ -66,7 +66,7 @@ async function main() {
 		console.log('✅ Real DICOM folder: four spatially ordered MR series (44, 26, 26, 36 slices)');
 	}
 
-	const jpegFolder = '/Users/florian/Projects/cursor/test_data/testfiles/MRI';
+	const jpegFolder = '/Users/florian/Projects/cursor/test_data/testfiles/scientific';
 	const jpegFixture = path.join(jpegFolder, '0002.DCM');
 	if (fs.existsSync(jpegFixture)) {
 		const jpegHeader = parseDicomImageHeader(fs.readFileSync(jpegFixture));

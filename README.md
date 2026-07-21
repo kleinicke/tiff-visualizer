@@ -18,7 +18,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | NPY/NPZ                        |   Yes |    Yes |     Yes |     Yes | Also supports float64 and int8/16/32/64, uint32/64                          |
 | FITS                           |   Yes |    Yes |      No |     Yes | Numeric image HDUs; also int32/int64 and float64                            |
 | DICOM                          |   Yes |    Yes |      No |     Yes | Native and JPEG Baseline; folder/series and multi-frame navigation           |
-| NetCDF                         |   Yes |    Yes |      No |     Yes | Classic CDF-1/CDF-2 numeric variables; first 2D slice                       |
+| NetCDF                         |   Yes |    Yes |      No |     Yes | Classic CDF-1/CDF-2 rasters and MPAS cell meshes; variable/dimension controls |
 | PFM                            |    No |     No |      No |     Yes | Portable Float Map                                                          |
 | HDR                            |    No |     No |      No |     Yes | Radiance RGBE, decoded to float32                                           |
 | PNG                            |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA                                              |
@@ -67,6 +67,7 @@ Float Image Visualization Options:
 - **OME-TIFF:** Navigate images/series, channels, Z slices, and timepoints from OME-XML. Multi-file datasets are presented as one logical image while C/Z/T changes transparently select the referenced TIFF and IFD. `BinaryOnly` members automatically follow metadata stored in a master OME-TIFF or companion `.ome`/`.ome.xml` file.
 - **DICOM:** Use **TIFF Visualizer: Open Folder as DICOM Dataset**, select an acquisition series, and navigate its slices and available time, echo, and frame dimensions. Physical files remain grouped by DICOM identity instead of being mixed into a filename-sorted collection. Multi-frame objects, including JPEG Baseline objects, expose a Frame control.
 - **Ordinary multi-page TIFF:** Navigate top-level pages even when no semantic dimension metadata is available.
+- **NetCDF:** Select a numeric variable and move through its non-spatial dimensions. Regular X/Y arrays render as rasters; MPAS `nCells` fields render on their unstructured cell polygons in an equirectangular mesh view.
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.
 
@@ -74,7 +75,7 @@ Float Image Visualization Options:
 
 - **TIFF and OME-TIFF pixels:** Rust/WebAssembly using the `tiff` crate and its codecs, with geotiff.js as a compatibility fallback. OME-XML metadata and dimension mapping are parsed in TypeScript.
 - **DICOM:** A lightweight TypeScript parser reads the container, technical headers, series metadata, and native pixel data. Encapsulated JPEG Baseline frames are extracted in TypeScript and decoded in Rust/WebAssembly with `zune-jpeg`; browser JPEG decoding is the fallback.
-- **FITS and classic NetCDF:** Dependency-free TypeScript parsers run in the decode worker.
+- **FITS and classic NetCDF:** Dependency-free TypeScript parsers run in the decode worker. The NetCDF path understands regular multidimensional rasters and MPAS cell geometry; NetCDF-4/HDF5 remains separate future work.
 - **EXR and other formats:** The viewer uses a mixture of Rust/WebAssembly, focused JavaScript libraries, and browser-native codecs according to the format.
 
 ## Feature Requests and Issues
