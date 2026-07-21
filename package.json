@@ -79,7 +79,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,nc,cdf,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
+            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,dng,cr2,cr3,nef,arw,raf,rw2,orf,pef,srw}"
           }
         ]
       },
@@ -95,6 +95,11 @@
       }
     ],
     "commands": [
+	  {
+		"command": "tiffVisualizer.openDicomFolder",
+		"title": "Open Folder as DICOM Dataset",
+		"category": "TIFF Visualizer"
+	  },
       {
         "command": "tiffVisualizer.zoomIn",
         "title": "Zoom In",
@@ -304,11 +309,12 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:scientific-formats && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
     "test:unit": "mocha out/test/unit/**/*.test.js",
     "test:integration": "vscode-test",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
     "test:scientific-formats": "node test/scientific-formats-test.js",
+	"test:dicom-dataset": "node test/dicom-dataset-test.js",
     "test:visualization": "node test/visualization-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:wasm": "node test/wasm-tiff-decode-test.js",

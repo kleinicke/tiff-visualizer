@@ -34,6 +34,9 @@ export class MessageRouter {
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
 		this.handlers.set('removeFromCollection', new RemoveFromCollectionMessageHandler());
 		this.handlers.set('jumpToCollectionIndex', new JumpToCollectionIndexMessageHandler());
+		this.handlers.set('navigateDataset', new NavigateDatasetMessageHandler());
+		this.handlers.set('registerOmeDataset', new RegisterOmeDatasetMessageHandler());
+		this.handlers.set('registerDicomFrames', new RegisterDicomFramesMessageHandler());
 		this.handlers.set('restorePeerImage', new RestorePeerImageMessageHandler());
 		this.handlers.set('histogramVisibilityChanged', new HistogramVisibilityChangedMessageHandler());
 		this.handlers.set('histogramPositionChanged', new HistogramPositionChangedMessageHandler());
@@ -179,6 +182,13 @@ class InitialDataMessageHandler implements MessageHandler {
 		});
 		// Sync status bar to reflect current global histogram visibility
 		preview.syncHistogramStatusBar(histogramState.isVisible);
+		preview.sendDatasetManifest();
+	}
+}
+
+class RegisterDicomFramesMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.registerDicomFrames(Number(message.frames || 1));
 	}
 }
 
@@ -218,6 +228,20 @@ class JumpToCollectionIndexMessageHandler implements MessageHandler {
 		if (typeof message.index === 'number') {
 			preview.jumpToCollectionIndex(message.index);
 		}
+	}
+}
+
+class NavigateDatasetMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		if (typeof message.seriesIndex === 'number' && message.coordinates && typeof message.coordinates === 'object') {
+			preview.navigateDataset(message.seriesIndex, message.coordinates);
+		}
+	}
+}
+
+class RegisterOmeDatasetMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		void preview.registerOmeDataset(message.dataset);
 	}
 }
 

@@ -7,7 +7,7 @@ import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, TagEntry 
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
-import { findOmeXmlInTags, OmeMetadata, parseOmeXml } from './ome-tiff.js';
+import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml } from './ome-tiff.js';
 
 // GeoTIFF is loaded globally via script tag; the geotiff npm library isn't a
 // real TS-typed dependency in this project, so it's treated as `any`.
@@ -124,6 +124,8 @@ export class TiffProcessor {
 	_sourceBuffer: ArrayBuffer | null;
 	_sourceBufferSrc: string | null;
 	omeMetadata: OmeMetadata | null;
+	omeBinaryOnly: OmeBinaryOnly | null;
+	omeXml: string | null;
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -151,6 +153,8 @@ export class TiffProcessor {
 		this._sourceBuffer = null;
 		this._sourceBufferSrc = null;
 		this.omeMetadata = null;
+		this.omeBinaryOnly = null;
+		this.omeXml = null;
 		this._wasmProcessor.init().then(available => {
 			this._wasmAvailable = available;
 			if (available) {
@@ -169,6 +173,13 @@ export class TiffProcessor {
 	 */
 	clamp(value: number, min: number, max: number): number {
 		return Math.min(Math.max(value, min), max);
+	}
+
+	private _setOmeXml(xml: string | undefined | null): void {
+		if (!xml) { return; }
+		this.omeXml = xml;
+		this.omeBinaryOnly = parseOmeBinaryOnly(xml);
+		this.omeMetadata = parseOmeXml(xml) || this.omeMetadata;
 	}
 
 	/**
@@ -242,6 +253,8 @@ export class TiffProcessor {
 		try {
 			if (this._sourceBufferSrc !== src) {
 				this.omeMetadata = null;
+				this.omeBinaryOnly = null;
+				this.omeXml = null;
 			}
 			let buffer: ArrayBuffer;
 			let readDuration = 0;
@@ -428,7 +441,7 @@ export class TiffProcessor {
 						this._lastStatisticsRgb24Mode = false;
 					}
 					this._lastAllTags = parseAllTagsJson(wasmResult.allTagsJson);
-					this.omeMetadata = parseOmeXml(wasmResult.omeXml || findOmeXmlInTags(this._lastAllTags)) || this.omeMetadata;
+					this._setOmeXml(wasmResult.omeXml || findOmeXmlInTags(this._lastAllTags));
 					this.rawTiffData.ome = this.omeMetadata;
 					this._gdalNodata = parseGdalNodata(this._lastAllTags);
 					if (this._gdalNodata !== undefined && this._lastStatistics &&
@@ -511,7 +524,7 @@ export class TiffProcessor {
 			const image = await tiff.getImage(pageIndex);
 			const firstImage = pageIndex === 0 ? image : await tiff.getImage(0);
 			const firstDescription = String(firstImage?.fileDirectory?.ImageDescription || '');
-			this.omeMetadata = parseOmeXml(firstDescription) || this.omeMetadata;
+			this._setOmeXml(firstDescription);
 			const sampleFormat = image.getSampleFormat();
 
 			// Post format info to VS Code
@@ -576,7 +589,7 @@ export class TiffProcessor {
 				data: data
 			};
 			this._lastAllTags = buildTagsFromGeotiffImage(image);
-			this.omeMetadata = parseOmeXml(findOmeXmlInTags(this._lastAllTags)) || this.omeMetadata;
+			this._setOmeXml(findOmeXmlInTags(this._lastAllTags));
 			this.rawTiffData.ome = this.omeMetadata;
 			this._gdalNodata = parseGdalNodata(this._lastAllTags);
 

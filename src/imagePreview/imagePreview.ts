@@ -14,6 +14,8 @@ import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager } from './types';
 import type { ImageSettings } from './appStateManager';
+import type { DatasetManifest, DatasetPlane, DatasetSeries, WebviewDatasetManifest } from './datasetTypes';
+import { parseOmeDatasetXml, tiffImageDescription } from './omeMetadataFile';
 
 // Extended settings for webview (includes preview-local display settings).
 interface WebviewImageSettings extends ImageSettings {
@@ -39,6 +41,10 @@ export class ImagePreview extends MediaPreview {
 	private _surfaceMode: 'editor' | 'layers' = 'editor';
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
+	private _datasetManifest: DatasetManifest | undefined;
+	private _datasetSeriesIndex = 0;
+	private _datasetCoordinates: Record<string, number> = {};
+	private _datasetCurrentResource: vscode.Uri | undefined;
 
 	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
 
@@ -421,7 +427,199 @@ export class ImagePreview extends MediaPreview {
 
 	/** The image currently displayed (the active collection entry, or the resource). */
 	public getCurrentImage(): vscode.Uri {
+		if (this._datasetCurrentResource) { return this._datasetCurrentResource; }
 		return this._imageCollection[this._currentImageIndex] ?? this.resource;
+	}
+
+	public setDatasetManifest(manifest: DatasetManifest): void {
+		this._datasetManifest = manifest;
+		this._datasetSeriesIndex = Math.max(0, Math.min(manifest.series.length - 1, manifest.initialSeriesIndex || 0));
+		this._datasetCoordinates = { ...(manifest.initialCoordinates || {}) };
+		const resources = manifest.series.flatMap(series => series.planes.map(plane => vscode.Uri.parse(plane.resourceUri)));
+		this.ensureLocalResourceRoots(resources);
+		this.sendDatasetManifest();
+	}
+
+	public sendDatasetManifest(): void {
+		if (!this._datasetManifest) { return; }
+		const manifest: WebviewDatasetManifest = {
+			...this._datasetManifest,
+			series: this._datasetManifest.series.map(series => ({
+				...series,
+				planes: series.planes.map(plane => {
+					const resource = vscode.Uri.parse(plane.resourceUri);
+					return { ...plane, src: this._webviewEditor.webview.asWebviewUri(resource).toString() };
+				}),
+			})),
+		};
+		this._webviewEditor.webview.postMessage({
+			type: 'setDataset',
+			manifest,
+			seriesIndex: this._datasetSeriesIndex,
+			coordinates: this._datasetCoordinates,
+		});
+	}
+
+	/** Promote a directly opened multi-frame DICOM object to the shared dataset UI. */
+	public registerDicomFrames(frameCount: number): void {
+		const frames = Math.max(1, Math.trunc(frameCount));
+		if (this._datasetManifest || frames <= 1) { return; }
+		const resource = this.getCurrentImage();
+		this.setDatasetManifest({
+			id: `dicom-frames-${resource.toString()}`,
+			kind: 'dicom',
+			label: Utils.basename(resource),
+			series: [{
+				id: 'dicom-multiframe',
+				label: 'Multi-frame image',
+				axes: [{ key: 'frame', label: 'Frame', size: frames }],
+				planes: Array.from({ length: frames }, (_, frameIndex) => ({
+					coordinates: { frame: frameIndex },
+					resourceUri: resource.toString(),
+					format: 'dicom' as const,
+					frameIndex,
+				})),
+			}],
+			initialSeriesIndex: 0,
+			initialCoordinates: { frame: 0 },
+		});
+	}
+
+	public navigateDataset(seriesIndex: number, coordinates: Record<string, number>): void {
+		const manifest = this._datasetManifest;
+		if (!manifest) { return; }
+		const safeSeriesIndex = Math.max(0, Math.min(manifest.series.length - 1, Math.trunc(seriesIndex)));
+		const series = manifest.series[safeSeriesIndex];
+		const safeCoordinates: Record<string, number> = {};
+		for (const axis of series.axes) {
+			safeCoordinates[axis.key] = Math.max(0, Math.min(axis.size - 1, Math.trunc(coordinates[axis.key] || 0)));
+		}
+		const plane = series.planes.find(candidate =>
+			series.axes.every(axis => (candidate.coordinates[axis.key] || 0) === safeCoordinates[axis.key]));
+		if (!plane) {
+			vscode.window.showWarningMessage('No image plane is available at that dataset position.');
+			return;
+		}
+		this._datasetSeriesIndex = safeSeriesIndex;
+		this._datasetCoordinates = safeCoordinates;
+		this._datasetCurrentResource = vscode.Uri.parse(plane.resourceUri);
+		this.sendDatasetPlane(plane);
+	}
+
+	public async registerOmeDataset(description: any): Promise<void> {
+		if (this._datasetManifest || !description) { return; }
+		const currentResource = description.currentResourceUri ? vscode.Uri.parse(description.currentResourceUri) : this.getCurrentImage();
+		const baseDirectory = Utils.dirname(currentResource);
+		const resolveFile = (fileName: string | undefined): vscode.Uri | undefined => {
+			if (!fileName) { return currentResource; }
+			const normalized = String(fileName).replace(/\\/g, '/');
+			if (normalized.startsWith('/') || normalized.split('/').includes('..')) { return undefined; }
+			const resolved = Utils.joinPath(baseDirectory, ...normalized.split('/').filter(Boolean));
+			const basePath = baseDirectory.path.endsWith('/') ? baseDirectory.path : `${baseDirectory.path}/`;
+			return resolved.path.startsWith(basePath) ? resolved : undefined;
+		};
+
+		if (description.metadataFile) {
+			const metadataResource = resolveFile(String(description.metadataFile));
+			if (!metadataResource) {
+				vscode.window.showWarningMessage('OME BinaryOnly metadata reference is outside the image folder and was not opened.');
+				return;
+			}
+			try {
+				const bytes = await vscode.workspace.fs.readFile(metadataResource);
+				const lower = metadataResource.path.toLowerCase();
+				const xml = lower.endsWith('.ome') || lower.endsWith('.xml')
+					? new TextDecoder('utf-8').decode(bytes)
+					: tiffImageDescription(bytes);
+				const parsed = parseOmeDatasetXml(xml);
+				if (!parsed) { throw new Error('referenced file contains no OME Image metadata'); }
+				if (description.metadataUuid && parsed.uuid && description.metadataUuid !== parsed.uuid) {
+					throw new Error(`metadata UUID mismatch (expected ${description.metadataUuid}, found ${parsed.uuid})`);
+				}
+				description = {
+					...description,
+					uuid: parsed.uuid || description.metadataUuid,
+					series: parsed.series,
+				};
+			} catch (error) {
+				vscode.window.showWarningMessage(`Could not load referenced OME metadata '${description.metadataFile}': ${error instanceof Error ? error.message : String(error)}`);
+				return;
+			}
+		}
+
+		const seriesDescriptions: any[] = Array.isArray(description.series)
+			? description.series
+			: Array.isArray(description.planes) ? [description] : [];
+		if (seriesDescriptions.length === 0) { return; }
+		const candidates: Array<{ series: any; seriesIndex: number; plane: any; resource: vscode.Uri | undefined }> = seriesDescriptions.flatMap((series: any, seriesIndex: number) =>
+			(series.planes || []).map((plane: any) => ({ series, seriesIndex, plane, resource: resolveFile(plane.fileName) })));
+		const availability = new Map<string, boolean>();
+		const uniqueResources = new Map<string, vscode.Uri>();
+		for (const candidate of candidates) {
+			if (candidate.resource) { uniqueResources.set(candidate.resource.toString(), candidate.resource); }
+		}
+		await Promise.all([...uniqueResources.values()].map(async resource => {
+			try { await vscode.workspace.fs.stat(resource); availability.set(resource.toString(), true); }
+			catch { availability.set(resource.toString(), false); }
+		}));
+		const datasetSeries: DatasetSeries[] = seriesDescriptions.map((series: any, seriesIndex: number): DatasetSeries => {
+			const planes: DatasetPlane[] = candidates
+				.filter(candidate => candidate.seriesIndex === seriesIndex)
+				.flatMap(({ plane, resource }: any) => {
+					if (!resource || !availability.get(resource.toString())) { return []; }
+					return [{
+						coordinates: { c: Number(plane.c || 0), z: Number(plane.z || 0), t: Number(plane.t || 0) },
+						resourceUri: resource.toString(),
+						format: 'tiff' as const,
+						pageIndex: Number(plane.ifd || 0),
+					}];
+				});
+			return {
+				id: String(series.imageId || `Image:${seriesIndex}`),
+				label: String(series.imageName || `OME Image ${seriesIndex + 1}`),
+				axes: [
+					{ key: 'c', label: 'C', size: Math.max(1, Number(series.sizeC || 1)), valueLabels: Array.isArray(series.channelNames) ? series.channelNames : undefined },
+					{ key: 'z', label: 'Z', size: Math.max(1, Number(series.sizeZ || 1)) },
+					{ key: 't', label: 'T', size: Math.max(1, Number(series.sizeT || 1)) },
+				],
+				planes,
+			};
+		}).filter(series => series.planes.length > 0);
+		if (datasetSeries.length === 0) { return; }
+		const availablePlaneCount = datasetSeries.reduce((sum, series) => sum + series.planes.length, 0);
+		const missing = candidates.length - availablePlaneCount;
+		const currentPage = Number(description.currentPageIndex || 0);
+		let initialSeriesIndex = datasetSeries.findIndex(series => series.planes.some(plane =>
+			plane.resourceUri === currentResource.toString() && plane.pageIndex === currentPage));
+		if (initialSeriesIndex < 0) { initialSeriesIndex = 0; }
+		const currentPlane = datasetSeries[initialSeriesIndex].planes.find(plane =>
+			plane.resourceUri === currentResource.toString() && plane.pageIndex === currentPage) || datasetSeries[initialSeriesIndex].planes[0];
+		const manifest: DatasetManifest = {
+			id: `ome-${description.uuid || seriesDescriptions[0]?.imageId || currentResource.toString()}`,
+			kind: 'ome-tiff',
+			label: description.imageName || seriesDescriptions[0]?.imageName || Utils.basename(baseDirectory),
+			series: datasetSeries,
+			initialSeriesIndex,
+			initialCoordinates: { ...currentPlane.coordinates },
+		};
+		this.setDatasetManifest(manifest);
+		if (missing > 0) {
+			vscode.window.showWarningMessage(`OME dataset opened with ${missing} unavailable plane mapping${missing === 1 ? '' : 's'}.`);
+		}
+	}
+
+	private sendDatasetPlane(plane: DatasetPlane): void {
+		const resource = vscode.Uri.parse(plane.resourceUri);
+		this._webviewEditor.webview.postMessage({
+			type: 'switchToDatasetPlane',
+			uri: this._webviewEditor.webview.asWebviewUri(resource).toString(),
+			resourceUri: resource.toString(),
+			formatHint: plane.format,
+			pageIndex: plane.pageIndex,
+			frameIndex: plane.frameIndex,
+			seriesIndex: this._datasetSeriesIndex,
+			coordinates: this._datasetCoordinates,
+		});
 	}
 
 	/**
@@ -701,9 +899,7 @@ export class ImagePreview extends MediaPreview {
 			// Use the currently displayed image URI (not always the original resource when
 			// using the image collection). This prevents settings updates from triggering
 			// a full reload when the webview is showing a different image in the collection.
-			const currentResource = this._imageCollection.length > 0
-				? this._imageCollection[this._currentImageIndex]
-				: this.resource;
+			const currentResource = this.getCurrentImage();
 			const uri = this._webviewEditor.webview.asWebviewUri(currentResource);
 			const webviewSafeSettings = {
 				...settings,

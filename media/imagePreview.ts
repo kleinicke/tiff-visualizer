@@ -29,7 +29,8 @@ import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
-import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
+import { extractDicomJpegFrame, parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
+import type { ScientificDecodedImage } from './modules/scientific-format-parsers.js';
 
 /**
  * Main Image Preview Application
@@ -40,6 +41,56 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 	type CopiedPosition = { relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number | string };
 	type ColormapConversionState = { colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean };
 	type FormatInfo = { width?: number, height?: number, samplesPerPixel?: number, bitsPerSample?: number, sampleFormat?: number, formatType?: string, [key: string]: any };
+	type DatasetPlane = { coordinates: Record<string, number>, resourceUri: string, src: string, format: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number };
+	type DatasetAxis = { key: string, label: string, size: number, valueLabels?: string[] };
+	type DatasetSeries = { id: string, label: string, axes: DatasetAxis[], planes: DatasetPlane[] };
+	type DatasetManifest = { id: string, kind: 'dicom' | 'ome-tiff', label: string, series: DatasetSeries[] };
+
+	// The worker normally decodes encapsulated DICOM JPEG frames with Rust/WASM.
+	// Keep a browser-native fallback so a failed/blocked worker never makes the
+	// file unusable; ordinary browser JPEG decoding is sufficient for Baseline.
+	async function parseDicomForBrowser(buffer: ArrayBuffer, frameIndex = 0): Promise<ScientificDecodedImage> {
+		try { return parseDicom(buffer, frameIndex); }
+		catch (error) {
+			if (!(error instanceof Error) || !error.message.includes('requires codec: jpeg-baseline')) { throw error; }
+		}
+		const started = performance.now();
+		const frame = extractDicomJpegFrame(buffer, frameIndex);
+		const bitmap = await createImageBitmap(new Blob([frame.encoded], { type: 'image/jpeg' }));
+		try {
+			if (bitmap.width !== frame.width || bitmap.height !== frame.height) {
+				throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${bitmap.width}x${bitmap.height}`);
+			}
+			const canvas = document.createElement('canvas');
+			canvas.width = bitmap.width;
+			canvas.height = bitmap.height;
+			const context = canvas.getContext('2d', { willReadFrequently: true });
+			if (!context) { throw new Error('Could not create a JPEG decode canvas'); }
+			context.drawImage(bitmap, 0, 0);
+			const rgba = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+			const channels = frame.channels === 1 ? 1 : 3;
+			const data = new Float32Array(bitmap.width * bitmap.height * channels);
+			const slope = Number(frame.metadata.rescaleSlope ?? 1);
+			const intercept = Number(frame.metadata.rescaleIntercept ?? 0);
+			for (let pixel = 0; pixel < bitmap.width * bitmap.height; pixel++) {
+				for (let channel = 0; channel < channels; channel++) {
+					data[pixel * channels + channel] = rgba[pixel * 4 + channel] * slope + intercept;
+				}
+			}
+			if (frame.metadata.photometric === 'MONOCHROME1') {
+				let min = Infinity, max = -Infinity;
+				for (const value of data) { if (value < min) { min = value; } if (value > max) { max = value; } }
+				for (let i = 0; i < data.length; i++) { data[i] = max + min - data[i]; }
+			}
+			return {
+				width: bitmap.width, height: bitmap.height, channels, data,
+				metadata: { ...frame.metadata, decoder: 'Browser JPEG fallback' },
+				decodeTimings: [{ name: 'decode-dicom-browser-jpeg', durationMs: performance.now() - started }],
+			};
+		} finally {
+			bitmap.close();
+		}
+	}
 
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
 	const originalVscode = acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
@@ -83,7 +134,7 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	const rawProcessor = new RawProcessor(settingsManager, vscode);
 	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: parseFits });
-	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: parseDicom });
+	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: parseDicomForBrowser });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: parseNetCdf });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor];
 	// All format processors, for bulk per-switch state resets and load cancellation.
@@ -181,8 +232,8 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 	let currentLoadFormat = '';
 	let currentLoadDecodeInfo: { engine: string, durationMs: number } | null = null;
 	let _deferredHistogramTimer: number | null = null;
-	let _previousDecodedImageCache: { resourceUri: string, format: string, raw: any } | null = null;
-	let _restoreDecodedImageCandidate: { resourceUri: string, format: string, raw: any } | null = null;
+	let _previousDecodedImageCache: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
+	let _restoreDecodedImageCandidate: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 	let _outgoingImageElement: HTMLElement | null = null;
 	let _imageTransitionActive = false;
 	let _collectionSwitchLoading = false;
@@ -258,6 +309,12 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 	};
 	let overlayElement: HTMLElement | null = null;
 	let tiffPageOverlay: HTMLElement | null = null;
+	let datasetOverlay: HTMLElement | null = null;
+	let datasetManifest: DatasetManifest | null = null;
+	let datasetSeriesIndex = 0;
+	let datasetCoordinates: Record<string, number> = {};
+	let datasetLoading = false;
+	let omeDatasetRequestKey = '';
 	let filenameBadge: HTMLElement | null = null;
 	let activeCounterInput: HTMLInputElement | null = null;
 
@@ -328,6 +385,7 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		setupEventListeners();
 		createImageCollectionOverlay();
 		createTiffPageOverlay();
+		createDatasetOverlay();
 		createFilenameBadge();
 
 		// Save state when webview might be disposed
@@ -647,6 +705,46 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 			const result = await tiffProcessor.processTiff(src, pageIndex);
 			if (gen !== _loadGeneration) { return; }
 			const ome = tiffProcessor.omeMetadata;
+			if (ome && !datasetManifest) {
+				const images = ome.images?.length ? ome.images : [ome];
+				const externalPlaneCount = images.flatMap(image => Object.values(image.coordinateToPlane || {})).filter(plane => !!plane.fileName).length;
+				const requestKey = `${ome.uuid || ome.imageId || ''}:${images.length}:${externalPlaneCount}`;
+				if (externalPlaneCount > 0 && requestKey !== omeDatasetRequestKey) {
+					omeDatasetRequestKey = requestKey;
+					vscode.postMessage({
+						type: 'registerOmeDataset',
+						dataset: {
+							uuid: ome.uuid,
+							series: images.map(image => ({
+								imageId: image.imageId,
+								imageName: image.imageName,
+								sizeC: image.planeSizeC,
+								sizeZ: image.sizeZ,
+								sizeT: image.sizeT,
+								channelNames: image.channels.map(channel => channel.name),
+								planes: Object.values(image.coordinateToPlane || {}),
+							})),
+							currentResourceUri: settingsManager.settings.resourceUri,
+							currentPageIndex: tiffProcessor.pageIndex,
+						},
+					});
+				}
+			} else if (tiffProcessor.omeBinaryOnly && !datasetManifest) {
+				const reference = tiffProcessor.omeBinaryOnly;
+				const requestKey = `binary-only:${reference.metadataFile}:${settingsManager.settings.resourceUri}`;
+				if (requestKey !== omeDatasetRequestKey) {
+					omeDatasetRequestKey = requestKey;
+					vscode.postMessage({
+						type: 'registerOmeDataset',
+						dataset: {
+							metadataFile: reference.metadataFile,
+							metadataUuid: reference.uuid,
+							currentResourceUri: settingsManager.settings.resourceUri,
+							currentPageIndex: tiffProcessor.pageIndex,
+						},
+					});
+				}
+			}
 			mouseHandler.setPhysicalPixelSize(ome ? {
 				x: ome.physicalSizeX,
 				y: ome.physicalSizeY,
@@ -762,12 +860,15 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		}
 	}
 
-	async function handleScientificArray(processor: ScientificArrayProcessor, src: string, gen: number = _loadGeneration) {
+	async function handleScientificArray(processor: ScientificArrayProcessor, src: string, gen: number = _loadGeneration, frameIndex = 0) {
 		currentLoadFormat = processor.config.formatLabel;
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await processor.process(src);
+			const result = await processor.process(src, frameIndex);
 			if (gen !== _loadGeneration) { return; }
+			if (processor === dicomProcessor && !datasetManifest && Number(processor.metadata.frames || 1) > 1) {
+				vscode.postMessage({ type: 'registerDicomFrames', frames: Number(processor.metadata.frames) });
+			}
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
@@ -1522,6 +1623,8 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		}
 		if (filenameBadge) filenameBadge.classList.remove('filename-badge--loading');
 		_collectionSwitchLoading = false;
+		datasetLoading = false;
+		updateDatasetOverlay(false);
 		updateTiffPageOverlay(false);
 	}
 
@@ -1872,6 +1975,27 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 				updateImageCollectionOverlay(message.data);
 				break;
 
+			case 'setDataset':
+				datasetManifest = message.manifest || null;
+				datasetSeriesIndex = Number(message.seriesIndex || 0);
+				datasetCoordinates = { ...(message.coordinates || {}) };
+				imageCollection = { totalImages: 1, currentIndex: 0, show: false };
+				updateImageCollectionOverlay(imageCollection);
+				updateDatasetOverlay(false);
+				{
+					const series = datasetManifest?.series[datasetSeriesIndex];
+					const plane = series?.planes.find(candidate =>
+						series.axes.every(axis => (candidate.coordinates[axis.key] || 0) === (datasetCoordinates[axis.key] || 0)));
+					const currentResource = settingsManager.settings.resourceUri;
+					const alreadyDisplayed = !!plane && plane.resourceUri === currentResource && (
+						plane.format === 'dicom'
+							? Number(plane.frameIndex || 0) === Number(dicomProcessor.metadata.frameIndex || 0) && !!dicomProcessor._lastRaw
+							: Number(plane.pageIndex || 0) === tiffProcessor.pageIndex && !!tiffProcessor.rawTiffData
+					);
+					if (!alreadyDisplayed) { requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates); }
+				}
+				break;
+
 			case 'getZoomState':
 				// Send current zoom state back to extension
 				const zoomState = zoomController.getCurrentState();
@@ -1937,6 +2061,18 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 					_pendingZoomState = message.zoomState || liveZoom;
 				}
 				switchToNewImage(message.uri, message.resourceUri);
+				break;
+
+			case 'switchToDatasetPlane':
+				datasetSeriesIndex = Number(message.seriesIndex || 0);
+				datasetCoordinates = { ...(message.coordinates || {}) };
+				datasetLoading = true;
+				updateDatasetOverlay(true);
+				switchToNewImage(message.uri, message.resourceUri, {
+					formatHint: message.formatHint,
+					pageIndex: message.pageIndex,
+					frameIndex: message.frameIndex,
+				});
 				break;
 
 			case 'toggleHistogram':
@@ -3309,10 +3445,12 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 			const isRightArrow = e.key === 'ArrowRight' || e.code === 'ArrowRight';
 			const isLeftArrow = e.key === 'ArrowLeft' || e.code === 'ArrowLeft';
 			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) &&
-				(imageCollection.totalImages > 1 || tiffProcessor.pageCount > 1)) {
+				(datasetManifest || imageCollection.totalImages > 1 || tiffProcessor.pageCount > 1)) {
 				e.preventDefault();
 				e.stopPropagation();
-				if (imageCollection.totalImages > 1) {
+				if (datasetManifest) {
+					navigateDatasetPrimary(isRightArrow ? 1 : -1);
+				} else if (imageCollection.totalImages > 1) {
 					requestCollectionNavigation(isRightArrow ? 'next' : 'previous');
 				} else {
 					void navigateTiffPage(isRightArrow ? 1 : -1);
@@ -3518,8 +3656,103 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		document.body.appendChild(tiffPageOverlay);
 	}
 
+	function createDatasetOverlay() {
+		datasetOverlay = document.createElement('div');
+		datasetOverlay.className = 'dataset-overlay';
+		datasetOverlay.style.display = 'none';
+		datasetOverlay.innerHTML = `
+			<div class="dataset-heading">
+				<button class="dataset-prev" type="button" tabindex="-1" title="Previous dataset plane (Left Arrow)" aria-label="Previous dataset plane">&#x2039;</button>
+				<span class="dataset-title"></span>
+				<button class="dataset-next" type="button" tabindex="-1" title="Next dataset plane (Right Arrow)" aria-label="Next dataset plane">&#x203a;</button>
+			</div>
+			<label class="dataset-series-row"><span>Series</span><select class="dataset-series"></select></label>
+			<div class="dataset-axis-controls"></div>
+		`;
+		const bindButton = (selector: string, delta: number) => {
+			const button = datasetOverlay?.querySelector(selector) as HTMLButtonElement | null;
+			button?.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); });
+			button?.addEventListener('click', e => {
+				e.preventDefault(); e.stopPropagation(); button.blur(); navigateDatasetPrimary(delta);
+			});
+			button?.addEventListener('keydown', e => {
+				if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); }
+			});
+		};
+		bindButton('.dataset-prev', -1);
+		bindButton('.dataset-next', 1);
+		const select = datasetOverlay.querySelector('.dataset-series') as HTMLSelectElement;
+		select.addEventListener('change', () => {
+			datasetSeriesIndex = Number(select.value);
+			const series = datasetManifest?.series[datasetSeriesIndex];
+			datasetCoordinates = Object.fromEntries((series?.axes || []).map(axis => [axis.key, 0]));
+			requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
+		});
+		document.body.appendChild(datasetOverlay);
+	}
+
+	function requestDatasetNavigation(seriesIndex: number, coordinates: Record<string, number>) {
+		if (!datasetManifest) { return; }
+		datasetLoading = true;
+		updateDatasetOverlay(true);
+		vscode.postMessage({ type: 'navigateDataset', seriesIndex, coordinates });
+	}
+
+	function navigateDatasetPrimary(delta: number) {
+		const series = datasetManifest?.series[datasetSeriesIndex];
+		if (!series || series.planes.length === 0) { return; }
+		const currentIndex = series.planes.findIndex(plane =>
+			series.axes.every(axis => (plane.coordinates[axis.key] || 0) === (datasetCoordinates[axis.key] || 0)));
+		const startIndex = currentIndex >= 0 ? currentIndex : 0;
+		const targetIndex = (startIndex + delta + series.planes.length) % series.planes.length;
+		datasetCoordinates = { ...series.planes[targetIndex].coordinates };
+		requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
+	}
+
+	function updateDatasetOverlay(loading = datasetLoading) {
+		if (!datasetOverlay) { return; }
+		const manifest = datasetManifest;
+		if (!manifest || manifest.series.length === 0) {
+			datasetOverlay.style.display = 'none';
+			return;
+		}
+		const series = manifest.series[Math.max(0, Math.min(manifest.series.length - 1, datasetSeriesIndex))];
+		const title = datasetOverlay.querySelector('.dataset-title') as HTMLElement;
+		title.textContent = manifest.label;
+		const seriesRow = datasetOverlay.querySelector('.dataset-series-row') as HTMLElement;
+		const select = datasetOverlay.querySelector('.dataset-series') as HTMLSelectElement;
+		if (select.options.length !== manifest.series.length || Array.from(select.options).some((option, index) => option.text !== manifest.series[index].label)) {
+			select.replaceChildren(...manifest.series.map((item, index) => {
+				const option = document.createElement('option'); option.value = String(index); option.text = item.label; return option;
+			}));
+		}
+		select.value = String(datasetSeriesIndex);
+		seriesRow.style.display = manifest.series.length > 1 ? 'grid' : 'none';
+		const controls = datasetOverlay.querySelector('.dataset-axis-controls') as HTMLElement;
+		controls.replaceChildren(...series.axes.map(axis => {
+			const row = document.createElement('label'); row.className = 'dataset-axis';
+			const axisLabel = document.createElement('span'); axisLabel.className = 'dataset-axis-label'; axisLabel.textContent = axis.label;
+			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, axis.size - 1)); input.step = '1'; input.value = String(datasetCoordinates[axis.key] || 0);
+			const axisValue = datasetCoordinates[axis.key] || 0;
+			const value = document.createElement('span'); value.className = 'dataset-axis-value'; value.textContent = `${axisValue + 1} / ${axis.size}${axis.valueLabels?.[axisValue] ? ` · ${axis.valueLabels[axisValue]}` : ''}`;
+			input.addEventListener('input', () => {
+				datasetCoordinates = { ...datasetCoordinates, [axis.key]: Number(input.value) };
+				requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
+			});
+			row.append(axisLabel, input, value); return row;
+		}));
+		datasetOverlay.classList.toggle('dataset-overlay--loading', loading);
+		datasetOverlay.style.display = 'flex';
+		if (tiffPageOverlay) tiffPageOverlay.style.display = 'none';
+		if (filenameBadge) filenameBadge.style.display = 'block';
+	}
+
 	function updateTiffPageOverlay(loading = false) {
 		if (!tiffPageOverlay) { return; }
+		if (datasetManifest) {
+			tiffPageOverlay.style.display = 'none';
+			return;
+		}
 		if (tiffProcessor.pageCount <= 1) {
 			tiffPageOverlay.style.display = 'none';
 			return;
@@ -3675,7 +3908,7 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 			renderCollectionLoadingState();
 		} else {
 			overlayElement.style.display = 'none';
-			if (filenameBadge) filenameBadge.style.display = 'none';
+			if (filenameBadge) filenameBadge.style.display = datasetManifest ? 'block' : 'none';
 		}
 	}
 
@@ -3683,10 +3916,11 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		const resourceUri = settingsManager.settings.resourceUri;
 		if (!resourceUri || !hasLoadedImage) { return; }
 		const lower = resourceUri.toLowerCase();
-		let entry: { resourceUri: string, format: string, raw: any } | null = null;
+		let entry: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 		if (isTiffExtension(lower) && tiffProcessor.rawTiffData) {
 			entry = {
 				resourceUri,
+				cacheKey: `${resourceUri}#tiff-page=${tiffProcessor.pageIndex}`,
 				format: 'tiff',
 				raw: {
 					tiffData: tiffProcessor.rawTiffData,
@@ -3699,17 +3933,24 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 				}
 			};
 		} else if (lower.endsWith('.exr') && exrProcessor.rawExrData) {
-			entry = { resourceUri, format: 'exr', raw: exrProcessor.rawExrData };
+			entry = { resourceUri, cacheKey: resourceUri, format: 'exr', raw: exrProcessor.rawExrData };
 		} else if ((lower.endsWith('.npy') || lower.endsWith('.npz')) && npyProcessor._lastRaw) {
-			entry = { resourceUri, format: 'npy', raw: npyProcessor._lastRaw };
+			entry = { resourceUri, cacheKey: resourceUri, format: 'npy', raw: npyProcessor._lastRaw };
 		} else if (lower.endsWith('.pfm') && pfmProcessor._lastRaw) {
-			entry = { resourceUri, format: 'pfm', raw: pfmProcessor._lastRaw };
+			entry = { resourceUri, cacheKey: resourceUri, format: 'pfm', raw: pfmProcessor._lastRaw };
 		} else if ((lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) && ppmProcessor._lastRaw) {
-			entry = { resourceUri, format: 'ppm', raw: ppmProcessor._lastRaw };
+			entry = { resourceUri, cacheKey: resourceUri, format: 'ppm', raw: ppmProcessor._lastRaw };
 		} else if (lower.endsWith('.png') && pngProcessor._lastRaw && pngProcessor._lastRaw.bitDepth > 8) {
-			entry = { resourceUri, format: 'png', raw: pngProcessor._lastRaw };
+			entry = { resourceUri, cacheKey: resourceUri, format: 'png', raw: pngProcessor._lastRaw };
 		} else if (lower.endsWith('.hdr') && hdrProcessor._lastRaw) {
-			entry = { resourceUri, format: 'hdr', raw: hdrProcessor._lastRaw };
+			entry = { resourceUri, cacheKey: resourceUri, format: 'hdr', raw: hdrProcessor._lastRaw };
+		} else if (dicomProcessor._lastRaw && (datasetManifest?.kind === 'dicom' || lower.endsWith('.dcm') || lower.endsWith('.dicom'))) {
+			entry = {
+				resourceUri,
+				cacheKey: `${resourceUri}#dicom-frame=${Number(dicomProcessor.metadata.frameIndex || 0)}`,
+				format: 'dicom',
+				raw: { image: dicomProcessor._lastRaw, metadata: { ...dicomProcessor.metadata } },
+			};
 		}
 		_previousDecodedImageCache = entry;
 	}
@@ -3744,9 +3985,14 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		});
 	}
 
-	function tryRestoreDecodedImageFromCache(resourceUri: string): boolean {
+	function tryRestoreDecodedImageFromCache(resourceUri: string, formatHint?: 'dicom' | 'tiff', pageIndex = 0, frameIndex = 0): boolean {
 		const cache = _restoreDecodedImageCandidate;
-		if (!cache || cache.resourceUri !== resourceUri) { return false; }
+		const requestedKey = formatHint === 'tiff' || isTiffExtension(resourceUri.toLowerCase())
+			? `${resourceUri}#tiff-page=${pageIndex}`
+			: formatHint === 'dicom' || datasetManifest?.kind === 'dicom' || /\.(dcm|dicom)$/i.test(resourceUri)
+				? `${resourceUri}#dicom-frame=${frameIndex}`
+				: resourceUri;
+		if (!cache || cache.cacheKey !== requestedKey) { return false; }
 		const raw = cache.raw;
 		currentLoadDecodeInfo = null;
 		switch (cache.format) {
@@ -3868,6 +4114,19 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 				installCachedPlaceholder(raw.width, raw.height);
 				hdrProcessor._postFormatInfo(raw.width, raw.height, 3, 'HDR');
 				return true;
+			case 'dicom': {
+				const image = raw.image;
+				if (!image?.data) { return false; }
+				currentLoadFormat = 'DICOM';
+				dicomProcessor._lastRaw = image;
+				dicomProcessor.metadata = raw.metadata || {};
+				dicomProcessor._cachedStats = undefined;
+				dicomProcessor._isInitialLoad = true;
+				dicomProcessor._pendingRenderData = { displayData: image.data, width: image.width, height: image.height, channels: image.channels };
+				installCachedPlaceholder(image.width, image.height);
+				dicomProcessor._postScientificFormatInfo({ ...image, metadata: dicomProcessor.metadata });
+				return true;
+			}
 			default:
 				return false;
 		}
@@ -3876,7 +4135,7 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
-	function switchToNewImage(uri: string, resourceUri: string) {
+	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number } = {}) {
 		// Every switch gets a new generation so any in-flight load from a
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
@@ -3902,7 +4161,7 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
-		tiffProcessor.pageIndex = 0;
+		tiffProcessor.pageIndex = Math.max(0, Number(options.pageIndex || 0));
 		tiffProcessor.pageCount = 1;
 		updateTiffPageOverlay();
 		updateFilenameBadge(resourceUri);
@@ -3951,13 +4210,13 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		// image is ready to be shown.
 
 		// Load the new image based on file type
-		loadImageByType(uri, resourceUri, gen);
+		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex);
 	}
 
 	/**
 	 * Load image by type (wrapper function)
 	 */
-	async function loadImageByType(uri: string, resourceUri: string, gen: number) {
+	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number) {
 		// Wait until the browser has painted the loading UI (counter, filename
 		// badge, loading dot) before starting synchronous decode work, so every
 		// switch gives immediate visual feedback. This also lets a burst of
@@ -3972,11 +4231,11 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 		if (gen !== _loadGeneration) { return; }
 		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
-		if (tryRestoreDecodedImageFromCache(resourceUri)) {
+		if (tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
 			return;
 		}
-		if (isTiffExtension(lower)) {
-			handleTiff(uri, gen);
+		if (formatHint === 'tiff' || isTiffExtension(lower)) {
+			handleTiff(uri, gen, pageIndex);
 		} else if (lower.endsWith('.exr')) {
 			handleExr(uri, gen);
 		} else if (lower.endsWith('.pfm')) {
@@ -3997,8 +4256,8 @@ import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-
 			handleJxl(uri, gen);
 		} else if (lower.endsWith('.fits') || lower.endsWith('.fit') || lower.endsWith('.fts')) {
 			handleScientificArray(fitsProcessor, uri, gen);
-		} else if (lower.endsWith('.dcm') || lower.endsWith('.dicom')) {
-			handleScientificArray(dicomProcessor, uri, gen);
+		} else if (formatHint === 'dicom' || lower.endsWith('.dcm') || lower.endsWith('.dicom') || !resourceUri.split('/').pop()?.includes('.')) {
+			handleScientificArray(dicomProcessor, uri, gen, Number(frameIndex || 0));
 		} else if (lower.endsWith('.nc') || lower.endsWith('.cdf')) {
 			handleScientificArray(netcdfProcessor, uri, gen);
 		} else if (isRawExtension(lower)) {

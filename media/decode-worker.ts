@@ -27,12 +27,12 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_png16_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_jpeg_fast, decode_png16_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
+import { extractDicomJpegFrame, parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
 // media/tsconfig.json) types `self` as `Window & typeof globalThis`, which
@@ -539,8 +539,44 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeHdr(buffer);
 		case 'fits':
 			return parseFits(buffer);
-		case 'dicom':
-			return parseDicom(buffer);
+		case 'dicom': {
+			const frameIndex = Number(options.frameIndex || 0);
+			try {
+				return parseDicom(buffer, frameIndex);
+			} catch (error) {
+				if (!(error instanceof Error) || !error.message.includes('requires codec: jpeg-baseline')) { throw error; }
+				if (!tiffWasmReady) { throw new Error('JPEG Baseline DICOM requires the Rust/WASM decoder'); }
+				const started = performance.now();
+				const frame = extractDicomJpegFrame(buffer, frameIndex);
+				const decoded = decode_jpeg_fast(frame.encoded);
+				const width = decoded.width;
+				const height = decoded.height;
+				const jpegChannels = decoded.channels;
+				const channels = frame.channels === 1 ? 1 : jpegChannels;
+				if (width !== frame.width || height !== frame.height) {
+					throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${width}x${height}`);
+				}
+				const bytes = decoded.take_data_as_u8();
+				const slope = Number(frame.metadata.rescaleSlope ?? 1);
+				const intercept = Number(frame.metadata.rescaleIntercept ?? 0);
+				const data = new Float32Array(width * height * channels);
+				for (let pixel = 0; pixel < width * height; pixel++) {
+					for (let channel = 0; channel < channels; channel++) {
+						data[pixel * channels + channel] = bytes[pixel * jpegChannels + channel] * slope + intercept;
+					}
+				}
+				if (frame.metadata.photometric === 'MONOCHROME1') {
+					let min = Infinity, max = -Infinity;
+					for (const value of data) { if (value < min) { min = value; } if (value > max) { max = value; } }
+					for (let i = 0; i < data.length; i++) { data[i] = max + min - data[i]; }
+				}
+				return {
+					width, height, channels, data,
+					metadata: { ...frame.metadata, decoder: 'Rust/WASM zune-jpeg' },
+					decodeTimings: [{ name: 'decode-dicom-rust', durationMs: performance.now() - started }],
+				};
+			}
+		}
 		case 'netcdf':
 			return parseNetCdf(buffer);
 		default:
@@ -553,7 +589,7 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
  * typed arrays are transferred (zero-copy) instead of structured-cloned.
  */
 function collectTransferables(value: any, buffers: Set<ArrayBuffer> = new Set(), depth = 0): ArrayBuffer[] {
-	if (value == null || depth > 4) {
+	if (value === null || value === undefined || depth > 4) {
 		return [...buffers];
 	}
 	if (value instanceof ArrayBuffer) {

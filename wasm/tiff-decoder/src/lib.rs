@@ -96,6 +96,60 @@ pub struct HdrResult {
     all_tags_json: String,
 }
 
+/// Small, format-neutral result used when a container (currently DICOM)
+/// supplies an individual JPEG codestream to the shared Rust decoder.
+#[wasm_bindgen]
+pub struct JpegResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    data_u8: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl JpegResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 { self.channels }
+
+    #[wasm_bindgen]
+    pub fn take_data_as_u8(&mut self) -> Vec<u8> {
+        mem::take(&mut self.data_u8)
+    }
+}
+
+/// Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
+/// in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
+#[wasm_bindgen]
+pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, JsValue> {
+    use zune_jpeg::JpegDecoder;
+
+    let mut decoder = JpegDecoder::new(Cursor::new(data));
+    let pixels = decoder.decode()
+        .map_err(|e| JsValue::from_str(&format!("JPEG decode failed: {:?}", e)))?;
+    let info = decoder.info()
+        .ok_or_else(|| JsValue::from_str("JPEG: missing image info"))?;
+    let pixel_count = (info.width as usize).saturating_mul(info.height as usize);
+    if pixel_count == 0 || pixels.len() % pixel_count != 0 {
+        return Err(JsValue::from_str("JPEG: invalid decoded dimensions"));
+    }
+    let channels = (pixels.len() / pixel_count) as u32;
+    if channels != 1 && channels != 3 && channels != 4 {
+        return Err(JsValue::from_str("JPEG: unsupported decoded channel count"));
+    }
+    Ok(JpegResult {
+        width: info.width as u32,
+        height: info.height as u32,
+        channels,
+        data_u8: pixels,
+    })
+}
+
 #[wasm_bindgen]
 impl HdrResult {
     #[wasm_bindgen(getter)]

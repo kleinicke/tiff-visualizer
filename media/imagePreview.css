@@ -248,6 +248,110 @@ body img {
 	animation: raw-badge-pulse 1.2s ease-in-out infinite;
 }
 
+.dataset-overlay {
+	position: fixed;
+	top: 10px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	min-width: min(360px, 80vw);
+	flex-direction: column;
+	gap: 6px;
+	padding: 6px 9px;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px;
+	background: var(--vscode-editor-background, #1e1e1e);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+	color: var(--vscode-editor-foreground, #ccc);
+	font-family: var(--vscode-editor-font-family, 'Segoe UI', sans-serif);
+	font-size: var(--vscode-editor-font-size, 12px);
+	z-index: 1001;
+	user-select: none;
+}
+
+.dataset-heading {
+	display: grid;
+	grid-template-columns: 24px minmax(0, 1fr) 24px;
+	align-items: center;
+	gap: 7px;
+}
+
+.dataset-title {
+	overflow: hidden;
+	font-weight: 600;
+	text-align: center;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dataset-overlay button {
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	border: none;
+	border-radius: 3px;
+	background: transparent;
+	color: var(--vscode-textLink-foreground, #3794ff);
+	font-size: 20px;
+	line-height: 20px;
+	cursor: pointer;
+}
+
+.dataset-overlay button:hover {
+	background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+}
+
+.dataset-series-row,
+.dataset-axis {
+	display: grid;
+	grid-template-columns: minmax(4em, auto) minmax(120px, 1fr) minmax(4.5em, auto);
+	align-items: center;
+	gap: 7px;
+}
+
+.dataset-series-row {
+	grid-template-columns: minmax(4em, auto) minmax(120px, 1fr);
+}
+
+.dataset-series {
+	min-width: 0;
+	color: var(--vscode-dropdown-foreground);
+	background: var(--vscode-dropdown-background);
+	border: 1px solid var(--vscode-dropdown-border, transparent);
+}
+
+.dataset-axis-controls {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding-top: 5px;
+	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.dataset-axis input[type='range'] {
+	min-width: 0;
+	accent-color: var(--vscode-focusBorder, #007acc);
+}
+
+.dataset-axis-label {
+	font-weight: 600;
+}
+
+.dataset-axis-value {
+	white-space: nowrap;
+}
+
+.dataset-overlay--loading .dataset-title::before {
+	content: '';
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-right: 6px;
+	border-radius: 50%;
+	background: var(--vscode-textLink-foreground, #3794ff);
+	animation: raw-badge-pulse 1.2s ease-in-out infinite;
+}
+
 /* Filename badge — bottom-left, always visible */
 .filename-badge {
 	position: fixed;

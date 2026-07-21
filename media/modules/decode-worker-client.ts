@@ -268,10 +268,11 @@ export class DecodeWorkerClient {
 		buffer: ArrayBuffer,
 		src: string,
 		signal: AbortSignal | undefined,
-		parseLocal: (buffer: ArrayBuffer) => any,
+		parseLocal: (buffer: ArrayBuffer, options?: Record<string, any>) => any,
+		options: Record<string, any> = {},
 	) {
 		const workerStart = performance.now();
-		const response = client ? await client.decode(format, buffer) : null;
+		const response = client ? await client.decode(format, buffer, options) : null;
 		const workerDuration = performance.now() - workerStart;
 		if (signal?.aborted) {
 			throw new DOMException('Load superseded', 'AbortError');
@@ -308,7 +309,7 @@ export class DecodeWorkerClient {
 			const refetched = await fetch(src, { signal });
 			localBuffer = await refetched.arrayBuffer();
 		}
-		const result = await parseLocal(localBuffer);
+		const result = await parseLocal(localBuffer, options);
 		PerfTrace.mark(`decode-local(${format})`);
 		return result;
 	}

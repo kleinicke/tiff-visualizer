@@ -125,6 +125,22 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 /**
+ * Decode a TIFF file from an ArrayBuffer
+ * Returns TiffResult with image data and metadata
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
  * Decode an arbitrary zero-based TIFF page and compute min/max statistics.
  * @param {Uint8Array} data
  * @param {number} page_index
@@ -138,6 +154,20 @@ export function decode_tiff_page(data, page_index) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
 }
 
 /**
@@ -160,6 +190,21 @@ export function decode_tiff_fast(data) {
 }
 
 /**
+ * Return the number of top-level image file directories (pages) in a TIFF.
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+export function tiff_page_count(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_page_count(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
  * @param {Uint8Array} data
  * @returns {HdrResult}
  */
@@ -171,36 +216,6 @@ export function decode_hdr_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return HdrResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a TIFF file from an ArrayBuffer
- * Returns TiffResult with image data and metadata
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrResult}
- */
-export function decode_exr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ExrResult.__wrap(ret[0]);
 }
 
 /**
@@ -234,6 +249,20 @@ export function extract_exif_tags(data) {
 }
 
 /**
+ * @param {Uint8Array} data
+ * @returns {PngResult}
+ */
+export function decode_png16_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_png16_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PngResult.__wrap(ret[0]);
+}
+
+/**
  * Decode an arbitrary zero-based TIFF page without eagerly computing stats.
  * @param {Uint8Array} data
  * @param {number} page_index
@@ -250,32 +279,19 @@ export function decode_tiff_page_fast(data, page_index) {
 }
 
 /**
+ * Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
+ * in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
  * @param {Uint8Array} data
- * @returns {PngResult}
+ * @returns {JpegResult}
  */
-export function decode_png16_fast(data) {
+export function decode_jpeg_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_png16_fast(ptr0, len0);
+    const ret = wasm.decode_jpeg_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return PngResult.__wrap(ret[0]);
-}
-
-/**
- * Return the number of top-level image file directories (pages) in a TIFF.
- * @param {Uint8Array} data
- * @returns {number}
- */
-export function tiff_page_count(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_page_count(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] >>> 0;
+    return JpegResult.__wrap(ret[0]);
 }
 
 let cachedFloat64ArrayMemory0 = null;
@@ -504,6 +520,67 @@ export class HdrResult {
     }
 }
 if (Symbol.dispose) HdrResult.prototype[Symbol.dispose] = HdrResult.prototype.free;
+
+const JpegResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_jpegresult_free(ptr >>> 0, 1));
+/**
+ * Small, format-neutral result used when a container (currently DICOM)
+ * supplies an individual JPEG codestream to the shared Rust decoder.
+ */
+export class JpegResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(JpegResult.prototype);
+        obj.__wbg_ptr = ptr;
+        JpegResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        JpegResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_jpegresult_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    take_data_as_u8() {
+        const ret = wasm.jpegresult_take_data_as_u8(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.jpegresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.jpegresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.jpegresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) JpegResult.prototype[Symbol.dispose] = JpegResult.prototype.free;
 
 const PngResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }

@@ -207,6 +207,8 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 		'TIFF page arrow controls must not enter the keyboard tab order');
 	assert.match(webviewSource, /bindTiffPageButton\('\.tiff-page-prev', -1\)[\s\S]*bindTiffPageButton\('\.tiff-page-next', 1\)/,
 		'TIFF page buttons must use isolated mouse navigation handlers');
+	assert.match(webviewSource, /function navigateDatasetPrimary[\s\S]*series\.planes\.findIndex[\s\S]*series\.planes\[targetIndex\]\.coordinates/,
+		'dataset arrows must advance through complete plane coordinates rather than changing only one C, Z, or T axis');
 
 	console.log('✅ collection switches retain the outgoing frame, persistent loading UI, and isolated navigation controls');
 }

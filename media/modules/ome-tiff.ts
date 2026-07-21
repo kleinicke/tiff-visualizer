@@ -35,6 +35,14 @@ export interface OmeTiffData {
 	firstZ: number;
 	firstT: number;
 	planeCount: number;
+	fileName?: string;
+	uuid?: string;
+}
+
+export interface OmePlaneSource extends OmeCoordinates {
+	ifd: number;
+	fileName?: string;
+	uuid?: string;
 }
 
 export interface OmeMetadata {
@@ -68,6 +76,14 @@ export interface OmeMetadata {
 	expectedPlaneCount: number;
 	coordinateToIfd: Record<string, number>;
 	ifdToCoordinate: Record<string, OmeCoordinates>;
+	coordinateToPlane: Record<string, OmePlaneSource>;
+	/** Every logical Image represented by the same OME-XML document. */
+	images?: OmeMetadata[];
+}
+
+export interface OmeBinaryOnly {
+	metadataFile: string;
+	uuid?: string;
 }
 
 type Attributes = Record<string, string>;
@@ -118,6 +134,15 @@ function firstElementBody(xml: string, localName: string): string {
 		'i',
 	);
 	return pattern.exec(xml)?.[1] || '';
+}
+
+function elements(xml: string, localName: string): { attributes: Attributes, body: string }[] {
+	const escaped = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const pattern = new RegExp(`<(?:[\\w.-]+:)?${escaped}\\b([^>]*?)(?:\\/\\s*>|>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${escaped}\\s*>)`, 'gi');
+	const out: { attributes: Attributes, body: string }[] = [];
+	let match: RegExpExecArray | null;
+	while ((match = pattern.exec(xml))) { out.push({ attributes: parseAttributes(match[1]), body: match[2] || '' }); }
+	return out;
 }
 
 function positiveInt(value: string | undefined, fallback: number): number {
@@ -206,13 +231,7 @@ export function findOmeXmlInTags(tags: TagEntry[]): string | undefined {
 	return undefined;
 }
 
-export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null {
-	const source = String(xml || '').replace(/^\uFEFF/, '').trim();
-	if (!/<(?:(?:[\w.-]+):)?OME\b/i.test(source)) { return null; }
-
-	const ome = firstStartTag(source, 'OME') || {};
-	const imageBody = firstElementBody(source, 'Image') || source;
-	const image = firstStartTag(source, 'Image') || {};
+function parseOmeImage(source: string, ome: Attributes, image: Attributes, imageBody: string): OmeMetadata | null {
 	const pixelsBody = firstElementBody(imageBody, 'Pixels') || imageBody;
 	const pixels = firstStartTag(imageBody, 'Pixels');
 	if (!pixels) { return null; }
@@ -285,17 +304,25 @@ export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null 
 		expectedPlaneCount: planeSizeC * sizeZ * sizeT,
 		coordinateToIfd: {},
 		ifdToCoordinate: {},
+		coordinateToPlane: {},
 	};
 
-	metadata.tiffData = startTags(pixelsBody, 'TiffData').map(attrs => ({
-		ifd: nonNegativeInt(attrs.IFD, 0),
-		firstC: channelIndexForFirstC(channels, nonNegativeInt(attrs.FirstC, 0)),
-		firstZ: nonNegativeInt(attrs.FirstZ, 0),
-		firstT: nonNegativeInt(attrs.FirstT, 0),
-		// Per the OME-TIFF specification, an attribute-free TiffData covers all
-		// planes; once IFD is explicitly supplied, the default becomes one.
-		planeCount: positiveInt(attrs.PlaneCount, attrs.IFD === undefined ? metadata.expectedPlaneCount : 1),
-	}));
+	metadata.tiffData = elements(pixelsBody, 'TiffData').map(element => {
+		const attrs = element.attributes;
+		const uuidElement = elements(element.body, 'UUID')[0];
+		const uuid = uuidElement?.attributes || {};
+		return {
+			ifd: nonNegativeInt(attrs.IFD, 0),
+			firstC: channelIndexForFirstC(channels, nonNegativeInt(attrs.FirstC, 0)),
+			firstZ: nonNegativeInt(attrs.FirstZ, 0),
+			firstT: nonNegativeInt(attrs.FirstT, 0),
+			// Per the OME-TIFF specification, an attribute-free TiffData covers all
+			// planes; once IFD is explicitly supplied, the default becomes one.
+			planeCount: positiveInt(attrs.PlaneCount, attrs.IFD === undefined ? metadata.expectedPlaneCount : 1),
+			fileName: uuid.FileName,
+			uuid: uuidElement?.body.trim() || undefined,
+		};
+	});
 
 	if (metadata.tiffData.length > 0) {
 		for (const mapping of metadata.tiffData) {
@@ -306,11 +333,37 @@ export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null 
 				const ifd = mapping.ifd + offset;
 				metadata.coordinateToIfd[coordinateKey(coordinates)] = ifd;
 				metadata.ifdToCoordinate[String(ifd)] = coordinates;
+				metadata.coordinateToPlane[coordinateKey(coordinates)] = { ...coordinates, ifd, fileName: mapping.fileName, uuid: mapping.uuid };
 			}
 		}
 	}
 
 	return metadata;
+}
+
+export function parseOmeXmlImages(xml: string | undefined | null): OmeMetadata[] {
+	const source = String(xml || '').replace(/^\uFEFF/, '').trim();
+	if (!/<(?:(?:[\w.-]+):)?OME\b/i.test(source)) { return []; }
+	const ome = firstStartTag(source, 'OME') || {};
+	return elements(source, 'Image')
+		.map(image => parseOmeImage(source, ome, image.attributes, image.body))
+		.filter((image): image is OmeMetadata => !!image);
+}
+
+export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null {
+	const images = parseOmeXmlImages(xml);
+	if (images.length === 0) { return null; }
+	images[0].images = images.map(image => ({ ...image, images: undefined }));
+	return images[0];
+}
+
+/** Locate the external metadata document referenced by a BinaryOnly OME block. */
+export function parseOmeBinaryOnly(xml: string | undefined | null): OmeBinaryOnly | null {
+	const source = String(xml || '').replace(/^\uFEFF/, '').trim();
+	if (!/<(?:(?:[\w.-]+):)?OME\b/i.test(source)) { return null; }
+	const binaryOnly = elements(source, 'BinaryOnly')[0]?.attributes;
+	if (!binaryOnly?.MetadataFile) { return null; }
+	return { metadataFile: binaryOnly.MetadataFile, uuid: binaryOnly.UUID };
 }
 
 export function omeCoordinatesToIfd(metadata: OmeMetadata, coordinates: OmeCoordinates): number {

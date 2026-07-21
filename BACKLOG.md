@@ -42,7 +42,7 @@ item — it makes the tool useful for microscopy/medical stacks immediately.
 
 ---
 
-## 2. OME-TIFF support — implemented (single-file datasets)
+## 2. OME-TIFF support — implemented (single-file and embedded multi-file core)
 
 > `cell_image.ome.tif` should expose Channels (GFP/DAPI/RFP), Z slices, Time
 > points, Objectives, Voxel spacing.
@@ -52,11 +52,13 @@ regular multi-page TIFF whose **first IFD's `ImageDescription` tag (270)**
 contains an **OME-XML** document describing how the flat list of pages maps onto
 the (Channel, Z, Time) dimensions, plus physical metadata.
 
-The first single-file implementation is now present: namespace-tolerant OME-XML
+The implementation now includes namespace-tolerant OME-XML
 parsing, `DimensionOrder` plus explicit `TiffData` mappings, C/Z/T sliders,
 channel names/colors, physical sizes/units, objective metadata, physical-unit
 pixel readouts, later-page session restore, and `.ome.tif`/`.ome.tiff` plus
-OME-BigTIFF extensions (`.ome.tf2`, `.ome.tf8`, `.ome.btf`).
+OME-BigTIFF extensions (`.ome.tf2`, `.ome.tf8`, `.ome.btf`). Embedded OME-XML
+filesets also resolve `UUID FileName` mappings into the shared dataset viewer,
+so C/Z/T navigation can switch both the physical TIFF and its local IFD.
 
 **Implementation sketch:**
 
@@ -73,14 +75,13 @@ OME-BigTIFF extensions (`.ome.tf2`, `.ome.tf8`, `.ome.btf`).
 - Show voxel spacing / objective in the metadata panel; feed spacing into the
   size/pixel-position readout for real-world units.
 
-**Remaining scope:** channel→layer merged compositing, multiple `Image`/`Pixels`
-series in one file, multi-file OME-TIFF filesets/companion XML, and pyramidal
-SubIFD viewport loading. These should stay separate because they change
-compositing, series selection, file resolution, and lazy-loading behavior
-respectively; they are not required for ordinary single-series, single-file
-C/Z/T OME-TIFF navigation.
+**Remaining scope:** channel→layer merged compositing, standalone companion
+`.ome`/`.ome.xml` entry points, and pyramidal SubIFD viewport loading. Multiple
+`Image`/`Pixels` nodes are now exposed through the dataset series selector.
+These remaining items stay separate because they change compositing, editor
+entry-point handling, and lazy-loading behavior respectively.
 
-### Future: complete multi-file OME datasets and companion OME-XML
+### Multi-file OME datasets — core implemented, follow-ups remain
 
 OME-XML is the dataset manifest, not another pixel format. It can be embedded
 in the first TIFF's `ImageDescription`, repeated in every member of a fileset,
@@ -91,47 +92,44 @@ the logical dimensions and each `TiffData` entry can contain a `UUID` with a
 ten Z planes may therefore be 86 TIFF files even though it should appear as one
 dataset in the viewer.
 
-The future implementation should load and navigate that complete logical
-dataset as follows:
+Implementation status for loading and navigating the complete logical dataset:
 
-- Extend the OME parser so a plane mapping is
+- [x] Extend the OME parser so a plane mapping is
   `(series, c, z, t) -> { fileName, uuid, ifd }`, rather than only
   `(c, z, t) -> ifd`. Preserve `Image`/`Pixels` IDs and support both explicit
   `TiffData` mappings and dimension-order-derived contiguous ranges.
-- When any member TIFF is opened, parse its embedded OME-XML and build a
+- [x] When any member TIFF is opened, parse its embedded OME-XML and build a
   dataset manifest. Resolve relative `FileName` references against the opened
-  file's directory through the extension host, match available siblings, and
-  validate UUIDs when present. Do not require the user to add the files to an
-  ordinary image collection manually.
-- Support a companion `.ome.xml` entry point as well: opening it should resolve
+  file's directory through the extension host and match available siblings.
+  Follow `BinaryOnly MetadataFile` references to either a master OME-TIFF or a
+  standalone companion `.ome`/`.ome.xml` document. Do not require the user to
+  add the files to an ordinary image collection manually.
+- [ ] Support a companion `.ome.xml` entry point as well: opening it should resolve
   its referenced TIFFs and open the logical dataset. Standalone OME-XML without
   resolvable pixel files remains useful as metadata, but cannot render an
   image.
-- Keep one dataset-level C/Z/T/series selection. Changing Z commonly selects a
+- [x] Keep one dataset-level C/Z/T selection. Changing Z commonly selects a
   different IFD in the current file; changing C or T may transparently switch
   to another TIFF and then select its mapped IFD. The controls must reflect the
   selected logical coordinate, not whichever mapping happened to be parsed
   last.
-- Reuse the collection switching infrastructure for byte preloading and smooth
+- [x] Reuse the collection switching infrastructure for smooth
   visual transitions, while keeping dataset navigation semantically separate
   from user-created collections. Continue showing the current plane while the
   target file decodes, show a small dataset-loading indicator, discard stale
   navigation results, and atomically replace the image when ready.
-- Cache the current decoded plane and nearby C/Z/T neighbors with a bounded
+- [ ] Expand the current previous-plane decoded cache to nearby C/Z/T neighbors with a bounded
   memory policy. Prefer the likely next file/IFD based on navigation direction;
   avoid eagerly loading an entire large fileset into memory.
-- Present the fileset as one item with useful context such as
+- [x] Present the fileset as one item with useful context such as
   `C 1/2 · Z 4/10 · T 12/43` and, where helpful, the current physical
   filename. Add a dataset/series selector only when the OME-XML contains more
   than one `Image`/`Pixels` series.
-- Handle incomplete or moved datasets explicitly. Missing, unsafe, or
+- [ ] Improve incomplete or moved dataset handling. Missing, unsafe, or
   inaccessible referenced files should mark only the affected coordinates as
   unavailable and produce a clear diagnostic listing the unresolved names,
   rather than silently displaying a plane from the wrong channel/timepoint.
-- Until this resolution path exists, detect external `FileName` references and
-  expose only the coordinates available in the current physical TIFF (with C/T
-  read-only where appropriate). Do not show apparently interactive global
-  sliders backed by ambiguous local IFD numbers.
+- [ ] Validate referenced TIFF UUIDs, not only safe paths and file availability.
 
 **Acceptance test:** opening any member of the `tubhiswt-4D` sample discovers
 the two-channel, 43-timepoint, ten-Z-plane fileset; Z navigation changes local
@@ -141,9 +139,19 @@ dataset. Tests must also cover repeated local IFD numbers, a missing member,
 UUID mismatch, rapid navigation cancellation, and session restore to a plane
 stored in a different member file.
 
-- [x] FITS, uncompressed DICOM, and classic NetCDF (CDF-1/CDF-2) image decoding.
-  NetCDF-4/HDF5 and compressed DICOM transfer syntaxes remain part of the
-  heavier codec/container follow-up described below.
+- [x] FITS, native/uncompressed DICOM, DICOM JPEG Baseline, and classic NetCDF
+  (CDF-1/CDF-2) image decoding. NetCDF-4/HDF5 and additional DICOM transfer
+  syntaxes (JPEG Lossless, JPEG-LS, JPEG 2000, RLE, and video) remain part of
+  the heavier codec/container follow-up described below.
+- [x] DICOM folder datasets: an **Open Folder as DICOM Dataset** command detects
+  extensionless objects by content, ignores non-image objects, deduplicates SOP
+  instances, groups Series Instance UIDs, spatially orders slices from image
+  orientation/position with Instance Number fallback, and exposes series/slice
+  navigation through the shared dataset UI. Explicit temporal-position and echo
+  dimensions become additional axes. Basic multi-frame objects expose a Frame
+  axis, including JPEG Baseline frames. Enhanced multi-frame functional-group
+  semantics, additional compressed transfer syntaxes, and less-standard
+  acquisition dimensions remain follow-ups.
 
 ---
 

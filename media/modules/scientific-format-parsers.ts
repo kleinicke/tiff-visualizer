@@ -130,6 +130,25 @@ export function parseFits(buffer: ArrayBuffer): ScientificDecodedImage {
 const LONG_VR = new Set(['OB', 'OD', 'OF', 'OL', 'OV', 'OW', 'SQ', 'UC', 'UR', 'UT', 'UN']);
 
 interface DicomElement { offset: number; length: number; vr: string; }
+interface DicomEncoding { explicit: boolean; little: boolean; compressed?: 'jpeg-baseline'; }
+interface DicomContext {
+	bytes: Uint8Array;
+	view: DataView;
+	encoding: DicomEncoding;
+	transferSyntax: string;
+	tags: Map<number, DicomElement>;
+	pixelTag: number;
+	pixelOffset: number;
+	pixelLength: number;
+}
+
+export interface DicomCompressedFrame {
+	encoded: Uint8Array;
+	width: number;
+	height: number;
+	channels: number;
+	metadata: Record<string, any>;
+}
 
 function dicomElement(view: DataView, bytes: Uint8Array, offset: number, explicit: boolean, little: boolean) {
 	if (offset + 8 > view.byteLength) { return null; }
@@ -165,9 +184,7 @@ function findSequenceEnd(bytes: Uint8Array, start: number, little: boolean): num
 	throw new Error('Unsupported unterminated DICOM sequence');
 }
 
-/** Decode native (uncompressed) DICOM Pixel Data. Patient-identifying tags are not retained. */
-export function parseDicom(buffer: ArrayBuffer): ScientificDecodedImage {
-	const started = performance.now();
+function parseDicomContext(buffer: ArrayBuffer): DicomContext {
 	const bytes = new Uint8Array(buffer);
 	const view = new DataView(buffer);
 	const hasPreamble = buffer.byteLength >= 132 && ascii(bytes, 128, 4) === 'DICM';
@@ -185,10 +202,11 @@ export function parseDicom(buffer: ArrayBuffer): ScientificDecodedImage {
 		}
 	}
 
-	const syntax: Record<string, { explicit: boolean, little: boolean }> = {
+	const syntax: Record<string, DicomEncoding> = {
 		'1.2.840.10008.1.2': { explicit: false, little: true },
 		'1.2.840.10008.1.2.1': { explicit: true, little: true },
 		'1.2.840.10008.1.2.2': { explicit: true, little: false },
+		'1.2.840.10008.1.2.4.50': { explicit: true, little: true, compressed: 'jpeg-baseline' },
 	};
 	let encoding = syntax[transferSyntax];
 	if (!hasPreamble) {
@@ -202,21 +220,32 @@ export function parseDicom(buffer: ArrayBuffer): ScientificDecodedImage {
 
 	const tags = new Map<number, DicomElement>();
 	let pixelTag = 0;
+	let pixelOffset = 0;
+	let pixelLength = 0;
 	while (offset + 8 <= buffer.byteLength) {
 		const el = dicomElement(view, bytes, offset, encoding.explicit, encoding.little);
 		if (!el) { break; }
+		if (el.tag === 0x7fe00010 || el.tag === 0x7fe00008 || el.tag === 0x7fe00009) {
+			pixelTag = el.tag;
+			pixelOffset = el.valueOffset;
+			pixelLength = el.length;
+			if (el.length !== 0xffffffff) { tags.set(el.tag, { offset: el.valueOffset, length: el.length, vr: el.vr }); }
+			break;
+		}
 		if (el.length === 0xffffffff) {
-			if (el.tag === 0x7fe00010) { throw new Error('Encapsulated/compressed DICOM Pixel Data is not supported'); }
 			offset = findSequenceEnd(bytes, el.valueOffset, encoding.little);
 			continue;
 		}
 		if (el.valueOffset + el.length > buffer.byteLength) { throw new Error('Truncated DICOM element'); }
 		tags.set(el.tag, { offset: el.valueOffset, length: el.length, vr: el.vr });
-		if (el.tag === 0x7fe00010 || el.tag === 0x7fe00008 || el.tag === 0x7fe00009) { pixelTag = el.tag; break; }
 		offset = el.valueOffset + el.length;
 	}
-	if (!pixelTag) { throw new Error('DICOM file has no native Pixel Data'); }
+	if (!pixelTag) { throw new Error('DICOM file has no Pixel Data'); }
+	return { bytes, view, encoding, transferSyntax, tags, pixelTag, pixelOffset, pixelLength };
+}
 
+function dicomImageInfo(context: DicomContext) {
+	const { bytes, view, encoding, tags, pixelTag, transferSyntax } = context;
 	const get = (tag: number) => tags.get(tag);
 	const uint16 = (tag: number, fallback: number) => {
 		const el = get(tag); return el && el.length >= 2 ? view.getUint16(el.offset, encoding.little) : fallback;
@@ -224,7 +253,10 @@ export function parseDicom(buffer: ArrayBuffer): ScientificDecodedImage {
 	const text = (tag: number, fallback = '') => {
 		const el = get(tag); return el ? ascii(bytes, el.offset, el.length).replace(/[\0 ]+$/g, '') : fallback;
 	};
-	const decimal = (tag: number, fallback: number) => finiteNumber(text(tag).split('\\')[0], fallback);
+	const decimal = (tag: number, fallback: number) => {
+		const raw = text(tag).split('\\')[0].trim();
+		return raw === '' ? fallback : finiteNumber(raw, fallback);
+	};
 	const rows = uint16(0x00280010, 0);
 	const columns = uint16(0x00280011, 0);
 	const samples = uint16(0x00280002, 1);
@@ -236,15 +268,40 @@ export function parseDicom(buffer: ArrayBuffer): ScientificDecodedImage {
 	const photometric = text(0x00280004, samples === 3 ? 'RGB' : 'MONOCHROME2');
 	if (!rows || !columns || ![1, 3, 4].includes(samples)) { throw new Error('Unsupported DICOM image dimensions or samples per pixel'); }
 	if (![8, 16, 32, 64].includes(bitsAllocated)) { throw new Error(`Unsupported DICOM Bits Allocated: ${bitsAllocated}`); }
-	const pixel = get(pixelTag)!;
-	const bytesPerSample = bitsAllocated / 8;
-	const sampleCount = rows * columns * samples;
-	if (pixel.length < sampleCount * bytesPerSample) { throw new Error('Truncated DICOM Pixel Data'); }
 	const slope = decimal(0x00281053, 1);
 	const intercept = decimal(0x00281052, 0);
+	return {
+		rows, columns, samples, planar, bitsAllocated, bitsStored, signed, frames, photometric,
+		slope, intercept,
+		metadata: {
+			format: 'DICOM', transferSyntax, photometric, bitsAllocated, bitsStored,
+			signed, frames, rescaleSlope: slope, rescaleIntercept: intercept,
+			windowCenter: decimal(0x00281050, NaN), windowWidth: decimal(0x00281051, NaN),
+			modality: text(0x00080060) || undefined,
+			pixelSpacing: text(0x00280030) || undefined,
+		},
+	};
+}
+
+/** Decode one native (uncompressed) DICOM frame. Patient-identifying tags are not retained. */
+export function parseDicom(buffer: ArrayBuffer, frameIndex = 0): ScientificDecodedImage {
+	const started = performance.now();
+	const context = parseDicomContext(buffer);
+	if (context.encoding.compressed) {
+		throw new Error(`Compressed DICOM frame requires codec: ${context.encoding.compressed}`);
+	}
+	const { view, encoding, pixelTag, pixelOffset, pixelLength } = context;
+	const info = dicomImageInfo(context);
+	const { rows, columns, samples, planar, bitsAllocated, bitsStored, signed, frames, photometric, slope, intercept } = info;
+	const safeFrame = Math.max(0, Math.min(frames - 1, Math.trunc(frameIndex)));
+	const bytesPerSample = bitsAllocated / 8;
+	const sampleCount = rows * columns * samples;
+	const frameBytes = sampleCount * bytesPerSample;
+	if (pixelLength < (safeFrame + 1) * frameBytes) { throw new Error('Truncated DICOM Pixel Data'); }
+	const frameSampleOffset = safeFrame * sampleCount;
 	const output = new Float32Array(sampleCount);
 	const readSample = (sampleIndex: number): number => {
-		const p = pixel.offset + sampleIndex * bytesPerSample;
+		const p = pixelOffset + (frameSampleOffset + sampleIndex) * bytesPerSample;
 		if (pixelTag === 0x7fe00008) { return view.getFloat32(p, encoding.little); }
 		if (pixelTag === 0x7fe00009) { return view.getFloat64(p, encoding.little); }
 		if (bitsAllocated === 8) {
@@ -276,14 +333,83 @@ export function parseDicom(buffer: ArrayBuffer): ScientificDecodedImage {
 	return {
 		width: columns, height: rows, channels: samples === 4 ? 4 : samples, data: output,
 		metadata: {
-			format: 'DICOM', transferSyntax, photometric, bitsAllocated, bitsStored,
-			signed, frames, firstFrameOnly: frames > 1,
-			rescaleSlope: slope, rescaleIntercept: intercept,
-			windowCenter: decimal(0x00281050, NaN), windowWidth: decimal(0x00281051, NaN),
-			modality: text(0x00080060) || undefined,
-			pixelSpacing: text(0x00280030) || undefined,
+			...info.metadata,
+			frameIndex: safeFrame,
 		},
 		decodeTimings: [{ name: 'decode-dicom-parse', durationMs: performance.now() - started }]
+	};
+}
+
+function concatFragments(fragments: Uint8Array[]): Uint8Array {
+	const length = fragments.reduce((sum, fragment) => sum + fragment.length, 0);
+	const output = new Uint8Array(length);
+	let offset = 0;
+	for (const fragment of fragments) { output.set(fragment, offset); offset += fragment.length; }
+	return output;
+}
+
+/** Extract one JPEG Baseline codestream from encapsulated DICOM Pixel Data. */
+export function extractDicomJpegFrame(buffer: ArrayBuffer, frameIndex = 0): DicomCompressedFrame {
+	const context = parseDicomContext(buffer);
+	if (context.encoding.compressed !== 'jpeg-baseline') {
+		throw new Error(`Unsupported compressed DICOM Transfer Syntax: ${context.transferSyntax}`);
+	}
+	const info = dicomImageInfo(context);
+	const safeFrame = Math.max(0, Math.min(info.frames - 1, Math.trunc(frameIndex)));
+	const { view, bytes } = context;
+	let offset = context.pixelOffset;
+	const readItem = () => {
+		if (offset + 8 > view.byteLength || view.getUint16(offset, true) !== 0xfffe) { throw new Error('Invalid encapsulated DICOM Pixel Data item'); }
+		const element = view.getUint16(offset + 2, true);
+		const length = view.getUint32(offset + 4, true);
+		const itemOffset = offset;
+		offset += 8;
+		if (length !== 0xffffffff && offset + length > view.byteLength) { throw new Error('Truncated encapsulated DICOM Pixel Data item'); }
+		const data = length === 0xffffffff ? new Uint8Array() : bytes.subarray(offset, offset + length);
+		if (length !== 0xffffffff) { offset += length; }
+		return { element, length, itemOffset, data };
+	};
+	const bot = readItem();
+	if (bot.element !== 0xe000) { throw new Error('DICOM Basic Offset Table is missing'); }
+	const basicOffsets: number[] = [];
+	for (let i = 0; i + 4 <= bot.data.length; i += 4) {
+		basicOffsets.push(new DataView(bot.data.buffer, bot.data.byteOffset + i, 4).getUint32(0, true));
+	}
+	const firstFragmentOffset = offset;
+	const fragments: { relativeOffset: number, data: Uint8Array }[] = [];
+	while (offset + 8 <= view.byteLength) {
+		const item = readItem();
+		if (item.element === 0xe0dd) { break; }
+		if (item.element !== 0xe000) { throw new Error('Unexpected DICOM encapsulated Pixel Data item'); }
+		fragments.push({ relativeOffset: item.itemOffset - firstFragmentOffset, data: item.data });
+	}
+	if (fragments.length === 0) { throw new Error('DICOM JPEG Pixel Data contains no fragments'); }
+
+	let selected: Uint8Array[];
+	if (basicOffsets.length >= info.frames && basicOffsets.some(value => value !== 0)) {
+		const start = basicOffsets[safeFrame];
+		const end = safeFrame + 1 < basicOffsets.length ? basicOffsets[safeFrame + 1] : Number.MAX_SAFE_INTEGER;
+		selected = fragments.filter(fragment => fragment.relativeOffset >= start && fragment.relativeOffset < end).map(fragment => fragment.data);
+	} else if (fragments.length === info.frames) {
+		selected = [fragments[safeFrame].data];
+	} else {
+		const joined = concatFragments(fragments.map(fragment => fragment.data));
+		const frames: Uint8Array[] = [];
+		let start = -1;
+		for (let i = 0; i + 1 < joined.length; i++) {
+			if (joined[i] === 0xff && joined[i + 1] === 0xd8) { start = i; }
+			if (start >= 0 && joined[i] === 0xff && joined[i + 1] === 0xd9) { frames.push(joined.subarray(start, i + 2)); start = -1; i++; }
+		}
+		if (!frames[safeFrame]) { throw new Error(`Could not locate compressed DICOM frame ${safeFrame + 1}`); }
+		selected = [frames[safeFrame]];
+	}
+	if (selected.length === 0) { throw new Error(`DICOM frame ${safeFrame + 1} has no JPEG fragments`); }
+	return {
+		encoded: concatFragments(selected),
+		width: info.columns,
+		height: info.rows,
+		channels: info.samples,
+		metadata: { ...info.metadata, frameIndex: safeFrame, compression: 'JPEG Baseline' },
 	};
 }
 

@@ -6,6 +6,7 @@ import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
 import { getOutputChannel } from '../extension';
+import { scanDicomFolder } from './dicomDataset';
 
 const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf'];
 
@@ -1169,12 +1170,60 @@ export function registerImagePreviewCommands(
 		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.getViewTypeForResource(uri));
 		// resolveCustomEditor runs asynchronously — wait briefly for the preview to register.
 		for (let i = 0; i < 60; i++) {
-			const preview = previewManager.getPreviewFor(uri) ?? previewManager.activePreview;
+			const preview = previewManager.getPreviewFor(uri);
 			if (preview) { return preview; }
 			await new Promise(r => setTimeout(r, 50));
 		}
-		return previewManager.getPreviewFor(uri) ?? previewManager.activePreview;
+		return previewManager.getPreviewFor(uri);
 	}
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openDicomFolder', async (resource?: vscode.Uri) => {
+		logCommand('openDicomFolder', 'start');
+		let folder = resource;
+		if (folder) {
+			try {
+				const type = (await vscode.workspace.fs.stat(folder)).type;
+				if ((type & vscode.FileType.Directory) === 0) { folder = Utils.dirname(folder); }
+			} catch {
+				folder = undefined;
+			}
+		}
+		if (!folder) {
+			const selection = await vscode.window.showOpenDialog({
+				canSelectFiles: false,
+				canSelectFolders: true,
+				canSelectMany: false,
+				openLabel: 'Open as DICOM Dataset',
+				title: 'Select a folder containing DICOM files',
+			});
+			folder = selection?.[0];
+		}
+		if (!folder) { return; }
+
+		try {
+			const manifest = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Scanning DICOM dataset…', cancellable: true },
+				async (progress, token) => scanDicomFolder(
+					folder!,
+					(done, total) => progress.report({ message: `${done} / ${total} files` }),
+					() => token.isCancellationRequested,
+				),
+			);
+			const firstPlane = manifest.series[manifest.initialSeriesIndex || 0]?.planes[0];
+			if (!firstPlane) { throw new Error('The DICOM dataset contains no displayable image planes.'); }
+			const firstResource = vscode.Uri.parse(firstPlane.resourceUri);
+			const preview = await openPreviewForResource(firstResource);
+			if (!preview || !('setDatasetManifest' in preview)) {
+				throw new Error('Failed to initialize the dataset viewer.');
+			}
+			(preview as any).setDatasetManifest(manifest);
+			logCommand('openDicomFolder', 'success', `${manifest.series.length} series`);
+		} catch (error) {
+			if (String(error).includes('cancelled')) { return; }
+			vscode.window.showErrorMessage(`Could not open DICOM dataset: ${error instanceof Error ? error.message : String(error)}`);
+			logCommand('openDicomFolder', 'error', String(error));
+		}
+	}));
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.browseAndAddToCollection', async (resource?: vscode.Uri, resources?: vscode.Uri[]) => {
 		logCommand('browseAndAddToCollection', 'start');
