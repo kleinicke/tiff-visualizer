@@ -103,7 +103,7 @@ export class PngProcessor {
 
             const arrayBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'png');
             const { exifBlob, textEntries } = parsePngChunks(new Uint8Array(arrayBuffer));
-            this._lastAllTags = textEntries.map(({ name, value }) => ({ tag: null, name, group: 'PNG', value }));
+            this._lastAllTags = textEntries.map(({ name, value }): TagEntry => ({ tag: null, name, group: 'PNG', value }));
             if (exifBlob) {
                 this._lastAllTags.push(...await extractExifTagsFromBlob(exifBlob));
             }

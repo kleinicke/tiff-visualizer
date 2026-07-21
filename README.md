@@ -1,6 +1,6 @@
 # Scientific Image Visualizer for Visual Studio Code
 
-Inspect high-bit-depth, floating-point, scientific, and camera image files directly inside Visual Studio Code.
+Inspect high-bit-depth, floating-point, scientific, and standard image files directly inside Visual Studio Code.
 
 Supports TIFF/OME-TIFF (including embedded multi-file filesets), FITS, DICOM, classic NetCDF, EXR, NPY/NPZ,
 PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM. Layered creative documents
@@ -44,7 +44,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 
 ## Features
 
-- **Fast and versatile TIFF Support**: Fast TIFF decoding using ![Rust](https://github.com/image-rs/image-tiff). Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files.
+- **Fast and versatile TIFF Support**: Fast TIFF decoding using [Rust](https://github.com/image-rs/image-tiff). Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files.
 - **Advanced TIFF Support**: Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files. Fast TIFF loading via Rust/WebAssembly, with geotiff.js fallback for compatibility.
 - **Scientific Image Inspection**: Inspect uint8, uint16, float16, and float32 image data in grayscale, RGB, and RGBA images.
 - **Dataset Navigation**: Browse DICOM series/slices and multi-file OME C/Z/T planes as one logical dataset while the viewer switches physical files transparently.

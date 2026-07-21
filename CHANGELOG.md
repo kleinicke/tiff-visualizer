@@ -5,6 +5,7 @@
 - Add a Metadata panel
 - Add some minor Tiff formats and edge cases
 - Add multi-page support for OME-TIFF, FITS, DICOM and NetCDF
+- Add support for multi layer files and shows at least the preview for ora, kra, psd, psb, xcf, afphoto, af
 
 ## 1.8.0 (2026-06-20)
 

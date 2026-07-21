@@ -57,7 +57,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 		const started = performance.now();
 		const frame = extractDicomJpegFrame(buffer, frameIndex);
-		const bitmap = await createImageBitmap(new Blob([frame.encoded], { type: 'image/jpeg' }));
+		const jpegBytes = new Uint8Array(frame.encoded.byteLength);
+		jpegBytes.set(frame.encoded);
+		const bitmap = await createImageBitmap(new Blob([jpegBytes.buffer], { type: 'image/jpeg' }));
 		try {
 			if (bitmap.width !== frame.width || bitmap.height !== frame.height) {
 				throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${bitmap.width}x${bitmap.height}`);

@@ -353,7 +353,11 @@ export function parseOmeXmlImages(xml: string | undefined | null): OmeMetadata[]
 export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null {
 	const images = parseOmeXmlImages(xml);
 	if (images.length === 0) { return null; }
-	images[0].images = images.map(image => ({ ...image, images: undefined }));
+	images[0].images = images.map(image => {
+		const copy: OmeMetadata = { ...image };
+		delete copy.images;
+		return copy;
+	});
 	return images[0];
 }
 

@@ -14,6 +14,7 @@ declare module '*/wasm/tiff-wasm.js' {
     export default initTiffWasm;
     export const decode_exr_fast: any;
     export const decode_hdr_fast: any;
+    export const decode_jpeg_fast: any;
     export const decode_png16_fast: any;
     export const decode_tiff: any;
     export const decode_tiff_fast: any;

@@ -48,6 +48,7 @@ export function tiffImageDescription(bytes: Uint8Array): string | undefined {
 }
 
 type Attributes = Record<string, string>;
+type OmeAxis = 'C' | 'Z' | 'T';
 
 export interface OmeDatasetDescription {
 	uuid?: string;
@@ -116,9 +117,10 @@ export function parseOmeDatasetXml(xml: string | undefined): OmeDatasetDescripti
 			}
 			return Math.max(0, Math.min(planeSizeC - 1, raw));
 		};
-		const axes = dimensionOrder.replace(/X|Y/g, '').split('').filter(axis => axis === 'C' || axis === 'Z' || axis === 'T');
-		for (const axis of ['Z', 'C', 'T']) { if (!axes.includes(axis)) { axes.push(axis); } }
-		const axisSize = (axis: string) => axis === 'C' ? planeSizeC : axis === 'Z' ? sizeZ : sizeT;
+		const axes = dimensionOrder.replace(/X|Y/g, '').split('')
+			.filter((axis): axis is OmeAxis => axis === 'C' || axis === 'Z' || axis === 'T');
+		for (const axis of ['Z', 'C', 'T'] as const) { if (!axes.includes(axis)) { axes.push(axis); } }
+		const axisSize = (axis: OmeAxis) => axis === 'C' ? planeSizeC : axis === 'Z' ? sizeZ : sizeT;
 		const coordinatesForIndex = (rawIndex: number) => {
 			let index = rawIndex;
 			const coordinates = { c: 0, z: 0, t: 0 };
