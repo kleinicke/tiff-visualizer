@@ -83,6 +83,8 @@ function buildMinimalXcf(compression = 0) {
 async function main() {
 	const decoderPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layered-preview-decoders.js');
 	const { decodeLayeredPreview } = await import(decoderPath);
+	const writerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'xcf-writer.js');
+	const { writeLayerStackAsXcf } = await import(writerPath);
 	const png = rgbaPng(2, 1, [12, 34, 56, 255]);
 
 	const ora = zipSync({
@@ -167,6 +169,20 @@ async function main() {
 		assert.deepStrictEqual(Array.from(xcf.layerAssets[0].data.slice(4, 8)), [0, 255, 0, 128]);
 		assert.strictEqual(xcf.layerAssets[0].support, 'native');
 	}
+
+	const exported = writeLayerStackAsXcf([
+		{ id: 'background', kind: 'raster', name: 'Background', data: new Uint8Array([0, 0, 0, 255, 0, 0, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 1, blendMode: 'normal' },
+		{ id: 'group', kind: 'group', name: 'Group', width: 2, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 0.5, blendMode: 'screen' },
+		{ id: 'paint', parentId: 'group', kind: 'raster', name: 'Paint', data: new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 1, blendMode: 'multiply', rasterMask: { data: new Uint8Array([255, 0]), width: 2, height: 1, channels: 1, typeMax: 255 } },
+	], 2, 1);
+	const exportedXcf = decodeLayeredPreview('xcf', asArrayBuffer(exported.data));
+	assert.strictEqual(exportedXcf.document.layerCount, 3);
+	assert.strictEqual(exportedXcf.layerAssets.find(asset => asset.kind === 'group').blendMode, 'screen');
+	const exportedPaint = exportedXcf.layerAssets.find(asset => asset.name === 'Paint');
+	assert.strictEqual(exportedPaint.parentId, exportedXcf.layerAssets.find(asset => asset.kind === 'group').nodeId);
+	assert.strictEqual(exportedPaint.blendMode, 'multiply');
+	assert.deepStrictEqual(Array.from(exportedPaint.data.slice(3, 8)), [255, 0, 255, 0, 0], 'raster mask is baked into exported XCF alpha');
+	assert.ok(exported.warnings.some(warning => warning.includes('baked into alpha')));
 
 	console.log('Layered preview decoders passed: ORA, KRA, PSD/PSB, XCF, and Affinity.');
 }

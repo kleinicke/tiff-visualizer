@@ -443,7 +443,11 @@ function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: numbe
 	const outChannels = visibleLayers.length ? compositeChannels(visibleLayers) : 1;
 	const pixelCount = canvasWidth * canvasHeight;
 	const data = new Float32Array(pixelCount * outChannels);
-	data.fill(NaN);
+	// Scientific scalar/RGB composites use NaN to represent uncovered no-data.
+	// Authored RGBA documents have a distinct representation for the same area:
+	// transparent black. Keeping the zero-initialized RGBA buffer preserves that
+	// distinction for rendering, pixel inspection, and export.
+	if (outChannels !== 4) { data.fill(NaN); }
 	const covered = new Float32Array(pixelCount);
 	const src = new Float32Array(outChannels);
 	let coveredCount = 0;
@@ -473,7 +477,7 @@ function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: numbe
 					sampleLayer(layer, lx, ly, outChannels, src);
 					if (isMask) {
 						if (covered[pixel] && !evalMaskCondition(src[0], layer.maskCondition)) {
-							for (let c = 0; c < outChannels; c++) { data[di + c] = NaN; }
+							for (let c = 0; c < outChannels; c++) { data[di + c] = outChannels === 4 ? 0 : NaN; }
 							covered[pixel] = 0; coveredCount--;
 						}
 						continue;
@@ -527,10 +531,15 @@ function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: numbe
 		for (let pixel = 0; pixel < pixelCount; pixel++) { data[pixel * 4 + 3] *= typeMax; }
 	}
 	let min = Infinity, max = -Infinity;
-	for (let i = 0; i < data.length; i++) {
-		if (outChannels === 4 && i % 4 === 3) { continue; }
-		const value = data[i];
-		if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+	const colorChannels = outChannels === 4 ? 3 : outChannels;
+	for (let pixel = 0; pixel < pixelCount; pixel++) {
+		// Transparent RGBA storage is finite zero, but it must not affect image
+		// statistics any more than an uncovered NaN scientific pixel does.
+		if (!covered[pixel]) { continue; }
+		for (let channel = 0; channel < colorChannels; channel++) {
+			const value = data[pixel * outChannels + channel];
+			if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
+		}
 	}
 	if (min === Infinity) { min = 0; max = 0; }
 	return { data, width: canvasWidth, height: canvasHeight, channels: outChannels, isFloat, typeMax, stats: { min, max }, coveredCount };

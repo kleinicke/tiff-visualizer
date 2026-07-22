@@ -11,9 +11,12 @@ import type { LayerManager } from './layer-manager.js';
 
 export interface LayersPanelCallbacks {
 	onChange: (options?: { interactive?: boolean }) => void;
+	onBackgroundChange?: (brightness: number | null) => void;
 	onVisibilityChange?: (visible: boolean) => void;
 	onPersist?: () => void;
 	onAddLayer?: () => void;
+	onExportPng?: () => void;
+	onExportXcf?: () => void;
 }
 
 export interface LayersPanelOptions {
@@ -79,15 +82,22 @@ export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
 export class LayersPanel {
 	manager: LayerManager;
 	onChange: (options?: { interactive?: boolean }) => void;
+	onBackgroundChange?: (brightness: number | null) => void;
 	onVisibilityChange?: (visible: boolean) => void;
 	onPersist?: () => void;
 	onAddLayer?: () => void;
+	onExportPng?: () => void;
+	onExportXcf?: () => void;
 	closable: boolean;
 	root: HTMLElement | null;
 	listEl: HTMLElement | null;
 	titleEl: HTMLElement | null;
 	minimizeBtn: HTMLButtonElement | null;
 	groupsBtn: HTMLButtonElement | null;
+	backgroundEl: HTMLElement | null;
+	backgroundSlider: HTMLInputElement | null;
+	backgroundBrightness: number | null;
+	themeBackgroundBrightness: number;
 	/** id of the layer currently armed for drag-to-move, or null */
 	movingLayerId: string | null;
 	/** id of the layer that needs a second remove click */
@@ -99,9 +109,12 @@ export class LayersPanel {
 	constructor(manager: LayerManager, callbacks: LayersPanelCallbacks, options: LayersPanelOptions = {}) {
 		this.manager = manager;
 		this.onChange = callbacks.onChange;
+		this.onBackgroundChange = callbacks.onBackgroundChange;
 		this.onVisibilityChange = callbacks.onVisibilityChange;
 		this.onPersist = callbacks.onPersist;
 		this.onAddLayer = callbacks.onAddLayer;
+		this.onExportPng = callbacks.onExportPng;
+		this.onExportXcf = callbacks.onExportXcf;
 		// In a dedicated Layers window the panel can't be closed (close the tab
 		// instead); only the minimize control is shown.
 		this.closable = options.closable !== false;
@@ -110,6 +123,10 @@ export class LayersPanel {
 		this.titleEl = null;
 		this.minimizeBtn = null;
 		this.groupsBtn = null;
+		this.backgroundEl = null;
+		this.backgroundSlider = null;
+		this.backgroundBrightness = null;
+		this.themeBackgroundBrightness = 50;
 		this.movingLayerId = null;
 		this._pendingRemoveId = null;
 		this._pendingRemoveTimer = null;
@@ -147,6 +164,17 @@ export class LayersPanel {
 		addBtn.textContent = '+';
 		addBtn.addEventListener('click', () => this.onAddLayer?.());
 
+		const exportBtn = document.createElement('button');
+		exportBtn.className = 'layers-btn layers-export-png';
+		exportBtn.title = 'Export the current rendered composition as PNG';
+		exportBtn.textContent = 'PNG';
+		exportBtn.addEventListener('click', () => this.onExportPng?.());
+		const exportXcfBtn = document.createElement('button');
+		exportXcfBtn.className = 'layers-btn layers-export-xcf';
+		exportXcfBtn.title = 'Save a new layered XCF (limited 8-bit interchange export)';
+		exportXcfBtn.textContent = 'XCF';
+		exportXcfBtn.addEventListener('click', () => this.onExportXcf?.());
+
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
 		minimizeBtn.title = 'Minimize / expand panel';
@@ -176,6 +204,8 @@ export class LayersPanel {
 
 		header.appendChild(title);
 		header.appendChild(addBtn);
+		header.appendChild(exportBtn);
+		header.appendChild(exportXcfBtn);
 		header.appendChild(groupsBtn);
 		header.appendChild(minimizeBtn);
 		if (this.closable) {
@@ -189,6 +219,35 @@ export class LayersPanel {
 
 		const list = document.createElement('div');
 		list.className = 'layers-list';
+		const background = document.createElement('label');
+		background.className = 'layers-background';
+		const backgroundLabel = document.createElement('span');
+		backgroundLabel.textContent = 'Background';
+		const backgroundSlider = document.createElement('input');
+		backgroundSlider.type = 'range';
+		backgroundSlider.className = 'layers-background-slider';
+		backgroundSlider.min = '0';
+		backgroundSlider.max = '100';
+		backgroundSlider.step = '1';
+		backgroundSlider.dataset.defaultValue = String(this.themeBackgroundBrightness);
+		backgroundSlider.value = String(this.backgroundBrightness ?? this.themeBackgroundBrightness);
+		backgroundSlider.title = 'Preview background: black to white · Double-click to restore the VS Code theme background';
+		backgroundSlider.addEventListener('input', () => {
+			this.backgroundBrightness = Number(backgroundSlider.value);
+			this.onBackgroundChange?.(this.backgroundBrightness);
+		});
+		// The shared range reset restores a numeric value. This control's true
+		// default is instead the live VS Code theme colour, represented by null.
+		backgroundSlider.addEventListener('dblclick', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			this.backgroundBrightness = null;
+			backgroundSlider.value = String(this.themeBackgroundBrightness);
+			this.onBackgroundChange?.(null);
+		});
+		background.append(backgroundLabel, backgroundSlider);
+		this.backgroundEl = background;
+		this.backgroundSlider = backgroundSlider;
 
 		root.appendChild(header);
 		root.appendChild(list);
@@ -198,6 +257,16 @@ export class LayersPanel {
 		this.listEl = list;
 		this._applyCollapsed();
 		this.refresh();
+	}
+
+	/** Keep the default thumb position aligned with the live editor theme. */
+	setThemeBackgroundBrightness(brightness: number): void {
+		this.themeBackgroundBrightness = Math.max(0, Math.min(100, Math.round(brightness)));
+		if (!this.backgroundSlider) { return; }
+		this.backgroundSlider.dataset.defaultValue = String(this.themeBackgroundBrightness);
+		if (this.backgroundBrightness === null) {
+			this.backgroundSlider.value = String(this.themeBackgroundBrightness);
+		}
 	}
 
 	isVisible(): boolean {
@@ -260,6 +329,7 @@ export class LayersPanel {
 		};
 		render(rootItems, 0);
 		this.listEl.appendChild(fragment);
+		if (this.backgroundEl) { this.listEl.appendChild(this.backgroundEl); }
 		this._applyCollapsed(); // keep the collapsed "(n)" count in sync
 	}
 
@@ -481,18 +551,19 @@ export class LayersPanel {
 		opacity.addEventListener('pointerup', () => opacity.blur());
 		controls.appendChild(opacity);
 		controls.appendChild(opacityValue);
+		row.appendChild(controls);
+
 		const clippingLabel = document.createElement('label');
 		clippingLabel.className = 'layer-clipping';
 		const clipping = document.createElement('input'); clipping.type = 'checkbox'; clipping.checked = !!layer.clipped;
 		clipping.title = 'Clip this layer to the alpha of the nearest unclipped layer below';
 		clipping.addEventListener('change', () => { this.manager.updateLayer(id, { clipped: clipping.checked }); this.onChange(); });
-		clippingLabel.appendChild(clipping); clippingLabel.append(' Clip'); controls.appendChild(clippingLabel);
+		clippingLabel.appendChild(clipping); clippingLabel.append(' Clip');
+		let maskBadge: HTMLSpanElement | null = null;
 		if (layer.rasterMask) {
-			const maskBadge = document.createElement('span'); maskBadge.className = 'layer-mask-badge';
+			maskBadge = document.createElement('span'); maskBadge.className = 'layer-mask-badge';
 			maskBadge.textContent = 'mask'; maskBadge.title = `${layer.rasterMask.width}×${layer.rasterMask.height} raster mask`;
-			controls.appendChild(maskBadge);
 		}
-		row.appendChild(controls);
 
 		// Mask condition row (only when this layer is a mask).
 		if (layer.blendMode === 'mask') {
@@ -531,6 +602,8 @@ export class LayersPanel {
 			this.refresh();
 		});
 		pos.appendChild(moveBtn);
+		pos.appendChild(clippingLabel);
+		if (maskBadge) { pos.appendChild(maskBadge); }
 		row.appendChild(pos);
 
 		// Reorder + remove.

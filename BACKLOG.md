@@ -509,11 +509,14 @@ reference.
 
 **Implementation status:** a bounded worker parser reconstructs common 8-bit
 RGB, grayscale, and indexed raster layers with offsets, visibility, opacity,
-and raw/RLE/zlib tile compression. Decoded raster layers are available as a
-flat editable stack in the Layers View. Non-normal modes are reported and
-currently approximated. Remaining work includes native hierarchy/group composition,
-masks and channels, broader precision/color models, text/vectors/effects,
-additional blend/composite spaces, version coverage, and lazy tile decoding.
+item-path hierarchy, common blend modes, and raw/RLE/zlib tile compression.
+Decoded groups become isolated editable compositor surfaces. A conservative
+XCF v3 writer exports a new 8-bit layered file with hierarchy, offsets,
+visibility, opacity, and common modes; raster masks and clipping are currently
+baked into layer alpha and every approximation is reported. Remaining work
+includes native mask/channel writing, broader precision/color models,
+text/vectors/effects, additional blend/composite spaces, version coverage,
+and lazy tile decoding.
 
 - Implement or adopt a bounded worker-side parser for the image header,
   properties, offset-based structures, tile hierarchies, uncompressed/RLE/zlib

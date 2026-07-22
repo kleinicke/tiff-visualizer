@@ -235,6 +235,24 @@ async function main() {
 		console.log('✅ Clipping relationships follow base alpha');
 	}
 
+	// 20. Transparent authored pixels stay RGBA-transparent instead of becoming
+	//     scientific no-data (NaN).
+	{
+		const authored = layer({
+			data: new Uint8Array([0, 0, 0, 0, 0, 0, 0, 128]),
+			width: 2,
+			height: 1,
+			channels: 4,
+			typeMax: 255,
+		});
+		const r = composite([authored], 2, 1);
+		assert.deepStrictEqual(Array.from(r.data), [0, 0, 0, 0, 0, 0, 0, 128]);
+		assert.ok(Array.from(r.data).every(Number.isFinite), 'transparent RGBA pixels must not become NaN');
+		assert.strictEqual(r.coveredCount, 1, 'only the partially opaque pixel is covered');
+		assert.deepStrictEqual(r.stats, { min: 0, max: 0 }, 'transparent pixels do not affect statistics');
+		console.log('✅ Transparent RGBA remains transparent, not NaN');
+	}
+
 	console.log('\n🎉 All layer compositor tests passed.\n');
 }
 

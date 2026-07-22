@@ -60,6 +60,8 @@ export class ImagePreview extends MediaPreview {
 
 	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
 	public readonly onDidExport = this._onDidExport.event;
+	private readonly _onDidExportXcf = this._register(new vscode.EventEmitter<{ payload?: string; warnings: string[]; error?: string }>());
+	public readonly onDidExportXcf = this._onDidExportXcf.event;
 
 	private _openTimestamp: number = 0;
 
@@ -286,6 +288,14 @@ export class ImagePreview extends MediaPreview {
 		return undefined;
 	}
 
+	public async exportAsXcf(): Promise<{ payload?: string; warnings: string[]; error?: string } | undefined> {
+		if (this.previewState !== PreviewState.Active) { return undefined; }
+		return new Promise(resolve => {
+			const subscription = this.onDidExportXcf(result => { subscription.dispose(); resolve(result); });
+			this._webviewEditor.webview.postMessage({ type: 'exportAsXcf' });
+		});
+	}
+
 	public startComparison(peerUri: vscode.Uri) {
 		if (this.previewState === PreviewState.Active) {
 			// Update comparison state
@@ -368,6 +378,10 @@ export class ImagePreview extends MediaPreview {
 
 	public fireExportEvent(payload: string): void {
 		this._onDidExport.fire(payload);
+	}
+
+	public fireExportXcfEvent(result: { payload?: string; warnings: string[]; error?: string }): void {
+		this._onDidExportXcf.fire(result);
 	}
 
 	public getManager(): IImagePreviewManager {

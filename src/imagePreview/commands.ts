@@ -470,15 +470,16 @@ export function registerImagePreviewCommands(
 			try {
 				const result = await activePreview.exportAsPng();
 				if (result) {
+					const suffix = activePreview.getViewMode() === 'layers' ? '.layers.png' : '.png';
 					const saveUri = await vscode.window.showSaveDialog({
 						filters: { 'PNG Images': ['png'] },
-						defaultUri: vscode.Uri.file(activePreview.resource.path.replace(/\.[^/.]+$/, '.png'))
+						defaultUri: vscode.Uri.file(activePreview.resource.path.replace(/\.[^/.]+$/, suffix))
 					});
 
 					if (saveUri) {
 						const buffer = Buffer.from(result.split(',')[1], 'base64');
 						await vscode.workspace.fs.writeFile(saveUri, buffer);
-						vscode.window.showInformationMessage(`Image exported to ${saveUri.fsPath}`);
+						vscode.window.showInformationMessage(`Rendered view exported to ${saveUri.fsPath}`);
 						logCommand('exportAsPng', 'success', saveUri.fsPath);
 					} else {
 						logCommand('exportAsPng', 'error', 'User cancelled save dialog');
@@ -492,6 +493,37 @@ export function registerImagePreviewCommands(
 			}
 		} else {
 			logCommand('exportAsPng', 'error', 'No active preview');
+		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsXcf', async () => {
+		logCommand('exportAsXcf', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) { logCommand('exportAsXcf', 'error', 'No active preview'); return; }
+		try {
+			const result = await activePreview.exportAsXcf();
+			if (!result) { return; }
+			if (result.error || !result.payload) {
+				vscode.window.showErrorMessage(`Failed to export XCF: ${result.error || 'No layer data was returned'}`);
+				logCommand('exportAsXcf', 'error', result.error || 'No payload');
+				return;
+			}
+			const saveUri = await vscode.window.showSaveDialog({
+				filters: { 'GIMP XCF Images': ['xcf'] },
+				defaultUri: vscode.Uri.file(activePreview.resource.path.replace(/\.[^/.]+$/, '.layers.xcf')),
+			});
+			if (!saveUri) { return; }
+			await vscode.workspace.fs.writeFile(saveUri, Buffer.from(result.payload, 'base64'));
+			if (result.warnings.length) {
+				const preview = result.warnings.slice(0, 3).join('; ');
+				vscode.window.showWarningMessage(`XCF exported with ${result.warnings.length} approximation${result.warnings.length === 1 ? '' : 's'}: ${preview}${result.warnings.length > 3 ? '; …' : ''}`);
+			} else {
+				vscode.window.showInformationMessage(`Layered XCF exported to ${saveUri.fsPath}`);
+			}
+			logCommand('exportAsXcf', 'success', saveUri.fsPath);
+		} catch (error) {
+			vscode.window.showErrorMessage(`Failed to export XCF: ${error}`);
+			logCommand('exportAsXcf', 'error', String(error));
 		}
 	}));
 

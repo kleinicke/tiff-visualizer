@@ -26,6 +26,7 @@ export class MessageRouter {
 		this.handlers.set('formatInfo', new FormatInfoMessageHandler());
 		this.handlers.set('ready', new ReadyMessageHandler());
 		this.handlers.set('didExportAsPng', new ExportPngMessageHandler());
+		this.handlers.set('didExportAsXcf', new ExportXcfMessageHandler());
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
 		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
@@ -160,6 +161,12 @@ class ReadyMessageHandler implements MessageHandler {
 class ExportPngMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.fireExportEvent(message.payload);
+	}
+}
+
+class ExportXcfMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		preview.fireExportXcfEvent({ payload: message.payload, warnings: Array.isArray(message.warnings) ? message.warnings : [], error: message.error });
 	}
 }
 

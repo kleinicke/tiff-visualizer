@@ -28,6 +28,7 @@ import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { installRangeDoubleClickReset } from './modules/range-controls.js';
+import { writeLayerStackAsXcf } from './modules/xcf-writer.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
@@ -183,8 +184,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: (options: { interactive?: boolean } = {}) => { scheduleRecomposite(options.interactive ? 180 : 0); scheduleSaveState(); },
+		onBackgroundChange: (brightness: number | null) => { applyLayerBackground(brightness); scheduleSaveState(); },
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
+		onExportPng: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' }); },
+		onExportXcf: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsXcf' }); },
 		onVisibilityChange: (visible: boolean) => {
 			layerManager.active = visible;
 			if (!visible) { _layerCanvasRenderGeneration++; }
@@ -308,6 +312,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
 		}
+		if (Number.isFinite(persistedState.layerBackgroundBrightness)) {
+			layersPanel.backgroundBrightness = Math.max(0, Math.min(100, Number(persistedState.layerBackgroundBrightness)));
+		}
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
 		const savedLayers = persistedState.layers;
@@ -385,6 +392,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			layerActive: layerManager.active,
 			layerCollapsed: layersPanel.collapsed,
 			layerGroupCollapsed: [...layersPanel.collapsedGroups],
+			layerBackgroundBrightness: layersPanel.backgroundBrightness,
 			tiffPageIndex: tiffProcessor.pageIndex,
 			timestamp: Date.now()
 		};
@@ -401,6 +409,36 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// DOM elements
 	const container = document.body;
 	const image = document.createElement('img');
+
+	function applyLayerBackground(brightness: number | null): void {
+		if (brightness === null) {
+			delete container.dataset.layerBackgroundOverride;
+			container.style.removeProperty('--layer-preview-background');
+			return;
+		}
+		const channel = Math.round(Math.max(0, Math.min(100, brightness)) * 2.55);
+		container.dataset.layerBackgroundOverride = 'true';
+		container.style.setProperty('--layer-preview-background', `rgb(${channel}, ${channel}, ${channel})`);
+	}
+
+	function syncThemeBackgroundBrightness(): void {
+		const probe = document.createElement('span');
+		probe.style.color = 'var(--vscode-editor-background, #1e1e1e)';
+		probe.style.display = 'none';
+		document.body.appendChild(probe);
+		const match = getComputedStyle(probe).color.match(/[\d.]+/g);
+		probe.remove();
+		if (!match || match.length < 3) { return; }
+		const [red, green, blue] = match.slice(0, 3).map(Number);
+		// Perceived sRGB brightness gives the most useful position on a grayscale slider.
+		layersPanel.setThemeBackgroundBrightness((0.299 * red + 0.587 * green + 0.114 * blue) / 2.55);
+	}
+
+	applyLayerBackground(layersPanel.backgroundBrightness);
+	syncThemeBackgroundBrightness();
+	const themeObserver = new MutationObserver(syncThemeBackgroundBrightness);
+	themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
+	themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
 
 	/**
 	 * Initialize the application
@@ -1855,6 +1893,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 
 			case 'exportAsPng':
 				exportAsPng();
+				break;
+
+			case 'exportAsXcf':
+				exportAsXcf();
 				break;
 
 			case 'start-comparison':
@@ -4551,6 +4593,23 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	 * Export canvas as PNG
 	 */
 	function exportAsPng() {
+		if (layerManager.active && layerManager.hasCompositeStack()) {
+			// Render directly for export instead of reading the visible canvas: its
+			// ImageBitmap upload is asynchronous and may still contain the previous
+			// layer state immediately after a visibility/opacity change.
+			const rendered = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
+			if (rendered) {
+				const exportCanvas = document.createElement('canvas');
+				exportCanvas.width = rendered.width; exportCanvas.height = rendered.height;
+				const exportContext = exportCanvas.getContext('2d');
+				if (exportContext) {
+					exportContext.putImageData(rendered, 0, 0);
+					vscode.postMessage({ type: 'didExportAsPng', payload: exportCanvas.toDataURL('image/png') });
+					exportCanvas.remove();
+					return;
+				}
+			}
+		}
 		const lazyImageElement = imageElement?.tagName === 'IMG' ? (imageElement as unknown as HTMLImageElement) : null;
 		if (lazyImageElement) {
 			const tempCanvas = document.createElement('canvas');
@@ -4584,6 +4643,20 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				});
 				tempCanvas.remove();
 			}
+		}
+	}
+
+	function exportAsXcf() {
+		try {
+			if (!layerManager.hasCompositeStack()) { throw new Error('Open Layers View before exporting an XCF'); }
+			const result = writeLayerStackAsXcf(layerManager.layers, layerManager.canvasWidth, layerManager.canvasHeight);
+			let binary = '';
+			for (let offset = 0; offset < result.data.length; offset += 0x8000) {
+				binary += String.fromCharCode(...result.data.subarray(offset, Math.min(result.data.length, offset + 0x8000)));
+			}
+			vscode.postMessage({ type: 'didExportAsXcf', payload: btoa(binary), warnings: result.warnings });
+		} catch (error) {
+			vscode.postMessage({ type: 'didExportAsXcf', error: error instanceof Error ? error.message : String(error), warnings: [] });
 		}
 	}
 

@@ -33,6 +33,7 @@ export interface IImagePreview {
 	copyImage(): void;
 	resetZoom(): void;
 	exportAsPng(): Promise<string | undefined>;
+	exportAsXcf(): Promise<{ payload?: string; warnings: string[]; error?: string } | undefined>;
 	startComparison(peerUri: vscode.Uri): void;
 	updateStatusBar(): void;
 	readonly imageCollection: readonly vscode.Uri[];
@@ -49,4 +50,4 @@ export interface IImagePreview {
 	getManager(): IImagePreviewManager;
 	toggleHistogram(): void;
 	toggleMetadata(): void;
-} 
+}

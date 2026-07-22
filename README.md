@@ -47,7 +47,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
   Easily get the difference between two images or apply a mask onto one. This layer view allows dedicated compositions between multiple images.
 - **NaN Color**: Choose how NaN values are displayed.
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.
-- **Export and Copy**: Export the current visualization as PNG, copy the image, or copy image zoom level to the clipboard to paste onto other image.
+- **Export and Copy**: Export the exact current visualization or Layers composition as PNG. Layers can also be saved to a new, limited 8-bit XCF for GIMP interchange; masks/clipping and unsupported modes are baked or reported rather than silently lost.
 - **VS Code Native Controls**: Most options are available from the right-click menu, command palette, or clickable status bar entries.
 - **Metadata panel** shows file info, image statistics (min/max/mean/std) and Exif/GPS sub-IFD tags.
 

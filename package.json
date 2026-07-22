@@ -148,7 +148,12 @@
       },
       {
         "command": "tiffVisualizer.exportAsPng",
-        "title": "Export as PNG",
+        "title": "Export Rendered View as PNG",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.exportAsXcf",
+        "title": "Export Layers as XCF",
         "category": "TIFF Visualizer"
       },
       {
