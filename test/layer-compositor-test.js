@@ -175,6 +175,22 @@ async function main() {
 		console.log('✅ RGBA arithmetic remains RGB value-space math');
 	}
 
+	// 15. Visibility changes never consume or mutate source layer pixels.
+	{
+		const bg = layer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const topPixels = new Uint8Array([200, 100, 50, 255]);
+		const top = layer({ data: topPixels, width: 1, height: 1, channels: 4, typeMax: 255 });
+		const visible = composite([bg, top], 1, 1);
+		top.visible = false;
+		const hidden = composite([bg, top], 1, 1);
+		top.visible = true;
+		const restored = composite([bg, top], 1, 1);
+		assert.deepStrictEqual(Array.from(hidden.data), [10, 20, 30, 255]);
+		assert.deepStrictEqual(Array.from(restored.data), Array.from(visible.data));
+		assert.deepStrictEqual(Array.from(top.data), Array.from(topPixels));
+		console.log('✅ RGBA layer visibility toggles restore the original pixels');
+	}
+
 	console.log('\n🎉 All layer compositor tests passed.\n');
 }
 

@@ -268,12 +268,12 @@ export class LayersPanel {
 		visibility.className = 'layer-visible layer-group-visible';
 		visibility.checked = visibleCount === group.layers.length;
 		visibility.indeterminate = visibleCount > 0 && visibleCount < group.layers.length;
-		visibility.title = 'Toggle all layers in this group (Shift-click to solo group)';
+		visibility.title = 'Toggle all layers in this group (Shift-click to solo; Shift-click again to show all)';
 		visibility.addEventListener('click', event => {
 			if (!event.shiftKey) { return; }
 			event.preventDefault(); event.stopPropagation();
-			const ids = new Set(group.layers.map(layer => layer.id));
-			for (const layer of this.manager.layers) { layer.visible = ids.has(layer.id); }
+			const ids = new Set(group.layers.map(layer => layer.id as string));
+			this.manager.toggleSoloLayers(ids);
 			this.refresh(); this.onChange();
 		});
 		visibility.addEventListener('change', () => {
@@ -312,7 +312,7 @@ export class LayersPanel {
 		vis.type = 'checkbox';
 		vis.className = 'layer-visible';
 		vis.checked = layer.visible !== false;
-		vis.title = 'Toggle visibility (Shift-click to show only this layer)';
+		vis.title = 'Toggle visibility (Shift-click to solo; Shift-click again to show all)';
 		vis.addEventListener('click', (event) => {
 			if (!event.shiftKey) { return; }
 			event.preventDefault();
@@ -423,8 +423,9 @@ export class LayersPanel {
 		opacity.className = 'layer-opacity';
 		opacity.min = '0';
 		opacity.max = '100';
+		opacity.dataset.defaultValue = '100';
 		opacity.value = String(Math.round((layer.opacity ?? 1) * 100));
-		opacity.title = 'Opacity';
+		opacity.title = 'Opacity · Double-click to reset to 100%';
 		opacity.disabled = layer.blendMode === 'mask';
 		const opacityValue = document.createElement('span');
 		opacityValue.className = 'layer-opacity-value';

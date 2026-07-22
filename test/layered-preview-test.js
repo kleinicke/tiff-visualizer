@@ -138,6 +138,10 @@ async function main() {
 		assert.deepStrictEqual([xcf.width, xcf.height, xcf.document.layerCount], [2, 1, 1]);
 		assert.deepStrictEqual(Array.from(xcf.data.slice(0, 4)), [255, 0, 0, 255]);
 		assert.deepStrictEqual(Array.from(xcf.data.slice(4, 8)), [0, 255, 0, 128]);
+		assert.strictEqual(xcf.document.previewKind, 'reconstructed');
+		assert.strictEqual(xcf.layerAssets.length, 1);
+		assert.deepStrictEqual(Array.from(xcf.layerAssets[0].data.slice(4, 8)), [0, 255, 0, 128]);
+		assert.strictEqual(xcf.layerAssets[0].support, 'native');
 	}
 
 	console.log('Layered preview decoders passed: ORA, KRA, PSD/PSB, XCF, and Affinity.');

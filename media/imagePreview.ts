@@ -27,6 +27,7 @@ import { LayerManager } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
+import { installRangeDoubleClickReset } from './modules/range-controls.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
@@ -176,6 +177,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	}
 
 	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
+	// Canvas uploads are async for ordinary-sized images; this generation keeps
+	// an older visibility state from painting over a newer one.
+	let _layerCanvasRenderGeneration = 0;
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: (options: { interactive?: boolean } = {}) => { scheduleRecomposite(options.interactive ? 180 : 0); scheduleSaveState(); },
@@ -183,6 +187,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 		onVisibilityChange: (visible: boolean) => {
 			layerManager.active = visible;
+			if (!visible) { _layerCanvasRenderGeneration++; }
 			// Tell the extension so it can track layer mode (and block collection ops).
 			vscode.postMessage({ type: 'layerModeChanged', active: visible });
 			if (visible) {
@@ -192,6 +197,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				// Restore the normal single-image render.
 				updateImageWithNewSettings(null);
 			}
+			updateLayeredPreviewOverlay();
 			scheduleSaveState();
 		},
 	}, { closable: settingsManager.settings.surfaceMode !== 'layers' });
@@ -574,8 +580,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	/**
 	 * Helper to render ImageData to canvas using createImageBitmap for performance
 	 */
-	async function renderImageDataToCanvas(imageData: ImageData, ctx: CanvasRenderingContext2D | null) {
+	async function renderImageDataToCanvas(imageData: ImageData, ctx: CanvasRenderingContext2D | null, shouldDraw: () => boolean = () => true) {
 		if (!ctx) return;
+		if (!shouldDraw()) return;
 		// Ensure the canvas matches the image size. Without this, drawing a smaller
 		// image onto a canvas still sized for a previous (larger) image leaves the
 		// old pixels visible around the new one — both images appear overlaid.
@@ -586,20 +593,20 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const start = performance.now();
 		const pixelCount = imageData.width * imageData.height;
 		if (pixelCount > 25_000_000) {
-			ctx.putImageData(imageData, 0, 0);
+			if (shouldDraw()) { ctx.putImageData(imageData, 0, 0); }
 			console.log(`[Canvas] putImageData upload took ${(performance.now() - start).toFixed(2)}ms`);
 			PerfTrace.mark('canvas-upload');
 			return;
 		}
 		try {
 			const bitmap = await createImageBitmap(imageData);
-			ctx.drawImage(bitmap, 0, 0);
+			if (shouldDraw()) { ctx.drawImage(bitmap, 0, 0); }
 			bitmap.close(); // Release memory
 			console.log(`[Canvas] ImageBitmap upload took ${(performance.now() - start).toFixed(2)}ms`);
 		} catch (e) {
 			console.error("Error creating ImageBitmap, falling back to putImageData", e);
 			const fallbackStart = performance.now();
-			ctx.putImageData(imageData, 0, 0);
+			if (shouldDraw()) { ctx.putImageData(imageData, 0, 0); }
 			console.log(`[Canvas] putImageData fallback took ${(performance.now() - fallbackStart).toFixed(2)}ms`);
 		}
 		PerfTrace.mark('canvas-upload');
@@ -1451,11 +1458,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			layerManager.hasExtraLayers();
 	}
 
-	/** Expand native ORA raster nodes into the existing editable layer stack. */
+	/** Expand compatible document raster nodes into the editable layer stack. */
 	function installLayeredDocumentLayers(): boolean {
 		const raw = layeredPreviewProcessor._lastRaw;
 		const uri = settingsManager.settings.resourceUri || '';
-		if (raw?.formatType !== 'ora' || !raw.layerAssets?.length) { return false; }
+		if (!raw?.layerAssets?.length) { return false; }
 		if (_expandedLayerDocumentUri === uri && layerManager.layers.length === raw.layerAssets.length) { return true; }
 		const layers = [...raw.layerAssets].reverse().map(asset => layerManager.createLayer({
 			data: asset.data, width: asset.width, height: asset.height, channels: 4,
@@ -1469,8 +1476,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}, {
 			offsetX: asset.x, offsetY: asset.y, opacity: asset.opacity,
 			visible: asset.visible,
-			// Unsupported ORA compositing operators remain editable but are
-			// deliberately approximated as normal in this first native import.
+			// Unsupported source compositing operators remain editable but are
+			// deliberately approximated as normal in the current document import.
 			blendMode: 'normal',
 		}));
 		if (!layers.length) { return false; }
@@ -1511,6 +1518,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	 */
 	function recompositeLayers(): boolean {
 		if (!layerManager.active || !canvas) { return false; }
+		const renderGeneration = ++_layerCanvasRenderGeneration;
 		const imageData = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
 		if (!imageData) { return false; }
 		if (canvas.width !== imageData.width || canvas.height !== imageData.height) {
@@ -1519,7 +1527,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 		const ctx = ensure2dCanvasContext();
 		if (ctx) {
-			void renderImageDataToCanvas(imageData, ctx);
+			void renderImageDataToCanvas(imageData, ctx, () =>
+				renderGeneration === _layerCanvasRenderGeneration && layerManager.active);
 			primaryImageData = imageData;
 			updateHistogramData();
 		}
@@ -3205,6 +3214,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	 * Setup additional event listeners
 	 */
 	function setupEventListeners() {
+		installRangeDoubleClickReset(document);
 		// Wheel zoom handling
 		container.addEventListener('wheel', (e) => {
 			// Prevent pinch to zoom
@@ -3718,9 +3728,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				<button class="tiff-page-next" type="button" tabindex="-1" title="Next TIFF page (Right Arrow, ] or Page Down)" aria-label="Next TIFF page">&#x203a;</button>
 			</div>
 			<div class="ome-axis-controls" aria-label="OME-TIFF dimensions">
-				<label class="ome-axis ome-axis-c"><span class="ome-axis-label">C</span><input type="range"><span class="ome-axis-value"></span></label>
-				<label class="ome-axis ome-axis-z"><span class="ome-axis-label">Z</span><input type="range"><span class="ome-axis-value"></span></label>
-				<label class="ome-axis ome-axis-t"><span class="ome-axis-label">T</span><input type="range"><span class="ome-axis-value"></span></label>
+				<label class="ome-axis ome-axis-c"><span class="ome-axis-label">C</span><input type="range" data-default-value="0" title="Channel · Double-click to reset"><span class="ome-axis-value"></span></label>
+				<label class="ome-axis ome-axis-z"><span class="ome-axis-label">Z</span><input type="range" data-default-value="0" title="Z slice · Double-click to reset"><span class="ome-axis-value"></span></label>
+				<label class="ome-axis ome-axis-t"><span class="ome-axis-label">T</span><input type="range" data-default-value="0" title="Timepoint · Double-click to reset"><span class="ome-axis-value"></span></label>
 			</div>
 		`;
 		const bindTiffPageButton = (selector: string, delta: number) => {
@@ -3827,7 +3837,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		controls.replaceChildren(...series.axes.map(axis => {
 			const row = document.createElement('label'); row.className = 'dataset-axis';
 			const axisLabel = document.createElement('span'); axisLabel.className = 'dataset-axis-label'; axisLabel.textContent = axis.label;
-			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, axis.size - 1)); input.step = '1'; input.value = String(datasetCoordinates[axis.key] || 0);
+			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, axis.size - 1)); input.step = '1'; input.dataset.defaultValue = '0'; input.value = String(datasetCoordinates[axis.key] || 0); input.title = `${axis.label} · Double-click to reset`;
 			const axisValue = datasetCoordinates[axis.key] || 0;
 			const value = document.createElement('span'); value.className = 'dataset-axis-value'; value.textContent = `${axisValue + 1} / ${axis.size}${axis.valueLabels?.[axisValue] ? ` · ${axis.valueLabels[axisValue]}` : ''}`;
 			input.addEventListener('input', () => {
@@ -3869,6 +3879,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			<span class="layered-preview-label">Document preview</span>
 			<button type="button" data-preview-mode="integrated">Integrated</button>
 			<button type="button" data-preview-mode="reconstructed">Reconstructed</button>
+			<button type="button" data-layer-action hidden>Open Layers</button>
 			<span class="layered-preview-fidelity"></span>`;
 		overlay.querySelectorAll<HTMLButtonElement>('button[data-preview-mode]').forEach(button => {
 			button.addEventListener('click', async event => {
@@ -3881,6 +3892,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				updateMetadataData();
 			});
 		});
+		const layersButton = overlay.querySelector<HTMLButtonElement>('button[data-layer-action]');
+		layersButton?.addEventListener('click', event => {
+			event.preventDefault(); event.stopPropagation(); layersButton.blur();
+			layersPanel.show();
+		});
 		document.body.appendChild(overlay);
 		layeredPreviewOverlay = overlay;
 	}
@@ -3888,21 +3904,40 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	function updateLayeredPreviewOverlay() {
 		if (!layeredPreviewOverlay) { return; }
 		const raw = layeredPreviewProcessor._lastRaw;
-		if (!raw?.reconstructedData) {
+		if (!raw || layerManager.active) {
 			layeredPreviewOverlay.setAttribute('hidden', '');
 			return;
 		}
 		layeredPreviewOverlay.removeAttribute('hidden');
+		const hasComparison = !!raw.reconstructedData;
 		layeredPreviewOverlay.querySelectorAll<HTMLButtonElement>('button[data-preview-mode]').forEach(button => {
+			button.hidden = !hasComparison;
 			const selected = button.dataset.previewMode === layeredPreviewProcessor.previewMode;
 			button.classList.toggle('active', selected);
 			button.setAttribute('aria-pressed', String(selected));
 		});
+		const formatNames: Record<LayeredDocumentFormat, string> = { ora: 'ORA', kra: 'KRA', psd: 'PSD', psb: 'PSB', xcf: 'XCF', affinity: 'Affinity' };
+		const kindNames: Record<string, string> = { integrated: 'integrated', merged: 'merged', embedded: 'embedded', reconstructed: 'reconstructed' };
+		const label = layeredPreviewOverlay.querySelector<HTMLElement>('.layered-preview-label');
+		if (label) { label.textContent = `${formatNames[raw.formatType]} · ${kindNames[raw.document.previewKind] || raw.document.previewKind} preview`; }
+		const layersButton = layeredPreviewOverlay.querySelector<HTMLButtonElement>('button[data-layer-action]');
+		if (layersButton) { layersButton.hidden = !raw.layerAssets?.length; }
 		const fidelity = layeredPreviewOverlay.querySelector<HTMLElement>('.layered-preview-fidelity');
 		const difference = raw.document.reconstruction?.differentPixelRatio;
 		if (fidelity) {
-			fidelity.textContent = difference === undefined ? '' : `${(difference * 100).toFixed(2)}% differ`;
-			fidelity.title = difference === undefined ? '' : 'Pixels differing by more than one channel value from the integrated preview';
+			if (hasComparison && difference !== undefined) {
+				fidelity.textContent = `${(difference * 100).toFixed(2)}% differ`;
+				fidelity.title = 'Pixels differing by more than one channel value from the integrated preview';
+			} else if (raw.document.previewKind === 'embedded') {
+				fidelity.textContent = 'non-authoritative · layers unavailable';
+				fidelity.title = 'This embedded preview may not match the full document';
+			} else if (raw.layerAssets?.length) {
+				fidelity.textContent = `${raw.layerAssets.length} raster layer${raw.layerAssets.length === 1 ? '' : 's'}`;
+				fidelity.title = 'Compatible raster layers can be opened in the Layers View';
+			} else {
+				fidelity.textContent = `${raw.document.layerCount} node${raw.document.layerCount === 1 ? '' : 's'} · preview only`;
+				fidelity.title = 'Layer structure may be inspected, but layer pixels are not available in the Layers View';
+			}
 		}
 	}
 
@@ -3931,7 +3966,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		controls.replaceChildren(...selectors.map((selector: any) => {
 			const row = document.createElement('label'); row.className = 'dataset-axis';
 			const label = document.createElement('span'); label.className = 'dataset-axis-label'; label.textContent = selector.name;
-			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, Number(selector.size) - 1)); input.step = '1'; input.value = String(selector.value || 0);
+			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, Number(selector.size) - 1)); input.step = '1'; input.dataset.defaultValue = '0'; input.value = String(selector.value || 0); input.title = `${selector.name} · Double-click to reset`;
 			const value = document.createElement('span'); value.className = 'dataset-axis-value'; value.textContent = `${Number(selector.value || 0) + 1} / ${selector.size}`;
 			input.addEventListener('input', () => { value.textContent = `${Number(input.value) + 1} / ${selector.size}`; });
 			input.addEventListener('change', () => {

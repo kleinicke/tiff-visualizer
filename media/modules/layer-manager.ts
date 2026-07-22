@@ -103,12 +103,17 @@ export class LayerManager {
 		if (layer) { Object.assign(layer, props); }
 	}
 
-	/**
-	 * Make one layer visible and hide every other layer.
-	 */
+	/** Toggle a layer between solo and an all-visible stack. */
 	showOnlyLayer(id: string): void {
+		this.toggleSoloLayers(new Set([id]));
+	}
+
+	/** Toggle a set of layers between solo and an all-visible stack. */
+	toggleSoloLayers(ids: Set<string>): void {
+		const alreadySolo = this.layers.length > 0 && this.layers.every(layer =>
+			ids.has(layer.id as string) ? layer.visible !== false : layer.visible === false);
 		for (const layer of this.layers) {
-			layer.visible = layer.id === id;
+			layer.visible = alreadySolo || ids.has(layer.id as string);
 		}
 	}
 

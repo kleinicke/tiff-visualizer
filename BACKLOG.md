@@ -225,9 +225,9 @@ Target formats, in suggested implementation order:
    MyPaint, and Scribus; the best first format for a true layer import.
 2. **Krita (`.kra`)** — easy authoritative preview via `mergedimage.png`, then
    progressively import ordinary paint layers and masks.
-3. **Photoshop (`.psd`, later `.psb`)** — broadest interchange value; import
-   the composite and all rasterizable/cached layers, while preserving
-   unsupported document nodes in the tree.
+3. **Photoshop (`.psd`, `.psb`)** — broadest interchange value; build from the
+   current composite/structure preview toward rasterizable and cached layers,
+   while preserving unsupported document nodes in the tree.
 4. **GIMP (`.xcf`)** — documented but evolving native format; decode tiled
    pixel layers, hierarchy, masks, visibility, offsets, and opacity before
    expanding into GIMP-specific effects and blend semantics.
@@ -309,16 +309,17 @@ that the original PSD/XCF/KRA/Affinity document has been modified.
 
 ### Layer View changes required for compatibility
 
-The current compositor is optimized for scientific arithmetic and explicitly
-ignores the fourth channel in value-space composition. Professional document
-compatibility requires a second, color-compositing path while retaining the
-existing exact raw-value path.
+The compositor now retains per-pixel alpha for normal RGBA layer stacks while
+keeping scientific arithmetic in exact RGB/value space. Professional document
+compatibility still requires a fuller color-compositing path without changing
+the existing raw-value behavior.
 
 #### Alpha, masks, and coverage
 
-- Implement straight/premultiplied alpha conversion explicitly and carry
-  per-pixel alpha through composition. Do not use NaN as the general-purpose
-  transparency representation for authored documents.
+- Normal straight-alpha RGBA composition is implemented. Add explicit
+  straight/premultiplied conversion and validate mixed representations; do not
+  use NaN as the general-purpose transparency representation for authored
+  documents.
 - Combine per-pixel alpha, layer opacity, fill opacity, raster masks, vector
   masks, and group masks in the correct order.
 - Support mask bounds, offsets, inversion, density/opacity, enable/disable,
@@ -442,6 +443,12 @@ mask, vector, and color-management fidelity.
 Reference: <https://docs.krita.org/en/general_concepts/file_formats/file_kra.html>.
 A normal KRA is ZIP-based and contains `mergedimage.png`, the rendered canvas.
 
+**Implementation status:** the worker safely opens the ZIP container, uses the
+full-size `mergedimage.png` with a `preview.png` fallback, reads document size
+and layer count from `maindoc.xml`, and labels reduced previews. Native paint
+layers, masks, groups, cached projections, Krita blend modes, vector/generator
+nodes, and animation remain to be implemented.
+
 - Phase 1: safely extract `mergedimage.png`, preview/thumbnail, document info,
   and basic metadata; route the preview through the existing PNG pipeline.
 - Phase 2: parse the document/layer XML and import ordinary paint layers,
@@ -458,14 +465,19 @@ listed with their type and do not disappear.
 **Difficulty: 2** for integrated preview, **4–5** for increasingly native KRA
 composition.
 
-#### Photoshop (`.psd`, later `.psb`)
+#### Photoshop (`.psd`, `.psb`)
 
 Reference: <https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/>.
-Evaluate a maintained browser/worker-capable decoder (currently `ag-psd` is a
-candidate) against representative fixtures before committing to it. Pin and
-document the exact supported bit depths, color modes, compression types, PSD
-features, maximum sizes, and PSB behavior; library claims and limitations have
-changed across releases.
+The worker uses `ag-psd` for bounded PSD/PSB decoding. Continue validating and
+documenting exact bit depths, color modes, compression types, maximum sizes,
+and PSB behavior against representative fixtures.
+
+**Implementation status:** PSD and basic PSB files expose their authoritative
+8/16/32-bit composite plus the parsed layer/group tree, bounds, visibility,
+opacity, kind, and blend mode. Layer pixel payloads are intentionally skipped.
+Lazy raster/cached-layer decode, masks, clipping, thumbnails, color profiles,
+blend/group semantics, effects, smart objects, and genuinely large PSB files
+remain unsupported or inspect-only.
 
 - Phase 1: decode the composite image, dimensions, bit depth, color mode,
   profile, image resources, and basic metadata in the worker.
@@ -493,6 +505,14 @@ Reference: <https://developer.gimp.org/core/standards/xcf/>. XCF is documented,
 but it is a living native format whose implementation remains the ultimate
 reference.
 
+**Implementation status:** a bounded worker parser reconstructs common 8-bit
+RGB, grayscale, and indexed raster layers with offsets, visibility, opacity,
+and raw/RLE/zlib tile compression. Decoded raster layers are available as a
+flat editable stack in the Layers View. Non-normal modes are reported and
+currently approximated. Remaining work includes native hierarchy/group composition,
+masks and channels, broader precision/color models, text/vectors/effects,
+additional blend/composite spaces, version coverage, and lazy tile decoding.
+
 - Implement or adopt a bounded worker-side parser for the image header,
   properties, offset-based structures, tile hierarchies, uncompressed/RLE/zlib
   pixel payloads, layers, channels, masks, groups, text/vectors, and effects.
@@ -518,6 +538,13 @@ fidelity.
 
 Affinity's native format is proprietary and has no public specification.
 Support must therefore be intentionally modest and version-gated.
+
+**Implementation status:** supported signatures are scanned for bounded,
+structurally valid embedded PNG streams and the largest preview is displayed
+with an explicit non-authoritative warning. Document dimensions, freshness,
+profiles, native layers, and version-specific metadata are not decoded. The
+remaining work below is validation and metadata hardening; native layers stay
+a separate demand-driven reverse-engineering project.
 
 - Spike existing preview extractors against Affinity versions and platforms.
   Validate preview presence, dimensions, color profile, alpha, orientation,
@@ -558,7 +585,8 @@ for native layer reconstruction.
 - Fuzz all container/descriptor parsers and enforce nesting, dimension,
   decompression, time, and memory limits.
 - Maintain a visible compatibility report per opened document and a versioned
-  support matrix in the README. "Opens" must state whether it means embedded
+  support matrix in this backlog or a dedicated compatibility document. Keep
+  the README summary compact. "Opens" must state whether it means embedded
   preview, solo-layer inspection, approximate reconstruction, or validated
   composition.
 

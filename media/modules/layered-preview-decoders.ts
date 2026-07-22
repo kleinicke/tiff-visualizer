@@ -194,7 +194,7 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		if (blendMode !== 'normal') { warnings.push(`“${name}” uses ${blendMode}; reconstruction currently approximates it as normal`); }
 		const summary: LayerNodeSummary = { id, name, kind: node.tag === 'stack' ? 'group' : 'raster', support, visible, opacity, blendMode, left: x, top: y };
 		if (node.tag === 'stack') {
-			if (opacity !== 1) { warnings.push(`Group “${name}” opacity is flattened into its child layers and may differ in overlapping regions`); }
+			if (opacity !== 1) { warnings.push(`Group “${name}” opacity is reconstructed on an isolated surface; the editable Layers View currently flattens it into child layers`); }
 			summary.children = buildNodes(node.children, [...groupPath, name], [...groupIds, id], x, y, inheritedOpacity * opacity, visible);
 			return summary;
 		}
@@ -663,6 +663,8 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 			}
 		}
 		if (mode !== 0 && !props.group) { warnings.push(`Layer “${node.name}” blend mode ${mode} is approximated as normal`); }
+		if (props.group) { warnings.push(`Group “${node.name}” is listed but its XCF group composition is not yet applied`); }
+		if (!props.group && !pixels) { warnings.push(`Layer “${node.name}” has no decodable raster payload`); }
 		layers.push({ node, pixels, type, opacity: props.opacity ?? 1, x: props.offsetX || 0, y: props.offsetY || 0, width: layerWidth, height: layerHeight, mode });
 	}
 	const composite = new Uint8Array(width * height * 4);
@@ -682,6 +684,22 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 	}
 	const colorMode = baseType === 0 ? 'RGB' : baseType === 1 ? 'Grayscale' : 'Indexed';
 	const root = layers.map(layer => layer.node);
+	const layerAssets: LayeredRasterAsset[] = layers.flatMap((layer, index) => layer.pixels ? [{
+		nodeId: layer.node.id,
+		name: layer.node.name,
+		sourcePath: `xcf-layer-${index}`,
+		data: layer.pixels,
+		width: layer.width,
+		height: layer.height,
+		x: layer.x,
+		y: layer.y,
+		opacity: layer.opacity,
+		visible: layer.node.visible,
+		blendMode: layer.node.blendMode || 'normal',
+		groupPath: [] as string[],
+		groupIds: [] as string[],
+		support: layer.node.support,
+	}] : []);
 	const document: LayeredDocumentSummary = {
 		format: 'xcf', width, height, bitDepth: 8, colorMode,
 		previewKind: 'reconstructed', previewIsAuthoritative: warnings.length === 0,
@@ -689,7 +707,7 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 	};
 	return {
 		width, height, channels: 4, bitDepth: 8, sampleFormat: 1, data: composite,
-		formatLabel: 'GIMP XCF reconstructed preview', formatType: 'xcf', document,
+		formatLabel: 'GIMP XCF reconstructed preview', formatType: 'xcf', document, layerAssets,
 		metadata: { xcfVersion: version, colorMode, precision, compression, layerCount: root.length, previewAuthoritative: document.previewIsAuthoritative },
 	};
 }

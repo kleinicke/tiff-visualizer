@@ -12,31 +12,20 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 ## Supported Sample Types
 
-| Format                         | uint8 | uint16 | float16 | float32 | Notes                                                                       |
-| ------------------------------ | ----: | -----: | ------: | ------: | --------------------------------------------------------------------------- |
-| TIFF                           |   Yes |    Yes |     Yes |     Yes | Decoded by a Rust/WASM decoder by default (uint8/16/32, int, float16/32/64) |
-| EXR                            |    No |     No |     Yes |     Yes | HDR floating-point format                                                   |
-| NPY/NPZ                        |   Yes |    Yes |     Yes |     Yes | Also supports float64 and int8/16/32/64, uint32/64                          |
-| FITS                           |   Yes |    Yes |      No |     Yes | Numeric image HDUs; also int32/int64 and float64                            |
-| DICOM                          |   Yes |    Yes |      No |     Yes | Native and JPEG Baseline; folder/series and multi-frame navigation           |
-| NetCDF                         |   Yes |    Yes |      No |     Yes | Classic CDF-1/CDF-2 rasters and MPAS cell meshes; variable/dimension controls |
-| PFM                            |    No |     No |      No |     Yes | Portable Float Map                                                          |
-| HDR                            |    No |     No |      No |     Yes | Radiance RGBE, decoded to float32                                           |
-| PNG                            |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA                                              |
-| PPM/PGM/PBM                    |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                |
-| JPEG/WebP/AVIF/BMP/ICO/TGA/JXL |   Yes |     No |      No |      No | Decoded as 8-bit image data in the extension                                |
+| Format                                  | uint8 | uint16 | float16 | float32 | Notes |
+| --------------------------------------- | ----: | -----: | ------: | ------: | ----- |
+| TIFF / OME-TIFF                         |   Yes |    Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation |
+| EXR                                     |    No |     No |     Yes |     Yes | HDR floating-point format |
+| NPY / NPZ                               |   Yes |    Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit |
+| FITS / DICOM / NetCDF                   |   Yes |    Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, and MPAS meshes |
+| PFM                                     |    No |     No |      No |     Yes | Portable Float Map |
+| HDR                                     |    No |     No |      No |     Yes | Radiance RGBE, decoded to float32 |
+| PNG                                     |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA |
+| PPM / PGM / PBM                         |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit |
+| JPEG / WebP / AVIF / BMP / ICO / TGA / JXL | Yes |     No |      No |      No | Decoded as 8-bit image data |
+| ORA / KRA / PSD / PSB / XCF / Affinity Photo | Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded document previews; ORA layers and common XCF rasters can also be composed |
 
-## Layered Creative Documents
-
-| Format | Initial preview | Current layer compatibility |
-| ------ | --------------- | --------------------------- |
-| OpenRaster (`.ora`) | Full-size `mergedimage.png`, with an Integrated/Reconstructed comparison | PNG layers, groups, names, order, visibility, opacity, offsets, and alpha are imported into the Layers View; non-normal operators are reported and approximated |
-| Krita (`.kra`) | Full-size `mergedimage.png` (`preview.png` fallback) | Paint and mask nodes are not reconstructed yet |
-| Photoshop (`.psd`, `.psb`) | Stored composite, including 8/16/32-bit data supported by the decoder | Layer tree, bounds, visibility, opacity, kind, and blend mode are inspected; the composite remains the displayed source |
-| GIMP (`.xcf`) | Reconstructed from common 8-bit RGB, grayscale, and indexed raster layers | Raw, RLE, and bounded zlib tiles are decoded; unsupported blend modes are visibly reported and approximated as normal |
-| Affinity Photo (`.afphoto`, `.af`) | Largest valid embedded PNG | Proprietary layer data is not decoded; this preview is explicitly marked non-authoritative |
-
-The metadata panel reports whether a preview is authoritative, reconstructed, or heuristic and lists compatibility warnings. ORA documents expose their individual raster nodes in the Layers View; other formats currently enter it as flattened inputs. The format-neutral layered-document model keeps the compositor independent from PSD, XCF, ORA, or Krita-specific structures.
+Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
 NetCDF-4/HDF5 and DICOM compression other than JPEG Baseline are not yet supported.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
@@ -84,13 +73,6 @@ Float Image Visualization Options:
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.
 
-## Decoder architecture
-
-- **TIFF and OME-TIFF pixels:** Rust/WebAssembly using the `tiff` crate and its codecs, with geotiff.js as a compatibility fallback. OME-XML metadata and dimension mapping are parsed in TypeScript.
-- **DICOM:** A lightweight TypeScript parser reads the container, technical headers, series metadata, and native pixel data. Encapsulated JPEG Baseline frames are extracted in TypeScript and decoded in Rust/WebAssembly with `zune-jpeg`; browser JPEG decoding is the fallback.
-- **FITS and classic NetCDF:** Dependency-free TypeScript parsers run in the decode worker. The NetCDF path understands regular multidimensional rasters and MPAS cell geometry; NetCDF-4/HDF5 remains separate future work.
-- **EXR and other formats:** The viewer uses a mixture of Rust/WebAssembly, focused JavaScript libraries, and browser-native codecs according to the format.
-- **Layered documents:** ZIP preview extraction handles ORA/Krita, `ag-psd` reads PSD/PSB composites and structure, a bounded parser reconstructs the common 8-bit XCF raster subset, and Affinity support scans validated embedded PNG streams. Decode work runs in the existing worker with explicit size and pointer bounds.
 
 ## Feature Requests and Issues
 
