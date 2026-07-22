@@ -9,7 +9,7 @@
  * NaN color) as a normal image.
  */
 
-import { composite, centeredOffset, BLEND_MODES, Layer, CompositeResult } from './layer-compositor.js';
+import { composite, centeredOffset, BLEND_MODES, Layer, CompositeResult, LayerAdjustment } from './layer-compositor.js';
 import { ImageRenderer } from './normalization-helper.js';
 import { PerfTrace } from './perf-trace.js';
 import type { ImageSettings } from './settings-manager.js';
@@ -29,6 +29,7 @@ export interface LayerInput {
 	sourceSupport?: Layer['sourceSupport'];
 	sourceBlendMode?: string;
 	kind?: Layer['kind'];
+	adjustment?: LayerAdjustment;
 	parentId?: string;
 	clipped?: boolean;
 	rasterMask?: Layer['rasterMask'];
@@ -219,6 +220,7 @@ export class LayerManager {
 		l.sourceSupport = settings.sourceSupport ?? input.sourceSupport;
 		l.sourceBlendMode = settings.sourceBlendMode ?? input.sourceBlendMode;
 		l.kind = settings.kind ?? input.kind ?? 'raster';
+		l.adjustment = settings.adjustment ?? input.adjustment;
 		l.parentId = settings.parentId ?? input.parentId;
 		l.clipped = settings.clipped ?? input.clipped;
 		l.rasterMask = settings.rasterMask ?? input.rasterMask;
@@ -259,6 +261,7 @@ export class LayerManager {
 			sourceSupport: layer.sourceSupport,
 			sourceBlendMode: layer.sourceBlendMode,
 			kind: layer.kind ?? 'raster',
+			adjustment: layer.adjustment,
 			parentId: layer.parentId,
 			clipped: layer.clipped,
 			rasterMask: layer.rasterMask,

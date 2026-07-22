@@ -231,7 +231,7 @@ export class LayersPanel {
 		backgroundSlider.step = '1';
 		backgroundSlider.dataset.defaultValue = String(this.themeBackgroundBrightness);
 		backgroundSlider.value = String(this.backgroundBrightness ?? this.themeBackgroundBrightness);
-		backgroundSlider.title = 'Preview background: black to white · Double-click to restore the VS Code theme background';
+		backgroundSlider.title = 'Preview background: darker to lighter while retaining the theme tint · Double-click to restore the VS Code theme background';
 		backgroundSlider.addEventListener('input', () => {
 			this.backgroundBrightness = Number(backgroundSlider.value);
 			this.onBackgroundChange?.(this.backgroundBrightness);

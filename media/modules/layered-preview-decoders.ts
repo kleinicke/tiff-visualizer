@@ -3,6 +3,7 @@ import { initializeCanvas, readPsd } from 'ag-psd';
 import pako from 'pako';
 import UPNG from 'upng-js';
 import type { DecodedLayeredPreview, LayeredRasterAsset, LayerNodeKind, LayerNodeSummary, LayeredDocumentSummary, LayeredPixelArray } from './layered-document.js';
+import type { LayerAdjustment } from './layer-compositor.js';
 
 const MAX_PREVIEW_PIXELS = 150_000_000;
 const MAX_PREVIEW_BYTES = 600 * 1024 * 1024;
@@ -377,27 +378,25 @@ function decodeKraPaintDevice(bytes: Uint8Array, width: number, height: number, 
 			throw new Error('Invalid Krita tile payload size');
 		}
 		const payload = bytes.subarray(state.offset, state.offset + payloadSize); state.offset += payloadSize;
-		let interleaved: Uint8Array;
+		let planar: Uint8Array;
 		if (payload[0] === 0) {
 			if (payload.length !== tileBytes + 1) { throw new Error('Invalid raw Krita tile size'); }
-			interleaved = payload.slice(1);
+			// Compression only changes how the tile bytes are encoded. Krita stores
+			// both raw and LZF tiles in channel-major planes (B, G, R, A for RGBA).
+			planar = payload.subarray(1);
 		} else if (payload[0] === 1) {
-			const planar = decodeKraLzf(payload.subarray(1), tileBytes);
-			interleaved = new Uint8Array(tileBytes);
-			const planeSize = tileWidth * tileHeight;
-			for (let pixel = 0; pixel < planeSize; pixel++) for (let channel = 0; channel < pixelSize; channel++) {
-				interleaved[pixel * pixelSize + channel] = planar[channel * planeSize + pixel];
-			}
+			planar = decodeKraLzf(payload.subarray(1), tileBytes);
 		} else { throw new Error(`Unsupported Krita tile compression flag: ${payload[0]}`); }
+		const planeSize = tileWidth * tileHeight;
 		for (let y = 0; y < tileHeight; y++) for (let x = 0; x < tileWidth; x++) {
 			const dx = tileX + x, dy = tileY + y;
 			if (dx < 0 || dy < 0 || dx >= width || dy >= height) { continue; }
-			const source = (y * tileWidth + x) * pixelSize, destination = (dy * width + dx) * outputChannels;
+			const sourcePixel = y * tileWidth + x, destination = (dy * width + dx) * outputChannels;
 			if (pixelSize === 4) {
 				// Krita's RGBA/U8 paint device stores pixels as BGRA on little-endian platforms.
-				output[destination] = interleaved[source + 2]; output[destination + 1] = interleaved[source + 1];
-				output[destination + 2] = interleaved[source]; output[destination + 3] = interleaved[source + 3];
-			} else { output[destination] = interleaved[source]; }
+				output[destination] = planar[2 * planeSize + sourcePixel]; output[destination + 1] = planar[planeSize + sourcePixel];
+				output[destination + 2] = planar[sourcePixel]; output[destination + 3] = planar[3 * planeSize + sourcePixel];
+			} else { output[destination] = planar[sourcePixel]; }
 		}
 	}
 	return output;
@@ -419,15 +418,19 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 	const supportedBlendModes = new Set(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion']);
 	const build = (nodes: KraXmlNode[], parentId?: string, groupPath: string[] = [], groupIds: string[] = []): LayerNodeSummary[] => nodes.map(node => {
 		const attrs = node.attrs, id = attrs.uuid || `kra-node-${sequence++}`, name = attrs.name || `Layer ${sequence}`;
+		const x = Math.trunc(oraNumber(attrs.x, 0)), y = Math.trunc(oraNumber(attrs.y, 0));
 		const nodeType = (attrs.nodetype || '').toLowerCase();
 		const kind: LayerNodeKind = nodeType === 'grouplayer' ? 'group' : nodeType === 'paintlayer' ? 'raster' : nodeType.includes('vector') ? 'vector' : nodeType.includes('adjustment') ? 'adjustment' : 'unknown';
 		const opacity = Math.max(0, Math.min(1, oraNumber(attrs.opacity, 255) / 255));
 		const visible = attrs.visible !== '0';
 		const blendMode = editableBlendMode(attrs.compositeop);
 		let support: LayerNodeSummary['support'] = kind === 'group' || kind === 'raster' ? (supportedBlendModes.has(blendMode) ? 'native' : 'approximate') : 'unsupported';
-		const summary: LayerNodeSummary = { id, name, kind, support, visible, opacity, blendMode, left: oraNumber(attrs.x, 0), top: oraNumber(attrs.y, 0) };
+		const summary: LayerNodeSummary = { id, name, kind, support, visible, opacity, blendMode, left: x, top: y };
 		if (kind === 'group') {
 			if (attrs.passthrough === '1') { support = 'approximate'; summary.support = support; warnings.push(`Pass-through group “${name}” is currently reconstructed as an isolated group`); }
+			// KRA tile coordinates are already in document space. The XML position is
+			// descriptive metadata here; applying it again to a document-sized surface
+			// would shift the layer twice and clip its right and bottom edges.
 			const groupAsset: LayeredRasterAsset = { nodeId: id, name, sourcePath: '', kind: 'group', parentId, width: declaredWidth, height: declaredHeight, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support };
 			const groupMask = node.masks.find(mask => (mask.nodetype || '').toLowerCase() === 'transparencymask' && mask.visible !== '0' && mask.filename);
 			if (groupMask?.filename) {
@@ -586,12 +589,13 @@ function summarizePsdLayers(layers: any[] | undefined, path = 'layer'): LayerNod
 	if (!Array.isArray(layers)) { return []; }
 	return layers.map((layer, index) => {
 		const kind = psdLayerKind(layer);
+		const adjustmentSupported = !!supportedPsdAdjustment(layer.adjustment);
 		const children = summarizePsdLayers(layer.children, `${path}-${index}`);
 		const node: LayerNodeSummary = {
 			id: `${path}-${index}`,
 			name: String(layer.name || `Layer ${index + 1}`),
 			kind,
-			support: kind === 'group' ? 'inspect-only' : kind === 'raster' ? 'inspect-only' : 'cached-raster',
+			support: kind === 'group' ? (layer.blendMode === 'pass through' ? 'approximate' : 'native') : kind === 'adjustment' ? (adjustmentSupported ? 'approximate' : 'unsupported') : layer.imageData?.data ? (kind === 'raster' ? 'native' : 'cached-raster') : 'unsupported',
 			visible: !layer.hidden,
 			opacity: Number.isFinite(layer.opacity) ? Math.max(0, Math.min(1, layer.opacity)) : 1,
 			blendMode: layer.blendMode || 'normal',
@@ -605,6 +609,59 @@ function summarizePsdLayers(layers: any[] | undefined, path = 'layer'): LayerNod
 	});
 }
 
+function psdMaskAsset(mask: any, layerLeft: number, layerTop: number): LayeredRasterAsset['rasterMask'] | undefined {
+	if (!mask?.imageData?.data || mask.disabled) { return undefined; }
+	const source = mask.imageData.data as ArrayLike<number>, pixels = mask.imageData.width * mask.imageData.height;
+	const channels = Math.max(1, Math.floor(source.length / Math.max(1, pixels)));
+	const data = new Uint8Array(pixels);
+	for (let pixel = 0; pixel < pixels; pixel++) { data[pixel] = Number(source[pixel * channels]); }
+	const relative = !!mask.positionRelativeToLayer;
+	return {
+		data, width: mask.imageData.width, height: mask.imageData.height, channels: 1, typeMax: 255,
+		x: Math.trunc(Number(mask.left || 0) + (relative ? layerLeft : 0)),
+		y: Math.trunc(Number(mask.top || 0) + (relative ? layerTop : 0)),
+	};
+}
+
+function supportedPsdAdjustment(value: any): LayerAdjustment | undefined {
+	if (!value || !['levels', 'curves', 'hue/saturation'].includes(value.type)) { return undefined; }
+	return value as LayerAdjustment;
+}
+
+function buildPsdAssets(layers: any[] | undefined, warnings: string[], parentId?: string, groupPath: string[] = [], groupIds: string[] = [], path = 'psd'): LayeredRasterAsset[] {
+	if (!Array.isArray(layers)) { return []; }
+	const assets: LayeredRasterAsset[] = [];
+	for (let index = 0; index < layers.length; index++) {
+		const layer = layers[index], id = Number.isFinite(layer.id) ? `psd-${layer.id}` : `${path}-${index}`;
+		const name = String(layer.name || `Layer ${index + 1}`), kind = psdLayerKind(layer);
+		const opacity = Number.isFinite(layer.opacity) ? Math.max(0, Math.min(1, Number(layer.opacity))) : 1;
+		const visible = !layer.hidden, blendMode = editableBlendMode(layer.blendMode);
+		if (kind === 'group') {
+			assets.push({ nodeId: id, name, sourcePath: '', kind: 'group', parentId, width: 1, height: 1, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support: layer.blendMode === 'pass through' ? 'approximate' : 'native' });
+			assets.push(...buildPsdAssets(layer.children, warnings, id, [...groupPath, name], [...groupIds, id], id));
+			continue;
+		}
+		const left = Math.trunc(Number(layer.left || 0)), top = Math.trunc(Number(layer.top || 0));
+		if (layer.effects) { warnings.push(`PSD layer effects on “${name}” are not reconstructed; cached pixels or the integrated preview may include them`); }
+		const activeMask = layer.realMask || layer.mask;
+		if (activeMask?.userMaskFeather || activeMask?.vectorMaskFeather) { warnings.push(`PSD mask feathering on “${name}” is not reconstructed`); }
+		if (activeMask?.userMaskDensity !== undefined && activeMask.userMaskDensity !== 100) { warnings.push(`PSD mask density on “${name}” is approximated`); }
+		const adjustment = supportedPsdAdjustment(layer.adjustment);
+		if (layer.adjustment) {
+			const supported = !!adjustment;
+			if (!supported) { warnings.push(`PSD adjustment “${name}” (${layer.adjustment.type || 'unknown'}) is inspect-only`); }
+			assets.push({ nodeId: id, name, sourcePath: '', kind: 'adjustment', adjustment, parentId, width: 1, height: 1, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support: supported ? 'approximate' : 'unsupported', clipped: !!layer.clipping, rasterMask: psdMaskAsset(layer.realMask || layer.mask, left, top) });
+			continue;
+		}
+		if (!layer.imageData?.data) { warnings.push(`PSD ${kind} layer “${name}” has no cached raster pixels`); continue; }
+		const source = layer.imageData.data as ArrayLike<number>;
+		const data = new Uint8Array(source.length);
+		for (let offset = 0; offset < source.length; offset++) { data[offset] = Math.max(0, Math.min(255, Math.round(Number(source[offset])))); }
+		assets.push({ nodeId: id, name, sourcePath: '', kind: 'raster', parentId, data, width: layer.imageData.width, height: layer.imageData.height, x: left, y: top, opacity, visible, blendMode, groupPath, groupIds, support: kind === 'raster' ? 'native' : 'cached-raster', clipped: !!layer.clipping, rasterMask: psdMaskAsset(layer.realMask || layer.mask, left, top) });
+	}
+	return assets;
+}
+
 function flattenNodeCount(nodes: LayerNodeSummary[]): number {
 	let count = 0;
 	for (const node of nodes) { count += 1 + flattenNodeCount(node.children || []); }
@@ -613,14 +670,22 @@ function flattenNodeCount(nodes: LayerNodeSummary[]): number {
 
 function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPreview {
 	ensurePsdImageDataFactory();
-	const psd = readPsd(buffer, {
-		useImageData: true,
-		skipLayerImageData: true,
-		skipThumbnail: true,
-		skipLinkedFilesData: true,
-		logMissingFeatures: false,
-		totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
-	});
+	let layerDecodeWarning = '';
+	let psd: any;
+	try {
+		psd = readPsd(buffer, {
+			useImageData: true, skipLayerImageData: false, skipThumbnail: true,
+			skipLinkedFilesData: true, logMissingFeatures: false, totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
+		});
+	} catch (error) {
+		// A valid integrated preview remains useful when decoding every layer would
+		// exceed the bounded memory budget or encounters an unsupported payload.
+		layerDecodeWarning = `PSD editable layers were unavailable: ${error instanceof Error ? error.message : String(error)}`;
+		psd = readPsd(buffer, {
+			useImageData: true, skipLayerImageData: true, skipThumbnail: true,
+			skipLinkedFilesData: true, logMissingFeatures: false, totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
+		});
+	}
 	if (!psd.imageData?.data) { throw new Error('PSD contains no decodable composite image'); }
 	const bitDepth = Number(psd.bitsPerChannel || 8);
 	assertDimensions(psd.width, psd.height, bitDepth === 32 ? 16 : bitDepth === 16 ? 8 : 4);
@@ -630,7 +695,10 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 	const colorModes: Record<number, string> = { 0: 'Bitmap', 1: 'Grayscale', 2: 'Indexed', 3: 'RGB', 4: 'CMYK', 7: 'Multichannel', 8: 'Duotone', 9: 'Lab' };
 	const colorMode = colorModes[Number(psd.colorMode)] || `Mode ${psd.colorMode}`;
 	const warnings: string[] = [];
-	if (![0, 1, 2, 3].includes(Number(psd.colorMode))) { warnings.push(`${colorMode} is converted by the PSD decoder`); }
+	if (layerDecodeWarning) { warnings.push(layerDecodeWarning); }
+	if (Number(psd.colorMode) !== 3) { warnings.push(`${colorMode} is converted to RGB by the PSD decoder; exact Photoshop color-management parity is unavailable`); }
+	if (bitDepth !== 8) { warnings.push(`${bitDepth}-bit PSD layers depend on decoder conversion and may not match Photoshop exactly`); }
+	const layerAssets = buildPsdAssets(psd.children, warnings);
 	const document: LayeredDocumentSummary = {
 		format: psb ? 'psb' : 'psd', width: psd.width, height: psd.height, bitDepth, colorMode,
 		previewKind: 'integrated', previewIsAuthoritative: true,
@@ -641,11 +709,12 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 		width: psd.width, height: psd.height, channels: 4, bitDepth,
 		sampleFormat: bitDepth === 32 ? 3 : 1,
 		data,
+		layerAssets,
 		formatLabel: `${psb ? 'Photoshop PSB' : 'Photoshop PSD'} composite`,
 		formatType: psb ? 'psb' : 'psd',
 		document,
 		metadata: {
-			colorMode, bitDepth, layerCount,
+			colorMode, bitDepth, layerCount, editableNodeCount: layerAssets.length,
 			previewAuthoritative: true,
 			decoder: 'ag-psd',
 		},

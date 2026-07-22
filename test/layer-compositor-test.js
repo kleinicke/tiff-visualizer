@@ -253,6 +253,24 @@ async function main() {
 		console.log('✅ Transparent RGBA remains transparent, not NaN');
 	}
 
+	// 21. PSD-style adjustment nodes transform the composite below them.
+	{
+		const base = layer({ data: new Uint8Array([64, 0, 0, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const levels = layer({ kind: 'adjustment', adjustment: { type: 'levels', rgb: { shadowInput: 0, highlightInput: 128, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } }, width: 1, height: 1, channels: 4, typeMax: 255 });
+		const levelResult = composite([base, levels], 1, 1);
+		assert.ok(approx(levelResult.data[0], 127.5, 0.01), `levels result: ${levelResult.data[0]}`);
+
+		const curves = layer({ kind: 'adjustment', adjustment: { type: 'curves', rgb: [{ input: 0, output: 255 }, { input: 255, output: 0 }] }, width: 1, height: 1, channels: 4, typeMax: 255 });
+		const curveResult = composite([base, curves], 1, 1);
+		assert.ok(approx(curveResult.data[0], 191, 0.01), `curves result: ${curveResult.data[0]}`);
+
+		const red = layer({ data: new Uint8Array([255, 0, 0, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const hue = layer({ kind: 'adjustment', adjustment: { type: 'hue/saturation', master: { hue: 120, saturation: 0, lightness: 0 } }, width: 1, height: 1, channels: 4, typeMax: 255 });
+		const hueResult = composite([red, hue], 1, 1);
+		assert.ok(hueResult.data[1] > 254 && hueResult.data[0] < 1, `hue result: ${Array.from(hueResult.data)}`);
+		console.log('✅ Levels, curves, and hue/saturation adjustment nodes');
+	}
+
 	console.log('\n🎉 All layer compositor tests passed.\n');
 }
 

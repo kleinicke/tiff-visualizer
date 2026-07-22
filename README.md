@@ -23,7 +23,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | PNG                                     |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA |
 | PPM / PGM / PBM                         |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit |
 | JPEG / WebP / AVIF / BMP / ICO / TGA / JXL | Yes |     No |      No |      No | Decoded as 8-bit image data |
-| ORA / KRA / PSD / PSB / XCF / Affinity Photo | Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, ordinary Krita paint layers, and common XCF rasters can also be composed |
+| ORA / KRA / PSD / PSB / XCF / Affinity Photo | Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; PSD levels, curves, and hue/saturation are approximated |
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 

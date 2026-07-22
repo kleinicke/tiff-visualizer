@@ -28,8 +28,13 @@ function asArrayBuffer(bytes) {
 }
 
 function kraPaintDevice(pixelSize, pixels) {
-	const tile = new Uint8Array(64 * 64 * pixelSize);
-	for (let i = 0; i < pixels.length; i++) { tile[i] = pixels[i]; }
+	const pixelCount = 64 * 64;
+	const tile = new Uint8Array(pixelCount * pixelSize);
+	// Krita's raw and compressed tile payloads are both channel-major.
+	for (let source = 0; source < pixels.length; source++) {
+		const pixel = Math.floor(source / pixelSize), channel = source % pixelSize;
+		tile[channel * pixelCount + pixel] = pixels[source];
+	}
 	const header = Buffer.from(`VERSION 2\nTILEWIDTH 64\nTILEHEIGHT 64\nPIXELSIZE ${pixelSize}\nDATA 1\n0,0,LZF,${tile.length + 1}\n`);
 	return Buffer.concat([header, Buffer.from([0]), Buffer.from(tile)]);
 }
@@ -130,7 +135,7 @@ async function main() {
 	const kraWithPaint = zipSync({
 		'mimetype': strToU8('application/x-krita'),
 		'mergedimage.png': png,
-		'maindoc.xml': strToU8('<DOC><IMAGE name="Paint Test" colorspacename="RGBA" width="2" height="1"><layers><layer name="Pixels" nodetype="paintlayer" filename="layer2" opacity="255" visible="1" compositeop="multiply"><masks><mask name="Mask" nodetype="transparencymask" filename="mask3" visible="1"/></masks></layer></layers></IMAGE></DOC>'),
+		'maindoc.xml': strToU8('<DOC><IMAGE name="Paint Test" colorspacename="RGBA" width="2" height="1"><layers><layer name="Pixels" nodetype="paintlayer" filename="layer2" x="3" y="-2" opacity="255" visible="1" compositeop="multiply"><masks><mask name="Mask" nodetype="transparencymask" filename="mask3" x="1" y="2" visible="1"/></masks></layer></layers></IMAGE></DOC>'),
 		'Paint Test/layers/layer2': kraPaintDevice(4, [0, 0, 255, 255, 0, 255, 0, 255]),
 		'Paint Test/layers/layer2.defaultpixel': Uint8Array.from([0, 0, 0, 0]),
 		'Paint Test/layers/mask3.pixelselection': kraPaintDevice(1, [255, 0]),
@@ -139,7 +144,10 @@ async function main() {
 	const paintedKra = decodeLayeredPreview('kra', asArrayBuffer(kraWithPaint));
 	assert.strictEqual(paintedKra.layerAssets.length, 1);
 	assert.strictEqual(paintedKra.layerAssets[0].blendMode, 'multiply');
+	assert.deepStrictEqual([paintedKra.document.root[0].left, paintedKra.document.root[0].top], [3, -2]);
+	assert.deepStrictEqual([paintedKra.layerAssets[0].x, paintedKra.layerAssets[0].y], [0, 0]);
 	assert.deepStrictEqual(Array.from(paintedKra.layerAssets[0].data.slice(0, 8)), [255, 0, 0, 255, 0, 255, 0, 255]);
+	assert.deepStrictEqual([paintedKra.layerAssets[0].rasterMask.x, paintedKra.layerAssets[0].rasterMask.y], [0, 0]);
 	assert.deepStrictEqual(Array.from(paintedKra.layerAssets[0].rasterMask.data.slice(0, 2)), [255, 0]);
 
 	const affinityBytes = new Uint8Array(8 + png.length);
@@ -154,6 +162,19 @@ async function main() {
 	const psd = decodeLayeredPreview('psd', asArrayBuffer(psdBytes));
 	assert.deepStrictEqual([psd.width, psd.height, psd.document.layerCount], [2, 1, 1]);
 	assert.strictEqual(psd.document.previewIsAuthoritative, true);
+	assert.strictEqual(psd.layerAssets.length, 1);
+	assert.deepStrictEqual(Array.from(psd.layerAssets[0].data), Array.from(imageData.data));
+	const adjustedPsdBytes = new Uint8Array(writePsd({
+		width: 2, height: 1, imageData,
+		children: [
+			{ name: 'Levels', adjustment: { type: 'levels', rgb: { shadowInput: 0, highlightInput: 200, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } } },
+			{ name: 'Pixels', left: 0, top: 0, imageData },
+		],
+	}));
+	const adjustedPsd = decodeLayeredPreview('psd', asArrayBuffer(adjustedPsdBytes));
+	const adjustmentAsset = adjustedPsd.layerAssets.find(asset => asset.kind === 'adjustment');
+	assert.strictEqual(adjustmentAsset.adjustment.type, 'levels');
+	assert.strictEqual(adjustmentAsset.support, 'approximate');
 	const psbBytes = new Uint8Array(writePsd({ width: 2, height: 1, imageData, children: [{ name: 'Pixels', left: 0, top: 0, imageData }] }, { psb: true }));
 	const psb = decodeLayeredPreview('psb', asArrayBuffer(psbBytes));
 	assert.deepStrictEqual([psb.width, psb.height, psb.document.layerCount], [2, 1, 1]);

@@ -20,12 +20,19 @@
  *    for `normal` (the layer below shows through) and propagates for arithmetic.
  */
 
+export type AdjustmentChannel = { shadowInput?: number; highlightInput?: number; shadowOutput?: number; highlightOutput?: number; midtoneInput?: number } | { input: number; output: number }[];
+export type LayerAdjustment =
+	| { type: 'levels'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
+	| { type: 'curves'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
+	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number> };
+
 export interface Layer {
 	id?: string;
 	name?: string;
 	uri?: string;
 	/** First-class compositor node type. Raster is the backwards-compatible default. */
-	kind?: 'raster' | 'group';
+	kind?: 'raster' | 'group' | 'adjustment';
+	adjustment?: LayerAdjustment;
 	/** Parent group id. Group children remain in the manager's ordered flat list. */
 	parentId?: string;
 	/** Source-document hierarchy metadata used by the Layers panel. */
@@ -412,7 +419,7 @@ function materializeGroupSurfaces(layers: Layer[], canvasWidth: number, canvasHe
 	const output: Layer[] = [];
 	for (const node of siblings) {
 		if (node.kind !== 'group') {
-			if (node.data) { output.push(node); }
+			if (node.data || (node.kind === 'adjustment' && node.adjustment)) { output.push(node); }
 			continue;
 		}
 		const id = node.id || '';
@@ -431,15 +438,81 @@ function materializeGroupSurfaces(layers: Layer[], canvasWidth: number, canvasHe
 			channels: surface.channels,
 			isFloat: surface.isFloat,
 			typeMax: surface.typeMax,
-			offsetX: 0,
-			offsetY: 0,
+			offsetX: node.offsetX ?? 0,
+			offsetY: node.offsetY ?? 0,
 		});
 	}
 	return output;
 }
 
+function adjustmentCurve(value: number, channel: AdjustmentChannel | undefined, typeMax: number): number {
+	if (!channel) { return value; }
+	if (Array.isArray(channel)) {
+		const points = channel.filter(point => Number.isFinite(point.input) && Number.isFinite(point.output)).sort((a, b) => a.input - b.input);
+		if (!points.length) { return value; }
+		const input = value * 255 / typeMax;
+		if (input <= points[0].input) { return points[0].output * typeMax / 255; }
+		for (let index = 1; index < points.length; index++) if (input <= points[index].input) {
+			const low = points[index - 1], high = points[index], span = high.input - low.input;
+			return (low.output + (span ? (input - low.input) / span : 0) * (high.output - low.output)) * typeMax / 255;
+		}
+		return points[points.length - 1].output * typeMax / 255;
+	}
+	const input = value * 255 / typeMax;
+	const low = channel.shadowInput ?? 0, high = channel.highlightInput ?? 255;
+	const gamma = Math.max(0.01, channel.midtoneInput ?? 1);
+	const normalized = Math.max(0, Math.min(1, (input - low) / Math.max(1e-6, high - low)));
+	const outputLow = channel.shadowOutput ?? 0, outputHigh = channel.highlightOutput ?? 255;
+	return (outputLow + Math.pow(normalized, 1 / gamma) * (outputHigh - outputLow)) * typeMax / 255;
+}
+
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+	const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+	let hue = 0; const lightness = (max + min) / 2;
+	if (delta) { hue = 60 * (max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4); }
+	const saturation = delta ? delta / (1 - Math.abs(2 * lightness - 1)) : 0;
+	return [(hue + 360) % 360, saturation, lightness];
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+	const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+	const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+	return [r + m, g + m, b + m];
+}
+
+function hueRangeWeight(hue: number, center: number): number {
+	const distance = Math.abs(((hue - center + 540) % 360) - 180);
+	return distance <= 30 ? 1 : distance >= 60 ? 0 : (60 - distance) / 30;
+}
+
+function applyAdjustmentPixel(data: Float32Array, index: number, channels: number, adjustment: LayerAdjustment, typeMax: number, amount: number): void {
+	const colorChannels = channels === 4 ? 3 : channels;
+	const original = Array.from({ length: colorChannels }, (_, channel) => data[index + channel]);
+	const adjusted = [...original];
+	if (adjustment.type === 'levels' || adjustment.type === 'curves') {
+		const names = ['red', 'green', 'blue'] as const;
+		for (let channel = 0; channel < colorChannels; channel++) {
+			adjusted[channel] = adjustmentCurve(adjustmentCurve(adjusted[channel], adjustment.rgb, typeMax), adjustment[names[Math.min(channel, 2)]], typeMax);
+		}
+	} else if (colorChannels >= 3) {
+		let [hue, saturation, lightness] = rgbToHsl(adjusted[0] / typeMax, adjusted[1] / typeMax, adjusted[2] / typeMax);
+		const apply = (settings: Record<string, number> | undefined, weight: number) => {
+			if (!settings || weight <= 0) { return; }
+			hue = (hue + (settings.hue || 0) * weight + 360) % 360;
+			saturation = Math.max(0, Math.min(1, saturation + (settings.saturation || 0) / 100 * weight));
+			lightness = Math.max(0, Math.min(1, lightness + (settings.lightness || 0) / 100 * weight));
+		};
+		apply(adjustment.master, 1);
+		const ranges: [keyof typeof adjustment, number][] = [['reds', 0], ['yellows', 60], ['greens', 120], ['cyans', 180], ['blues', 240], ['magentas', 300]];
+		for (const [name, center] of ranges) { apply(adjustment[name] as Record<string, number> | undefined, hueRangeWeight(hue, center)); }
+		const rgb = hslToRgb(hue, saturation, lightness);
+		for (let channel = 0; channel < 3; channel++) { adjusted[channel] = rgb[channel] * typeMax; }
+	}
+	for (let channel = 0; channel < colorChannels; channel++) { data[index + channel] = original[channel] + (adjusted[channel] - original[channel]) * amount; }
+}
+
 function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: number): CompositeResult {
-	const visibleLayers = layers.filter(l => l && l.visible !== false && (l.opacity ?? 1) > 0 && l.data);
+	const visibleLayers = layers.filter(l => l && l.visible !== false && (l.opacity ?? 1) > 0 && (l.data || (l.kind === 'adjustment' && l.adjustment)));
 	const outChannels = visibleLayers.length ? compositeChannels(visibleLayers) : 1;
 	const pixelCount = canvasWidth * canvasHeight;
 	const data = new Float32Array(pixelCount * outChannels);
@@ -467,6 +540,16 @@ function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: numbe
 		const clipSurface = layer.clipped ? clippingBase : null;
 
 		if (layer.clipped && !clipSurface) { continue; }
+		if (layer.kind === 'adjustment' && layer.adjustment) {
+			const max = visibleLayers.find(candidate => candidate.data)?.typeMax || 255;
+			for (let y = 0; y < canvasHeight; y++) for (let x = 0; x < canvasWidth; x++) {
+				const pixel = y * canvasWidth + x;
+				if (!covered[pixel]) { continue; }
+				const amount = opacity * rasterMaskFactor(layer, x, y) * (clipSurface ? clipSurface[pixel] : 1);
+				if (amount > 0) { applyAdjustmentPixel(data, pixel * outChannels, outChannels, layer.adjustment, max, amount); }
+			}
+			continue;
+		}
 		if (mode === 'normal' && !layer.rasterMask && !layer.clipped) {
 			coveredCount = compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth, xStart, yStart, xEnd, yEnd, offsetX, offsetY, opacity, coveredCount);
 		} else {

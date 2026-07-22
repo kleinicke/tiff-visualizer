@@ -181,10 +181,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// Canvas uploads are async for ordinary-sized images; this generation keeps
 	// an older visibility state from painting over a newer one.
 	let _layerCanvasRenderGeneration = 0;
+	type PreviewBackgroundRgb = { red: number; green: number; blue: number };
+	let _themeBackgroundRgb: PreviewBackgroundRgb = { red: 30, green: 30, blue: 30 };
+	// A manual adjustment keeps the tint of the theme in which it was made. The
+	// live theme is followed again after a double-click reset.
+	let _layerBackgroundTint: PreviewBackgroundRgb | null = null;
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: (options: { interactive?: boolean } = {}) => { scheduleRecomposite(options.interactive ? 180 : 0); scheduleSaveState(); },
-		onBackgroundChange: (brightness: number | null) => { applyLayerBackground(brightness); scheduleSaveState(); },
+		onBackgroundChange: (brightness: number | null) => { setLayerBackgroundBrightness(brightness); scheduleSaveState(); },
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 		onExportPng: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' }); },
@@ -315,6 +320,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (Number.isFinite(persistedState.layerBackgroundBrightness)) {
 			layersPanel.backgroundBrightness = Math.max(0, Math.min(100, Number(persistedState.layerBackgroundBrightness)));
 		}
+		const savedBackgroundTint = persistedState.layerBackgroundTint;
+		if (savedBackgroundTint && [savedBackgroundTint.red, savedBackgroundTint.green, savedBackgroundTint.blue].every(Number.isFinite)) {
+			_layerBackgroundTint = {
+				red: Math.max(0, Math.min(255, Number(savedBackgroundTint.red))),
+				green: Math.max(0, Math.min(255, Number(savedBackgroundTint.green))),
+				blue: Math.max(0, Math.min(255, Number(savedBackgroundTint.blue))),
+			};
+		}
 		// Note: Histogram visibility is now managed globally by the extension
 		// and restored via restoreHistogramState message when webview becomes active
 		const savedLayers = persistedState.layers;
@@ -380,6 +393,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				visible: l.visible,
 				maskCondition: l.maskCondition,
 				kind: l.kind,
+				adjustment: l.adjustment,
 				parentId: l.parentId,
 				clipped: l.clipped,
 				groupPath: l.groupPath,
@@ -393,6 +407,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			layerCollapsed: layersPanel.collapsed,
 			layerGroupCollapsed: [...layersPanel.collapsedGroups],
 			layerBackgroundBrightness: layersPanel.backgroundBrightness,
+			layerBackgroundTint: layersPanel.backgroundBrightness === null ? null : _layerBackgroundTint,
 			tiffPageIndex: tiffProcessor.pageIndex,
 			timestamp: Date.now()
 		};
@@ -410,15 +425,33 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const container = document.body;
 	const image = document.createElement('img');
 
+	function rgbToHsl({ red, green, blue }: PreviewBackgroundRgb): { hue: number; saturation: number; lightness: number } {
+		const r = red / 255, g = green / 255, b = blue / 255;
+		const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+		const lightness = (max + min) / 2;
+		if (delta === 0) { return { hue: 0, saturation: 0, lightness: lightness * 100 }; }
+		const saturation = delta / (1 - Math.abs(2 * lightness - 1));
+		let hue = max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+		hue = (hue * 60 + 360) % 360;
+		return { hue, saturation: saturation * 100, lightness: lightness * 100 };
+	}
+
 	function applyLayerBackground(brightness: number | null): void {
 		if (brightness === null) {
 			delete container.dataset.layerBackgroundOverride;
 			container.style.removeProperty('--layer-preview-background');
 			return;
 		}
-		const channel = Math.round(Math.max(0, Math.min(100, brightness)) * 2.55);
+		const tint = rgbToHsl(_layerBackgroundTint || _themeBackgroundRgb);
+		const lightness = Math.max(0, Math.min(100, brightness));
 		container.dataset.layerBackgroundOverride = 'true';
-		container.style.setProperty('--layer-preview-background', `rgb(${channel}, ${channel}, ${channel})`);
+		container.style.setProperty('--layer-preview-background', `hsl(${tint.hue}, ${tint.saturation}%, ${lightness}%)`);
+	}
+
+	function setLayerBackgroundBrightness(brightness: number | null): void {
+		if (brightness === null) { _layerBackgroundTint = null; }
+		else if (!_layerBackgroundTint) { _layerBackgroundTint = { ..._themeBackgroundRgb }; }
+		applyLayerBackground(brightness);
 	}
 
 	function syncThemeBackgroundBrightness(): void {
@@ -430,12 +463,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		probe.remove();
 		if (!match || match.length < 3) { return; }
 		const [red, green, blue] = match.slice(0, 3).map(Number);
-		// Perceived sRGB brightness gives the most useful position on a grayscale slider.
-		layersPanel.setThemeBackgroundBrightness((0.299 * red + 0.587 * green + 0.114 * blue) / 2.55);
+		_themeBackgroundRgb = { red, green, blue };
+		// HSL lightness makes the default thumb position exactly reproduce the
+		// theme colour while retaining its hue and saturation along the slider.
+		layersPanel.setThemeBackgroundBrightness(rgbToHsl(_themeBackgroundRgb).lightness);
 	}
 
-	applyLayerBackground(layersPanel.backgroundBrightness);
 	syncThemeBackgroundBrightness();
+	if (layersPanel.backgroundBrightness !== null && !_layerBackgroundTint) { _layerBackgroundTint = { ..._themeBackgroundRgb }; }
+	applyLayerBackground(layersPanel.backgroundBrightness);
 	const themeObserver = new MutationObserver(syncThemeBackgroundBrightness);
 	themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
 	themeObserver.observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
@@ -641,7 +677,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 		try {
 			const bitmap = await createImageBitmap(imageData);
-			if (shouldDraw()) { ctx.drawImage(bitmap, 0, 0); }
+			if (shouldDraw()) {
+				// A rendered frame is a replacement, not another translucent layer.
+				// source-over would leave pixels from the previous frame visible where
+				// the new layer composite is transparent after hiding a layer.
+				ctx.save();
+				ctx.globalCompositeOperation = 'copy';
+				ctx.drawImage(bitmap, 0, 0);
+				ctx.restore();
+			}
 			bitmap.close(); // Release memory
 			console.log(`[Canvas] ImageBitmap upload took ${(performance.now() - start).toFixed(2)}ms`);
 		} catch (e) {
@@ -1511,6 +1555,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			isFloat: false, typeMax: 255,
 			name: asset.name,
 			kind: asset.kind || 'raster',
+			adjustment: asset.adjustment,
 			parentId: asset.parentId,
 			clipped: asset.clipped,
 			rasterMask: asset.rasterMask ? {
@@ -1527,6 +1572,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			offsetX: asset.x, offsetY: asset.y, opacity: asset.opacity,
 			visible: asset.visible,
 			blendMode: supportedModes.has(asset.blendMode) ? asset.blendMode : 'normal',
+			adjustment: asset.adjustment,
 		}));
 		if (!layers.length) { return false; }
 		layerManager.setLayers(layers, raw.document.width, raw.document.height);

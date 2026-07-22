@@ -1,5 +1,7 @@
 /** Shared, format-neutral description of a layered creative document. */
 
+import type { LayerAdjustment } from './layer-compositor.js';
+
 export type LayerSupportState = 'native' | 'cached-raster' | 'approximate' | 'inspect-only' | 'unsupported';
 
 export type LayeredDocumentFormat = 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
@@ -49,7 +51,8 @@ export interface LayeredRasterAsset {
 	nodeId: string;
 	name: string;
 	sourcePath: string;
-	kind?: 'raster' | 'group';
+	kind?: 'raster' | 'group' | 'adjustment';
+	adjustment?: LayerAdjustment;
 	parentId?: string;
 	data?: Uint8Array;
 	width: number;

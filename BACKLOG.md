@@ -210,6 +210,67 @@ each format:
 tractable). Treat CZI/ND2/LIF as demand-driven — only if microscopy users
 specifically ask, since each is a large reverse-engineering effort for one vendor.
 
+### Dedicated format and codec priorities
+
+Prefer focused decoders that preserve source sample depth and metadata over a
+general conversion engine. From the current feature set, the next useful
+additions are:
+
+1. **DICOM RLE Lossless.** Implement directly in the decode worker; it is a
+   comparatively small codec and needs no heavyweight dependency.
+2. **JPEG-LS (`.jls`) and DICOM JPEG-LS transfer syntaxes.** Use a focused
+   CharLS/WASM decoder (BSD-3-Clause) and share the decoded-pixel path between
+   standalone images and encapsulated DICOM frames.
+3. **JPEG 2000 / HTJ2K (`.jp2`, `.j2k`, `.j2c`) and their DICOM transfer
+   syntaxes.** Prefer OpenJPEG/OpenJPH-style WASM decoders with permissive
+   licensing. Preserve signedness, component count, and 12/16-bit samples
+   instead of converting through 8-bit RGBA.
+4. **NIfTI (`.nii`, `.nii.gz`, and paired `.hdr`/`.img`).** Add a focused
+   parser and reuse dataset axes for 3D/4D volume and time navigation. Honor
+   voxel spacing, scaling, qform/sform orientation, and integer/float data
+   types.
+5. **NRRD (`.nrrd`, `.nhdr`) and MetaImage (`.mha`, `.mhd`).** These are
+   tractable header + raw/gzip array formats that fit the existing scientific
+   array processor and dataset navigation well.
+6. **MRC/CCP4 (`.mrc`, `.map`).** Add scalar-volume support for cryo-EM and
+   electron-microscopy density data, including axis order, voxel size, and
+   slice navigation.
+7. **OME-Zarr**, following the local-first, chunked-loading plan in item 3.
+   This has more strategic value than accumulating legacy single-image raster
+   formats, but requires the lazy/viewport loading architecture described
+   above.
+
+Lower-priority, demand-driven additions:
+
+- **GIF/APNG:** only if frames are exposed through the shared page/frame
+  navigator; first-frame-only decoding is not sufficient justification.
+- **DDS/KTX2:** useful for graphics workflows when mip levels, array layers,
+  cube faces, and compressed texture formats can be inspected rather than
+  flattened into one preview.
+- **QOI:** very small and easy to decode, but currently too niche to outrank
+  the scientific and medical formats above.
+
+### HEIC/HEIF: platform-only experiment
+
+Do not bundle libheif or an HEVC decoder unless its LGPL redistribution and
+HEVC patent-licensing implications have been reviewed explicitly. A safer
+experiment is an **opportunistic platform decode** using `Image`,
+`createImageBitmap`, or `ImageDecoder` when the host supports `image/heic` or
+`image/heif`.
+
+This is not portable support: desktop VS Code webviews use Electron/Chromium,
+which does not currently provide HEIC image decoding and does not automatically
+inherit macOS ImageIO or optional Windows codecs. VS Code for the Web may work
+when hosted in a browser with HEIC support (notably Safari). Detect support by
+attempting to decode the actual file, show a precise unsupported-host message
+on failure, and never advertise HEIC as universally supported. Keep HEIC/HEIF
+separate from AVIF: they share the HEIF container family but normally use HEVC
+and AV1 payloads respectively.
+
+**Format expansion sequence from the current state:** DICOM RLE → JPEG-LS →
+JPEG 2000/HTJ2K → NIfTI → NRRD/MetaImage → MRC/CCP4 → OME-Zarr. HEIC remains
+an optional platform capability rather than a bundled decoder.
+
 ---
 
 ## 5. Layered creative-document formats and professional Layer View
@@ -363,10 +424,11 @@ the existing raw-value behavior.
 - Show cached raster data for text, vector, shape, and smart-object layers
   whenever the file provides it. Keep their semantic data in the inspector
   even before native rendering exists.
-- Add reusable non-destructive adjustment nodes, starting with operations that
-  overlap existing visualization controls: exposure/brightness, gamma, levels,
-  curves, invert, threshold, and channel mixing. Then add hue/saturation,
-  color balance, gradient maps, LUTs, and common blur/sharpen filters.
+- Reusable non-destructive adjustment nodes now import PSD levels, curves, and
+  hue/saturation (including feathered selective hue ranges) into the CPU
+  compositor. They remain approximate until Photoshop color-space behavior is
+  validated. Add exposure/brightness, gamma, invert, threshold, channel mixing,
+  color balance, gradient maps, LUTs, and common blur/sharpen filters next.
 - Model adjustment scope correctly: the layer stack below, a clipped target,
   or a group. An adjustment layer without an input image is inspect-only, not
   a standalone raster layer.
