@@ -47,6 +47,16 @@ async function main() {
 	assert.deepStrictEqual(art.items[1].items.map(item => item.layer.id), ['nested-high', 'nested-low']);
 
 	assert.notStrictEqual(otherArt.key, art.key, 'same-named groups with distinct source ids remain separate');
+
+	const firstClass = buildLayerDisplayTree([
+		layer('background', 'Background'),
+		{ ...layer('group', 'Editable group'), kind: 'group', data: undefined, opacity: 0.5 },
+		{ ...layer('child-low', 'Child low'), parentId: 'group' },
+		{ ...layer('child-high', 'Child high'), parentId: 'group' },
+	]);
+	assert.deepStrictEqual(firstClass.map(item => item.kind === 'group' ? item.key : item.layer.id), ['group', 'background']);
+	assert.strictEqual(firstClass[0].group.opacity, 0.5);
+	assert.deepStrictEqual(firstClass[0].items.map(item => item.layer.id), ['child-high', 'child-low']);
 	console.log('Layers panel hierarchy passed: ordering, nesting, descendants, and stable source group ids.');
 }
 

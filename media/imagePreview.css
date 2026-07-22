@@ -1275,6 +1275,29 @@ body img {
 	color: var(--vscode-badge-foreground, #fff);
 }
 
+.layer-group-controls {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.layer-clipping {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	white-space: nowrap;
+	font-size: 10px;
+}
+
+.layer-mask-badge {
+	padding: 1px 5px;
+	border-radius: 8px;
+	font-size: 9px;
+	background: var(--vscode-badge-background, #4d4d4d);
+	color: var(--vscode-badge-foreground, #fff);
+}
+
 .layer-base-tag {
 	grid-column: 2;
 	justify-self: start;

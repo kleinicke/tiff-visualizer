@@ -294,13 +294,13 @@ Add an explicit document-view selector:
 - **Solo Layer / Solo Group** — display a layer's raw or cached pixels without
   requiring the complete document to be composable.
 
-The layer tree now supports nested groups, persistent expand/collapse, layer and
-group visibility, Shift-solo, source support-state badges, inline renaming, and
-live opacity feedback for imported ORA nodes. Remaining tree work is thumbnails,
-lock indicators, clipping/mask relationships, search/filter, selection, and a
-node-details view. Selecting an unsupported node should show its parsed metadata
-and why it cannot currently be rendered; unsupported nodes must never be
-silently dropped.
+The layer tree now supports first-class nested group surfaces, persistent
+expand/collapse, layer and group visibility/opacity/blend controls, Shift-solo,
+source support-state badges, inline renaming, raster-mask badges, and editable
+clipping relationships. Remaining tree work is thumbnails, lock indicators,
+independent mask inspection/editing, search/filter, selection, and a node-details
+view. Selecting an unsupported node should show its parsed metadata and why it
+cannot currently be rendered; unsupported nodes must never be silently dropped.
 
 Keep the source document read-only. Visibility, order, transforms, blend
 settings, and temporary edits are session overlays until a deliberate export
@@ -344,12 +344,12 @@ the existing raw-value behavior.
 
 #### Hierarchy, clipping, and transforms
 
-- Make groups first-class compositing surfaces rather than a flat UI-only
-  list. Support isolated groups and pass-through groups with group opacity and
-  blend mode.
-- Implement clipping chains and knockout/isolation semantics incrementally.
-  Initially mark unsupported combinations rather than flattening them
-  invisibly.
+- Isolated groups are now first-class compositing surfaces with group visibility,
+  opacity, blend mode, and attached raster masks. Add pass-through groups,
+  knockout semantics, and cached dirty-region updates next.
+- Basic clipping chains now use the nearest unclipped sibling's alpha. Extend
+  this with format-specific clipping scopes and knockout/isolation combinations;
+  unsupported combinations must remain explicitly marked.
 - Extend layer placement beyond integer `offsetX/offsetY`: affine transforms,
   subpixel translation, resampling choice, crop/bounds, and canvas clipping.
   Perspective/warp transforms can be a later capability shared with smart
@@ -444,16 +444,18 @@ Reference: <https://docs.krita.org/en/general_concepts/file_formats/file_kra.htm
 A normal KRA is ZIP-based and contains `mergedimage.png`, the rendered canvas.
 
 **Implementation status:** the worker safely opens the ZIP container, uses the
-full-size `mergedimage.png` with a `preview.png` fallback, reads document size
-and layer count from `maindoc.xml`, and labels reduced previews. Native paint
-layers, masks, groups, cached projections, Krita blend modes, vector/generator
-nodes, and animation remain to be implemented.
+full-size `mergedimage.png` with a `preview.png` fallback, parses the hierarchy
+from `maindoc.xml`, and imports ordinary 8-bit RGBA paint layers from Krita's
+native raw/LZF sparse-tile streams. Isolated groups, visibility, opacity, common
+blend modes, transparency masks, and alpha-inheritance metadata feed the editable
+compositor. Pass-through groups, non-8-bit/color-managed paint devices, cached
+projections, advanced masks, vector/generator/filter nodes, and animation remain.
 
 - Phase 1: safely extract `mergedimage.png`, preview/thumbnail, document info,
   and basic metadata; route the preview through the existing PNG pipeline.
-- Phase 2: parse the document/layer XML and import ordinary paint layers,
-  bounds, groups, visibility, opacity, masks, and cached projections lazily.
-- Phase 3: support selected Krita blend modes, filter/adjustment masks,
+- Phase 2: continue the implemented document/layer XML and ordinary paint-layer
+  import with lazy tile loading, more color spaces/bit depths, and cached projections.
+- Phase 3: extend the implemented common Krita blend modes with filter/adjustment masks,
   generator layers, vector layers, and animation frames as demand warrants.
 - Treat `.krz` separately: it intentionally omits `mergedimage.png`, so do not
   register it until reconstruction support can produce a useful result.

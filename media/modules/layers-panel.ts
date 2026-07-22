@@ -28,11 +28,31 @@ export type GroupDisplayItem = {
 	path: string[];
 	items: DisplayItem[];
 	layers: Layer[];
+	group?: Layer;
 };
 export type DisplayItem = LayerDisplayItem | GroupDisplayItem;
 
 /** Build the visual hierarchy while keeping the manager's compositing stack flat. */
 export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
+	if (layers.some(layer => layer.kind === 'group')) {
+		const build = (parentId?: string, path: string[] = []): DisplayItem[] => layers
+			.map((layer, index) => ({ layer, index }))
+			.filter(item => (item.layer.parentId || undefined) === parentId)
+			.reverse()
+			.map(({ layer, index }) => {
+				if (layer.kind !== 'group') { return { kind: 'layer', layer, index } as LayerDisplayItem; }
+				const groupPath = [...path, layer.name || 'Group'];
+				const items = build(layer.id, groupPath);
+				const descendants: Layer[] = [];
+				const collect = (children: DisplayItem[]) => children.forEach(child => {
+					if (child.kind === 'layer') { descendants.push(child.layer); }
+					else { if (child.group) { descendants.push(child.group); } collect(child.items); }
+				});
+				collect(items);
+				return { kind: 'group', key: layer.id as string, name: layer.name || 'Group', path: groupPath, items, layers: descendants, group: layer } as GroupDisplayItem;
+			});
+		return build();
+	}
 	const rootItems: DisplayItem[] = [];
 	const groups = new Map<string, GroupDisplayItem>();
 	for (let i = layers.length - 1; i >= 0; i--) {
@@ -221,7 +241,7 @@ export class LayersPanel {
 			const n = this.manager.layers.length;
 			this.titleEl.textContent = this.collapsed ? `Layers (${n})` : `Layers · ${n}`;
 		}
-		if (this.groupsBtn) { this.groupsBtn.disabled = !this.manager.layers.some(layer => layer.groupPath?.length); }
+		if (this.groupsBtn) { this.groupsBtn.disabled = !this.manager.layers.some(layer => layer.kind === 'group' || layer.groupPath?.length); }
 	}
 
 	/** Rebuild the layer rows from the manager state (top layer shown first). */
@@ -262,23 +282,24 @@ export class LayersPanel {
 		});
 		row.appendChild(toggle);
 
-		const visibleCount = group.layers.filter(layer => layer.visible !== false).length;
+		const targetLayers = group.group ? [group.group] : group.layers;
+		const visibleCount = targetLayers.filter(layer => layer.visible !== false).length;
 		const visibility = document.createElement('input');
 		visibility.type = 'checkbox';
 		visibility.className = 'layer-visible layer-group-visible';
-		visibility.checked = visibleCount === group.layers.length;
-		visibility.indeterminate = visibleCount > 0 && visibleCount < group.layers.length;
+		visibility.checked = visibleCount === targetLayers.length;
+		visibility.indeterminate = visibleCount > 0 && visibleCount < targetLayers.length;
 		visibility.title = 'Toggle all layers in this group (Shift-click to solo; Shift-click again to show all)';
 		visibility.addEventListener('click', event => {
 			if (!event.shiftKey) { return; }
 			event.preventDefault(); event.stopPropagation();
-			const ids = new Set(group.layers.map(layer => layer.id as string));
+			const ids = new Set([...(group.group ? [group.group] : []), ...group.layers].map(layer => layer.id as string));
 			this.manager.toggleSoloLayers(ids);
 			this.refresh(); this.onChange();
 		});
 		visibility.addEventListener('change', () => {
-			const next = visibleCount !== group.layers.length;
-			for (const layer of group.layers) { layer.visible = next; }
+			const next = visibleCount !== targetLayers.length;
+			for (const layer of targetLayers) { layer.visible = next; }
 			this.refresh(); this.onChange();
 		});
 		row.appendChild(visibility);
@@ -291,8 +312,25 @@ export class LayersPanel {
 
 		const count = document.createElement('span');
 		count.className = 'layer-group-count';
-		count.textContent = String(group.layers.length);
+		count.textContent = String(group.layers.filter(layer => layer.kind !== 'group').length);
 		row.appendChild(count);
+		if (group.group) {
+			const controls = document.createElement('div'); controls.className = 'layer-group-controls';
+			const blend = document.createElement('select');
+			blend.className = 'layer-blend layer-group-blend'; blend.title = 'Group blend mode';
+			for (const mode of BLEND_MODES.filter(mode => !mode.mask)) {
+				const option = document.createElement('option'); option.value = mode.id; option.textContent = mode.label;
+				option.selected = (group.group.blendMode || 'normal') === mode.id; blend.appendChild(option);
+			}
+			blend.addEventListener('change', () => { this.manager.updateLayer(group.key, { blendMode: blend.value }); this.onChange(); });
+			controls.appendChild(blend);
+			const opacity = document.createElement('input'); opacity.type = 'range'; opacity.className = 'layer-opacity layer-group-opacity';
+			opacity.min = '0'; opacity.max = '100'; opacity.dataset.defaultValue = '100'; opacity.value = String(Math.round((group.group.opacity ?? 1) * 100));
+			opacity.title = 'Group opacity · Double-click to reset to 100%';
+			opacity.addEventListener('input', () => { this.manager.updateLayer(group.key, { opacity: Number(opacity.value) / 100 }); this.onChange({ interactive: true }); });
+			opacity.addEventListener('change', () => opacity.blur()); controls.appendChild(opacity);
+			row.appendChild(controls);
+		}
 		return row;
 	}
 
@@ -443,6 +481,17 @@ export class LayersPanel {
 		opacity.addEventListener('pointerup', () => opacity.blur());
 		controls.appendChild(opacity);
 		controls.appendChild(opacityValue);
+		const clippingLabel = document.createElement('label');
+		clippingLabel.className = 'layer-clipping';
+		const clipping = document.createElement('input'); clipping.type = 'checkbox'; clipping.checked = !!layer.clipped;
+		clipping.title = 'Clip this layer to the alpha of the nearest unclipped layer below';
+		clipping.addEventListener('change', () => { this.manager.updateLayer(id, { clipped: clipping.checked }); this.onChange(); });
+		clippingLabel.appendChild(clipping); clippingLabel.append(' Clip'); controls.appendChild(clippingLabel);
+		if (layer.rasterMask) {
+			const maskBadge = document.createElement('span'); maskBadge.className = 'layer-mask-badge';
+			maskBadge.textContent = 'mask'; maskBadge.title = `${layer.rasterMask.width}×${layer.rasterMask.height} raster mask`;
+			controls.appendChild(maskBadge);
+		}
 		row.appendChild(controls);
 
 		// Mask condition row (only when this layer is a mask).

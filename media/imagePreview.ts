@@ -23,7 +23,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 import { PerfTrace } from './modules/perf-trace.js';
-import { LayerManager } from './modules/layer-manager.js';
+import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
@@ -372,6 +372,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				blendMode: l.blendMode,
 				visible: l.visible,
 				maskCondition: l.maskCondition,
+				kind: l.kind,
+				parentId: l.parentId,
+				clipped: l.clipped,
 				groupPath: l.groupPath,
 				groupIds: l.groupIds,
 				sourceNodeId: l.sourceNodeId,
@@ -1464,10 +1467,19 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const uri = settingsManager.settings.resourceUri || '';
 		if (!raw?.layerAssets?.length) { return false; }
 		if (_expandedLayerDocumentUri === uri && layerManager.layers.length === raw.layerAssets.length) { return true; }
+		const supportedModes = new Set(BLEND_MODES.map(mode => mode.id));
 		const layers = [...raw.layerAssets].reverse().map(asset => layerManager.createLayer({
 			data: asset.data, width: asset.width, height: asset.height, channels: 4,
 			isFloat: false, typeMax: 255,
 			name: asset.name,
+			kind: asset.kind || 'raster',
+			parentId: asset.parentId,
+			clipped: asset.clipped,
+			rasterMask: asset.rasterMask ? {
+				data: asset.rasterMask.data, width: asset.rasterMask.width, height: asset.rasterMask.height,
+				channels: asset.rasterMask.channels, typeMax: asset.rasterMask.typeMax,
+				offsetX: asset.rasterMask.x, offsetY: asset.rasterMask.y,
+			} : undefined,
 			groupPath: asset.groupPath,
 			groupIds: asset.groupIds,
 			sourceNodeId: asset.nodeId,
@@ -1476,9 +1488,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}, {
 			offsetX: asset.x, offsetY: asset.y, opacity: asset.opacity,
 			visible: asset.visible,
-			// Unsupported source compositing operators remain editable but are
-			// deliberately approximated as normal in the current document import.
-			blendMode: 'normal',
+			blendMode: supportedModes.has(asset.blendMode) ? asset.blendMode : 'normal',
 		}));
 		if (!layers.length) { return false; }
 		layerManager.setLayers(layers, raw.document.width, raw.document.height);
@@ -3921,7 +3931,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const label = layeredPreviewOverlay.querySelector<HTMLElement>('.layered-preview-label');
 		if (label) { label.textContent = `${formatNames[raw.formatType]} · ${kindNames[raw.document.previewKind] || raw.document.previewKind} preview`; }
 		const layersButton = layeredPreviewOverlay.querySelector<HTMLButtonElement>('button[data-layer-action]');
-		if (layersButton) { layersButton.hidden = !raw.layerAssets?.length; }
+		const editableRasterCount = raw.layerAssets?.filter(asset => asset.kind !== 'group' && !!asset.data).length || 0;
+		if (layersButton) { layersButton.hidden = editableRasterCount === 0; }
 		const fidelity = layeredPreviewOverlay.querySelector<HTMLElement>('.layered-preview-fidelity');
 		const difference = raw.document.reconstruction?.differentPixelRatio;
 		if (fidelity) {
@@ -3931,8 +3942,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			} else if (raw.document.previewKind === 'embedded') {
 				fidelity.textContent = 'non-authoritative · layers unavailable';
 				fidelity.title = 'This embedded preview may not match the full document';
-			} else if (raw.layerAssets?.length) {
-				fidelity.textContent = `${raw.layerAssets.length} raster layer${raw.layerAssets.length === 1 ? '' : 's'}`;
+			} else if (editableRasterCount) {
+				fidelity.textContent = `${editableRasterCount} raster layer${editableRasterCount === 1 ? '' : 's'}`;
 				fidelity.title = 'Compatible raster layers can be opened in the Layers View';
 			} else {
 				fidelity.textContent = `${raw.document.layerCount} node${raw.document.layerCount === 1 ? '' : 's'} · preview only`;

@@ -14,7 +14,7 @@ function approx(a, b, eps = 1e-6) {
 
 async function main() {
 	const mod = await import(path.join('..', 'out', 'media', 'modules', 'layer-compositor.js').replace(/\\/g, '/'));
-	const { composite, blendValue, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
+	const { composite, blendValue, blendDocumentValue, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
 
 	console.log('🧪 Running Layer Compositor tests...\n');
 
@@ -189,6 +189,50 @@ async function main() {
 		assert.deepStrictEqual(Array.from(restored.data), Array.from(visible.data));
 		assert.deepStrictEqual(Array.from(top.data), Array.from(topPixels));
 		console.log('✅ RGBA layer visibility toggles restore the original pixels');
+	}
+
+	// 16. Groups composite on an isolated surface before group opacity is applied.
+	{
+		const bg = layer({ id: 'bg', data: new Uint8Array([0, 0, 0, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const group = layer({ id: 'group', kind: 'group', data: undefined, width: 1, height: 1, channels: 4, typeMax: 255, opacity: 0.5 });
+		const red = layer({ id: 'red', parentId: 'group', data: new Uint8Array([255, 0, 0, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const green = layer({ id: 'green', parentId: 'group', data: new Uint8Array([0, 255, 0, 128]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const r = composite([bg, group, red, green], 1, 1);
+		assert.ok(approx(r.data[0], 63.5, 1), `isolated group red: ${r.data[0]}`);
+		assert.ok(approx(r.data[1], 64, 1), `isolated group green: ${r.data[1]}`);
+		console.log('✅ First-class groups use isolated compositor surfaces');
+	}
+
+	// 17. Common document blend functions use the source value range.
+	{
+		assert.ok(approx(blendDocumentValue(128, 64, 'multiply', 255), 32.125, 1e-3));
+		assert.ok(approx(blendDocumentValue(128, 64, 'screen', 255), 159.875, 1e-3));
+		assert.strictEqual(blendDocumentValue(128, 64, 'darken', 255), 64);
+		assert.strictEqual(blendDocumentValue(128, 64, 'lighten', 255), 128);
+		assert.strictEqual(blendDocumentValue(128, 64, 'difference', 255), 64);
+		assert.ok(approx(blendDocumentValue(128, 64, 'exclusion', 255), 127.749, 1e-3));
+		assert.ok(BLEND_MODES.some(mode => mode.id === 'overlay'));
+		console.log('✅ Common document blend modes');
+	}
+
+	// 18. Attached raster masks modulate layer alpha without becoming color layers.
+	{
+		const bg = layer({ data: new Uint8Array([0, 0, 0, 255, 0, 0, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255 });
+		const top = layer({ data: new Uint8Array([255, 0, 0, 255, 255, 0, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255,
+			rasterMask: { data: new Uint8Array([255, 0]), width: 2, height: 1, channels: 1, typeMax: 255, offsetX: 0, offsetY: 0 } });
+		const r = composite([bg, top], 2, 1);
+		assert.deepStrictEqual(Array.from(r.data), [255, 0, 0, 255, 0, 0, 0, 255]);
+		console.log('✅ Attached raster masks modulate alpha');
+	}
+
+	// 19. Clipped layers use the nearest unclipped sibling's alpha.
+	{
+		const bg = layer({ data: new Uint8Array([0, 0, 0, 255, 0, 0, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255 });
+		const base = layer({ data: new Uint8Array([255, 0, 0, 255, 255, 0, 0, 0]), width: 2, height: 1, channels: 4, typeMax: 255 });
+		const clipped = layer({ data: new Uint8Array([0, 0, 255, 255, 0, 0, 255, 255]), width: 2, height: 1, channels: 4, typeMax: 255, clipped: true });
+		const r = composite([bg, base, clipped], 2, 1);
+		assert.deepStrictEqual(Array.from(r.data), [0, 0, 255, 255, 0, 0, 0, 255]);
+		console.log('✅ Clipping relationships follow base alpha');
 	}
 
 	console.log('\n🎉 All layer compositor tests passed.\n');

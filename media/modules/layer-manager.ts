@@ -15,7 +15,7 @@ import { PerfTrace } from './perf-trace.js';
 import type { ImageSettings } from './settings-manager.js';
 
 export interface LayerInput {
-	data: ArrayLike<number>;
+	data?: ArrayLike<number>;
 	width: number;
 	height: number;
 	channels: number;
@@ -28,6 +28,10 @@ export interface LayerInput {
 	sourceNodeId?: string;
 	sourceSupport?: Layer['sourceSupport'];
 	sourceBlendMode?: string;
+	kind?: Layer['kind'];
+	parentId?: string;
+	clipped?: boolean;
+	rasterMask?: Layer['rasterMask'];
 }
 
 let _nextLayerId = 1;
@@ -92,7 +96,17 @@ export class LayerManager {
 	removeLayer(id: string): void {
 		const idx = this.layers.findIndex(l => l.id === id);
 		// Keep at least one layer (it defines the canvas).
-		if (idx >= 0 && this.layers.length > 1) { this.layers.splice(idx, 1); }
+		if (idx >= 0 && this.layers.length > 1) {
+			const descendants = new Set([id]);
+			let changed = true;
+			while (changed) {
+				changed = false;
+				for (const layer of this.layers) if (layer.parentId && descendants.has(layer.parentId) && !descendants.has(layer.id as string)) {
+					descendants.add(layer.id as string); changed = true;
+				}
+			}
+			this.layers = this.layers.filter(layer => !descendants.has(layer.id as string));
+		}
 	}
 
 	/**
@@ -204,6 +218,10 @@ export class LayerManager {
 		l.sourceNodeId = settings.sourceNodeId ?? input.sourceNodeId;
 		l.sourceSupport = settings.sourceSupport ?? input.sourceSupport;
 		l.sourceBlendMode = settings.sourceBlendMode ?? input.sourceBlendMode;
+		l.kind = settings.kind ?? input.kind ?? 'raster';
+		l.parentId = settings.parentId ?? input.parentId;
+		l.clipped = settings.clipped ?? input.clipped;
+		l.rasterMask = settings.rasterMask ?? input.rasterMask;
 		return l;
 	}
 
@@ -240,6 +258,10 @@ export class LayerManager {
 			sourceNodeId: layer.sourceNodeId,
 			sourceSupport: layer.sourceSupport,
 			sourceBlendMode: layer.sourceBlendMode,
+			kind: layer.kind ?? 'raster',
+			parentId: layer.parentId,
+			clipped: layer.clipped,
+			rasterMask: layer.rasterMask,
 		};
 	}
 }

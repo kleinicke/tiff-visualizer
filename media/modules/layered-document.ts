@@ -49,7 +49,9 @@ export interface LayeredRasterAsset {
 	nodeId: string;
 	name: string;
 	sourcePath: string;
-	data: Uint8Array;
+	kind?: 'raster' | 'group';
+	parentId?: string;
+	data?: Uint8Array;
 	width: number;
 	height: number;
 	x: number;
@@ -60,6 +62,16 @@ export interface LayeredRasterAsset {
 	groupPath: string[];
 	groupIds: string[];
 	support: LayerSupportState;
+	clipped?: boolean;
+	rasterMask?: {
+		data: Uint8Array;
+		width: number;
+		height: number;
+		channels: number;
+		typeMax: number;
+		x: number;
+		y: number;
+	};
 }
 
 export interface DecodedLayeredPreview {

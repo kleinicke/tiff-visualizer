@@ -119,10 +119,34 @@ function oraNumber(value: string | undefined, fallback: number): number {
 function oraVisible(value: string | undefined): boolean { return value !== 'hidden'; }
 
 function oraBlendMode(value: string | undefined): string {
-	return !value || value === 'svg:src-over' ? 'normal' : value;
+	if (!value || value === 'svg:src-over' || value === 'normal') { return 'normal'; }
+	const normalized = value.replace(/^svg:/, '').replace(/^krita:/, '');
+	const aliases: Record<string, string> = {
+		'multiply': 'multiply', 'screen': 'screen', 'overlay': 'overlay',
+		'darken': 'darken', 'darken-only': 'darken', 'lighten': 'lighten', 'lighten-only': 'lighten',
+		'difference': 'difference', 'exclusion': 'exclusion',
+	};
+	return aliases[normalized] || value;
 }
 
-function compositeRgbaOver(destination: Uint8Array, source: Uint8Array, opacity: number): void {
+function editableBlendMode(value: string | undefined): string {
+	return oraBlendMode(value);
+}
+
+function documentBlend8(below: number, source: number, mode: string): number {
+	switch (mode) {
+		case 'multiply': return below * source / 255;
+		case 'screen': return 255 - (255 - below) * (255 - source) / 255;
+		case 'overlay': return below <= 127.5 ? 2 * below * source / 255 : 255 - 2 * (255 - below) * (255 - source) / 255;
+		case 'darken': return Math.min(below, source);
+		case 'lighten': return Math.max(below, source);
+		case 'difference': return Math.abs(below - source);
+		case 'exclusion': return below + source - 2 * below * source / 255;
+		default: return source;
+	}
+}
+
+function compositeRgbaOver(destination: Uint8Array, source: Uint8Array, opacity: number, mode = 'normal'): void {
 	const pixelCount = Math.min(destination.length, source.length) / 4;
 	for (let pixel = 0; pixel < pixelCount; pixel++) {
 		const i = pixel * 4;
@@ -131,8 +155,9 @@ function compositeRgbaOver(destination: Uint8Array, source: Uint8Array, opacity:
 		const da = destination[i + 3] / 255;
 		const oa = sa + da * (1 - sa);
 		for (let channel = 0; channel < 3; channel++) {
+			const s = source[i + channel], d = destination[i + channel], blended = documentBlend8(d, s, mode);
 			destination[i + channel] = oa > 0
-				? Math.round((source[i + channel] * sa + destination[i + channel] * da * (1 - sa)) / oa)
+				? Math.round(((1 - sa) * da * d + (1 - da) * sa * s + da * sa * blended) / oa)
 				: 0;
 		}
 		destination[i + 3] = Math.round(oa * 255);
@@ -182,20 +207,21 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 	const warnings: string[] = [];
 	if (!xml.trim()) { warnings.push('OpenRaster stack.xml is missing; only the integrated preview is available'); }
 	let nodeSequence = 0;
-	const buildNodes = (nodes: OraXmlNode[], groupPath: string[] = [], groupIds: string[] = [], inheritedX = 0, inheritedY = 0, inheritedOpacity = 1, inheritedVisible = true): LayerNodeSummary[] => nodes.map(node => {
+	const supportedBlendModes = new Set(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion']);
+	const buildNodes = (nodes: OraXmlNode[], groupPath: string[] = [], groupIds: string[] = [], parentId: string | undefined = undefined, inheritedX = 0, inheritedY = 0): LayerNodeSummary[] => nodes.map(node => {
 		const id = `ora-node-${nodeSequence++}`;
 		const name = node.attrs.name || (node.tag === 'stack' ? 'Group' : `Layer ${nodeSequence}`);
 		const x = inheritedX + Math.trunc(oraNumber(node.attrs.x, 0));
 		const y = inheritedY + Math.trunc(oraNumber(node.attrs.y, 0));
 		const opacity = Math.max(0, Math.min(1, oraNumber(node.attrs.opacity, 1)));
-		const visible = inheritedVisible && oraVisible(node.attrs.visibility);
+		const visible = oraVisible(node.attrs.visibility);
 		const blendMode = oraBlendMode(node.attrs['composite-op']);
-		const support = blendMode === 'normal' ? 'native' : 'approximate';
-		if (blendMode !== 'normal') { warnings.push(`“${name}” uses ${blendMode}; reconstruction currently approximates it as normal`); }
+		const support = supportedBlendModes.has(blendMode) ? 'native' : 'approximate';
+		if (!supportedBlendModes.has(blendMode)) { warnings.push(`“${name}” uses ${blendMode}; reconstruction currently approximates it as normal`); }
 		const summary: LayerNodeSummary = { id, name, kind: node.tag === 'stack' ? 'group' : 'raster', support, visible, opacity, blendMode, left: x, top: y };
 		if (node.tag === 'stack') {
-			if (opacity !== 1) { warnings.push(`Group “${name}” opacity is reconstructed on an isolated surface; the editable Layers View currently flattens it into child layers`); }
-			summary.children = buildNodes(node.children, [...groupPath, name], [...groupIds, id], x, y, inheritedOpacity * opacity, visible);
+			assets.push({ nodeId: id, name, sourcePath: '', kind: 'group', parentId, width: declaredWidth, height: declaredHeight, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support });
+			summary.children = buildNodes(node.children, [...groupPath, name], [...groupIds, id], id, x, y);
 			return summary;
 		}
 		const path = (node.attrs.src || '').replace(/\\/g, '/').replace(/^\.\//, '');
@@ -208,7 +234,7 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		try {
 			const png = decodePngRgba(bytes);
 			summary.width = png.width; summary.height = png.height;
-			assets.push({ nodeId: id, name, sourcePath: path, data: png.data, width: png.width, height: png.height, x, y, opacity: inheritedOpacity * opacity, visible, blendMode, groupPath, groupIds, support });
+			assets.push({ nodeId: id, name, sourcePath: path, kind: 'raster', parentId, data: png.data, width: png.width, height: png.height, x, y, opacity, visible, blendMode, groupPath, groupIds, support });
 		} catch (error) {
 			summary.support = 'unsupported'; summary.warnings = [error instanceof Error ? error.message : String(error)];
 			warnings.push(`Layer “${name}” could not be decoded`);
@@ -228,13 +254,14 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 					const asset = assetByNode.get(node.id);
 					return asset ? placeOraLayer(output, declaredWidth, declaredHeight, asset) : new Uint8Array(output.length);
 				})();
-			compositeRgbaOver(output, source, node.opacity);
+			compositeRgbaOver(output, source, node.opacity, supportedBlendModes.has(node.blendMode || 'normal') ? node.blendMode : 'normal');
 		}
 		return output;
 	};
 	const reconstructed = renderNodes(root);
 	const comparable = decoded.width === declaredWidth && decoded.height === declaredHeight;
-	const reconstruction: NonNullable<LayeredDocumentSummary['reconstruction']> = assets.length === 0
+	const rasterAssetCount = assets.filter(asset => asset.kind !== 'group' && asset.data).length;
+	const reconstruction: NonNullable<LayeredDocumentSummary['reconstruction']> = rasterAssetCount === 0
 		? { available: false }
 		: comparable
 		? compareRgba(decoded.data, reconstructed)
@@ -253,6 +280,201 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		formatLabel: 'OpenRaster integrated preview', formatType: 'ora', document,
 		metadata: { container: 'ZIP', previewEntry: previewName, previewAuthoritative: document.previewIsAuthoritative, layerCount: assets.length, documentWidth: declaredWidth, documentHeight: declaredHeight, reconstructionMeanError: reconstruction.meanAbsoluteError ?? 0, reconstructionDifferentPixels: reconstruction.differentPixelRatio ?? 0 },
 	};
+}
+
+interface KraXmlNode {
+	attrs: Record<string, string>;
+	children: KraXmlNode[];
+	masks: Record<string, string>[];
+}
+
+function parseKraTree(xml: string): KraXmlNode[] {
+	const roots: KraXmlNode[] = [], stack: KraXmlNode[] = [];
+	const tags = /<\s*(\/?)\s*(layer|mask)\b([^>]*?)(\/?)\s*>/gi;
+	let match: RegExpExecArray | null, count = 0;
+	while ((match = tags.exec(xml))) {
+		const closing = match[1] === '/', tag = match[2].toLowerCase();
+		if (closing) { if (tag === 'layer' && stack.length) { stack.pop(); } continue; }
+		if (++count > 100_000) { throw new Error('Krita layer tree exceeds the node safety limit'); }
+		const attrs = parseXmlAttributes(match[3]);
+		if (tag === 'mask') {
+			stack[stack.length - 1]?.masks.push(attrs);
+			continue;
+		}
+		const node: KraXmlNode = { attrs, children: [], masks: [] };
+		const parent = stack[stack.length - 1];
+		(parent ? parent.children : roots).push(node);
+		if (match[4] !== '/') { stack.push(node); }
+	}
+	return roots;
+}
+
+function kraEntryPath(files: Record<string, Uint8Array>, documentName: string, filename: string, suffix = ''): string | undefined {
+	const normalized = filename.replace(/\\/g, '/').replace(/^\/+/, '') + suffix;
+	const candidates = [`${documentName}/layers/${normalized}`, `layers/${normalized}`];
+	return candidates.find(path => !!files[path]) || Object.keys(files).find(path => path.endsWith(`/layers/${normalized}`));
+}
+
+/** Standard LZF decoder used by Krita's version-2 tile stream. */
+function decodeKraLzf(input: Uint8Array, expectedLength: number): Uint8Array {
+	const output = new Uint8Array(expectedLength);
+	let ip = 0, op = 0;
+	while (ip < input.length && op < output.length) {
+		const control = input[ip++];
+		if (control < 32) {
+			const length = control + 1;
+			if (ip + length > input.length || op + length > output.length) { throw new Error('Invalid Krita LZF literal'); }
+			output.set(input.subarray(ip, ip + length), op); ip += length; op += length;
+			continue;
+		}
+		let length = control >> 5;
+		let reference = op - ((control & 0x1f) << 8) - 1;
+		if (length === 7) { if (ip >= input.length) { throw new Error('Invalid Krita LZF length'); } length += input[ip++]; }
+		if (ip >= input.length) { throw new Error('Invalid Krita LZF back-reference'); }
+		reference -= input[ip++]; length += 2;
+		if (reference < 0 || op + length > output.length) { throw new Error('Invalid Krita LZF range'); }
+		for (let i = 0; i < length; i++) { output[op++] = output[reference++]; }
+	}
+	if (op !== expectedLength) { throw new Error(`Krita LZF tile decoded to ${op} bytes instead of ${expectedLength}`); }
+	return output;
+}
+
+function readAsciiLine(bytes: Uint8Array, state: { offset: number }): string {
+	const start = state.offset;
+	while (state.offset < bytes.length && bytes[state.offset] !== 10) { state.offset++; }
+	const line = new TextDecoder('ascii').decode(bytes.subarray(start, state.offset)).replace(/\r$/, '');
+	if (state.offset < bytes.length) { state.offset++; }
+	return line;
+}
+
+function decodeKraPaintDevice(bytes: Uint8Array, width: number, height: number, expectedPixelSize: 1 | 4, defaultPixel?: Uint8Array): Uint8Array {
+	const state = { offset: 0 };
+	const versionLine = readAsciiLine(bytes, state);
+	if (versionLine !== 'VERSION 2') { throw new Error(`Unsupported Krita tile stream: ${versionLine || 'missing version'}`); }
+	const tileWidth = Number(readAsciiLine(bytes, state).split(/\s+/)[1]);
+	const tileHeight = Number(readAsciiLine(bytes, state).split(/\s+/)[1]);
+	const pixelSize = Number(readAsciiLine(bytes, state).split(/\s+/)[1]);
+	const tileCount = Number(readAsciiLine(bytes, state).split(/\s+/)[1]);
+	if (tileWidth !== 64 || tileHeight !== 64 || pixelSize !== expectedPixelSize || !Number.isSafeInteger(tileCount) || tileCount < 0 || tileCount > 1_000_000) {
+		throw new Error(`Unsupported Krita tile geometry or pixel size (${tileWidth}x${tileHeight}, ${pixelSize} B)`);
+	}
+	const outputChannels = expectedPixelSize === 4 ? 4 : 1;
+	const output = new Uint8Array(width * height * outputChannels);
+	if (defaultPixel?.length) {
+		for (let i = 0; i < width * height; i++) {
+			if (expectedPixelSize === 4) {
+				output[i * 4] = defaultPixel[2] || 0; output[i * 4 + 1] = defaultPixel[1] || 0;
+				output[i * 4 + 2] = defaultPixel[0] || 0; output[i * 4 + 3] = defaultPixel[3] || 0;
+			} else { output[i] = defaultPixel[0] || 0; }
+		}
+	}
+	const tileBytes = tileWidth * tileHeight * pixelSize;
+	for (let tile = 0; tile < tileCount; tile++) {
+		const parts = readAsciiLine(bytes, state).split(',');
+		if (parts.length !== 4 || parts[2] !== 'LZF') { throw new Error('Invalid Krita tile header'); }
+		const tileX = Number(parts[0]), tileY = Number(parts[1]), payloadSize = Number(parts[3]);
+		if (!Number.isSafeInteger(tileX) || !Number.isSafeInteger(tileY) || !Number.isSafeInteger(payloadSize) || payloadSize < 1 || state.offset + payloadSize > bytes.length) {
+			throw new Error('Invalid Krita tile payload size');
+		}
+		const payload = bytes.subarray(state.offset, state.offset + payloadSize); state.offset += payloadSize;
+		let interleaved: Uint8Array;
+		if (payload[0] === 0) {
+			if (payload.length !== tileBytes + 1) { throw new Error('Invalid raw Krita tile size'); }
+			interleaved = payload.slice(1);
+		} else if (payload[0] === 1) {
+			const planar = decodeKraLzf(payload.subarray(1), tileBytes);
+			interleaved = new Uint8Array(tileBytes);
+			const planeSize = tileWidth * tileHeight;
+			for (let pixel = 0; pixel < planeSize; pixel++) for (let channel = 0; channel < pixelSize; channel++) {
+				interleaved[pixel * pixelSize + channel] = planar[channel * planeSize + pixel];
+			}
+		} else { throw new Error(`Unsupported Krita tile compression flag: ${payload[0]}`); }
+		for (let y = 0; y < tileHeight; y++) for (let x = 0; x < tileWidth; x++) {
+			const dx = tileX + x, dy = tileY + y;
+			if (dx < 0 || dy < 0 || dx >= width || dy >= height) { continue; }
+			const source = (y * tileWidth + x) * pixelSize, destination = (dy * width + dx) * outputChannels;
+			if (pixelSize === 4) {
+				// Krita's RGBA/U8 paint device stores pixels as BGRA on little-endian platforms.
+				output[destination] = interleaved[source + 2]; output[destination + 1] = interleaved[source + 1];
+				output[destination + 2] = interleaved[source]; output[destination + 3] = interleaved[source + 3];
+			} else { output[destination] = interleaved[source]; }
+		}
+	}
+	return output;
+}
+
+function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { width: number; height: number; data: Uint8Array }, xml: string, declaredWidth: number, declaredHeight: number): DecodedLayeredPreview {
+	const roots = parseKraTree(xml);
+	const documentName = xmlAttribute(xml, 'name') || '';
+	const filenames = new Set<string>();
+	const collect = (nodes: KraXmlNode[]) => nodes.forEach(node => {
+		if (node.attrs.filename) { filenames.add(node.attrs.filename); }
+		for (const mask of node.masks) if (mask.filename) { filenames.add(`${mask.filename}.pixelselection`); }
+		collect(node.children);
+	});
+	collect(roots);
+	const files = unzipSelected(buffer, name => [...filenames].some(filename => name.endsWith(`/layers/${filename}`) || name === `layers/${filename}` || name.endsWith(`/layers/${filename}.defaultpixel`) || name === `layers/${filename}.defaultpixel`));
+	const assets: LayeredRasterAsset[] = [], warnings: string[] = [];
+	let sequence = 0;
+	const supportedBlendModes = new Set(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion']);
+	const build = (nodes: KraXmlNode[], parentId?: string, groupPath: string[] = [], groupIds: string[] = []): LayerNodeSummary[] => nodes.map(node => {
+		const attrs = node.attrs, id = attrs.uuid || `kra-node-${sequence++}`, name = attrs.name || `Layer ${sequence}`;
+		const nodeType = (attrs.nodetype || '').toLowerCase();
+		const kind: LayerNodeKind = nodeType === 'grouplayer' ? 'group' : nodeType === 'paintlayer' ? 'raster' : nodeType.includes('vector') ? 'vector' : nodeType.includes('adjustment') ? 'adjustment' : 'unknown';
+		const opacity = Math.max(0, Math.min(1, oraNumber(attrs.opacity, 255) / 255));
+		const visible = attrs.visible !== '0';
+		const blendMode = editableBlendMode(attrs.compositeop);
+		let support: LayerNodeSummary['support'] = kind === 'group' || kind === 'raster' ? (supportedBlendModes.has(blendMode) ? 'native' : 'approximate') : 'unsupported';
+		const summary: LayerNodeSummary = { id, name, kind, support, visible, opacity, blendMode, left: oraNumber(attrs.x, 0), top: oraNumber(attrs.y, 0) };
+		if (kind === 'group') {
+			if (attrs.passthrough === '1') { support = 'approximate'; summary.support = support; warnings.push(`Pass-through group “${name}” is currently reconstructed as an isolated group`); }
+			const groupAsset: LayeredRasterAsset = { nodeId: id, name, sourcePath: '', kind: 'group', parentId, width: declaredWidth, height: declaredHeight, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support };
+			const groupMask = node.masks.find(mask => (mask.nodetype || '').toLowerCase() === 'transparencymask' && mask.visible !== '0' && mask.filename);
+			if (groupMask?.filename) {
+				try {
+					const maskPath = kraEntryPath(files, documentName, groupMask.filename, '.pixelselection');
+					if (!maskPath) { throw new Error('missing pixel data'); }
+					const defaultMaskPath = kraEntryPath(files, documentName, groupMask.filename, '.pixelselection.defaultpixel');
+					groupAsset.rasterMask = { data: decodeKraPaintDevice(files[maskPath], declaredWidth, declaredHeight, 1, defaultMaskPath ? files[defaultMaskPath] : undefined), width: declaredWidth, height: declaredHeight, channels: 1, typeMax: 255, x: 0, y: 0 };
+				} catch (error) { warnings.push(`Transparency mask for group “${name}” could not be decoded: ${error instanceof Error ? error.message : String(error)}`); }
+			}
+			assets.push(groupAsset);
+			summary.children = build(node.children, id, [...groupPath, name], [...groupIds, id]);
+			return summary;
+		}
+		if (kind !== 'raster' || !attrs.filename) {
+			warnings.push(`Krita ${nodeType || 'unknown'} node “${name}” is not an ordinary paint layer`);
+			return summary;
+		}
+		const path = kraEntryPath(files, documentName, attrs.filename);
+		try {
+			if (!path) { throw new Error(`Missing paint data for ${attrs.filename}`); }
+			const defaultPath = kraEntryPath(files, documentName, attrs.filename, '.defaultpixel');
+			const pixels = decodeKraPaintDevice(files[path], declaredWidth, declaredHeight, 4, defaultPath ? files[defaultPath] : undefined);
+			const asset: LayeredRasterAsset = { nodeId: id, name, sourcePath: path, kind: 'raster', parentId, data: pixels, width: declaredWidth, height: declaredHeight, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support, clipped: attrs.alphainheritance === '1' || attrs.inheritalpha === '1' || attrs.clipping === '1' };
+			const transparencyMask = node.masks.find(mask => (mask.nodetype || '').toLowerCase() === 'transparencymask' && mask.visible !== '0' && mask.filename);
+			if (transparencyMask?.filename) {
+				const maskPath = kraEntryPath(files, documentName, transparencyMask.filename, '.pixelselection');
+				if (maskPath) {
+					const defaultMaskPath = kraEntryPath(files, documentName, transparencyMask.filename, '.pixelselection.defaultpixel');
+					asset.rasterMask = { data: decodeKraPaintDevice(files[maskPath], declaredWidth, declaredHeight, 1, defaultMaskPath ? files[defaultMaskPath] : undefined), width: declaredWidth, height: declaredHeight, channels: 1, typeMax: 255, x: 0, y: 0 };
+				} else { warnings.push(`Transparency mask for “${name}” has no pixel data`); }
+			}
+			assets.push(asset);
+		} catch (error) {
+			support = 'unsupported'; summary.support = support;
+			summary.warnings = [error instanceof Error ? error.message : String(error)];
+			warnings.push(`Krita paint layer “${name}” could not be decoded: ${summary.warnings[0]}`);
+		}
+		return summary;
+	});
+	const root = build(roots);
+	const document: LayeredDocumentSummary = {
+		format: 'kra', width: declaredWidth, height: declaredHeight, bitDepth: 8, colorMode: xmlAttribute(xml, 'colorspacename') || 'RGBA',
+		previewKind: 'merged', previewIsAuthoritative: previewName === 'mergedimage.png' && decoded.width === declaredWidth && decoded.height === declaredHeight,
+		previewWidth: decoded.width, previewHeight: decoded.height, layerCount: flattenNodeCount(root), root, warnings,
+	};
+	return { ...decoded, channels: 4, bitDepth: 8, sampleFormat: 1, layerAssets: assets, formatLabel: 'Krita integrated preview', formatType: 'kra', document, metadata: { container: 'ZIP', previewEntry: previewName, previewAuthoritative: document.previewIsAuthoritative, layerCount: document.layerCount, editableNodeCount: assets.length, documentWidth: declaredWidth, documentHeight: declaredHeight } };
 }
 
 function unzipSelected(buffer: ArrayBuffer, wanted: (name: string) => boolean): Record<string, Uint8Array> {
@@ -305,6 +527,9 @@ function archivePreviewResult(
 			result.document.warnings.unshift(mime ? `Unexpected OpenRaster MIME marker: ${mime}` : 'OpenRaster MIME marker is missing');
 		}
 		return result;
+	}
+	if (format === 'kra') {
+		return decodeKraResult(buffer, previewName, decoded, xml, declaredWidth, declaredHeight);
 	}
 	const warnings: string[] = [];
 	if (format === 'ora' && !xml.trim()) { warnings.push('OpenRaster stack.xml is missing; only the integrated preview is available'); }
@@ -519,6 +744,7 @@ interface XcfProperties {
 	offsetY?: number;
 	mode?: number;
 	group?: boolean;
+	itemPath?: number[];
 	colormap?: Uint8Array;
 }
 
@@ -536,6 +762,10 @@ function readXcfProperties(reader: XcfReader, start: number): XcfProperties {
 		else if (type === 15 && length >= 8) { out.offsetX = reader.i32(offset); out.offsetY = reader.i32(offset + 4); }
 		else if (type === 7 && length >= 4) { out.mode = reader.u32(offset); }
 		else if (type === 29) { out.group = true; }
+		else if (type === 30 && length % 4 === 0) {
+			out.itemPath = [];
+			for (let i = 0; i < length; i += 4) { out.itemPath.push(reader.u32(offset + i)); }
+		}
 		else if (type === 1 && length >= 4) {
 			const countColors = Math.min(256, reader.u32(offset));
 			reader.check(offset + 4, countColors * 3);
@@ -595,6 +825,11 @@ function xcfPixelToRgba(raw: Uint8Array, base: number, type: number, colormap?: 
 	return [colormap?.[index] || 0, colormap?.[index + 1] || 0, colormap?.[index + 2] || 0, type === 5 ? raw[base + 1] : 255];
 }
 
+function xcfBlendMode(mode: number): string {
+	const legacy: Record<number, string> = { 0: 'normal', 3: 'multiply', 4: 'screen', 5: 'overlay', 6: 'difference', 9: 'darken', 10: 'lighten' };
+	return legacy[mode] || `gimp-${mode}`;
+}
+
 function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 	const signature = new TextDecoder('ascii').decode(new Uint8Array(buffer, 0, Math.min(14, buffer.byteLength)));
 	if (!signature.startsWith('gimp xcf ')) { throw new Error('Invalid XCF signature'); }
@@ -618,8 +853,9 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		layerPointers.push(pointer);
 	}
 	// Skip the channel pointer list for this first raster-preview implementation.
-	const layers: { node: LayerNodeSummary; pixels?: Uint8Array; type: number; opacity: number; x: number; y: number; width: number; height: number; mode: number }[] = [];
+	const layers: { node: LayerNodeSummary; pixels?: Uint8Array; type: number; opacity: number; x: number; y: number; width: number; height: number; mode: number; parentId?: string; groupPath: string[]; groupIds: string[] }[] = [];
 	const warnings: string[] = [];
+	const groupsByPath = new Map<string, { id: string; names: string[]; ids: string[] }>();
 	for (let index = 0; index < layerPointers.length; index++) {
 		let cursor = layerPointers[index];
 		const layerWidth = reader.u32(cursor), layerHeight = reader.u32(cursor + 4), type = reader.u32(cursor + 8); cursor += 12;
@@ -628,10 +864,14 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		const props = readXcfProperties(reader, cursor); cursor = props.next;
 		const hierarchyPointer = reader.pointer(cursor); cursor += reader.pointerBytes;
 		const mode = props.mode ?? 0;
+		const itemPath = props.itemPath || [index];
+		const parentPath = itemPath.slice(0, -1).join('/');
+		const parent = groupsByPath.get(parentPath);
+		const blendMode = xcfBlendMode(mode);
 		const node: LayerNodeSummary = {
 			id: `xcf-layer-${index}`, name: name.value || `Layer ${index + 1}`,
-			kind: props.group ? 'group' : 'raster', support: props.group ? 'inspect-only' : mode === 0 ? 'native' : 'approximate',
-			visible: props.visible !== false, opacity: props.opacity ?? 1, blendMode: `gimp-${mode}`,
+			kind: props.group ? 'group' : 'raster', support: props.group || blendMode !== `gimp-${mode}` ? 'native' : 'approximate',
+			visible: props.visible !== false, opacity: props.opacity ?? 1, blendMode,
 			left: props.offsetX || 0, top: props.offsetY || 0, width: layerWidth, height: layerHeight,
 		};
 		let pixels: Uint8Array | undefined;
@@ -662,10 +902,13 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 				}
 			}
 		}
-		if (mode !== 0 && !props.group) { warnings.push(`Layer “${node.name}” blend mode ${mode} is approximated as normal`); }
-		if (props.group) { warnings.push(`Group “${node.name}” is listed but its XCF group composition is not yet applied`); }
+		if (blendMode.startsWith('gimp-') && !props.group) { warnings.push(`Layer “${node.name}” blend mode ${mode} is approximated as normal`); }
+		else if (mode !== 0 && !props.group) { warnings.push(`Layer “${node.name}” uses ${blendMode}; the quick preview is flattened normally, while Layers View preserves the blend mode`); }
+		if (props.group) { warnings.push(`Group “${node.name}” is composited as an isolated editable surface after opening Layers View`); }
 		if (!props.group && !pixels) { warnings.push(`Layer “${node.name}” has no decodable raster payload`); }
-		layers.push({ node, pixels, type, opacity: props.opacity ?? 1, x: props.offsetX || 0, y: props.offsetY || 0, width: layerWidth, height: layerHeight, mode });
+		const groupPath = parent?.names || [], groupIds = parent?.ids || [];
+		layers.push({ node, pixels, type, opacity: props.opacity ?? 1, x: props.offsetX || 0, y: props.offsetY || 0, width: layerWidth, height: layerHeight, mode, parentId: parent?.id, groupPath, groupIds });
+		if (props.group) { groupsByPath.set(itemPath.join('/'), { id: node.id, names: [...groupPath, node.name], ids: [...groupIds, node.id] }); }
 	}
 	const composite = new Uint8Array(width * height * 4);
 	// XCF layer pointers are top-to-bottom; composite bottom-to-top.
@@ -683,32 +926,39 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		}
 	}
 	const colorMode = baseType === 0 ? 'RGB' : baseType === 1 ? 'Grayscale' : 'Indexed';
-	const root = layers.map(layer => layer.node);
-	const layerAssets: LayeredRasterAsset[] = layers.flatMap((layer, index) => layer.pixels ? [{
-		nodeId: layer.node.id,
-		name: layer.node.name,
-		sourcePath: `xcf-layer-${index}`,
-		data: layer.pixels,
-		width: layer.width,
-		height: layer.height,
-		x: layer.x,
-		y: layer.y,
-		opacity: layer.opacity,
-		visible: layer.node.visible,
-		blendMode: layer.node.blendMode || 'normal',
-		groupPath: [] as string[],
-		groupIds: [] as string[],
-		support: layer.node.support,
-	}] : []);
+	const nodesByParent = new Map<string | undefined, LayerNodeSummary[]>();
+	for (const layer of layers) {
+		const siblings = nodesByParent.get(layer.parentId) || []; siblings.push(layer.node); nodesByParent.set(layer.parentId, siblings);
+	}
+	for (const layer of layers) if (layer.node.kind === 'group') { layer.node.children = nodesByParent.get(layer.node.id) || []; }
+	const root = nodesByParent.get(undefined) || layers.map(layer => layer.node);
+	const layerAssets: LayeredRasterAsset[] = [];
+	for (let index = 0; index < layers.length; index++) {
+		const layer = layers[index];
+		if (layer.node.kind === 'group') {
+			layerAssets.push({
+				nodeId: layer.node.id, name: layer.node.name, sourcePath: '', kind: 'group', parentId: layer.parentId,
+				width, height, x: 0, y: 0, opacity: layer.opacity, visible: layer.node.visible, blendMode: layer.node.blendMode || 'normal',
+				groupPath: layer.groupPath, groupIds: layer.groupIds, support: layer.node.support,
+			});
+		} else if (layer.pixels) {
+			layerAssets.push({
+				nodeId: layer.node.id, name: layer.node.name, sourcePath: `xcf-layer-${index}`, kind: 'raster', parentId: layer.parentId,
+				data: layer.pixels, width: layer.width, height: layer.height, x: layer.x, y: layer.y,
+				opacity: layer.opacity, visible: layer.node.visible, blendMode: layer.node.blendMode || 'normal',
+				groupPath: layer.groupPath, groupIds: layer.groupIds, support: layer.node.support,
+			});
+		}
+	}
 	const document: LayeredDocumentSummary = {
 		format: 'xcf', width, height, bitDepth: 8, colorMode,
 		previewKind: 'reconstructed', previewIsAuthoritative: warnings.length === 0,
-		previewWidth: width, previewHeight: height, layerCount: root.length, root, warnings,
+		previewWidth: width, previewHeight: height, layerCount: layers.length, root, warnings,
 	};
 	return {
 		width, height, channels: 4, bitDepth: 8, sampleFormat: 1, data: composite,
 		formatLabel: 'GIMP XCF reconstructed preview', formatType: 'xcf', document, layerAssets,
-		metadata: { xcfVersion: version, colorMode, precision, compression, layerCount: root.length, previewAuthoritative: document.previewIsAuthoritative },
+		metadata: { xcfVersion: version, colorMode, precision, compression, layerCount: layers.length, previewAuthoritative: document.previewIsAuthoritative },
 	};
 }
 

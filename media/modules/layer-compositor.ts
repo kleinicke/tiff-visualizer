@@ -24,6 +24,10 @@ export interface Layer {
 	id?: string;
 	name?: string;
 	uri?: string;
+	/** First-class compositor node type. Raster is the backwards-compatible default. */
+	kind?: 'raster' | 'group';
+	/** Parent group id. Group children remain in the manager's ordered flat list. */
+	parentId?: string;
 	/** Source-document hierarchy metadata used by the Layers panel. */
 	groupPath?: string[];
 	groupIds?: string[];
@@ -31,7 +35,7 @@ export interface Layer {
 	sourceSupport?: 'native' | 'cached-raster' | 'approximate' | 'inspect-only' | 'unsupported';
 	sourceBlendMode?: string;
 	/** Raw pixel data (interleaved by channel). */
-	data: ArrayLike<number>;
+	data?: ArrayLike<number>;
 	width: number;
 	height: number;
 	/** 1, 3 or 4. RGBA alpha participates in normal display compositing. */
@@ -50,6 +54,19 @@ export interface Layer {
 	blendMode?: string;
 	/** Default true. */
 	visible?: boolean;
+	/** Restrict this node to the alpha of the nearest unclipped sibling below it. */
+	clipped?: boolean;
+	/** Non-destructive grayscale/alpha mask attached to this node. */
+	rasterMask?: {
+		data: ArrayLike<number>;
+		width: number;
+		height: number;
+		channels?: number;
+		typeMax?: number;
+		offsetX?: number;
+		offsetY?: number;
+		invert?: boolean;
+	};
 	/** Only for blendMode 'mask'. */
 	maskCondition?: { op: string; threshold?: number };
 }
@@ -74,10 +91,17 @@ export interface CompositeResult {
  */
 export const BLEND_MODES: { id: string; label: string; arithmetic: boolean; mask?: boolean }[] = [
 	{ id: 'normal', label: 'Normal', arithmetic: false },
+	{ id: 'multiply', label: 'Multiply', arithmetic: false },
+	{ id: 'screen', label: 'Screen', arithmetic: false },
+	{ id: 'overlay', label: 'Overlay', arithmetic: false },
+	{ id: 'darken', label: 'Darken', arithmetic: false },
+	{ id: 'lighten', label: 'Lighten', arithmetic: false },
+	{ id: 'difference', label: 'Difference', arithmetic: false },
+	{ id: 'exclusion', label: 'Exclusion', arithmetic: false },
 	{ id: 'add', label: 'Add', arithmetic: true },
 	{ id: 'subtract', label: 'Subtract', arithmetic: true },
-	{ id: 'difference', label: 'Difference (|a − b|)', arithmetic: true },
-	{ id: 'multiply', label: 'Multiply', arithmetic: true },
+	{ id: 'raw-difference', label: 'Difference (raw)', arithmetic: true },
+	{ id: 'raw-multiply', label: 'Multiply (raw)', arithmetic: true },
 	{ id: 'divide', label: 'Divide', arithmetic: true },
 	{ id: 'min', label: 'Darken (min)', arithmetic: true },
 	{ id: 'max', label: 'Lighten (max)', arithmetic: true },
@@ -87,6 +111,7 @@ export const BLEND_MODES: { id: string; label: string; arithmetic: boolean; mask
 
 const BLEND_MODE_IDS = new Set(BLEND_MODES.map(m => m.id));
 const ARITHMETIC_MODES = new Set(BLEND_MODES.filter(m => m.arithmetic).map(m => m.id));
+const DOCUMENT_MODES = new Set(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion']);
 
 /** Mask condition operators shown in the UI. */
 export const MASK_CONDITIONS = [
@@ -133,8 +158,9 @@ export function blendValue(below: number, src: number, mode: string): number {
 	switch (mode) {
 		case 'add': return below + src;
 		case 'subtract': return below - src;
-		case 'difference': return Math.abs(below - src);
-		case 'multiply': return below * src;
+		case 'difference':
+		case 'raw-difference': return Math.abs(below - src);
+		case 'raw-multiply': return below * src;
 		case 'divide': return src === 0 ? NaN : below / src;
 		case 'min': return Math.min(below, src);
 		case 'max': return Math.max(below, src);
@@ -142,6 +168,24 @@ export function blendValue(below: number, src: number, mode: string): number {
 		case 'normal':
 		default:
 			return src;
+	}
+}
+
+/** Photoshop/OpenRaster-style blend math in the node's native value range. */
+export function blendDocumentValue(below: number, src: number, mode: string, typeMax = 1): number {
+	const max = Number.isFinite(typeMax) && typeMax > 0 ? typeMax : 1;
+	switch (mode) {
+		case 'multiply': return below * src / max;
+		case 'screen': return max - ((max - below) * (max - src) / max);
+		case 'overlay': return below <= max * 0.5
+			? 2 * below * src / max
+			: max - 2 * (max - below) * (max - src) / max;
+		case 'darken': return Math.min(below, src);
+		case 'lighten': return Math.max(below, src);
+		case 'difference': return Math.abs(below - src);
+		case 'exclusion': return below + src - 2 * below * src / max;
+		case 'normal':
+		default: return src;
 	}
 }
 
@@ -164,13 +208,14 @@ function compositeChannels(visibleLayers: Layer[]): number {
  */
 function sampleLayer(layer: Layer, lx: number, ly: number, outChannels: number, out: Float32Array): void {
 	const base = (ly * layer.width + lx) * layer.channels;
+	const layerData = layer.data!;
 	if (layer.channels === 1) {
-		const v = layer.data[base];
+		const v = layerData[base];
 		for (let c = 0; c < outChannels; c++) out[c] = v;
 	} else {
 		for (let c = 0; c < outChannels; c++) {
 			// If the layer has fewer channels than the composite, replicate the last.
-			out[c] = layer.data[base + Math.min(c, layer.channels - 1)];
+			out[c] = layerData[base + Math.min(c, layer.channels - 1)];
 		}
 	}
 }
@@ -180,7 +225,7 @@ function sampleLayer(layer: Layer, lx: number, ly: number, outChannels: number, 
  * normal blending. Avoids per-pixel scratch arrays and per-channel dispatch.
  */
 function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Float32Array, outChannels: number, canvasWidth: number, xStart: number, yStart: number, xEnd: number, yEnd: number, offsetX: number, offsetY: number, opacity: number, coveredCount: number): number {
-	const srcData = layer.data;
+	const srcData = layer.data!;
 	const layerChannels = layer.channels;
 	const opaque = opacity >= 1;
 
@@ -327,90 +372,151 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 	return coveredCount;
 }
 
-/**
- * Composite an ordered layer stack (index 0 = bottom / background) into a single
- * float buffer of the given canvas size.
- */
-export function composite(layers: Layer[], canvasWidth: number, canvasHeight: number): CompositeResult {
+function rasterMaskFactor(layer: Layer, canvasX: number, canvasY: number): number {
+	const mask = layer.rasterMask;
+	if (!mask) { return 1; }
+	const mx = canvasX - Math.round(mask.offsetX ?? layer.offsetX ?? 0);
+	const my = canvasY - Math.round(mask.offsetY ?? layer.offsetY ?? 0);
+	if (mx < 0 || my < 0 || mx >= mask.width || my >= mask.height) { return mask.invert ? 1 : 0; }
+	const channels = Math.max(1, mask.channels ?? 1);
+	const value = Number(mask.data[(my * mask.width + mx) * channels]);
+	let factor = Number.isFinite(value) ? value / (mask.typeMax || 255) : 0;
+	factor = Math.max(0, Math.min(1, factor));
+	return mask.invert ? 1 - factor : factor;
+}
+
+function sourceAlphaAt(layer: Layer, canvasX: number, canvasY: number): number {
+	const lx = canvasX - Math.round(layer.offsetX ?? 0);
+	const ly = canvasY - Math.round(layer.offsetY ?? 0);
+	if (lx < 0 || ly < 0 || lx >= layer.width || ly >= layer.height || !layer.data) { return 0; }
+	const base = (ly * layer.width + lx) * layer.channels;
+	const alpha = layer.channels === 4 ? Number(layer.data[base + 3]) / (layer.typeMax || 255) : 1;
+	return Math.max(0, Math.min(1, alpha * rasterMaskFactor(layer, canvasX, canvasY) * Math.max(0, Math.min(1, layer.opacity ?? 1))));
+}
+
+function layerAlphaSurface(layer: Layer, canvasWidth: number, canvasHeight: number): Float32Array {
+	const alpha = new Float32Array(canvasWidth * canvasHeight);
+	const xStart = Math.max(0, Math.round(layer.offsetX ?? 0));
+	const yStart = Math.max(0, Math.round(layer.offsetY ?? 0));
+	const xEnd = Math.min(canvasWidth, Math.round(layer.offsetX ?? 0) + layer.width);
+	const yEnd = Math.min(canvasHeight, Math.round(layer.offsetY ?? 0) + layer.height);
+	for (let y = yStart; y < yEnd; y++) for (let x = xStart; x < xEnd; x++) {
+		alpha[y * canvasWidth + x] = sourceAlphaAt(layer, x, y);
+	}
+	return alpha;
+}
+
+/** Render group children to an isolated surface and replace each group with it. */
+function materializeGroupSurfaces(layers: Layer[], canvasWidth: number, canvasHeight: number, parentId?: string, ancestors = new Set<string>()): Layer[] {
+	const siblings = layers.filter(layer => (layer.parentId || undefined) === parentId);
+	const output: Layer[] = [];
+	for (const node of siblings) {
+		if (node.kind !== 'group') {
+			if (node.data) { output.push(node); }
+			continue;
+		}
+		const id = node.id || '';
+		if (!id || ancestors.has(id)) { continue; }
+		const nextAncestors = new Set(ancestors); nextAncestors.add(id);
+		const children = materializeGroupSurfaces(layers, canvasWidth, canvasHeight, id, nextAncestors);
+		const surface = compositeFlat(children, canvasWidth, canvasHeight);
+		if (surface.coveredCount === 0) { continue; }
+		output.push({
+			...node,
+			kind: 'raster',
+			parentId: undefined,
+			data: surface.data,
+			width: canvasWidth,
+			height: canvasHeight,
+			channels: surface.channels,
+			isFloat: surface.isFloat,
+			typeMax: surface.typeMax,
+			offsetX: 0,
+			offsetY: 0,
+		});
+	}
+	return output;
+}
+
+function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: number): CompositeResult {
 	const visibleLayers = layers.filter(l => l && l.visible !== false && (l.opacity ?? 1) > 0 && l.data);
 	const outChannels = visibleLayers.length ? compositeChannels(visibleLayers) : 1;
 	const pixelCount = canvasWidth * canvasHeight;
 	const data = new Float32Array(pixelCount * outChannels);
-	data.fill(NaN); // No-data until covered.
+	data.fill(NaN);
 	const covered = new Float32Array(pixelCount);
-
 	const src = new Float32Array(outChannels);
 	let coveredCount = 0;
+	let clippingBase: Float32Array | null = null;
 
-	for (const layer of visibleLayers) {
+	for (let layerIndex = 0; layerIndex < visibleLayers.length; layerIndex++) {
+		const layer = visibleLayers[layerIndex];
 		const offsetX = Math.round(layer.offsetX ?? 0);
 		const offsetY = Math.round(layer.offsetY ?? 0);
 		const opacity = Math.max(0, Math.min(1, layer.opacity ?? 1));
 		const mode = BLEND_MODE_IDS.has(layer.blendMode ?? 'normal') ? (layer.blendMode ?? 'normal') : 'normal';
 		const arithmetic = ARITHMETIC_MODES.has(mode);
+		const documentBlend = DOCUMENT_MODES.has(mode);
 		const isMask = mode === 'mask';
-		const maskCondition = layer.maskCondition;
+		const xStart = Math.max(0, offsetX), yStart = Math.max(0, offsetY);
+		const xEnd = Math.min(canvasWidth, offsetX + layer.width), yEnd = Math.min(canvasHeight, offsetY + layer.height);
+		const clipSurface = layer.clipped ? clippingBase : null;
 
-		// Canvas range that this layer overlaps.
-		const xStart = Math.max(0, offsetX);
-		const yStart = Math.max(0, offsetY);
-		const xEnd = Math.min(canvasWidth, offsetX + layer.width);
-		const yEnd = Math.min(canvasHeight, offsetY + layer.height);
-
-		if (!arithmetic && !isMask && (outChannels === 1 || outChannels === 3 || outChannels === 4)) {
+		if (layer.clipped && !clipSurface) { continue; }
+		if (mode === 'normal' && !layer.rasterMask && !layer.clipped) {
 			coveredCount = compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth, xStart, yStart, xEnd, yEnd, offsetX, offsetY, opacity, coveredCount);
-			continue;
-		}
-
-		for (let y = yStart; y < yEnd; y++) {
-			const ly = y - offsetY;
-			for (let x = xStart; x < xEnd; x++) {
-				const lx = x - offsetX;
-				const pixel = y * canvasWidth + x;
-				sampleLayer(layer, lx, ly, outChannels, src);
-
-				const di = pixel * outChannels;
-
-				if (isMask) {
-					// A mask layer never draws colour; it hides the content below
-					// wherever its condition is false. With nothing below, it does
-					// nothing.
-					if (!covered[pixel]) { continue; }
-					if (!evalMaskCondition(src[0], maskCondition)) {
-						for (let c = 0; c < outChannels; c++) data[di + c] = NaN;
+		} else {
+			for (let y = yStart; y < yEnd; y++) {
+				const ly = y - offsetY;
+				for (let x = xStart; x < xEnd; x++) {
+					const lx = x - offsetX, pixel = y * canvasWidth + x, di = pixel * outChannels;
+					sampleLayer(layer, lx, ly, outChannels, src);
+					if (isMask) {
+						if (covered[pixel] && !evalMaskCondition(src[0], layer.maskCondition)) {
+							for (let c = 0; c < outChannels; c++) { data[di + c] = NaN; }
+							covered[pixel] = 0; coveredCount--;
+						}
+						continue;
 					}
-					continue;
-				}
-
-				if (!covered[pixel]) {
-					// First layer to reach this pixel establishes the base value;
-					// there is nothing beneath to blend with, so opacity/mode are moot.
-					for (let c = 0; c < outChannels; c++) data[di + c] = src[c];
-					covered[pixel] = 1;
-					coveredCount++;
-					continue;
-				}
-
-				for (let c = 0; c < outChannels; c++) {
-					const below = data[di + c];
-					const s = src[c];
+					const maskAlpha = rasterMaskFactor(layer, x, y);
+					const clippedAlpha = clipSurface ? clipSurface[pixel] : 1;
 					if (arithmetic) {
-						// Arithmetic: NaN propagates (standard float semantics).
-						const result = blendValue(below, s, mode);
-						data[di + c] = opacity >= 1
-							? result
-							: (Number.isFinite(result) && Number.isFinite(below))
-								? below + (result - below) * opacity
-								: NaN; // propagate NaN rather than letting NaN*0 leak.
-					} else {
-						// Normal: NaN in this layer is transparent (keep below).
-						if (!Number.isFinite(s)) continue;
-						data[di + c] = Number.isFinite(below)
-							? below + (s - below) * opacity
-							: s; // nothing valid below → take the layer value.
+						const effectiveOpacity = opacity * maskAlpha * clippedAlpha;
+						if (effectiveOpacity <= 0) { continue; }
+						if (!covered[pixel]) {
+							for (let c = 0; c < outChannels; c++) { data[di + c] = src[c]; }
+							covered[pixel] = 1; coveredCount++;
+							continue;
+						}
+						for (let c = 0; c < outChannels; c++) {
+							const below = data[di + c], result = blendValue(below, src[c], mode);
+							data[di + c] = effectiveOpacity >= 1 ? result
+								: Number.isFinite(result) && Number.isFinite(below) ? below + (result - below) * effectiveOpacity : NaN;
+						}
+						continue;
 					}
+					if (!documentBlend) { continue; }
+					const sourceAlpha = sourceAlphaAt(layer, x, y) * clippedAlpha;
+					if (sourceAlpha <= 0) { continue; }
+					const destinationAlpha = covered[pixel];
+					const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
+					const colorChannels = outChannels === 4 ? 3 : outChannels;
+					for (let c = 0; c < colorChannels; c++) {
+						const s = src[c], below = data[di + c];
+						if (!Number.isFinite(s)) { continue; }
+						if (destinationAlpha <= 0 || !Number.isFinite(below)) { data[di + c] = s; continue; }
+						const blended = blendDocumentValue(below, s, mode, layer.typeMax || visibleLayers[0]?.typeMax || 1);
+						data[di + c] = ((1 - sourceAlpha) * destinationAlpha * below + (1 - destinationAlpha) * sourceAlpha * s + destinationAlpha * sourceAlpha * blended) / outputAlpha;
+					}
+					if (!destinationAlpha) { coveredCount++; }
+					covered[pixel] = outputAlpha;
+					if (outChannels === 4) { data[di + 3] = outputAlpha; }
 				}
 			}
+		}
+
+		if (!layer.clipped) {
+			clippingBase = visibleLayers[layerIndex + 1]?.clipped ? layerAlphaSurface(layer, canvasWidth, canvasHeight) : null;
 		}
 	}
 
@@ -420,21 +526,19 @@ export function composite(layers: Layer[], canvasWidth: number, canvasHeight: nu
 	if (outChannels === 4 && !isFloat) {
 		for (let pixel = 0; pixel < pixelCount; pixel++) { data[pixel * 4 + 3] *= typeMax; }
 	}
-
-	// Composite statistics over finite color values (alpha does not affect range).
-	let min = Infinity;
-	let max = -Infinity;
+	let min = Infinity, max = -Infinity;
 	for (let i = 0; i < data.length; i++) {
 		if (outChannels === 4 && i % 4 === 3) { continue; }
-		const v = data[i];
-		if (Number.isFinite(v)) {
-			if (v < min) min = v;
-			if (v > max) max = v;
-		}
+		const value = data[i];
+		if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value); }
 	}
 	if (min === Infinity) { min = 0; max = 0; }
-
 	return { data, width: canvasWidth, height: canvasHeight, channels: outChannels, isFloat, typeMax, stats: { min, max }, coveredCount };
+}
+
+/** Composite an ordered stack (index 0 = bottom), including isolated groups. */
+export function composite(layers: Layer[], canvasWidth: number, canvasHeight: number): CompositeResult {
+	return compositeFlat(materializeGroupSurfaces(layers, canvasWidth, canvasHeight), canvasWidth, canvasHeight);
 }
 
 /**
