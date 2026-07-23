@@ -1550,7 +1550,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (!raw?.layerAssets?.length) { return false; }
 		if (_expandedLayerDocumentUri === uri && layerManager.layers.length === raw.layerAssets.length) { return true; }
 		const supportedModes = new Set(BLEND_MODES.map(mode => mode.id));
-		const layers = [...raw.layerAssets].reverse().map(asset => layerManager.createLayer({
+		const orderedAssets = raw.layerOrder === 'bottom-to-top' ? raw.layerAssets : [...raw.layerAssets].reverse();
+		const layers = orderedAssets.map(asset => layerManager.createLayer({
 			data: asset.data, width: asset.width, height: asset.height, channels: 4,
 			isFloat: false, typeMax: 255,
 			name: asset.name,

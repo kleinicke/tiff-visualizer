@@ -162,6 +162,7 @@ async function main() {
 	const psd = decodeLayeredPreview('psd', asArrayBuffer(psdBytes));
 	assert.deepStrictEqual([psd.width, psd.height, psd.document.layerCount], [2, 1, 1]);
 	assert.strictEqual(psd.document.previewIsAuthoritative, true);
+	assert.strictEqual(psd.layerOrder, 'bottom-to-top');
 	assert.strictEqual(psd.layerAssets.length, 1);
 	assert.deepStrictEqual(Array.from(psd.layerAssets[0].data), Array.from(imageData.data));
 	const adjustedPsdBytes = new Uint8Array(writePsd({
@@ -175,6 +176,17 @@ async function main() {
 	const adjustmentAsset = adjustedPsd.layerAssets.find(asset => asset.kind === 'adjustment');
 	assert.strictEqual(adjustmentAsset.adjustment.type, 'levels');
 	assert.strictEqual(adjustmentAsset.support, 'approximate');
+	const colorizedPsdBytes = new Uint8Array(writePsd({
+		width: 2, height: 1, imageData,
+		children: [{
+			name: 'Colorize', clipping: true,
+			adjustment: { type: 'hue/saturation', master: { a: 256, b: -131, c: 100, d: -50, hue: 0, saturation: 0, lightness: 0 } },
+		}, { name: 'Pixels', left: 0, top: 0, imageData }],
+	}));
+	const colorizedPsd = decodeLayeredPreview('psd', asArrayBuffer(colorizedPsdBytes));
+	const colorizeAsset = colorizedPsd.layerAssets.find(asset => asset.kind === 'adjustment');
+	assert.deepStrictEqual(colorizeAsset.adjustment.colorize, { hue: -131, saturation: 100, lightness: -50 });
+	assert.strictEqual(colorizeAsset.clipped, true);
 	const psbBytes = new Uint8Array(writePsd({ width: 2, height: 1, imageData, children: [{ name: 'Pixels', left: 0, top: 0, imageData }] }, { psb: true }));
 	const psb = decodeLayeredPreview('psb', asArrayBuffer(psbBytes));
 	assert.deepStrictEqual([psb.width, psb.height, psb.document.layerCount], [2, 1, 1]);

@@ -625,6 +625,19 @@ function psdMaskAsset(mask: any, layerLeft: number, layerTop: number): LayeredRa
 
 function supportedPsdAdjustment(value: any): LayerAdjustment | undefined {
 	if (!value || !['levels', 'curves', 'hue/saturation'].includes(value.type)) { return undefined; }
+	if (value.type === 'hue/saturation' && Number(value.master?.a) === 256) {
+		// Legacy PSD hue2 stores the Colorize flag as a padded byte (read by
+		// ag-psd as 0x0100), followed by colorize hue/saturation/lightness in
+		// the otherwise range-boundary fields b/c/d.
+		return {
+			...value,
+			colorize: {
+				hue: Number(value.master?.b || 0),
+				saturation: Number(value.master?.c || 0),
+				lightness: Number(value.master?.d || 0),
+			},
+		} as LayerAdjustment;
+	}
 	return value as LayerAdjustment;
 }
 
@@ -642,7 +655,8 @@ function buildPsdAssets(layers: any[] | undefined, warnings: string[], parentId?
 			continue;
 		}
 		const left = Math.trunc(Number(layer.left || 0)), top = Math.trunc(Number(layer.top || 0));
-		if (layer.effects) { warnings.push(`PSD layer effects on “${name}” are not reconstructed; cached pixels or the integrated preview may include them`); }
+		const effectNames = layer.effects ? Object.keys(layer.effects).filter(key => key !== 'scale') : [];
+		if (effectNames.length) { warnings.push(`PSD layer effects on “${name}” (${effectNames.join(', ')}) are not reconstructed; cached pixels or the integrated preview may include them`); }
 		const activeMask = layer.realMask || layer.mask;
 		if (activeMask?.userMaskFeather || activeMask?.vectorMaskFeather) { warnings.push(`PSD mask feathering on “${name}” is not reconstructed`); }
 		if (activeMask?.userMaskDensity !== undefined && activeMask.userMaskDensity !== 100) { warnings.push(`PSD mask density on “${name}” is approximated`); }
@@ -710,6 +724,7 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 		sampleFormat: bitDepth === 32 ? 3 : 1,
 		data,
 		layerAssets,
+		layerOrder: 'bottom-to-top',
 		formatLabel: `${psb ? 'Photoshop PSB' : 'Photoshop PSD'} composite`,
 		formatType: psb ? 'psb' : 'psd',
 		document,

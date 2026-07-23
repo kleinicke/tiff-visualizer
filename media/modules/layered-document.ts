@@ -87,6 +87,8 @@ export interface DecodedLayeredPreview {
 	integratedData?: LayeredPixelArray;
 	reconstructedData?: LayeredPixelArray;
 	layerAssets?: LayeredRasterAsset[];
+	/** Order used by layerAssets. The compositor itself always consumes bottom-to-top. */
+	layerOrder?: 'top-to-bottom' | 'bottom-to-top';
 	formatLabel: string;
 	formatType: LayeredDocumentFormat;
 	document: LayeredDocumentSummary;

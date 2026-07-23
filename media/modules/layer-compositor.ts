@@ -24,7 +24,7 @@ export type AdjustmentChannel = { shadowInput?: number; highlightInput?: number;
 export type LayerAdjustment =
 	| { type: 'levels'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
 	| { type: 'curves'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
-	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number> };
+	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number>; colorize?: { hue: number; saturation: number; lightness: number } };
 
 export interface Layer {
 	id?: string;
@@ -379,6 +379,31 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 	return coveredCount;
 }
 
+/** Fast path for full-document RGBA creative layers using common blend modes. */
+function compositeDocumentLayerFast(layer: Layer, data: Float32Array, covered: Float32Array, mode: string, opacity: number, coveredCount: number): number {
+	const source = layer.data!, maximum = layer.typeMax || 255;
+	for (let pixel = 0, offset = 0; pixel < covered.length; pixel++, offset += 4) {
+		const sourceAlpha = Math.max(0, Math.min(1, Number(source[offset + 3]) / maximum * opacity));
+		if (sourceAlpha <= 0) { continue; }
+		const destinationAlpha = covered[pixel];
+		const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
+		if (destinationAlpha <= 0) {
+			data[offset] = source[offset]; data[offset + 1] = source[offset + 1]; data[offset + 2] = source[offset + 2];
+			coveredCount++;
+		} else {
+			for (let channel = 0; channel < 3; channel++) {
+				const foreground = Number(source[offset + channel]), background = data[offset + channel];
+				const blended = blendDocumentValue(background, foreground, mode, maximum);
+				data[offset + channel] = ((1 - sourceAlpha) * destinationAlpha * background
+					+ (1 - destinationAlpha) * sourceAlpha * foreground + destinationAlpha * sourceAlpha * blended) / outputAlpha;
+			}
+		}
+		covered[pixel] = outputAlpha;
+		data[offset + 3] = outputAlpha;
+	}
+	return coveredCount;
+}
+
 function rasterMaskFactor(layer: Layer, canvasX: number, canvasY: number): number {
 	const mask = layer.rasterMask;
 	if (!mask) { return 1; }
@@ -448,13 +473,27 @@ function materializeGroupSurfaces(layers: Layer[], canvasWidth: number, canvasHe
 function adjustmentCurve(value: number, channel: AdjustmentChannel | undefined, typeMax: number): number {
 	if (!channel) { return value; }
 	if (Array.isArray(channel)) {
-		const points = channel.filter(point => Number.isFinite(point.input) && Number.isFinite(point.output)).sort((a, b) => a.input - b.input);
+		const points = channel.filter(point => Number.isFinite(point.input) && Number.isFinite(point.output)).sort((a, b) => a.input - b.input)
+			.filter((point, index, all) => index === 0 || point.input !== all[index - 1].input);
 		if (!points.length) { return value; }
 		const input = value * 255 / typeMax;
 		if (input <= points[0].input) { return points[0].output * typeMax / 255; }
 		for (let index = 1; index < points.length; index++) if (input <= points[index].input) {
 			const low = points[index - 1], high = points[index], span = high.input - low.input;
-			return (low.output + (span ? (input - low.input) / span : 0) * (high.output - low.output)) * typeMax / 255;
+			if (!span) { return high.output * typeMax / 255; }
+			const before = points[Math.max(0, index - 2)], after = points[Math.min(points.length - 1, index + 1)];
+			const slope = (a: typeof low, b: typeof low) => (b.output - a.output) / Math.max(1e-6, b.input - a.input);
+			const segmentSlope = slope(low, high);
+			let lowTangent = index === 1 ? segmentSlope : (slope(before, low) + segmentSlope) / 2;
+			let highTangent = index === points.length - 1 ? segmentSlope : (segmentSlope + slope(high, after)) / 2;
+			// Photoshop-style smooth curves must remain monotone between monotone
+			// control points; suppress spline overshoot around extrema.
+			if (!segmentSlope || lowTangent * segmentSlope < 0) { lowTangent = 0; }
+			if (!segmentSlope || highTangent * segmentSlope < 0) { highTangent = 0; }
+			const t = (input - low.input) / span, t2 = t * t, t3 = t2 * t;
+			const output = (2 * t3 - 3 * t2 + 1) * low.output + (t3 - 2 * t2 + t) * span * lowTangent
+				+ (-2 * t3 + 3 * t2) * high.output + (t3 - t2) * span * highTangent;
+			return Math.max(Math.min(low.output, high.output), Math.min(Math.max(low.output, high.output), output)) * typeMax / 255;
 		}
 		return points[points.length - 1].output * typeMax / 255;
 	}
@@ -485,33 +524,169 @@ function hueRangeWeight(hue: number, center: number): number {
 	return distance <= 30 ? 1 : distance >= 60 ? 0 : (60 - distance) / 30;
 }
 
-function applyAdjustmentPixel(data: Float32Array, index: number, channels: number, adjustment: LayerAdjustment, typeMax: number, amount: number): void {
-	const colorChannels = channels === 4 ? 3 : channels;
-	const original = Array.from({ length: colorChannels }, (_, channel) => data[index + channel]);
-	const adjusted = [...original];
+function configuredHueRangeWeight(hue: number, settings: Record<string, number> | undefined, fallbackCenter: number): number {
+	if (!settings || !['a', 'b', 'c', 'd'].every(name => Number.isFinite(settings[name]))) { return hueRangeWeight(hue, fallbackCenter); }
+	let a = settings.a, b = settings.b, c = settings.c, d = settings.d;
+	while (b < a) { b += 360; } while (c < b) { c += 360; } while (d < c) { d += 360; }
+	let weight = 0;
+	for (let candidate = hue - 360; candidate <= hue + 720; candidate += 360) {
+		if (candidate < a || candidate > d) { continue; }
+		weight = Math.max(weight, candidate < b ? (candidate - a) / Math.max(1e-6, b - a)
+			: candidate <= c ? 1 : (d - candidate) / Math.max(1e-6, d - c));
+	}
+	return Math.max(0, Math.min(1, weight));
+}
+
+type PreparedAdjustment = { kind: 'lut'; tables: Float32Array[] } | { kind: 'hue'; value: Extract<LayerAdjustment, { type: 'hue/saturation' }> };
+const preparedAdjustmentCache = new WeakMap<object, Map<number, PreparedAdjustment>>();
+
+function prepareAdjustment(adjustment: LayerAdjustment, typeMax: number): PreparedAdjustment {
+	let byMaximum = preparedAdjustmentCache.get(adjustment as object);
+	if (!byMaximum) { byMaximum = new Map(); preparedAdjustmentCache.set(adjustment as object, byMaximum); }
+	const cached = byMaximum.get(typeMax);
+	if (cached) { return cached; }
+	let prepared: PreparedAdjustment;
 	if (adjustment.type === 'levels' || adjustment.type === 'curves') {
 		const names = ['red', 'green', 'blue'] as const;
+		const tables = names.map(name => {
+			const table = new Float32Array(256);
+			for (let input = 0; input < 256; input++) {
+				const value = input * typeMax / 255;
+				table[input] = adjustmentCurve(adjustmentCurve(value, adjustment.rgb, typeMax), adjustment[name], typeMax);
+			}
+			return table;
+		});
+		prepared = { kind: 'lut', tables };
+	} else { prepared = { kind: 'hue', value: adjustment }; }
+	byMaximum.set(typeMax, prepared);
+	return prepared;
+}
+
+function sampleAdjustmentLut(table: Float32Array, value: number, typeMax: number): number {
+	const position = Math.max(0, Math.min(255, value * 255 / typeMax));
+	const low = Math.floor(position), high = Math.min(255, low + 1), fraction = position - low;
+	return table[low] + (table[high] - table[low]) * fraction;
+}
+
+function applyAdjustmentPixel(data: Float32Array, index: number, channels: number, prepared: PreparedAdjustment, typeMax: number, amount: number): void {
+	const colorChannels = channels === 4 ? 3 : channels;
+	if (prepared.kind === 'lut') {
 		for (let channel = 0; channel < colorChannels; channel++) {
-			adjusted[channel] = adjustmentCurve(adjustmentCurve(adjusted[channel], adjustment.rgb, typeMax), adjustment[names[Math.min(channel, 2)]], typeMax);
+			const original = data[index + channel], adjusted = sampleAdjustmentLut(prepared.tables[Math.min(channel, 2)], original, typeMax);
+			data[index + channel] = original + (adjusted - original) * amount;
 		}
-	} else if (colorChannels >= 3) {
-		let [hue, saturation, lightness] = rgbToHsl(adjusted[0] / typeMax, adjusted[1] / typeMax, adjusted[2] / typeMax);
-		const apply = (settings: Record<string, number> | undefined, weight: number) => {
-			if (!settings || weight <= 0) { return; }
-			hue = (hue + (settings.hue || 0) * weight + 360) % 360;
-			saturation = Math.max(0, Math.min(1, saturation + (settings.saturation || 0) / 100 * weight));
-			lightness = Math.max(0, Math.min(1, lightness + (settings.lightness || 0) / 100 * weight));
-		};
-		apply(adjustment.master, 1);
-		const ranges: [keyof typeof adjustment, number][] = [['reds', 0], ['yellows', 60], ['greens', 120], ['cyans', 180], ['blues', 240], ['magentas', 300]];
-		for (const [name, center] of ranges) { apply(adjustment[name] as Record<string, number> | undefined, hueRangeWeight(hue, center)); }
-		const rgb = hslToRgb(hue, saturation, lightness);
-		for (let channel = 0; channel < 3; channel++) { adjusted[channel] = rgb[channel] * typeMax; }
+		return;
 	}
-	for (let channel = 0; channel < colorChannels; channel++) { data[index + channel] = original[channel] + (adjusted[channel] - original[channel]) * amount; }
+	if (colorChannels >= 3) {
+		const adjustment = prepared.value;
+		const originalRed = data[index], originalGreen = data[index + 1], originalBlue = data[index + 2];
+		let [hue, saturation, lightness] = rgbToHsl(originalRed / typeMax, originalGreen / typeMax, originalBlue / typeMax);
+		if (adjustment.colorize) {
+			hue = (adjustment.colorize.hue + 360) % 360;
+			saturation = Math.max(0, Math.min(1, adjustment.colorize.saturation / 100));
+			const delta = Math.max(-1, Math.min(1, adjustment.colorize.lightness / 100));
+			lightness = delta < 0 ? lightness * (1 + delta) : lightness + (1 - lightness) * delta;
+		} else {
+			const sourceHue = hue;
+			const apply = (settings: Record<string, number> | undefined, weight: number) => {
+				if (!settings || weight <= 0) { return; }
+				hue = (hue + (settings.hue || 0) * weight + 360) % 360;
+				saturation = Math.max(0, Math.min(1, saturation + (settings.saturation || 0) / 100 * weight));
+				lightness = Math.max(0, Math.min(1, lightness + (settings.lightness || 0) / 100 * weight));
+			};
+			apply(adjustment.master, 1);
+			const ranges: [keyof typeof adjustment, number][] = [['reds', 0], ['yellows', 60], ['greens', 120], ['cyans', 180], ['blues', 240], ['magentas', 300]];
+			for (const [name, center] of ranges) {
+				const settings = adjustment[name] as Record<string, number> | undefined;
+				apply(settings, configuredHueRangeWeight(sourceHue, settings, center));
+			}
+		}
+		const rgb = hslToRgb(hue, saturation, lightness);
+		const adjustedRed = rgb[0] * typeMax, adjustedGreen = rgb[1] * typeMax, adjustedBlue = rgb[2] * typeMax;
+		data[index] = originalRed + (adjustedRed - originalRed) * amount;
+		data[index + 1] = originalGreen + (adjustedGreen - originalGreen) * amount;
+		data[index + 2] = originalBlue + (adjustedBlue - originalBlue) * amount;
+	}
+}
+
+type LayerSnapshot = {
+	layer: Layer; data: ArrayLike<number> | undefined; adjustment: LayerAdjustment | undefined;
+	visible: boolean | undefined; opacity: number | undefined; blendMode: string | undefined;
+	offsetX: number | undefined; offsetY: number | undefined; clipped: boolean | undefined;
+	width: number; height: number; channels: number; typeMax: number | undefined;
+	mask: Layer['rasterMask']; maskData: ArrayLike<number> | undefined;
+};
+
+type ClippingSurfaceCacheEntry = { snapshots: LayerSnapshot[]; width: number; height: number; surface: CompositeResult };
+const clippingSurfaceCache = new WeakMap<Layer, ClippingSurfaceCacheEntry>();
+
+function takeLayerSnapshot(layer: Layer, clippingBase = false): LayerSnapshot {
+	return {
+		layer, data: layer.data, adjustment: layer.adjustment, visible: clippingBase ? true : layer.visible, opacity: clippingBase ? 1 : layer.opacity,
+		blendMode: clippingBase ? 'normal' : layer.blendMode, offsetX: layer.offsetX, offsetY: layer.offsetY, clipped: clippingBase ? false : layer.clipped,
+		width: layer.width, height: layer.height, channels: layer.channels, typeMax: layer.typeMax,
+		mask: layer.rasterMask, maskData: layer.rasterMask?.data,
+	};
+}
+
+function snapshotsMatch(left: LayerSnapshot[], right: LayerSnapshot[]): boolean {
+	if (left.length !== right.length) { return false; }
+	for (let index = 0; index < left.length; index++) {
+		const a = left[index], b = right[index];
+		if (a.layer !== b.layer || a.data !== b.data || a.adjustment !== b.adjustment || a.visible !== b.visible || a.opacity !== b.opacity
+			|| a.blendMode !== b.blendMode || a.offsetX !== b.offsetX || a.offsetY !== b.offsetY || a.clipped !== b.clipped
+			|| a.width !== b.width || a.height !== b.height || a.channels !== b.channels || a.typeMax !== b.typeMax
+			|| a.mask !== b.mask || a.maskData !== b.maskData) { return false; }
+	}
+	return true;
+}
+
+/**
+ * Turn a base plus its contiguous clipped siblings into one reusable surface.
+ * Adjustments therefore affect the base before the base blend mode is applied
+ * to the parent stack, matching PSD clipping-group scope.
+ */
+function materializeClippingSurfaces(layers: Layer[], canvasWidth: number, canvasHeight: number): Layer[] {
+	const output: Layer[] = [];
+	for (let index = 0; index < layers.length;) {
+		const base = layers[index];
+		if (base.clipped || !base.data) { output.push(base); index++; continue; }
+		let end = index + 1;
+		while (end < layers.length && layers[end].clipped) { end++; }
+		if (end === index + 1) { output.push(base); index++; continue; }
+		const stack = layers.slice(index, end), snapshots = stack.map((layer, stackIndex) => takeLayerSnapshot(layer, stackIndex === 0));
+		const cached = clippingSurfaceCache.get(base);
+		let surface: CompositeResult;
+		if (cached && cached.width === canvasWidth && cached.height === canvasHeight && snapshotsMatch(cached.snapshots, snapshots)) {
+			surface = cached.surface;
+		} else {
+			const internalBase: Layer = { ...base, visible: true, opacity: 1, blendMode: 'normal', clipped: false };
+			surface = compositePrepared([internalBase, ...stack.slice(1)], canvasWidth, canvasHeight);
+			clippingSurfaceCache.set(base, { snapshots, width: canvasWidth, height: canvasHeight, surface });
+		}
+		output.push({
+			...base,
+			data: surface.data,
+			width: canvasWidth,
+			height: canvasHeight,
+			channels: surface.channels,
+			isFloat: surface.isFloat,
+			typeMax: surface.typeMax,
+			offsetX: 0,
+			offsetY: 0,
+			rasterMask: undefined,
+			clipped: false,
+		});
+		index = end;
+	}
+	return output;
 }
 
 function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: number): CompositeResult {
+	return compositePrepared(materializeClippingSurfaces(layers, canvasWidth, canvasHeight), canvasWidth, canvasHeight);
+}
+
+function compositePrepared(layers: Layer[], canvasWidth: number, canvasHeight: number): CompositeResult {
 	const visibleLayers = layers.filter(l => l && l.visible !== false && (l.opacity ?? 1) > 0 && (l.data || (l.kind === 'adjustment' && l.adjustment)));
 	const outChannels = visibleLayers.length ? compositeChannels(visibleLayers) : 1;
 	const pixelCount = canvasWidth * canvasHeight;
@@ -542,16 +717,20 @@ function compositeFlat(layers: Layer[], canvasWidth: number, canvasHeight: numbe
 		if (layer.clipped && !clipSurface) { continue; }
 		if (layer.kind === 'adjustment' && layer.adjustment) {
 			const max = visibleLayers.find(candidate => candidate.data)?.typeMax || 255;
+			const prepared = prepareAdjustment(layer.adjustment, max);
 			for (let y = 0; y < canvasHeight; y++) for (let x = 0; x < canvasWidth; x++) {
 				const pixel = y * canvasWidth + x;
 				if (!covered[pixel]) { continue; }
 				const amount = opacity * rasterMaskFactor(layer, x, y) * (clipSurface ? clipSurface[pixel] : 1);
-				if (amount > 0) { applyAdjustmentPixel(data, pixel * outChannels, outChannels, layer.adjustment, max, amount); }
+				if (amount > 0) { applyAdjustmentPixel(data, pixel * outChannels, outChannels, prepared, max, amount); }
 			}
 			continue;
 		}
 		if (mode === 'normal' && !layer.rasterMask && !layer.clipped) {
 			coveredCount = compositeNormalLayerFast(layer, data, covered, outChannels, canvasWidth, xStart, yStart, xEnd, yEnd, offsetX, offsetY, opacity, coveredCount);
+		} else if (documentBlend && outChannels === 4 && layer.channels === 4 && !layer.rasterMask && !layer.clipped
+			&& offsetX === 0 && offsetY === 0 && layer.width === canvasWidth && layer.height === canvasHeight) {
+			coveredCount = compositeDocumentLayerFast(layer, data, covered, mode, opacity, coveredCount);
 		} else {
 			for (let y = yStart; y < yEnd; y++) {
 				const ly = y - offsetY;

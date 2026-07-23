@@ -268,7 +268,29 @@ async function main() {
 		const hue = layer({ kind: 'adjustment', adjustment: { type: 'hue/saturation', master: { hue: 120, saturation: 0, lightness: 0 } }, width: 1, height: 1, channels: 4, typeMax: 255 });
 		const hueResult = composite([red, hue], 1, 1);
 		assert.ok(hueResult.data[1] > 254 && hueResult.data[0] < 1, `hue result: ${Array.from(hueResult.data)}`);
-		console.log('✅ Levels, curves, and hue/saturation adjustment nodes');
+
+		const gray = layer({ data: new Uint8Array([128, 128, 128, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const colorize = layer({ kind: 'adjustment', adjustment: { type: 'hue/saturation', colorize: { hue: 0, saturation: 100, lightness: -50 } }, width: 1, height: 1, channels: 4, typeMax: 255 });
+		const colorized = composite([gray, colorize], 1, 1);
+		assert.ok(approx(colorized.data[0], 128, 0.01) && colorized.data[1] < 0.01 && colorized.data[2] < 0.01,
+			`legacy colorize result: ${Array.from(colorized.data)}`);
+		console.log('✅ Levels, smooth curves, hue/saturation, and legacy colorize adjustments');
+	}
+
+	// 22. A clipped adjustment changes its base surface before the base blend
+	//     mode is applied to the parent stack.
+	{
+		const background = layer({ data: new Uint8Array([100, 100, 100, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const screenedBase = layer({ data: new Uint8Array([50, 50, 50, 255]), width: 1, height: 1, channels: 4, typeMax: 255, blendMode: 'screen' });
+		const clippedLevels = layer({ kind: 'adjustment', clipped: true, adjustment: { type: 'levels', rgb: { shadowInput: 0, highlightInput: 100, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } }, width: 1, height: 1, channels: 4, typeMax: 255 });
+		const result = composite([background, screenedBase, clippedLevels], 1, 1);
+		const expected = blendDocumentValue(100, 127.5, 'screen', 255);
+		assert.ok(approx(result.data[0], expected, 0.01), `clipped adjustment scope: ${result.data[0]} vs ${expected}`);
+		screenedBase.visible = false;
+		assert.ok(approx(composite([background, screenedBase, clippedLevels], 1, 1).data[0], 100, 0.01));
+		screenedBase.visible = true;
+		assert.ok(approx(composite([background, screenedBase, clippedLevels], 1, 1).data[0], expected, 0.01));
+		console.log('✅ Clipped adjustment stacks render before their base blend mode and remain cache-safe');
 	}
 
 	console.log('\n🎉 All layer compositor tests passed.\n');
