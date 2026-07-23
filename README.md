@@ -23,7 +23,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | PNG                                     |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA |
 | PPM / PGM / PBM                         |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit |
 | JPEG / WebP / AVIF / BMP / ICO / TGA / JXL | Yes |     No |      No |      No | Decoded as 8-bit image data |
-| ORA / KRA / PSD / PSB / XCF / Affinity Photo | Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; PSD levels, curves, and hue/saturation are approximated |
+| ORA / KRA / PSD / PSB / XCF / Affinity Photo | Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; compatible PSD adjustments, Krita filter masks/layers, and GIMP 3 layer effects are approximated |
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
@@ -43,7 +43,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 - **Histogram View**: Show a histogram overlay to inspect the current image distribution while tuning the visualization.
 - **Image Collections**: Group related images in one preview and quickly move between them without opening a tab for every file. Add individual images, folders, paths, or wildcard matches from the command palette and editor context menu.
   ![collection](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/Collection.gif)
-- **Layers View**: Open one or more images in a dedicated Layers window for compositing and visual comparison. Imported layered documents retain collapsible nested groups, group visibility and Shift-solo controls, source-compatibility badges, inline renaming, and persistent group expansion state.
+- **Layers View**: Open one or more images in a dedicated Layers window for compositing and visual comparison. Imported layered documents retain collapsible nested groups, group visibility and Shift-solo controls, source-compatibility badges, inline renaming, editable/removable filters, persistent group expansion state, and keyboard undo/redo for layer/filter changes.
   Easily get the difference between two images or apply a mask onto one. This layer view allows dedicated compositions between multiple images.
 - **NaN Color**: Choose how NaN values are displayed.
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.

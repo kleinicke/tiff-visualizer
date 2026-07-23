@@ -41,6 +41,36 @@ async function main() {
 		assert.strictEqual(filterManager.layers.find(layer => layer.id === id).adjustment.type, type);
 	}
 
+	const undoManager = new LayerManager();
+	undoManager.setBaseLayer({ data: new Uint8Array([64, 64, 64, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Undo base' });
+	const undoBaseId = undoManager.layers[0].id;
+	const undoFilterId = undoManager.addAdjustmentLayer(undoBaseId, 'brightness/contrast');
+	assert.strictEqual(undoManager.canUndo(), true);
+	assert.strictEqual(undoManager.undo(), true);
+	assert.strictEqual(undoManager.layers.length, 1, 'undo removes a newly added filter');
+	const restoredFilterId = undoManager.addAdjustmentLayer(undoBaseId, 'brightness/contrast');
+	undoManager.beginHistoryGroup();
+	undoManager.updateLayer(restoredFilterId, { adjustment: { type: 'brightness/contrast', brightness: 10, contrast: 0 } });
+	undoManager.updateLayer(restoredFilterId, { adjustment: { type: 'brightness/contrast', brightness: 35, contrast: 20 } });
+	undoManager.endHistoryGroup();
+	assert.strictEqual(undoManager.undo(), true);
+	assert.deepStrictEqual(undoManager.layers.find(layer => layer.id === restoredFilterId).adjustment, { type: 'brightness/contrast', brightness: 0, contrast: 0 }, 'continuous filter edits undo as one gesture');
+	assert.strictEqual(undoManager.canRedo(), true);
+	assert.strictEqual(undoManager.redo(), true);
+	assert.deepStrictEqual(undoManager.layers.find(layer => layer.id === restoredFilterId).adjustment, { type: 'brightness/contrast', brightness: 35, contrast: 20 }, 'redo restores a coalesced filter edit');
+	assert.strictEqual(undoManager.undo(), true);
+	undoManager.removeLayer(restoredFilterId);
+	assert.strictEqual(undoManager.layers.some(layer => layer.id === restoredFilterId), false);
+	undoManager.undo();
+	assert.strictEqual(undoManager.layers.some(layer => layer.id === restoredFilterId), true, 'removed filters can be restored');
+	undoManager.addLayer({ data: new Uint8Array([255, 0, 0, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Added' });
+	undoManager.undo();
+	assert.strictEqual(undoManager.layers.some(layer => layer.name === 'Added'), false, 'new image layers can be undone');
+	assert.strictEqual(undoManager.canRedo(), true);
+	undoManager.addLayer({ data: new Uint8Array([0, 255, 0, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Replacement' });
+	assert.strictEqual(undoManager.canRedo(), false, 'a new edit clears the redo branch');
+	assert.ok(undoFilterId);
+
 	const events = [];
 	const range = {
 		dataset: { defaultValue: '50' },
@@ -62,7 +92,7 @@ async function main() {
 	resetRangeToDefault(minFallback);
 	assert.strictEqual(minFallback.value, '-5');
 
-	console.log('Control behavior passed: toggle-solo layers/groups and double-click range defaults.');
+	console.log('Control behavior passed: layer undo/redo, toggle-solo layers/groups, and double-click range defaults.');
 }
 
 main().catch(error => {

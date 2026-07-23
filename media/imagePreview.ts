@@ -1745,6 +1745,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				(!!target && !!imageElement.contains && imageElement.contains(target));
 			if (!onImage) { return; }
 			_layerDrag = { id: layersPanel.movingLayerId, lastX: e.clientX, lastY: e.clientY };
+			layerManager.beginHistoryGroup();
 			// Capture-phase stop so the zoom/pan controller doesn't also react.
 			e.preventDefault();
 			e.stopPropagation();
@@ -1765,6 +1766,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		window.addEventListener('mouseup', () => {
 			if (_layerDrag) {
 				_layerDrag = null;
+				layerManager.endHistoryGroup();
 				layersPanel.refresh(); // sync the numeric offset inputs after the drag
 				scheduleSaveState();
 			}

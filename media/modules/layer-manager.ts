@@ -37,6 +37,24 @@ export interface LayerInput {
 
 let _nextLayerId = 1;
 
+interface LayerHistorySnapshot {
+	layers: Layer[];
+	documentExpanded: boolean;
+}
+
+function cloneHistoryLayer(layer: Layer): Layer {
+	return {
+		...layer,
+		groupPath: layer.groupPath ? [...layer.groupPath] : undefined,
+		groupIds: layer.groupIds ? [...layer.groupIds] : undefined,
+		maskCondition: layer.maskCondition ? { ...layer.maskCondition } : undefined,
+		rasterMask: layer.rasterMask ? { ...layer.rasterMask } : undefined,
+		// Pixel arrays are immutable after decode and can be shared. Adjustment
+		// descriptors are small mutable value objects and must be copied.
+		adjustment: layer.adjustment ? JSON.parse(JSON.stringify(layer.adjustment)) as LayerAdjustment : undefined,
+	};
+}
+
 export class LayerManager {
 	layers: Layer[];
 	active: boolean;
@@ -44,6 +62,11 @@ export class LayerManager {
 	canvasHeight: number;
 	_lastComposite: CompositeResult | null;
 	documentExpanded: boolean;
+	private _undoStack: LayerHistorySnapshot[];
+	private _redoStack: LayerHistorySnapshot[];
+	private _historyGroupDepth: number;
+	private _historyGroupStart: LayerHistorySnapshot | null;
+	private _historyGroupChanged: boolean;
 
 	constructor() {
 		this.layers = [];
@@ -52,6 +75,86 @@ export class LayerManager {
 		this.canvasHeight = 0;
 		this._lastComposite = null;
 		this.documentExpanded = false;
+		this._undoStack = [];
+		this._redoStack = [];
+		this._historyGroupDepth = 0;
+		this._historyGroupStart = null;
+		this._historyGroupChanged = false;
+	}
+
+	private _snapshot(): LayerHistorySnapshot {
+		return { layers: this.layers.map(cloneHistoryLayer), documentExpanded: this.documentExpanded };
+	}
+
+	private _pushUndo(snapshot: LayerHistorySnapshot): void {
+		this._undoStack.push(snapshot);
+		if (this._undoStack.length > 50) { this._undoStack.shift(); }
+	}
+
+	private _recordHistory(): void {
+		if (this._historyGroupDepth > 0) {
+			if (!this._historyGroupChanged) { this._redoStack = []; }
+			this._historyGroupChanged = true;
+			return;
+		}
+		this._redoStack = [];
+		this._pushUndo(this._snapshot());
+	}
+
+	/** Coalesce a continuous UI gesture (slider/curve/drag) into one undo step. */
+	beginHistoryGroup(): void {
+		if (this._historyGroupDepth++ === 0) {
+			this._historyGroupStart = this._snapshot();
+			this._historyGroupChanged = false;
+		}
+	}
+
+	endHistoryGroup(): void {
+		if (this._historyGroupDepth <= 0) { return; }
+		if (--this._historyGroupDepth === 0) {
+			if (this._historyGroupChanged && this._historyGroupStart) { this._pushUndo(this._historyGroupStart); }
+			this._historyGroupStart = null;
+			this._historyGroupChanged = false;
+		}
+	}
+
+	canUndo(): boolean {
+		return this._undoStack.length > 0 || (this._historyGroupDepth > 0 && this._historyGroupChanged);
+	}
+
+	canRedo(): boolean {
+		return this._redoStack.length > 0;
+	}
+
+	undo(): boolean {
+		while (this._historyGroupDepth > 0) { this.endHistoryGroup(); }
+		const snapshot = this._undoStack.pop();
+		if (!snapshot) { return false; }
+		this._redoStack.push(this._snapshot());
+		if (this._redoStack.length > 50) { this._redoStack.shift(); }
+		this.layers = snapshot.layers.map(cloneHistoryLayer);
+		this.documentExpanded = snapshot.documentExpanded;
+		this._lastComposite = null;
+		return true;
+	}
+
+	redo(): boolean {
+		while (this._historyGroupDepth > 0) { this.endHistoryGroup(); }
+		const snapshot = this._redoStack.pop();
+		if (!snapshot) { return false; }
+		this._pushUndo(this._snapshot());
+		this.layers = snapshot.layers.map(cloneHistoryLayer);
+		this.documentExpanded = snapshot.documentExpanded;
+		this._lastComposite = null;
+		return true;
+	}
+
+	clearHistory(): void {
+		this._undoStack = [];
+		this._redoStack = [];
+		this._historyGroupDepth = 0;
+		this._historyGroupStart = null;
+		this._historyGroupChanged = false;
 	}
 
 	/** True if there is more than just the base layer. */
@@ -79,6 +182,7 @@ export class LayerManager {
 		this.canvasHeight = layer.height;
 		this.layers = [base];
 		this.documentExpanded = false;
+		this.clearHistory();
 	}
 
 	/**
@@ -86,6 +190,7 @@ export class LayerManager {
 	 * @returns The new layer's id.
 	 */
 	addLayer(layer: LayerInput): string {
+		this._recordHistory();
 		const { offsetX, offsetY } = centeredOffset(layer.width, layer.height, this.canvasWidth || layer.width, this.canvasHeight || layer.height);
 		const l = this._toLayer(layer, offsetX, offsetY);
 		l.name = layer.name || `Layer ${this.layers.length}`;
@@ -98,6 +203,7 @@ export class LayerManager {
 	addAdjustmentLayer(targetId: string, type: LayerAdjustment['type']): string | null {
 		const targetIndex = this.layers.findIndex(layer => layer.id === targetId);
 		if (targetIndex < 0) { return null; }
+		this._recordHistory();
 		const target = this.layers[targetIndex];
 		const defaults: Record<LayerAdjustment['type'], () => LayerAdjustment> = {
 			'levels': () => ({ type: 'levels', rgb: { shadowInput: 0, highlightInput: 255, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } }),
@@ -136,6 +242,7 @@ export class LayerManager {
 		const idx = this.layers.findIndex(l => l.id === id);
 		// Keep at least one layer (it defines the canvas).
 		if (idx >= 0 && this.layers.length > 1) {
+			this._recordHistory();
 			const descendants = new Set([id]);
 			if (!this.layers[idx].clipped) {
 				for (let attached = idx + 1; attached < this.layers.length && this.layers[attached].clipped
@@ -160,7 +267,11 @@ export class LayerManager {
 	 */
 	updateLayer(id: string, props: Partial<Layer>): void {
 		const layer = this.layers.find(l => l.id === id);
-		if (layer) { Object.assign(layer, props); }
+		if (layer && Object.entries(props).some(([key, value]) => layer[key as keyof Layer] !== value)) {
+			this._recordHistory();
+			Object.assign(layer, props);
+			this._lastComposite = null;
+		}
 	}
 
 	/** Toggle a layer between solo and an all-visible stack. */
@@ -172,6 +283,7 @@ export class LayerManager {
 	toggleSoloLayers(ids: Set<string>): void {
 		const alreadySolo = this.layers.length > 0 && this.layers.every(layer =>
 			ids.has(layer.id as string) ? layer.visible !== false : layer.visible === false);
+		this._recordHistory();
 		for (const layer of this.layers) {
 			layer.visible = alreadySolo || ids.has(layer.id as string);
 		}
@@ -182,7 +294,8 @@ export class LayerManager {
 	 */
 	moveLayer(id: string, dx: number, dy: number): void {
 		const layer = this.layers.find(l => l.id === id);
-		if (layer) {
+		if (layer && (dx !== 0 || dy !== 0)) {
+			this._recordHistory();
 			layer.offsetX = (layer.offsetX ?? 0) + dx;
 			layer.offsetY = (layer.offsetY ?? 0) + dy;
 		}
@@ -196,6 +309,7 @@ export class LayerManager {
 		if (idx < 0) { return; }
 		const clamped = Math.max(0, Math.min(this.layers.length - 1, newIndex));
 		if (clamped === idx) { return; }
+		this._recordHistory();
 		const [layer] = this.layers.splice(idx, 1);
 		this.layers.splice(clamped, 0, layer);
 	}
@@ -279,6 +393,7 @@ export class LayerManager {
 		this.layers = layers;
 		this.canvasWidth = canvasWidth;
 		this.canvasHeight = canvasHeight;
+		this.clearHistory();
 	}
 
 	/**

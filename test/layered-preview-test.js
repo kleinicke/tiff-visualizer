@@ -85,6 +85,55 @@ function buildMinimalXcf(compression = 0) {
 	return Uint8Array.from(bytes);
 }
 
+function buildEffectXcf() {
+	const bytes = [], labels = new Map(), patches = [];
+	const raw = values => bytes.push(...values);
+	const u32 = value => bytes.push((value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255);
+	const f32 = value => { const data = Buffer.alloc(4); data.writeFloatBE(value); raw(data); };
+	const pointer = label => { patches.push({ offset: bytes.length, label }); raw([0, 0, 0, 0, 0, 0, 0, 0]); };
+	const zeroPointer = () => raw([0, 0, 0, 0, 0, 0, 0, 0]);
+	const label = name => labels.set(name, bytes.length);
+	const string = value => { const encoded = Buffer.from(`${value}\0`); u32(encoded.length); raw(encoded); };
+	const endProps = () => { u32(0); u32(0); };
+	const filterFloat = (name, value) => {
+		const payload = [], encoded = Buffer.from(`${name}\0`);
+		const pushU32 = number => payload.push((number >>> 24) & 255, (number >>> 16) & 255, (number >>> 8) & 255, number & 255);
+		pushU32(encoded.length); payload.push(...encoded); pushU32(3);
+		const data = Buffer.alloc(4); data.writeFloatBE(value); payload.push(...data);
+		u32(45); u32(payload.length); raw(payload);
+	};
+
+	raw(Buffer.from('gimp xcf v020\0'));
+	u32(1); u32(1); u32(0); u32(150);
+	u32(17); u32(1); raw([0]); endProps();
+	pointer('layer'); zeroPointer(); zeroPointer();
+
+	label('layer');
+	u32(1); u32(1); u32(1); string('Effect pixels');
+	u32(6); u32(4); u32(255); u32(8); u32(4); u32(1); u32(7); u32(4); u32(0); endProps();
+	pointer('hierarchy'); zeroPointer(); pointer('effect'); zeroPointer();
+
+	label('effect');
+	string('Brightness/Contrast'); string(''); string('gegl:brightness-contrast');
+	filterFloat('brightness', 0.25); filterFloat('contrast', 0.5); endProps(); zeroPointer();
+
+	label('hierarchy');
+	u32(1); u32(1); u32(4); pointer('level'); zeroPointer();
+	label('level');
+	u32(1); u32(1); pointer('tile'); zeroPointer();
+	label('tile'); raw([64, 64, 64, 255]);
+
+	for (const patch of patches) {
+		const value = labels.get(patch.label);
+		if (value === undefined) { throw new Error(`Missing XCF label ${patch.label}`); }
+		bytes[patch.offset + 4] = (value >>> 24) & 255;
+		bytes[patch.offset + 5] = (value >>> 16) & 255;
+		bytes[patch.offset + 6] = (value >>> 8) & 255;
+		bytes[patch.offset + 7] = value & 255;
+	}
+	return Uint8Array.from(bytes);
+}
+
 async function main() {
 	const decoderPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layered-preview-decoders.js');
 	const { decodeLayeredPreview } = await import(decoderPath);
@@ -150,6 +199,19 @@ async function main() {
 	assert.deepStrictEqual([paintedKra.layerAssets[0].rasterMask.x, paintedKra.layerAssets[0].rasterMask.y], [0, 0]);
 	assert.deepStrictEqual(Array.from(paintedKra.layerAssets[0].rasterMask.data.slice(0, 2)), [255, 0]);
 
+	const filteredKra = decodeLayeredPreview('kra', asArrayBuffer(zipSync({
+		'mimetype': strToU8('application/x-krita'),
+		'mergedimage.png': png,
+		'maindoc.xml': strToU8('<DOC><IMAGE name="Filter Test" colorspacename="RGBA" width="2" height="1"><layers><layer name="Global hue" nodetype="adjustmentlayer" filename="layer1" filtername="hsvadjustment" visible="1" opacity="255"/><layer name="Pixels" nodetype="paintlayer" filename="layer2" visible="1" opacity="255"><masks><mask name="Local levels" nodetype="filtermask" filename="mask3" filtername="levels" visible="1"/></masks></layer></layers></IMAGE></DOC>'),
+		'Filter Test/layers/layer1.filterconfig': strToU8('<params version="1"><param name="h">45</param><param name="s">20</param><param name="v">-5</param><param name="colorize">false</param></params>'),
+		'Filter Test/layers/layer2': kraPaintDevice(4, [0, 0, 255, 255, 0, 255, 0, 255]),
+		'Filter Test/layers/mask3.filterconfig': strToU8('<params version="2"><param name="lightness">0.1;0.9;1.2;0;1</param></params>'),
+	})));
+	const kraAdjustments = filteredKra.layerAssets.filter(asset => asset.kind === 'adjustment');
+	assert.deepStrictEqual(kraAdjustments.map(asset => asset.adjustment.type), ['hue/saturation', 'levels']);
+	assert.strictEqual(kraAdjustments.find(asset => asset.name === 'Local levels').clipped, true);
+	assert.strictEqual(kraAdjustments.find(asset => asset.name === 'Local levels').adjustment.rgb.midtoneInput, 1.2);
+
 	const affinityBytes = new Uint8Array(8 + png.length);
 	affinityBytes.set([0, 255, 75, 65], 0);
 	affinityBytes.set(png, 8);
@@ -213,6 +275,12 @@ async function main() {
 		assert.deepStrictEqual(Array.from(xcf.layerAssets[0].data.slice(4, 8)), [0, 255, 0, 128]);
 		assert.strictEqual(xcf.layerAssets[0].support, 'native');
 	}
+	const effectXcf = decodeLayeredPreview('xcf', asArrayBuffer(buildEffectXcf()));
+	const xcfEffect = effectXcf.layerAssets.find(asset => asset.kind === 'adjustment');
+	assert.strictEqual(xcfEffect.adjustment.type, 'brightness/contrast');
+	assert.strictEqual(xcfEffect.adjustment.brightness, 25);
+	assert.strictEqual(xcfEffect.adjustment.contrast, 50);
+	assert.strictEqual(xcfEffect.clipped, true);
 
 	const exported = writeLayerStackAsXcf([
 		{ id: 'background', kind: 'raster', name: 'Background', data: new Uint8Array([0, 0, 0, 255, 0, 0, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 1, blendMode: 'normal' },

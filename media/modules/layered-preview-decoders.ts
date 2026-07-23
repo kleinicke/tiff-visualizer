@@ -316,6 +316,77 @@ function kraEntryPath(files: Record<string, Uint8Array>, documentName: string, f
 	return candidates.find(path => !!files[path]) || Object.keys(files).find(path => path.endsWith(`/layers/${normalized}`));
 }
 
+function filterConfigParams(xml: string): Record<string, string> {
+	const params: Record<string, string> = {};
+	const expression = /<(?:param|property)\b([^>]*)>([\s\S]*?)<\/(?:param|property)\s*>/gi;
+	let match: RegExpExecArray | null, count = 0;
+	while ((match = expression.exec(xml))) {
+		if (++count > 10_000) { throw new Error('Filter configuration exceeds the parameter safety limit'); }
+		const name = parseXmlAttributes(match[1]).name;
+		if (name) { params[name] = decodeXmlEntity(match[2].replace(/<[^>]*>/g, '').trim()); }
+	}
+	return params;
+}
+
+function configNumber(params: Record<string, string>, names: string[], fallback: number): number {
+	for (const name of names) {
+		const value = Number(params[name]);
+		if (Number.isFinite(value)) { return value; }
+	}
+	return fallback;
+}
+
+function configBool(params: Record<string, string>, names: string[], fallback = false): boolean {
+	for (const name of names) {
+		if (!(name in params)) { continue; }
+		return /^(?:1|true|yes|on)$/i.test(params[name]);
+	}
+	return fallback;
+}
+
+/** Translate the stable/common subset of Krita filter configurations. */
+function kraAdjustment(filterName: string | undefined, xml: string): LayerAdjustment | undefined {
+	const id = (filterName || xmlAttribute(xml, 'name') || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+	const params = filterConfigParams(xml);
+	if (id === 'levels') {
+		const compact = (params.lightness || '').split(';').map(Number);
+		const values = compact.length >= 5 && compact.every(Number.isFinite) ? compact : [
+			configNumber(params, ['blackvalue'], 0) / 255,
+			configNumber(params, ['whitevalue'], 255) / 255,
+			configNumber(params, ['gammavalue'], 1),
+			configNumber(params, ['outblackvalue'], 0) / 255,
+			configNumber(params, ['outwhitevalue'], 255) / 255,
+		];
+		return { type: 'levels', rgb: { shadowInput: values[0] * 255, highlightInput: values[1] * 255, midtoneInput: values[2], shadowOutput: values[3] * 255, highlightOutput: values[4] * 255 } };
+	}
+	if (['hsvadjustment', 'huesaturation', 'hsladjustment'].includes(id)) {
+		const colorizeEnabled = configBool(params, ['colorize']);
+		const values = {
+			hue: configNumber(params, ['h', 'hue'], 0),
+			saturation: configNumber(params, ['s', 'saturation'], colorizeEnabled ? 100 : 0),
+			lightness: configNumber(params, ['v', 'l', 'lightness', 'value'], 0),
+		};
+		return colorizeEnabled
+			? { type: 'hue/saturation', master: { hue: 0, saturation: 0, lightness: 0 }, colorize: values, colorizeEnabled: true }
+			: { type: 'hue/saturation', master: values, colorize: { hue: 0, saturation: 100, lightness: 0 }, colorizeEnabled: false };
+	}
+	if (id === 'invert') { return { type: 'invert' }; }
+	if (id === 'threshold') { return { type: 'threshold', level: configNumber(params, ['threshold', 'level', 'value'], 128) }; }
+	if (id === 'posterize') { return { type: 'posterize', levels: configNumber(params, ['steps', 'levels', 'value'], 4) }; }
+	if (['brightnesscontrast', 'brightnessandcontrast'].includes(id)) {
+		return { type: 'brightness/contrast', brightness: configNumber(params, ['brightness'], 0), contrast: configNumber(params, ['contrast'], 0) };
+	}
+	if (id === 'colorbalance') {
+		const range = (prefix: string) => ({
+			cyanRed: configNumber(params, [`${prefix}_cyan_red`, `${prefix}CyanRed`, `cyan_red_${prefix}`], 0),
+			magentaGreen: configNumber(params, [`${prefix}_magenta_green`, `${prefix}MagentaGreen`, `magenta_green_${prefix}`], 0),
+			yellowBlue: configNumber(params, [`${prefix}_yellow_blue`, `${prefix}YellowBlue`, `yellow_blue_${prefix}`], 0),
+		});
+		return { type: 'color balance', shadows: range('shadows'), midtones: range('midtones'), highlights: range('highlights'), preserveLuminosity: configBool(params, ['preserve_luminosity', 'preserveLuminosity'], true) };
+	}
+	return undefined;
+}
+
 /** Standard LZF decoder used by Krita's version-2 tile stream. */
 function decodeKraLzf(input: Uint8Array, expectedLength: number): Uint8Array {
 	const output = new Uint8Array(expectedLength);
@@ -408,11 +479,17 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 	const filenames = new Set<string>();
 	const collect = (nodes: KraXmlNode[]) => nodes.forEach(node => {
 		if (node.attrs.filename) { filenames.add(node.attrs.filename); }
-		for (const mask of node.masks) if (mask.filename) { filenames.add(`${mask.filename}.pixelselection`); }
+		for (const mask of node.masks) if (mask.filename) { filenames.add(mask.filename); }
 		collect(node.children);
 	});
 	collect(roots);
-	const files = unzipSelected(buffer, name => [...filenames].some(filename => name.endsWith(`/layers/${filename}`) || name === `layers/${filename}` || name.endsWith(`/layers/${filename}.defaultpixel`) || name === `layers/${filename}.defaultpixel`));
+	const files = unzipSelected(buffer, name => [...filenames].some(filename => {
+		const base = name.endsWith(`/layers/${filename}`) || name === `layers/${filename}`;
+		return base || name.endsWith(`/layers/${filename}.defaultpixel`) || name === `layers/${filename}.defaultpixel`
+			|| name.endsWith(`/layers/${filename}.filterconfig`) || name === `layers/${filename}.filterconfig`
+			|| name.endsWith(`/layers/${filename}.pixelselection`) || name === `layers/${filename}.pixelselection`
+			|| name.endsWith(`/layers/${filename}.pixelselection.defaultpixel`) || name === `layers/${filename}.pixelselection.defaultpixel`;
+	}));
 	const assets: LayeredRasterAsset[] = [], warnings: string[] = [];
 	let sequence = 0;
 	const supportedBlendModes = new Set(['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion']);
@@ -420,7 +497,7 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		const attrs = node.attrs, id = attrs.uuid || `kra-node-${sequence++}`, name = attrs.name || `Layer ${sequence}`;
 		const x = Math.trunc(oraNumber(attrs.x, 0)), y = Math.trunc(oraNumber(attrs.y, 0));
 		const nodeType = (attrs.nodetype || '').toLowerCase();
-		const kind: LayerNodeKind = nodeType === 'grouplayer' ? 'group' : nodeType === 'paintlayer' ? 'raster' : nodeType.includes('vector') ? 'vector' : nodeType.includes('adjustment') ? 'adjustment' : 'unknown';
+		const kind: LayerNodeKind = nodeType === 'grouplayer' ? 'group' : nodeType === 'paintlayer' ? 'raster' : nodeType.includes('vector') ? 'vector' : nodeType === 'adjustmentlayer' ? 'adjustment' : 'unknown';
 		const opacity = Math.max(0, Math.min(1, oraNumber(attrs.opacity, 255) / 255));
 		const visible = attrs.visible !== '0';
 		const blendMode = editableBlendMode(attrs.compositeop);
@@ -445,6 +522,28 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 			summary.children = build(node.children, id, [...groupPath, name], [...groupIds, id]);
 			return summary;
 		}
+		if (kind === 'adjustment' && attrs.filename) {
+			const configPath = kraEntryPath(files, documentName, attrs.filename, '.filterconfig');
+			const adjustment = configPath ? kraAdjustment(attrs.filtername, decodeXml(files[configPath])) : undefined;
+			if (adjustment) {
+				summary.support = 'approximate';
+				const asset: LayeredRasterAsset = {
+					nodeId: id, name, sourcePath: configPath || '', kind: 'adjustment', adjustment, parentId,
+					width: declaredWidth, height: declaredHeight, x: 0, y: 0, opacity, visible, blendMode,
+					groupPath, groupIds, support: 'approximate',
+				};
+				const selectionPath = kraEntryPath(files, documentName, attrs.filename, '.pixelselection');
+				if (selectionPath) {
+					const defaultSelectionPath = kraEntryPath(files, documentName, attrs.filename, '.pixelselection.defaultpixel');
+					asset.rasterMask = { data: decodeKraPaintDevice(files[selectionPath], declaredWidth, declaredHeight, 1, defaultSelectionPath ? files[defaultSelectionPath] : undefined), width: declaredWidth, height: declaredHeight, channels: 1, typeMax: 255, x: 0, y: 0 };
+				}
+				assets.push(asset);
+			} else {
+				summary.support = 'unsupported';
+				warnings.push(`Krita adjustment layer “${name}” uses unsupported filter “${attrs.filtername || 'unknown'}”`);
+			}
+			return summary;
+		}
 		if (kind !== 'raster' || !attrs.filename) {
 			warnings.push(`Krita ${nodeType || 'unknown'} node “${name}” is not an ordinary paint layer`);
 			return summary;
@@ -463,7 +562,32 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 					asset.rasterMask = { data: decodeKraPaintDevice(files[maskPath], declaredWidth, declaredHeight, 1, defaultMaskPath ? files[defaultMaskPath] : undefined), width: declaredWidth, height: declaredHeight, channels: 1, typeMax: 255, x: 0, y: 0 };
 				} else { warnings.push(`Transparency mask for “${name}” has no pixel data`); }
 			}
-			assets.push(asset);
+			const filterAssets: LayeredRasterAsset[] = [];
+			for (let maskIndex = 0; maskIndex < node.masks.length; maskIndex++) {
+				const filterMask = node.masks[maskIndex];
+				if ((filterMask.nodetype || '').toLowerCase() !== 'filtermask' || filterMask.visible === '0' || !filterMask.filename) { continue; }
+				const configPath = kraEntryPath(files, documentName, filterMask.filename, '.filterconfig');
+				const adjustment = configPath ? kraAdjustment(filterMask.filtername, decodeXml(files[configPath])) : undefined;
+				if (!adjustment) {
+					warnings.push(`Krita filter mask “${filterMask.name || filterMask.filename}” uses unsupported filter “${filterMask.filtername || 'unknown'}”`);
+					continue;
+				}
+				const filterAsset: LayeredRasterAsset = {
+					nodeId: filterMask.uuid || `${id}-filter-${maskIndex}`, name: filterMask.name || filterMask.filtername || `Filter ${maskIndex + 1}`,
+					sourcePath: configPath || '', kind: 'adjustment', adjustment, parentId,
+					width: declaredWidth, height: declaredHeight, x: 0, y: 0, opacity: 1, visible: true, blendMode: 'normal',
+					groupPath, groupIds, support: 'approximate', clipped: true,
+				};
+				const selectionPath = kraEntryPath(files, documentName, filterMask.filename, '.pixelselection');
+				if (selectionPath) {
+					const defaultSelectionPath = kraEntryPath(files, documentName, filterMask.filename, '.pixelselection.defaultpixel');
+					filterAsset.rasterMask = { data: decodeKraPaintDevice(files[selectionPath], declaredWidth, declaredHeight, 1, defaultSelectionPath ? files[defaultSelectionPath] : undefined), width: declaredWidth, height: declaredHeight, channels: 1, typeMax: 255, x: 0, y: 0 };
+				}
+				filterAssets.push(filterAsset);
+			}
+			// layerAssets are source-order (top-to-bottom), so attached filter
+			// masks precede the paint layer they affect.
+			assets.push(...filterAssets, asset);
 		} catch (error) {
 			support = 'unsupported'; summary.support = support;
 			summary.warnings = [error instanceof Error ? error.message : String(error)];
@@ -847,6 +971,14 @@ interface XcfProperties {
 	colormap?: Uint8Array;
 }
 
+interface XcfEffect {
+	name: string;
+	operation: string;
+	visible: boolean;
+	opacity: number;
+	adjustment?: LayerAdjustment;
+}
+
 function readXcfProperties(reader: XcfReader, start: number): XcfProperties {
 	const out: XcfProperties = { next: start };
 	let offset = start;
@@ -873,6 +1005,93 @@ function readXcfProperties(reader: XcfReader, start: number): XcfProperties {
 		offset += length;
 	}
 	throw new Error('XCF property list exceeds the safety limit');
+}
+
+function xcfEffectAdjustment(operation: string, args: Record<string, string | number | boolean>): LayerAdjustment | undefined {
+	const op = operation.toLowerCase().replace(/^(?:gegl|gimp):/, '').replace(/_/g, '-');
+	const number = (names: string[], fallback: number): number => {
+		for (const name of names) {
+			const value = Number(args[name]);
+			if (Number.isFinite(value)) { return value; }
+		}
+		return fallback;
+	};
+	if (op === 'brightness-contrast') {
+		return { type: 'brightness/contrast', brightness: number(['brightness'], 0) * 100, contrast: number(['contrast'], 0) * 100 };
+	}
+	if (op === 'exposure') {
+		return { type: 'exposure', exposure: number(['exposure'], 0), offset: -number(['black-level', 'black_level'], 0), gamma: 1 };
+	}
+	if (['invert', 'invert-linear', 'invert-gamma', 'value-invert'].includes(op)) { return { type: 'invert' }; }
+	if (op === 'threshold') { return { type: 'threshold', level: number(['value', 'threshold'], 0.5) * 255 }; }
+	if (op === 'posterize') { return { type: 'posterize', levels: number(['levels'], 4) }; }
+	if (['hue-chroma', 'hue-saturation'].includes(op)) {
+		return { type: 'hue/saturation', master: { hue: number(['hue'], 0), saturation: number(['chroma', 'saturation'], 0), lightness: number(['lightness'], 0) }, colorize: { hue: 0, saturation: 100, lightness: 0 }, colorizeEnabled: false };
+	}
+	if (op === 'saturation') {
+		return { type: 'hue/saturation', master: { hue: 0, saturation: (number(['scale'], 1) - 1) * 100, lightness: 0 }, colorize: { hue: 0, saturation: 100, lightness: 0 }, colorizeEnabled: false };
+	}
+	if (op === 'levels') {
+		return {
+			type: 'levels',
+			rgb: {
+				shadowInput: number(['in-low', 'in_low'], 0) * 255, highlightInput: number(['in-high', 'in_high'], 1) * 255,
+				midtoneInput: 1, shadowOutput: number(['out-low', 'out_low'], 0) * 255, highlightOutput: number(['out-high', 'out_high'], 1) * 255,
+			},
+		};
+	}
+	if (['channel-mixer', 'mono-mixer'].includes(op)) {
+		const gain = (names: string[], fallback: number) => number(names, fallback) * 100;
+		if (op === 'mono-mixer') {
+			return { type: 'channel mixer', monochrome: true, gray: { red: gain(['red', 'red-gain'], 0.4), green: gain(['green', 'green-gain'], 0.4), blue: gain(['blue', 'blue-gain'], 0.2), constant: 0 } };
+		}
+		return {
+			type: 'channel mixer',
+			red: { red: gain(['rr-gain', 'red-red'], 1), green: gain(['rg-gain', 'red-green'], 0), blue: gain(['rb-gain', 'red-blue'], 0), constant: gain(['red-offset'], 0) },
+			green: { red: gain(['gr-gain', 'green-red'], 0), green: gain(['gg-gain', 'green-green'], 1), blue: gain(['gb-gain', 'green-blue'], 0), constant: gain(['green-offset'], 0) },
+			blue: { red: gain(['br-gain', 'blue-red'], 0), green: gain(['bg-gain', 'blue-green'], 0), blue: gain(['bb-gain', 'blue-blue'], 1), constant: gain(['blue-offset'], 0) },
+		};
+	}
+	if (op === 'color-balance') {
+		const range = (name: string) => ({
+			cyanRed: number([`${name}-cyan-red`, `${name}-cyan_red`], 0) * 100,
+			magentaGreen: number([`${name}-magenta-green`, `${name}-magenta_green`], 0) * 100,
+			yellowBlue: number([`${name}-yellow-blue`, `${name}-yellow_blue`], 0) * 100,
+		});
+		return { type: 'color balance', shadows: range('shadows'), midtones: range('midtones'), highlights: range('highlights'), preserveLuminosity: args['preserve-luminosity'] !== false };
+	}
+	return undefined;
+}
+
+function decodeXcfEffect(reader: XcfReader, pointer: number): XcfEffect {
+	let cursor = pointer;
+	const name = reader.string(cursor); cursor = name.next;
+	const icon = reader.string(cursor); cursor = icon.next;
+	const operation = reader.string(cursor); cursor = operation.next;
+	if (reader.version >= 22) { cursor = reader.string(cursor).next; }
+	let visible = true, opacity = 1;
+	const args: Record<string, string | number | boolean> = {};
+	for (let count = 0; count < 100_000; count++) {
+		const type = reader.u32(cursor), length = reader.u32(cursor + 4); cursor += 8;
+		if (type === 0) { break; }
+		reader.check(cursor, length);
+		const end = cursor + length;
+		if (type === 8 && length >= 4) { visible = reader.u32(cursor) !== 0; }
+		else if (type === 33 && length >= 4) { opacity = Math.max(0, Math.min(1, reader.f32(cursor))); }
+		else if (type === 45 && length >= 8) {
+			const argumentName = reader.string(cursor); let valueCursor = argumentName.next;
+			const argumentType = reader.u32(valueCursor); valueCursor += 4;
+			if ([1, 5].includes(argumentType) && valueCursor + 4 <= end) { args[argumentName.value] = reader.i32(valueCursor); }
+			else if ([2, 7].includes(argumentType) && valueCursor + 4 <= end) { args[argumentName.value] = argumentType === 2 ? reader.u32(valueCursor) !== 0 : reader.u32(valueCursor); }
+			else if (argumentType === 3 && valueCursor + 4 <= end) { args[argumentName.value] = reader.f32(valueCursor); }
+			else if ([4, 6].includes(argumentType) && valueCursor + 4 <= end) {
+				const value = reader.string(valueCursor);
+				if (value.next <= end) { args[argumentName.value] = value.value; }
+			}
+		}
+		cursor = end;
+	}
+	return { name: name.value || operation.value, operation: operation.value, visible, opacity, adjustment: xcfEffectAdjustment(operation.value, args) };
 }
 
 function decodeXcfRle(reader: XcfReader, start: number, pixelCount: number, bpp: number): Uint8Array {
@@ -952,7 +1171,7 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		layerPointers.push(pointer);
 	}
 	// Skip the channel pointer list for this first raster-preview implementation.
-	const layers: { node: LayerNodeSummary; pixels?: Uint8Array; type: number; opacity: number; x: number; y: number; width: number; height: number; mode: number; parentId?: string; groupPath: string[]; groupIds: string[] }[] = [];
+	const layers: { node: LayerNodeSummary; pixels?: Uint8Array; effects: XcfEffect[]; type: number; opacity: number; x: number; y: number; width: number; height: number; mode: number; parentId?: string; groupPath: string[]; groupIds: string[] }[] = [];
 	const warnings: string[] = [];
 	const groupsByPath = new Map<string, { id: string; names: string[]; ids: string[] }>();
 	for (let index = 0; index < layerPointers.length; index++) {
@@ -962,6 +1181,16 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		const name = reader.string(cursor); cursor = name.next;
 		const props = readXcfProperties(reader, cursor); cursor = props.next;
 		const hierarchyPointer = reader.pointer(cursor); cursor += reader.pointerBytes;
+		const maskPointer = reader.pointer(cursor); cursor += reader.pointerBytes;
+		const effects: XcfEffect[] = [];
+		if (version >= 20) {
+			for (let effectIndex = 0; effectIndex < 10_000; effectIndex++, cursor += reader.pointerBytes) {
+				const effectPointer = reader.pointer(cursor);
+				if (!effectPointer) { break; }
+				try { effects.push(decodeXcfEffect(reader, effectPointer)); }
+				catch (error) { warnings.push(`An effect on layer “${name.value || `Layer ${index + 1}`}” could not be decoded: ${error instanceof Error ? error.message : String(error)}`); }
+			}
+		}
 		const mode = props.mode ?? 0;
 		const itemPath = props.itemPath || [index];
 		const parentPath = itemPath.slice(0, -1).join('/');
@@ -1004,9 +1233,11 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		if (blendMode.startsWith('gimp-') && !props.group) { warnings.push(`Layer “${node.name}” blend mode ${mode} is approximated as normal`); }
 		else if (mode !== 0 && !props.group) { warnings.push(`Layer “${node.name}” uses ${blendMode}; the quick preview is flattened normally, while Layers View preserves the blend mode`); }
 		if (props.group) { warnings.push(`Group “${node.name}” is composited as an isolated editable surface after opening Layers View`); }
+		if (maskPointer) { warnings.push(`Layer mask on “${node.name}” is present but is not yet decoded by the XCF importer`); }
+		for (const effect of effects) if (!effect.adjustment) { warnings.push(`Layer effect “${effect.name}” (${effect.operation}) on “${node.name}” is not supported by the compositor`); }
 		if (!props.group && !pixels) { warnings.push(`Layer “${node.name}” has no decodable raster payload`); }
 		const groupPath = parent?.names || [], groupIds = parent?.ids || [];
-		layers.push({ node, pixels, type, opacity: props.opacity ?? 1, x: props.offsetX || 0, y: props.offsetY || 0, width: layerWidth, height: layerHeight, mode, parentId: parent?.id, groupPath, groupIds });
+		layers.push({ node, pixels, effects, type, opacity: props.opacity ?? 1, x: props.offsetX || 0, y: props.offsetY || 0, width: layerWidth, height: layerHeight, mode, parentId: parent?.id, groupPath, groupIds });
 		if (props.group) { groupsByPath.set(itemPath.join('/'), { id: node.id, names: [...groupPath, node.name], ids: [...groupIds, node.id] }); }
 	}
 	const composite = new Uint8Array(width * height * 4);
@@ -1034,6 +1265,16 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 	const layerAssets: LayeredRasterAsset[] = [];
 	for (let index = 0; index < layers.length; index++) {
 		const layer = layers[index];
+		for (let effectIndex = 0; effectIndex < layer.effects.length; effectIndex++) {
+			const effect = layer.effects[effectIndex];
+			if (!effect.adjustment) { continue; }
+			layerAssets.push({
+				nodeId: `${layer.node.id}-effect-${effectIndex}`, name: effect.name, sourcePath: `xcf-effect-${index}-${effectIndex}`,
+				kind: 'adjustment', adjustment: effect.adjustment, parentId: layer.parentId,
+				width, height, x: 0, y: 0, opacity: effect.opacity, visible: effect.visible, blendMode: 'normal',
+				groupPath: layer.groupPath, groupIds: layer.groupIds, support: 'approximate', clipped: true,
+			});
+		}
 		if (layer.node.kind === 'group') {
 			layerAssets.push({
 				nodeId: layer.node.id, name: layer.node.name, sourcePath: '', kind: 'group', parentId: layer.parentId,

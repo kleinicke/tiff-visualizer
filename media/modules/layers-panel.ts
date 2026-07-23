@@ -330,8 +330,37 @@ export class LayersPanel {
 
 		this.root = root;
 		this.listEl = list;
+		document.addEventListener('keydown', event => {
+			if (!this.isVisible() || event.key.toLowerCase() !== 'z' || (!event.ctrlKey && !event.metaKey) || event.altKey) { return; }
+			const target = event.target as HTMLElement | null;
+			// Preserve native text/number editing undo, but let the Layers
+			// history shortcut work while a slider, checkbox, colour input, or
+			// select still has focus after an edit.
+			if (target?.matches('textarea, [contenteditable="true"], input:not([type="range"]):not([type="checkbox"]):not([type="color"])')) { return; }
+			event.preventDefault();
+			if (event.shiftKey) { this._redo(); }
+			else { this._undo(); }
+		});
 		this._applyCollapsed();
 		this.refresh();
+	}
+
+	_undo(): void {
+		this._clearPendingRemove(false);
+		if (!this.manager.undo()) { return; }
+		this._afterHistoryRestore();
+	}
+
+	_redo(): void {
+		this._clearPendingRemove(false);
+		if (!this.manager.redo()) { return; }
+		this._afterHistoryRestore();
+	}
+
+	private _afterHistoryRestore(): void {
+		if (this.movingLayerId && !this.manager.layers.some(layer => layer.id === this.movingLayerId)) { this.movingLayerId = null; }
+		this.refresh();
+		this.onChange();
 	}
 
 	/** Keep the default thumb position aligned with the live editor theme. */
@@ -476,7 +505,9 @@ export class LayersPanel {
 		});
 		visibility.addEventListener('change', () => {
 			const next = visibleCount !== targetLayers.length;
-			for (const layer of targetLayers) { layer.visible = next; }
+			this.manager.beginHistoryGroup();
+			for (const layer of targetLayers) { this.manager.updateLayer(layer.id as string, { visible: next }); }
+			this.manager.endHistoryGroup();
 			this.refresh(); this.onChange();
 		});
 		row.appendChild(visibility);
@@ -504,6 +535,7 @@ export class LayersPanel {
 			const opacity = document.createElement('input'); opacity.type = 'range'; opacity.className = 'layer-opacity layer-group-opacity';
 			opacity.min = '0'; opacity.max = '100'; opacity.dataset.defaultValue = '100'; opacity.value = String(Math.round((group.group.opacity ?? 1) * 100));
 			opacity.title = 'Group opacity · Double-click to reset to 100%';
+			this._bindContinuousHistory(opacity);
 			opacity.addEventListener('input', () => { this.manager.updateLayer(group.key, { opacity: Number(opacity.value) / 100 }); this.onChange({ interactive: true }); });
 			opacity.addEventListener('change', () => opacity.blur()); controls.appendChild(opacity);
 			row.appendChild(controls);
@@ -595,7 +627,6 @@ export class LayersPanel {
 		body.className = 'layer-adjustment-controls';
 		details.appendChild(body);
 		const commit = (adjustment: LayerAdjustment, interactive = true) => {
-			layer.adjustment = adjustment;
 			this.manager.updateLayer(id, { adjustment });
 			heading.textContent = adjustmentSummary(adjustment);
 			this._refreshAdjustmentThumbnail(layer);
@@ -623,6 +654,18 @@ export class LayersPanel {
 		} else if (layer.adjustment?.type === 'invert') {
 			const note = document.createElement('div'); note.className = 'layer-adjustment-note'; note.textContent = 'No parameters — every RGB value is replaced by its inverse.'; body.appendChild(note);
 		}
+		const remove = document.createElement('button');
+		remove.type = 'button';
+		remove.className = 'layers-btn layer-filter-remove';
+		remove.textContent = 'Remove filter';
+		remove.title = 'Remove this filter (can be undone)';
+		remove.addEventListener('click', () => {
+			this.expandedAdjustments.delete(id);
+			this.manager.removeLayer(id);
+			this.refresh();
+			this.onChange();
+		});
+		body.appendChild(remove);
 		return details;
 	}
 
@@ -718,6 +761,7 @@ export class LayersPanel {
 				circle.setAttribute('tabindex', '0'); circle.setAttribute('aria-label', `Input ${point.input}, output ${point.output}`);
 				circle.addEventListener('pointerdown', pointerDown => {
 					pointerDown.preventDefault(); pointerDown.stopPropagation();
+					this.manager.beginHistoryGroup();
 					const move = (moveEvent: PointerEvent) => {
 						const next = pointerValue(moveEvent), latest = currentPoints();
 						const minimum = pointIndex === 0 ? 0 : latest[pointIndex - 1].input + 1;
@@ -725,7 +769,10 @@ export class LayersPanel {
 						latest[pointIndex] = { input: Math.max(minimum, Math.min(maximum, next.input)), output: next.output };
 						commitPoints(latest);
 					};
-					const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+					const up = () => {
+						window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+						this.manager.endHistoryGroup(); this._applyCollapsed();
+					};
 					window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 				});
 				circle.addEventListener('dblclick', doubleClick => {
@@ -889,6 +936,7 @@ export class LayersPanel {
 		const colors = document.createElement('div'); colors.className = 'layer-gradient-colors';
 		for (const [label, index] of [['Dark', 0], ['Light', stops.length - 1]] as [string, number][]) {
 			const input = document.createElement('input'); input.type = 'color'; input.value = toHex(stops[index].color); input.title = `${label} gradient color`;
+			this._bindContinuousHistory(input);
 			const field = this._labeledAdjustmentControl(label, input); colors.appendChild(field);
 			input.addEventListener('input', () => { const latest = layer.adjustment as typeof adjustment, next = [...(latest.stops || stops)]; next[index] = { ...next[index], color: fromHex(input.value) }; commit({ ...latest, stops: next }); });
 		}
@@ -912,12 +960,33 @@ export class LayersPanel {
 		const caption = document.createElement('span'); caption.textContent = label; field.append(caption, control); return field;
 	}
 
+	_bindContinuousHistory(control: HTMLElement): void {
+		let active = false;
+		const begin = () => {
+			if (active) { return; }
+			active = true;
+			this.manager.beginHistoryGroup();
+		};
+		const end = () => {
+			if (!active) { return; }
+			active = false;
+			this.manager.endHistoryGroup();
+			this._applyCollapsed();
+		};
+		control.addEventListener('pointerdown', begin);
+		control.addEventListener('keydown', begin);
+		control.addEventListener('input', begin);
+		control.addEventListener('change', end);
+		control.addEventListener('blur', end);
+	}
+
 	_adjustmentRange(label: string, min: number, max: number, step: number, value: number, defaultValue: number, onInput: (value: number) => void, decimals = 0, suffix = ''): HTMLElement {
 		const field = document.createElement('label'); field.className = 'layer-adjustment-range';
 		const caption = document.createElement('span'); caption.textContent = label;
 		const input = document.createElement('input'); input.type = 'range'; input.min = String(min); input.max = String(max); input.step = String(step);
 		input.value = String(value); input.dataset.defaultValue = String(defaultValue); input.title = `${label} · Double-click to reset`;
 		const output = document.createElement('output'); output.textContent = `${Number(value).toFixed(decimals)}${suffix}`;
+		this._bindContinuousHistory(input);
 		input.addEventListener('input', () => { const next = Number(input.value); output.textContent = `${next.toFixed(decimals)}${suffix}`; onInput(next); });
 		field.append(caption, input, output); return field;
 	}
@@ -1074,6 +1143,7 @@ export class LayersPanel {
 		const opacityValue = document.createElement('span');
 		opacityValue.className = 'layer-opacity-value';
 		opacityValue.textContent = `${opacity.value}%`;
+		this._bindContinuousHistory(opacity);
 		opacity.addEventListener('input', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
 			opacityValue.textContent = `${opacity.value}%`;
@@ -1271,6 +1341,7 @@ export class LayersPanel {
 		const meta = MASK_CONDITIONS.find(c => c.id === cond.op);
 		if (meta && !meta.needsThreshold) { thr.style.display = 'none'; }
 		row.appendChild(thr);
+		this._bindContinuousHistory(thr);
 
 		const readCond = () => ({ op: opSel.value, threshold: parseFloat(thr.value) });
 		opSel.addEventListener('change', () => {

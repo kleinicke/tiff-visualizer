@@ -1564,6 +1564,12 @@ body img {
 	line-height: 1.35;
 }
 
+.layer-filter-remove {
+	width: max-content;
+	margin-top: 4px;
+	color: var(--vscode-errorForeground);
+}
+
 .layer-gradient-colors {
 	display: grid;
 	grid-template-columns: 1fr 1fr;

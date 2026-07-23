@@ -250,26 +250,8 @@ Lower-priority, demand-driven additions:
 - **QOI:** very small and easy to decode, but currently too niche to outrank
   the scientific and medical formats above.
 
-### HEIC/HEIF: platform-only experiment
-
-Do not bundle libheif or an HEVC decoder unless its LGPL redistribution and
-HEVC patent-licensing implications have been reviewed explicitly. A safer
-experiment is an **opportunistic platform decode** using `Image`,
-`createImageBitmap`, or `ImageDecoder` when the host supports `image/heic` or
-`image/heif`.
-
-This is not portable support: desktop VS Code webviews use Electron/Chromium,
-which does not currently provide HEIC image decoding and does not automatically
-inherit macOS ImageIO or optional Windows codecs. VS Code for the Web may work
-when hosted in a browser with HEIC support (notably Safari). Detect support by
-attempting to decode the actual file, show a precise unsupported-host message
-on failure, and never advertise HEIC as universally supported. Keep HEIC/HEIF
-separate from AVIF: they share the HEIF container family but normally use HEVC
-and AV1 payloads respectively.
-
 **Format expansion sequence from the current state:** DICOM RLE → JPEG-LS →
-JPEG 2000/HTJ2K → NIfTI → NRRD/MetaImage → MRC/CCP4 → OME-Zarr. HEIC remains
-an optional platform capability rather than a bundled decoder.
+JPEG 2000/HTJ2K → NIfTI → NRRD/MetaImage → MRC/CCP4 → OME-Zarr.
 
 ---
 
@@ -515,15 +497,19 @@ full-size `mergedimage.png` with a `preview.png` fallback, parses the hierarchy
 from `maindoc.xml`, and imports ordinary 8-bit RGBA paint layers from Krita's
 native raw/LZF sparse-tile streams. Isolated groups, visibility, opacity, common
 blend modes, transparency masks, and alpha-inheritance metadata feed the editable
-compositor. Pass-through groups, non-8-bit/color-managed paint devices, cached
-projections, advanced masks, vector/generator/filter nodes, and animation remain.
+compositor. Common levels, HSV, invert, threshold, posterize, brightness/contrast,
+and color-balance adjustment layers/filter masks are translated from
+`.filterconfig` into editable approximate compositor filters. Pass-through groups,
+non-8-bit/color-managed paint devices, cached projections, advanced filters,
+vector/generator nodes, and animation remain.
 
 - Phase 1: safely extract `mergedimage.png`, preview/thumbnail, document info,
   and basic metadata; route the preview through the existing PNG pipeline.
 - Phase 2: continue the implemented document/layer XML and ordinary paint-layer
   import with lazy tile loading, more color spaces/bit depths, and cached projections.
-- Phase 3: extend the implemented common Krita blend modes with filter/adjustment masks,
-  generator layers, vector layers, and animation frames as demand warrants.
+- Phase 3: extend the implemented common Krita filter/adjustment-mask subset
+  with curves, channel-specific levels, gradient resources, generator layers,
+  vector layers, and animation frames as demand warrants.
 - Treat `.krz` separately: it intentionally omits `mergedimage.png`, so do not
   register it until reconstruction support can produce a useful result.
 
@@ -580,10 +566,13 @@ item-path hierarchy, common blend modes, and raw/RLE/zlib tile compression.
 Decoded groups become isolated editable compositor surfaces. A conservative
 XCF v3 writer exports a new 8-bit layered file with hierarchy, offsets,
 visibility, opacity, and common modes; raster masks and clipping are currently
-baked into layer alpha and every approximation is reported. Remaining work
-includes native mask/channel writing, broader precision/color models,
-text/vectors/effects, additional blend/composite spaces, version coverage,
-and lazy tile decoding.
+baked into layer alpha and every approximation is reported. GIMP 3/XCF v20+
+layer-effect records are parsed, with common GEGL levels, brightness/contrast,
+exposure, invert, threshold, posterize, hue/chroma, saturation, channel/mono
+mixer, and color-balance operations translated to approximate editable filters.
+Remaining work includes native mask/channel writing, effect masks and resources,
+broader precision/color models, text/vectors, additional GEGL operations and
+blend/composite spaces, version coverage, and lazy tile decoding.
 
 - Implement or adopt a bounded worker-side parser for the image header,
   properties, offset-based structures, tile hierarchies, uncompressed/RLE/zlib
