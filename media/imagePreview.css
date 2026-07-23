@@ -1240,10 +1240,21 @@ body img {
 
 .layer-name {
 	min-width: 0;
+	flex: 1;
 	font-weight: 500;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.layer-thumbnail {
+	flex: none;
+	width: 48px;
+	height: 48px;
+	border: 1px solid var(--vscode-editorWidget-border, #454545);
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 70%, transparent);
+	image-rendering: auto;
 }
 
 .layer-title-line {
@@ -1546,6 +1557,32 @@ body img {
 	font-size: 10px;
 }
 
+.layer-adjustment-note {
+	padding: 4px 2px;
+	color: var(--vscode-descriptionForeground, #aaa);
+	font-size: 10px;
+	line-height: 1.35;
+}
+
+.layer-gradient-colors {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+}
+
+.layer-gradient-colors .layer-adjustment-field {
+	grid-template-columns: auto minmax(28px, 1fr);
+}
+
+.layer-gradient-colors input[type='color'] {
+	width: 100%;
+	height: 24px;
+	padding: 1px;
+	border: 1px solid var(--vscode-input-border, #555);
+	border-radius: 3px;
+	background: var(--vscode-input-background, #3c3c3c);
+}
+
 .layer-mask-badge {
 	padding: 1px 5px;
 	border-radius: 8px;
@@ -1615,6 +1652,12 @@ body img {
 
 .layer-actions {
 	justify-content: flex-end;
+}
+
+.layer-filter-toggle-inline {
+	margin-right: auto;
+	min-width: 78px;
+	text-align: left;
 }
 
 .layer-add-filter {

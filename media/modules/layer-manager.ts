@@ -99,12 +99,26 @@ export class LayerManager {
 		const targetIndex = this.layers.findIndex(layer => layer.id === targetId);
 		if (targetIndex < 0) { return null; }
 		const target = this.layers[targetIndex];
-		const adjustment: LayerAdjustment = type === 'levels'
-			? { type: 'levels', rgb: { shadowInput: 0, highlightInput: 255, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } }
-			: type === 'curves'
-				? { type: 'curves', rgb: [{ input: 0, output: 0 }, { input: 255, output: 255 }] }
-				: { type: 'hue/saturation', master: { hue: 0, saturation: 0, lightness: 0 }, colorize: { hue: 0, saturation: 100, lightness: 0 }, colorizeEnabled: false };
-		const label = type === 'levels' ? 'Levels' : type === 'curves' ? 'Curves' : 'Hue/Saturation';
+		const defaults: Record<LayerAdjustment['type'], () => LayerAdjustment> = {
+			'levels': () => ({ type: 'levels', rgb: { shadowInput: 0, highlightInput: 255, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } }),
+			'curves': () => ({ type: 'curves', rgb: [{ input: 0, output: 0 }, { input: 255, output: 255 }] }),
+			'hue/saturation': () => ({ type: 'hue/saturation', master: { hue: 0, saturation: 0, lightness: 0 }, colorize: { hue: 0, saturation: 100, lightness: 0 }, colorizeEnabled: false }),
+			'brightness/contrast': () => ({ type: 'brightness/contrast', brightness: 0, contrast: 0 }),
+			'exposure': () => ({ type: 'exposure', exposure: 0, offset: 0, gamma: 1 }),
+			'invert': () => ({ type: 'invert' }),
+			'channel mixer': () => ({ type: 'channel mixer', red: { red: 100, green: 0, blue: 0, constant: 0 }, green: { red: 0, green: 100, blue: 0, constant: 0 }, blue: { red: 0, green: 0, blue: 100, constant: 0 } }),
+			'color balance': () => ({ type: 'color balance', shadows: {}, midtones: {}, highlights: {}, preserveLuminosity: true }),
+			'black & white': () => ({ type: 'black & white', reds: 40, yellows: 60, greens: 40, cyans: 60, blues: 20, magentas: 80 }),
+			'threshold': () => ({ type: 'threshold', level: 128 }),
+			'posterize': () => ({ type: 'posterize', levels: 4 }),
+			'gradient map': () => ({ type: 'gradient map', stops: [{ position: 0, color: { r: 0, g: 0, b: 0 } }, { position: 1, color: { r: 255, g: 255, b: 255 } }] }),
+		};
+		const adjustment = defaults[type]();
+		const labels: Record<LayerAdjustment['type'], string> = {
+			levels: 'Levels', curves: 'Curves', 'hue/saturation': 'Hue/Saturation', 'brightness/contrast': 'Brightness/Contrast', exposure: 'Exposure', invert: 'Invert',
+			'channel mixer': 'Channel Mixer', 'color balance': 'Color Balance', 'black & white': 'Black & White', threshold: 'Threshold', posterize: 'Posterize', 'gradient map': 'Gradient Map',
+		};
+		const label = labels[type];
 		const existingCount = this.layers.filter(layer => layer.kind === 'adjustment' && layer.adjustment?.type === type).length;
 		const created = this.createLayer({
 			width: 1, height: 1, channels: 4, isFloat: false, typeMax: target.typeMax || 255,

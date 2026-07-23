@@ -188,6 +188,16 @@ async function main() {
 	assert.deepStrictEqual(colorizeAsset.adjustment.colorize, { hue: -131, saturation: 100, lightness: -50 });
 	assert.strictEqual(colorizeAsset.adjustment.colorizeEnabled, true);
 	assert.strictEqual(colorizeAsset.clipped, true);
+	const extendedAdjustmentsPsd = decodeLayeredPreview('psd', asArrayBuffer(new Uint8Array(writePsd({
+		width: 2, height: 1, imageData,
+		children: [
+			{ name: 'Exposure', clipping: true, adjustment: { type: 'exposure', exposure: 1, offset: 0, gamma: 1 } },
+			{ name: 'Invert', clipping: true, adjustment: { type: 'invert' } },
+			{ name: 'Pixels', left: 0, top: 0, imageData },
+		],
+	}))));
+	assert.strictEqual(extendedAdjustmentsPsd.layerAssets.find(asset => asset.name === 'Exposure').adjustment.type, 'exposure');
+	assert.strictEqual(extendedAdjustmentsPsd.layerAssets.find(asset => asset.name === 'Invert').adjustment.type, 'invert');
 	const psbBytes = new Uint8Array(writePsd({ width: 2, height: 1, imageData, children: [{ name: 'Pixels', left: 0, top: 0, imageData }] }, { psb: true }));
 	const psb = decodeLayeredPreview('psb', asArrayBuffer(psbBytes));
 	assert.deepStrictEqual([psb.width, psb.height, psb.document.layerCount], [2, 1, 1]);

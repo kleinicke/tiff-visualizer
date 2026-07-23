@@ -70,6 +70,8 @@ async function main() {
 	assert.strictEqual(adjustmentLabel(adjustmentStack[2].adjustment), 'Hue/Saturation · Colorize');
 	assert.strictEqual(adjustmentSummary(adjustmentStack[1].adjustment), 'Input 3–200 · γ 1.20');
 	assert.strictEqual(adjustmentSummary(adjustmentStack[2].adjustment), 'Colorize · H -131° · S 100 · L -50');
+	assert.strictEqual(adjustmentLabel({ type: 'channel mixer' }), 'Channel Mixer');
+	assert.strictEqual(adjustmentSummary({ type: 'exposure', exposure: 1.5, gamma: 0.8 }), 'Exposure 1.5 EV · Gamma 0.80');
 	const adjustmentTree = buildLayerDisplayTree(adjustmentStack);
 	assert.deepStrictEqual(adjustmentTree.map(item => item.layer.id), ['base']);
 	assert.deepStrictEqual(adjustmentTree[0].effects.map(item => item.layer.id), ['levels', 'hue']);

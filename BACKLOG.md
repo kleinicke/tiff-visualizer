@@ -357,9 +357,9 @@ Add an explicit document-view selector:
 
 The layer tree now supports first-class nested group surfaces, persistent
 expand/collapse, layer and group visibility/opacity/blend controls, Shift-solo,
-source support-state badges, inline renaming, raster-mask badges, and editable
-clipping relationships. Remaining tree work is thumbnails, lock indicators,
-independent mask inspection/editing, search/filter, selection, and a node-details
+source support-state badges, inline renaming, filtered/cropped layer thumbnails,
+raster-mask badges, and editable clipping relationships. Remaining tree work is
+lock indicators, independent mask inspection/editing, search/filter, selection, and a node-details
 view. Selecting an unsupported node should show its parsed metadata and why it
 cannot currently be rendered; unsupported nodes must never be silently dropped.
 
@@ -424,16 +424,21 @@ the existing raw-value behavior.
 - Show cached raster data for text, vector, shape, and smart-object layers
   whenever the file provides it. Keep their semantic data in the inspector
   even before native rendering exists.
-- Reusable non-destructive adjustment nodes now import PSD levels, curves, and
-  hue/saturation (including feathered selective hue ranges) into the CPU
-  compositor. They remain approximate until Photoshop color-space behavior is
-  validated. Add exposure/brightness, gamma, invert, threshold, channel mixing,
-  color balance, gradient maps, LUTs, and common blur/sharpen filters next.
+- Reusable non-destructive adjustment nodes now cover levels, curves,
+  hue/saturation, brightness/contrast, exposure/gamma, invert, channel mixing,
+  color balance, black-and-white conversion, threshold, posterize, and gradient
+  maps. Compatible PSD adjustment records import into the CPU compositor. They
+  remain approximate until application-specific color-space behavior is validated;
+  add LUTs and common blur/sharpen filters next.
 - Model adjustment scope correctly: the layer stack below, a clipped target,
   or a group. An adjustment layer without an input image is inspect-only, not
   a standalone raster layer.
 - Add fill layers (solid, gradient, pattern) and vector masks only after the
   shared color/transform/mask infrastructure is stable.
+- Optionally add blank transparent raster layers together with painting and
+  annotation tools. A blank layer without brush/fill/shape editing has little
+  value; when implemented, include undo/redo, brush bounds, and editable mask
+  painting rather than presenting an inert empty surface.
 - For smart objects and linked assets, expose embedded previews and metadata
   first. Recursive document rendering needs cycle detection, depth limits,
   missing-resource diagnostics, and a bounded cache.

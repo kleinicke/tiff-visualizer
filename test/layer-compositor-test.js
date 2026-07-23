@@ -149,6 +149,12 @@ async function main() {
 		assert.strictEqual(evalMaskCondition(0.6, { op: 'gt', threshold: 0.5 }), true);
 		assert.strictEqual(evalMaskCondition(NaN, { op: 'isnan' }), true);
 		assert.strictEqual(evalMaskCondition(0.2, { op: 'isfinite' }), true);
+		const rgbBase = layer({ data: new Float32Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const greenMask = layer({
+			data: new Float32Array([0, 255, 0, 255]), width: 1, height: 1, channels: 4, typeMax: 255,
+			blendMode: 'mask', maskCondition: { op: 'gt', threshold: 100 },
+		});
+		assert.strictEqual(composite([rgbBase, greenMask], 1, 1).data[3], 255, 'RGB masks use luminance rather than only the red channel');
 		console.log('✅ Mask mode hides below where condition is false');
 	}
 
@@ -298,6 +304,30 @@ async function main() {
 		screenedBase.visible = true;
 		assert.ok(approx(composite([background, screenedBase, clippedLevels], 1, 1).data[0], expected, 0.01));
 		console.log('✅ Clipped adjustment stacks render before their base blend mode and remain cache-safe');
+	}
+
+	// 23. Additional professional adjustment families share the same scoped,
+	//     non-destructive compositor path.
+	{
+		const apply = (pixel, adjustment) => composite([
+			layer({ data: new Uint8Array([...pixel, 255]), width: 1, height: 1, channels: 4, typeMax: 255 }),
+			layer({ kind: 'adjustment', adjustment, width: 1, height: 1, channels: 4, typeMax: 255 }),
+		], 1, 1).data;
+		assert.ok(apply([64, 64, 64], { type: 'brightness/contrast', brightness: 10, contrast: 0 })[0] > 88);
+		assert.ok(approx(apply([64, 64, 64], { type: 'exposure', exposure: 1, offset: 0, gamma: 1 })[0], 128, 0.01));
+		assert.deepStrictEqual(Array.from(apply([10, 20, 30], { type: 'invert' })), [245, 235, 225, 255]);
+		const mixed = apply([10, 20, 30], { type: 'channel mixer', red: { blue: 100 }, green: { green: 100 }, blue: { red: 100 } });
+		assert.deepStrictEqual(Array.from(mixed), [30, 20, 10, 255]);
+		const balanced = apply([128, 128, 128], { type: 'color balance', midtones: { cyanRed: 50 }, preserveLuminosity: false });
+		assert.ok(balanced[0] > balanced[1], 'color balance moves midtone red independently');
+		const monochrome = apply([200, 80, 20], { type: 'black & white' });
+		assert.ok(approx(monochrome[0], monochrome[1]) && approx(monochrome[1], monochrome[2]));
+		assert.deepStrictEqual(Array.from(apply([127, 200, 20], { type: 'threshold', level: 128 })), [255, 255, 255, 255]);
+		const posterized = apply([100, 150, 240], { type: 'posterize', levels: 2 });
+		assert.deepStrictEqual(Array.from(posterized), [0, 255, 255, 255]);
+		const mapped = apply([128, 128, 128], { type: 'gradient map', stops: [{ position: 0, color: { r: 0, g: 0, b: 0 } }, { position: 1, color: { r: 255, g: 0, b: 0 } }] });
+		assert.ok(mapped[0] > 127 && mapped[1] === 0 && mapped[2] === 0);
+		console.log('✅ Exposure, brightness/contrast, invert, channel mixer, color balance, black & white, threshold/posterize, and gradient map');
 	}
 
 	console.log('\n🎉 All layer compositor tests passed.\n');

@@ -6,7 +6,7 @@
  * (b) request the extension to open a file picker for adding a layer.
  */
 
-import { BLEND_MODES, MASK_CONDITIONS, Layer, LayerAdjustment, evaluateCurvePoints } from './layer-compositor.js';
+import { BLEND_MODES, MASK_CONDITIONS, Layer, LayerAdjustment, composite, evaluateCurvePoints } from './layer-compositor.js';
 import type { LayerManager } from './layer-manager.js';
 
 export interface LayersPanelCallbacks {
@@ -35,6 +35,8 @@ export type GroupDisplayItem = {
 };
 export type DisplayItem = LayerDisplayItem | GroupDisplayItem;
 
+const thumbnailBoundsCache = new WeakMap<object, { left: number; top: number; right: number; bottom: number }>();
+
 function attachClippedAdjustments(items: DisplayItem[], layers: Layer[]): DisplayItem[] {
 	const effectsByTarget = new Map<string, LayerDisplayItem[]>();
 	for (let index = 0; index < layers.length; index++) {
@@ -58,9 +60,12 @@ function attachClippedAdjustments(items: DisplayItem[], layers: Layer[]): Displa
 
 export function adjustmentLabel(adjustment: LayerAdjustment | undefined): string {
 	if (!adjustment) { return 'Adjustment'; }
-	if (adjustment.type === 'levels') { return 'Levels'; }
-	if (adjustment.type === 'curves') { return 'Curves'; }
-	return adjustment.colorize && adjustment.colorizeEnabled !== false ? 'Hue/Saturation · Colorize' : 'Hue/Saturation';
+	const labels: Record<LayerAdjustment['type'], string> = {
+		levels: 'Levels', curves: 'Curves', 'hue/saturation': adjustment.type === 'hue/saturation' && adjustment.colorize && adjustment.colorizeEnabled !== false ? 'Hue/Saturation · Colorize' : 'Hue/Saturation',
+		'brightness/contrast': 'Brightness/Contrast', exposure: 'Exposure', invert: 'Invert', 'channel mixer': 'Channel Mixer', 'color balance': 'Color Balance',
+		'black & white': 'Black & White', threshold: 'Threshold', posterize: 'Posterize', 'gradient map': 'Gradient Map',
+	};
+	return labels[adjustment.type];
 }
 
 export function adjustmentSummary(adjustment: LayerAdjustment | undefined): string {
@@ -73,9 +78,20 @@ export function adjustmentSummary(adjustment: LayerAdjustment | undefined): stri
 		const points = Array.isArray(adjustment.rgb) ? adjustment.rgb.length : 0;
 		return `${points || 2} RGB control points`;
 	}
-	const colorizeActive = !!adjustment.colorize && adjustment.colorizeEnabled !== false;
-	const values = colorizeActive ? adjustment.colorize! : adjustment.master || {};
-	return `${colorizeActive ? 'Colorize · ' : ''}H ${values.hue ?? 0}° · S ${values.saturation ?? 0} · L ${values.lightness ?? 0}`;
+	if (adjustment.type === 'hue/saturation') {
+		const colorizeActive = !!adjustment.colorize && adjustment.colorizeEnabled !== false;
+		const values = colorizeActive ? adjustment.colorize! : adjustment.master || {};
+		return `${colorizeActive ? 'Colorize · ' : ''}H ${values.hue ?? 0}° · S ${values.saturation ?? 0} · L ${values.lightness ?? 0}`;
+	}
+	if (adjustment.type === 'brightness/contrast') { return `Brightness ${adjustment.brightness ?? 0} · Contrast ${adjustment.contrast ?? 0}`; }
+	if (adjustment.type === 'exposure') { return `Exposure ${(adjustment.exposure ?? 0).toFixed(1)} EV · Gamma ${(adjustment.gamma ?? 1).toFixed(2)}`; }
+	if (adjustment.type === 'invert') { return 'Invert RGB values'; }
+	if (adjustment.type === 'channel mixer') { return adjustment.monochrome ? 'Monochrome channel mix' : 'RGB channel matrix'; }
+	if (adjustment.type === 'color balance') { return adjustment.preserveLuminosity ? 'Preserve luminosity' : 'Independent channel balance'; }
+	if (adjustment.type === 'black & white') { return 'Color-weighted grayscale'; }
+	if (adjustment.type === 'threshold') { return `Threshold ${adjustment.level ?? 128}`; }
+	if (adjustment.type === 'posterize') { return `${adjustment.levels ?? 4} levels per channel`; }
+	return `${adjustment.stops?.length || 2} color stops${adjustment.reverse ? ' · reversed' : ''}`;
 }
 
 /** Find the unclipped sibling that owns a clipped node (manager order is bottom-to-top). */
@@ -382,11 +398,12 @@ export class LayersPanel {
 		const render = (items: DisplayItem[], depth: number) => {
 			for (const item of items) {
 				if (item.kind === 'layer') {
-					fragment.appendChild(this._buildRow(item.layer, item.index, depth));
+					const effects = item.effects || [];
+					fragment.appendChild(this._buildRow(item.layer, item.index, depth, false, effects));
 					const ownsFilters = item.layer.kind !== 'adjustment' && !!item.layer.data;
-					if (ownsFilters) { fragment.appendChild(this._buildFilterShelf(item.layer, item.effects || [], depth)); }
 					if (ownsFilters && this.expandedEffectStacks.has(item.layer.id as string)) {
-						for (const effect of [...(item.effects || [])].reverse()) { fragment.appendChild(this._buildRow(effect.layer, effect.index, depth + 1, true)); }
+						fragment.appendChild(this._buildFilterShelf(item.layer, depth));
+						for (const effect of [...effects].reverse()) { fragment.appendChild(this._buildRow(effect.layer, effect.index, depth + 1, true)); }
 					}
 					continue;
 				}
@@ -400,32 +417,26 @@ export class LayersPanel {
 		this._applyCollapsed(); // keep the collapsed "(n)" count in sync
 	}
 
-	_buildFilterShelf(layer: Layer, effects: LayerDisplayItem[], depth: number): HTMLElement {
-		const id = layer.id as string, expanded = this.expandedEffectStacks.has(id);
-		const shelf = document.createElement('div'); shelf.className = 'layer-filter-shelf' + (expanded ? ' expanded' : '');
+	_buildFilterShelf(layer: Layer, depth: number): HTMLElement {
+		const id = layer.id as string;
+		const shelf = document.createElement('div'); shelf.className = 'layer-filter-shelf expanded';
 		shelf.style.setProperty('--layer-depth', String(depth));
-		const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'layer-filter-shelf-toggle';
-		toggle.textContent = `${expanded ? '▾' : '▸'} Filters${effects.length ? ` (${effects.length})` : ''}`;
-		toggle.title = expanded ? 'Hide filters applied to this layer' : 'Show filters applied to this layer';
-		toggle.addEventListener('click', () => {
-			if (expanded) { this.expandedEffectStacks.delete(id); } else { this.expandedEffectStacks.add(id); }
-			this.refresh();
-		});
-		shelf.appendChild(toggle);
-		if (expanded) {
-			const addFilter = document.createElement('select'); addFilter.className = 'layer-add-filter';
-			addFilter.title = 'Add a non-destructive filter to this layer';
-			for (const [value, label] of [['', '+ Add filter…'], ['levels', 'Levels'], ['curves', 'Curves'], ['hue/saturation', 'Hue/Saturation']]) {
-				const option = document.createElement('option'); option.value = value; option.textContent = label; addFilter.appendChild(option);
-			}
-			addFilter.addEventListener('change', () => {
-				if (!addFilter.value) { return; }
-				const created = this.manager.addAdjustmentLayer(id, addFilter.value as LayerAdjustment['type']);
-				if (created) { this.expandedAdjustments.add(created); }
-				this.refresh(); this.onChange();
-			});
-			shelf.appendChild(addFilter);
+		const addFilter = document.createElement('select'); addFilter.className = 'layer-add-filter';
+		addFilter.title = 'Add a non-destructive filter to this layer';
+		for (const [value, label] of [
+			['', '+ Add filter…'], ['levels', 'Levels'], ['curves', 'Curves'], ['hue/saturation', 'Hue/Saturation'],
+			['brightness/contrast', 'Brightness/Contrast'], ['exposure', 'Exposure / Gamma'], ['invert', 'Invert'], ['channel mixer', 'Channel Mixer'],
+			['color balance', 'Color Balance'], ['black & white', 'Black & White'], ['threshold', 'Threshold'], ['posterize', 'Posterize'], ['gradient map', 'Gradient Map'],
+		]) {
+			const option = document.createElement('option'); option.value = value; option.textContent = label; addFilter.appendChild(option);
 		}
+		addFilter.addEventListener('change', () => {
+			if (!addFilter.value) { return; }
+			const created = this.manager.addAdjustmentLayer(id, addFilter.value as LayerAdjustment['type']);
+			if (created) { this.expandedAdjustments.add(created); }
+			this.refresh(); this.onChange();
+		});
+		shelf.appendChild(addFilter);
 		return shelf;
 	}
 
@@ -500,6 +511,73 @@ export class LayersPanel {
 		return row;
 	}
 
+	_paintLayerThumbnail(canvas: HTMLCanvasElement, layer: Layer, effects: Layer[]): void {
+		if (!layer.data || layer.width <= 0 || layer.height <= 0) { return; }
+		const dataObject = layer.data as object;
+		let bounds = thumbnailBoundsCache.get(dataObject);
+		if (!bounds) {
+			let left = 0, top = 0, right = layer.width, bottom = layer.height;
+			if (layer.channels === 4) {
+				left = layer.width; top = layer.height; right = 0; bottom = 0;
+				for (let y = 0; y < layer.height; y++) for (let x = 0; x < layer.width; x++) {
+					const alpha = Number(layer.data![(y * layer.width + x) * 4 + 3]);
+					if (!(alpha > 0)) { continue; }
+					left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + 1); bottom = Math.max(bottom, y + 1);
+				}
+				if (right <= left || bottom <= top) { left = 0; top = 0; right = layer.width; bottom = layer.height; }
+			}
+			bounds = { left, top, right, bottom }; thumbnailBoundsCache.set(dataObject, bounds);
+		}
+		const cropWidth = Math.max(1, bounds.right - bounds.left), cropHeight = Math.max(1, bounds.bottom - bounds.top);
+		const scale = Math.min(44 / cropWidth, 44 / cropHeight);
+		const width = Math.max(1, Math.round(cropWidth * scale)), height = Math.max(1, Math.round(cropHeight * scale));
+		const pixels = new Uint8Array(width * height * 4), sourceMaximum = layer.typeMax || 255;
+		for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+			const sourceX = Math.min(bounds.right - 1, bounds.left + Math.floor((x + 0.5) * cropWidth / width));
+			const sourceY = Math.min(bounds.bottom - 1, bounds.top + Math.floor((y + 0.5) * cropHeight / height));
+			const sourceOffset = (sourceY * layer.width + sourceX) * layer.channels, destination = (y * width + x) * 4;
+			const value = (channel: number) => Math.max(0, Math.min(255, Math.round(Number(layer.data![sourceOffset + Math.min(channel, layer.channels - 1)]) * 255 / sourceMaximum)));
+			if (layer.channels === 1) { pixels[destination] = pixels[destination + 1] = pixels[destination + 2] = value(0); pixels[destination + 3] = 255; }
+			else {
+				pixels[destination] = value(0); pixels[destination + 1] = value(1); pixels[destination + 2] = value(2);
+				pixels[destination + 3] = layer.channels === 4 ? value(3) : 255;
+			}
+		}
+		const previewBase: Layer = { ...layer, data: pixels, width, height, channels: 4, typeMax: 255, offsetX: 0, offsetY: 0, opacity: 1, blendMode: 'normal', visible: true, rasterMask: undefined };
+		const previewEffects: Layer[] = effects.map((effect): Layer => ({
+			...effect, width: 1, height: 1, offsetX: 0, offsetY: 0, rasterMask: undefined as Layer['rasterMask'],
+		}));
+		const rendered = composite([previewBase, ...previewEffects], width, height);
+		const context = canvas.getContext('2d'); if (!context) { return; }
+		context.clearRect(0, 0, canvas.width, canvas.height);
+		const image = context.createImageData(width, height);
+		for (let pixel = 0; pixel < width * height; pixel++) {
+			const source = pixel * rendered.channels, destination = pixel * 4;
+			if (rendered.channels === 1) {
+				const gray = Math.max(0, Math.min(255, Math.round(rendered.data[source])));
+				image.data[destination] = image.data[destination + 1] = image.data[destination + 2] = gray; image.data[destination + 3] = 255;
+			} else {
+				image.data[destination] = Math.max(0, Math.min(255, Math.round(rendered.data[source])));
+				image.data[destination + 1] = Math.max(0, Math.min(255, Math.round(rendered.data[source + 1])));
+				image.data[destination + 2] = Math.max(0, Math.min(255, Math.round(rendered.data[source + 2])));
+				image.data[destination + 3] = rendered.channels === 4 ? Math.max(0, Math.min(255, Math.round(rendered.data[source + 3]))) : 255;
+			}
+		}
+		context.putImageData(image, Math.floor((canvas.width - width) / 2), Math.floor((canvas.height - height) / 2));
+	}
+
+	_refreshAdjustmentThumbnail(adjustmentLayer: Layer): void {
+		const index = this.manager.layers.indexOf(adjustmentLayer), target = clippingTarget(this.manager.layers, index);
+		if (!target?.id || !this.listEl) { return; }
+		const targetIndex = this.manager.layers.indexOf(target), effects: Layer[] = [];
+		for (let candidate = targetIndex + 1; candidate < this.manager.layers.length && this.manager.layers[candidate].clipped; candidate++) {
+			if ((this.manager.layers[candidate].parentId || undefined) === (target.parentId || undefined)) { effects.push(this.manager.layers[candidate]); }
+		}
+		this.listEl.querySelectorAll<HTMLCanvasElement>('.layer-thumbnail').forEach(canvas => {
+			if (canvas.dataset.layerId === target.id) { this._paintLayerThumbnail(canvas, target, effects); }
+		});
+	}
+
 	_buildAdjustmentEditor(layer: Layer, id: string): HTMLElement {
 		const details = document.createElement('details');
 		details.className = 'layer-adjustment-editor';
@@ -520,6 +598,7 @@ export class LayersPanel {
 			layer.adjustment = adjustment;
 			this.manager.updateLayer(id, { adjustment });
 			heading.textContent = adjustmentSummary(adjustment);
+			this._refreshAdjustmentThumbnail(layer);
 			this.onChange({ interactive });
 		};
 
@@ -529,6 +608,20 @@ export class LayersPanel {
 			this._buildCurvesControls(layer, body, commit);
 		} else if (layer.adjustment?.type === 'hue/saturation') {
 			this._buildHueControls(layer, body, commit, () => this.refresh());
+		} else if (layer.adjustment?.type === 'brightness/contrast' || layer.adjustment?.type === 'exposure') {
+			this._buildToneControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'channel mixer') {
+			this._buildChannelMixerControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'color balance') {
+			this._buildColorBalanceControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'black & white') {
+			this._buildBlackWhiteControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'threshold' || layer.adjustment?.type === 'posterize') {
+			this._buildQuantizeControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'gradient map') {
+			this._buildGradientMapControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'invert') {
+			const note = document.createElement('div'); note.className = 'layer-adjustment-note'; note.textContent = 'No parameters — every RGB value is replaced by its inverse.'; body.appendChild(note);
 		}
 		return details;
 	}
@@ -701,6 +794,110 @@ export class LayersPanel {
 		channel.addEventListener('change', rebuild); rebuild();
 	}
 
+	_buildToneControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		if (layer.adjustment?.type === 'brightness/contrast') {
+			const update = (field: 'brightness' | 'contrast', value: number) => commit({ ...layer.adjustment as Extract<LayerAdjustment, { type: 'brightness/contrast' }>, [field]: value });
+			root.append(
+				this._adjustmentRange('Brightness', -100, 100, 1, layer.adjustment.brightness ?? 0, 0, value => update('brightness', value)),
+				this._adjustmentRange('Contrast', -100, 100, 1, layer.adjustment.contrast ?? 0, 0, value => update('contrast', value)),
+			);
+			return;
+		}
+		const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'exposure' }>;
+		const update = (field: 'exposure' | 'offset' | 'gamma', value: number) => commit({ ...layer.adjustment as typeof adjustment, [field]: value });
+		root.append(
+			this._adjustmentRange('Exposure', -5, 5, 0.1, adjustment.exposure ?? 0, 0, value => update('exposure', value), 1, ' EV'),
+			this._adjustmentRange('Offset', -0.5, 0.5, 0.01, adjustment.offset ?? 0, 0, value => update('offset', value), 2),
+			this._adjustmentRange('Gamma', 0.1, 5, 0.01, adjustment.gamma ?? 1, 1, value => update('gamma', value), 2),
+		);
+	}
+
+	_buildChannelMixerControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'channel mixer' }>;
+		const monochromeLabel = document.createElement('label'); monochromeLabel.className = 'layer-adjustment-colorize';
+		const monochrome = document.createElement('input'); monochrome.type = 'checkbox'; monochrome.checked = !!adjustment.monochrome; monochromeLabel.append(monochrome, ' Monochrome'); root.appendChild(monochromeLabel);
+		const output = document.createElement('select'); output.className = 'layer-adjustment-channel';
+		for (const [value, label] of adjustment.monochrome ? [['gray', 'Gray']] : [['red', 'Red output'], ['green', 'Green output'], ['blue', 'Blue output']]) {
+			const option = document.createElement('option'); option.value = value; option.textContent = label; output.appendChild(option);
+		}
+		root.appendChild(this._labeledAdjustmentControl('Output', output));
+		const controls = document.createElement('div'); controls.className = 'layer-adjustment-channel-controls'; root.appendChild(controls);
+		const rebuild = () => {
+			controls.textContent = '';
+			const latest = layer.adjustment as Extract<LayerAdjustment, { type: 'channel mixer' }>, key = output.value as 'red' | 'green' | 'blue' | 'gray';
+			const defaults = key === 'red' ? { red: 100, green: 0, blue: 0, constant: 0 } : key === 'green' ? { red: 0, green: 100, blue: 0, constant: 0 }
+				: key === 'blue' ? { red: 0, green: 0, blue: 100, constant: 0 } : { red: 40, green: 40, blue: 20, constant: 0 };
+			const values = latest[key] || defaults;
+			const update = (field: 'red' | 'green' | 'blue' | 'constant', value: number) => {
+				const current = layer.adjustment as Extract<LayerAdjustment, { type: 'channel mixer' }>;
+				commit({ ...current, [key]: { ...(current[key] || defaults), [field]: value } });
+			};
+			for (const field of ['red', 'green', 'blue', 'constant'] as const) controls.appendChild(this._adjustmentRange(field[0].toUpperCase() + field.slice(1), -200, 200, 1, values[field] ?? defaults[field], defaults[field], value => update(field, value), 0, '%'));
+		};
+		monochrome.addEventListener('change', () => { commit({ ...layer.adjustment as typeof adjustment, monochrome: monochrome.checked }); this.refresh(); });
+		output.addEventListener('change', rebuild); rebuild();
+	}
+
+	_buildColorBalanceControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'color balance' }>;
+		const range = document.createElement('select'); range.className = 'layer-adjustment-channel';
+		for (const value of ['shadows', 'midtones', 'highlights']) { const option = document.createElement('option'); option.value = value; option.textContent = value[0].toUpperCase() + value.slice(1); range.appendChild(option); }
+		root.appendChild(this._labeledAdjustmentControl('Range', range));
+		const preserveLabel = document.createElement('label'); preserveLabel.className = 'layer-adjustment-colorize';
+		const preserve = document.createElement('input'); preserve.type = 'checkbox'; preserve.checked = adjustment.preserveLuminosity !== false; preserveLabel.append(preserve, ' Preserve luminosity'); root.appendChild(preserveLabel);
+		const controls = document.createElement('div'); controls.className = 'layer-adjustment-channel-controls'; root.appendChild(controls);
+		const rebuild = () => {
+			controls.textContent = ''; const key = range.value as 'shadows' | 'midtones' | 'highlights';
+			const values = (layer.adjustment as typeof adjustment)[key] || {};
+			const update = (field: 'cyanRed' | 'magentaGreen' | 'yellowBlue', value: number) => {
+				const latest = layer.adjustment as typeof adjustment; commit({ ...latest, [key]: { ...(latest[key] || {}), [field]: value } });
+			};
+			controls.append(
+				this._adjustmentRange('Cyan ↔ Red', -100, 100, 1, values.cyanRed ?? 0, 0, value => update('cyanRed', value)),
+				this._adjustmentRange('Magenta ↔ Green', -100, 100, 1, values.magentaGreen ?? 0, 0, value => update('magentaGreen', value)),
+				this._adjustmentRange('Yellow ↔ Blue', -100, 100, 1, values.yellowBlue ?? 0, 0, value => update('yellowBlue', value)),
+			);
+		};
+		preserve.addEventListener('change', () => commit({ ...layer.adjustment as typeof adjustment, preserveLuminosity: preserve.checked }));
+		range.addEventListener('change', rebuild); rebuild();
+	}
+
+	_buildBlackWhiteControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		const defaults = { reds: 40, yellows: 60, greens: 40, cyans: 60, blues: 20, magentas: 80 };
+		for (const field of Object.keys(defaults) as (keyof typeof defaults)[]) {
+			const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'black & white' }>;
+			root.appendChild(this._adjustmentRange(field[0].toUpperCase() + field.slice(1), -200, 300, 1, adjustment[field] ?? defaults[field], defaults[field], value => {
+				commit({ ...layer.adjustment as typeof adjustment, [field]: value });
+			}, 0, '%'));
+		}
+	}
+
+	_buildQuantizeControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		if (layer.adjustment?.type === 'threshold') {
+			root.appendChild(this._adjustmentRange('Threshold', 0, 255, 1, layer.adjustment.level ?? 128, 128, value => commit({ ...layer.adjustment as Extract<LayerAdjustment, { type: 'threshold' }>, level: value })));
+		} else {
+			const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'posterize' }>;
+			root.appendChild(this._adjustmentRange('Levels', 2, 32, 1, adjustment.levels ?? 4, 4, value => commit({ ...layer.adjustment as typeof adjustment, levels: value })));
+		}
+	}
+
+	_buildGradientMapControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'gradient map' }>;
+		const stops = adjustment.stops?.length ? adjustment.stops : [{ position: 0, color: { r: 0, g: 0, b: 0 } }, { position: 1, color: { r: 255, g: 255, b: 255 } }];
+		const toHex = (color: { r: number; g: number; b: number }) => `#${[color.r, color.g, color.b].map(value => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')).join('')}`;
+		const fromHex = (value: string) => ({ r: parseInt(value.slice(1, 3), 16), g: parseInt(value.slice(3, 5), 16), b: parseInt(value.slice(5, 7), 16) });
+		const colors = document.createElement('div'); colors.className = 'layer-gradient-colors';
+		for (const [label, index] of [['Dark', 0], ['Light', stops.length - 1]] as [string, number][]) {
+			const input = document.createElement('input'); input.type = 'color'; input.value = toHex(stops[index].color); input.title = `${label} gradient color`;
+			const field = this._labeledAdjustmentControl(label, input); colors.appendChild(field);
+			input.addEventListener('input', () => { const latest = layer.adjustment as typeof adjustment, next = [...(latest.stops || stops)]; next[index] = { ...next[index], color: fromHex(input.value) }; commit({ ...latest, stops: next }); });
+		}
+		const reverseLabel = document.createElement('label'); reverseLabel.className = 'layer-adjustment-colorize';
+		const reverse = document.createElement('input'); reverse.type = 'checkbox'; reverse.checked = !!adjustment.reverse; reverseLabel.append(reverse, ' Reverse');
+		reverse.addEventListener('change', () => commit({ ...layer.adjustment as typeof adjustment, reverse: reverse.checked }));
+		root.append(colors, reverseLabel);
+	}
+
 	_adjustmentChannelSelect(hueRanges = false): HTMLSelectElement {
 		const select = document.createElement('select'); select.className = 'layer-adjustment-channel';
 		const entries = hueRanges
@@ -728,7 +925,7 @@ export class LayersPanel {
 	/**
 	 * @param index 0 = base/background.
 	 */
-	_buildRow(layer: Layer, index: number, depth = 0, nestedEffect = false): HTMLElement {
+	_buildRow(layer: Layer, index: number, depth = 0, nestedEffect = false, ownedEffects: LayerDisplayItem[] = []): HTMLElement {
 		const id = layer.id as string;
 		const isBase = index === 0 && !this.manager.documentExpanded;
 		const isAdjustment = layer.kind === 'adjustment' && !!layer.adjustment;
@@ -759,6 +956,13 @@ export class LayersPanel {
 		// Name, dimensions, and source-document compatibility.
 		const titleLine = document.createElement('div');
 		titleLine.className = 'layer-title-line';
+		if (!isAdjustment && layer.data) {
+			const thumbnail = document.createElement('canvas'); thumbnail.className = 'layer-thumbnail';
+			thumbnail.width = 48; thumbnail.height = 48; thumbnail.dataset.layerId = id;
+			thumbnail.title = 'Layer content with its filters applied';
+			titleLine.appendChild(thumbnail);
+			this._paintLayerThumbnail(thumbnail, layer, ownedEffects.map(effect => effect.layer));
+		}
 		const name = document.createElement('span');
 		name.className = 'layer-name';
 		name.textContent = layer.name || id;
@@ -848,8 +1052,9 @@ export class LayersPanel {
 		}
 		blend.addEventListener('change', () => {
 			const patch: Partial<Layer> = { blendMode: blend.value };
-			if (blend.value === 'mask' && !layer.maskCondition) {
-				patch.maskCondition = { op: 'gt', threshold: 0.5 };
+			if (blend.value === 'mask') {
+				if (!layer.maskCondition) { patch.maskCondition = { op: 'gt', threshold: (layer.typeMax || 1) * 0.5 }; }
+				patch.clipped = true;
 			}
 			this.manager.updateLayer(id, patch);
 			this.refresh(); // show/hide the mask condition row
@@ -903,20 +1108,12 @@ export class LayersPanel {
 		}
 
 		if (isAdjustment) {
-			const scope = document.createElement('div');
-			scope.className = 'layer-adjustment-scope';
-			const scopeText = document.createElement('span');
-			scopeText.className = 'layer-adjustment-target';
-			scopeText.textContent = layer.clipped
-				? target ? `↳ Applied to “${target.name || target.id}”` : '↳ Clipped, but no base layer was found'
-				: '↓ Applied to the composite below';
-			scopeText.title = layer.clipped
-				? target ? `This adjustment is evaluated on ${target.name || target.id} before that layer is blended` : 'Move this adjustment directly above a raster or group base'
-				: 'This adjustment changes all visible content below it in the current group';
-			scope.appendChild(scopeText);
-			if (!nestedEffect) { scope.appendChild(clippingLabel); }
-			if (maskBadge) { scope.appendChild(maskBadge); maskBadge = null; }
-			row.appendChild(scope);
+			if (!nestedEffect) {
+				const scope = document.createElement('div'); scope.className = 'layer-adjustment-scope';
+				const scopeText = document.createElement('span'); scopeText.className = 'layer-adjustment-target';
+				scopeText.textContent = layer.clipped ? target ? `Applied to “${target.name || target.id}”` : 'Clipped, but no base layer was found' : 'Applied to the composite below';
+				scope.append(scopeText, clippingLabel); if (maskBadge) { scope.appendChild(maskBadge); maskBadge = null; } row.appendChild(scope);
+			}
 			row.appendChild(this._buildAdjustmentEditor(layer, id));
 		}
 
@@ -964,6 +1161,18 @@ export class LayersPanel {
 		// Reorder + remove.
 		const actions = document.createElement('div');
 		actions.className = 'layer-actions';
+		if (!nestedEffect && !isAdjustment && layer.data) {
+			const filtersExpanded = this.expandedEffectStacks.has(id);
+			const filterToggle = document.createElement('button'); filterToggle.type = 'button';
+			filterToggle.className = 'layers-btn layer-filter-toggle-inline';
+			filterToggle.textContent = `${filtersExpanded ? '▾' : '▸'} Filters${ownedEffects.length ? ` (${ownedEffects.length})` : ''}`;
+			filterToggle.title = filtersExpanded ? 'Hide filters applied to this layer' : 'Show and add filters for this layer';
+			filterToggle.addEventListener('click', () => {
+				if (filtersExpanded) { this.expandedEffectStacks.delete(id); } else { this.expandedEffectStacks.add(id); }
+				this.refresh();
+			});
+			actions.appendChild(filterToggle);
+		}
 
 		const up = document.createElement('button');
 		up.className = 'layers-btn';
@@ -1031,13 +1240,13 @@ export class LayersPanel {
 	 * Build the mask condition row: "keep where  [op] [threshold]".
 	 */
 	_buildMaskRow(layer: Layer, id: string): HTMLElement {
-		const cond = layer.maskCondition || { op: 'gt', threshold: 0.5 };
+		const cond = layer.maskCondition || { op: 'gt', threshold: (layer.typeMax || 1) * 0.5 };
 		const row = document.createElement('div');
 		row.className = 'layer-mask';
 
 		const label = document.createElement('span');
 		label.className = 'layer-mask-label';
-		label.textContent = 'keep where';
+		label.textContent = 'Show layer where mask is';
 		row.appendChild(label);
 
 		const opSel = document.createElement('select');
@@ -1055,8 +1264,9 @@ export class LayersPanel {
 		const thr = document.createElement('input');
 		thr.type = 'number';
 		thr.step = 'any';
+		thr.min = '0'; thr.max = String(layer.typeMax || 1);
 		thr.className = 'layer-mask-threshold';
-		thr.value = String(cond.threshold ?? 0.5);
+		thr.value = String(cond.threshold ?? (layer.typeMax || 1) * 0.5);
 		thr.title = 'Threshold';
 		const meta = MASK_CONDITIONS.find(c => c.id === cond.op);
 		if (meta && !meta.needsThreshold) { thr.style.display = 'none'; }

@@ -36,6 +36,10 @@ async function main() {
 	assert.strictEqual(filterManager.layers.find(layer => layer.id === hueId).adjustment.colorizeEnabled, false);
 	filterManager.updateLayer(baseId, { visible: false });
 	assert.deepStrictEqual(filterManager.layers.slice(1).map(layer => layer.visible), [true, true], 'hiding an image preserves its filter states');
+	for (const type of ['brightness/contrast', 'exposure', 'invert', 'channel mixer', 'color balance', 'black & white', 'threshold', 'posterize', 'gradient map']) {
+		const id = filterManager.addAdjustmentLayer(baseId, type);
+		assert.strictEqual(filterManager.layers.find(layer => layer.id === id).adjustment.type, type);
+	}
 
 	const events = [];
 	const range = {

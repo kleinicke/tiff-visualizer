@@ -624,7 +624,7 @@ function psdMaskAsset(mask: any, layerLeft: number, layerTop: number): LayeredRa
 }
 
 function supportedPsdAdjustment(value: any): LayerAdjustment | undefined {
-	if (!value || !['levels', 'curves', 'hue/saturation'].includes(value.type)) { return undefined; }
+	if (!value || !['levels', 'curves', 'hue/saturation', 'brightness/contrast', 'exposure', 'invert', 'channel mixer', 'color balance', 'black & white', 'threshold', 'posterize', 'gradient map'].includes(value.type)) { return undefined; }
 	if (value.type === 'hue/saturation' && Number(value.master?.a) === 256) {
 		// Legacy PSD hue2 stores the Colorize flag as a padded byte (read by
 		// ag-psd as 0x0100), followed by colorize hue/saturation/lightness in
@@ -638,6 +638,20 @@ function supportedPsdAdjustment(value: any): LayerAdjustment | undefined {
 				lightness: Number(value.master?.d || 0),
 			},
 		} as LayerAdjustment;
+	}
+	if (value.type === 'gradient map') {
+		const toRgb = (color: any): { r: number; g: number; b: number } => {
+			if (Number.isFinite(color?.r)) { return { r: color.r, g: color.g, b: color.b }; }
+			if (Number.isFinite(color?.fr)) { return { r: color.fr * 255, g: color.fg * 255, b: color.fb * 255 }; }
+			if (Number.isFinite(color?.k)) { const gray = 255 - color.k; return { r: gray, g: gray, b: gray }; }
+			return { r: 0, g: 0, b: 0 };
+		};
+		return {
+			type: 'gradient map', reverse: !!value.reverse,
+			stops: Array.isArray(value.colorStops) ? value.colorStops.map((stop: any) => ({
+				position: Math.max(0, Math.min(1, Number(stop.location || 0) / 4096)), color: toRgb(stop.color),
+			})) : undefined,
+		};
 	}
 	return value as LayerAdjustment;
 }

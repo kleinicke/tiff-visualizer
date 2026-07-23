@@ -21,10 +21,22 @@
  */
 
 export type AdjustmentChannel = { shadowInput?: number; highlightInput?: number; shadowOutput?: number; highlightOutput?: number; midtoneInput?: number } | { input: number; output: number }[];
+export type MixerChannel = { red?: number; green?: number; blue?: number; constant?: number };
+export type BalanceRange = { cyanRed?: number; magentaGreen?: number; yellowBlue?: number };
+export type GradientStop = { position: number; color: { r: number; g: number; b: number } };
 export type LayerAdjustment =
 	| { type: 'levels'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
 	| { type: 'curves'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
-	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number>; colorize?: { hue: number; saturation: number; lightness: number }; colorizeEnabled?: boolean };
+	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number>; colorize?: { hue: number; saturation: number; lightness: number }; colorizeEnabled?: boolean }
+	| { type: 'brightness/contrast'; brightness?: number; contrast?: number; useLegacy?: boolean }
+	| { type: 'exposure'; exposure?: number; offset?: number; gamma?: number }
+	| { type: 'invert' }
+	| { type: 'channel mixer'; monochrome?: boolean; red?: MixerChannel; green?: MixerChannel; blue?: MixerChannel; gray?: MixerChannel }
+	| { type: 'color balance'; shadows?: BalanceRange; midtones?: BalanceRange; highlights?: BalanceRange; preserveLuminosity?: boolean }
+	| { type: 'black & white'; reds?: number; yellows?: number; greens?: number; cyans?: number; blues?: number; magentas?: number }
+	| { type: 'threshold'; level?: number }
+	| { type: 'posterize'; levels?: number }
+	| { type: 'gradient map'; stops?: GradientStop[]; reverse?: boolean };
 
 export interface Layer {
 	id?: string;
@@ -113,7 +125,7 @@ export const BLEND_MODES: { id: string; label: string; arithmetic: boolean; mask
 	{ id: 'min', label: 'Darken (min)', arithmetic: true },
 	{ id: 'max', label: 'Lighten (max)', arithmetic: true },
 	{ id: 'average', label: 'Average', arithmetic: true },
-	{ id: 'mask', label: 'Mask (hide below)', arithmetic: false, mask: true },
+	{ id: 'mask', label: 'Brightness Mask', arithmetic: false, mask: true },
 ];
 
 const BLEND_MODE_IDS = new Set(BLEND_MODES.map(m => m.id));
@@ -122,11 +134,11 @@ const DOCUMENT_MODES = new Set(['normal', 'multiply', 'screen', 'overlay', 'dark
 
 /** Mask condition operators shown in the UI. */
 export const MASK_CONDITIONS = [
-	{ id: 'gt', label: '>', needsThreshold: true },
-	{ id: 'ge', label: '≥', needsThreshold: true },
-	{ id: 'lt', label: '<', needsThreshold: true },
-	{ id: 'le', label: '≤', needsThreshold: true },
-	{ id: 'eq', label: '=', needsThreshold: true },
+	{ id: 'gt', label: 'brighter than', needsThreshold: true },
+	{ id: 'ge', label: 'at least', needsThreshold: true },
+	{ id: 'lt', label: 'darker than', needsThreshold: true },
+	{ id: 'le', label: 'at most', needsThreshold: true },
+	{ id: 'eq', label: 'equal to', needsThreshold: true },
 	{ id: 'isfinite', label: 'is finite', needsThreshold: false },
 	{ id: 'isnan', label: 'is NaN/Inf', needsThreshold: false },
 ];
@@ -540,7 +552,9 @@ function configuredHueRangeWeight(hue: number, settings: Record<string, number> 
 	return Math.max(0, Math.min(1, weight));
 }
 
-type PreparedAdjustment = { kind: 'lut'; tables: Float32Array[] } | { kind: 'hue'; value: Extract<LayerAdjustment, { type: 'hue/saturation' }> };
+type PreparedAdjustment = { kind: 'lut'; tables: Float32Array[] }
+	| { kind: 'hue'; value: Extract<LayerAdjustment, { type: 'hue/saturation' }> }
+	| { kind: 'direct'; value: Exclude<LayerAdjustment, { type: 'levels' | 'curves' | 'hue/saturation' }> };
 const preparedAdjustmentCache = new WeakMap<object, Map<number, PreparedAdjustment>>();
 
 function prepareAdjustment(adjustment: LayerAdjustment, typeMax: number): PreparedAdjustment {
@@ -560,7 +574,8 @@ function prepareAdjustment(adjustment: LayerAdjustment, typeMax: number): Prepar
 			return table;
 		});
 		prepared = { kind: 'lut', tables };
-	} else { prepared = { kind: 'hue', value: adjustment }; }
+	} else if (adjustment.type === 'hue/saturation') { prepared = { kind: 'hue', value: adjustment }; }
+	else { prepared = { kind: 'direct', value: adjustment }; }
 	byMaximum.set(typeMax, prepared);
 	return prepared;
 }
@@ -571,12 +586,76 @@ function sampleAdjustmentLut(table: Float32Array, value: number, typeMax: number
 	return table[low] + (table[high] - table[low]) * fraction;
 }
 
+function clampUnit(value: number): number { return Math.max(0, Math.min(1, value)); }
+
+function sampleGradient(stops: GradientStop[] | undefined, value: number, reverse = false): [number, number, number] {
+	const defaults: GradientStop[] = [{ position: 0, color: { r: 0, g: 0, b: 0 } }, { position: 1, color: { r: 255, g: 255, b: 255 } }];
+	const sorted = (stops?.length ? stops : defaults).map(stop => ({ ...stop, position: clampUnit(stop.position) })).sort((a, b) => a.position - b.position);
+	const position = reverse ? 1 - value : value;
+	if (position <= sorted[0].position) { const color = sorted[0].color; return [color.r / 255, color.g / 255, color.b / 255]; }
+	for (let index = 1; index < sorted.length; index++) if (position <= sorted[index].position) {
+		const low = sorted[index - 1], high = sorted[index], amount = (position - low.position) / Math.max(1e-6, high.position - low.position);
+		return [low.color.r + (high.color.r - low.color.r) * amount, low.color.g + (high.color.g - low.color.g) * amount,
+			low.color.b + (high.color.b - low.color.b) * amount].map(channel => channel / 255) as [number, number, number];
+	}
+	const color = sorted[sorted.length - 1].color; return [color.r / 255, color.g / 255, color.b / 255];
+}
+
+function applyDirectAdjustment(adjustment: Extract<PreparedAdjustment, { kind: 'direct' }>['value'], red: number, green: number, blue: number): [number, number, number] {
+	let r = red, g = green, b = blue;
+	const luminance = () => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+	if (adjustment.type === 'brightness/contrast') {
+		const brightness = (adjustment.brightness || 0) / 100, contrast = Math.max(-0.99, Math.min(0.99, (adjustment.contrast || 0) / 100));
+		const factor = (1 + contrast) / (1 - contrast);
+		r = (r - 0.5) * factor + 0.5 + brightness; g = (g - 0.5) * factor + 0.5 + brightness; b = (b - 0.5) * factor + 0.5 + brightness;
+	} else if (adjustment.type === 'exposure') {
+		const multiplier = Math.pow(2, adjustment.exposure || 0), offset = adjustment.offset || 0, gamma = Math.max(0.01, adjustment.gamma ?? 1);
+		r = Math.pow(Math.max(0, r * multiplier + offset), 1 / gamma); g = Math.pow(Math.max(0, g * multiplier + offset), 1 / gamma); b = Math.pow(Math.max(0, b * multiplier + offset), 1 / gamma);
+	} else if (adjustment.type === 'invert') { r = 1 - r; g = 1 - g; b = 1 - b; }
+	else if (adjustment.type === 'channel mixer') {
+		const mix = (channel: MixerChannel | undefined, fallback: MixerChannel) => {
+			const value = channel || fallback;
+			return r * (value.red ?? 0) / 100 + g * (value.green ?? 0) / 100 + b * (value.blue ?? 0) / 100 + (value.constant ?? 0) / 100;
+		};
+		if (adjustment.monochrome) { const gray = mix(adjustment.gray, { red: 40, green: 40, blue: 20 }); r = g = b = gray; }
+		else [r, g, b] = [mix(adjustment.red, { red: 100 }), mix(adjustment.green, { green: 100 }), mix(adjustment.blue, { blue: 100 })];
+	} else if (adjustment.type === 'color balance') {
+		const originalLightness = rgbToHsl(r, g, b)[2], light = luminance();
+		const weights = [{ value: adjustment.shadows, weight: clampUnit((0.5 - light) * 2) }, { value: adjustment.midtones, weight: 1 - Math.abs(light - 0.5) * 2 }, { value: adjustment.highlights, weight: clampUnit((light - 0.5) * 2) }];
+		for (const { value, weight } of weights) if (value && weight > 0) {
+			r += (value.cyanRed || 0) / 100 * weight; g += (value.magentaGreen || 0) / 100 * weight; b += (value.yellowBlue || 0) / 100 * weight;
+		}
+		if (adjustment.preserveLuminosity) { const [hue, saturation] = rgbToHsl(clampUnit(r), clampUnit(g), clampUnit(b)); [r, g, b] = hslToRgb(hue, saturation, originalLightness); }
+	} else if (adjustment.type === 'black & white') {
+		const [hue, saturation] = rgbToHsl(r, g, b), centers = [0, 60, 120, 180, 240, 300];
+		const values = [adjustment.reds ?? 40, adjustment.yellows ?? 60, adjustment.greens ?? 40, adjustment.cyans ?? 60, adjustment.blues ?? 20, adjustment.magentas ?? 80];
+		let weighted = 0, total = 0;
+		for (let index = 0; index < centers.length; index++) { const weight = hueRangeWeight(hue, centers[index]); weighted += values[index] * weight; total += weight; }
+		const gray = luminance() + (((total ? weighted / total : 50) - 50) / 100) * saturation * 0.5; r = g = b = gray;
+	} else if (adjustment.type === 'threshold') { const value = luminance() * 255 >= (adjustment.level ?? 128) ? 1 : 0; r = g = b = value; }
+	else if (adjustment.type === 'posterize') {
+		const levels = Math.max(2, Math.min(255, Math.round(adjustment.levels ?? 4))), quantize = (value: number) => Math.round(value * (levels - 1)) / (levels - 1);
+		r = quantize(r); g = quantize(g); b = quantize(b);
+	} else if (adjustment.type === 'gradient map') { [r, g, b] = sampleGradient(adjustment.stops, clampUnit(luminance()), adjustment.reverse); }
+	return [clampUnit(r), clampUnit(g), clampUnit(b)];
+}
+
 function applyAdjustmentPixel(data: Float32Array, index: number, channels: number, prepared: PreparedAdjustment, typeMax: number, amount: number): void {
 	const colorChannels = channels === 4 ? 3 : channels;
 	if (prepared.kind === 'lut') {
 		for (let channel = 0; channel < colorChannels; channel++) {
 			const original = data[index + channel], adjusted = sampleAdjustmentLut(prepared.tables[Math.min(channel, 2)], original, typeMax);
 			data[index + channel] = original + (adjusted - original) * amount;
+		}
+		return;
+	}
+	if (prepared.kind === 'direct') {
+		if (colorChannels >= 3) {
+			const originalRed = data[index], originalGreen = data[index + 1], originalBlue = data[index + 2];
+			const adjusted = applyDirectAdjustment(prepared.value, originalRed / typeMax, originalGreen / typeMax, originalBlue / typeMax);
+			data[index] = originalRed + (adjusted[0] * typeMax - originalRed) * amount;
+			data[index + 1] = originalGreen + (adjusted[1] * typeMax - originalGreen) * amount;
+			data[index + 2] = originalBlue + (adjusted[2] * typeMax - originalBlue) * amount;
 		}
 		return;
 	}
@@ -741,7 +820,10 @@ function compositePrepared(layers: Layer[], canvasWidth: number, canvasHeight: n
 					const lx = x - offsetX, pixel = y * canvasWidth + x, di = pixel * outChannels;
 					sampleLayer(layer, lx, ly, outChannels, src);
 					if (isMask) {
-						if (covered[pixel] && !evalMaskCondition(src[0], layer.maskCondition)) {
+						const maskValue = layer.channels >= 3
+							? 0.2126 * src[0] + 0.7152 * src[1] + 0.0722 * src[2]
+							: src[0];
+						if (covered[pixel] && !evalMaskCondition(maskValue, layer.maskCondition)) {
 							for (let c = 0; c < outChannels; c++) { data[di + c] = outChannels === 4 ? 0 : NaN; }
 							covered[pixel] = 0; coveredCount--;
 						}
