@@ -1706,6 +1706,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					rebuilt.push(baseLayer);
 				}
 			} else {
+				if (meta.kind === 'adjustment' && meta.adjustment) {
+					rebuilt.push(layerManager.createLayer({
+						width: 1, height: 1, channels: 4, isFloat: false, typeMax: baseLayer?.typeMax || 255,
+						name: meta.name || 'Adjustment', kind: 'adjustment', adjustment: meta.adjustment,
+						parentId: meta.parentId, clipped: meta.clipped, groupPath: meta.groupPath, groupIds: meta.groupIds,
+					}, meta));
+					continue;
+				}
 				const src = uriMap[meta.resourceUri];
 				if (!src) { continue; }
 				const input = await decodeLayer(src, meta.resourceUri);

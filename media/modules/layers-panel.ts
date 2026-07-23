@@ -6,7 +6,7 @@
  * (b) request the extension to open a file picker for adding a layer.
  */
 
-import { BLEND_MODES, MASK_CONDITIONS, Layer } from './layer-compositor.js';
+import { BLEND_MODES, MASK_CONDITIONS, Layer, LayerAdjustment, evaluateCurvePoints } from './layer-compositor.js';
 import type { LayerManager } from './layer-manager.js';
 
 export interface LayersPanelCallbacks {
@@ -23,7 +23,7 @@ export interface LayersPanelOptions {
 	closable?: boolean;
 }
 
-export type LayerDisplayItem = { kind: 'layer'; layer: Layer; index: number };
+export type LayerDisplayItem = { kind: 'layer'; layer: Layer; index: number; effects?: LayerDisplayItem[] };
 export type GroupDisplayItem = {
 	kind: 'group';
 	key: string;
@@ -34,6 +34,61 @@ export type GroupDisplayItem = {
 	group?: Layer;
 };
 export type DisplayItem = LayerDisplayItem | GroupDisplayItem;
+
+function attachClippedAdjustments(items: DisplayItem[], layers: Layer[]): DisplayItem[] {
+	const effectsByTarget = new Map<string, LayerDisplayItem[]>();
+	for (let index = 0; index < layers.length; index++) {
+		const layer = layers[index], target = layer.kind === 'adjustment' ? clippingTarget(layers, index) : undefined;
+		if (!target?.id) { continue; }
+		const effects = effectsByTarget.get(target.id as string) || [];
+		effects.push({ kind: 'layer', layer, index }); effectsByTarget.set(target.id as string, effects);
+	}
+	const organize = (entries: DisplayItem[]): DisplayItem[] => {
+		const output: DisplayItem[] = [];
+		for (const item of entries) {
+			if (item.kind === 'group') { output.push({ ...item, items: organize(item.items) }); continue; }
+			if (item.layer.kind === 'adjustment' && clippingTarget(layers, item.index)) { continue; }
+			const effects = item.layer.id ? effectsByTarget.get(item.layer.id as string) : undefined;
+			output.push({ ...item, effects });
+		}
+		return output;
+	};
+	return organize(items);
+}
+
+export function adjustmentLabel(adjustment: LayerAdjustment | undefined): string {
+	if (!adjustment) { return 'Adjustment'; }
+	if (adjustment.type === 'levels') { return 'Levels'; }
+	if (adjustment.type === 'curves') { return 'Curves'; }
+	return adjustment.colorize && adjustment.colorizeEnabled !== false ? 'Hue/Saturation · Colorize' : 'Hue/Saturation';
+}
+
+export function adjustmentSummary(adjustment: LayerAdjustment | undefined): string {
+	if (!adjustment) { return 'No editable parameters'; }
+	if (adjustment.type === 'levels') {
+		const rgb = !Array.isArray(adjustment.rgb) ? adjustment.rgb : undefined;
+		return `Input ${rgb?.shadowInput ?? 0}–${rgb?.highlightInput ?? 255} · γ ${(rgb?.midtoneInput ?? 1).toFixed(2)}`;
+	}
+	if (adjustment.type === 'curves') {
+		const points = Array.isArray(adjustment.rgb) ? adjustment.rgb.length : 0;
+		return `${points || 2} RGB control points`;
+	}
+	const colorizeActive = !!adjustment.colorize && adjustment.colorizeEnabled !== false;
+	const values = colorizeActive ? adjustment.colorize! : adjustment.master || {};
+	return `${colorizeActive ? 'Colorize · ' : ''}H ${values.hue ?? 0}° · S ${values.saturation ?? 0} · L ${values.lightness ?? 0}`;
+}
+
+/** Find the unclipped sibling that owns a clipped node (manager order is bottom-to-top). */
+export function clippingTarget(layers: Layer[], index: number): Layer | undefined {
+	const layer = layers[index];
+	if (!layer?.clipped) { return undefined; }
+	for (let candidate = index - 1; candidate >= 0; candidate--) {
+		const below = layers[candidate];
+		if ((below.parentId || undefined) !== (layer.parentId || undefined)) { continue; }
+		if (!below.clipped) { return below; }
+	}
+	return undefined;
+}
 
 /** Build the visual hierarchy while keeping the manager's compositing stack flat. */
 export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
@@ -54,7 +109,7 @@ export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
 				collect(items);
 				return { kind: 'group', key: layer.id as string, name: layer.name || 'Group', path: groupPath, items, layers: descendants, group: layer } as GroupDisplayItem;
 			});
-		return build();
+		return attachClippedAdjustments(build(), layers);
 	}
 	const rootItems: DisplayItem[] = [];
 	const groups = new Map<string, GroupDisplayItem>();
@@ -76,7 +131,7 @@ export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
 		}
 		items.push({ kind: 'layer', layer, index: i });
 	}
-	return rootItems;
+	return attachClippedAdjustments(rootItems, layers);
 }
 
 export class LayersPanel {
@@ -105,6 +160,8 @@ export class LayersPanel {
 	_pendingRemoveTimer: ReturnType<typeof setTimeout> | null;
 	collapsed: boolean;
 	collapsedGroups: Set<string>;
+	expandedAdjustments: Set<string>;
+	expandedEffectStacks: Set<string>;
 
 	constructor(manager: LayerManager, callbacks: LayersPanelCallbacks, options: LayersPanelOptions = {}) {
 		this.manager = manager;
@@ -132,6 +189,8 @@ export class LayersPanel {
 		this._pendingRemoveTimer = null;
 		this.collapsed = false;
 		this.collapsedGroups = new Set();
+		this.expandedAdjustments = new Set();
+		this.expandedEffectStacks = new Set();
 	}
 
 	_clearPendingRemove(refresh = false): void {
@@ -322,7 +381,15 @@ export class LayersPanel {
 		const fragment = document.createDocumentFragment();
 		const render = (items: DisplayItem[], depth: number) => {
 			for (const item of items) {
-				if (item.kind === 'layer') { fragment.appendChild(this._buildRow(item.layer, item.index, depth)); continue; }
+				if (item.kind === 'layer') {
+					fragment.appendChild(this._buildRow(item.layer, item.index, depth));
+					const ownsFilters = item.layer.kind !== 'adjustment' && !!item.layer.data;
+					if (ownsFilters) { fragment.appendChild(this._buildFilterShelf(item.layer, item.effects || [], depth)); }
+					if (ownsFilters && this.expandedEffectStacks.has(item.layer.id as string)) {
+						for (const effect of [...(item.effects || [])].reverse()) { fragment.appendChild(this._buildRow(effect.layer, effect.index, depth + 1, true)); }
+					}
+					continue;
+				}
 				fragment.appendChild(this._buildGroupRow(item, depth));
 				if (!this.collapsedGroups.has(item.key)) { render(item.items, depth + 1); }
 			}
@@ -331,6 +398,35 @@ export class LayersPanel {
 		this.listEl.appendChild(fragment);
 		if (this.backgroundEl) { this.listEl.appendChild(this.backgroundEl); }
 		this._applyCollapsed(); // keep the collapsed "(n)" count in sync
+	}
+
+	_buildFilterShelf(layer: Layer, effects: LayerDisplayItem[], depth: number): HTMLElement {
+		const id = layer.id as string, expanded = this.expandedEffectStacks.has(id);
+		const shelf = document.createElement('div'); shelf.className = 'layer-filter-shelf' + (expanded ? ' expanded' : '');
+		shelf.style.setProperty('--layer-depth', String(depth));
+		const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'layer-filter-shelf-toggle';
+		toggle.textContent = `${expanded ? '▾' : '▸'} Filters${effects.length ? ` (${effects.length})` : ''}`;
+		toggle.title = expanded ? 'Hide filters applied to this layer' : 'Show filters applied to this layer';
+		toggle.addEventListener('click', () => {
+			if (expanded) { this.expandedEffectStacks.delete(id); } else { this.expandedEffectStacks.add(id); }
+			this.refresh();
+		});
+		shelf.appendChild(toggle);
+		if (expanded) {
+			const addFilter = document.createElement('select'); addFilter.className = 'layer-add-filter';
+			addFilter.title = 'Add a non-destructive filter to this layer';
+			for (const [value, label] of [['', '+ Add filter…'], ['levels', 'Levels'], ['curves', 'Curves'], ['hue/saturation', 'Hue/Saturation']]) {
+				const option = document.createElement('option'); option.value = value; option.textContent = label; addFilter.appendChild(option);
+			}
+			addFilter.addEventListener('change', () => {
+				if (!addFilter.value) { return; }
+				const created = this.manager.addAdjustmentLayer(id, addFilter.value as LayerAdjustment['type']);
+				if (created) { this.expandedAdjustments.add(created); }
+				this.refresh(); this.onChange();
+			});
+			shelf.appendChild(addFilter);
+		}
+		return shelf;
 	}
 
 	_buildGroupRow(group: GroupDisplayItem, depth: number): HTMLElement {
@@ -404,14 +500,241 @@ export class LayersPanel {
 		return row;
 	}
 
+	_buildAdjustmentEditor(layer: Layer, id: string): HTMLElement {
+		const details = document.createElement('details');
+		details.className = 'layer-adjustment-editor';
+		details.open = this.expandedAdjustments.has(id);
+		details.addEventListener('toggle', () => {
+			if (details.open) { this.expandedAdjustments.add(id); } else { this.expandedAdjustments.delete(id); }
+		});
+		const heading = document.createElement('summary');
+		heading.className = 'layer-adjustment-summary';
+		heading.textContent = adjustmentSummary(layer.adjustment);
+		heading.title = 'Expand to edit this adjustment';
+		details.appendChild(heading);
+
+		const body = document.createElement('div');
+		body.className = 'layer-adjustment-controls';
+		details.appendChild(body);
+		const commit = (adjustment: LayerAdjustment, interactive = true) => {
+			layer.adjustment = adjustment;
+			this.manager.updateLayer(id, { adjustment });
+			heading.textContent = adjustmentSummary(adjustment);
+			this.onChange({ interactive });
+		};
+
+		if (layer.adjustment?.type === 'levels') {
+			this._buildLevelsControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'curves') {
+			this._buildCurvesControls(layer, body, commit);
+		} else if (layer.adjustment?.type === 'hue/saturation') {
+			this._buildHueControls(layer, body, commit, () => this.refresh());
+		}
+		return details;
+	}
+
+	_buildLevelsControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void): void {
+		const channel = this._adjustmentChannelSelect();
+		root.appendChild(this._labeledAdjustmentControl('Channel', channel));
+		const controls = document.createElement('div');
+		controls.className = 'layer-adjustment-channel-controls';
+		root.appendChild(controls);
+		const rebuild = () => {
+			controls.textContent = '';
+			const key = channel.value as 'rgb' | 'red' | 'green' | 'blue';
+			const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'levels' }>;
+			const current = !Array.isArray(adjustment[key]) ? adjustment[key] as Record<string, number> | undefined : undefined;
+			const update = (field: string, value: number) => {
+				const latest = layer.adjustment as Extract<LayerAdjustment, { type: 'levels' }>;
+				const existing = !Array.isArray(latest[key]) ? latest[key] as Record<string, number> | undefined : undefined;
+				commit({ ...latest, [key]: { ...existing, [field]: value } });
+			};
+			controls.append(
+				this._adjustmentRange('Black in', 0, 255, 1, current?.shadowInput ?? 0, 0, value => update('shadowInput', value)),
+				this._adjustmentRange('Gamma', 0.1, 9.99, 0.01, current?.midtoneInput ?? 1, 1, value => update('midtoneInput', value), 2),
+				this._adjustmentRange('White in', 0, 255, 1, current?.highlightInput ?? 255, 255, value => update('highlightInput', value)),
+				this._adjustmentRange('Black out', 0, 255, 1, current?.shadowOutput ?? 0, 0, value => update('shadowOutput', value)),
+				this._adjustmentRange('White out', 0, 255, 1, current?.highlightOutput ?? 255, 255, value => update('highlightOutput', value)),
+			);
+		};
+		channel.addEventListener('change', rebuild);
+		rebuild();
+	}
+
+	_buildCurvesControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment, interactive?: boolean) => void): void {
+		const channel = this._adjustmentChannelSelect();
+		root.appendChild(this._labeledAdjustmentControl('Channel', channel));
+		const svgNamespace = 'http://www.w3.org/2000/svg';
+		const graph = document.createElementNS(svgNamespace, 'svg');
+		graph.classList.add('layer-curve-graph'); graph.setAttribute('viewBox', '0 0 255 255');
+		graph.setAttribute('role', 'img'); graph.setAttribute('aria-label', 'Editable tone curve');
+		root.appendChild(graph);
+		const pointsLabel = document.createElement('label');
+		pointsLabel.className = 'layer-adjustment-field layer-adjustment-points';
+		const caption = document.createElement('span'); caption.textContent = 'Points';
+		const input = document.createElement('input'); input.type = 'text'; input.className = 'layer-adjustment-points-input';
+		input.title = 'Comma-separated input:output control points, for example 0:0, 128:160, 255:255';
+		const currentPoints = () => {
+			const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'curves' }>;
+			const value = adjustment[channel.value as 'rgb' | 'red' | 'green' | 'blue'];
+			return Array.isArray(value) && value.length ? value.map(point => ({ ...point })).sort((a, b) => a.input - b.input)
+				: [{ input: 0, output: 0 }, { input: 255, output: 255 }];
+		};
+		const commitPoints = (points: { input: number; output: number }[], interactive = true) => {
+			const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'curves' }>;
+			commit({ ...adjustment, [channel.value]: points }, interactive);
+			render();
+		};
+		const pointerValue = (event: PointerEvent | MouseEvent) => {
+			const bounds = graph.getBoundingClientRect();
+			return {
+				input: Math.max(0, Math.min(255, Math.round((event.clientX - bounds.left) / Math.max(1, bounds.width) * 255))),
+				output: Math.max(0, Math.min(255, Math.round(255 - (event.clientY - bounds.top) / Math.max(1, bounds.height) * 255))),
+			};
+		};
+		const render = () => {
+			const points = currentPoints();
+			input.value = points.map(point => `${point.input}:${point.output}`).join(', ');
+			input.classList.remove('invalid');
+			graph.textContent = '';
+			const graphTitle = document.createElementNS(svgNamespace, 'title');
+			graphTitle.textContent = 'Drag points · Double-click empty space to add · Double-click a point to remove'; graph.appendChild(graphTitle);
+			const background = document.createElementNS(svgNamespace, 'rect');
+			background.setAttribute('width', '255'); background.setAttribute('height', '255'); background.classList.add('layer-curve-background');
+			graph.appendChild(background);
+			for (const position of [63.75, 127.5, 191.25]) {
+				for (const vertical of [true, false]) {
+					const line = document.createElementNS(svgNamespace, 'line'); line.classList.add('layer-curve-grid');
+					line.setAttribute('x1', String(vertical ? position : 0)); line.setAttribute('x2', String(vertical ? position : 255));
+					line.setAttribute('y1', String(vertical ? 0 : position)); line.setAttribute('y2', String(vertical ? 255 : position)); graph.appendChild(line);
+				}
+			}
+			const identity = document.createElementNS(svgNamespace, 'line'); identity.classList.add('layer-curve-identity');
+			identity.setAttribute('x1', '0'); identity.setAttribute('y1', '255'); identity.setAttribute('x2', '255'); identity.setAttribute('y2', '0'); graph.appendChild(identity);
+			const curve = document.createElementNS(svgNamespace, 'path'); curve.classList.add('layer-curve-path', `layer-curve-${channel.value}`);
+			let path = '';
+			for (let curveInput = 0; curveInput <= 255; curveInput = Math.min(255, curveInput + 2)) {
+				const output = evaluateCurvePoints(points, curveInput);
+				path += `${curveInput ? ' L' : 'M'} ${curveInput} ${255 - output}`;
+				if (curveInput === 255) { break; }
+			}
+			curve.setAttribute('d', path); graph.appendChild(curve);
+			points.forEach((point, pointIndex) => {
+				const circle = document.createElementNS(svgNamespace, 'circle'); circle.classList.add('layer-curve-point', `layer-curve-${channel.value}`);
+				circle.setAttribute('cx', String(point.input)); circle.setAttribute('cy', String(255 - point.output)); circle.setAttribute('r', '5');
+				circle.setAttribute('tabindex', '0'); circle.setAttribute('aria-label', `Input ${point.input}, output ${point.output}`);
+				circle.addEventListener('pointerdown', pointerDown => {
+					pointerDown.preventDefault(); pointerDown.stopPropagation();
+					const move = (moveEvent: PointerEvent) => {
+						const next = pointerValue(moveEvent), latest = currentPoints();
+						const minimum = pointIndex === 0 ? 0 : latest[pointIndex - 1].input + 1;
+						const maximum = pointIndex === latest.length - 1 ? 255 : latest[pointIndex + 1].input - 1;
+						latest[pointIndex] = { input: Math.max(minimum, Math.min(maximum, next.input)), output: next.output };
+						commitPoints(latest);
+					};
+					const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+					window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+				});
+				circle.addEventListener('dblclick', doubleClick => {
+					doubleClick.preventDefault(); doubleClick.stopPropagation();
+					if (points.length <= 2) { return; }
+					commitPoints(points.filter((_, index) => index !== pointIndex), false);
+				});
+				graph.appendChild(circle);
+			});
+		};
+		graph.addEventListener('dblclick', event => {
+			if ((event.target as Element).classList.contains('layer-curve-point')) { return; }
+			const next = pointerValue(event), points = currentPoints();
+			if (points.some(point => point.input === next.input)) { return; }
+			points.push(next); points.sort((a, b) => a.input - b.input); commitPoints(points, false);
+		});
+		input.addEventListener('change', () => {
+			const points = input.value.split(',').map(pair => pair.trim().split(':').map(Number))
+				.filter(pair => pair.length === 2 && pair.every(Number.isFinite))
+				.map(([pointInput, output]) => ({ input: Math.max(0, Math.min(255, pointInput)), output: Math.max(0, Math.min(255, output)) }))
+				.sort((a, b) => a.input - b.input);
+			if (points.length < 2) { input.classList.add('invalid'); return; }
+			const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'curves' }>;
+			commit({ ...adjustment, [channel.value]: points }, false);
+			render();
+		});
+		channel.addEventListener('change', render);
+		pointsLabel.append(caption, input); root.appendChild(pointsLabel); render();
+	}
+
+	_buildHueControls(layer: Layer, root: HTMLElement, commit: (adjustment: LayerAdjustment) => void, refresh: () => void): void {
+		const adjustment = layer.adjustment as Extract<LayerAdjustment, { type: 'hue/saturation' }>;
+		const colorizeActive = !!adjustment.colorize && adjustment.colorizeEnabled !== false;
+		const colorizeLabel = document.createElement('label'); colorizeLabel.className = 'layer-adjustment-colorize';
+		colorizeLabel.title = 'Colorize assigns a hue and saturation to every pixel, including neutral grayscale. Off: rotate colors that already exist.';
+		const colorize = document.createElement('input'); colorize.type = 'checkbox'; colorize.checked = colorizeActive;
+		colorizeLabel.append(colorize, ' Colorize'); root.appendChild(colorizeLabel);
+		colorize.addEventListener('change', () => {
+			const latest = layer.adjustment as Extract<LayerAdjustment, { type: 'hue/saturation' }>;
+			commit({ ...latest, colorizeEnabled: colorize.checked, colorize: latest.colorize || { hue: 0, saturation: 100, lightness: 0 } });
+			refresh();
+		});
+
+		const channel = this._adjustmentChannelSelect(true);
+		if (!colorizeActive) { root.appendChild(this._labeledAdjustmentControl('Range', channel)); }
+		const settingsKey = () => colorizeActive ? 'colorize' : channel.value as keyof typeof adjustment;
+		const readSettings = () => {
+			const latest = layer.adjustment as Extract<LayerAdjustment, { type: 'hue/saturation' }>;
+			return (latest[settingsKey()] || {}) as Record<string, number>;
+		};
+		const controls = document.createElement('div'); controls.className = 'layer-adjustment-channel-controls'; root.appendChild(controls);
+		const rebuild = () => {
+			controls.textContent = '';
+			const settings = readSettings();
+			const update = (field: string, value: number) => {
+				const latest = layer.adjustment as Extract<LayerAdjustment, { type: 'hue/saturation' }>;
+				const key = colorizeActive ? 'colorize' : channel.value;
+				commit({ ...latest, [key]: { ...(latest[key as keyof typeof latest] as Record<string, number> || {}), [field]: value } });
+			};
+			controls.append(
+				this._adjustmentRange('Hue (°)', -180, 180, 1, settings.hue ?? 0, 0, value => update('hue', value), 0, '°'),
+				this._adjustmentRange('Saturation', colorizeActive ? 0 : -100, 100, 1, settings.saturation ?? (colorizeActive ? 100 : 0), colorizeActive ? 100 : 0, value => update('saturation', value)),
+				this._adjustmentRange('Lightness', -100, 100, 1, settings.lightness ?? 0, 0, value => update('lightness', value)),
+			);
+		};
+		channel.addEventListener('change', rebuild); rebuild();
+	}
+
+	_adjustmentChannelSelect(hueRanges = false): HTMLSelectElement {
+		const select = document.createElement('select'); select.className = 'layer-adjustment-channel';
+		const entries = hueRanges
+			? [['master', 'Master'], ['reds', 'Reds'], ['yellows', 'Yellows'], ['greens', 'Greens'], ['cyans', 'Cyans'], ['blues', 'Blues'], ['magentas', 'Magentas']]
+			: [['rgb', 'RGB'], ['red', 'Red'], ['green', 'Green'], ['blue', 'Blue']];
+		for (const [value, label] of entries) { const option = document.createElement('option'); option.value = value; option.textContent = label; select.appendChild(option); }
+		return select;
+	}
+
+	_labeledAdjustmentControl(label: string, control: HTMLElement): HTMLElement {
+		const field = document.createElement('label'); field.className = 'layer-adjustment-field';
+		const caption = document.createElement('span'); caption.textContent = label; field.append(caption, control); return field;
+	}
+
+	_adjustmentRange(label: string, min: number, max: number, step: number, value: number, defaultValue: number, onInput: (value: number) => void, decimals = 0, suffix = ''): HTMLElement {
+		const field = document.createElement('label'); field.className = 'layer-adjustment-range';
+		const caption = document.createElement('span'); caption.textContent = label;
+		const input = document.createElement('input'); input.type = 'range'; input.min = String(min); input.max = String(max); input.step = String(step);
+		input.value = String(value); input.dataset.defaultValue = String(defaultValue); input.title = `${label} · Double-click to reset`;
+		const output = document.createElement('output'); output.textContent = `${Number(value).toFixed(decimals)}${suffix}`;
+		input.addEventListener('input', () => { const next = Number(input.value); output.textContent = `${next.toFixed(decimals)}${suffix}`; onInput(next); });
+		field.append(caption, input, output); return field;
+	}
+
 	/**
 	 * @param index 0 = base/background.
 	 */
-	_buildRow(layer: Layer, index: number, depth = 0): HTMLElement {
+	_buildRow(layer: Layer, index: number, depth = 0, nestedEffect = false): HTMLElement {
 		const id = layer.id as string;
 		const isBase = index === 0 && !this.manager.documentExpanded;
+		const isAdjustment = layer.kind === 'adjustment' && !!layer.adjustment;
+		const target = clippingTarget(this.manager.layers, index);
 		const row = document.createElement('div');
-		row.className = 'layer-row' + (isBase ? ' layer-row-base' : '');
+		row.className = 'layer-row' + (isBase ? ' layer-row-base' : '') + (isAdjustment ? ' layer-row-adjustment' : '') + (layer.clipped ? ' layer-row-clipped' : '') + (nestedEffect ? ' layer-row-filter-child' : '');
 		row.dataset.id = id;
 		row.style.setProperty('--layer-depth', String(depth));
 
@@ -466,10 +789,18 @@ export class LayersPanel {
 		});
 		titleLine.appendChild(name);
 
-		const dimensions = document.createElement('span');
-		dimensions.className = 'layer-dimensions';
-		dimensions.textContent = `${layer.width}×${layer.height}`;
-		titleLine.appendChild(dimensions);
+		if (isAdjustment) {
+			const typeBadge = document.createElement('span');
+			typeBadge.className = 'layer-adjustment-badge';
+			typeBadge.textContent = adjustmentLabel(layer.adjustment);
+			typeBadge.title = 'Non-destructive adjustment layer';
+			titleLine.appendChild(typeBadge);
+		} else {
+			const dimensions = document.createElement('span');
+			dimensions.className = 'layer-dimensions';
+			dimensions.textContent = `${layer.width}×${layer.height}`;
+			titleLine.appendChild(dimensions);
+		}
 
 		if (layer.sourceSupport && layer.sourceSupport !== 'native') {
 			const badge = document.createElement('span');
@@ -524,7 +855,7 @@ export class LayersPanel {
 			this.refresh(); // show/hide the mask condition row
 			this.onChange();
 		});
-		controls.appendChild(blend);
+		if (!isAdjustment) { controls.appendChild(blend); }
 
 		const opacity = document.createElement('input');
 		opacity.type = 'range';
@@ -549,6 +880,12 @@ export class LayersPanel {
 			opacity.blur();
 		});
 		opacity.addEventListener('pointerup', () => opacity.blur());
+		if (isAdjustment) {
+			const strength = document.createElement('span');
+			strength.className = 'layer-adjustment-strength-label';
+			strength.textContent = 'Strength';
+			controls.appendChild(strength);
+		}
 		controls.appendChild(opacity);
 		controls.appendChild(opacityValue);
 		row.appendChild(controls);
@@ -556,13 +893,31 @@ export class LayersPanel {
 		const clippingLabel = document.createElement('label');
 		clippingLabel.className = 'layer-clipping';
 		const clipping = document.createElement('input'); clipping.type = 'checkbox'; clipping.checked = !!layer.clipped;
-		clipping.title = 'Clip this layer to the alpha of the nearest unclipped layer below';
-		clipping.addEventListener('change', () => { this.manager.updateLayer(id, { clipped: clipping.checked }); this.onChange(); });
-		clippingLabel.appendChild(clipping); clippingLabel.append(' Clip');
+		clipping.title = target ? `Applied only to “${target.name || target.id}”` : 'Clip this layer to the nearest unclipped layer below';
+		clipping.addEventListener('change', () => { this.manager.updateLayer(id, { clipped: clipping.checked }); this.refresh(); this.onChange(); });
+		clippingLabel.appendChild(clipping); clippingLabel.append(layer.clipped ? ' Clipped' : ' Clip');
 		let maskBadge: HTMLSpanElement | null = null;
 		if (layer.rasterMask) {
 			maskBadge = document.createElement('span'); maskBadge.className = 'layer-mask-badge';
 			maskBadge.textContent = 'mask'; maskBadge.title = `${layer.rasterMask.width}×${layer.rasterMask.height} raster mask`;
+		}
+
+		if (isAdjustment) {
+			const scope = document.createElement('div');
+			scope.className = 'layer-adjustment-scope';
+			const scopeText = document.createElement('span');
+			scopeText.className = 'layer-adjustment-target';
+			scopeText.textContent = layer.clipped
+				? target ? `↳ Applied to “${target.name || target.id}”` : '↳ Clipped, but no base layer was found'
+				: '↓ Applied to the composite below';
+			scopeText.title = layer.clipped
+				? target ? `This adjustment is evaluated on ${target.name || target.id} before that layer is blended` : 'Move this adjustment directly above a raster or group base'
+				: 'This adjustment changes all visible content below it in the current group';
+			scope.appendChild(scopeText);
+			if (!nestedEffect) { scope.appendChild(clippingLabel); }
+			if (maskBadge) { scope.appendChild(maskBadge); maskBadge = null; }
+			row.appendChild(scope);
+			row.appendChild(this._buildAdjustmentEditor(layer, id));
 		}
 
 		// Mask condition row (only when this layer is a mask).
@@ -602,9 +957,9 @@ export class LayersPanel {
 			this.refresh();
 		});
 		pos.appendChild(moveBtn);
-		pos.appendChild(clippingLabel);
+		if (!isAdjustment) { pos.appendChild(clippingLabel); }
 		if (maskBadge) { pos.appendChild(maskBadge); }
-		row.appendChild(pos);
+		if (!isAdjustment) { row.appendChild(pos); }
 
 		// Reorder + remove.
 		const actions = document.createElement('div');

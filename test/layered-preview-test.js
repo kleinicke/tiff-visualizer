@@ -186,6 +186,7 @@ async function main() {
 	const colorizedPsd = decodeLayeredPreview('psd', asArrayBuffer(colorizedPsdBytes));
 	const colorizeAsset = colorizedPsd.layerAssets.find(asset => asset.kind === 'adjustment');
 	assert.deepStrictEqual(colorizeAsset.adjustment.colorize, { hue: -131, saturation: 100, lightness: -50 });
+	assert.strictEqual(colorizeAsset.adjustment.colorizeEnabled, true);
 	assert.strictEqual(colorizeAsset.clipped, true);
 	const psbBytes = new Uint8Array(writePsd({ width: 2, height: 1, imageData, children: [{ name: 'Pixels', left: 0, top: 0, imageData }] }, { psb: true }));
 	const psb = decodeLayeredPreview('psb', asArrayBuffer(psbBytes));

@@ -25,6 +25,18 @@ async function main() {
 	manager.toggleSoloLayers(new Set(['a', 'c']));
 	assert.deepStrictEqual(manager.layers.map(layer => layer.visible), [true, true, true]);
 
+	const filterManager = new LayerManager();
+	filterManager.setBaseLayer({ data: new Uint8Array([64, 64, 64, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Image' });
+	const baseId = filterManager.layers[0].id;
+	const levelsId = filterManager.addAdjustmentLayer(baseId, 'levels');
+	const hueId = filterManager.addAdjustmentLayer(baseId, 'hue/saturation');
+	assert.deepStrictEqual(filterManager.layers.map(layer => layer.kind), ['raster', 'adjustment', 'adjustment']);
+	assert.deepStrictEqual(filterManager.layers.slice(1).map(layer => layer.clipped), [true, true]);
+	assert.strictEqual(filterManager.layers.find(layer => layer.id === levelsId).adjustment.type, 'levels');
+	assert.strictEqual(filterManager.layers.find(layer => layer.id === hueId).adjustment.colorizeEnabled, false);
+	filterManager.updateLayer(baseId, { visible: false });
+	assert.deepStrictEqual(filterManager.layers.slice(1).map(layer => layer.visible), [true, true], 'hiding an image preserves its filter states');
+
 	const events = [];
 	const range = {
 		dataset: { defaultValue: '50' },

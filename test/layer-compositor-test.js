@@ -14,7 +14,7 @@ function approx(a, b, eps = 1e-6) {
 
 async function main() {
 	const mod = await import(path.join('..', 'out', 'media', 'modules', 'layer-compositor.js').replace(/\\/g, '/'));
-	const { composite, blendValue, blendDocumentValue, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
+	const { composite, blendValue, blendDocumentValue, evaluateCurvePoints, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
 
 	console.log('🧪 Running Layer Compositor tests...\n');
 
@@ -263,6 +263,9 @@ async function main() {
 		const curves = layer({ kind: 'adjustment', adjustment: { type: 'curves', rgb: [{ input: 0, output: 255 }, { input: 255, output: 0 }] }, width: 1, height: 1, channels: 4, typeMax: 255 });
 		const curveResult = composite([base, curves], 1, 1);
 		assert.ok(approx(curveResult.data[0], 191, 0.01), `curves result: ${curveResult.data[0]}`);
+		const previewPoints = [{ input: 0, output: 0 }, { input: 128, output: 200 }, { input: 255, output: 255 }];
+		assert.strictEqual(evaluateCurvePoints(previewPoints, 128), 200);
+		assert.ok(evaluateCurvePoints(previewPoints, 64) > 64 && evaluateCurvePoints(previewPoints, 64) < 200, 'curve preview uses smooth monotone interpolation');
 
 		const red = layer({ data: new Uint8Array([255, 0, 0, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
 		const hue = layer({ kind: 'adjustment', adjustment: { type: 'hue/saturation', master: { hue: 120, saturation: 0, lightness: 0 } }, width: 1, height: 1, channels: 4, typeMax: 255 });
@@ -274,6 +277,10 @@ async function main() {
 		const colorized = composite([gray, colorize], 1, 1);
 		assert.ok(approx(colorized.data[0], 128, 0.01) && colorized.data[1] < 0.01 && colorized.data[2] < 0.01,
 			`legacy colorize result: ${Array.from(colorized.data)}`);
+		colorize.adjustment = { ...colorize.adjustment, colorizeEnabled: false };
+		assert.deepStrictEqual(Array.from(composite([gray, colorize], 1, 1).data), [128, 128, 128, 255]);
+		colorize.adjustment = { ...colorize.adjustment, colorizeEnabled: true };
+		assert.ok(composite([gray, colorize], 1, 1).data[0] > 127, 're-enabling colorize reuses its previous parameters');
 		console.log('✅ Levels, smooth curves, hue/saturation, and legacy colorize adjustments');
 	}
 

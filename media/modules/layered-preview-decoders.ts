@@ -631,6 +631,7 @@ function supportedPsdAdjustment(value: any): LayerAdjustment | undefined {
 		// the otherwise range-boundary fields b/c/d.
 		return {
 			...value,
+			colorizeEnabled: true,
 			colorize: {
 				hue: Number(value.master?.b || 0),
 				saturation: Number(value.master?.c || 0),

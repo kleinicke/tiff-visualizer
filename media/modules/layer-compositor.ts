@@ -24,7 +24,7 @@ export type AdjustmentChannel = { shadowInput?: number; highlightInput?: number;
 export type LayerAdjustment =
 	| { type: 'levels'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
 	| { type: 'curves'; rgb?: AdjustmentChannel; red?: AdjustmentChannel; green?: AdjustmentChannel; blue?: AdjustmentChannel }
-	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number>; colorize?: { hue: number; saturation: number; lightness: number } };
+	| { type: 'hue/saturation'; master?: Record<string, number>; reds?: Record<string, number>; yellows?: Record<string, number>; greens?: Record<string, number>; cyans?: Record<string, number>; blues?: Record<string, number>; magentas?: Record<string, number>; colorize?: { hue: number; saturation: number; lightness: number }; colorizeEnabled?: boolean };
 
 export interface Layer {
 	id?: string;
@@ -470,17 +470,14 @@ function materializeGroupSurfaces(layers: Layer[], canvasWidth: number, canvasHe
 	return output;
 }
 
-function adjustmentCurve(value: number, channel: AdjustmentChannel | undefined, typeMax: number): number {
-	if (!channel) { return value; }
-	if (Array.isArray(channel)) {
-		const points = channel.filter(point => Number.isFinite(point.input) && Number.isFinite(point.output)).sort((a, b) => a.input - b.input)
-			.filter((point, index, all) => index === 0 || point.input !== all[index - 1].input);
-		if (!points.length) { return value; }
-		const input = value * 255 / typeMax;
-		if (input <= points[0].input) { return points[0].output * typeMax / 255; }
-		for (let index = 1; index < points.length; index++) if (input <= points[index].input) {
+export function evaluateCurvePoints(channel: { input: number; output: number }[], input: number): number {
+	const points = channel.filter(point => Number.isFinite(point.input) && Number.isFinite(point.output)).sort((a, b) => a.input - b.input)
+		.filter((point, index, all) => index === 0 || point.input !== all[index - 1].input);
+	if (!points.length) { return input; }
+	if (input <= points[0].input) { return points[0].output; }
+	for (let index = 1; index < points.length; index++) if (input <= points[index].input) {
 			const low = points[index - 1], high = points[index], span = high.input - low.input;
-			if (!span) { return high.output * typeMax / 255; }
+			if (!span) { return high.output; }
 			const before = points[Math.max(0, index - 2)], after = points[Math.min(points.length - 1, index + 1)];
 			const slope = (a: typeof low, b: typeof low) => (b.output - a.output) / Math.max(1e-6, b.input - a.input);
 			const segmentSlope = slope(low, high);
@@ -493,9 +490,15 @@ function adjustmentCurve(value: number, channel: AdjustmentChannel | undefined, 
 			const t = (input - low.input) / span, t2 = t * t, t3 = t2 * t;
 			const output = (2 * t3 - 3 * t2 + 1) * low.output + (t3 - 2 * t2 + t) * span * lowTangent
 				+ (-2 * t3 + 3 * t2) * high.output + (t3 - t2) * span * highTangent;
-			return Math.max(Math.min(low.output, high.output), Math.min(Math.max(low.output, high.output), output)) * typeMax / 255;
+			return Math.max(Math.min(low.output, high.output), Math.min(Math.max(low.output, high.output), output));
 		}
-		return points[points.length - 1].output * typeMax / 255;
+	return points[points.length - 1].output;
+}
+
+function adjustmentCurve(value: number, channel: AdjustmentChannel | undefined, typeMax: number): number {
+	if (!channel) { return value; }
+	if (Array.isArray(channel)) {
+		return evaluateCurvePoints(channel, value * 255 / typeMax) * typeMax / 255;
 	}
 	const input = value * 255 / typeMax;
 	const low = channel.shadowInput ?? 0, high = channel.highlightInput ?? 255;
@@ -581,7 +584,7 @@ function applyAdjustmentPixel(data: Float32Array, index: number, channels: numbe
 		const adjustment = prepared.value;
 		const originalRed = data[index], originalGreen = data[index + 1], originalBlue = data[index + 2];
 		let [hue, saturation, lightness] = rgbToHsl(originalRed / typeMax, originalGreen / typeMax, originalBlue / typeMax);
-		if (adjustment.colorize) {
+		if (adjustment.colorize && adjustment.colorizeEnabled !== false) {
 			hue = (adjustment.colorize.hue + 360) % 360;
 			saturation = Math.max(0, Math.min(1, adjustment.colorize.saturation / 100));
 			const delta = Math.max(-1, Math.min(1, adjustment.colorize.lightness / 100));

@@ -94,11 +94,41 @@ export class LayerManager {
 		return l.id as string;
 	}
 
+	/** Add a non-destructive adjustment immediately above a layer's clipping stack. */
+	addAdjustmentLayer(targetId: string, type: LayerAdjustment['type']): string | null {
+		const targetIndex = this.layers.findIndex(layer => layer.id === targetId);
+		if (targetIndex < 0) { return null; }
+		const target = this.layers[targetIndex];
+		const adjustment: LayerAdjustment = type === 'levels'
+			? { type: 'levels', rgb: { shadowInput: 0, highlightInput: 255, shadowOutput: 0, highlightOutput: 255, midtoneInput: 1 } }
+			: type === 'curves'
+				? { type: 'curves', rgb: [{ input: 0, output: 0 }, { input: 255, output: 255 }] }
+				: { type: 'hue/saturation', master: { hue: 0, saturation: 0, lightness: 0 }, colorize: { hue: 0, saturation: 100, lightness: 0 }, colorizeEnabled: false };
+		const label = type === 'levels' ? 'Levels' : type === 'curves' ? 'Curves' : 'Hue/Saturation';
+		const existingCount = this.layers.filter(layer => layer.kind === 'adjustment' && layer.adjustment?.type === type).length;
+		const created = this.createLayer({
+			width: 1, height: 1, channels: 4, isFloat: false, typeMax: target.typeMax || 255,
+			name: `${label} ${existingCount + 1}`, kind: 'adjustment', adjustment,
+			parentId: target.parentId, clipped: true, groupPath: target.groupPath, groupIds: target.groupIds,
+		}, { adjustment, clipped: true, parentId: target.parentId });
+		let insertAt = targetIndex + 1;
+		while (insertAt < this.layers.length && this.layers[insertAt].clipped
+			&& (this.layers[insertAt].parentId || undefined) === (target.parentId || undefined)) { insertAt++; }
+		this.layers.splice(insertAt, 0, created);
+		return created.id as string;
+	}
+
 	removeLayer(id: string): void {
 		const idx = this.layers.findIndex(l => l.id === id);
 		// Keep at least one layer (it defines the canvas).
 		if (idx >= 0 && this.layers.length > 1) {
 			const descendants = new Set([id]);
+			if (!this.layers[idx].clipped) {
+				for (let attached = idx + 1; attached < this.layers.length && this.layers[attached].clipped
+					&& (this.layers[attached].parentId || undefined) === (this.layers[idx].parentId || undefined); attached++) {
+					descendants.add(this.layers[attached].id as string);
+				}
+			}
 			let changed = true;
 			while (changed) {
 				changed = false;
@@ -106,7 +136,8 @@ export class LayerManager {
 					descendants.add(layer.id as string); changed = true;
 				}
 			}
-			this.layers = this.layers.filter(layer => !descendants.has(layer.id as string));
+			const remaining = this.layers.filter(layer => !descendants.has(layer.id as string));
+			if (remaining.length) { this.layers = remaining; }
 		}
 	}
 
