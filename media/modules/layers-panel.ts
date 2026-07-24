@@ -22,6 +22,19 @@ export interface LayersPanelOptions {
 	closable?: boolean;
 }
 
+export function blendModePatch(layer: Layer, nextMode: string): Partial<Layer> {
+	const patch: Partial<Layer> = { blendMode: nextMode };
+	if (nextMode === 'mask') {
+		if (!layer.maskCondition) { patch.maskCondition = { op: 'gt', threshold: (layer.typeMax || 1) * 0.5 }; }
+		patch.maskPreviousClipped = !!layer.clipped;
+		patch.clipped = false;
+	} else if (layer.blendMode === 'mask') {
+		patch.clipped = layer.maskPreviousClipped ?? false;
+		patch.maskPreviousClipped = undefined;
+	}
+	return patch;
+}
+
 export type LayerDisplayItem = { kind: 'layer'; layer: Layer; index: number; effects?: LayerDisplayItem[] };
 export type GroupDisplayItem = {
 	kind: 'group';
@@ -545,10 +558,10 @@ export class LayersPanel {
 		let bounds = thumbnailBoundsCache.get(dataObject);
 		if (!bounds) {
 			let left = 0, top = 0, right = layer.width, bottom = layer.height;
-			if (layer.channels === 4) {
+			if (layer.channels === 2 || layer.channels === 4) {
 				left = layer.width; top = layer.height; right = 0; bottom = 0;
 				for (let y = 0; y < layer.height; y++) for (let x = 0; x < layer.width; x++) {
-					const alpha = Number(layer.data![(y * layer.width + x) * 4 + 3]);
+					const alpha = Number(layer.data![(y * layer.width + x) * layer.channels + layer.channels - 1]);
 					if (!(alpha > 0)) { continue; }
 					left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x + 1); bottom = Math.max(bottom, y + 1);
 				}
@@ -565,7 +578,7 @@ export class LayersPanel {
 			const sourceY = Math.min(bounds.bottom - 1, bounds.top + Math.floor((y + 0.5) * cropHeight / height));
 			const sourceOffset = (sourceY * layer.width + sourceX) * layer.channels, destination = (y * width + x) * 4;
 			const value = (channel: number) => Math.max(0, Math.min(255, Math.round(Number(layer.data![sourceOffset + Math.min(channel, layer.channels - 1)]) * 255 / sourceMaximum)));
-			if (layer.channels === 1) { pixels[destination] = pixels[destination + 1] = pixels[destination + 2] = value(0); pixels[destination + 3] = 255; }
+			if (layer.channels <= 2) { pixels[destination] = pixels[destination + 1] = pixels[destination + 2] = value(0); pixels[destination + 3] = layer.channels === 2 ? value(1) : 255; }
 			else {
 				pixels[destination] = value(0); pixels[destination + 1] = value(1); pixels[destination + 2] = value(2);
 				pixels[destination + 3] = layer.channels === 4 ? value(3) : 255;
@@ -1117,12 +1130,7 @@ export class LayersPanel {
 			blend.appendChild(opt);
 		}
 		blend.addEventListener('change', () => {
-			const patch: Partial<Layer> = { blendMode: blend.value };
-			if (blend.value === 'mask') {
-				if (!layer.maskCondition) { patch.maskCondition = { op: 'gt', threshold: (layer.typeMax || 1) * 0.5 }; }
-				patch.clipped = true;
-			}
-			this.manager.updateLayer(id, patch);
+			this.manager.updateLayer(id, blendModePatch(layer, blend.value));
 			this.refresh(); // show/hide the mask condition row
 			this.onChange();
 		});
@@ -1221,7 +1229,7 @@ export class LayersPanel {
 			this.refresh();
 		});
 		pos.appendChild(moveBtn);
-		if (!isAdjustment) { pos.appendChild(clippingLabel); }
+		if (!isAdjustment && layer.blendMode !== 'mask') { pos.appendChild(clippingLabel); }
 		if (maskBadge) { pos.appendChild(maskBadge); }
 		if (!isAdjustment) { row.appendChild(pos); }
 

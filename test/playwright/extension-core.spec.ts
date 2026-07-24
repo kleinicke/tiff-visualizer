@@ -86,7 +86,7 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
       expect(mediaFiles.length).toBeGreaterThan(0);
       
       // Check for key files
-      const keyFiles = ['geotiff.min.js', 'imagePreview.css', 'imagePreview.bundle.js'];
+      const keyFiles = ['geotiff.min.js', 'imagePreview.css', 'imagePreview.bundle.js', 'decodeWorker.bundle.js', 'layerCompositorWorker.bundle.js'];
       for (const file of keyFiles) {
         expect(fs.existsSync(path.join(mediaPath, file))).toBe(true);
       }

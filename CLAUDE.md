@@ -39,13 +39,14 @@ vsce package            # Creates .vsix file for distribution
 
 ## Architecture Overview
 
-### Four-Bundle Build System
-The extension uses four build targets:
+### Five-Bundle Build System
+The extension uses five primary build targets:
 
 1. **Extension bundle** (`out/extension.js`) - Node.js target for VS Code desktop API integration
 2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
 3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
 4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Runs pure-data decoders, including TIFF/WASM, EXR, NPY/NPZ, NetPBM, HDR, FITS, DICOM, and NetCDF, off the UI thread. Bytes and typed arrays cross as zero-copy transfers; every path retains a main-thread fallback.
+5. **Layer compositor worker bundle** (`media/layer-compositor-worker.ts` → `media/layerCompositorWorker.bundle.js`) - Retains raster assets off-thread, composes full-resolution editable layer stacks, produces scaled interaction previews, and reuses group/clipping/dirty-region caches. The synchronous CPU path remains the fallback and export correctness reference.
 
 This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).
 

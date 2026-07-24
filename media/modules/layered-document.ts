@@ -45,7 +45,7 @@ export interface LayeredDocumentSummary {
 	};
 }
 
-export type LayeredPixelArray = Uint8Array | Uint8ClampedArray | Uint16Array | Float32Array;
+export type LayeredPixelArray = Uint8Array | Uint8ClampedArray | Uint16Array | Float32Array | Float64Array;
 
 export interface LayeredRasterAsset {
 	nodeId: string;
@@ -54,9 +54,13 @@ export interface LayeredRasterAsset {
 	kind?: 'raster' | 'group' | 'adjustment';
 	adjustment?: LayerAdjustment;
 	parentId?: string;
-	data?: Uint8Array;
+	data?: LayeredPixelArray;
 	width: number;
 	height: number;
+	channels?: number;
+	isFloat?: boolean;
+	typeMax?: number;
+	sourceNumericType?: 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float16' | 'float32' | 'float64';
 	x: number;
 	y: number;
 	opacity: number;

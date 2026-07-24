@@ -11,6 +11,7 @@ extension/test-fixtures/*
 test-workspace/**
 test-resources/**
 playwright-report/**
+test-results/**
 .github/**
 
 **/*.map
@@ -37,5 +38,6 @@ scripts/build-wasm.sh
 media/modules/**
 media/imagePreview.ts
 media/decode-worker.ts
+media/layer-compositor-worker.ts
 media/comparisonPanel.ts
 media/tsconfig.json

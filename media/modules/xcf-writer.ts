@@ -70,7 +70,7 @@ function sourceAlpha(layer: Layer, canvasX: number, canvasY: number): number {
 	const x = canvasX - Math.round(layer.offsetX || 0), y = canvasY - Math.round(layer.offsetY || 0);
 	if (x < 0 || y < 0 || x >= layer.width || y >= layer.height) { return 0; }
 	const base = (y * layer.width + x) * layer.channels;
-	let alpha = layer.channels === 4 ? Number(layer.data[base + 3]) / (layer.typeMax || 255) : 1;
+	let alpha = layer.channels === 2 || layer.channels === 4 ? Number(layer.data[base + layer.channels - 1]) / (layer.typeMax || 255) : 1;
 	const mask = layer.rasterMask;
 	if (mask) {
 		const mx = canvasX - Math.round(mask.offsetX ?? layer.offsetX ?? 0), my = canvasY - Math.round(mask.offsetY ?? layer.offsetY ?? 0);
@@ -93,7 +93,7 @@ function rasterRgba(layer: Layer, clipBase: Layer | undefined, warnings: string[
 		const source = (y * layer.width + x) * layer.channels, destination = (y * layer.width + x) * 4;
 		const read = (channel: number) => Number(layer.data?.[source + Math.min(channel, layer.channels - 1)] || 0);
 		const scale = (value: number) => Math.max(0, Math.min(255, Math.round(value * 255 / max)));
-		if (layer.channels === 1) { const value = scale(read(0)); output[destination] = value; output[destination + 1] = value; output[destination + 2] = value; }
+		if (layer.channels <= 2) { const value = scale(read(0)); output[destination] = value; output[destination + 1] = value; output[destination + 2] = value; }
 		else { output[destination] = scale(read(0)); output[destination + 1] = scale(read(1)); output[destination + 2] = scale(read(2)); }
 		const canvasX = x + Math.round(layer.offsetX || 0), canvasY = y + Math.round(layer.offsetY || 0);
 		let alpha = sourceAlpha(layer, canvasX, canvasY);

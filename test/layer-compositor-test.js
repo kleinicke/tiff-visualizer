@@ -14,8 +14,13 @@ function approx(a, b, eps = 1e-6) {
 
 async function main() {
 	const mod = await import(path.join('..', 'out', 'media', 'modules', 'layer-compositor.js').replace(/\\/g, '/'));
-	const { composite, blendValue, blendDocumentValue, evaluateCurvePoints, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
+	const {
+		composite, compositeRegion, blendValue, blendDocumentValue, evaluateCurvePoints,
+		isArithmeticMode, centeredOffset, BLEND_MODES, getLayerCompositorCacheStats,
+		resetLayerCompositorCacheStats,
+	} = mod;
 	const { LayerManager } = await import(path.join('..', 'out', 'media', 'modules', 'layer-manager.js').replace(/\\/g, '/'));
+	const { blendModePatch } = await import(path.join('..', 'out', 'media', 'modules', 'layers-panel.js').replace(/\\/g, '/'));
 
 	console.log('🧪 Running Layer Compositor tests...\n');
 
@@ -344,6 +349,126 @@ async function main() {
 		manager.moveLayer(manager.layers[0].id, 1, 0);
 		assert.notStrictEqual(manager.getComposite(), updated, 'layer movement invalidates the composite cache');
 		console.log('✅ Composite cache is reused for display-only rerenders and invalidated by layer edits');
+	}
+
+	// 25. Isolated group surfaces are retained when unrelated branches change.
+	{
+		resetLayerCompositorCacheStats();
+		const group = layer({ id: 'group-cache', kind: 'group', width: 2, height: 1, channels: 4, typeMax: 255 });
+		const child = layer({ id: 'group-child', parentId: 'group-cache', data: new Uint8Array([10, 20, 30, 255, 40, 50, 60, 255]), width: 2, height: 1, channels: 4, typeMax: 255 });
+		const outside = layer({ id: 'outside', data: new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0]), width: 2, height: 1, channels: 4, typeMax: 255 });
+		composite([group, child, outside], 2, 1);
+		outside.opacity = 0.5;
+		composite([group, child, outside], 2, 1);
+		const stats = getLayerCompositorCacheStats();
+		assert.ok(stats.groupMisses >= 1 && stats.groupHits >= 1, `expected a group cache hit after an unrelated edit: ${JSON.stringify(stats)}`);
+		console.log('✅ Unchanged isolated groups reuse their cached compositor surfaces');
+	}
+
+	// 26. Dirty-region composition exactly matches the corresponding rectangle
+	//     from a complete render, including canvas-coordinate translation.
+	{
+		const background = layer({ id: 'region-bg', data: new Uint8Array(4 * 4 * 4).fill(32), width: 4, height: 4, channels: 4, typeMax: 255 });
+		for (let pixel = 0; pixel < 16; pixel++) { background.data[pixel * 4 + 3] = 255; }
+		const patchLayer = layer({ id: 'region-patch', data: new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255]), width: 2, height: 1, channels: 4, typeMax: 255, offsetX: 1, offsetY: 2 });
+		const complete = composite([background, patchLayer], 4, 4);
+		const region = compositeRegion([background, patchLayer], 4, 4, { x: 1, y: 2, width: 2, height: 1 });
+		assert.deepStrictEqual(Array.from(region.data), Array.from(complete.data.slice((2 * 4 + 1) * 4, (2 * 4 + 3) * 4)));
+		console.log('✅ Dirty-region composition matches the full compositor');
+	}
+
+	// 27. Creative 8-bit RGBA and scientific/high-bit-depth layers share one
+	//     normalized display domain without collapsing the composite alpha.
+	{
+		const psdBase = layer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const floatTiff = layer({ data: new Float32Array([0.5]), width: 1, height: 1, channels: 1, typeMax: 1, isFloat: true });
+		const floatResult = composite([psdBase, floatTiff], 1, 1);
+		assert.strictEqual(floatResult.channels, 4);
+		assert.strictEqual(floatResult.typeMax, 255);
+		assert.ok(approx(floatResult.data[0], 127.5) && approx(floatResult.data[1], 127.5) && approx(floatResult.data[2], 127.5));
+		assert.strictEqual(floatResult.data[3], 255, 'mixed float/RGBA alpha remains in the output type range');
+
+		const uint16Tiff = layer({ data: new Uint16Array([32768]), width: 1, height: 1, channels: 1, typeMax: 65535 });
+		const uint16Result = composite([psdBase, uint16Tiff], 1, 1);
+		assert.ok(approx(uint16Result.data[0], 32768 * 255 / 65535, 1e-4), '16-bit samples are normalized into the PSD working range');
+		assert.strictEqual(uint16Result.data[3], 255);
+		console.log('✅ Mixed PSD + float/16-bit TIFF layers retain visible, correctly ranged alpha');
+	}
+
+	// 28. Two-channel TIFF is gray+alpha throughout composition.
+	{
+		const base = layer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const grayAlpha = layer({ data: new Float32Array([1, 0.5]), width: 1, height: 1, channels: 2, typeMax: 1, isFloat: true });
+		const result = composite([base, grayAlpha], 1, 1);
+		assert.ok(approx(result.data[0], 132.5) && approx(result.data[1], 137.5) && approx(result.data[2], 142.5));
+		assert.strictEqual(result.data[3], 255);
+		console.log('✅ Gray+alpha TIFF layers composite as grayscale with independent alpha');
+	}
+
+	// 29. Every document blend mode accepts mixed numeric ranges and produces a
+	//     finite opaque result in the base document's working range.
+	{
+		const documentModes = BLEND_MODES.filter(mode => !mode.arithmetic && !mode.mask).map(mode => mode.id);
+		for (const mode of documentModes) {
+			const base = layer({ data: new Uint8Array([40, 100, 200, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+			const top = layer({ data: new Float32Array([0.8, 0.4, 0.2, 1]), width: 1, height: 1, channels: 4, typeMax: 1, isFloat: true, blendMode: mode });
+			const result = composite([base, top], 1, 1);
+			assert.ok(Array.from(result.data).every(Number.isFinite), `${mode} produced only finite samples`);
+			assert.strictEqual(result.data[3], 255, `${mode} preserved opaque alpha`);
+		}
+		console.log('✅ All creative blend modes compose across uint8 and float layers');
+	}
+
+	// 30. Brightness Mask is a reversible view mode: it neither mutates pixels
+	//     nor leaves an ordinary image clipped when returning to Normal.
+	{
+		const manager = new LayerManager();
+		manager.setBaseLayer({ data: new Uint8Array([20, 20, 20, 255, 40, 40, 40, 255]), width: 2, height: 1, channels: 4, isFloat: false, typeMax: 255 });
+		const pixels = new Float32Array([0, 1]);
+		const id = manager.addLayer({ data: pixels, width: 2, height: 1, channels: 1, isFloat: true, typeMax: 1, sourceNumericType: 'float32' });
+		const added = manager.layers.find(item => item.id === id);
+		const before = Array.from(manager.getComposite().data);
+		manager.updateLayer(id, blendModePatch(added, 'mask'));
+		assert.strictEqual(added.clipped, false, 'brightness masks apply to the composite below instead of becoming clipping layers');
+		assert.strictEqual(manager.getComposite().coveredCount, 1, 'mask mode changes coverage');
+		manager.updateLayer(id, blendModePatch(added, 'normal'));
+		assert.strictEqual(added.clipped, false);
+		assert.deepStrictEqual(Array.from(manager.getComposite().data), before, 'returning to normal fully restores the prior composite');
+		assert.deepStrictEqual(Array.from(pixels), [0, 1], 'mode changes never mutate TIFF source samples');
+		console.log('✅ Brightness Mask → Normal restores the layer and its unmodified samples');
+	}
+
+	// 31. Channel-layout × numeric-type × blend-mode compatibility matrix.
+	{
+		const variants = [
+			() => layer({ data: new Uint8Array([96]), width: 1, height: 1, channels: 1, typeMax: 255 }),
+			() => layer({ data: new Uint16Array([32768, 49152]), width: 1, height: 1, channels: 2, typeMax: 65535 }),
+			() => layer({ data: new Float32Array([0.2, 0.5, 0.8]), width: 1, height: 1, channels: 3, typeMax: 1, isFloat: true }),
+			() => layer({ data: new Uint8Array([40, 100, 180, 224]), width: 1, height: 1, channels: 4, typeMax: 255 }),
+		];
+		for (const mode of BLEND_MODES.filter(item => !item.mask)) {
+			for (const makeBase of variants) for (const makeTop of variants) {
+				const base = makeBase(), top = makeTop(); top.blendMode = mode.id;
+				const result = composite([base, top], 1, 1);
+				assert.ok(result.data.length === result.channels, `${mode.id}: output shape matches channel count`);
+				assert.ok(Array.from(result.data).every(Number.isFinite), `${mode.id}: 1/2/3/4-channel mixed result is finite`);
+			}
+		}
+		console.log('✅ Numeric/channel/blend compatibility matrix passed for 1/2/3/4-channel layers');
+	}
+
+	// 32. Group/clipping caches invalidate when mask conditions or float
+	//     interpretation changes, rather than returning a stale surface.
+	{
+		const group = layer({ id: 'mixed-cache-group', kind: 'group', width: 2, height: 1, channels: 4, typeMax: 255 });
+		const base = layer({ id: 'mixed-cache-base', parentId: group.id, data: new Uint8Array([20, 20, 20, 255, 40, 40, 40, 255]), width: 2, height: 1, channels: 4, typeMax: 255 });
+		const mask = layer({ id: 'mixed-cache-mask', parentId: group.id, data: new Float32Array([0.25, 0.75]), width: 2, height: 1, channels: 1, typeMax: 1, isFloat: true, blendMode: 'mask', maskCondition: { op: 'gt', threshold: 0.5 } });
+		const first = composite([group, base, mask], 2, 1);
+		assert.strictEqual(first.coveredCount, 1);
+		mask.maskCondition = { op: 'gt', threshold: 0.1 };
+		const second = composite([group, base, mask], 2, 1);
+		assert.strictEqual(second.coveredCount, 2, 'mask threshold invalidates the isolated group cache');
+		console.log('✅ Mixed group/mask caches invalidate on semantic changes');
 	}
 
 	console.log('\n🎉 All layer compositor tests passed.\n');

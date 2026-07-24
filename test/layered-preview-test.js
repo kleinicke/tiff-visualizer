@@ -317,6 +317,40 @@ async function main() {
 	const exportedKraDocument = decodeLayeredPreview('kra', asArrayBuffer(writeLayerDocument('kra', exportLayers, 2, 1, renderedExport).data));
 	assert.deepStrictEqual(Array.from(exportedKraDocument.data.slice(0, 4)), [22, 55, 88, 255]);
 	assert.ok(exportedKraDocument.layerAssets.some(asset => asset.kind === 'adjustment' && asset.adjustment.type === 'levels'), 'KRA keeps compatible clipped filter masks editable');
+
+	const numericLayers = [
+		{ id: 'numeric-base', kind: 'raster', name: 'PSD base', data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255, sourceNumericType: 'uint8', visible: true, opacity: 1, blendMode: 'normal' },
+		{ id: 'int8', kind: 'raster', name: 'Signed 8', data: new Float32Array([-128, 0, 127]), width: 3, height: 1, channels: 1, typeMax: 127, isFloat: true, sourceNumericType: 'int8', visible: true, opacity: 1, blendMode: 'normal', offsetX: -1, offsetY: 0 },
+		{ id: 'int16', kind: 'raster', name: 'Signed 16', data: new Float32Array([-32768, -1, 32767]), width: 3, height: 1, channels: 1, typeMax: 32767, isFloat: true, sourceNumericType: 'int16', visible: true, opacity: 1, blendMode: 'normal', offsetX: 1, offsetY: 1 },
+		{ id: 'float16', kind: 'raster', name: 'Half float', data: new Float32Array([-2, 0.5, 4]), width: 1, height: 1, channels: 3, typeMax: 1, isFloat: true, sourceNumericType: 'float16', visible: true, opacity: 1, blendMode: 'screen', offsetX: 0, offsetY: 1 },
+		{ id: 'float32', kind: 'raster', name: 'Float 32', data: new Float32Array([Math.PI, NaN]), width: 1, height: 1, channels: 2, typeMax: 1, isFloat: true, sourceNumericType: 'float32', visible: true, opacity: 0.5, blendMode: 'normal', offsetX: 1, offsetY: 0 },
+		{ id: 'uint16', kind: 'raster', name: 'Unsigned 16', data: new Uint16Array([0, 32768, 65535]), width: 3, height: 1, channels: 1, typeMax: 65535, isFloat: false, sourceNumericType: 'uint16', visible: false, opacity: 1, blendMode: 'multiply', offsetX: 2, offsetY: -1 },
+	];
+	const numericRendered = { width: 4, height: 3, data: new Uint8ClampedArray(4 * 3 * 4) };
+	const expectedNumeric = new Map(numericLayers.slice(1).map(layer => [layer.name, layer]));
+	for (const format of ['ora', 'kra']) {
+		const written = writeLayerDocument(format, numericLayers, 4, 3, numericRendered);
+		assert.ok(written.warnings.some(warning => warning.includes('retained exact samples')), `${format} reports its exact-sample sidecar`);
+		const reopened = decodeLayeredPreview(format, asArrayBuffer(written.data));
+		assert.ok(reopened.document.warnings.some(warning => warning.includes('restored with exact')), `${format} reports restored exact samples`);
+		for (const [name, expected] of expectedNumeric) {
+			const restored = reopened.layerAssets.find(asset => asset.name === name);
+			assert.ok(restored, `${format} restores ${name}`);
+			assert.strictEqual(restored.sourceNumericType, expected.sourceNumericType);
+			assert.deepStrictEqual([restored.width, restored.height, restored.channels, restored.x, restored.y], [expected.width, expected.height, expected.channels, expected.offsetX, expected.offsetY]);
+			const actual = Array.from(restored.data);
+			const wanted = Array.from(expected.data);
+			assert.strictEqual(actual.length, wanted.length);
+			for (let index = 0; index < wanted.length; index++) {
+				if (Number.isNaN(wanted[index])) { assert.ok(Number.isNaN(actual[index]), `${format} keeps NaN in ${name}`); }
+				else { assert.strictEqual(actual[index], wanted[index], `${format} keeps sample ${index} in ${name}`); }
+			}
+		}
+	}
+	const numericCompatibility = analyzeLayerExports(numericLayers);
+	assert.strictEqual(numericCompatibility.find(option => option.format === 'psd').compatible, false, '8-bit PSD writer does not claim numeric fidelity');
+	assert.match(numericCompatibility.find(option => option.format === 'kra').detail, /exact samples/, 'KRA explains the exact TIFF Visualizer round trip');
+
 	const exportedPsdDocument = decodeLayeredPreview('psd', asArrayBuffer(writeLayerDocument('psd', exportLayers, 2, 1, renderedExport).data));
 	assert.deepStrictEqual(Array.from(exportedPsdDocument.data.slice(0, 4)), [22, 55, 88, 255]);
 	assert.strictEqual(exportedPsdDocument.layerOrder, 'bottom-to-top', 'PSD decoder declares ag-psd compositing order correctly');

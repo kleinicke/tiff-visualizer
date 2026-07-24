@@ -429,7 +429,14 @@ the existing raw-value behavior.
 
 - Preserve source bit depth and channel precision through decode and
   composition; avoid forcing 16/32-bit authored documents through 8-bit
-  canvas pixels before analysis.
+  canvas pixels before analysis. Mixed 8-bit creative documents and
+  uint16/float scientific layers now composite in the base document's
+  normalized working range, and 16/32-bit PSD raster payloads stay typed.
+  KRA/ORA exports retain exact non-8-bit layer samples in namespaced TIFF
+  Visualizer sidecars while writing ordinary 8-bit compatibility rasters.
+  Native high-precision PSD/XCF/KRA writing remains: their current writers
+  are 8-bit, and other editors may discard the namespaced sidecars when
+  resaving a KRA/ORA file.
 - Parse and expose ICC profiles, document color mode, transfer function, and
   rendering intent. Introduce a color-management service used by the CPU and
   GPU render paths.
@@ -466,7 +473,10 @@ properties, reconstructs normal alpha compositions, measures them against
 raster nodes can be expanded into the existing Layers View. The unified exporter
 writes an authoritative merged PNG plus editable raster/group entries; filters
 are retained in the merged result and reported because ORA has no adjustment
-layer model. Remaining ORA work
+layer model. Non-8-bit raster sources also carry exact sample arrays and numeric
+type metadata in a namespaced TIFF Visualizer sidecar; standard ORA consumers
+see the 8-bit PNG layer, while reopening the direct export here restores the
+original int/float samples. Remaining ORA work
 is lazy per-node extraction, non-normal SVG blend operators, SVG assets, masks,
 color management, editable group properties with isolated group compositing,
 and the remaining professional layer-tree features listed above.
@@ -507,7 +517,9 @@ non-8-bit/color-managed paint devices, cached projections, advanced filters,
 vector/generator nodes, and animation remain.
 The exporter writes 8-bit paint devices, hierarchy, merged/preview images, and
 the supported filter configurations; raster masks and unsupported operations
-are currently baked or reported.
+are currently baked or reported. It also stores exact non-8-bit raster samples
+in a namespaced TIFF Visualizer sidecar for lossless direct round-trips. Krita
+uses the compatibility paint device and may discard that sidecar when resaving.
 
 - Phase 1: safely extract `mergedimage.png`, preview/thumbnail, document info,
   and basic metadata; route the preview through the existing PNG pipeline.
@@ -679,23 +691,44 @@ for native layer reconstruction.
 
 ### Layer compositor performance
 
-The editable compositor is currently TypeScript/JavaScript on the webview
-thread. It now reuses the composed float surface when only display settings
-(such as gamma or normalization) change, and invalidates that cache for every
-layer mutation. `npm run benchmark:layers` provides a repeatable mixed
-raster/filter workload; its dimensions, layer count and runs can be increased
-with the documented environment variables in the benchmark file.
+The editable compositor remains a framework-free TypeScript/JavaScript CPU
+reference, but full-resolution work now runs in a dedicated worker. Raster
+assets are copied into that worker once and retained across edits. Slider and
+curve gestures request a preview capped at 768 pixels on the longest side,
+followed by a full-resolution render after the gesture settles. Worker startup
+and failures retain the synchronous main-thread fallback.
 
-Remaining work, in measured order:
+Caching now operates at four levels:
 
-- Record representative 4K/8K documents and establish interaction and final
-  render budgets on the supported VS Code platforms.
-- Move full-resolution composition to a dedicated worker while retaining a
-  lower-resolution interactive preview during slider and curve gestures.
-- Add dirty-region and per-group surface caches so visibility/filter edits do
-  not rebuild unrelated branches.
-- Evaluate WebGL/WebGPU or Rust/WASM only after the benchmark identifies the
-  dominant operations; retain the CPU compositor as the correctness reference.
+- display-only changes reuse the last composed float surface;
+- prepared Levels/Curves LUTs are retained by adjustment identity;
+- unchanged clipping stacks and isolated group branches reuse their surfaces;
+- localized ordinary-raster edits recompose and patch only the union of the
+  old/new drawable bounds. Adjustment, group, mask, and clipped-node changes
+  conservatively retain the full-render path.
+
+Repeatable commands and results from the July 2026 development machine:
+
+- `npm run benchmark:layers`: 1024×1024, six RGBA rasters + three filters,
+  approximately 386 ms median;
+- `npm run benchmark:layers:4k`: 3840×2160, four RGBA rasters + three filters,
+  approximately 3.20 s median;
+- `npm run benchmark:layers:8k`: 7680×4320, three scalar rasters + two filters,
+  approximately 4.82 s;
+- the 768×432 four-RGBA-layer interaction workload is approximately 122 ms
+  median before worker messaging, visualization, and canvas upload.
+
+**Acceleration decision:** the measurements are dominated by parallel
+per-pixel blend/filter passes. Prefer an optional WebGPU compute prototype for
+the next acceleration tier, retaining the worker CPU compositor for unsupported
+environments and golden-result comparisons. Do not duplicate the compositor in
+Rust/WASM yet: without a threaded WASM memory design it remains another
+single-worker CPU implementation, while introducing substantial parity and
+maintenance cost.
+
+Remaining performance validation is platform coverage: record worker,
+visualization, and canvas-upload timings on the supported desktop and web VS
+Code targets, then define release budgets and GPU enablement thresholds.
 
 This is a **Difficulty: 5 programme**, not one feature. The first useful
 increments (KRA integrated preview or ORA raster layers) are Difficulty 2–3;

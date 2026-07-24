@@ -28,6 +28,7 @@ export interface LayerInput {
 	sourceNodeId?: string;
 	sourceSupport?: Layer['sourceSupport'];
 	sourceBlendMode?: string;
+	sourceNumericType?: Layer['sourceNumericType'];
 	kind?: Layer['kind'];
 	adjustment?: LayerAdjustment;
 	parentId?: string;
@@ -169,6 +170,10 @@ export class LayerManager {
 
 	isEmpty(): boolean {
 		return this.layers.length === 0;
+	}
+
+	invalidateComposite(): void {
+		this._lastComposite = null;
 	}
 
 	/**
@@ -355,6 +360,25 @@ export class LayerManager {
 	}
 
 	/**
+	 * Render a composite produced off-thread. Full-resolution worker results
+	 * become the pixel-inspection/export cache; scaled interaction previews do
+	 * not replace that authoritative surface.
+	 */
+	renderCompositeToImageData(compositeResult: CompositeResult, settings: ImageSettings, options: { nanColor?: { r: number; g: number; b: number }; cache?: boolean } = {}): ImageData {
+		if (options.cache !== false) { this._lastComposite = compositeResult; }
+		return ImageRenderer.render(
+			compositeResult.data,
+			compositeResult.width,
+			compositeResult.height,
+			compositeResult.channels,
+			compositeResult.isFloat,
+			compositeResult.stats,
+			settings,
+			{ nanColor: options.nanColor, typeMax: compositeResult.typeMax },
+		);
+	}
+
+	/**
 	 * Sample the composited float value(s) at a canvas pixel, for the pixel
 	 * inspector. Returns null if outside the canvas or no-data.
 	 */
@@ -428,6 +452,7 @@ export class LayerManager {
 			sourceNodeId: layer.sourceNodeId,
 			sourceSupport: layer.sourceSupport,
 			sourceBlendMode: layer.sourceBlendMode,
+			sourceNumericType: layer.sourceNumericType,
 			kind: layer.kind ?? 'raster',
 			adjustment: layer.adjustment,
 			parentId: layer.parentId,

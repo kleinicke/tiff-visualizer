@@ -195,6 +195,53 @@ function compareRgba(reference: Uint8Array, reconstructed: Uint8Array) {
 	};
 }
 
+interface NumericLayerSidecar {
+	sourcePath: string;
+	dataPath: string;
+	storage: 'uint8' | 'uint16' | 'float32' | 'float64';
+	numericType: NonNullable<LayeredRasterAsset['sourceNumericType']>;
+	width: number;
+	height: number;
+	channels: number;
+	typeMax: number;
+	isFloat: boolean;
+	x: number;
+	y: number;
+}
+
+function restoreNumericLayerSidecars(files: Record<string, Uint8Array>, assets: LayeredRasterAsset[], warnings: string[]): void {
+	const manifestBytes = files['tiff-visualizer/numeric-layers.json'];
+	if (!manifestBytes) { return; }
+	try {
+		const parsed = JSON.parse(new TextDecoder().decode(manifestBytes));
+		if (parsed?.version !== 1 || !Array.isArray(parsed.layers)) { throw new Error('unsupported manifest version'); }
+		let restored = 0;
+		for (const entry of parsed.layers as NumericLayerSidecar[]) {
+			const asset = assets.find(candidate => candidate.sourcePath === entry.sourcePath);
+			const bytes = files[entry.dataPath];
+			if (!asset || !bytes || !Number.isInteger(entry.width) || !Number.isInteger(entry.height)
+				|| !Number.isInteger(entry.channels) || entry.width <= 0 || entry.height <= 0 || entry.channels < 1 || entry.channels > 4) { continue; }
+			const count = entry.width * entry.height * entry.channels;
+			const buffer = bytes.slice().buffer;
+			let data: LayeredPixelArray;
+			if (entry.storage === 'uint8') { data = new Uint8Array(buffer); }
+			else if (entry.storage === 'uint16') { data = new Uint16Array(buffer); }
+			else if (entry.storage === 'float64') { data = new Float64Array(buffer); }
+			else { data = new Float32Array(buffer); }
+			if (data.length !== count) { continue; }
+			Object.assign(asset, {
+				data, width: entry.width, height: entry.height, channels: entry.channels,
+				isFloat: entry.isFloat, typeMax: entry.typeMax, sourceNumericType: entry.numericType,
+				x: entry.x, y: entry.y, support: 'native' as const,
+			});
+			restored++;
+		}
+		if (restored) { warnings.push(`${restored} high-precision raster layer${restored === 1 ? '' : 's'} restored with exact TIFF Visualizer sample data`); }
+	} catch (error) {
+		warnings.push(`TIFF Visualizer high-precision layer metadata could not be restored: ${error instanceof Error ? error.message : String(error)}`);
+	}
+}
+
 function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { width: number; height: number; data: Uint8Array }, xml: string, declaredWidth: number, declaredHeight: number): DecodedLayeredPreview {
 	const xmlRoots = parseOraTree(xml);
 	const sourcePaths = new Set<string>();
@@ -203,7 +250,7 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		collectPaths(node.children);
 	});
 	collectPaths(xmlRoots);
-	const layerFiles = unzipSelected(buffer, name => sourcePaths.has(name));
+	const layerFiles = unzipSelected(buffer, name => sourcePaths.has(name) || name.startsWith('tiff-visualizer/'));
 	const assets: LayeredRasterAsset[] = [];
 	const warnings: string[] = [];
 	if (!xml.trim()) { warnings.push('OpenRaster stack.xml is missing; only the integrated preview is available'); }
@@ -243,6 +290,7 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		return summary;
 	});
 	const root = buildNodes(xmlRoots);
+	restoreNumericLayerSidecars(layerFiles, assets, warnings);
 	const assetByNode = new Map(assets.map(asset => [asset.nodeId, asset]));
 	const renderNodes = (nodes: LayerNodeSummary[]): Uint8Array => {
 		const output = new Uint8Array(declaredWidth * declaredHeight * 4);
@@ -483,7 +531,7 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		collect(node.children);
 	});
 	collect(roots);
-	const files = unzipSelected(buffer, name => [...filenames].some(filename => {
+	const files = unzipSelected(buffer, name => name.startsWith('tiff-visualizer/') || [...filenames].some(filename => {
 		const base = name.endsWith(`/layers/${filename}`) || name === `layers/${filename}`;
 		return base || name.endsWith(`/layers/${filename}.defaultpixel`) || name === `layers/${filename}.defaultpixel`
 			|| name.endsWith(`/layers/${filename}.filterconfig`) || name === `layers/${filename}.filterconfig`
@@ -596,6 +644,7 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		return summary;
 	});
 	const root = build(roots);
+	restoreNumericLayerSidecars(files, assets, warnings);
 	const document: LayeredDocumentSummary = {
 		format: 'kra', width: declaredWidth, height: declaredHeight, bitDepth: 8, colorMode: xmlAttribute(xml, 'colorspacename') || 'RGBA',
 		previewKind: 'merged', previewIsAuthoritative: previewName === 'mergedimage.png' && decoded.width === declaredWidth && decoded.height === declaredHeight,
@@ -733,12 +782,15 @@ function summarizePsdLayers(layers: any[] | undefined, path = 'layer'): LayerNod
 	});
 }
 
-function psdMaskAsset(mask: any, layerLeft: number, layerTop: number): LayeredRasterAsset['rasterMask'] | undefined {
+function psdMaskAsset(mask: any, layerLeft: number, layerTop: number, bitDepth: number): LayeredRasterAsset['rasterMask'] | undefined {
 	if (!mask?.imageData?.data || mask.disabled) { return undefined; }
 	const source = mask.imageData.data as ArrayLike<number>, pixels = mask.imageData.width * mask.imageData.height;
 	const channels = Math.max(1, Math.floor(source.length / Math.max(1, pixels)));
 	const data = new Uint8Array(pixels);
-	for (let pixel = 0; pixel < pixels; pixel++) { data[pixel] = Number(source[pixel * channels]); }
+	const maximum = bitDepth === 32 ? 1 : bitDepth === 16 ? 65535 : 255;
+	for (let pixel = 0; pixel < pixels; pixel++) {
+		data[pixel] = Math.max(0, Math.min(255, Math.round(Number(source[pixel * channels]) * 255 / maximum)));
+	}
 	const relative = !!mask.positionRelativeToLayer;
 	return {
 		data, width: mask.imageData.width, height: mask.imageData.height, channels: 1, typeMax: 255,
@@ -780,7 +832,7 @@ function supportedPsdAdjustment(value: any): LayerAdjustment | undefined {
 	return value as LayerAdjustment;
 }
 
-function buildPsdAssets(layers: any[] | undefined, warnings: string[], parentId?: string, groupPath: string[] = [], groupIds: string[] = [], path = 'psd'): LayeredRasterAsset[] {
+function buildPsdAssets(layers: any[] | undefined, warnings: string[], bitDepth: number, parentId?: string, groupPath: string[] = [], groupIds: string[] = [], path = 'psd'): LayeredRasterAsset[] {
 	if (!Array.isArray(layers)) { return []; }
 	const assets: LayeredRasterAsset[] = [];
 	for (let index = 0; index < layers.length; index++) {
@@ -790,7 +842,7 @@ function buildPsdAssets(layers: any[] | undefined, warnings: string[], parentId?
 		const visible = !layer.hidden, blendMode = editableBlendMode(layer.blendMode);
 		if (kind === 'group') {
 			assets.push({ nodeId: id, name, sourcePath: '', kind: 'group', parentId, width: 1, height: 1, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support: layer.blendMode === 'pass through' ? 'approximate' : 'native' });
-			assets.push(...buildPsdAssets(layer.children, warnings, id, [...groupPath, name], [...groupIds, id], id));
+			assets.push(...buildPsdAssets(layer.children, warnings, bitDepth, id, [...groupPath, name], [...groupIds, id], id));
 			continue;
 		}
 		const left = Math.trunc(Number(layer.left || 0)), top = Math.trunc(Number(layer.top || 0));
@@ -803,14 +855,20 @@ function buildPsdAssets(layers: any[] | undefined, warnings: string[], parentId?
 		if (layer.adjustment) {
 			const supported = !!adjustment;
 			if (!supported) { warnings.push(`PSD adjustment “${name}” (${layer.adjustment.type || 'unknown'}) is inspect-only`); }
-			assets.push({ nodeId: id, name, sourcePath: '', kind: 'adjustment', adjustment, parentId, width: 1, height: 1, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support: supported ? 'approximate' : 'unsupported', clipped: !!layer.clipping, rasterMask: psdMaskAsset(layer.realMask || layer.mask, left, top) });
+			assets.push({ nodeId: id, name, sourcePath: '', kind: 'adjustment', adjustment, parentId, width: 1, height: 1, x: 0, y: 0, opacity, visible, blendMode, groupPath, groupIds, support: supported ? 'approximate' : 'unsupported', clipped: !!layer.clipping, rasterMask: psdMaskAsset(layer.realMask || layer.mask, left, top, bitDepth) });
 			continue;
 		}
 		if (!layer.imageData?.data) { warnings.push(`PSD ${kind} layer “${name}” has no cached raster pixels`); continue; }
-		const source = layer.imageData.data as ArrayLike<number>;
-		const data = new Uint8Array(source.length);
-		for (let offset = 0; offset < source.length; offset++) { data[offset] = Math.max(0, Math.min(255, Math.round(Number(source[offset])))); }
-		assets.push({ nodeId: id, name, sourcePath: '', kind: 'raster', parentId, data, width: layer.imageData.width, height: layer.imageData.height, x: left, y: top, opacity, visible, blendMode, groupPath, groupIds, support: kind === 'raster' ? 'native' : 'cached-raster', clipped: !!layer.clipping, rasterMask: psdMaskAsset(layer.realMask || layer.mask, left, top) });
+		const data = layer.imageData.data as LayeredPixelArray;
+		assets.push({
+			nodeId: id, name, sourcePath: '', kind: 'raster', parentId, data,
+			width: layer.imageData.width, height: layer.imageData.height, channels: 4,
+			isFloat: bitDepth === 32, typeMax: bitDepth === 32 ? 1 : bitDepth === 16 ? 65535 : 255,
+			sourceNumericType: bitDepth === 32 ? 'float32' : bitDepth === 16 ? 'uint16' : 'uint8',
+			x: left, y: top, opacity, visible, blendMode, groupPath, groupIds,
+			support: kind === 'raster' ? 'native' : 'cached-raster', clipped: !!layer.clipping,
+			rasterMask: psdMaskAsset(layer.realMask || layer.mask, left, top, bitDepth),
+		});
 	}
 	return assets;
 }
@@ -851,7 +909,7 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 	if (layerDecodeWarning) { warnings.push(layerDecodeWarning); }
 	if (Number(psd.colorMode) !== 3) { warnings.push(`${colorMode} is converted to RGB by the PSD decoder; exact Photoshop color-management parity is unavailable`); }
 	if (bitDepth !== 8) { warnings.push(`${bitDepth}-bit PSD layers depend on decoder conversion and may not match Photoshop exactly`); }
-	const layerAssets = buildPsdAssets(psd.children, warnings);
+	const layerAssets = buildPsdAssets(psd.children, warnings, bitDepth);
 	const document: LayeredDocumentSummary = {
 		format: psb ? 'psb' : 'psd', width: psd.width, height: psd.height, bitDepth, colorMode,
 		previewKind: 'integrated', previewIsAuthoritative: true,

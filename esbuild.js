@@ -63,6 +63,18 @@ const decodeWorkerBuildOptions = {
   format: 'esm',
 };
 
+// Dedicated editable-layer compositor worker. Keeping this separate from the
+// decode worker prevents a long document decode from delaying layer gestures.
+const layerCompositorWorkerBuildOptions = {
+  entryPoints: ['media/layer-compositor-worker.ts'],
+  bundle: true,
+  outfile: 'media/layerCompositorWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 // Build the comparison panel webview script (classic script, no imports/exports).
 const comparisonPanelBuildOptions = {
   entryPoints: ['media/comparisonPanel.ts'],
@@ -98,6 +110,7 @@ const mediaModuleTsFiles = [
   ...findMediaTsFiles('media/modules'),
   'media/imagePreview.ts',
   'media/decode-worker.ts',
+  'media/layer-compositor-worker.ts',
   'media/comparisonPanel.ts',
 ];
 
@@ -203,6 +216,16 @@ if (isWatch) {
     },
   };
 
+  layerCompositorWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('layer compositor worker watch build failed', error);
+      } else {
+        console.log('layer compositor worker watch build succeeded');
+      }
+    },
+  };
+
   comparisonPanelBuildOptions.watch = {
     onRebuild(error) {
       if (error) {
@@ -251,6 +274,9 @@ async function buildAll() {
     // Build decode worker
     await build(decodeWorkerBuildOptions);
     console.log('Decode worker built successfully');
+
+    await build(layerCompositorWorkerBuildOptions);
+    console.log('Layer compositor worker built successfully');
 
     // Build comparison panel webview script
     await build(comparisonPanelBuildOptions);

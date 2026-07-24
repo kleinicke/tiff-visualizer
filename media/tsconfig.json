@@ -19,6 +19,7 @@
     "include": [
         "./imagePreview.ts",
         "./decode-worker.ts",
+        "./layer-compositor-worker.ts",
         "./comparisonPanel.ts",
         "./modules/**/*.ts",
         "./types/**/*.d.ts"
@@ -28,6 +29,7 @@
         "./imagePreview.bundle.js",
         "./comparisonPanel.bundle.js",
         "./decodeWorker.bundle.js",
+        "./layerCompositorWorker.bundle.js",
         "./geotiff.min.js",
         "./pako.min.js",
         "./parse-exr.js",

@@ -32,6 +32,57 @@ function unique(values: string[]): string[] {
 	return [...new Set(values)];
 }
 
+interface NumericLayerSidecar {
+	sourcePath: string;
+	dataPath: string;
+	storage: 'uint8' | 'uint16' | 'float32' | 'float64';
+	numericType: NonNullable<Layer['sourceNumericType']>;
+	width: number;
+	height: number;
+	channels: number;
+	typeMax: number;
+	isFloat: boolean;
+	x: number;
+	y: number;
+}
+
+function numericLayerBytes(layer: Layer): { bytes: Uint8Array; storage: NumericLayerSidecar['storage'] } {
+	const data = layer.data!;
+	if (data instanceof Uint16Array) {
+		return { bytes: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)), storage: 'uint16' };
+	}
+	if (data instanceof Float64Array) {
+		return { bytes: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)), storage: 'float64' };
+	}
+	if (data instanceof Float32Array) {
+		return { bytes: new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)), storage: 'float32' };
+	}
+	if (data instanceof Uint8Array || data instanceof Uint8ClampedArray) {
+		return { bytes: Uint8Array.from(data), storage: 'uint8' };
+	}
+	const copy = Float32Array.from(data);
+	return { bytes: new Uint8Array(copy.buffer), storage: 'float32' };
+}
+
+function addNumericLayerSidecar(files: Record<string, unknown>, manifest: NumericLayerSidecar[], layer: Layer, sourcePath: string): void {
+	if (!layer.data || !layer.sourceNumericType || layer.sourceNumericType === 'uint8') { return; }
+	const encoded = numericLayerBytes(layer);
+	const dataPath = `tiff-visualizer/numeric-layer-${manifest.length}.bin`;
+	files[dataPath] = encoded.bytes;
+	manifest.push({
+		sourcePath, dataPath, storage: encoded.storage, numericType: layer.sourceNumericType,
+		width: layer.width, height: layer.height, channels: layer.channels,
+		typeMax: layer.typeMax || (layer.isFloat ? 1 : 255), isFloat: !!layer.isFloat,
+		x: Math.round(layer.offsetX || 0), y: Math.round(layer.offsetY || 0),
+	});
+}
+
+function finishNumericLayerSidecars(files: Record<string, unknown>, manifest: NumericLayerSidecar[], warnings: string[]): void {
+	if (!manifest.length) { return; }
+	files['tiff-visualizer/numeric-layers.json'] = strToU8(JSON.stringify({ version: 1, layers: manifest }));
+	warnings.push(`${manifest.length} high-precision raster layer${manifest.length === 1 ? '' : 's'} retained exact samples in TIFF Visualizer metadata; other editors use the 8-bit compatibility raster`);
+}
+
 function formatList(values: string[]): string {
 	if (!values.length) { return 'none'; }
 	return unique(values).join(', ');
@@ -46,7 +97,7 @@ export function analyzeLayerExports(layers: Layer[]): LayerExportCompatibility[]
 	const adjustments = layers.filter(layer => layer.kind === 'adjustment' && layer.adjustment).map(layer => layer.adjustment!.type);
 	const hasMasks = layers.some(layer => !!layer.rasterMask);
 	const hasClipping = layers.some(layer => !!layer.clipped);
-	const floatLayers = layers.filter(layer => layer.data && (layer.isFloat || (layer.typeMax || 255) !== 255)).length;
+	const highPrecisionLayers = layers.filter(layer => layer.data && layer.sourceNumericType && layer.sourceNumericType !== 'uint8').length;
 	const unsupportedDocumentModes = layers.map(layer => layer.blendMode || 'normal').filter(mode => !DOCUMENT_BLEND_MODES.has(mode));
 	const unsupportedXcfModes = layers.map(layer => layer.blendMode || 'normal').filter(mode => !XCF_BLEND_MODES.has(mode));
 	const unsupportedKraFilters = adjustments.filter(type => !KRA_FILTERS.has(type));
@@ -58,28 +109,29 @@ export function analyzeLayerExports(layers: Layer[]): LayerExportCompatibility[]
 			|| adjustment?.type === 'exposure' && (adjustment.gamma ?? 1) !== 1
 			|| adjustment?.type === 'hue/saturation' && adjustment.colorizeEnabled !== false && !!adjustment.colorize;
 	}).map(layer => layer.name || layer.adjustment!.type);
-	const common = floatLayers ? `${floatLayers} source layer${floatLayers === 1 ? '' : 's'} converted to 8-bit. ` : '';
+	const lossyPrecision = highPrecisionLayers ? `${highPrecisionLayers} high-precision source layer${highPrecisionLayers === 1 ? '' : 's'} converted to 8-bit. ` : '';
+	const sidecarPrecision = highPrecisionLayers ? `${highPrecisionLayers} high-precision source layer${highPrecisionLayers === 1 ? '' : 's'} keeps exact samples in TIFF Visualizer metadata; other editors see its 8-bit compatibility raster. ` : '';
 	return [
 		{ format: 'png', label: 'PNG', description: '✓ Rendered image', detail: 'Exports exactly the current rendered composition.', compatible: true },
 		{
-			format: 'psd', label: 'Photoshop PSD (.psd)', description: unsupportedDocumentModes.length ? '◐ Layers and filters editable; some modes approximated' : '✓ Layers and editable adjustment filters',
-			detail: `${common}${unsupportedDocumentModes.length ? `Modes exported as normal: ${formatList(unsupportedDocumentModes)}.` : ''}`.trim() || 'Raster layers, groups, clipping, masks and supported adjustment layers remain editable.',
-			compatible: unsupportedDocumentModes.length === 0,
+			format: 'psd', label: 'Photoshop PSD (.psd)', description: highPrecisionLayers ? '◐ Editable layers; high-precision samples reduced to 8-bit' : unsupportedDocumentModes.length ? '◐ Layers and filters editable; some modes approximated' : '✓ Layers and editable adjustment filters',
+			detail: `${lossyPrecision}${unsupportedDocumentModes.length ? `Modes exported as normal: ${formatList(unsupportedDocumentModes)}.` : ''}`.trim() || 'Raster layers, groups, clipping, masks and supported adjustment layers remain editable.',
+			compatible: unsupportedDocumentModes.length === 0 && highPrecisionLayers === 0,
 		},
 		{
 			format: 'xcf', label: 'GIMP 3 XCF (.xcf)', description: unsupportedXcfFilters.length ? '◐ Compatible GIMP 3 effects editable; others omitted' : partialXcfFilters.length || unsupportedXcfModes.length ? '◐ Effects editable with listed approximations' : adjustments.length ? '✓ Layers and compatible GIMP 3 effects' : '✓ Raster layers and groups',
-			detail: `${common}${unsupportedXcfFilters.length ? `No native effect mapping for: ${formatList(unsupportedXcfFilters)}. ` : ''}${partialXcfFilters.length ? `Partially mapped parameters: ${formatList(partialXcfFilters)}. ` : ''}${unsupportedXcfModes.length ? `Modes exported as normal: ${formatList(unsupportedXcfModes)}.` : ''}`.trim() || 'Raster layers, groups and compatible filters remain editable; masks and clipping are currently baked.',
-			compatible: unsupportedXcfFilters.length === 0 && partialXcfFilters.length === 0 && unsupportedXcfModes.length === 0,
+			detail: `${lossyPrecision}${unsupportedXcfFilters.length ? `No native effect mapping for: ${formatList(unsupportedXcfFilters)}. ` : ''}${partialXcfFilters.length ? `Partially mapped parameters: ${formatList(partialXcfFilters)}. ` : ''}${unsupportedXcfModes.length ? `Modes exported as normal: ${formatList(unsupportedXcfModes)}.` : ''}`.trim() || 'Raster layers, groups and compatible filters remain editable; masks and clipping are currently baked.',
+			compatible: unsupportedXcfFilters.length === 0 && partialXcfFilters.length === 0 && unsupportedXcfModes.length === 0 && highPrecisionLayers === 0,
 		},
 		{
 			format: 'kra', label: 'Krita (.kra)', description: unsupportedKraFilters.length ? '◐ Compatible filters editable; others in merged preview' : adjustments.length ? '✓ Raster layers and compatible filter masks' : '✓ Raster layers and groups',
-			detail: `${common}${unsupportedKraFilters.length ? `Only the merged preview contains: ${formatList(unsupportedKraFilters)}. ` : ''}${hasMasks ? 'Raster masks are currently baked into alpha. ' : ''}${hasClipping ? 'Clipping is represented by Krita filter masks where possible and otherwise baked.' : ''}`.trim() || 'Layers, groups and supported Krita filter configurations remain editable.',
-			compatible: unsupportedKraFilters.length === 0 && unsupportedDocumentModes.length === 0,
+			detail: `${sidecarPrecision}${unsupportedKraFilters.length ? `Only the merged preview contains: ${formatList(unsupportedKraFilters)}. ` : ''}${hasMasks ? 'Raster masks are currently baked into alpha. ' : ''}${hasClipping ? 'Clipping is represented by Krita filter masks where possible and otherwise baked.' : ''}`.trim() || 'Layers, groups and supported Krita filter configurations remain editable.',
+			compatible: unsupportedKraFilters.length === 0 && unsupportedDocumentModes.length === 0 && highPrecisionLayers === 0,
 		},
 		{
 			format: 'ora', label: 'OpenRaster (.ora)', description: adjustments.length || hasMasks || hasClipping ? '◐ Raster structure; effects baked into merged preview' : '✓ Raster layers and groups',
-			detail: `${common}${adjustments.length ? `Filters represented only by the merged preview: ${formatList(adjustments)}. ` : ''}${hasMasks ? 'Masks are baked into layer alpha. ' : ''}${hasClipping ? 'Clipping is baked into layer alpha.' : ''}`.trim() || 'Raster layers, groups, offsets, visibility, opacity and common blend modes remain editable.',
-			compatible: adjustments.length === 0 && unsupportedDocumentModes.length === 0,
+			detail: `${sidecarPrecision}${adjustments.length ? `Filters represented only by the merged preview: ${formatList(adjustments)}. ` : ''}${hasMasks ? 'Masks are baked into layer alpha. ' : ''}${hasClipping ? 'Clipping is baked into layer alpha.' : ''}`.trim() || 'Raster layers, groups, offsets, visibility, opacity and common blend modes remain editable.',
+			compatible: adjustments.length === 0 && unsupportedDocumentModes.length === 0 && highPrecisionLayers === 0,
 		},
 	];
 }
@@ -109,9 +161,9 @@ function layerRgba(layer: Layer, warnings: string[], bakeMask: boolean): Uint8Cl
 			const value = Number(layer.data?.[source + Math.min(channel, layer.channels - 1)] ?? 0);
 			return Number.isFinite(value) ? Math.max(0, Math.min(255, Math.round(value * 255 / max))) : 0;
 		};
-		if (layer.channels === 1) { output[target] = output[target + 1] = output[target + 2] = sample(0); }
+		if (layer.channels <= 2) { output[target] = output[target + 1] = output[target + 2] = sample(0); }
 		else { output[target] = sample(0); output[target + 1] = sample(1); output[target + 2] = sample(2); }
-		let alpha = layer.channels === 4 ? sample(3) : 255;
+		let alpha = layer.channels === 2 || layer.channels === 4 ? sample(layer.channels - 1) : 255;
 		if (bakeMask && layer.rasterMask) {
 			const mask = layer.rasterMask;
 			const canvasX = x + Math.round(layer.offsetX || 0), canvasY = y + Math.round(layer.offsetY || 0);
@@ -213,6 +265,7 @@ function alphaBakedLayer(layer: Layer, layers: Layer[], warnings: string[]): Uin
 
 function writeOra(layers: Layer[], width: number, height: number, rendered: ImageData): LayerDocumentWriteResult {
 	const warnings: string[] = [];
+	const numericManifest: NumericLayerSidecar[] = [];
 	const files: any = {
 		mimetype: [strToU8('image/openraster'), { level: 0 }],
 		'mergedimage.png': encodePng(rendered),
@@ -229,6 +282,7 @@ function writeOra(layers: Layer[], width: number, height: number, rendered: Imag
 				const path = `data/layer-${imageIndex++}.png`;
 				const data = alphaBakedLayer(layer, layers, warnings);
 				files[path] = encodePngPixels(data, layer.width, layer.height);
+				addNumericLayerSidecar(files, numericManifest, layer, path);
 				content.push(`<layer name="${xml(layer.name || 'Layer')}" src="${path}" x="${Math.round(layer.offsetX || 0)}" y="${Math.round(layer.offsetY || 0)}" visibility="${layer.visible === false ? 'hidden' : 'visible'}" opacity="${layer.opacity ?? 1}" composite-op="${xml(oraCompositeMode(layer.blendMode))}"/>`);
 				if (layer.rasterMask) { warnings.push(`“${layer.name || 'Layer'}” mask was baked into alpha`); }
 			}
@@ -236,6 +290,7 @@ function writeOra(layers: Layer[], width: number, height: number, rendered: Imag
 		return content.join('');
 	};
 	files['stack.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8"?><image version="0.0.1" w="${width}" h="${height}" name="TIFF Visualizer export"><stack>${build()}</stack></image>`);
+	finishNumericLayerSidecars(files, numericManifest, warnings);
 	return { data: zipSync(files, { level: 6 }), warnings: unique(warnings) };
 }
 
@@ -309,6 +364,7 @@ function kraFilterConfig(adjustment: LayerAdjustment): { name: string; xml: stri
 
 function writeKra(layers: Layer[], width: number, height: number, rendered: ImageData): LayerDocumentWriteResult {
 	const warnings: string[] = [], documentName = 'TIFF Visualizer export';
+	const numericManifest: NumericLayerSidecar[] = [];
 	const files: any = {
 		mimetype: [strToU8('application/x-krita'), { level: 0 }],
 		'mergedimage.png': encodePng(rendered),
@@ -331,8 +387,10 @@ function writeKra(layers: Layer[], width: number, height: number, rendered: Imag
 				output.push(`<layer ${common} nodetype="adjustmentlayer" filtername="${xml(config.name)}"/>`);
 			} else if (layer.data) {
 				const rgba = alphaBakedLayer(layer, layers, warnings);
-				files[`${documentName}/layers/${filename}`] = kraPaintDevice(placeLayerOnCanvas(layer, rgba, width, height), width, height);
+				const layerPath = `${documentName}/layers/${filename}`;
+				files[layerPath] = kraPaintDevice(placeLayerOnCanvas(layer, rgba, width, height), width, height);
 				files[`${documentName}/layers/${filename}.defaultpixel`] = Uint8Array.from([0, 0, 0, 0]);
+				addNumericLayerSidecar(files, numericManifest, layer, layerPath);
 				const masks: string[] = [];
 				const attached = layers.filter(candidate => candidate.kind === 'adjustment' && clippedTarget(layers, candidate) === layer).reverse();
 				for (const adjustmentLayer of attached) {
@@ -352,6 +410,7 @@ function writeKra(layers: Layer[], width: number, height: number, rendered: Imag
 		return output.join('');
 	};
 	files['maindoc.xml'] = strToU8(`<?xml version="1.0"?><DOC><IMAGE name="${xml(documentName)}" colorspacename="RGBA" width="${width}" height="${height}"><layers>${build()}</layers></IMAGE></DOC>`);
+	finishNumericLayerSidecars(files, numericManifest, warnings);
 	return { data: zipSync(files, { level: 6 }), warnings: unique(warnings) };
 }
 

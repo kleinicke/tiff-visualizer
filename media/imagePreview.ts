@@ -22,6 +22,7 @@ import type { TagEntry } from './modules/tiff-tag-utils.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
+import { LayerCompositorWorkerClient } from './modules/layer-compositor-worker-client.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
@@ -149,6 +150,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// is unavailable, so worker failures never break image loading.
 	const decodeWorkerClient = new DecodeWorkerClient();
 	decodeWorkerClient.start();
+	const layerCompositorWorker = new LayerCompositorWorkerClient();
+	layerCompositorWorker.start();
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
@@ -188,7 +191,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let _layerBackgroundTint: PreviewBackgroundRgb | null = null;
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
-		onChange: (options: { interactive?: boolean } = {}) => { scheduleRecomposite(options.interactive ? 180 : 0); scheduleSaveState(); },
+		onChange: (options: { interactive?: boolean } = {}) => {
+			if (options.interactive) {
+				scheduleRecomposite(0, true);
+				scheduleRecomposite(180, false);
+			} else {
+				scheduleRecomposite(0, false);
+			}
+			scheduleSaveState();
+		},
 		onBackgroundChange: (brightness: number | null) => { setLayerBackgroundBrightness(brightness); scheduleSaveState(); },
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
@@ -400,6 +411,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				sourceNodeId: l.sourceNodeId,
 				sourceSupport: l.sourceSupport,
 				sourceBlendMode: l.sourceBlendMode,
+				sourceNumericType: l.sourceNumericType,
 				isBase: i === 0,
 			})),
 			layerActive: layerManager.active,
@@ -1374,19 +1386,25 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			: { r: 0, g: 0, b: 0 };
 	}
 
-	function npyTypeInfo(dtype?: string): { isFloat: boolean, typeMax: number } {
+	function npyTypeInfo(dtype?: string): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
 		const d = String(dtype || '').toLowerCase();
-		if (d.includes('f')) { return { isFloat: true, typeMax: 1.0 }; }
-		const bits = parseInt(d.replace(/\D/g, ''), 10) || 8;
-		return { isFloat: false, typeMax: bits >= 16 ? 65535 : 255 };
+		const compact = d.match(/^[<>=|]?([fiu])(\d+)$/);
+		const bits = compact ? Number(compact[2]) * 8 : parseInt(d.replace(/\D/g, ''), 10) || 8;
+		if (d.includes('f')) {
+			return { isFloat: true, typeMax: 1.0, sourceNumericType: bits <= 16 ? 'float16' : bits <= 32 ? 'float32' : 'float64' };
+		}
+		const signed = compact ? compact[1] === 'i' : d.includes('i') && !d.includes('u');
+		const sourceNumericType: LayerInput['sourceNumericType'] = `${signed ? 'int' : 'uint'}${bits <= 8 ? 8 : bits <= 16 ? 16 : 32}` as LayerInput['sourceNumericType'];
+		return { isFloat: false, typeMax: bits >= 16 ? 65535 : 255, sourceNumericType };
 	}
 
 	/**
 	 * Map a processor's raw struct to a compositor layer.
 	 */
-	function lastRawToLayer(raw: any, ti: { isFloat: boolean, typeMax: number }, name: string, uri: string): LayerInput | null {
+	function lastRawToLayer(raw: any, ti: { isFloat: boolean, typeMax: number, sourceNumericType?: LayerInput['sourceNumericType'] }, name: string, uri: string): LayerInput | null {
 		if (!raw || !raw.data) { return null; }
-		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, name, uri };
+		const inferred = raw.data instanceof Uint16Array ? 'uint16' : raw.data instanceof Uint8Array || raw.data instanceof Uint8ClampedArray ? 'uint8' : raw.data instanceof Float64Array ? 'float64' : 'float32';
+		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, sourceNumericType: ti.sourceNumericType || inferred, name, uri };
 	}
 
 	function tiffRawToLayer(raw: any, name: string, uri: string): LayerInput | null {
@@ -1399,12 +1417,17 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// float data.
 		const isFloat = tiffNeedsFloatCarrier(ifd.t339, ifd.t258);
 		const typeMax = tiffTypeMax(ifd.t339, ifd.t258);
-		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, name, uri };
+		const sampleFormat = Array.isArray(ifd.t339) ? ifd.t339[0] : ifd.t339;
+		const bits = Array.isArray(ifd.t258) ? ifd.t258[0] : ifd.t258;
+		const sourceNumericType: LayerInput['sourceNumericType'] = sampleFormat === 3
+			? bits <= 16 ? 'float16' : bits <= 32 ? 'float32' : 'float64'
+			: `${sampleFormat === 2 ? 'int' : 'uint'}${bits <= 8 ? 8 : bits <= 16 ? 16 : 32}` as LayerInput['sourceNumericType'];
+		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, sourceNumericType, name, uri };
 	}
 
 	function exrRawToLayer(raw: any, name: string, uri: string): LayerInput | null {
 		if (!raw || !raw.data) { return null; }
-		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: true, typeMax: 1.0, name, uri };
+		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: true, typeMax: 1.0, sourceNumericType: raw.type === 1016 ? 'float16' : 'float32', name, uri };
 	}
 
 	/**
@@ -1551,8 +1574,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const supportedModes = new Set(BLEND_MODES.map(mode => mode.id));
 		const orderedAssets = raw.layerOrder === 'bottom-to-top' ? raw.layerAssets : [...raw.layerAssets].reverse();
 		const layers = orderedAssets.map(asset => layerManager.createLayer({
-			data: asset.data, width: asset.width, height: asset.height, channels: 4,
-			isFloat: false, typeMax: 255,
+			data: asset.data, width: asset.width, height: asset.height, channels: asset.channels ?? 4,
+			isFloat: asset.isFloat ?? false, typeMax: asset.typeMax ?? 255,
+			sourceNumericType: asset.sourceNumericType,
 			name: asset.name,
 			kind: asset.kind || 'raster',
 			adjustment: asset.adjustment,
@@ -1602,6 +1626,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				});
 				layerManager.canvasWidth = base.width;
 				layerManager.canvasHeight = base.height;
+				layerManager.invalidateComposite();
 			}
 		}
 	}
@@ -1610,15 +1635,60 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	 * Composite the layer stack and draw the result to the main canvas.
 	 * @returns True if a composite was rendered.
 	 */
-	function recompositeLayers(): boolean {
+	function recompositeLayers(interactive = false): boolean {
 		if (!layerManager.active || !canvas) { return false; }
 		const renderGeneration = ++_layerCanvasRenderGeneration;
+		const fullWidth = layerManager.canvasWidth, fullHeight = layerManager.canvasHeight;
+		const scale = interactive ? Math.min(1, 768 / Math.max(fullWidth, fullHeight)) : 1;
+		const workerRequest = layerCompositorWorker.compose(layerManager.layers, fullWidth, fullHeight, scale);
+		if (workerRequest) {
+			void workerRequest.then(async result => {
+				if (!result || renderGeneration !== _layerCanvasRenderGeneration || !layerManager.active || !canvas) { return; }
+				const imageData = layerManager.renderCompositeToImageData(result, settingsManager.settings, {
+					nanColor: getNanColorObj(),
+					cache: scale === 1,
+				});
+				const ctx = ensure2dCanvasContext();
+				if (!ctx) { return; }
+				if (scale < 1) {
+					if (ctx.canvas.width !== fullWidth || ctx.canvas.height !== fullHeight) {
+						ctx.canvas.width = fullWidth; ctx.canvas.height = fullHeight;
+					}
+					try {
+						const bitmap = await createImageBitmap(imageData);
+						if (renderGeneration === _layerCanvasRenderGeneration && layerManager.active) {
+							ctx.save();
+							ctx.globalCompositeOperation = 'copy';
+							ctx.imageSmoothingEnabled = true;
+							ctx.drawImage(bitmap, 0, 0, fullWidth, fullHeight);
+							ctx.restore();
+						}
+						bitmap.close();
+					} catch {
+						const previewCanvas = document.createElement('canvas');
+						previewCanvas.width = imageData.width; previewCanvas.height = imageData.height;
+						previewCanvas.getContext('2d')?.putImageData(imageData, 0, 0);
+						if (renderGeneration === _layerCanvasRenderGeneration && layerManager.active) {
+							ctx.save(); ctx.globalCompositeOperation = 'copy';
+							ctx.drawImage(previewCanvas, 0, 0, fullWidth, fullHeight); ctx.restore();
+						}
+					}
+				} else {
+					await renderImageDataToCanvas(imageData, ctx, () =>
+						renderGeneration === _layerCanvasRenderGeneration && layerManager.active);
+					if (renderGeneration === _layerCanvasRenderGeneration && layerManager.active) {
+						primaryImageData = imageData;
+						updateHistogramData();
+					}
+				}
+			});
+			return true;
+		}
+		// Worker startup/failure fallback. Interactive gestures retain the last
+		// good frame; their scheduled final render uses the synchronous path.
+		if (interactive) { return true; }
 		const imageData = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
 		if (!imageData) { return false; }
-		if (canvas.width !== imageData.width || canvas.height !== imageData.height) {
-			canvas.width = imageData.width;
-			canvas.height = imageData.height;
-		}
 		const ctx = ensure2dCanvasContext();
 		if (ctx) {
 			void renderImageDataToCanvas(imageData, ctx, () =>
@@ -1633,25 +1703,33 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// debounce because a full large-layer composite can take hundreds of ms or
 	// seconds, and running one for every slider event makes the slider itself lag.
 	let _recompositeScheduled = false;
+	let _scheduledInteractive = false;
 	let _interactiveRecompositeTimer: ReturnType<typeof setTimeout> | null = null;
-	function scheduleRecomposite(delayMs: number = 0) {
+	function scheduleRecomposite(delayMs: number = 0, interactive = false) {
 		if (delayMs > 0) {
 			if (_interactiveRecompositeTimer) { clearTimeout(_interactiveRecompositeTimer); }
 			_interactiveRecompositeTimer = setTimeout(() => {
 				_interactiveRecompositeTimer = null;
-				scheduleRecomposite(0);
+				scheduleRecomposite(0, interactive);
 			}, delayMs);
 			return;
 		}
-		if (_interactiveRecompositeTimer) {
+		if (_interactiveRecompositeTimer && !interactive) {
 			clearTimeout(_interactiveRecompositeTimer);
 			_interactiveRecompositeTimer = null;
 		}
-		if (_recompositeScheduled) { return; }
+		if (_recompositeScheduled) {
+			// A full render subsumes an interactive preview in the same frame.
+			if (!interactive) { _scheduledInteractive = false; }
+			return;
+		}
 		_recompositeScheduled = true;
+		_scheduledInteractive = interactive;
 		requestAnimationFrame(() => {
 			_recompositeScheduled = false;
-			recompositeLayers();
+			const renderInteractive = _scheduledInteractive;
+			_scheduledInteractive = false;
+			recompositeLayers(renderInteractive);
 		});
 	}
 
@@ -3691,6 +3769,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// Window beforeunload
 		window.addEventListener('beforeunload', () => {
 			zoomController.saveState();
+			layerCompositorWorker.dispose();
 		});
 	}
 
