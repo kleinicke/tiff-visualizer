@@ -1059,7 +1059,9 @@ export class LayersPanel {
 		vis.type = 'checkbox';
 		vis.className = 'layer-visible';
 		vis.checked = layer.visible !== false;
-		vis.title = 'Toggle visibility (Shift-click to solo; Shift-click again to show all)';
+		vis.title = isAdjustment
+			? 'Toggle filter visibility'
+			: 'Toggle visibility (Shift-click to show only this image; Shift-click again to show all images)';
 		vis.addEventListener('click', (event) => {
 			if (!event.shiftKey) { return; }
 			event.preventDefault();

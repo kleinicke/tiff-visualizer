@@ -415,6 +415,16 @@ async function main() {
 		console.log('✅ Dirty-region composition matches the full compositor');
 	}
 
+	// 26b. Region/on-demand composition must not apply a moved group offset twice.
+	{
+		const group = layer({ id: 'moved-group', kind: 'group', width: 1, height: 1, channels: 4, typeMax: 255, offsetX: 1 });
+		const child = layer({ id: 'moved-child', parentId: 'moved-group', data: new Uint8Array([5, 6, 7, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const complete = composite([group, child], 2, 1);
+		const point = compositeRegion([group, child], 2, 1, { x: 1, y: 0, width: 1, height: 1 });
+		assert.deepStrictEqual(Array.from(point.data), Array.from(complete.data.slice(4, 8)));
+		console.log('✅ On-demand region composition preserves moved group offsets');
+	}
+
 	// 27. Creative 8-bit RGBA and scientific/high-bit-depth layers share one
 	//     normalized display domain without collapsing the composite alpha.
 	{

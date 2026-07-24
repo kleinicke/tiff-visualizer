@@ -22,7 +22,7 @@ import type { TagEntry } from './modules/tiff-tag-utils.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
-import { LayerCompositorWorkerClient } from './modules/layer-compositor-worker-client.js';
+import { LayerCompositorWorkerClient, layerDisplayScale } from './modules/layer-compositor-worker-client.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
@@ -196,7 +196,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				scheduleRecomposite(0, true);
 				scheduleRecomposite(180, false);
 			} else {
-				scheduleRecomposite(0, false);
+				// Structural/visibility edits need immediate feedback too. Large
+				// documents then settle to a bounded high-quality display render
+				// instead of blocking the queue with an automatic 5K composite.
+				scheduleRecomposite(0, true);
+				scheduleRecomposite(120, false);
 			}
 			scheduleSaveState();
 		},
@@ -1662,7 +1666,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (!layerManager.active || !canvas) { return false; }
 		const renderGeneration = ++_layerCanvasRenderGeneration;
 		const fullWidth = layerManager.canvasWidth, fullHeight = layerManager.canvasHeight;
-		const scale = interactive ? Math.min(1, 768 / Math.max(fullWidth, fullHeight)) : 1;
+		const scale = layerDisplayScale(fullWidth, fullHeight, interactive);
 		const workerRequest = layerCompositorWorker.compose(layerManager.layers, fullWidth, fullHeight, scale);
 		if (workerRequest) {
 			void workerRequest.then(async result => {

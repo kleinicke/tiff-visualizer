@@ -6,8 +6,14 @@ const path = require('path');
 async function main() {
 	const managerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-manager.js');
 	const controlsPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'range-controls.js');
+	const compositorWorkerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-compositor-worker-client.js');
 	const { LayerManager } = await import(managerPath);
 	const { resetRangeToDefault } = await import(controlsPath);
+	const { layerDisplayScale } = await import(compositorWorkerPath);
+
+	assert.strictEqual(layerDisplayScale(1024, 768, false), 1, 'ordinary documents render at full display resolution');
+	assert.strictEqual(layerDisplayScale(5000, 4000, false), 2048 / 5000, '5K settled display composites are bounded to 2048 px');
+	assert.strictEqual(layerDisplayScale(5000, 4000, true), 768 / 5000, '5K interaction previews are bounded to 768 px');
 
 	const manager = new LayerManager();
 	manager.layers = [
@@ -34,12 +40,45 @@ async function main() {
 	assert.deepStrictEqual(filterManager.layers.slice(1).map(layer => layer.clipped), [true, true]);
 	assert.strictEqual(filterManager.layers.find(layer => layer.id === levelsId).adjustment.type, 'levels');
 	assert.strictEqual(filterManager.layers.find(layer => layer.id === hueId).adjustment.colorizeEnabled, false);
+	filterManager.updateLayer(levelsId, { visible: false });
+	filterManager.showOnlyLayer(baseId);
+	assert.strictEqual(filterManager.layers.find(layer => layer.id === baseId).visible, true);
+	assert.strictEqual(filterManager.layers.find(layer => layer.id === levelsId).visible, false,
+		'soloing an image preserves a disabled filter');
+	assert.strictEqual(filterManager.layers.find(layer => layer.id === hueId).visible, true,
+		'soloing an image preserves an enabled filter');
+	const secondImageId = filterManager.addLayer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Second image' });
+	filterManager.showOnlyLayer(baseId);
+	assert.deepStrictEqual(
+		filterManager.layers.filter(layer => layer.data && layer.kind !== 'adjustment' && layer.kind !== 'group').map(layer => layer.visible),
+		[true, false],
+		'Shift-solo hides only other image layers');
+	assert.deepStrictEqual(filterManager.layers.filter(layer => layer.kind === 'adjustment').map(layer => layer.visible), [false, true],
+		'Shift-solo does not change filter visibility');
+	filterManager.showOnlyLayer(baseId);
+	assert.deepStrictEqual(
+		filterManager.layers.filter(layer => layer.data && layer.kind !== 'adjustment' && layer.kind !== 'group').map(layer => layer.visible),
+		[true, true],
+		'a second Shift-solo shows all image layers');
+	assert.deepStrictEqual(filterManager.layers.filter(layer => layer.kind === 'adjustment').map(layer => layer.visible), [false, true],
+		'a second Shift-solo still does not change filter visibility');
+	assert.ok(secondImageId);
 	filterManager.updateLayer(baseId, { visible: false });
-	assert.deepStrictEqual(filterManager.layers.slice(1).map(layer => layer.visible), [true, true], 'hiding an image preserves its filter states');
+	assert.deepStrictEqual(filterManager.layers.filter(layer => layer.kind === 'adjustment').map(layer => layer.visible), [false, true],
+		'hiding an image preserves its filter states');
 	for (const type of ['brightness/contrast', 'exposure', 'invert', 'channel mixer', 'color balance', 'black & white', 'threshold', 'posterize', 'gradient map']) {
 		const id = filterManager.addAdjustmentLayer(baseId, type);
 		assert.strictEqual(filterManager.layers.find(layer => layer.id === id).adjustment.type, type);
 	}
+
+	const pointManager = new LayerManager();
+	pointManager.setBaseLayer({ data: new Uint8Array([10]), width: 1, height: 1, channels: 1, isFloat: false, typeMax: 255, name: 'Point base' });
+	const pointTopId = pointManager.addLayer({ data: new Uint8Array([20]), width: 1, height: 1, channels: 1, isFloat: false, typeMax: 255, name: 'Point top' });
+	assert.deepStrictEqual(pointManager.getCompositeValueAt(0, 0), [20],
+		'pixel inspection evaluates an exact source pixel without a full-resolution display cache');
+	pointManager.updateLayer(pointTopId, { visible: false });
+	assert.deepStrictEqual(pointManager.getCompositeValueAt(0, 0), [10],
+		'exact on-demand pixel inspection follows current visibility');
 
 	const reorderManager = new LayerManager();
 	reorderManager.setBaseLayer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Bottom' });
@@ -121,7 +160,7 @@ async function main() {
 	resetRangeToDefault(minFallback);
 	assert.strictEqual(minFallback.value, '-5');
 
-	console.log('Control behavior passed: layer undo/redo, toggle-solo layers/groups, and double-click range defaults.');
+	console.log('Control behavior passed: layer undo/redo, image-only Shift-solo, bounded large previews, and double-click range defaults.');
 }
 
 main().catch(error => {

@@ -1025,16 +1025,37 @@ export function compositeRegion(layers: Layer[], canvasWidth: number, canvasHeig
 	const width = Math.max(0, Math.min(canvasWidth - x, Math.ceil(requested.width)));
 	const height = Math.max(0, Math.min(canvasHeight - y, Math.ceil(requested.height)));
 	if (!width || !height) { return composite([], Math.max(1, width), Math.max(1, height)); }
-	const translated = layers.map(layer => ({
-		...layer,
-		offsetX: (layer.offsetX || 0) - x,
-		offsetY: (layer.offsetY || 0) - y,
-		rasterMask: layer.rasterMask ? {
-			...layer.rasterMask,
-			offsetX: (layer.rasterMask.offsetX ?? layer.offsetX ?? 0) - x,
-			offsetY: (layer.rasterMask.offsetY ?? layer.offsetY ?? 0) - y,
-		} : undefined,
-	}));
+	const groups = new Map(layers.filter(layer => layer.kind === 'group' && layer.id)
+		.map(layer => [layer.id as string, layer]));
+	const groupTranslation = (layer: Layer): { x: number; y: number } => {
+		let parentId = layer.parentId, dx = 0, dy = 0;
+		const visited = new Set<string>();
+		while (parentId && !visited.has(parentId)) {
+			visited.add(parentId);
+			const parent = groups.get(parentId);
+			if (!parent) { break; }
+			dx += parent.offsetX || 0; dy += parent.offsetY || 0;
+			parentId = parent.parentId;
+		}
+		return { x: dx, y: dy };
+	};
+	const translated = layers.map(layer => {
+		const inherited = groupTranslation(layer);
+		// Group movement is folded into every descendant. The materialized group
+		// surface itself then sits at the local origin, avoiding a second offset.
+		const ownX = layer.kind === 'group' ? 0 : (layer.offsetX || 0) + inherited.x - x;
+		const ownY = layer.kind === 'group' ? 0 : (layer.offsetY || 0) + inherited.y - y;
+		return {
+			...layer,
+			offsetX: ownX,
+			offsetY: ownY,
+			rasterMask: layer.rasterMask ? {
+				...layer.rasterMask,
+				offsetX: (layer.rasterMask.offsetX ?? layer.offsetX ?? 0) + inherited.x - x,
+				offsetY: (layer.rasterMask.offsetY ?? layer.offsetY ?? 0) + inherited.y - y,
+			} : undefined,
+		};
+	});
 	return composite(translated, width, height);
 }
 

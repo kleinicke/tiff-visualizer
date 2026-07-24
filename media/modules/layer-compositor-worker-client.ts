@@ -31,6 +31,19 @@ type LayerState = {
 type TileStat = { min: number; max: number; covered: number };
 
 const COMPOSITE_TIMEOUT_MS = 120_000;
+export const INTERACTIVE_COMPOSITE_MAX_EDGE = 768;
+export const DISPLAY_COMPOSITE_MAX_EDGE = 2048;
+
+/**
+ * The layer editor keeps original pixels at full precision, but its on-screen
+ * composite need not allocate and process hundreds of megabytes at document
+ * resolution. Export remains explicitly full-resolution.
+ */
+export function layerDisplayScale(width: number, height: number, interactive = false): number {
+	const edge = Math.max(1, width, height);
+	const maximum = interactive ? INTERACTIVE_COMPOSITE_MAX_EDGE : DISPLAY_COMPOSITE_MAX_EDGE;
+	return Math.min(1, maximum / edge);
+}
 
 function clonePixels(source: ArrayLike<number>): TypedPixels {
 	if (ArrayBuffer.isView(source)) {
@@ -354,7 +367,10 @@ export class LayerCompositorWorkerClient {
 				this.lastStates = active.states;
 				this.lastWidth = active.width;
 				this.lastHeight = active.height;
-				if (!active.region || !this.lastTileStats) { this.lastTileStats = this.buildTileStats(result); }
+				// Tile statistics are only needed if a later edit is localized.
+				// Building them eagerly repeats a complete main-thread image scan
+				// immediately after every worker render.
+				if (!active.region) { this.lastTileStats = null; }
 			}
 			console.log(`[LayerCompositorWorker] ${result.width}×${result.height} composed in ${Number(message.durationMs).toFixed(1)}ms`);
 			resolve(result);

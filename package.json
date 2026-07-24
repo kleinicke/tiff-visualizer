@@ -349,7 +349,7 @@
     "test:ui": "npm run compile && extest setup-and-run out/test/ui/**/*.js",
     "test:ui-setup": "extest setup-tests",
     "test:ui-run": "extest run-tests out/test/ui/**/*.js",
-    "test:playwright": "playwright test test/playwright/extension-core.spec.ts",
+    "test:playwright": "playwright test test/playwright/extension-core.spec.ts test/playwright/layer-compositor-worker.spec.ts",
     "build": "webpack"
   },
   "dependencies": {

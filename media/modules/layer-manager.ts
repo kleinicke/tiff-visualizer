@@ -9,7 +9,7 @@
  * NaN color) as a normal image.
  */
 
-import { composite, centeredOffset, BLEND_MODES, Layer, CompositeResult, LayerAdjustment } from './layer-compositor.js';
+import { composite, compositeRegion, centeredOffset, BLEND_MODES, Layer, CompositeResult, LayerAdjustment } from './layer-compositor.js';
 import { ImageRenderer } from './normalization-helper.js';
 import { PerfTrace } from './perf-trace.js';
 import type { ImageSettings } from './settings-manager.js';
@@ -330,13 +330,40 @@ export class LayerManager {
 
 	/** Toggle a layer between solo and an all-visible stack. */
 	showOnlyLayer(id: string): void {
-		this.toggleSoloLayers(new Set([id]));
+		const target = this.layers.find(layer => layer.id === id);
+		if (target?.data && target.kind !== 'adjustment' && target.kind !== 'group') {
+			this.toggleSoloImageLayers(new Set([id]));
+		} else {
+			this.toggleSoloLayers(new Set([id]));
+		}
+	}
+
+	/**
+	 * Toggle image/raster visibility without changing filters or group nodes.
+	 * This keeps an image's attached filter switches intact while the image is
+	 * temporarily soloed; the filters simply have no effect while it is hidden.
+	 */
+	toggleSoloImageLayers(ids: Set<string>): void {
+		const images = this.layers.filter(layer =>
+			!!layer.data && layer.kind !== 'adjustment' && layer.kind !== 'group');
+		if (!images.length) { return; }
+		const alreadySolo = images.every(layer =>
+			ids.has(layer.id as string) ? layer.visible !== false : layer.visible === false);
+		const changed = images.some(layer => layer.visible !== (alreadySolo || ids.has(layer.id as string)));
+		if (!changed) { return; }
+		this._recordHistory();
+		for (const layer of images) {
+			layer.visible = alreadySolo || ids.has(layer.id as string);
+		}
+		this._lastComposite = null;
 	}
 
 	/** Toggle a set of layers between solo and an all-visible stack. */
 	toggleSoloLayers(ids: Set<string>): void {
 		const alreadySolo = this.layers.length > 0 && this.layers.every(layer =>
 			ids.has(layer.id as string) ? layer.visible !== false : layer.visible === false);
+		const changed = this.layers.some(layer => layer.visible !== (alreadySolo || ids.has(layer.id as string)));
+		if (!changed) { return; }
 		this._recordHistory();
 		for (const layer of this.layers) {
 			layer.visible = alreadySolo || ids.has(layer.id as string);
@@ -471,11 +498,19 @@ export class LayerManager {
 	 * inspector. Returns null if outside the canvas or no-data.
 	 */
 	getCompositeValueAt(x: number, y: number): number[] | null {
-		// Use the most recently rendered composite to avoid recompositing the
-		// whole stack on every pointer move.
-		const c = this._lastComposite;
-		if (!c || x < 0 || y < 0 || x >= c.width || y >= c.height) { return null; }
-		const base = (y * c.width + x) * c.channels;
+		if (x < 0 || y < 0 || x >= this.canvasWidth || y >= this.canvasHeight) { return null; }
+		// Large documents deliberately keep only a scaled display composite.
+		// Preserve exact pixel inspection by evaluating just the requested source
+		// pixel whenever no authoritative full-resolution cache is available.
+		const c = this._lastComposite || compositeRegion(
+			this.layers,
+			this.canvasWidth,
+			this.canvasHeight,
+			{ x, y, width: 1, height: 1 },
+		);
+		const sampleX = c === this._lastComposite ? x : 0;
+		const sampleY = c === this._lastComposite ? y : 0;
+		const base = (sampleY * c.width + sampleX) * c.channels;
 		const out: number[] = [];
 		for (let i = 0; i < c.channels; i++) { out.push(c.data[base + i]); }
 		return out;
