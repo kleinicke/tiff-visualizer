@@ -1070,6 +1070,22 @@ body img {
 	color: var(--vscode-menu-selectionForeground, #ffffff);
 }
 
+.layer-filter-copy-menu .context-menu-item {
+	display: block;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	text-align: left;
+	white-space: nowrap;
+}
+
+.layer-filter-copy-menu .context-menu-item:hover,
+.layer-filter-copy-menu .context-menu-item:focus-visible {
+	background: var(--vscode-menu-selectionBackground, #094771);
+	color: var(--vscode-menu-selectionForeground, #ffffff);
+	outline: none;
+}
+
 .context-menu-separator {
 	height: 1px;
 	background: var(--vscode-menu-separatorBackground, #454545);
@@ -1677,8 +1693,8 @@ body img {
 }
 
 .layer-filter-toggle-inline {
-	margin-right: auto;
-	min-width: 78px;
+	flex: 1 1 auto;
+	min-width: 0;
 	text-align: left;
 }
 

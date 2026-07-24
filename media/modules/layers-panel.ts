@@ -1001,6 +1001,46 @@ export class LayersPanel {
 		field.append(caption, input, output); return field;
 	}
 
+	_openFilterCopyMenu(layer: Layer, id: string, anchor: HTMLButtonElement): void {
+		document.querySelector('.layer-filter-copy-menu')?.remove();
+		const menu = document.createElement('div');
+		menu.className = 'custom-context-menu layer-filter-copy-menu';
+		menu.setAttribute('role', 'menu');
+		const currentTarget = clippingTarget(this.manager.layers, this.manager.layers.indexOf(layer));
+		for (const candidate of [...this.manager.layers].reverse()) {
+			if (candidate.kind === 'adjustment' || !candidate.data || !candidate.id) { continue; }
+			const item = document.createElement('button');
+			item.type = 'button';
+			item.className = 'context-menu-item';
+			item.setAttribute('role', 'menuitem');
+			item.textContent = `Copy filter to “${candidate.name || candidate.id}”${candidate === currentTarget ? ' (duplicate here)' : ''}`;
+			item.addEventListener('click', event => {
+				event.stopPropagation();
+				const targetId = candidate.id as string;
+				const created = this.manager.copyAdjustmentLayer(id, targetId);
+				document.removeEventListener('pointerdown', close);
+				menu.remove();
+				if (!created) { return; }
+				this.expandedEffectStacks.add(targetId);
+				this.expandedAdjustments.add(created);
+				this.refresh();
+				this.onChange();
+			});
+			menu.appendChild(item);
+		}
+		document.body.appendChild(menu);
+		const bounds = anchor.getBoundingClientRect();
+		const menuBounds = menu.getBoundingClientRect();
+		menu.style.left = `${Math.max(4, Math.min(window.innerWidth - menuBounds.width - 4, bounds.right - menuBounds.width))}px`;
+		menu.style.top = `${Math.max(4, Math.min(window.innerHeight - menuBounds.height - 4, bounds.bottom + 2))}px`;
+		const close = (event: PointerEvent) => {
+			if (menu.contains(event.target as Node) || event.target === anchor) { return; }
+			menu.remove();
+			document.removeEventListener('pointerdown', close);
+		};
+		document.addEventListener('pointerdown', close);
+	}
+
 	/**
 	 * @param index 0 = base/background.
 	 */
@@ -1269,6 +1309,31 @@ export class LayersPanel {
 			this.onChange();
 		});
 
+		let duplicate: HTMLButtonElement | null = null;
+		if (!nestedEffect && !isAdjustment && layer.data) {
+			duplicate = document.createElement('button');
+			duplicate.className = 'layers-btn';
+			duplicate.textContent = '⧉';
+			duplicate.title = 'Duplicate this layer with all attached filters';
+			duplicate.setAttribute('aria-label', 'Duplicate layer with filters');
+			duplicate.addEventListener('click', () => {
+				const copyId = this.manager.duplicateLayerWithAdjustments(id);
+				if (copyId && this.expandedEffectStacks.has(id)) { this.expandedEffectStacks.add(copyId); }
+				this.refresh();
+				this.onChange();
+			});
+		} else if (isAdjustment && layer.adjustment) {
+			duplicate = document.createElement('button');
+			duplicate.className = 'layers-btn';
+			duplicate.textContent = '⧉';
+			duplicate.title = 'Copy this filter to an image layer';
+			duplicate.setAttribute('aria-label', 'Copy filter to layer');
+			duplicate.addEventListener('click', event => {
+				event.stopPropagation();
+				this._openFilterCopyMenu(layer, id, duplicate as HTMLButtonElement);
+			});
+		}
+
 		const remove = document.createElement('button');
 		remove.className = 'layers-btn layer-remove';
 		const pendingRemove = this._pendingRemoveId === id;
@@ -1294,6 +1359,7 @@ export class LayersPanel {
 			this.onChange();
 		});
 
+		if (duplicate) { actions.appendChild(duplicate); }
 		actions.appendChild(up);
 		actions.appendChild(down);
 		actions.appendChild(remove);

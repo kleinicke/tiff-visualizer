@@ -47,14 +47,21 @@ async function main() {
 		console.log('✅ NaN propagates through arithmetic');
 	}
 
-	// 3. Normal mode: NaN in the top layer is transparent (background shows through).
+	// 3. Normal mode: every non-finite value with non-zero weight propagates.
 	{
 		const bg = layer({ data: new Float32Array([10, 20]), width: 2, height: 1 });
 		const top = layer({ data: new Float32Array([NaN, 99]), width: 2, height: 1, blendMode: 'normal' });
 		const r = composite([bg, top], 2, 1);
-		assert.strictEqual(r.data[0], 10, 'NaN in top is transparent -> background value');
+		assert.ok(Number.isNaN(r.data[0]), 'contributing NaN in top propagates');
 		assert.strictEqual(r.data[1], 99, 'finite top value replaces background');
-		console.log('✅ Normal mode treats NaN as transparent');
+		const invalidBelow = layer({ data: new Float32Array([NaN]), width: 1, height: 1 });
+		const partialTop = layer({ data: new Float32Array([100]), width: 1, height: 1, opacity: 0.9 });
+		assert.ok(Number.isNaN(composite([invalidBelow, partialTop], 1, 1).data[0]),
+			'partially visible finite top cannot hide contributing NaN below');
+		const opaqueTop = layer({ data: new Float32Array([100]), width: 1, height: 1 });
+		assert.strictEqual(composite([invalidBelow, opaqueTop], 1, 1).data[0], 100,
+			'fully opaque finite top shields invalid data below');
+		console.log('✅ Normal mode propagates contributing NaN and honors exact opacity endpoints');
 	}
 
 	// 4. Opacity lerps in normal mode.
@@ -175,6 +182,37 @@ async function main() {
 		assert.ok(approx(r.data[2], 30 + 100 * (128 / 255), 1e-5), `blue alpha blend: ${r.data[2]}`);
 		assert.strictEqual(r.data[3], 255, 'opaque background keeps the result opaque');
 		console.log('✅ RGBA layers honor per-pixel alpha');
+	}
+
+	// 13b. Alpha/mask contribution, not finiteness, decides whether an invalid
+	//      source participates in the composite.
+	{
+		const bg = layer({ data: new Float32Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const hiddenInvalid = layer({ data: new Float32Array([NaN, NaN, NaN, 0]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const hiddenResult = composite([bg, hiddenInvalid], 1, 1);
+		assert.deepStrictEqual(Array.from(hiddenResult.data), [10, 20, 30, 255],
+			'zero-alpha invalid RGB does not contribute');
+
+		const partialInvalid = layer({ data: new Float32Array([NaN, NaN, NaN, 128]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const partialResult = composite([bg, partialInvalid], 1, 1);
+		assert.ok(Number.isNaN(partialResult.data[0]) && Number.isNaN(partialResult.data[1]) && Number.isNaN(partialResult.data[2]),
+			'non-zero-alpha invalid RGB propagates');
+
+		const invalidAlpha = layer({ data: new Float32Array([40, 50, 60, NaN]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const invalidAlphaResult = composite([bg, invalidAlpha], 1, 1);
+		assert.ok(Number.isNaN(invalidAlphaResult.data[0]) && Number.isNaN(invalidAlphaResult.data[1]) && Number.isNaN(invalidAlphaResult.data[2]),
+			'invalid alpha marks the covered result invalid instead of acting transparent');
+
+		const invalidBg = layer({ data: new Float32Array([NaN, NaN, NaN, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const opaqueNormal = layer({ data: new Float32Array([40, 50, 60, 255]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		assert.deepStrictEqual(Array.from(composite([invalidBg, opaqueNormal], 1, 1).data), [40, 50, 60, 255],
+			'opaque Normal source shields invalid backdrop');
+
+		const opaqueScreen = layer({ data: new Float32Array([40, 50, 60, 255]), width: 1, height: 1, channels: 4, typeMax: 255, blendMode: 'screen' });
+		const screenResult = composite([invalidBg, opaqueScreen], 1, 1);
+		assert.ok(Number.isNaN(screenResult.data[0]) && Number.isNaN(screenResult.data[1]) && Number.isNaN(screenResult.data[2]),
+			'backdrop-dependent blend mode propagates invalid backdrop');
+		console.log('✅ Non-finite RGBA channels propagate exactly when they contribute');
 	}
 
 	// 14. Arithmetic comparisons keep their historical RGB value-space behavior.

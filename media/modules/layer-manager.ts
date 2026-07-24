@@ -246,6 +246,52 @@ export class LayerManager {
 		return created.id as string;
 	}
 
+	/** Duplicate a raster layer and the clipped adjustment layers it owns. */
+	duplicateLayerWithAdjustments(id: string): string | null {
+		const sourceIndex = this.layers.findIndex(layer => layer.id === id);
+		const source = this.layers[sourceIndex];
+		if (sourceIndex < 0 || !source || source.kind === 'adjustment' || !source.data) { return null; }
+		this._recordHistory();
+		let end = sourceIndex + 1;
+		while (end < this.layers.length && this.layers[end].kind === 'adjustment' && this.layers[end].clipped
+			&& (this.layers[end].parentId || undefined) === (source.parentId || undefined)) { end++; }
+		const copies = this.layers.slice(sourceIndex, end).map((layer, index) => {
+			const copy = cloneHistoryLayer(layer);
+			copy.id = `layer-${_nextLayerId++}`;
+			copy.sourceNodeId = undefined;
+			if (index === 0) { copy.name = `${layer.name || 'Layer'} copy`; }
+			return copy;
+		});
+		this.layers.splice(end, 0, ...copies);
+		this._lastComposite = null;
+		return copies[0].id as string;
+	}
+
+	/** Copy one adjustment, preserving its parameters, onto another raster layer. */
+	copyAdjustmentLayer(adjustmentId: string, targetId: string): string | null {
+		const source = this.layers.find(layer => layer.id === adjustmentId);
+		const targetIndex = this.layers.findIndex(layer => layer.id === targetId);
+		const target = this.layers[targetIndex];
+		if (!source?.adjustment || source.kind !== 'adjustment' || targetIndex < 0 || !target?.data || target.kind === 'adjustment') { return null; }
+		this._recordHistory();
+		const copy = cloneHistoryLayer(source);
+		copy.id = `layer-${_nextLayerId++}`;
+		copy.name = `${source.name || 'Filter'} copy`;
+		copy.parentId = target.parentId;
+		copy.groupPath = target.groupPath ? [...target.groupPath] : undefined;
+		copy.groupIds = target.groupIds ? [...target.groupIds] : undefined;
+		copy.clipped = true;
+		copy.sourceNodeId = undefined;
+		copy.typeMax = target.typeMax || copy.typeMax;
+		let insertAt = targetIndex + 1;
+		while (insertAt < this.layers.length && this.layers[insertAt].kind === 'adjustment'
+			&& this.layers[insertAt].clipped
+			&& (this.layers[insertAt].parentId || undefined) === (target.parentId || undefined)) { insertAt++; }
+		this.layers.splice(insertAt, 0, copy);
+		this._lastComposite = null;
+		return copy.id as string;
+	}
+
 	removeLayer(id: string): void {
 		const idx = this.layers.findIndex(l => l.id === id);
 		// Keep at least one layer (it defines the canvas).
@@ -312,16 +358,58 @@ export class LayerManager {
 	}
 
 	/**
-	 * Reorder a layer within the stack (0 = bottom).
+	 * Reorder a layer within the stack (0 = bottom). Raster layers move together
+	 * with their clipped adjustments; clipped adjustments remain inside their
+	 * owner's filter stack.
 	 */
 	reorderLayer(id: string, newIndex: number): void {
 		const idx = this.layers.findIndex(l => l.id === id);
 		if (idx < 0) { return; }
-		const clamped = Math.max(0, Math.min(this.layers.length - 1, newIndex));
-		if (clamped === idx) { return; }
+		const layer = this.layers[idx];
+		const direction = Math.sign(newIndex - idx);
+		if (!direction) { return; }
+
+		if (layer.kind === 'adjustment' && layer.clipped) {
+			let ownerIndex = idx - 1;
+			while (ownerIndex >= 0 && this.layers[ownerIndex].clipped
+				&& (this.layers[ownerIndex].parentId || undefined) === (layer.parentId || undefined)) { ownerIndex--; }
+			if (ownerIndex < 0) { return; }
+			let end = ownerIndex + 1;
+			while (end < this.layers.length && this.layers[end].kind === 'adjustment' && this.layers[end].clipped
+				&& (this.layers[end].parentId || undefined) === (layer.parentId || undefined)) { end++; }
+			const clamped = Math.max(ownerIndex + 1, Math.min(end - 1, newIndex));
+			if (clamped === idx) { return; }
+			this._recordHistory();
+			const [adjustment] = this.layers.splice(idx, 1);
+			this.layers.splice(clamped, 0, adjustment);
+			this._lastComposite = null;
+			return;
+		}
+
+		let bundleEnd = idx + 1;
+		while (bundleEnd < this.layers.length && this.layers[bundleEnd].kind === 'adjustment'
+			&& this.layers[bundleEnd].clipped
+			&& (this.layers[bundleEnd].parentId || undefined) === (layer.parentId || undefined)) { bundleEnd++; }
+		let candidateIndex = direction > 0 ? bundleEnd : idx - 1;
+		while (candidateIndex >= 0 && candidateIndex < this.layers.length) {
+			const candidate = this.layers[candidateIndex];
+			if ((candidate.parentId || undefined) === (layer.parentId || undefined) && candidate.kind !== 'adjustment' && candidate.data) { break; }
+			candidateIndex += direction;
+		}
+		if (candidateIndex < 0 || candidateIndex >= this.layers.length) { return; }
+		const target = this.layers[candidateIndex];
 		this._recordHistory();
-		const [layer] = this.layers.splice(idx, 1);
-		this.layers.splice(clamped, 0, layer);
+		const bundle = this.layers.splice(idx, bundleEnd - idx);
+		const targetIndex = this.layers.indexOf(target);
+		if (direction > 0) {
+			let targetEnd = targetIndex + 1;
+			while (targetEnd < this.layers.length && this.layers[targetEnd].kind === 'adjustment'
+				&& this.layers[targetEnd].clipped
+				&& (this.layers[targetEnd].parentId || undefined) === (target.parentId || undefined)) { targetEnd++; }
+			this.layers.splice(targetEnd, 0, ...bundle);
+		} else {
+			this.layers.splice(targetIndex, 0, ...bundle);
+		}
 		this._lastComposite = null;
 	}
 

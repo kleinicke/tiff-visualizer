@@ -16,8 +16,9 @@
  *    (offsetX, offsetY). The canvas size is provided by the caller (defaults to
  *    the background layer). Negative offsets / overhang are allowed.
  *  - A per-pixel coverage flag distinguishes "no layer overlaps here" (stays
- *    no-data) from "a layer has an actual NaN value here". NaN is transparent
- *    for `normal` (the layer below shows through) and propagates for arithmetic.
+ *    no-data) from "a layer has an actual NaN value here". A non-finite channel
+ *    propagates whenever it has non-zero compositing weight. Only zero alpha,
+ *    opacity, clipping, or mask coverage shields the composite from it.
  */
 
 export type AdjustmentChannel = { shadowInput?: number; highlightInput?: number; shadowOutput?: number; highlightOutput?: number; midtoneInput?: number } | { input: number; output: number }[];
@@ -109,8 +110,8 @@ export interface CompositeResult {
 
 /**
  * Blend mode metadata. `arithmetic: true` means the mode combines raw float
- * values (NaN propagates); `arithmetic: false` is display-style alpha blending
- * (NaN is treated as transparent).
+ * values; `arithmetic: false` is display-style alpha blending. Both preserve
+ * non-finite contributing values.
  */
 export const BLEND_MODES: { id: string; label: string; arithmetic: boolean; mask?: boolean }[] = [
 	{ id: 'normal', label: 'Normal', arithmetic: false },
@@ -213,6 +214,45 @@ export function blendDocumentValue(below: number, src: number, mode: string, typ
 }
 
 /**
+ * Interpolate two channels without allowing an invalid contributing value to
+ * disappear. Exact endpoints are handled first so zero-weight values genuinely
+ * do not contribute (for example, an opaque source shields invalid data below).
+ */
+function strictLerp(below: number, src: number, sourceWeight: number): number {
+	if (sourceWeight <= 0) { return below; }
+	if (sourceWeight >= 1) { return src; }
+	return Number.isFinite(below) && Number.isFinite(src)
+		? below + (src - below) * sourceWeight
+		: NaN;
+}
+
+function compositeNormalChannel(below: number, src: number, sourceAlpha: number, destinationAlpha: number, outputAlpha: number): number {
+	if (destinationAlpha <= 0 || sourceAlpha >= 1) { return src; }
+	if (!Number.isFinite(below) || !Number.isFinite(src)) { return NaN; }
+	return (src * sourceAlpha + below * destinationAlpha * (1 - sourceAlpha)) / outputAlpha;
+}
+
+function compositeDocumentChannel(below: number, src: number, mode: string, sourceAlpha: number, destinationAlpha: number, outputAlpha: number, typeMax: number): number {
+	if (destinationAlpha <= 0) { return src; }
+	if (mode === 'normal') { return compositeNormalChannel(below, src, sourceAlpha, destinationAlpha, outputAlpha); }
+	if (!Number.isFinite(below) || !Number.isFinite(src)) { return NaN; }
+	const blended = blendDocumentValue(below, src, mode, typeMax);
+	return ((1 - sourceAlpha) * destinationAlpha * below
+		+ (1 - destinationAlpha) * sourceAlpha * src
+		+ destinationAlpha * sourceAlpha * blended) / outputAlpha;
+}
+
+/** Store an invalid, visibly covered pixel. Returns one when coverage is new. */
+function coverInvalidPixel(data: Float32Array, covered: Float32Array, pixel: number, dataIndex: number, channels: number): number {
+	const wasCovered = covered[pixel] > 0;
+	const colorChannels = channels === 4 ? 3 : channels;
+	for (let channel = 0; channel < colorChannels; channel++) { data[dataIndex + channel] = NaN; }
+	covered[pixel] = 1;
+	if (channels === 4) { data[dataIndex + 3] = 1; }
+	return wasCovered ? 0 : 1;
+}
+
+/**
  * Determine the composite channel count: 3 if any visible layer is colour,
  * otherwise 1.
  */
@@ -263,20 +303,22 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 			let di = pixel * 4;
 			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * layerChannels;
 			for (let x = xStart; x < xEnd; x++, pixel++, di += 4, si += layerChannels) {
-				const gray = Number(srcData[si]) * valueScale;
-				if (!Number.isFinite(gray)) { continue; }
 				const sourceAlpha = layerChannels === 2 ? Number(srcData[si + 1]) / (layer.typeMax || outputTypeMax) : 1;
-				if (!Number.isFinite(sourceAlpha)) { continue; }
+				if (!Number.isFinite(sourceAlpha)) {
+					coveredCount += coverInvalidPixel(data, covered, pixel, di, 4);
+					continue;
+				}
 				const sa = Math.max(0, Math.min(1, sourceAlpha * opacity));
 				if (sa <= 0) { continue; }
+				const gray = Number(srcData[si]) * valueScale;
 				const da = covered[pixel], oa = sa + da * (1 - sa);
 				if (da <= 0) {
 					data[di] = data[di + 1] = data[di + 2] = gray;
 					coveredCount++;
 				} else {
-					data[di] = (gray * sa + data[di] * da * (1 - sa)) / oa;
-					data[di + 1] = (gray * sa + data[di + 1] * da * (1 - sa)) / oa;
-					data[di + 2] = (gray * sa + data[di + 2] * da * (1 - sa)) / oa;
+					data[di] = compositeNormalChannel(data[di], gray, sa, da, oa);
+					data[di + 1] = compositeNormalChannel(data[di + 1], gray, sa, da, oa);
+					data[di + 2] = compositeNormalChannel(data[di + 2], gray, sa, da, oa);
 				}
 				covered[pixel] = oa;
 				data[di + 3] = oa;
@@ -292,20 +334,22 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * layerChannels;
 			for (let x = xStart; x < xEnd; x++, pixel++, di += 4, si += layerChannels) {
 				const sourceAlpha = layerChannels === 4 ? Number(srcData[si + 3]) / (layer.typeMax || 255) : 1;
-				if (!Number.isFinite(sourceAlpha)) { continue; }
+				if (!Number.isFinite(sourceAlpha)) {
+					coveredCount += coverInvalidPixel(data, covered, pixel, di, 4);
+					continue;
+				}
 				const sa = Math.max(0, Math.min(1, sourceAlpha * opacity));
 				if (sa <= 0) { continue; }
 				const da = covered[pixel];
 				const oa = sa + da * (1 - sa);
 				const s0 = srcData[si] * valueScale, s1 = srcData[si + 1] * valueScale, s2 = srcData[si + 2] * valueScale;
-				if (!Number.isFinite(s0) || !Number.isFinite(s1) || !Number.isFinite(s2)) { continue; }
 				if (da <= 0) {
 					data[di] = s0; data[di + 1] = s1; data[di + 2] = s2;
 					coveredCount++;
 				} else {
-					data[di] = (s0 * sa + data[di] * da * (1 - sa)) / oa;
-					data[di + 1] = (s1 * sa + data[di + 1] * da * (1 - sa)) / oa;
-					data[di + 2] = (s2 * sa + data[di + 2] * da * (1 - sa)) / oa;
+					data[di] = compositeNormalChannel(data[di], s0, sa, da, oa);
+					data[di + 1] = compositeNormalChannel(data[di + 1], s1, sa, da, oa);
+					data[di + 2] = compositeNormalChannel(data[di + 2], s2, sa, da, oa);
 				}
 				covered[pixel] = oa;
 				data[di + 3] = oa; // normalized until the final typeMax is known
@@ -324,11 +368,8 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 					data[pixel] = s;
 					covered[pixel] = 1;
 					coveredCount++;
-				} else if (Number.isFinite(s)) {
-					const below = data[pixel];
-					data[pixel] = opaque || !Number.isFinite(below)
-						? s
-						: below + (s - below) * opacity;
+				} else {
+					data[pixel] = strictLerp(data[pixel], s, opacity);
 				}
 			}
 		}
@@ -348,18 +389,15 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 					data[di + 2] = s;
 					covered[pixel] = 1;
 					coveredCount++;
-				} else if (Number.isFinite(s)) {
+				} else {
 					if (opaque) {
 						data[di] = s;
 						data[di + 1] = s;
 						data[di + 2] = s;
 					} else {
-						const b0 = data[di];
-						const b1 = data[di + 1];
-						const b2 = data[di + 2];
-						data[di] = Number.isFinite(b0) ? b0 + (s - b0) * opacity : s;
-						data[di + 1] = Number.isFinite(b1) ? b1 + (s - b1) * opacity : s;
-						data[di + 2] = Number.isFinite(b2) ? b2 + (s - b2) * opacity : s;
+						data[di] = strictLerp(data[di], s, opacity);
+						data[di + 1] = strictLerp(data[di + 1], s, opacity);
+						data[di + 2] = strictLerp(data[di + 2], s, opacity);
 					}
 				}
 			}
@@ -374,7 +412,10 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 			let si = ((y - offsetY) * layer.width + (xStart - offsetX)) * 4;
 			for (let x = xStart; x < xEnd; x++, pixel++, di += 3, si += 4) {
 				const rawAlpha = Number(srcData[si + 3]) / (layer.typeMax || 255);
-				if (!Number.isFinite(rawAlpha)) { continue; }
+				if (!Number.isFinite(rawAlpha)) {
+					coveredCount += coverInvalidPixel(data, covered, pixel, di, 3);
+					continue;
+				}
 				const alpha = Math.max(0, Math.min(1, rawAlpha * opacity));
 				if (alpha <= 0) { continue; }
 				const s0 = srcData[si] * valueScale, s1 = srcData[si + 1] * valueScale, s2 = srcData[si + 2] * valueScale;
@@ -382,10 +423,9 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 					data[di] = s0; data[di + 1] = s1; data[di + 2] = s2;
 					covered[pixel] = 1; coveredCount++;
 				} else {
-					const b0 = data[di], b1 = data[di + 1], b2 = data[di + 2];
-					data[di] = Number.isFinite(b0) ? b0 + (s0 - b0) * alpha : s0;
-					data[di + 1] = Number.isFinite(b1) ? b1 + (s1 - b1) * alpha : s1;
-					data[di + 2] = Number.isFinite(b2) ? b2 + (s2 - b2) * alpha : s2;
+					data[di] = strictLerp(data[di], s0, alpha);
+					data[di + 1] = strictLerp(data[di + 1], s1, alpha);
+					data[di + 2] = strictLerp(data[di + 2], s2, alpha);
 				}
 			}
 		}
@@ -408,22 +448,13 @@ function compositeNormalLayerFast(layer: Layer, data: Float32Array, covered: Flo
 					covered[pixel] = 1;
 					coveredCount++;
 				} else if (opaque) {
-					if (Number.isFinite(s0)) data[di] = s0;
-					if (Number.isFinite(s1)) data[di + 1] = s1;
-					if (Number.isFinite(s2)) data[di + 2] = s2;
+					data[di] = s0;
+					data[di + 1] = s1;
+					data[di + 2] = s2;
 				} else {
-					if (Number.isFinite(s0)) {
-						const b = data[di];
-						data[di] = Number.isFinite(b) ? b + (s0 - b) * opacity : s0;
-					}
-					if (Number.isFinite(s1)) {
-						const b = data[di + 1];
-						data[di + 1] = Number.isFinite(b) ? b + (s1 - b) * opacity : s1;
-					}
-					if (Number.isFinite(s2)) {
-						const b = data[di + 2];
-						data[di + 2] = Number.isFinite(b) ? b + (s2 - b) * opacity : s2;
-					}
+					data[di] = strictLerp(data[di], s0, opacity);
+					data[di + 1] = strictLerp(data[di + 1], s1, opacity);
+					data[di + 2] = strictLerp(data[di + 2], s2, opacity);
 				}
 			}
 		}
@@ -437,9 +468,11 @@ function compositeDocumentLayerFast(layer: Layer, data: Float32Array, covered: F
 	const source = layer.data!, maximum = layer.typeMax || outputTypeMax, valueScale = outputTypeMax / maximum;
 	for (let pixel = 0, offset = 0; pixel < covered.length; pixel++, offset += 4) {
 		const sourceAlpha = Math.max(0, Math.min(1, Number(source[offset + 3]) / maximum * opacity));
-		if (!Number.isFinite(sourceAlpha)) { continue; }
+		if (!Number.isFinite(sourceAlpha)) {
+			coveredCount += coverInvalidPixel(data, covered, pixel, offset, 4);
+			continue;
+		}
 		if (sourceAlpha <= 0) { continue; }
-		if (!Number.isFinite(source[offset]) || !Number.isFinite(source[offset + 1]) || !Number.isFinite(source[offset + 2])) { continue; }
 		const destinationAlpha = covered[pixel];
 		const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
 		if (destinationAlpha <= 0) {
@@ -448,9 +481,8 @@ function compositeDocumentLayerFast(layer: Layer, data: Float32Array, covered: F
 		} else {
 			for (let channel = 0; channel < 3; channel++) {
 				const foreground = Number(source[offset + channel]) * valueScale, background = data[offset + channel];
-				const blended = blendDocumentValue(background, foreground, mode, outputTypeMax);
-				data[offset + channel] = ((1 - sourceAlpha) * destinationAlpha * background
-					+ (1 - destinationAlpha) * sourceAlpha * foreground + destinationAlpha * sourceAlpha * blended) / outputAlpha;
+				data[offset + channel] = compositeDocumentChannel(
+					background, foreground, mode, sourceAlpha, destinationAlpha, outputAlpha, outputTypeMax);
 			}
 		}
 		covered[pixel] = outputAlpha;
@@ -477,11 +509,13 @@ function sourceAlphaAt(layer: Layer, canvasX: number, canvasY: number): number {
 	const ly = canvasY - Math.round(layer.offsetY ?? 0);
 	if (lx < 0 || ly < 0 || lx >= layer.width || ly >= layer.height || !layer.data) { return 0; }
 	const base = (ly * layer.width + lx) * layer.channels;
+	const coverage = rasterMaskFactor(layer, canvasX, canvasY) * Math.max(0, Math.min(1, layer.opacity ?? 1));
+	if (coverage <= 0) { return 0; }
 	const alpha = layer.channels === 2 || layer.channels === 4
 		? Number(layer.data[base + layer.channels - 1]) / (layer.typeMax || 255)
 		: 1;
-	if (!Number.isFinite(alpha)) { return 0; }
-	return Math.max(0, Math.min(1, alpha * rasterMaskFactor(layer, canvasX, canvasY) * Math.max(0, Math.min(1, layer.opacity ?? 1))));
+	if (!Number.isFinite(alpha)) { return NaN; }
+	return Math.max(0, Math.min(1, alpha * coverage));
 }
 
 function layerAlphaSurface(layer: Layer, canvasWidth: number, canvasHeight: number): Float32Array {
@@ -925,17 +959,21 @@ function compositePrepared(layers: Layer[], canvasWidth: number, canvasHeight: n
 						continue;
 					}
 					if (!documentBlend) { continue; }
-					const sourceAlpha = sourceAlphaAt(layer, x, y) * clippedAlpha;
+					const ownAlpha = sourceAlphaAt(layer, x, y);
+					if (ownAlpha <= 0 || clippedAlpha <= 0) { continue; }
+					if (!Number.isFinite(ownAlpha) || !Number.isFinite(clippedAlpha)) {
+						coveredCount += coverInvalidPixel(data, covered, pixel, di, outChannels);
+						continue;
+					}
+					const sourceAlpha = ownAlpha * clippedAlpha;
 					if (sourceAlpha <= 0) { continue; }
 					const destinationAlpha = covered[pixel];
 					const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
 					const colorChannels = outChannels === 4 ? 3 : outChannels;
 					for (let c = 0; c < colorChannels; c++) {
 						const s = src[c], below = data[di + c];
-						if (!Number.isFinite(s)) { continue; }
-						if (destinationAlpha <= 0 || !Number.isFinite(below)) { data[di + c] = s; continue; }
-						const blended = blendDocumentValue(below, s, mode, outputTypeMax);
-						data[di + c] = ((1 - sourceAlpha) * destinationAlpha * below + (1 - destinationAlpha) * sourceAlpha * s + destinationAlpha * sourceAlpha * blended) / outputAlpha;
+						data[di + c] = compositeDocumentChannel(
+							below, s, mode, sourceAlpha, destinationAlpha, outputAlpha, outputTypeMax);
 					}
 					if (!destinationAlpha) { coveredCount++; }
 					covered[pixel] = outputAlpha;

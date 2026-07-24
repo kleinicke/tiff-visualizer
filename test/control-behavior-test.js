@@ -41,6 +41,35 @@ async function main() {
 		assert.strictEqual(filterManager.layers.find(layer => layer.id === id).adjustment.type, type);
 	}
 
+	const reorderManager = new LayerManager();
+	reorderManager.setBaseLayer({ data: new Uint8Array([10, 20, 30, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Bottom' });
+	const bottomId = reorderManager.layers[0].id;
+	const bottomFilterId = reorderManager.addAdjustmentLayer(bottomId, 'levels');
+	const topId = reorderManager.addLayer({ data: new Uint8Array([40, 50, 60, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Top' });
+	const topFilterId = reorderManager.addAdjustmentLayer(topId, 'curves');
+	reorderManager.reorderLayer(topId, reorderManager.layers.findIndex(layer => layer.id === topId) - 1);
+	assert.deepStrictEqual(reorderManager.layers.map(layer => layer.id), [topId, topFilterId, bottomId, bottomFilterId],
+		'moving an image down swaps complete image/filter bundles');
+	reorderManager.reorderLayer(topId, reorderManager.layers.findIndex(layer => layer.id === topId) + 1);
+	assert.deepStrictEqual(reorderManager.layers.map(layer => layer.id), [bottomId, bottomFilterId, topId, topFilterId],
+		'moving an image up keeps both filter stacks attached');
+	reorderManager.reorderLayer(topFilterId, reorderManager.layers.findIndex(layer => layer.id === topFilterId) + 1);
+	assert.deepStrictEqual(reorderManager.layers.map(layer => layer.id), [bottomId, bottomFilterId, topId, topFilterId],
+		'a filter cannot move outside its owning image');
+
+	const duplicateId = reorderManager.duplicateLayerWithAdjustments(bottomId);
+	const duplicateIndex = reorderManager.layers.findIndex(layer => layer.id === duplicateId);
+	assert.strictEqual(reorderManager.layers[duplicateIndex].name, 'Bottom copy');
+	assert.strictEqual(reorderManager.layers[duplicateIndex + 1].adjustment.type, 'levels',
+		'duplicating an image also duplicates its attached filters');
+	assert.notStrictEqual(reorderManager.layers[duplicateIndex + 1].adjustment, reorderManager.layers.find(layer => layer.id === bottomFilterId).adjustment,
+		'duplicated filter parameters are independently editable');
+	const copiedFilterId = reorderManager.copyAdjustmentLayer(topFilterId, duplicateId);
+	const copiedFilter = reorderManager.layers.find(layer => layer.id === copiedFilterId);
+	assert.strictEqual(copiedFilter.adjustment.type, 'curves');
+	assert.notStrictEqual(copiedFilter.adjustment, reorderManager.layers.find(layer => layer.id === topFilterId).adjustment,
+		'copying a filter to another image creates independent parameters');
+
 	const undoManager = new LayerManager();
 	undoManager.setBaseLayer({ data: new Uint8Array([64, 64, 64, 255]), width: 1, height: 1, channels: 4, isFloat: false, typeMax: 255, name: 'Undo base' });
 	const undoBaseId = undoManager.layers[0].id;
