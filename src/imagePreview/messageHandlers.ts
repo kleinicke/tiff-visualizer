@@ -25,8 +25,8 @@ export class MessageRouter {
 		this.handlers.set('stats', new StatsMessageHandler());
 		this.handlers.set('formatInfo', new FormatInfoMessageHandler());
 		this.handlers.set('ready', new ReadyMessageHandler());
-		this.handlers.set('didExportAsPng', new ExportPngMessageHandler());
-		this.handlers.set('didExportAsXcf', new ExportXcfMessageHandler());
+		this.handlers.set('didGetLayerExportCompatibility', new LayerExportCompatibilityMessageHandler());
+		this.handlers.set('didExportLayerDocument', new ExportLayerDocumentMessageHandler());
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
 		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
@@ -158,15 +158,20 @@ class ReadyMessageHandler implements MessageHandler {
 	}
 }
 
-class ExportPngMessageHandler implements MessageHandler {
+class LayerExportCompatibilityMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		preview.fireExportEvent(message.payload);
+		preview.fireLayerExportCompatibilityEvent(Array.isArray(message.options) ? message.options : []);
 	}
 }
 
-class ExportXcfMessageHandler implements MessageHandler {
+class ExportLayerDocumentMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		preview.fireExportXcfEvent({ payload: message.payload, warnings: Array.isArray(message.warnings) ? message.warnings : [], error: message.error });
+		preview.fireLayerExportEvent({
+			format: message.format,
+			payload: message.payload,
+			warnings: Array.isArray(message.warnings) ? message.warnings : [],
+			error: message.error,
+		});
 	}
 }
 

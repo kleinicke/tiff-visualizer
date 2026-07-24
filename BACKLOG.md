@@ -463,7 +463,10 @@ ZIP container with XML stack metadata and PNG/SVG layer assets.
 selectively extracts referenced PNG layers, retains groups and source-node
 properties, reconstructs normal alpha compositions, measures them against
 `mergedimage.png`, and exposes an Integrated/Reconstructed switch. Compatible
-raster nodes can be expanded into the existing Layers View. Remaining ORA work
+raster nodes can be expanded into the existing Layers View. The unified exporter
+writes an authoritative merged PNG plus editable raster/group entries; filters
+are retained in the merged result and reported because ORA has no adjustment
+layer model. Remaining ORA work
 is lazy per-node extraction, non-normal SVG blend operators, SVG assets, masks,
 color management, editable group properties with isolated group compositing,
 and the remaining professional layer-tree features listed above.
@@ -502,6 +505,9 @@ and color-balance adjustment layers/filter masks are translated from
 `.filterconfig` into editable approximate compositor filters. Pass-through groups,
 non-8-bit/color-managed paint devices, cached projections, advanced filters,
 vector/generator nodes, and animation remain.
+The exporter writes 8-bit paint devices, hierarchy, merged/preview images, and
+the supported filter configurations; raster masks and unsupported operations
+are currently baked or reported.
 
 - Phase 1: safely extract `mergedimage.png`, preview/thumbnail, document info,
   and basic metadata; route the preview through the existing PNG pipeline.
@@ -529,8 +535,10 @@ and PSB behavior against representative fixtures.
 
 **Implementation status:** PSD and basic PSB files expose their authoritative
 8/16/32-bit composite plus the parsed layer/group tree, bounds, visibility,
-opacity, kind, and blend mode. Layer pixel payloads are intentionally skipped.
-Lazy raster/cached-layer decode, masks, clipping, thumbnails, color profiles,
+opacity, kind, blend mode, cached raster pixels, common masks, clipping, and
+supported adjustment descriptors. The exporter writes a new 8-bit PSD with an
+authoritative composite, raster/group hierarchy, masks, clipping, and the
+supported adjustment layers. Lazy decode, thumbnails, color profiles,
 blend/group semantics, effects, smart objects, and genuinely large PSB files
 remain unsupported or inspect-only.
 
@@ -563,10 +571,11 @@ reference.
 **Implementation status:** a bounded worker parser reconstructs common 8-bit
 RGB, grayscale, and indexed raster layers with offsets, visibility, opacity,
 item-path hierarchy, common blend modes, and raw/RLE/zlib tile compression.
-Decoded groups become isolated editable compositor surfaces. A conservative
-XCF v3 writer exports a new 8-bit layered file with hierarchy, offsets,
-visibility, opacity, and common modes; raster masks and clipping are currently
-baked into layer alpha and every approximation is reported. GIMP 3/XCF v20+
+Decoded groups become isolated editable compositor surfaces. The exporter now
+targets GIMP 3 with XCF v22 and 64-bit pointers, writing an 8-bit layered file
+with hierarchy, offsets, visibility, opacity, common modes, and mapped GEGL/GIMP
+effects. Raster masks and clipping are currently baked into layer alpha and
+every approximation is reported. GIMP 3/XCF v20+
 layer-effect records are parsed, with common GEGL levels, brightness/contrast,
 exposure, invert, threshold, posterize, hue/chroma, saturation, channel/mono
 mixer, and color-balance operations translated to approximate editable filters.
@@ -667,6 +676,26 @@ for native layer reconstruction.
    smart/linked documents, color-management expansion, GPU acceleration.
 8. **Affinity embedded preview:** opportunistic and explicitly not native
    document support.
+
+### Layer compositor performance
+
+The editable compositor is currently TypeScript/JavaScript on the webview
+thread. It now reuses the composed float surface when only display settings
+(such as gamma or normalization) change, and invalidates that cache for every
+layer mutation. `npm run benchmark:layers` provides a repeatable mixed
+raster/filter workload; its dimensions, layer count and runs can be increased
+with the documented environment variables in the benchmark file.
+
+Remaining work, in measured order:
+
+- Record representative 4K/8K documents and establish interaction and final
+  render budgets on the supported VS Code platforms.
+- Move full-resolution composition to a dedicated worker while retaining a
+  lower-resolution interactive preview during slider and curve gestures.
+- Add dirty-region and per-group surface caches so visibility/filter edits do
+  not rebuild unrelated branches.
+- Evaluate WebGL/WebGPU or Rust/WASM only after the benchmark identifies the
+  dominant operations; retain the CPU compositor as the correctness reference.
 
 This is a **Difficulty: 5 programme**, not one feature. The first useful
 increments (KRA integrated preview or ORA raster layers) are Difficulty 2–3;

@@ -2,6 +2,21 @@ import * as vscode from 'vscode';
 import { ImageSettingsManager } from './imageSettings';
 import { AppStateManager } from './appStateManager';
 
+export type LayerExportFormat = 'png' | 'ora' | 'xcf' | 'kra' | 'psd';
+export interface LayerExportOption {
+	format: LayerExportFormat;
+	label: string;
+	description: string;
+	detail: string;
+	compatible: boolean;
+}
+export interface LayerExportResult {
+	format: LayerExportFormat;
+	payload?: string;
+	warnings: string[];
+	error?: string;
+}
+
 export interface IImagePreviewManager {
 	readonly settingsManager: ImageSettingsManager;
 	readonly appStateManager: AppStateManager;
@@ -32,8 +47,8 @@ export interface IImagePreview {
 	zoomOut(): void;
 	copyImage(): void;
 	resetZoom(): void;
-	exportAsPng(): Promise<string | undefined>;
-	exportAsXcf(): Promise<{ payload?: string; warnings: string[]; error?: string } | undefined>;
+	getLayerExportCompatibility(): Promise<LayerExportOption[] | undefined>;
+	exportLayerDocument(format: LayerExportFormat): Promise<LayerExportResult | undefined>;
 	startComparison(peerUri: vscode.Uri): void;
 	updateStatusBar(): void;
 	readonly imageCollection: readonly vscode.Uri[];

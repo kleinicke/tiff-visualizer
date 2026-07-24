@@ -15,6 +15,7 @@ function approx(a, b, eps = 1e-6) {
 async function main() {
 	const mod = await import(path.join('..', 'out', 'media', 'modules', 'layer-compositor.js').replace(/\\/g, '/'));
 	const { composite, blendValue, blendDocumentValue, evaluateCurvePoints, isArithmeticMode, centeredOffset, BLEND_MODES } = mod;
+	const { LayerManager } = await import(path.join('..', 'out', 'media', 'modules', 'layer-manager.js').replace(/\\/g, '/'));
 
 	console.log('🧪 Running Layer Compositor tests...\n');
 
@@ -328,6 +329,21 @@ async function main() {
 		const mapped = apply([128, 128, 128], { type: 'gradient map', stops: [{ position: 0, color: { r: 0, g: 0, b: 0 } }, { position: 1, color: { r: 255, g: 0, b: 0 } }] });
 		assert.ok(mapped[0] > 127 && mapped[1] === 0 && mapped[2] === 0);
 		console.log('✅ Exposure, brightness/contrast, invert, channel mixer, color balance, black & white, threshold/posterize, and gradient map');
+	}
+
+	// 24. Display-only setting changes may rerender the cached composite, while
+	//     all mutations invalidate it before the next compositor pass.
+	{
+		const manager = new LayerManager();
+		manager.setBaseLayer({ data: new Uint8Array([10, 20]), width: 2, height: 1, channels: 1, isFloat: false, typeMax: 255 });
+		const first = manager.getComposite();
+		assert.strictEqual(manager.getComposite(), first, 'unchanged layer stacks reuse the same composite');
+		manager.updateLayer(manager.layers[0].id, { opacity: 0.5 });
+		const updated = manager.getComposite();
+		assert.notStrictEqual(updated, first, 'layer edits invalidate the composite cache');
+		manager.moveLayer(manager.layers[0].id, 1, 0);
+		assert.notStrictEqual(manager.getComposite(), updated, 'layer movement invalidates the composite cache');
+		console.log('✅ Composite cache is reused for display-only rerenders and invalidated by layer edits');
 	}
 
 	console.log('\n🎉 All layer compositor tests passed.\n');

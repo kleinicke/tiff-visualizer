@@ -139,6 +139,8 @@ async function main() {
 	const { decodeLayeredPreview } = await import(decoderPath);
 	const writerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'xcf-writer.js');
 	const { writeLayerStackAsXcf } = await import(writerPath);
+	const documentWriterPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-document-writers.js');
+	const { analyzeLayerExports, writeLayerDocument } = await import(documentWriterPath);
 	const png = rgbaPng(2, 1, [12, 34, 56, 255]);
 
 	const ora = zipSync({
@@ -295,6 +297,51 @@ async function main() {
 	assert.strictEqual(exportedPaint.blendMode, 'multiply');
 	assert.deepStrictEqual(Array.from(exportedPaint.data.slice(3, 8)), [255, 0, 255, 0, 0], 'raster mask is baked into exported XCF alpha');
 	assert.ok(exported.warnings.some(warning => warning.includes('baked into alpha')));
+
+	const exportLayers = [
+		{ id: 'base', kind: 'raster', name: 'Base', data: new Uint8Array([30, 60, 90, 255, 100, 120, 140, 255]), width: 2, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 0.5, blendMode: 'normal' },
+		{ id: 'levels', kind: 'adjustment', name: 'Levels', width: 1, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 0.23, blendMode: 'normal', clipped: true, adjustment: { type: 'levels', rgb: { shadowInput: 10, highlightInput: 240, shadowOutput: 3, highlightOutput: 250, midtoneInput: 1.35 } } },
+		{ id: 'curves', kind: 'adjustment', name: 'Curves', width: 1, height: 1, channels: 4, typeMax: 255, visible: false, opacity: 0.57, blendMode: 'normal', clipped: true, adjustment: { type: 'curves', rgb: [{ input: 0, output: 8 }, { input: 96, output: 140 }, { input: 255, output: 245 }], red: [{ input: 0, output: 0 }, { input: 255, output: 220 }] } },
+		{ id: 'hue', kind: 'adjustment', name: 'Hue', width: 1, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 0.81, blendMode: 'normal', clipped: true, adjustment: { type: 'hue/saturation', master: { hue: -37, saturation: 24, lightness: -8 }, colorize: { hue: 212, saturation: 68, lightness: 11 }, colorizeEnabled: true } },
+	];
+	const renderedExport = { width: 2, height: 1, data: new Uint8ClampedArray([22, 55, 88, 255, 100, 122, 144, 255]) };
+	const compatibility = analyzeLayerExports(exportLayers);
+	assert.deepStrictEqual(compatibility.map(option => option.format), ['png', 'psd', 'xcf', 'kra', 'ora']);
+	assert.ok(compatibility.find(option => option.format === 'psd').compatible, 'PSD reports native compatibility for Levels');
+
+	const exportedPng = writeLayerDocument('png', exportLayers, 2, 1, renderedExport);
+	assert.deepStrictEqual(Array.from(exportedPng.data.slice(0, 8)), [137, 80, 78, 71, 13, 10, 26, 10]);
+	const exportedOraDocument = decodeLayeredPreview('ora', asArrayBuffer(writeLayerDocument('ora', exportLayers, 2, 1, renderedExport).data));
+	assert.deepStrictEqual(Array.from(exportedOraDocument.integratedData.slice(0, 4)), [22, 55, 88, 255]);
+	assert.strictEqual(exportedOraDocument.layerAssets.filter(asset => asset.kind === 'raster').length, 1);
+	const exportedKraDocument = decodeLayeredPreview('kra', asArrayBuffer(writeLayerDocument('kra', exportLayers, 2, 1, renderedExport).data));
+	assert.deepStrictEqual(Array.from(exportedKraDocument.data.slice(0, 4)), [22, 55, 88, 255]);
+	assert.ok(exportedKraDocument.layerAssets.some(asset => asset.kind === 'adjustment' && asset.adjustment.type === 'levels'), 'KRA keeps compatible clipped filter masks editable');
+	const exportedPsdDocument = decodeLayeredPreview('psd', asArrayBuffer(writeLayerDocument('psd', exportLayers, 2, 1, renderedExport).data));
+	assert.deepStrictEqual(Array.from(exportedPsdDocument.data.slice(0, 4)), [22, 55, 88, 255]);
+	assert.strictEqual(exportedPsdDocument.layerOrder, 'bottom-to-top', 'PSD decoder declares ag-psd compositing order correctly');
+	const psdManagerOrder = exportedPsdDocument.layerAssets;
+	assert.deepStrictEqual(psdManagerOrder.map(asset => asset.name), ['Base', 'Levels', 'Curves', 'Hue'], 'PSD filters remain attached above their raster after reopening');
+	assert.deepStrictEqual(psdManagerOrder.find(asset => asset.name === 'Levels').adjustment.rgb, exportLayers[1].adjustment.rgb, 'PSD keeps edited Levels values');
+	assert.deepStrictEqual(psdManagerOrder.find(asset => asset.name === 'Curves').adjustment, exportLayers[2].adjustment, 'PSD keeps edited curve points');
+	assert.deepStrictEqual(psdManagerOrder.find(asset => asset.name === 'Hue').adjustment.colorize, exportLayers[3].adjustment.colorize, 'PSD keeps edited colorize values');
+	assert.strictEqual(psdManagerOrder.find(asset => asset.name === 'Hue').adjustment.colorizeEnabled, true, 'PSD keeps Colorize enabled');
+	assert.ok(Math.abs(exportedPsdDocument.layerAssets.find(asset => asset.name === 'Base').opacity - 0.5) < 0.01, 'PSD keeps fractional layer opacity');
+	const exportedModernXcf = writeLayerDocument('xcf', exportLayers, 2, 1, renderedExport);
+	assert.match(new TextDecoder('ascii').decode(exportedModernXcf.data.slice(0, 14)), /gimp xcf v022/);
+	const modernXcfDocument = decodeLayeredPreview('xcf', asArrayBuffer(exportedModernXcf.data));
+	assert.strictEqual(modernXcfDocument.layerOrder, 'bottom-to-top');
+	assert.deepStrictEqual(modernXcfDocument.layerAssets.map(asset => asset.name), ['Base', 'Levels', 'Curves', 'Hue'], 'XCF preserves base-to-top filter order');
+	assert.deepStrictEqual(modernXcfDocument.layerAssets.slice(1).map(asset => Math.round(asset.opacity * 100)), [23, 57, 81], 'XCF preserves filter strength');
+	assert.deepStrictEqual(modernXcfDocument.layerAssets.slice(1).map(asset => asset.visible), [true, false, true], 'XCF preserves filter visibility');
+	assert.ok(modernXcfDocument.layerAssets.some(asset => asset.kind === 'adjustment' && asset.adjustment.type === 'levels'), 'GIMP 3 XCF keeps mapped layer effects editable');
+	assert.deepStrictEqual(modernXcfDocument.layerAssets.find(asset => asset.name === 'Curves').adjustment, exportLayers[2].adjustment, 'XCF keeps editable curve points on extension round trips');
+	assert.deepStrictEqual(modernXcfDocument.layerAssets.find(asset => asset.name === 'Hue').adjustment, exportLayers[3].adjustment, 'XCF keeps the complete hue/colorize model on extension round trips');
+	const colorizedXcf = decodeLayeredPreview('xcf', asArrayBuffer(writeLayerDocument('xcf', [
+		{ id: 'gray', kind: 'raster', name: 'Gray', data: new Uint8Array([128, 128, 128, 255]), width: 1, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 1, blendMode: 'normal' },
+		{ id: 'colorize', kind: 'adjustment', name: 'Colorize', width: 1, height: 1, channels: 4, typeMax: 255, visible: true, opacity: 1, blendMode: 'normal', clipped: true, adjustment: { type: 'hue/saturation', master: { hue: 0, saturation: 0, lightness: 0 }, colorize: { hue: 210, saturation: 80, lightness: 0 }, colorizeEnabled: true } },
+	], 1, 1, { width: 1, height: 1, data: new Uint8ClampedArray([26, 77, 230, 255]) }).data));
+	assert.notStrictEqual(colorizedXcf.data[0], colorizedXcf.data[2], 'XCF initial preview applies colorizing effects instead of showing the grayscale raster source');
 
 	console.log('Layered preview decoders passed: ORA, KRA, PSD/PSB, XCF, and Affinity.');
 }

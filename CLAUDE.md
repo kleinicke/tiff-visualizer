@@ -142,7 +142,7 @@ Side-by-side image comparison ([src/comparisonPanel/comparisonPanel.ts](src/comp
 All commands registered with `tiffVisualizer.` prefix ([src/imagePreview/commands.ts](src/imagePreview/commands.ts)):
 - **Zoom**: `zoomIn`, `zoomOut`, `resetZoom`
 - **Image adjustments**: `setGamma`, `setBrightness`, `setNormalizationRange`
-- **Export**: `exportAsPng`, `copyImage`
+- **Export**: `exportLayers` (PNG, ORA, GIMP 3 XCF, KRA, or PSD), `copyImage`
 - **Collection**: `browseAndAddToCollection` — adds a file to the active preview's image collection; accepts an optional URI (Explorer context menu) or prompts with a glob/path picker (command palette)
 - **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`
 - **Filters**: `filterByMask`, `toggleNanColor`

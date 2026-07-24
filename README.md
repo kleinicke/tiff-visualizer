@@ -6,7 +6,7 @@ Supports TIFF/OME-TIFF (including embedded multi-file filesets), FITS, DICOM, cl
 PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM. Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
-The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export the current visualization as PNG. Uses Rust for decoding several formats and the GPU for rendering to provide the fastest possible extension.
+The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export rendered or layered results. Uses Rust for decoding several formats and the GPU for rendering to provide the fastest possible extension.
 
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
@@ -47,7 +47,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
   Easily get the difference between two images or apply a mask onto one. This layer view allows dedicated compositions between multiple images.
 - **NaN Color**: Choose how NaN values are displayed.
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.
-- **Export and Copy**: Export the exact current visualization or Layers composition as PNG. Layers can also be saved to a new, limited 8-bit XCF for GIMP interchange; masks/clipping and unsupported modes are baked or reported rather than silently lost.
+- **Export and Copy**: One compatibility-aware **Export…** picker writes the exact rendered image as PNG or layered documents as ORA, GIMP 3 XCF, KRA, or PSD. It reports which filters, masks, clipping relationships, blend modes, and high-bit-depth layers remain editable or require approximation.
 - **VS Code Native Controls**: Most options are available from the right-click menu, command palette, or clickable status bar entries.
 - **Metadata panel** shows file info, image statistics (min/max/mean/std) and Exif/GPS sub-IFD tags.
 

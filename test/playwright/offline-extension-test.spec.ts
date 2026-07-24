@@ -121,7 +121,7 @@ test.describe('Offline TIFF Visualizer Extension Tests', () => {
       'tiffVisualizer.copyImage',
       'tiffVisualizer.resetZoom',
       'tiffVisualizer.setNormalizationRange',
-      'tiffVisualizer.exportAsPng',
+      'tiffVisualizer.exportLayers',
       'tiffVisualizer.setGamma',
       'tiffVisualizer.setBrightness',
       'tiffVisualizer.selectForCompare',

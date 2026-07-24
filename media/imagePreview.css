@@ -1439,9 +1439,10 @@ body img {
 }
 
 .layer-adjustment-controls {
+	position: relative;
 	display: grid;
 	gap: 5px;
-	padding: 3px 6px 7px;
+	padding: 3px 28px 7px 6px;
 	border-top: 1px solid color-mix(in srgb, var(--vscode-editorWidget-border, #454545) 60%, transparent);
 }
 
@@ -1565,9 +1566,24 @@ body img {
 }
 
 .layer-filter-remove {
-	width: max-content;
-	margin-top: 4px;
+	position: absolute;
+	top: 4px;
+	right: 5px;
+	width: 18px;
+	height: 18px;
+	min-width: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: 3px;
+	background: transparent;
 	color: var(--vscode-errorForeground);
+	font-size: 16px;
+	line-height: 16px;
+}
+
+.layer-filter-remove:hover,
+.layer-filter-remove:focus-visible {
+	background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.18));
 }
 
 .layer-gradient-colors {

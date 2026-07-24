@@ -61,7 +61,7 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
       'tiffVisualizer.copyImage',
       'tiffVisualizer.resetZoom',
       'tiffVisualizer.setNormalizationRange',
-      'tiffVisualizer.exportAsPng',
+      'tiffVisualizer.exportLayers',
       'tiffVisualizer.setGamma',
       'tiffVisualizer.setBrightness',
       'tiffVisualizer.selectForCompare',
@@ -129,4 +129,4 @@ test.describe('TIFF Visualizer Extension Core Tests', () => {
     
     console.log('✅ Test setup is complete');
   });
-}); 
+});

@@ -15,8 +15,7 @@ export interface LayersPanelCallbacks {
 	onVisibilityChange?: (visible: boolean) => void;
 	onPersist?: () => void;
 	onAddLayer?: () => void;
-	onExportPng?: () => void;
-	onExportXcf?: () => void;
+	onExport?: () => void;
 }
 
 export interface LayersPanelOptions {
@@ -157,8 +156,7 @@ export class LayersPanel {
 	onVisibilityChange?: (visible: boolean) => void;
 	onPersist?: () => void;
 	onAddLayer?: () => void;
-	onExportPng?: () => void;
-	onExportXcf?: () => void;
+	onExport?: () => void;
 	closable: boolean;
 	root: HTMLElement | null;
 	listEl: HTMLElement | null;
@@ -186,8 +184,7 @@ export class LayersPanel {
 		this.onVisibilityChange = callbacks.onVisibilityChange;
 		this.onPersist = callbacks.onPersist;
 		this.onAddLayer = callbacks.onAddLayer;
-		this.onExportPng = callbacks.onExportPng;
-		this.onExportXcf = callbacks.onExportXcf;
+		this.onExport = callbacks.onExport;
 		// In a dedicated Layers window the panel can't be closed (close the tab
 		// instead); only the minimize control is shown.
 		this.closable = options.closable !== false;
@@ -240,15 +237,10 @@ export class LayersPanel {
 		addBtn.addEventListener('click', () => this.onAddLayer?.());
 
 		const exportBtn = document.createElement('button');
-		exportBtn.className = 'layers-btn layers-export-png';
-		exportBtn.title = 'Export the current rendered composition as PNG';
-		exportBtn.textContent = 'PNG';
-		exportBtn.addEventListener('click', () => this.onExportPng?.());
-		const exportXcfBtn = document.createElement('button');
-		exportXcfBtn.className = 'layers-btn layers-export-xcf';
-		exportXcfBtn.title = 'Save a new layered XCF (limited 8-bit interchange export)';
-		exportXcfBtn.textContent = 'XCF';
-		exportXcfBtn.addEventListener('click', () => this.onExportXcf?.());
+		exportBtn.className = 'layers-btn layers-export';
+		exportBtn.title = 'Export as PNG, ORA, XCF, KRA, or PSD';
+		exportBtn.textContent = 'Export…';
+		exportBtn.addEventListener('click', () => this.onExport?.());
 
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
@@ -280,7 +272,6 @@ export class LayersPanel {
 		header.appendChild(title);
 		header.appendChild(addBtn);
 		header.appendChild(exportBtn);
-		header.appendChild(exportXcfBtn);
 		header.appendChild(groupsBtn);
 		header.appendChild(minimizeBtn);
 		if (this.closable) {
@@ -330,17 +321,22 @@ export class LayersPanel {
 
 		this.root = root;
 		this.listEl = list;
-		document.addEventListener('keydown', event => {
+		window.addEventListener('keydown', event => {
 			if (!this.isVisible() || event.key.toLowerCase() !== 'z' || (!event.ctrlKey && !event.metaKey) || event.altKey) { return; }
 			const target = event.target as HTMLElement | null;
 			// Preserve native text/number editing undo, but let the Layers
 			// history shortcut work while a slider, checkbox, colour input, or
 			// select still has focus after an edit.
 			if (target?.matches('textarea, [contenteditable="true"], input:not([type="range"]):not([type="checkbox"]):not([type="color"])')) { return; }
+			const redo = event.shiftKey;
 			event.preventDefault();
-			if (event.shiftKey) { this._redo(); }
-			else { this._undo(); }
-		});
+			event.stopPropagation();
+			event.stopImmediatePropagation();
+			// A focused custom editor owns Undo even when its local history is
+			// empty; falling through would undo unrelated VS Code file actions.
+			if (redo && this.manager.canRedo()) { this._redo(); }
+			else if (!redo && this.manager.canUndo()) { this._undo(); }
+		}, true);
 		this._applyCollapsed();
 		this.refresh();
 	}
@@ -657,7 +653,8 @@ export class LayersPanel {
 		const remove = document.createElement('button');
 		remove.type = 'button';
 		remove.className = 'layers-btn layer-filter-remove';
-		remove.textContent = 'Remove filter';
+		remove.textContent = '×';
+		remove.setAttribute('aria-label', 'Remove filter');
 		remove.title = 'Remove this filter (can be undone)';
 		remove.addEventListener('click', () => {
 			this.expandedAdjustments.delete(id);

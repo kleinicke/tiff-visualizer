@@ -3,7 +3,7 @@ import { initializeCanvas, readPsd } from 'ag-psd';
 import pako from 'pako';
 import UPNG from 'upng-js';
 import type { DecodedLayeredPreview, LayeredRasterAsset, LayerNodeKind, LayerNodeSummary, LayeredDocumentSummary, LayeredPixelArray } from './layered-document.js';
-import type { LayerAdjustment } from './layer-compositor.js';
+import { composite as compositeLayers, type Layer, type LayerAdjustment } from './layer-compositor.js';
 
 const MAX_PREVIEW_PIXELS = 150_000_000;
 const MAX_PREVIEW_BYTES = 600 * 1024 * 1024;
@@ -863,6 +863,8 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 		sampleFormat: bitDepth === 32 ? 3 : 1,
 		data,
 		layerAssets,
+		// ag-psd exposes the PSD sibling sequence in compositing order: raster
+		// bases precede their clipped adjustment layers.
 		layerOrder: 'bottom-to-top',
 		formatLabel: `${psb ? 'Photoshop PSB' : 'Photoshop PSD'} composite`,
 		formatType: psb ? 'psb' : 'psd',
@@ -1008,6 +1010,16 @@ function readXcfProperties(reader: XcfReader, start: number): XcfProperties {
 }
 
 function xcfEffectAdjustment(operation: string, args: Record<string, string | number | boolean>): LayerAdjustment | undefined {
+	const preserved = args['tiff-visualizer-adjustment'];
+	if (typeof preserved === 'string') {
+		try {
+			const value = JSON.parse(preserved) as LayerAdjustment;
+			if (value && typeof value === 'object' && typeof value.type === 'string') { return value; }
+		} catch {
+			// Continue with interoperable GEGL arguments if an unrelated writer
+			// happens to use the same argument name with invalid data.
+		}
+	}
 	const op = operation.toLowerCase().replace(/^(?:gegl|gimp):/, '').replace(/_/g, '-');
 	const number = (names: string[], fallback: number): number => {
 		for (const name of names) {
@@ -1263,18 +1275,11 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 	for (const layer of layers) if (layer.node.kind === 'group') { layer.node.children = nodesByParent.get(layer.node.id) || []; }
 	const root = nodesByParent.get(undefined) || layers.map(layer => layer.node);
 	const layerAssets: LayeredRasterAsset[] = [];
-	for (let index = 0; index < layers.length; index++) {
+	// XCF layer pointers are top-to-bottom. Build the editable stack directly
+	// in bottom-to-top compositor order. Within each drawable, GIMP's effect
+	// pointer order matches our base-to-top adjustment order.
+	for (let index = layers.length - 1; index >= 0; index--) {
 		const layer = layers[index];
-		for (let effectIndex = 0; effectIndex < layer.effects.length; effectIndex++) {
-			const effect = layer.effects[effectIndex];
-			if (!effect.adjustment) { continue; }
-			layerAssets.push({
-				nodeId: `${layer.node.id}-effect-${effectIndex}`, name: effect.name, sourcePath: `xcf-effect-${index}-${effectIndex}`,
-				kind: 'adjustment', adjustment: effect.adjustment, parentId: layer.parentId,
-				width, height, x: 0, y: 0, opacity: effect.opacity, visible: effect.visible, blendMode: 'normal',
-				groupPath: layer.groupPath, groupIds: layer.groupIds, support: 'approximate', clipped: true,
-			});
-		}
 		if (layer.node.kind === 'group') {
 			layerAssets.push({
 				nodeId: layer.node.id, name: layer.node.name, sourcePath: '', kind: 'group', parentId: layer.parentId,
@@ -1289,15 +1294,65 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 				groupPath: layer.groupPath, groupIds: layer.groupIds, support: layer.node.support,
 			});
 		}
+		for (let effectIndex = 0; effectIndex < layer.effects.length; effectIndex++) {
+			const effect = layer.effects[effectIndex];
+			if (!effect.adjustment) { continue; }
+			layerAssets.push({
+				nodeId: `${layer.node.id}-effect-${effectIndex}`, name: effect.name, sourcePath: `xcf-effect-${index}-${effectIndex}`,
+				kind: 'adjustment', adjustment: effect.adjustment, parentId: layer.parentId,
+				width, height, x: 0, y: 0, opacity: effect.opacity, visible: effect.visible, blendMode: 'normal',
+				groupPath: layer.groupPath, groupIds: layer.groupIds, support: 'approximate', clipped: true,
+			});
+		}
 	}
 	const document: LayeredDocumentSummary = {
 		format: 'xcf', width, height, bitDepth: 8, colorMode,
 		previewKind: 'reconstructed', previewIsAuthoritative: warnings.length === 0,
 		previewWidth: width, previewHeight: height, layerCount: layers.length, root, warnings,
 	};
+	// XCF has no authoritative flattened preview. Reconstruct its initial view
+	// with the same compositor model used after opening Layers View, including
+	// imported effects, effect strength, groups, clipping, and blend modes.
+	const previewStack: Layer[] = layerAssets.map(asset => ({
+		id: asset.nodeId,
+		data: asset.data,
+		width: asset.width,
+		height: asset.height,
+		channels: 4,
+		isFloat: false,
+		typeMax: 255,
+		offsetX: asset.x,
+		offsetY: asset.y,
+		opacity: asset.opacity,
+		visible: asset.visible,
+		blendMode: asset.blendMode,
+		kind: asset.kind,
+		adjustment: asset.adjustment,
+		parentId: asset.parentId,
+		clipped: asset.clipped,
+	}));
+	const rendered = compositeLayers(previewStack, width, height);
+	const reconstructed = new Uint8Array(width * height * 4);
+	for (let pixel = 0; pixel < width * height; pixel++) {
+		const source = pixel * rendered.channels, destination = pixel * 4;
+		const sample = (channel: number): number => {
+			const value = Number(rendered.data[source + Math.min(channel, rendered.channels - 1)]);
+			return Number.isFinite(value) ? Math.max(0, Math.min(255, Math.round(value))) : 0;
+		};
+		if (rendered.channels === 1) {
+			reconstructed[destination] = reconstructed[destination + 1] = reconstructed[destination + 2] = sample(0);
+			reconstructed[destination + 3] = Number.isFinite(rendered.data[source]) ? 255 : 0;
+		} else {
+			reconstructed[destination] = sample(0);
+			reconstructed[destination + 1] = sample(1);
+			reconstructed[destination + 2] = sample(2);
+			reconstructed[destination + 3] = rendered.channels >= 4 ? sample(3) : 255;
+		}
+	}
 	return {
-		width, height, channels: 4, bitDepth: 8, sampleFormat: 1, data: composite,
+		width, height, channels: 4, bitDepth: 8, sampleFormat: 1, data: reconstructed,
 		formatLabel: 'GIMP XCF reconstructed preview', formatType: 'xcf', document, layerAssets,
+		layerOrder: 'bottom-to-top',
 		metadata: { xcfVersion: version, colorMode, precision, compression, layerCount: layers.length, previewAuthoritative: document.previewIsAuthoritative },
 	};
 }

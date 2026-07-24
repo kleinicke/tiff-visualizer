@@ -12,7 +12,7 @@ import { LayersStatusBarEntry } from './layersStatusBarEntry';
 import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
-import type { IImagePreviewManager } from './types';
+import type { IImagePreviewManager, LayerExportFormat, LayerExportOption, LayerExportResult } from './types';
 import type { ImageSettings } from './appStateManager';
 import type { DatasetManifest, DatasetPlane, DatasetSeries, WebviewDatasetManifest } from './datasetTypes';
 import { parseOmeDatasetXml, tiffImageDescription } from './omeMetadataFile';
@@ -58,10 +58,10 @@ export class ImagePreview extends MediaPreview {
 	private readonly _colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry;
 	private readonly _messageRouter: MessageRouter;
 
-	private readonly _onDidExport = this._register(new vscode.EventEmitter<string>());
-	public readonly onDidExport = this._onDidExport.event;
-	private readonly _onDidExportXcf = this._register(new vscode.EventEmitter<{ payload?: string; warnings: string[]; error?: string }>());
-	public readonly onDidExportXcf = this._onDidExportXcf.event;
+	private readonly _onDidGetLayerExportCompatibility = this._register(new vscode.EventEmitter<LayerExportOption[]>());
+	public readonly onDidGetLayerExportCompatibility = this._onDidGetLayerExportCompatibility.event;
+	private readonly _onDidExportLayerDocument = this._register(new vscode.EventEmitter<LayerExportResult>());
+	public readonly onDidExportLayerDocument = this._onDidExportLayerDocument.event;
 
 	private _openTimestamp: number = 0;
 
@@ -275,24 +275,22 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
-	public async exportAsPng(): Promise<string | undefined> {
-		if (this.previewState === PreviewState.Active) {
-			return new Promise<string | undefined>((resolve) => {
-				const subscription = this.onDidExport(payload => {
-					subscription.dispose();
-					resolve(payload);
-				});
-				this._webviewEditor.webview.postMessage({ type: 'exportAsPng' });
-			});
-		}
-		return undefined;
-	}
-
-	public async exportAsXcf(): Promise<{ payload?: string; warnings: string[]; error?: string } | undefined> {
+	public async getLayerExportCompatibility(): Promise<LayerExportOption[] | undefined> {
 		if (this.previewState !== PreviewState.Active) { return undefined; }
 		return new Promise(resolve => {
-			const subscription = this.onDidExportXcf(result => { subscription.dispose(); resolve(result); });
-			this._webviewEditor.webview.postMessage({ type: 'exportAsXcf' });
+			const subscription = this.onDidGetLayerExportCompatibility(options => { subscription.dispose(); resolve(options); });
+			this._webviewEditor.webview.postMessage({ type: 'getLayerExportCompatibility' });
+		});
+	}
+
+	public async exportLayerDocument(format: LayerExportFormat): Promise<LayerExportResult | undefined> {
+		if (this.previewState !== PreviewState.Active) { return undefined; }
+		return new Promise(resolve => {
+			const subscription = this.onDidExportLayerDocument(result => {
+				if (result.format !== format) { return; }
+				subscription.dispose(); resolve(result);
+			});
+			this._webviewEditor.webview.postMessage({ type: 'exportLayerDocument', format });
 		});
 	}
 
@@ -376,12 +374,12 @@ export class ImagePreview extends MediaPreview {
 		return this._webviewEditor.webview;
 	}
 
-	public fireExportEvent(payload: string): void {
-		this._onDidExport.fire(payload);
+	public fireLayerExportCompatibilityEvent(options: LayerExportOption[]): void {
+		this._onDidGetLayerExportCompatibility.fire(options);
 	}
 
-	public fireExportXcfEvent(result: { payload?: string; warnings: string[]; error?: string }): void {
-		this._onDidExportXcf.fire(result);
+	public fireLayerExportEvent(result: LayerExportResult): void {
+		this._onDidExportLayerDocument.fire(result);
 	}
 
 	public getManager(): IImagePreviewManager {

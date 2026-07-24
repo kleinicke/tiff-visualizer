@@ -28,7 +28,7 @@ import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { installRangeDoubleClickReset } from './modules/range-controls.js';
-import { writeLayerStackAsXcf } from './modules/xcf-writer.js';
+import { analyzeLayerExports, LayerExportFormat, writeLayerDocument } from './modules/layer-document-writers.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
@@ -192,8 +192,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		onBackgroundChange: (brightness: number | null) => { setLayerBackgroundBrightness(brightness); scheduleSaveState(); },
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
-		onExportPng: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' }); },
-		onExportXcf: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsXcf' }); },
+		onExport: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' }); },
 		onVisibilityChange: (visible: boolean) => {
 			layerManager.active = visible;
 			if (!visible) { _layerCanvasRenderGeneration++; }
@@ -1948,12 +1947,17 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				zoomController.resetZoom();
 				break;
 
-			case 'exportAsPng':
-				exportAsPng();
+			case 'getLayerExportCompatibility':
+				vscode.postMessage({
+					type: 'didGetLayerExportCompatibility',
+					options: layerManager.hasCompositeStack()
+						? analyzeLayerExports(layerManager.layers)
+						: [{ format: 'png', label: 'PNG', description: '✓ Rendered image', detail: 'Exports exactly the current rendered image.', compatible: true }],
+				});
 				break;
 
-			case 'exportAsXcf':
-				exportAsXcf();
+			case 'exportLayerDocument':
+				exportLayerDocument(message.format as LayerExportFormat);
 				break;
 
 			case 'start-comparison':
@@ -3445,9 +3449,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
 			}));
 
-			// Add Export as PNG option (triggers command via extension)
-			menu.appendChild(createMenuItem('Export as PNG', () => {
-				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportAsPng' });
+			// The unified exporter evaluates compatibility before choosing a format.
+			menu.appendChild(createMenuItem('Export…', () => {
+				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' });
 			}));
 
 			menu.appendChild(createSeparator());
@@ -4646,10 +4650,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 	}
 
-	/**
-	 * Export canvas as PNG
-	 */
-	function exportAsPng() {
+	/** Capture the exact currently rendered pixels used by every export format. */
+	function renderedExportImage(): ImageData | null {
 		if (layerManager.active && layerManager.hasCompositeStack()) {
 			// Render directly for export instead of reading the visible canvas: its
 			// ImageBitmap upload is asynchronous and may still contain the previous
@@ -4661,9 +4663,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				const exportContext = exportCanvas.getContext('2d');
 				if (exportContext) {
 					exportContext.putImageData(rendered, 0, 0);
-					vscode.postMessage({ type: 'didExportAsPng', payload: exportCanvas.toDataURL('image/png') });
+					const result = exportContext.getImageData(0, 0, exportCanvas.width, exportCanvas.height);
 					exportCanvas.remove();
-					return;
+					return result;
 				}
 			}
 		}
@@ -4675,17 +4677,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			const ctx = tempCanvas.getContext('2d');
 			if (ctx) {
 				ctx.drawImage(lazyImageElement, 0, 0);
-				vscode.postMessage({
-					type: 'didExportAsPng',
-					payload: tempCanvas.toDataURL('image/png')
-				});
+				const result = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+				tempCanvas.remove();
+				return result;
 			}
-			tempCanvas.remove();
 		} else if (canvas) {
-			vscode.postMessage({
-				type: 'didExportAsPng',
-				payload: canvas.toDataURL('image/png')
-			});
+			const context = canvas.getContext('2d');
+			return context ? context.getImageData(0, 0, canvas.width, canvas.height) : null;
 		} else if (image && image.src) {
 			// If no canvas, create a temporary canvas from the image element
 			const tempCanvas = document.createElement('canvas');
@@ -4694,26 +4692,27 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			const ctx = tempCanvas.getContext('2d');
 			if (ctx) {
 				ctx.drawImage(image, 0, 0);
-				vscode.postMessage({
-					type: 'didExportAsPng',
-					payload: tempCanvas.toDataURL('image/png')
-				});
+				const result = ctx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
 				tempCanvas.remove();
+				return result;
 			}
 		}
+		return null;
 	}
 
-	function exportAsXcf() {
+	function exportLayerDocument(format: LayerExportFormat) {
 		try {
-			if (!layerManager.hasCompositeStack()) { throw new Error('Open Layers View before exporting an XCF'); }
-			const result = writeLayerStackAsXcf(layerManager.layers, layerManager.canvasWidth, layerManager.canvasHeight);
+			const rendered = renderedExportImage();
+			if (!rendered) { throw new Error('The current image has no rendered pixels to export'); }
+			if (format !== 'png' && !layerManager.hasCompositeStack()) { throw new Error(`${format.toUpperCase()} layered export requires an active Layers composition`); }
+			const result = writeLayerDocument(format, layerManager.layers, rendered.width, rendered.height, rendered);
 			let binary = '';
 			for (let offset = 0; offset < result.data.length; offset += 0x8000) {
 				binary += String.fromCharCode(...result.data.subarray(offset, Math.min(result.data.length, offset + 0x8000)));
 			}
-			vscode.postMessage({ type: 'didExportAsXcf', payload: btoa(binary), warnings: result.warnings });
+			vscode.postMessage({ type: 'didExportLayerDocument', format, payload: btoa(binary), warnings: result.warnings });
 		} catch (error) {
-			vscode.postMessage({ type: 'didExportAsXcf', error: error instanceof Error ? error.message : String(error), warnings: [] });
+			vscode.postMessage({ type: 'didExportLayerDocument', format, error: error instanceof Error ? error.message : String(error), warnings: [] });
 		}
 	}
 

@@ -73,7 +73,6 @@ export class TypedMessageRouter {
 		this.registerHandler(new StatsMessageHandler());
 		this.registerHandler(new FormatInfoMessageHandler());
 		this.registerHandler(new ReadyMessageHandler());
-		this.registerHandler(new ExportPngMessageHandler());
 		this.registerHandler(new InitialDataMessageHandler());
 	}
 }
@@ -110,11 +109,6 @@ export interface FormatInfoMessage {
 
 export interface ReadyMessage {
 	type: 'ready';
-}
-
-export interface ExportPngMessage {
-	type: 'didExportAsPng';
-	payload: any;
 }
 
 export interface InitialDataMessage {
@@ -230,16 +224,6 @@ export class ReadyMessageHandler implements MessageHandler<ReadyMessage> {
 	}
 }
 
-export class ExportPngMessageHandler implements MessageHandler<ExportPngMessage> {
-	readonly type = 'didExportAsPng';
-
-	handle(message: ExportPngMessage, context: HandlerContext): void {
-		if (context.preview.fireExportEvent) {
-			context.preview.fireExportEvent(message.payload);
-		}
-	}
-}
-
 export class InitialDataMessageHandler implements MessageHandler<InitialDataMessage> {
 	readonly type = 'get-initial-data';
 
@@ -251,4 +235,4 @@ export class InitialDataMessageHandler implements MessageHandler<InitialDataMess
 			}
 		});
 	}
-} 
+}

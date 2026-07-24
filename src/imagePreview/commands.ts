@@ -463,67 +463,54 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsPng', async () => {
-		logCommand('exportAsPng', 'start');
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportLayers', async () => {
+		logCommand('exportLayers', 'start');
 		const activePreview = previewManager.activePreview;
-		if (activePreview) {
-			try {
-				const result = await activePreview.exportAsPng();
-				if (result) {
-					const suffix = activePreview.getViewMode() === 'layers' ? '.layers.png' : '.png';
-					const saveUri = await vscode.window.showSaveDialog({
-						filters: { 'PNG Images': ['png'] },
-						defaultUri: vscode.Uri.file(activePreview.resource.path.replace(/\.[^/.]+$/, suffix))
-					});
-
-					if (saveUri) {
-						const buffer = Buffer.from(result.split(',')[1], 'base64');
-						await vscode.workspace.fs.writeFile(saveUri, buffer);
-						vscode.window.showInformationMessage(`Rendered view exported to ${saveUri.fsPath}`);
-						logCommand('exportAsPng', 'success', saveUri.fsPath);
-					} else {
-						logCommand('exportAsPng', 'error', 'User cancelled save dialog');
-					}
-				} else {
-					logCommand('exportAsPng', 'error', 'No result from exportAsPng');
-				}
-			} catch (error) {
-				vscode.window.showErrorMessage(`Failed to export image: ${error}`);
-				logCommand('exportAsPng', 'error', String(error));
-			}
-		} else {
-			logCommand('exportAsPng', 'error', 'No active preview');
-		}
-	}));
-
-	disposables.push(vscode.commands.registerCommand('tiffVisualizer.exportAsXcf', async () => {
-		logCommand('exportAsXcf', 'start');
-		const activePreview = previewManager.activePreview;
-		if (!activePreview) { logCommand('exportAsXcf', 'error', 'No active preview'); return; }
+		if (!activePreview) { logCommand('exportLayers', 'error', 'No active preview'); return; }
 		try {
-			const result = await activePreview.exportAsXcf();
-			if (!result) { return; }
-			if (result.error || !result.payload) {
-				vscode.window.showErrorMessage(`Failed to export XCF: ${result.error || 'No layer data was returned'}`);
-				logCommand('exportAsXcf', 'error', result.error || 'No payload');
-				return;
-			}
+			const options = await activePreview.getLayerExportCompatibility();
+			if (!options?.length) { throw new Error('No export formats are available for the current view'); }
+			const selected = await vscode.window.showQuickPick(options.map(option => ({
+				label: option.label,
+				description: option.description,
+				detail: option.detail,
+				format: option.format,
+			})), {
+				title: 'Export image or layered document',
+				placeHolder: 'Choose an export format',
+				matchOnDescription: true,
+				matchOnDetail: true,
+			});
+			if (!selected) { return; }
+			const labels: Record<string, string> = { png: 'PNG Images', ora: 'OpenRaster Documents', xcf: 'GIMP XCF Documents', kra: 'Krita Documents', psd: 'Photoshop Documents' };
+			const suffix = activePreview.getViewMode() === 'layers' ? `.layers.${selected.format}` : `.${selected.format}`;
+			const sourcePath = activePreview.resource.path;
+			const filenameStart = sourcePath.lastIndexOf('/') + 1;
+			const extensionStart = sourcePath.lastIndexOf('.');
+			const defaultPath = extensionStart > filenameStart ? `${sourcePath.slice(0, extensionStart)}${suffix}` : `${sourcePath}${suffix}`;
 			const saveUri = await vscode.window.showSaveDialog({
-				filters: { 'GIMP XCF Images': ['xcf'] },
-				defaultUri: vscode.Uri.file(activePreview.resource.path.replace(/\.[^/.]+$/, '.layers.xcf')),
+				filters: { [labels[selected.format] || `${selected.format.toUpperCase()} Documents`]: [selected.format] },
+				defaultUri: vscode.Uri.file(defaultPath),
 			});
 			if (!saveUri) { return; }
+			const result = await activePreview.exportLayerDocument(selected.format);
+			if (!result) { return; }
+			if (result.error || !result.payload) {
+				vscode.window.showErrorMessage(`Failed to export ${selected.format.toUpperCase()}: ${result.error || 'No data was returned'}`);
+				logCommand('exportLayers', 'error', result.error || 'No payload');
+				return;
+			}
 			await vscode.workspace.fs.writeFile(saveUri, Buffer.from(result.payload, 'base64'));
 			if (result.warnings.length) {
 				const preview = result.warnings.slice(0, 3).join('; ');
-				vscode.window.showWarningMessage(`XCF exported with ${result.warnings.length} approximation${result.warnings.length === 1 ? '' : 's'}: ${preview}${result.warnings.length > 3 ? '; …' : ''}`);
+				vscode.window.showWarningMessage(`${selected.format.toUpperCase()} exported with ${result.warnings.length} approximation${result.warnings.length === 1 ? '' : 's'}: ${preview}${result.warnings.length > 3 ? '; …' : ''}`);
 			} else {
-				vscode.window.showInformationMessage(`Layered XCF exported to ${saveUri.fsPath}`);
+				vscode.window.showInformationMessage(`${selected.format.toUpperCase()} exported to ${saveUri.fsPath}`);
 			}
-			logCommand('exportAsXcf', 'success', saveUri.fsPath);
+			logCommand('exportLayers', 'success', saveUri.fsPath);
 		} catch (error) {
-			vscode.window.showErrorMessage(`Failed to export XCF: ${error}`);
-			logCommand('exportAsXcf', 'error', String(error));
+			vscode.window.showErrorMessage(`Failed to export: ${error}`);
+			logCommand('exportLayers', 'error', String(error));
 		}
 	}));
 

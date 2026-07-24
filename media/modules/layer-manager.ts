@@ -181,6 +181,7 @@ export class LayerManager {
 		this.canvasWidth = layer.width;
 		this.canvasHeight = layer.height;
 		this.layers = [base];
+		this._lastComposite = null;
 		this.documentExpanded = false;
 		this.clearHistory();
 	}
@@ -196,6 +197,7 @@ export class LayerManager {
 		l.name = layer.name || `Layer ${this.layers.length}`;
 		l.blendMode = 'normal';
 		this.layers.push(l);
+		this._lastComposite = null;
 		return l.id as string;
 	}
 
@@ -235,6 +237,7 @@ export class LayerManager {
 		while (insertAt < this.layers.length && this.layers[insertAt].clipped
 			&& (this.layers[insertAt].parentId || undefined) === (target.parentId || undefined)) { insertAt++; }
 		this.layers.splice(insertAt, 0, created);
+		this._lastComposite = null;
 		return created.id as string;
 	}
 
@@ -258,7 +261,7 @@ export class LayerManager {
 				}
 			}
 			const remaining = this.layers.filter(layer => !descendants.has(layer.id as string));
-			if (remaining.length) { this.layers = remaining; }
+			if (remaining.length) { this.layers = remaining; this._lastComposite = null; }
 		}
 	}
 
@@ -287,6 +290,7 @@ export class LayerManager {
 		for (const layer of this.layers) {
 			layer.visible = alreadySolo || ids.has(layer.id as string);
 		}
+		this._lastComposite = null;
 	}
 
 	/**
@@ -298,6 +302,7 @@ export class LayerManager {
 			this._recordHistory();
 			layer.offsetX = (layer.offsetX ?? 0) + dx;
 			layer.offsetY = (layer.offsetY ?? 0) + dy;
+			this._lastComposite = null;
 		}
 	}
 
@@ -312,6 +317,7 @@ export class LayerManager {
 		this._recordHistory();
 		const [layer] = this.layers.splice(idx, 1);
 		this.layers.splice(clamped, 0, layer);
+		this._lastComposite = null;
 	}
 
 	/**
@@ -319,7 +325,8 @@ export class LayerManager {
 	 */
 	getComposite(): CompositeResult | null {
 		if (!this.canvasWidth || !this.canvasHeight) { return null; }
-		return composite(this.layers, this.canvasWidth, this.canvasHeight);
+		if (!this._lastComposite) { this._lastComposite = composite(this.layers, this.canvasWidth, this.canvasHeight); }
+		return this._lastComposite;
 	}
 
 	/**
@@ -393,6 +400,7 @@ export class LayerManager {
 		this.layers = layers;
 		this.canvasWidth = canvasWidth;
 		this.canvasHeight = canvasHeight;
+		this._lastComposite = null;
 		this.clearHistory();
 	}
 

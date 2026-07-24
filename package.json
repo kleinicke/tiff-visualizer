@@ -147,13 +147,8 @@
         "category": "TIFF Visualizer"
       },
       {
-        "command": "tiffVisualizer.exportAsPng",
-        "title": "Export Rendered View as PNG",
-        "category": "TIFF Visualizer"
-      },
-      {
-        "command": "tiffVisualizer.exportAsXcf",
-        "title": "Export Layers as XCF",
+        "command": "tiffVisualizer.exportLayers",
+        "title": "Export…",
         "category": "TIFF Visualizer"
       },
       {
@@ -348,6 +343,7 @@
     "test:ome-tiff": "node test/ome-tiff-test.js",
     "test:image-renderer-channels": "node test/image-renderer-channels-test.js",
     "test:collection-switch": "tsc -p tsconfig.json && node test/collection-switch-render-test.js",
+    "benchmark:layers": "npm run compile:quick && node test/layer-compositor-benchmark.js",
     "test:ui": "npm run compile && extest setup-and-run out/test/ui/**/*.js",
     "test:ui-setup": "extest setup-tests",
     "test:ui-run": "extest run-tests out/test/ui/**/*.js",
