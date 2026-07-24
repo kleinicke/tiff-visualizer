@@ -1,11 +1,14 @@
 # Change Log
 
-## 1.9.0
+## 1.9.0 (2026-07-24)
 
-- Add a Metadata panel
-- Add some minor Tiff formats and edge cases
-- Add multi-page support for OME-TIFF, FITS, DICOM and NetCDF
-- Add support for multi layer files and shows at least the preview, for ora, kra, psd, psb, xcf, afphoto, af. For some allowing viewing of layers and editing.
+- Add a metadata panel with file details, image statistics, and EXIF/GPS tags.
+- Expand TIFF decoding support and handle additional sample, compression, orientation, and metadata edge cases.
+- Add multidimensional navigation for OME-TIFF, FITS, DICOM, and NetCDF datasets.
+- Add embedded or saved previews for ORA, KRA, PSD/PSB, XCF, and Affinity Photo documents.
+- Reconstruct editable layers from ORA, KRA, PSD/PSB, and XCF, including groups, masks, clipping, common blend modes, and compatible adjustment filters.
+- Add layer/filter duplication, filter copying, undo/redo, persistent layer state, and responsive worker-based compositing.
+- Add compatibility-aware export to PNG, PSD, GIMP 3 XCF, KRA, and ORA.
 
 ## 1.8.0 (2026-06-20)
 

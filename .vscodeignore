@@ -13,6 +13,19 @@ test-resources/**
 playwright-report/**
 test-results/**
 .github/**
+.claude/**
+
+# Development-only project instructions and test tooling
+AGENTS.md
+agents.md
+CLAUDE.md
+claude.md
+.mocharc.js
+playwright.config.ts
+run-behavioral-tests.js
+TESTING.md
+scripts/**
+out/media/**
 
 **/*.map
 

@@ -232,6 +232,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	};
 	/** URI of the image currently used as the base layer. */
 	let _layerBaseUri: string | undefined;
+	/** Stable identity of that base layer even when the user reorders the stack. */
+	let _layerBaseId: string | undefined;
 	let _expandedLayerDocumentUri: string | undefined;
 
 	const isTiffExtension = (lower: string): boolean => /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
@@ -315,7 +317,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// Restore persisted state if available
 	const persistedState = vscode.getState();
 	/** Layer stack to restore after the base image loads. */
-	let _pendingLayerRestore: { layers: any[], active: boolean, collapsed: boolean } | null = null;
+	let _pendingLayerRestore: { layers: any[], active: boolean, collapsed: boolean, documentUri?: string } | null = null;
 	if (persistedState) {
 		peerImageUris = persistedState.peerImageUris || [];
 		isShowingPeer = persistedState.isShowingPeer || false;
@@ -346,6 +348,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				layers: savedLayers,
 				active: !!persistedState.layerActive,
 				collapsed: !!persistedState.layerCollapsed,
+				documentUri: persistedState.layerDocumentUri,
 			};
 		}
 	}
@@ -393,7 +396,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			// Layer compositing state — metadata only (images are re-decoded from
 			// their URIs on reload). Lets a layer view restore itself after the
 			// webview is unloaded and reloaded on a tab switch.
-			layers: layerManager.layers.map((l, i) => ({
+			layerDocumentUri: settingsManager.settings.resourceUri,
+			layers: layerManager.layers.map(l => ({
+				id: l.id,
 				resourceUri: l.uri,
 				name: l.name,
 				offsetX: l.offsetX,
@@ -412,7 +417,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				sourceSupport: l.sourceSupport,
 				sourceBlendMode: l.sourceBlendMode,
 				sourceNumericType: l.sourceNumericType,
-				isBase: i === 0,
+				isBase: l.id === _layerBaseId,
 			})),
 			layerActive: layerManager.active,
 			layerCollapsed: layersPanel.collapsed,
@@ -1599,10 +1604,25 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			adjustment: asset.adjustment,
 		}));
 		if (!layers.length) { return false; }
+		// Decoder relationships use stable source-node IDs, while the compositor
+		// uses its own runtime layer IDs. Resolve the former before compositing so
+		// imported groups and adjustment ownership are first-class relationships.
+		const runtimeIds = new Map<string, string>();
+		for (let i = 0; i < orderedAssets.length; i++) {
+			const sourceId = orderedAssets[i].nodeId;
+			const runtimeId = layers[i].id;
+			if (sourceId && runtimeId) { runtimeIds.set(sourceId, runtimeId); }
+		}
+		for (const layer of layers) {
+			if (layer.parentId && runtimeIds.has(layer.parentId)) {
+				layer.parentId = runtimeIds.get(layer.parentId);
+			}
+		}
 		layerManager.setLayers(layers, raw.document.width, raw.document.height);
 		layerManager.documentExpanded = true;
 		_expandedLayerDocumentUri = uri;
 		_layerBaseUri = uri;
+		_layerBaseId = undefined;
 		layersPanel.refresh();
 		return true;
 	}
@@ -1613,13 +1633,16 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (_layerBaseUri !== base.uri || layerManager.isEmpty()) {
 			_layerBaseUri = base.uri;
 			layerManager.setBaseLayer(base);
+			_layerBaseId = layerManager.layers[0]?.id;
 			if (layersPanel.isVisible()) { layersPanel.refresh(); }
 		} else {
 			// Same image re-rendered: refresh the matching layer's data in place
 			// (it may have been reordered). If the user removed that layer, leave
 			// the stack untouched — don't re-inject it.
-			const existing = layerManager.layers.find(l => l.uri === base.uri);
+			const existing = layerManager.layers.find(l => l.id === _layerBaseId) ||
+				layerManager.layers.find(l => l.uri === base.uri);
 			if (existing) {
+				_layerBaseId = existing.id;
 				Object.assign(existing, {
 					data: base.data, width: base.width, height: base.height,
 					channels: base.channels, isFloat: base.isFloat, typeMax: base.typeMax,
@@ -1747,7 +1770,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const baseMeta = metas.find(m => m.isBase);
 		const currentUri = settingsManager.settings.resourceUri;
 		// Only restore if the saved stack belongs to the image now showing.
-		if (baseMeta && baseMeta.resourceUri && currentUri && baseMeta.resourceUri !== currentUri) {
+		const savedDocumentUri = _pendingLayerRestore.documentUri || baseMeta?.resourceUri;
+		if (savedDocumentUri && currentUri && savedDocumentUri !== currentUri) {
 			_pendingLayerRestore = null;
 			return;
 		}
@@ -1769,32 +1793,93 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		_pendingLayerRestore = null;
 		if (!pending) { return; }
 
-		syncBaseLayer();
-		const baseLayer = layerManager.layers.find(l => l.uri === settingsManager.settings.resourceUri) || layerManager.layers[0];
-		const rebuilt = [];
+		const restoresSourceDocument = pending.layers.some(meta => !!meta.sourceNodeId) &&
+			!!layeredPreviewProcessor._lastRaw?.layerAssets?.length;
+		if (restoresSourceDocument) {
+			installLayeredDocumentLayers();
+		} else {
+			syncBaseLayer();
+		}
+		const baseLayer = layerManager.layers.find(l => l.id === _layerBaseId) ||
+			layerManager.layers.find(l => l.uri === settingsManager.settings.resourceUri) ||
+			layerManager.layers[0];
+		const sourceLayers = new Map<string, typeof layerManager.layers>();
+		for (const layer of layerManager.layers) {
+			if (!layer.sourceNodeId) { continue; }
+			const matches = sourceLayers.get(layer.sourceNodeId) || [];
+			matches.push(layer);
+			sourceLayers.set(layer.sourceNodeId, matches);
+		}
+		const rebuilt: typeof layerManager.layers = [];
+		const restoredIds = new Map<string, string>();
+		const applyMeta = (layer: typeof layerManager.layers[number], meta: any) => {
+			Object.assign(layer, {
+				name: meta.name ?? layer.name,
+				offsetX: meta.offsetX ?? layer.offsetX ?? 0,
+				offsetY: meta.offsetY ?? layer.offsetY ?? 0,
+				opacity: meta.opacity ?? layer.opacity ?? 1,
+				blendMode: meta.blendMode ?? layer.blendMode ?? 'normal',
+				visible: meta.visible !== false,
+				maskCondition: meta.maskCondition,
+				kind: meta.kind ?? layer.kind,
+				adjustment: meta.adjustment ?? layer.adjustment,
+				parentId: meta.parentId,
+				clipped: meta.clipped,
+				groupPath: meta.groupPath ?? layer.groupPath,
+				groupIds: meta.groupIds ?? layer.groupIds,
+				sourceNodeId: meta.sourceNodeId ?? layer.sourceNodeId,
+				sourceSupport: meta.sourceSupport ?? layer.sourceSupport,
+				sourceBlendMode: meta.sourceBlendMode ?? layer.sourceBlendMode,
+				sourceNumericType: meta.sourceNumericType ?? layer.sourceNumericType,
+			});
+			if (meta.id && layer.id) { restoredIds.set(meta.id, layer.id); }
+			return layer;
+		};
 		for (const meta of pending.layers) {
-			if (meta.isBase) {
+			if (meta.sourceNodeId) {
+				const matches = sourceLayers.get(meta.sourceNodeId);
+				const source = matches?.shift();
+				if (source) {
+					rebuilt.push(applyMeta(source, meta));
+				} else {
+					// A duplicated imported node shares its decoded pixels with the
+					// original and can be recreated without embedding them in state.
+					const template = layerManager.layers.find(l => l.sourceNodeId === meta.sourceNodeId);
+					if (template) {
+						rebuilt.push(applyMeta(layerManager.createLayer({
+							...template,
+							isFloat: template.isFloat ?? false,
+							typeMax: template.typeMax ?? 255,
+							channels: template.channels ?? 4,
+						}, meta), meta));
+					}
+				}
+			} else if (meta.isBase) {
 				if (baseLayer) {
-					Object.assign(baseLayer, {
-						offsetX: meta.offsetX ?? 0, offsetY: meta.offsetY ?? 0,
-						opacity: meta.opacity ?? 1, blendMode: meta.blendMode ?? 'normal',
-						visible: meta.visible !== false, maskCondition: meta.maskCondition,
-					});
-					rebuilt.push(baseLayer);
+					rebuilt.push(applyMeta(baseLayer, meta));
+					_layerBaseId = baseLayer.id;
 				}
 			} else {
 				if (meta.kind === 'adjustment' && meta.adjustment) {
-					rebuilt.push(layerManager.createLayer({
+					const adjustment = layerManager.createLayer({
 						width: 1, height: 1, channels: 4, isFloat: false, typeMax: baseLayer?.typeMax || 255,
 						name: meta.name || 'Adjustment', kind: 'adjustment', adjustment: meta.adjustment,
 						parentId: meta.parentId, clipped: meta.clipped, groupPath: meta.groupPath, groupIds: meta.groupIds,
-					}, meta));
+					}, meta);
+					rebuilt.push(applyMeta(adjustment, meta));
 					continue;
 				}
 				const src = uriMap[meta.resourceUri];
 				if (!src) { continue; }
 				const input = await decodeLayer(src, meta.resourceUri);
-				if (input) { rebuilt.push(layerManager.createLayer(input, meta)); }
+				if (input) { rebuilt.push(applyMeta(layerManager.createLayer(input, meta), meta)); }
+			}
+		}
+		// createLayer assigns fresh IDs. Reconnect filters and groups to those new
+		// IDs after every node has been rebuilt.
+		for (const layer of rebuilt) {
+			if (layer.parentId && restoredIds.has(layer.parentId)) {
+				layer.parentId = restoredIds.get(layer.parentId);
 			}
 		}
 		if (rebuilt.length === 0) {
@@ -3475,13 +3560,23 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			}
 		}, { passive: true });
 
+		const isEditableEventTarget = (target: EventTarget | null): boolean => {
+			if (!(target instanceof HTMLElement)) { return false; }
+			if (target.isContentEditable || target.closest('[contenteditable="true"]')) { return true; }
+			if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) { return true; }
+			if (!(target instanceof HTMLInputElement)) { return false; }
+			return !['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit'].includes(target.type);
+		};
+
 		// Copy handling
-		document.addEventListener('copy', () => {
+		document.addEventListener('copy', (e) => {
+			if (isEditableEventTarget(e.target)) { return; }
 			copyImage();
 		});
 
 		// Custom context menu with various commands
 		document.addEventListener('contextmenu', (e) => {
+			if (isEditableEventTarget(e.target)) { return; }
 			e.preventDefault();
 
 			// Remove any existing custom context menu
@@ -3681,12 +3776,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 
 		// Prevent cut operation (only copy makes sense for image viewer)
 		document.addEventListener('cut', (e) => {
+			if (isEditableEventTarget(e.target)) { return; }
 			e.preventDefault();
 		});
 
 		// Handle paste for position pasting (Ctrl+V / Cmd+V)
 		// Uses extension command for cross-webview support
 		document.addEventListener('paste', (e) => {
+			if (isEditableEventTarget(e.target)) { return; }
 			e.preventDefault();
 			// Use extension command for cross-webview paste support
 			vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
@@ -3694,7 +3791,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 
 		// Comparison toggle
 		document.addEventListener('keydown', async (e) => {
-			if (e.key === 'c' && peerImageData) {
+			if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey &&
+				!isEditableEventTarget(e.target) && peerImageData) {
 				isShowingPeer = !isShowingPeer;
 
 				// Swap raw data so histogram and re-renders use the correct image's data.

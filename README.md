@@ -12,18 +12,18 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 ## Supported Sample Types
 
-| Format                                  | uint8 | uint16 | float16 | float32 | Notes |
-| --------------------------------------- | ----: | -----: | ------: | ------: | ----- |
-| TIFF / OME-TIFF                         |   Yes |    Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation |
-| EXR                                     |    No |     No |     Yes |     Yes | HDR floating-point format |
-| NPY / NPZ                               |   Yes |    Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit |
-| FITS / DICOM / NetCDF                   |   Yes |    Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, and MPAS meshes |
-| PFM                                     |    No |     No |      No |     Yes | Portable Float Map |
-| HDR                                     |    No |     No |      No |     Yes | Radiance RGBE, decoded to float32 |
-| PNG                                     |   Yes |    Yes |      No |      No | Palette PNGs become 8-bit RGBA |
-| PPM / PGM / PBM                         |   Yes |    Yes |      No |      No | PBM is 1-bit, shown as 8-bit |
-| JPEG / WebP / AVIF / BMP / ICO / TGA / JXL | Yes |     No |      No |      No | Decoded as 8-bit image data |
-| ORA / KRA / PSD / PSB / XCF / Affinity Photo | Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; compatible PSD adjustments, Krita filter masks/layers, and GIMP 3 layer effects are approximated |
+| Format                                       | uint8 |  uint16 | float16 | float32 | Notes                                                                                                                                                                                                                               |
+| -------------------------------------------- | ----: | ------: | ------: | ------: | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TIFF / OME-TIFF                              |   Yes |     Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation                                                                                                                                                                  |
+| EXR                                          |    No |      No |     Yes |     Yes | HDR floating-point format                                                                                                                                                                                                           |
+| NPY / NPZ                                    |   Yes |     Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit                                                                                                                                                                     |
+| FITS / DICOM / NetCDF                        |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, and MPAS meshes                                                                                                                                                        |
+| HDR                                          |    No |      No |      No |     Yes | Radiance RGBE, decoded to float32                                                                                                                                                                                                   |
+| PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
+| PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
+| PNG                                          |   Yes |     Yes |      No |      No | Palette PNGs become 8-bit RGBA                                                                                                                                                                                                      |
+| JPEG / WebP / AVIF / BMP / ICO / TGA / JXL   |   Yes |      No |      No |      No | Decoded as 8-bit image data                                                                                                                                                                                                         |
+| ORA / KRA / PSD / PSB / XCF / Affinity Photo |   Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; compatible PSD adjustments, Krita filter masks/layers, and XCF GIMP 3 layer effects are approximated |
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
@@ -44,11 +44,10 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 - **Image Collections**: Group related images in one preview and quickly move between them without opening a tab for every file. Add individual images, folders, paths, or wildcard matches from the command palette and editor context menu.
   ![collection](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/Collection.gif)
 - **Layers View**: Open one or more images in a dedicated Layers window for compositing and visual comparison. Imported layered documents retain collapsible nested groups, group visibility and Shift-solo controls, source-compatibility badges, inline renaming, editable/removable filters, persistent group expansion state, and keyboard undo/redo for layer/filter changes.
-  Easily get the difference between two images or apply a mask onto one. This layer view allows dedicated compositions between multiple images.
+  Easily get the difference between two images or apply a mask onto one. This layer view allows dedicated compositions between multiple images. Basic compatibility with tools like photoshop.
 - **NaN Color**: Choose how NaN values are displayed.
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.
-- **Export and Copy**: One compatibility-aware **Export…** picker writes the exact rendered image as PNG or layered documents as ORA, GIMP 3 XCF, KRA, or PSD. It reports which filters, masks, clipping relationships, blend modes, and high-bit-depth layers remain editable or require approximation.
-- **VS Code Native Controls**: Most options are available from the right-click menu, command palette, or clickable status bar entries.
+- **VS Code Native Controls**: Most options are available from the right-click menu inside the webview, command palette, or clickable status bar entries.
 - **Metadata panel** shows file info, image statistics (min/max/mean/std) and Exif/GPS sub-IFD tags.
 
 ## How to Use
@@ -72,7 +71,6 @@ Float Image Visualization Options:
 - **NetCDF:** Select a numeric variable and move through its non-spatial dimensions. Regular X/Y arrays render as rasters; MPAS `nCells` fields render on their unstructured cell polygons in an equirectangular mesh view.
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.
-
 
 ## Feature Requests and Issues
 
