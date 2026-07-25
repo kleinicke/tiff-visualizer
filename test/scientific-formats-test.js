@@ -20,6 +20,10 @@ function testFits() {
 	const image = parseFits(arrayBuffer('synthetic-gradient.fits'));
 	assert.deepStrictEqual([image.width, image.height, image.channels], [32, 24, 1]);
 	assert.strictEqual(image.metadata.bitpix, 16);
+	assert.deepStrictEqual(image.numericDomain, {
+		bitsPerSample: 16, sampleFormat: 2,
+		typeMin: -16484, typeMax: 16283.5, sourceNumericType: 'int16',
+	});
 	assert.strictEqual(image.data[0], -100 + 0.5 * 2300, 'FITS rows should be displayed top-down');
 	assert.strictEqual(image.data[23 * 32], -100, 'FITS bottom row should contain the first stored row');
 }
@@ -31,6 +35,10 @@ function testDicom() {
 	assert.strictEqual(image.data[0], -1024);
 	assert.strictEqual(image.data[767], -257);
 	assert.strictEqual(image.metadata.windowCenter, -640);
+	assert.deepStrictEqual(image.numericDomain, {
+		bitsPerSample: 12, sampleFormat: 1,
+		typeMin: -1024, typeMax: 3071, sourceNumericType: 'uint16',
+	}, 'the Float32 decode carrier must retain the DICOM source domain');
 }
 
 async function testJpegBaselineDicom() {
@@ -44,6 +52,7 @@ async function testJpegBaselineDicom() {
 	assert.strictEqual(first.metadata.frames, 96);
 	assert.strictEqual(first.metadata.rescaleSlope, 1, 'missing RescaleSlope must default to identity');
 	assert.strictEqual(first.metadata.rescaleIntercept, 0);
+	assert.strictEqual(first.numericDomain.typeMax, (2 ** first.metadata.bitsStored) - 1);
 	assert.ok(Number.isNaN(first.metadata.windowCenter), 'missing WindowCenter must remain unspecified');
 	assert.ok(Number.isNaN(first.metadata.windowWidth), 'missing WindowWidth must remain unspecified');
 	assert.deepStrictEqual(Array.from(first.encoded.subarray(0, 2)), [0xff, 0xd8]);
@@ -64,6 +73,7 @@ function testNetCdf() {
 	const image = parseNetCdf(arrayBuffer('synthetic-temperature.nc'));
 	assert.deepStrictEqual([image.width, image.height, image.channels], [32, 24, 1]);
 	assert.strictEqual(image.metadata.variable, 'temperature');
+	assert.strictEqual(image.numericDomain.sampleFormat, 3);
 	assert.ok(Math.abs(image.data[0] - 273.15) < 0.001);
 	assert.ok(Math.abs(image.data[767] - 287.75) < 0.001);
 }

@@ -574,6 +574,7 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 				return {
 					width, height, channels, data,
 					metadata: { ...frame.metadata, decoder: 'Rust/WASM zune-jpeg' },
+					numericDomain: frame.numericDomain,
 					decodeTimings: [{ name: 'decode-dicom-rust', durationMs: performance.now() - started }],
 				};
 			}

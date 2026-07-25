@@ -190,6 +190,26 @@ async function main() {
 		console.log('✅ calculateFloatStats/calculateIntegerStats scan only the gray channel for channels=2 (alpha excluded)');
 	}
 
+	// ---------------------------------------------------------------------
+	// 7. A Float32 decode carrier must not force float [0,1] gamma semantics.
+	//    Scientific formats use float storage for rescale/NaN while retaining
+	//    the source domain separately (e.g. uint8 DICOM remains [0,255]).
+	// ---------------------------------------------------------------------
+	{
+		const data = new Float32Array([0, 128, 255]);
+		const result = ImageRenderer.render(data, 3, 1, 1, true, null, {
+			normalization: { autoNormalize: false, gammaMode: true },
+			gamma: { in: 1, out: 1 },
+			brightness: { offset: 0 },
+		}, { typeMin: 0, typeMax: 255 });
+		assert.deepStrictEqual(
+			[pixelAt(result, 0, 0).r, pixelAt(result, 1, 0).r, pixelAt(result, 2, 0).r],
+			[0, 128, 255],
+			'uint8-valued Float32 carrier must use the supplied [0,255] source domain',
+		);
+		console.log('✅ Float32 scientific carrier retains uint8 gamma range');
+	}
+
 	console.log('\n🎉 All ImageRenderer channel-count tests passed.\n');
 }
 

@@ -9,6 +9,7 @@
 export interface RenderOptions {
   nanColor?: { r: number; g: number; b: number };
   flipY?: boolean;
+  typeMin?: number;
   typeMax?: number;
   rgbAs24BitGrayscale?: boolean;
   planarData?: any;
@@ -30,6 +31,8 @@ export interface DeferredRenderOptions {
   placeholderImageData?: ImageData;
   renderHistogramResult?: any;
   topDown?: boolean;
+  typeMin?: number;
+  typeMax?: number;
 }
 
 /** Basic min/max statistics for image data. */

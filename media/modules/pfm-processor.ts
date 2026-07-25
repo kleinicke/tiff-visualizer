@@ -158,6 +158,8 @@ export class PfmProcessor {
         this._lastRenderUsedWebGL = false;
         const settings = this.settingsManager.settings;
         const isGammaMode = settings.normalization?.gammaMode || false;
+        const typeMin = renderOptions.typeMin ?? 0;
+        const typeMax = renderOptions.typeMax ?? 1;
 
         // Calculate stats if needed (for auto-normalize or just to have them)
         let stats: { min: number, max: number } | undefined = this._cachedStats;
@@ -186,7 +188,8 @@ export class PfmProcessor {
                 height,
                 min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
                 max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
-                typeMax: 1.0,
+                typeMin,
+                typeMax,
                 settings,
                 nanColor,
                 channels
@@ -198,9 +201,11 @@ export class PfmProcessor {
         }
 
         // Use centralized ImageRenderer
-        const options: { nanColor: { r: number, g: number, b: number }, collectHistogram: boolean, renderHistogramResult?: any } = {
+        const options: { nanColor: { r: number, g: number, b: number }, collectHistogram: boolean, typeMin: number, typeMax: number, renderHistogramResult?: any } = {
             nanColor,
-            collectHistogram: renderOptions.collectHistogram === true
+            collectHistogram: renderOptions.collectHistogram === true,
+            typeMin,
+            typeMax,
         };
         const imageData = ImageRenderer.render(
             data,

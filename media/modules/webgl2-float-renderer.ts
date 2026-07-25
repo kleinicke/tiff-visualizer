@@ -25,6 +25,7 @@ export interface RenderParams {
 	isFloat?: boolean;
 	min: number;
 	max: number;
+	typeMin?: number;
 	typeMax: number;
 	settings: any;
 	nanColor: { r: number; g: number; b: number };
@@ -345,7 +346,7 @@ export class WebGL2FloatRenderer {
 		PerfTrace.detail('webgl-colormap-upload', performance.now() - start);
 	}
 
-	_draw(params: { min: number; max: number; typeMax: number; settings: any; nanColor: { r: number; g: number; b: number }; channels?: number; flipY?: boolean }): void {
+	_draw(params: { min: number; max: number; typeMin?: number; typeMax: number; settings: any; nanColor: { r: number; g: number; b: number }; channels?: number; flipY?: boolean }): void {
 		const gl = this.gl as WebGL2RenderingContext;
 		const program = this.program as WebGLProgram;
 		const settings = params.settings || {};
@@ -360,15 +361,15 @@ export class WebGL2FloatRenderer {
 		let displayMax;
 		let gammaExponent = 1.0;
 		if (isGammaMode && isIdentity) {
-			displayMin = 0;
+			displayMin = params.typeMin ?? 0;
 			displayMax = params.typeMax;
 		} else {
-			const range = NormalizationHelper.getNormalizationRange(settings, stats, params.typeMax, true);
+			const range = NormalizationHelper.getNormalizationRange(settings, stats, params.typeMax, true, params.typeMin ?? 0);
 			displayMin = range.min;
 			displayMax = range.max;
 		}
 		if (isGammaMode && !isIdentity) {
-			const range = NormalizationHelper.getEffectiveVisualizationRange(settings, 0, params.typeMax);
+			const range = NormalizationHelper.getEffectiveVisualizationRange(settings, params.typeMin ?? 0, params.typeMax);
 			displayMin = range.min;
 			displayMax = range.max;
 			const gammaIn = settings.gamma?.in ?? 1.0;

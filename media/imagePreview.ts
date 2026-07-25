@@ -92,6 +92,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			return {
 				width: bitmap.width, height: bitmap.height, channels, data,
 				metadata: { ...frame.metadata, decoder: 'Browser JPEG fallback' },
+				numericDomain: frame.numericDomain,
 				decodeTimings: [{ name: 'decode-dicom-browser-jpeg', durationMs: performance.now() - started }],
 			};
 		} finally {
@@ -1419,6 +1420,17 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, sourceNumericType: ti.sourceNumericType || inferred, name, uri };
 	}
 
+	function scientificTypeInfo(processor: ScientificArrayProcessor): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
+		return {
+			// Scientific decoders intentionally use a Float32 carrier so rescale,
+			// signed values, and NaN no-data remain representable. Keep that
+			// carrier fact separate from the source numeric type and range.
+			isFloat: true,
+			typeMax: processor.numericDomain.typeMax,
+			sourceNumericType: processor.numericDomain.sourceNumericType,
+		};
+	}
+
 	function tiffRawToLayer(raw: any, name: string, uri: string): LayerInput | null {
 		if (!raw || !raw.data || !raw.ifd) { return null; }
 		const ifd = raw.ifd;
@@ -1471,9 +1483,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
 			case 'HDR': return lastRawToLayer(hdrProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
-			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
-			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
-			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, scientificTypeInfo(fitsProcessor), name, uri) || baseFromCanvas(name, uri);
+			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, scientificTypeInfo(dicomProcessor), name, uri) || baseFromCanvas(name, uri);
+			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, scientificTypeInfo(netcdfProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'Layered Document': {
 				const raw = layeredPreviewProcessor._lastRaw;
 				const activeRaw = raw ? { ...raw, data: layeredPreviewProcessor.activeData() } : null;
@@ -1537,7 +1549,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				lower.match(/\.(nc|cdf)$/) ? netcdfProcessor.config : null;
 			if (scientificConfig) {
 				const p = new ScientificArrayProcessor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
-				await p.process(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
+				await p.process(src); return lastRawToLayer(p._lastRaw, scientificTypeInfo(p), name, resourceUri);
 			}
 			return decodeViaImage(src, name, resourceUri);
 		} catch (err) {
@@ -2873,7 +2885,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					rawData: data,
 					channels,
 					isFloat: true,
-					typeMax: 1.0,
+					typeMin: processor.numericDomain.typeMin,
+					typeMax: processor.numericDomain.typeMax,
 					stats: processor._cachedStats || null
 				};
 			} else if (hdrProcessor && hdrProcessor._lastRaw) {

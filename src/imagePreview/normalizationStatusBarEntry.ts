@@ -14,6 +14,8 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 	private _normalizedFloatMode: boolean = false;
 	private _bitsPerSample: number | undefined;
 	private _sampleFormat: number | undefined;
+	private _typeMin: number | undefined;
+	private _typeMax: number | undefined;
 
 	constructor() {
 		super(
@@ -30,14 +32,18 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
 		// Determine the normalization range based on data type
 		const isFloat = this._sampleFormat === 3;
-		let typeMaxValue = 1;
+		let typeMinValue = this._typeMin ?? 0;
+		let typeMaxValue = this._typeMax ?? 1;
 		if (!isFloat) {
 			// Full type range from the actual bit depth (255, 1023, 4095, 16383,
-			// 65535, ...); signed samples only cover the positive half.
+			// 65535, ...), including the negative half for signed samples.
 			const bits = this._bitsPerSample ?? 8;
-			typeMaxValue = this._sampleFormat === 2
-				? Math.pow(2, bits - 1) - 1
-				: Math.pow(2, bits) - 1;
+			if (this._typeMax === undefined) {
+				typeMinValue = this._sampleFormat === 2 ? -Math.pow(2, bits - 1) : 0;
+				typeMaxValue = this._sampleFormat === 2
+					? Math.pow(2, bits - 1) - 1
+					: Math.pow(2, bits) - 1;
+			}
 		}
 
 		if (autoNormalize) {
@@ -79,9 +85,9 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 			if (this._rgbAs24BitMode) {
 				tooltip += `Normalization: [0, 16777215]\n`;
 			} else if (this._normalizedFloatMode || isFloat) {
-				tooltip += `Normalization: [0.00, 1.00]\n`;
+				tooltip += `Normalization: [${typeMinValue.toFixed(2)}, ${typeMaxValue.toFixed(2)}]\n`;
 			} else {
-				tooltip += `Normalization: [0, ${typeMaxValue}]\n`;
+				tooltip += `Normalization: [${typeMinValue}, ${typeMaxValue}]\n`;
 			}
 		} else if (!autoNormalize && this._normMin !== undefined && this._normMax !== undefined) {
 			// For manual mode, show the normalization range in tooltip as well
@@ -119,8 +125,10 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 		this._normalizedFloatMode = enabled;
 	}
 
-	public updateFormatInfo(bitsPerSample: number, sampleFormat: number) {
-		this._bitsPerSample = bitsPerSample;
-		this._sampleFormat = sampleFormat;
+	public updateFormatInfo(formatInfo: { bitsPerSample: number, sampleFormat: number, typeMin?: number, typeMax?: number }) {
+		this._bitsPerSample = formatInfo.bitsPerSample;
+		this._sampleFormat = formatInfo.sampleFormat;
+		this._typeMin = formatInfo.typeMin;
+		this._typeMax = formatInfo.typeMax;
 	}
-} 
+}

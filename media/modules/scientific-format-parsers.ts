@@ -6,12 +6,25 @@ export interface ScientificDecodedImage {
 	channels: number;
 	data: Float32Array;
 	metadata: Record<string, any>;
+	numericDomain: {
+		bitsPerSample: number;
+		sampleFormat: 1 | 2 | 3;
+		typeMin: number;
+		typeMax: number;
+		sourceNumericType: 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float32' | 'float64';
+	};
 	decodeTimings?: { name: string, durationMs: number }[];
 }
 
 function finiteNumber(value: unknown, fallback: number): number {
 	const parsed = typeof value === 'number' ? value : Number(value);
 	return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function scaledDomain(storedMin: number, storedMax: number, scale: number, offset: number): { typeMin: number, typeMax: number } {
+	const first = offset + scale * storedMin;
+	const last = offset + scale * storedMax;
+	return { typeMin: Math.min(first, last), typeMax: Math.max(first, last) };
 }
 
 function ascii(bytes: Uint8Array, start: number, length: number): string {
@@ -87,6 +100,15 @@ export function parseFits(buffer: ArrayBuffer): ScientificDecodedImage {
 			const scale = finiteNumber(header.BSCALE, 1);
 			const zero = finiteNumber(header.BZERO, 0);
 			const blank = typeof header.BLANK === 'number' ? header.BLANK : null;
+			const bitsPerSample = Math.abs(bitpix);
+			const sampleFormat: 1 | 2 | 3 = bitpix < 0 ? 3 : bitpix === 8 ? 1 : 2;
+			const storedMin = sampleFormat === 3 ? 0 : sampleFormat === 1 ? 0 : -(2 ** (bitsPerSample - 1));
+			const storedMax = sampleFormat === 3 ? 1 : sampleFormat === 1 ? (2 ** bitsPerSample) - 1 : (2 ** (bitsPerSample - 1)) - 1;
+			const domain = scaledDomain(storedMin, storedMax, scale, zero);
+			const sourceNumericType = (sampleFormat === 3
+				? (bitsPerSample <= 32 ? 'float32' : 'float64')
+				: sampleFormat === 1 ? 'uint8'
+					: bitsPerSample <= 16 ? 'int16' : 'int32') as ScientificDecodedImage['numericDomain']['sourceNumericType'];
 			const data = new Float32Array(planeValues);
 			const readStored = (offset: number): number => {
 				switch (bitpix) {
@@ -109,6 +131,7 @@ export function parseFits(buffer: ArrayBuffer): ScientificDecodedImage {
 			}
 			return {
 				width, height, channels: 1, data,
+				numericDomain: { bitsPerSample, sampleFormat, ...domain, sourceNumericType },
 				metadata: {
 					format: 'FITS', hduIndex, bitpix, axes,
 					bscale: scale, bzero: zero,
@@ -148,6 +171,7 @@ export interface DicomCompressedFrame {
 	height: number;
 	channels: number;
 	metadata: Record<string, any>;
+	numericDomain: ScientificDecodedImage['numericDomain'];
 }
 
 function dicomElement(view: DataView, bytes: Uint8Array, offset: number, explicit: boolean, little: boolean) {
@@ -270,9 +294,21 @@ function dicomImageInfo(context: DicomContext) {
 	if (![8, 16, 32, 64].includes(bitsAllocated)) { throw new Error(`Unsupported DICOM Bits Allocated: ${bitsAllocated}`); }
 	const slope = decimal(0x00281053, 1);
 	const intercept = decimal(0x00281052, 0);
+	const sampleFormat: 1 | 2 | 3 = pixelTag === 0x7fe00008 || pixelTag === 0x7fe00009 ? 3 : signed ? 2 : 1;
+	const storedMin = sampleFormat === 3 ? 0 : signed ? -(2 ** (bitsStored - 1)) : 0;
+	const storedMax = sampleFormat === 3 ? 1 : signed ? (2 ** (bitsStored - 1)) - 1 : (2 ** bitsStored) - 1;
+	const domain = scaledDomain(storedMin, storedMax, slope, intercept);
+	const sourceNumericType = (sampleFormat === 3
+		? (bitsAllocated <= 32 ? 'float32' : 'float64')
+		: `${signed ? 'int' : 'uint'}${bitsStored <= 8 ? 8 : bitsStored <= 16 ? 16 : 32}`) as ScientificDecodedImage['numericDomain']['sourceNumericType'];
 	return {
 		rows, columns, samples, planar, bitsAllocated, bitsStored, signed, frames, photometric,
-		slope, intercept,
+		slope, intercept, numericDomain: {
+			bitsPerSample: bitsStored,
+			sampleFormat,
+			...domain,
+			sourceNumericType,
+		},
 		metadata: {
 			format: 'DICOM', transferSyntax, photometric, bitsAllocated, bitsStored,
 			signed, frames, rescaleSlope: slope, rescaleIntercept: intercept,
@@ -332,6 +368,7 @@ export function parseDicom(buffer: ArrayBuffer, frameIndex = 0): ScientificDecod
 
 	return {
 		width: columns, height: rows, channels: samples === 4 ? 4 : samples, data: output,
+		numericDomain: info.numericDomain,
 		metadata: {
 			...info.metadata,
 			frameIndex: safeFrame,
@@ -410,6 +447,7 @@ export function extractDicomJpegFrame(buffer: ArrayBuffer, frameIndex = 0): Dico
 		height: info.rows,
 		channels: info.samples,
 		metadata: { ...info.metadata, frameIndex: safeFrame, compression: 'JPEG Baseline' },
+		numericDomain: info.numericDomain,
 	};
 }
 
@@ -570,6 +608,22 @@ export function parseNetCdf(buffer: ArrayBuffer, options: NetCdfDecodeOptions = 
 	const selected = candidates.find(variable => variable.name === options.variableName)
 		|| (meshVariables.length > 0 ? preferredMeshNames.map(name => variableByName.get(name)).find(variable => variable && meshVariables.includes(variable)) : undefined)
 		|| candidates[0];
+	const selectedBits = NC_TYPE_SIZE[selected.type] * 8;
+	const selectedSampleFormat: 1 | 2 | 3 = selected.type >= 5 ? 3 : 2;
+	const selectedScale = finiteNumber(selected.attrs.scale_factor, 1);
+	const selectedOffset = finiteNumber(selected.attrs.add_offset, 0);
+	const selectedStoredMin = selectedSampleFormat === 3 ? 0 : -(2 ** (selectedBits - 1));
+	const selectedStoredMax = selectedSampleFormat === 3 ? 1 : (2 ** (selectedBits - 1)) - 1;
+	const selectedDomain = scaledDomain(selectedStoredMin, selectedStoredMax, selectedScale, selectedOffset);
+	const selectedSourceNumericType = (selectedSampleFormat === 3
+		? (selectedBits <= 32 ? 'float32' : 'float64')
+		: selectedBits <= 8 ? 'int8' : selectedBits <= 16 ? 'int16' : 'int32') as ScientificDecodedImage['numericDomain']['sourceNumericType'];
+	const numericDomain: ScientificDecodedImage['numericDomain'] = {
+		bitsPerSample: selectedBits,
+		sampleFormat: selectedSampleFormat,
+		...selectedDomain,
+		sourceNumericType: selectedSourceNumericType,
+	};
 	const selectedDimensions = variableDimensions(selected);
 	const selectedIndices = Object.fromEntries(selectedDimensions.map(dimension => [
 		dimension.name,
@@ -649,6 +703,7 @@ export function parseNetCdf(buffer: ArrayBuffer, options: NetCdfDecodeOptions = 
 		}
 		return {
 			width, height, channels: 1, data,
+			numericDomain,
 			metadata: {
 				format: `NetCDF CDF-${version}`, variable: selected.name,
 				unit: selected.attrs.units, longName: selected.attrs.long_name,
@@ -674,6 +729,7 @@ export function parseNetCdf(buffer: ArrayBuffer, options: NetCdfDecodeOptions = 
 	}
 	return {
 		width, height, channels: 1, data,
+		numericDomain,
 		metadata: {
 			format: `NetCDF CDF-${version}`,
 			variable: selected.name,
