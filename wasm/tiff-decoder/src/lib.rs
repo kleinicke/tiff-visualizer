@@ -3429,3 +3429,271 @@ fn compute_stats_f64(data: &[f64]) -> (f64, f64) {
     }
     (min, max)
 }
+
+/// Persistent full-resolution RGBA compositor used by the layer worker.
+///
+/// Keeping the accumulation buffer in WASM is important: only each source
+/// layer crosses the JS/WASM boundary once and only the finished composite is
+/// copied back. The TypeScript compositor remains the correctness fallback for
+/// hierarchy, masks, adjustments, arithmetic modes, and non-RGBA stacks.
+#[wasm_bindgen]
+pub struct RgbaLayerCompositor {
+    width: u32,
+    height: u32,
+    type_max: f32,
+    data: Vec<f32>,
+    covered_count: u32,
+}
+
+#[wasm_bindgen]
+impl RgbaLayerCompositor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(width: u32, height: u32, type_max: f32) -> Result<RgbaLayerCompositor, JsValue> {
+        if width == 0 || height == 0 || !type_max.is_finite() || type_max <= 0.0 {
+            return Err(JsValue::from_str("Invalid RGBA compositor dimensions or type maximum"));
+        }
+        let pixel_count = (width as usize)
+            .checked_mul(height as usize)
+            .ok_or_else(|| JsValue::from_str("RGBA compositor dimensions overflow"))?;
+        let value_count = pixel_count
+            .checked_mul(4)
+            .ok_or_else(|| JsValue::from_str("RGBA compositor allocation overflow"))?;
+        Ok(RgbaLayerCompositor {
+            width,
+            height,
+            type_max,
+            data: vec![0.0; value_count],
+            covered_count: 0,
+        })
+    }
+
+    pub fn add_u8(
+        &mut self,
+        source: &[u8],
+        width: u32,
+        height: u32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), width, height)?;
+        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, 255.0, |index| {
+            source[index] as f32
+        });
+        Ok(())
+    }
+
+    pub fn add_u16(
+        &mut self,
+        source: &[u16],
+        width: u32,
+        height: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), width, height)?;
+        self.validate_type_max(source_type_max)?;
+        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, source_type_max, |index| {
+            source[index] as f32
+        });
+        Ok(())
+    }
+
+    pub fn add_f32(
+        &mut self,
+        source: &[f32],
+        width: u32,
+        height: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), width, height)?;
+        self.validate_type_max(source_type_max)?;
+        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, source_type_max, |index| {
+            source[index]
+        });
+        Ok(())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn covered_count(&self) -> u32 {
+        self.covered_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn min_value(&self) -> f32 {
+        self.stats().0
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn max_value(&self) -> f32 {
+        self.stats().1
+    }
+
+    pub fn take_data(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.data)
+    }
+}
+
+impl RgbaLayerCompositor {
+    fn validate_source(&self, length: usize, width: u32, height: u32) -> Result<(), JsValue> {
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| JsValue::from_str("RGBA source dimensions overflow"))?;
+        if length != expected {
+            return Err(JsValue::from_str("RGBA source length does not match its dimensions"));
+        }
+        Ok(())
+    }
+
+    fn validate_type_max(&self, source_type_max: f32) -> Result<(), JsValue> {
+        if !source_type_max.is_finite() || source_type_max <= 0.0 {
+            return Err(JsValue::from_str("Invalid RGBA source type maximum"));
+        }
+        Ok(())
+    }
+
+    fn add_source<F>(
+        &mut self,
+        source_width: u32,
+        source_height: u32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+        source_type_max: f32,
+        sample: F,
+    )
+    where
+        F: Fn(usize) -> f32,
+    {
+        let opacity = opacity.clamp(0.0, 1.0);
+        if opacity <= 0.0 {
+            return;
+        }
+        let x_start = offset_x.max(0) as u32;
+        let y_start = offset_y.max(0) as u32;
+        let x_end = self.width.min((offset_x as i64 + source_width as i64).max(0) as u32);
+        let y_end = self.height.min((offset_y as i64 + source_height as i64).max(0) as u32);
+        if x_start >= x_end || y_start >= y_end {
+            return;
+        }
+        let value_scale = self.type_max / source_type_max;
+        for y in y_start..y_end {
+            let source_y = (y as i64 - offset_y as i64) as usize;
+            for x in x_start..x_end {
+                let source_x = (x as i64 - offset_x as i64) as usize;
+                let source_index = (source_y * source_width as usize + source_x) * 4;
+                let destination_index = (y as usize * self.width as usize + x as usize) * 4;
+                let source_alpha_value = sample(source_index + 3);
+                if !source_alpha_value.is_finite() {
+                    self.cover_invalid(destination_index);
+                    continue;
+                }
+                let source_alpha = (source_alpha_value / source_type_max * opacity).clamp(0.0, 1.0);
+                if source_alpha <= 0.0 {
+                    continue;
+                }
+                let destination_alpha = self.data[destination_index + 3] / self.type_max;
+                let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+                let was_covered = destination_alpha > 0.0;
+                for channel in 0..3 {
+                    let source_value = sample(source_index + channel) * value_scale;
+                    let below = self.data[destination_index + channel];
+                    self.data[destination_index + channel] = composite_rgba_channel(
+                        below,
+                        source_value,
+                        blend_mode,
+                        source_alpha,
+                        destination_alpha,
+                        output_alpha,
+                        self.type_max,
+                    );
+                }
+                self.data[destination_index + 3] = output_alpha * self.type_max;
+                if !was_covered {
+                    self.covered_count += 1;
+                }
+            }
+        }
+    }
+
+    fn cover_invalid(&mut self, destination_index: usize) {
+        if self.data[destination_index + 3] <= 0.0 {
+            self.covered_count += 1;
+        }
+        self.data[destination_index] = f32::NAN;
+        self.data[destination_index + 1] = f32::NAN;
+        self.data[destination_index + 2] = f32::NAN;
+        self.data[destination_index + 3] = self.type_max;
+    }
+
+    fn stats(&self) -> (f32, f32) {
+        let mut minimum = f32::INFINITY;
+        let mut maximum = f32::NEG_INFINITY;
+        for pixel in self.data.chunks_exact(4) {
+            if pixel[3] <= 0.0 {
+                continue;
+            }
+            for value in &pixel[..3] {
+                if value.is_finite() {
+                    minimum = minimum.min(*value);
+                    maximum = maximum.max(*value);
+                }
+            }
+        }
+        if minimum == f32::INFINITY {
+            (0.0, 0.0)
+        } else {
+            (minimum, maximum)
+        }
+    }
+}
+
+fn composite_rgba_channel(
+    below: f32,
+    source: f32,
+    mode: u32,
+    source_alpha: f32,
+    destination_alpha: f32,
+    output_alpha: f32,
+    type_max: f32,
+) -> f32 {
+    if destination_alpha <= 0.0 || source_alpha >= 1.0 && mode == 0 {
+        return source;
+    }
+    if !below.is_finite() || !source.is_finite() {
+        return f32::NAN;
+    }
+    if mode == 0 {
+        return (source * source_alpha + below * destination_alpha * (1.0 - source_alpha)) / output_alpha;
+    }
+    let blended = match mode {
+        1 => below * source / type_max,
+        2 => type_max - (type_max - below) * (type_max - source) / type_max,
+        3 => {
+            if below <= type_max * 0.5 {
+                2.0 * below * source / type_max
+            } else {
+                type_max - 2.0 * (type_max - below) * (type_max - source) / type_max
+            }
+        }
+        4 => below.min(source),
+        5 => below.max(source),
+        6 => (below - source).abs(),
+        7 => below + source - 2.0 * below * source / type_max,
+        _ => source,
+    };
+    ((1.0 - source_alpha) * destination_alpha * below
+        + (1.0 - destination_alpha) * source_alpha * source
+        + destination_alpha * source_alpha * blended)
+        / output_alpha
+}

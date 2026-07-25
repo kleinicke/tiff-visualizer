@@ -4,14 +4,20 @@ import path from 'path';
 
 test('dedicated layer compositor worker returns full and scaled surfaces', async ({ page }) => {
 	const workerSource = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'layerCompositorWorker.bundle.js'), 'utf8');
-	const results = await page.evaluate(async source => {
+	const wasmBase64 = fs.readFileSync(path.join(__dirname, '..', '..', 'media', 'wasm', 'tiff-wasm.wasm')).toString('base64');
+	const results = await page.evaluate(async ({ source, wasmBase64 }) => {
 		const url = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-		// The bundle is self-contained; classic mode also works on Playwright's
-		// opaque about:blank origin, where module Blob workers are blocked.
 		const worker = new Worker(url);
 		const messages: any[] = [];
 		worker.onmessage = event => messages.push(event.data);
 		for (let wait = 0; wait < 100 && !messages.some(message => message.type === 'ready'); wait++) {
+			await new Promise(resolve => setTimeout(resolve, 10));
+		}
+		const binary = atob(wasmBase64);
+		const wasm = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index++) { wasm[index] = binary.charCodeAt(index); }
+		worker.postMessage({ type: 'init-wasm', buffer: wasm.buffer }, [wasm.buffer]);
+		for (let wait = 0; wait < 200 && !messages.some(message => message.type === 'caps' && message.rustCompositor); wait++) {
 			await new Promise(resolve => setTimeout(resolve, 10));
 		}
 		const baseLayer = {
@@ -50,13 +56,14 @@ test('dedicated layer compositor worker returns full and scaled surfaces', async
 		worker.terminate();
 		URL.revokeObjectURL(url);
 		return {
-			full: { type: full.type, width: full.result.width, height: full.result.height, data: Array.from(full.result.data) },
+			full: { type: full.type, backend: full.backend, width: full.result.width, height: full.result.height, data: Array.from(full.result.data) },
 			scaled: { type: scaled.type, width: scaled.result.width, height: scaled.result.height, data: Array.from(scaled.result.data) },
 			mixed: { type: mixed.type, typeMax: mixed.result.typeMax, channels: mixed.result.channels, data: Array.from(mixed.result.data) },
 		};
-	}, workerSource);
+	}, { source: workerSource, wasmBase64 });
 
 	expect(results.full.type).toBe('composite-result');
+	expect(results.full.backend).toBe('rust-wasm');
 	expect([results.full.width, results.full.height]).toEqual([2, 2]);
 	expect(results.full.data.slice(0, 4)).toEqual([255, 0, 0, 255]);
 	expect(results.scaled.type).toBe('composite-result');

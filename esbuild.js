@@ -72,7 +72,13 @@ const layerCompositorWorkerBuildOptions = {
   platform: 'browser',
   target: 'es2020',
   sourcemap: true,
-  format: 'esm',
+  // This worker is loaded from a Blob URL. Classic workers remain available
+  // on VS Code's opaque webview origins where module Blob workers are blocked.
+  // WASM bytes are explicitly transferred by the client, so the generated
+  // glue's import.meta URL fallback is neither needed nor executed.
+  format: 'iife',
+  supported: { 'import-meta': false },
+  logOverride: { 'empty-import-meta': 'silent' },
 };
 
 // Build the comparison panel webview script (classic script, no imports/exports).

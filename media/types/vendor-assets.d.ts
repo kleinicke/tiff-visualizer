@@ -16,6 +16,7 @@ declare module '*/wasm/tiff-wasm.js' {
     export const decode_hdr_fast: any;
     export const decode_jpeg_fast: any;
     export const decode_png16_fast: any;
+    export const RgbaLayerCompositor: any;
     export const decode_tiff: any;
     export const decode_tiff_fast: any;
 	export const decode_tiff_page: any;

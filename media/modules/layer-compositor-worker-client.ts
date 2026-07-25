@@ -90,6 +90,7 @@ export class LayerCompositorWorkerClient {
 		region?: CompositeRegion;
 	} | null = null;
 	private queued: PendingRequest | null = null;
+	private rustCompositor = false;
 	private lastResult: CompositeResult | null = null;
 	private lastStates: LayerState[] | null = null;
 	private lastWidth = 0;
@@ -112,6 +113,10 @@ export class LayerCompositorWorkerClient {
 			new URL('./layerCompositorWorker.bundle.js', import.meta.url).href,
 			new URL('../layerCompositorWorker.bundle.js', import.meta.url).href,
 		];
+		const wasmCandidates = [
+			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
+			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
+		];
 		let source: string | null = null;
 		for (const url of candidates) {
 			try {
@@ -121,8 +126,6 @@ export class LayerCompositorWorkerClient {
 		}
 		if (!source) { throw new Error('layerCompositorWorker.bundle.js not found'); }
 		this.blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-		// esbuild emits a self-contained worker, so classic mode avoids module
-		// Blob restrictions on opaque/embedded webview origins.
 		const worker = new Worker(this.blobUrl);
 		this.worker = worker;
 		worker.onmessage = event => this.onMessage(event.data);
@@ -130,10 +133,20 @@ export class LayerCompositorWorkerClient {
 			console.warn('[LayerCompositorWorker] Worker error:', event.message || event);
 			this.teardown();
 		};
-		await new Promise<void>((resolve, reject) => {
+		const ready = new Promise<void>((resolve, reject) => {
 			this.readyResolve = resolve;
 			setTimeout(() => reject(new Error('worker init timeout')), 20_000);
 		});
+		for (const url of wasmCandidates) {
+			try {
+				const response = await fetch(url);
+				if (!response.ok) { continue; }
+				const buffer = await response.arrayBuffer();
+				worker.postMessage({ type: 'init-wasm', buffer }, [buffer]);
+				break;
+			} catch { /* the worker retains its TypeScript fallback */ }
+		}
+		await ready;
 		this.ready = true;
 	}
 
@@ -337,7 +350,12 @@ export class LayerCompositorWorkerClient {
 	}
 
 	private onMessage(message: any): void {
+		if (message?.type === 'caps') {
+			this.rustCompositor = !!message.rustCompositor;
+			return;
+		}
 		if (message?.type === 'ready') {
+			this.rustCompositor = !!message.caps?.rustCompositor;
 			this.readyResolve?.();
 			this.readyResolve = null;
 			return;
@@ -385,6 +403,7 @@ export class LayerCompositorWorkerClient {
 
 	private teardown(): void {
 		this.ready = false;
+		this.rustCompositor = false;
 		try { this.worker?.terminate(); } catch { /* already stopped */ }
 		this.worker = null;
 		if (this.active) {

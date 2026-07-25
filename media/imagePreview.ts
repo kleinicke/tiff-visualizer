@@ -23,6 +23,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 import { LayerCompositorWorkerClient, layerDisplayScale } from './modules/layer-compositor-worker-client.js';
+import { WebGL2LayerCompositor } from './modules/webgl2-layer-compositor.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
@@ -152,6 +153,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	decodeWorkerClient.start();
 	const layerCompositorWorker = new LayerCompositorWorkerClient();
 	layerCompositorWorker.start();
+	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
@@ -170,6 +172,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	mouseHandler.setLayeredPreviewProcessor(layeredPreviewProcessor);
 
 	function disposeWebglRenderers() {
+		layerGpuCompositor.dispose();
 		for (const p of allProcessors) {
 			// Not every processor class exposes a _webglRenderer field; cast is a
 			// pre-existing (documented) type-only workaround, no behavior change.
@@ -1667,6 +1670,27 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const renderGeneration = ++_layerCanvasRenderGeneration;
 		const fullWidth = layerManager.canvasWidth, fullHeight = layerManager.canvasHeight;
 		const scale = layerDisplayScale(fullWidth, fullHeight, interactive);
+		const gpuSurface = layerGpuCompositor.render(
+			layerManager.layers,
+			fullWidth,
+			fullHeight,
+			scale,
+			settingsManager.settings,
+			getNanColorObj(),
+		);
+		if (gpuSurface) {
+			const ctx = ensure2dCanvasContext();
+			if (!ctx) { return false; }
+			if (ctx.canvas.width !== fullWidth || ctx.canvas.height !== fullHeight) {
+				ctx.canvas.width = fullWidth; ctx.canvas.height = fullHeight;
+			}
+			ctx.save();
+			ctx.globalCompositeOperation = 'copy';
+			ctx.imageSmoothingEnabled = true;
+			ctx.drawImage(gpuSurface, 0, 0, fullWidth, fullHeight);
+			ctx.restore();
+			return true;
+		}
 		const workerRequest = layerCompositorWorker.compose(layerManager.layers, fullWidth, fullHeight, scale);
 		if (workerRequest) {
 			void workerRequest.then(async result => {
@@ -3872,6 +3896,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		window.addEventListener('beforeunload', () => {
 			zoomController.saveState();
 			layerCompositorWorker.dispose();
+			layerGpuCompositor.dispose();
 		});
 	}
 
@@ -4832,12 +4857,20 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	}
 
 	/** Capture the exact currently rendered pixels used by every export format. */
-	function renderedExportImage(): ImageData | null {
+	async function renderedExportImage(): Promise<ImageData | null> {
 		if (layerManager.active && layerManager.hasCompositeStack()) {
 			// Render directly for export instead of reading the visible canvas: its
 			// ImageBitmap upload is asynchronous and may still contain the previous
 			// layer state immediately after a visibility/opacity change.
-			const rendered = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
+			const workerComposite = await layerCompositorWorker.compose(
+				layerManager.layers,
+				layerManager.canvasWidth,
+				layerManager.canvasHeight,
+				1,
+			);
+			const rendered = workerComposite
+				? layerManager.renderCompositeToImageData(workerComposite, settingsManager.settings, { nanColor: getNanColorObj() })
+				: layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
 			if (rendered) {
 				const exportCanvas = document.createElement('canvas');
 				exportCanvas.width = rendered.width; exportCanvas.height = rendered.height;
@@ -4881,9 +4914,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		return null;
 	}
 
-	function exportLayerDocument(format: LayerExportFormat) {
+	async function exportLayerDocument(format: LayerExportFormat) {
 		try {
-			const rendered = renderedExportImage();
+			const rendered = await renderedExportImage();
 			if (!rendered) { throw new Error('The current image has no rendered pixels to export'); }
 			if (format !== 'png' && !layerManager.hasCompositeStack()) { throw new Error(`${format.toUpperCase()} layered export requires an active Layers composition`); }
 			const result = writeLayerDocument(format, layerManager.layers, rendered.width, rendered.height, rendered);
