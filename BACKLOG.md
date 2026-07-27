@@ -467,9 +467,10 @@ Specification: <https://www.openraster.org/>. ORA is intentionally simple: a
 ZIP container with XML stack metadata and PNG/SVG layer assets.
 
 **Implementation status:** the worker now validates and parses `stack.xml`,
-selectively extracts referenced PNG layers, retains groups and source-node
-properties, reconstructs normal alpha compositions, measures them against
-`mergedimage.png`, and exposes an Integrated/Reconstructed switch. Compatible
+shows `mergedimage.png` immediately in a preview-only pass, then selectively
+extracts referenced PNG layers in a background layer-only pass. It retains
+groups and source-node properties, reconstructs normal alpha compositions,
+measures them against `mergedimage.png`, and exposes an Integrated/Reconstructed switch. Compatible
 raster nodes can be expanded into the existing Layers View. The unified exporter
 writes an authoritative merged PNG plus editable raster/group entries; filters
 are retained in the merged result and reported because ORA has no adjustment
@@ -515,6 +516,8 @@ and color-balance adjustment layers/filter masks are translated from
 `.filterconfig` into editable approximate compositor filters. Pass-through groups,
 non-8-bit/color-managed paint devices, cached projections, advanced filters,
 vector/generator nodes, and animation remain.
+Opening uses complementary preview-only and background layer-only worker passes,
+so the integrated image does not wait for paint-device and mask decoding.
 The exporter writes 8-bit paint devices, hierarchy, merged/preview images, and
 the supported filter configurations; raster masks and unsupported operations
 are currently baked or reported. It also stores exact non-8-bit raster samples
@@ -550,7 +553,10 @@ and PSB behavior against representative fixtures.
 opacity, kind, blend mode, cached raster pixels, common masks, clipping, and
 supported adjustment descriptors. The exporter writes a new 8-bit PSD with an
 authoritative composite, raster/group hierarchy, masks, clipping, and the
-supported adjustment layers. Lazy decode, thumbnails, color profiles,
+supported adjustment layers. PSD/PSB opening now performs complementary
+composite-only and background layer-only worker passes, and ordinary 8-bit RGBA
+composites use a zero-copy identity display path. Per-layer visibility-driven
+loading, thumbnails, color profiles,
 blend/group semantics, effects, smart objects, and genuinely large PSB files
 remain unsupported or inspect-only.
 
@@ -695,7 +701,10 @@ The editable compositor now has four explicitly selectable implementations:
 WebGPU, WebGL2, Rust/Wasm, and the TypeScript/JavaScript CPU reference. The development
 selector is intentionally strict: a selected backend must render the document
 itself or report the exact unsupported feature/error; it never silently changes
-backend. Full-resolution CPU work runs in a dedicated worker. Slider and curve
+backend. The production default probes and selects WebGPU, then WebGL2, then
+Rust/Wasm; JavaScript remains only as the final availability fallback and
+manual correctness reference. Full-resolution CPU work runs in a dedicated
+worker. Slider and curve
 gestures request a preview capped at 768 pixels on the longest side. Their
 trailing native render remains debounced while input is moving, but pointer/key
 release cancels that timer and starts the final native-resolution render
@@ -703,6 +712,9 @@ immediately if the preview is already visible. A direct slider click first
 presents its queued preview, then starts native work on the following animation
 frame. Documents at or below 1500×1500 render natively without a preview pass;
 discrete edits on larger documents use a short 60 ms settle delay.
+Production compositor telemetry is aggregated per edit/slider gesture into one
+line containing the preview count and timings plus the final native render;
+per-pass phase logs remain console-only behind a code diagnostic flag.
 
 The target architecture is:
 

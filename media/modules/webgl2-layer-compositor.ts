@@ -90,6 +90,12 @@ export class WebGL2LayerCompositor {
 		return this.unsupportedReason(layers, settings, width, height) === null;
 	}
 
+	isAvailable(): boolean {
+		if (this.failed) { return false; }
+		try { return this.ensureContext(1, 1); }
+		catch { return false; }
+	}
+
 	setLogger(logger: (message: string) => void): void {
 		this.logger = logger;
 	}

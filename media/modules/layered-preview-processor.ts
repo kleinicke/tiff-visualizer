@@ -19,6 +19,10 @@ export class LayeredPreviewProcessor {
 	metadata: Record<string, string | number | boolean> = {};
 	_cachedStats: { min: number; max: number } | undefined;
 	previewMode: 'integrated' | 'reconstructed' = 'integrated';
+	decodeEditableLayers = true;
+	onLayersReady: ((decoded: DecodedLayeredPreview) => void) | null = null;
+	private _deferredDecodeToken = 0;
+	private _deferredLayersPromise: Promise<void> | null = null;
 
 	constructor(settingsManager: any, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -29,9 +33,12 @@ export class LayeredPreviewProcessor {
 		const signal = this.loadSignal;
 		const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, format);
 		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+		const splitLayeredDecode = this.decodeEditableLayers &&
+			(format === 'psd' || format === 'psb' || format === 'ora' || format === 'kra');
 		const decoded = await DecodeWorkerClient.decodeWithFallback(
 			this.decodeWorker, format, buffer, src, signal,
-			(localBuffer) => decodeLayeredPreview(format, localBuffer),
+			(localBuffer, options) => decodeLayeredPreview(format, localBuffer, options),
+			splitLayeredDecode ? { previewOnly: true } : {},
 		);
 		this._cachedStats = undefined;
 		this._lastRaw = decoded;
@@ -39,6 +46,7 @@ export class LayeredPreviewProcessor {
 		this.document = decoded.document;
 		this.metadata = decoded.metadata || {};
 		this._postFormatInfo(decoded);
+		if (splitLayeredDecode) { this._startDeferredLayerDecode(src, format, signal); }
 		const canvas = document.createElement('canvas');
 		canvas.width = decoded.width;
 		canvas.height = decoded.height;
@@ -47,6 +55,39 @@ export class LayeredPreviewProcessor {
 			return { canvas, imageData: new ImageData(decoded.width, decoded.height) };
 		}
 		return { canvas, imageData: this.renderWithSettings() };
+	}
+
+	private _startDeferredLayerDecode(
+		src: string,
+		format: LayeredDocumentFormat,
+		signal: AbortSignal | undefined,
+	): void {
+		const token = ++this._deferredDecodeToken;
+		this._deferredLayersPromise = new Promise<void>(resolve => setTimeout(resolve, 0)).then(async () => {
+			const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, `${format}-layers`);
+			if (signal?.aborted || token !== this._deferredDecodeToken) { return; }
+			const decoded = await DecodeWorkerClient.decodeWithFallback(
+				this.decodeWorker, format, buffer, src, signal,
+				(localBuffer, options) => decodeLayeredPreview(format, localBuffer, options),
+				{ layersOnly: true },
+			);
+			if (signal?.aborted || token !== this._deferredDecodeToken || !this._lastRaw) { return; }
+			const preview = this._lastRaw;
+			this._lastRaw = {
+				...decoded,
+				data: preview.data,
+				integratedData: preview.integratedData || preview.data,
+			};
+			this.document = decoded.document;
+			this.metadata = decoded.metadata || {};
+			this.onLayersReady?.(this._lastRaw);
+		}).catch(error => {
+			if (!signal?.aborted && token === this._deferredDecodeToken) {
+				console.warn(`[LayeredPreview] Deferred ${format.toUpperCase()} layer decode failed:`, error);
+			}
+		}).finally(() => {
+			if (token === this._deferredDecodeToken) { this._deferredLayersPromise = null; }
+		});
 	}
 
 	private _postFormatInfo(decoded: DecodedLayeredPreview): void {
@@ -86,6 +127,23 @@ export class LayeredPreviewProcessor {
 			this.vscode.postMessage({ type: 'stats', value: stats });
 		}
 		const typeMax = isFloat ? 1 : raw.bitDepth === 16 ? 65535 : 255;
+		const normalization = this.settingsManager.settings.normalization;
+		const identityEightBitRgba =
+			raw.bitDepth === 8 && raw.channels === 4 &&
+			(data instanceof Uint8Array || data instanceof Uint8ClampedArray) &&
+			!renderOptions.collectHistogram &&
+			!this.settingsManager.settings.rgbAs24BitGrayscale &&
+			(!this.settingsManager.settings.displayColormap || this.settingsManager.settings.displayColormap === 'none') &&
+			NormalizationHelper.isIdentityTransformation(this.settingsManager.settings) &&
+			(normalization?.gammaMode === true ||
+				(normalization?.autoNormalize === false && normalization.min === 0 && normalization.max === 255));
+		if (identityEightBitRgba) {
+			const bytes = data as Uint8Array | Uint8ClampedArray;
+			const clamped = bytes.buffer instanceof ArrayBuffer
+				? new Uint8ClampedArray(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+				: new Uint8ClampedArray(bytes);
+			return new ImageData(clamped, raw.width, raw.height);
+		}
 		return ImageRenderer.render(data, raw.width, raw.height, raw.channels, isFloat, stats, this.settingsManager.settings, {
 			typeMax,
 			collectHistogram: renderOptions.collectHistogram === true,
@@ -137,6 +195,8 @@ export class LayeredPreviewProcessor {
 	}
 
 	reset(): void {
+		this._deferredDecodeToken++;
+		this._deferredLayersPromise = null;
 		this._lastRaw = null;
 		this.document = null;
 		this.metadata = {};

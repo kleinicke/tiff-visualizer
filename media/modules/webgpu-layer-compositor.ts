@@ -104,6 +104,15 @@ export class WebGPULayerCompositor {
 		if (!this.device) { this.initPromise = null; }
 	}
 
+	async isAvailable(): Promise<boolean> {
+		try {
+			await this.ensureDevice();
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	pendingUpload(layers: Layer[]): { count: number; bytes: number } {
 		const pending = new Set<object>();
 		let bytes = 0;
@@ -172,6 +181,14 @@ export class WebGPULayerCompositor {
 		layers: Layer[], documentWidth: number, documentHeight: number, scale: number,
 		settings: ImageSettings, nanColor: { r: number; g: number; b: number }, strict = false,
 	): Promise<WebGPURenderResult> {
+		// WebGPU work is serialized and asynchronous. UI edits may mutate the
+		// manager's layer objects while an earlier request is queued or executing,
+		// so retain immutable parameters for both GPU encoding and CPU parity
+		// validation. Pixel arrays themselves are immutable document assets and
+		// intentionally remain shared to avoid multi-hundred-megabyte copies.
+		const requestedLayers = this.snapshotLayers(layers);
+		const requestedSettings = this.snapshotSettings(settings);
+		const requestedNanColor = { ...nanColor };
 		const timing: WebGPURenderTiming = {
 			requestedAt: performance.now(), startedAt: 0, queueMs: 0,
 			initializationMs: 0, prepareMs: 0, encodeMs: 0, gpuMs: 0,
@@ -185,7 +202,8 @@ export class WebGPULayerCompositor {
 			this.activeTiming = timing;
 			try {
 				const canvas = await this.renderNow(
-					layers, documentWidth, documentHeight, scale, settings, nanColor, strict,
+					requestedLayers, documentWidth, documentHeight, scale,
+					requestedSettings, requestedNanColor, strict,
 				);
 				timing.renderMs = performance.now() - timing.startedAt;
 				return { canvas, timing };
@@ -195,6 +213,28 @@ export class WebGPULayerCompositor {
 		});
 		this.renderQueue = operation.then((): void => { /* serialize */ }, (): void => { /* continue after failure */ });
 		return operation;
+	}
+
+	private snapshotLayers(layers: Layer[]): Layer[] {
+		return layers.map(layer => ({
+			...layer,
+			adjustment: layer.adjustment
+				? JSON.parse(JSON.stringify(layer.adjustment)) as LayerAdjustment
+				: undefined,
+			maskCondition: layer.maskCondition ? { ...layer.maskCondition } : undefined,
+			rasterMask: layer.rasterMask ? { ...layer.rasterMask } : undefined,
+			groupPath: layer.groupPath ? [...layer.groupPath] : undefined,
+			groupIds: layer.groupIds ? [...layer.groupIds] : undefined,
+		}));
+	}
+
+	private snapshotSettings(settings: ImageSettings): ImageSettings {
+		return {
+			...settings,
+			normalization: settings.normalization ? { ...settings.normalization } : undefined,
+			gamma: settings.gamma ? { ...settings.gamma } : undefined,
+			brightness: settings.brightness ? { ...settings.brightness } : undefined,
+		};
 	}
 
 	private async renderNow(

@@ -8,7 +8,7 @@
 
 import { BLEND_MODES, MASK_CONDITIONS, Layer, LayerAdjustment, composite, evaluateCurvePoints } from './layer-compositor.js';
 import type { LayerManager } from './layer-manager.js';
-import type { LayerCompositorBackend } from './layer-compositor-worker-client.js';
+import type { LayerCompositorBackend, LayerCompositorBackendSelection } from './layer-compositor-worker-client.js';
 
 export interface LayersPanelCallbacks {
 	onChange: (options?: { interactive?: boolean; settled?: boolean }) => void;
@@ -17,7 +17,7 @@ export interface LayersPanelCallbacks {
 	onPersist?: () => void;
 	onAddLayer?: () => void;
 	onExport?: () => void;
-	onCompositorBackendChange?: (backend: LayerCompositorBackend) => void;
+	onCompositorBackendChange?: (backend: LayerCompositorBackendSelection) => void;
 }
 
 export interface LayersPanelOptions {
@@ -172,7 +172,7 @@ export class LayersPanel {
 	onPersist?: () => void;
 	onAddLayer?: () => void;
 	onExport?: () => void;
-	onCompositorBackendChange?: (backend: LayerCompositorBackend) => void;
+	onCompositorBackendChange?: (backend: LayerCompositorBackendSelection) => void;
 	closable: boolean;
 	root: HTMLElement | null;
 	listEl: HTMLElement | null;
@@ -182,7 +182,8 @@ export class LayersPanel {
 	backgroundEl: HTMLElement | null;
 	backgroundSlider: HTMLInputElement | null;
 	backgroundBrightness: number | null;
-	compositorBackend: LayerCompositorBackend;
+	compositorBackend: LayerCompositorBackendSelection;
+	resolvedCompositorBackend: LayerCompositorBackend = 'javascript';
 	compositorSelect: HTMLSelectElement | null;
 	themeBackgroundBrightness: number;
 	/** id of the layer currently armed for drag-to-move, or null */
@@ -215,7 +216,7 @@ export class LayersPanel {
 		this.backgroundEl = null;
 		this.backgroundSlider = null;
 		this.backgroundBrightness = null;
-		this.compositorBackend = 'gpu';
+		this.compositorBackend = 'auto';
 		this.compositorSelect = null;
 		this.themeBackgroundBrightness = 50;
 		this.movingLayerId = null;
@@ -266,7 +267,13 @@ export class LayersPanel {
 		const compositorSelect = document.createElement('select');
 		compositorSelect.className = 'layers-compositor-select';
 		compositorSelect.title = 'Strict layer compositor: unsupported features fail instead of falling back';
-		for (const [value, label] of [['webgpu', 'WebGPU'], ['gpu', 'WebGL'], ['wasm', 'Wasm'], ['javascript', 'JS']] as const) {
+		for (const [value, label] of [
+			['auto', 'Auto'],
+			['webgpu', 'WebGPU'],
+			['gpu', 'WebGL'],
+			['wasm', 'Wasm'],
+			['javascript', 'JS (diagnostic)'],
+		] as const) {
 			const option = document.createElement('option');
 			option.value = value;
 			option.textContent = label;
@@ -274,7 +281,7 @@ export class LayersPanel {
 		}
 		compositorSelect.value = this.compositorBackend;
 		compositorSelect.addEventListener('change', () => {
-			this.compositorBackend = compositorSelect.value as LayerCompositorBackend;
+			this.compositorBackend = compositorSelect.value as LayerCompositorBackendSelection;
 			this.onCompositorBackendChange?.(this.compositorBackend);
 		});
 		this.compositorSelect = compositorSelect;
@@ -407,9 +414,20 @@ export class LayersPanel {
 		}
 	}
 
-	setCompositorBackend(backend: LayerCompositorBackend): void {
+	setCompositorBackend(backend: LayerCompositorBackendSelection): void {
 		this.compositorBackend = backend;
 		if (this.compositorSelect) { this.compositorSelect.value = backend; }
+	}
+
+	setResolvedCompositorBackend(backend: LayerCompositorBackend): void {
+		this.resolvedCompositorBackend = backend;
+		const option = this.compositorSelect?.querySelector<HTMLOptionElement>('option[value="auto"]');
+		if (option) {
+			const labels: Record<LayerCompositorBackend, string> = {
+				webgpu: 'WebGPU', gpu: 'WebGL', wasm: 'Wasm', javascript: 'JS',
+			};
+			option.textContent = `Auto (${labels[backend]})`;
+		}
 	}
 
 	isVisible(): boolean {
@@ -451,7 +469,7 @@ export class LayersPanel {
 		}
 		if (this.titleEl) {
 			const n = this.manager.layers.length;
-			this.titleEl.textContent = this.collapsed ? `Layers (${n})` : `Layers · ${n}`;
+			this.titleEl.textContent = `${n} layer${n === 1 ? '' : 's'}`;
 		}
 		if (this.groupsBtn) { this.groupsBtn.disabled = !this.manager.layers.some(layer => layer.kind === 'group' || layer.groupPath?.length); }
 	}

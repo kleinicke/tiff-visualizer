@@ -161,6 +161,15 @@ async function main() {
 	assert.strictEqual(oraResult.layerAssets[1].support, 'native');
 	assert.deepStrictEqual(Array.from(oraResult.reconstructedData), Array.from(oraResult.integratedData));
 	assert.strictEqual(oraResult.document.reconstruction.differentPixelRatio, 0);
+	const oraPreviewOnly = decodeLayeredPreview('ora', asArrayBuffer(ora), { previewOnly: true });
+	assert.deepStrictEqual(Array.from(oraPreviewOnly.data), Array.from(oraResult.data));
+	assert.strictEqual(oraPreviewOnly.layerAssets.length, 0);
+	assert.strictEqual(oraPreviewOnly.metadata.previewOnly, true);
+	const oraLayersOnly = decodeLayeredPreview('ora', asArrayBuffer(ora), { layersOnly: true });
+	assert.strictEqual(oraLayersOnly.data.length, 0);
+	assert.strictEqual(oraLayersOnly.layerAssets.length, 2);
+	assert.deepStrictEqual(Array.from(oraLayersOnly.reconstructedData), Array.from(oraResult.reconstructedData));
+	assert.strictEqual(oraLayersOnly.metadata.layersOnly, true);
 
 	const groupedMerged = rgbaPng(2, 1, [64, 64, 0, 255]);
 	const groupedOra = zipSync({
@@ -200,6 +209,15 @@ async function main() {
 	assert.deepStrictEqual(Array.from(paintedKra.layerAssets[0].data.slice(0, 8)), [255, 0, 0, 255, 0, 255, 0, 255]);
 	assert.deepStrictEqual([paintedKra.layerAssets[0].rasterMask.x, paintedKra.layerAssets[0].rasterMask.y], [0, 0]);
 	assert.deepStrictEqual(Array.from(paintedKra.layerAssets[0].rasterMask.data.slice(0, 2)), [255, 0]);
+	const kraPreviewOnly = decodeLayeredPreview('kra', asArrayBuffer(kraWithPaint), { previewOnly: true });
+	assert.deepStrictEqual(Array.from(kraPreviewOnly.data), Array.from(paintedKra.data));
+	assert.strictEqual(kraPreviewOnly.layerAssets.length, 0);
+	assert.strictEqual(kraPreviewOnly.metadata.previewOnly, true);
+	const kraLayersOnly = decodeLayeredPreview('kra', asArrayBuffer(kraWithPaint), { layersOnly: true });
+	assert.strictEqual(kraLayersOnly.data.length, 0);
+	assert.strictEqual(kraLayersOnly.layerAssets.length, 1);
+	assert.deepStrictEqual(Array.from(kraLayersOnly.layerAssets[0].data.slice(0, 8)), Array.from(paintedKra.layerAssets[0].data.slice(0, 8)));
+	assert.strictEqual(kraLayersOnly.metadata.layersOnly, true);
 
 	const filteredKra = decodeLayeredPreview('kra', asArrayBuffer(zipSync({
 		'mimetype': strToU8('application/x-krita'),
@@ -229,6 +247,15 @@ async function main() {
 	assert.strictEqual(psd.layerOrder, 'bottom-to-top');
 	assert.strictEqual(psd.layerAssets.length, 1);
 	assert.deepStrictEqual(Array.from(psd.layerAssets[0].data), Array.from(imageData.data));
+	const psdPreviewOnly = decodeLayeredPreview('psd', asArrayBuffer(psdBytes), { previewOnly: true });
+	assert.deepStrictEqual(Array.from(psdPreviewOnly.data), Array.from(imageData.data));
+	assert.strictEqual(psdPreviewOnly.layerAssets.length, 0);
+	assert.strictEqual(psdPreviewOnly.metadata.previewOnly, true);
+	const psdLayersOnly = decodeLayeredPreview('psd', asArrayBuffer(psdBytes), { layersOnly: true });
+	assert.strictEqual(psdLayersOnly.data.length, 0);
+	assert.strictEqual(psdLayersOnly.layerAssets.length, 1);
+	assert.deepStrictEqual(Array.from(psdLayersOnly.layerAssets[0].data), Array.from(imageData.data));
+	assert.strictEqual(psdLayersOnly.metadata.layersOnly, true);
 	const adjustedPsdBytes = new Uint8Array(writePsd({
 		width: 2, height: 1, imageData,
 		children: [

@@ -48,6 +48,14 @@ test('WebGPU composites PSD-style colorize and screen stacks with strict parity'
 			try {
 				const canvas = await compositor.render(layers, 2, 1, 1, settings, { r: 255, g: 0, b: 255 }, true);
 				if (!canvas) { return { supported: false, error: 'No canvas' }; }
+				// A slider can mutate adjustment objects while an asynchronous GPU
+				// request is between command submission and strict CPU validation.
+				// The request must retain its submission-time parameters.
+				(layers[1] as any).adjustment.colorize.hue = -90;
+				const queued = compositor.render(layers, 2, 1, 1, settings, { r: 255, g: 0, b: 255 }, true);
+				await new Promise(resolve => setTimeout(resolve, 0));
+				(layers[1] as any).adjustment.colorize.hue = -131;
+				await queued;
 				// A hidden raster still owns its clipped filters. Hiding the red
 				// base must not attach its colorize filter to the blue base.
 				layers[2].visible = false;

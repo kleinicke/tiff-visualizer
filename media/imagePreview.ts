@@ -27,7 +27,10 @@ import {
 	layerDisplayScale,
 	shouldUseLayerInteractionPreview,
 } from './modules/layer-compositor-worker-client.js';
-import type { LayerCompositorBackend } from './modules/layer-compositor-worker-client.js';
+import type {
+	LayerCompositorBackend,
+	LayerCompositorBackendSelection,
+} from './modules/layer-compositor-worker-client.js';
 import { WebGL2LayerCompositor } from './modules/webgl2-layer-compositor.js';
 import { WebGPULayerCompositor } from './modules/webgpu-layer-compositor.js';
 import { PerfTrace } from './modules/perf-trace.js';
@@ -204,7 +207,31 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const _layerNativeRequested = new Set<number>();
 	const _layerNativeDisplayed = new Set<number>();
 	let _nativeAfterPreviewRevision: number | null = null;
-	let _layerCompositorBackend: LayerCompositorBackend = 'gpu';
+	type LayerPerformanceChange = {
+		id: number;
+		latestRevision: number;
+		backend: string;
+		settled: boolean;
+		emitted: boolean;
+		previewCount: number;
+		previewWidth: number;
+		previewHeight: number;
+		previewLastMs: number;
+		previewMaxMs: number;
+		previewSkipped?: string;
+		nativeWidth: number;
+		nativeHeight: number;
+		nativeMs: number;
+		nativeRevision: number;
+		nativeNote?: string;
+	};
+	let _nextLayerPerformanceChangeId = 1;
+	let _activeLayerGestureChangeId: number | null = null;
+	const _layerPerformanceChanges = new Map<number, LayerPerformanceChange>();
+	const _layerRevisionPerformanceChange = new Map<number, number>();
+	let _layerCompositorBackend: LayerCompositorBackend = 'javascript';
+	let _layerCompositorSelection: LayerCompositorBackendSelection = 'auto';
+	let _automaticBackendGeneration = 0;
 	type PreviewBackgroundRgb = { red: number; green: number; blue: number };
 	let _themeBackgroundRgb: PreviewBackgroundRgb = { red: 30, green: 30, blue: 30 };
 	// A manual adjustment keeps the tint of the theme in which it was made. The
@@ -217,6 +244,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			// the interactive revision so its queued/in-flight preview remains
 			// eligible to be displayed before the native render.
 			const stateRevision = options.settled ? _layerStateRevision : ++_layerStateRevision;
+			if (options.settled) {
+				settleLayerPerformanceChange(stateRevision);
+			} else {
+				registerLayerPerformanceRevision(stateRevision, options.interactive === true);
+			}
 			const usePreview = shouldUseLayerInteractionPreview(
 				layerManager.canvasWidth,
 				layerManager.canvasHeight,
@@ -246,14 +278,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 		onExport: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' }); },
-		onCompositorBackendChange: (backend: LayerCompositorBackend) => {
-			_layerCompositorBackend = backend;
-			layerCompositorWorker.invalidateCompositeCache();
-			if (backend === 'gpu') { layerGpuCompositor.retry(); }
-			if (backend === 'webgpu') { layerWebGpuCompositor.retry(); }
-			const stateRevision = ++_layerStateRevision;
-			schedulePreviewThenNative(stateRevision, 60);
-			scheduleSaveState();
+		onCompositorBackendChange: (selection: LayerCompositorBackendSelection) => {
+			_layerCompositorSelection = selection;
+			if (selection === 'auto') {
+				void selectAutomaticLayerBackend(true);
+			} else {
+				_automaticBackendGeneration++;
+				applyLayerCompositorBackend(selection, true);
+			}
 		},
 		onVisibilityChange: (visible: boolean) => {
 			layerManager.active = visible;
@@ -272,6 +304,21 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			scheduleSaveState();
 		},
 	}, { closable: settingsManager.settings.surfaceMode !== 'layers' });
+	layeredPreviewProcessor.onLayersReady = () => {
+		if (currentLoadFormat !== 'Layered Document') { return; }
+		updateLayeredPreviewOverlay();
+		if (!layerManager.active && !layersPanel.isVisible() && settingsManager.settings.surfaceMode !== 'layers') {
+			return;
+		}
+		// Replace the temporary integrated-preview base with the editable PSD
+		// graph as soon as the background layer-only decode has completed.
+		_expandedLayerDocumentUri = undefined;
+		if (installLayeredDocumentLayers()) {
+			const stateRevision = ++_layerStateRevision;
+			schedulePreviewThenNative(stateRevision, 60);
+			scheduleSaveState();
+		}
+	};
 	// Pixel inspector reads the composite value when compositing is active.
 	mouseHandler.compositeValueProvider = (x: number, y: number) =>
 		(layerManager.active && layerManager.hasCompositeStack()) ? layerManager.getCompositeValueAt(x, y) : null;
@@ -384,10 +431,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (Number.isFinite(persistedState.layerBackgroundBrightness)) {
 			layersPanel.backgroundBrightness = Math.max(0, Math.min(100, Number(persistedState.layerBackgroundBrightness)));
 		}
-		if (persistedState.layerCompositorBackend === 'webgpu' || persistedState.layerCompositorBackend === 'gpu' || persistedState.layerCompositorBackend === 'wasm'
-			|| persistedState.layerCompositorBackend === 'javascript') {
-			_layerCompositorBackend = persistedState.layerCompositorBackend;
-			layersPanel.setCompositorBackend(_layerCompositorBackend);
+		const savedBackendSelection = persistedState.layerCompositorBackendSelection;
+		if (savedBackendSelection === 'auto' || savedBackendSelection === 'webgpu' || savedBackendSelection === 'gpu' ||
+			savedBackendSelection === 'wasm' || savedBackendSelection === 'javascript') {
+			_layerCompositorSelection = savedBackendSelection;
+			layersPanel.setCompositorBackend(_layerCompositorSelection);
 		}
 		const savedBackgroundTint = persistedState.layerBackgroundTint;
 		if (savedBackgroundTint && [savedBackgroundTint.red, savedBackgroundTint.green, savedBackgroundTint.blue].every(Number.isFinite)) {
@@ -480,6 +528,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			layerCollapsed: layersPanel.collapsed,
 			layerGroupCollapsed: [...layersPanel.collapsedGroups],
 			layerCompositorBackend: _layerCompositorBackend,
+			layerCompositorBackendSelection: _layerCompositorSelection,
 			layerBackgroundBrightness: layersPanel.backgroundBrightness,
 			layerBackgroundTint: layersPanel.backgroundBrightness === null ? null : _layerBackgroundTint,
 			tiffPageIndex: tiffProcessor.pageIndex,
@@ -710,13 +759,56 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		});
 	}
 
+	const DETAILED_LAYER_COMPOSITOR_LOGGING = false;
 	function logLayerPerformance(message: string) {
 		console.log(message);
-		logToOutput(message);
+		if (DETAILED_LAYER_COMPOSITOR_LOGGING ||
+			/\b(failed|device lost|validation error|unavailable)\b/i.test(message)) {
+			logToOutput(message);
+		}
 	}
 
 	layerCompositorWorker.setLogger(logLayerPerformance);
 	layerGpuCompositor.setLogger(logLayerPerformance);
+	layerWebGpuCompositor.setLogger(logLayerPerformance);
+
+	function applyLayerCompositorBackend(backend: LayerCompositorBackend, rerender: boolean): void {
+		const changed = _layerCompositorBackend !== backend;
+		_layerCompositorBackend = backend;
+		layersPanel.setResolvedCompositorBackend(backend);
+		if (!changed) {
+			if (rerender) { scheduleSaveState(); }
+			return;
+		}
+		layerCompositorWorker.invalidateCompositeCache();
+		if (backend === 'gpu') { layerGpuCompositor.retry(); }
+		if (backend === 'webgpu') { layerWebGpuCompositor.retry(); }
+		if (rerender && layerManager.active && !layerManager.isEmpty()) {
+			const stateRevision = ++_layerStateRevision;
+			schedulePreviewThenNative(stateRevision, 60);
+		}
+		scheduleSaveState();
+	}
+
+	async function selectAutomaticLayerBackend(rerender: boolean): Promise<void> {
+		const generation = ++_automaticBackendGeneration;
+		let backend: LayerCompositorBackend = 'javascript';
+		if (settingsManager.settings.gpuAcceleration !== false && await layerWebGpuCompositor.isAvailable()) {
+			backend = 'webgpu';
+		} else if (settingsManager.settings.gpuAcceleration !== false && layerGpuCompositor.isAvailable()) {
+			backend = 'gpu';
+		} else if (await layerCompositorWorker.isWasmAvailable()) {
+			backend = 'wasm';
+		}
+		if (generation !== _automaticBackendGeneration || _layerCompositorSelection !== 'auto') { return; }
+		applyLayerCompositorBackend(backend, rerender);
+	}
+
+	if (_layerCompositorSelection === 'auto') {
+		void selectAutomaticLayerBackend(false);
+	} else {
+		applyLayerCompositorBackend(_layerCompositorSelection, false);
+	}
 
 	// PerfTrace summaries go to both the webview console and the extension's
 	// Output channel, so timing is visible without opening Developer Tools.
@@ -1571,7 +1663,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		try {
 			const layeredFormat = layeredFormatForPath(lower);
 			if (layeredFormat) {
-				const p = new LayeredPreviewProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				const p = new LayeredPreviewProcessor(settingsManager, noop);
+				p._isInitialLoad = false;
+				p.decodeEditableLayers = false;
+				p.decodeWorker = decodeWorkerClient;
 				await p.process(src, layeredFormat);
 				const raw = p._lastRaw;
 				return lastRawToLayer(raw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, resourceUri);
@@ -1759,6 +1854,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 						`pending-uploads=${pendingUpload.count}/${formatBytes(pendingUpload.bytes)} ` +
 						`delay=${formatTiming(performance.now() - interactionStartedAt)}; starting native immediately`,
 					);
+					recordLayerPreviewSkipped(stateRevision, 'cold upload');
 					scheduleRecomposite(0, false, stateRevision);
 					return true;
 				}
@@ -1780,7 +1876,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				ctx.drawImage(gpuSurface, 0, 0, fullWidth, fullHeight);
 				ctx.restore();
 				const displayedAt = performance.now();
-				if (interactive) { markLayerPreviewDisplayed(stateRevision, displayedAt); }
+				if (interactive) {
+					recordLayerPreview(stateRevision, 'webgpu', gpuSurface.width, gpuSurface.height, timing.renderMs);
+					markLayerPreviewDisplayed(stateRevision, displayedAt);
+				} else {
+					recordLayerNative(
+						stateRevision, 'webgpu', gpuSurface.width, gpuSurface.height, timing.renderMs,
+						`uploads=${timing.uploadCount}, composition=${timing.compositionCacheHit ? 'cached' : 'rendered'}`,
+					);
+				}
 				const previewVisibleMs = !interactive && _layerPreviewDisplayedAt.has(stateRevision)
 					? displayedAt - (_layerPreviewDisplayedAt.get(stateRevision) as number)
 					: null;
@@ -1839,7 +1943,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			ctx.drawImage(gpuSurface, 0, 0, fullWidth, fullHeight);
 			ctx.restore();
 			const displayedAt = performance.now();
-			if (interactive) { markLayerPreviewDisplayed(stateRevision, displayedAt); }
+			const gpuRenderMs = renderFinished - gpuStarted;
+			if (interactive) {
+				recordLayerPreview(stateRevision, 'webgl2', gpuSurface.width, gpuSurface.height, gpuRenderMs);
+				markLayerPreviewDisplayed(stateRevision, displayedAt);
+			} else {
+				recordLayerNative(stateRevision, 'webgl2', gpuSurface.width, gpuSurface.height, gpuRenderMs);
+			}
 			const previewVisibleMs = !interactive && _layerPreviewDisplayedAt.has(stateRevision)
 				? displayedAt - (_layerPreviewDisplayedAt.get(stateRevision) as number)
 				: null;
@@ -1901,8 +2011,24 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					}
 				}
 				if (interactive && stateRevision === _layerStateRevision && layerManager.active) {
+					const timing = (result as typeof result & { compositorTiming?: { backend: string; durationMs: number } }).compositorTiming;
+					recordLayerPreview(
+						stateRevision,
+						timing?.backend || workerBackend,
+						result.width,
+						result.height,
+						timing?.durationMs || 0,
+					);
 					markLayerPreviewDisplayed(stateRevision, performance.now());
 				} else if (!interactive && stateRevision === _layerStateRevision && layerManager.active) {
+					const timing = (result as typeof result & { compositorTiming?: { backend: string; durationMs: number } }).compositorTiming;
+					recordLayerNative(
+						stateRevision,
+						timing?.backend || workerBackend,
+						result.width,
+						result.height,
+						timing?.durationMs || 0,
+					);
 					markLayerNativeDisplayed(stateRevision);
 				}
 			}).catch(error => {
@@ -1937,6 +2063,109 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let _scheduledStateRevision = 0;
 	let _interactiveRecompositeTimer: ReturnType<typeof setTimeout> | null = null;
 
+	function registerLayerPerformanceRevision(stateRevision: number, interactive: boolean): LayerPerformanceChange {
+		let change: LayerPerformanceChange | undefined;
+		if (interactive && _activeLayerGestureChangeId !== null) {
+			change = _layerPerformanceChanges.get(_activeLayerGestureChangeId);
+		}
+		if (!change) {
+			const id = _nextLayerPerformanceChangeId++;
+			change = {
+				id,
+				latestRevision: stateRevision,
+				backend: _layerCompositorBackend,
+				settled: !interactive,
+				emitted: false,
+				previewCount: 0,
+				previewWidth: 0,
+				previewHeight: 0,
+				previewLastMs: 0,
+				previewMaxMs: 0,
+				nativeWidth: 0,
+				nativeHeight: 0,
+				nativeMs: 0,
+				nativeRevision: -1,
+			};
+			_layerPerformanceChanges.set(id, change);
+			if (interactive) { _activeLayerGestureChangeId = id; }
+		}
+		change.latestRevision = stateRevision;
+		change.backend = _layerCompositorBackend;
+		_layerRevisionPerformanceChange.set(stateRevision, change.id);
+		return change;
+	}
+
+	function layerPerformanceChange(stateRevision: number, interactive: boolean): LayerPerformanceChange {
+		const id = _layerRevisionPerformanceChange.get(stateRevision);
+		return (id !== undefined ? _layerPerformanceChanges.get(id) : undefined) ||
+			registerLayerPerformanceRevision(stateRevision, interactive);
+	}
+
+	function settleLayerPerformanceChange(stateRevision: number): void {
+		const change = layerPerformanceChange(stateRevision, true);
+		change.settled = true;
+		if (_activeLayerGestureChangeId === change.id) { _activeLayerGestureChangeId = null; }
+		emitLayerPerformanceChange(change);
+	}
+
+	function recordLayerPreview(
+		stateRevision: number,
+		backend: string,
+		width: number,
+		height: number,
+		renderMs: number,
+	): void {
+		const change = layerPerformanceChange(stateRevision, true);
+		change.backend = backend;
+		change.previewCount++;
+		change.previewWidth = width;
+		change.previewHeight = height;
+		change.previewLastMs = renderMs;
+		change.previewMaxMs = Math.max(change.previewMaxMs, renderMs);
+	}
+
+	function recordLayerPreviewSkipped(stateRevision: number, reason: string): void {
+		layerPerformanceChange(stateRevision, true).previewSkipped = reason;
+	}
+
+	function recordLayerNative(
+		stateRevision: number,
+		backend: string,
+		width: number,
+		height: number,
+		renderMs: number,
+		note?: string,
+	): void {
+		const change = layerPerformanceChange(stateRevision, false);
+		if (stateRevision !== change.latestRevision) { return; }
+		change.backend = backend;
+		change.nativeWidth = width;
+		change.nativeHeight = height;
+		change.nativeMs = renderMs;
+		change.nativeRevision = stateRevision;
+		change.nativeNote = note;
+		emitLayerPerformanceChange(change);
+	}
+
+	function emitLayerPerformanceChange(change: LayerPerformanceChange): void {
+		if (change.emitted || !change.settled || change.nativeWidth <= 0 ||
+			change.nativeRevision !== change.latestRevision) { return; }
+		change.emitted = true;
+		const preview = change.previewCount > 0
+			? `${change.previewCount}× ${change.previewWidth}×${change.previewHeight}, last ${change.previewLastMs.toFixed(1)}ms` +
+				(change.previewCount > 1 ? `, max ${change.previewMaxMs.toFixed(1)}ms` : '')
+			: `skipped${change.previewSkipped ? ` (${change.previewSkipped})` : ''}`;
+		logToOutput(
+			`[LayerCompositor] ${change.backend} change | preview=${preview} | ` +
+			`native=${change.nativeWidth}×${change.nativeHeight} ${change.nativeMs.toFixed(1)}ms` +
+			`${change.nativeNote ? ` | ${change.nativeNote}` : ''}`,
+		);
+		for (const [revision, id] of _layerRevisionPerformanceChange) {
+			if (id === change.id) { _layerRevisionPerformanceChange.delete(revision); }
+		}
+		_layerPerformanceChanges.delete(change.id);
+	}
+
 	function markLayerPreviewDisplayed(stateRevision: number, displayedAt: number): void {
 		_layerPreviewRequested.delete(stateRevision);
 		_layerPreviewDisplayedAt.set(stateRevision, displayedAt);
@@ -1966,7 +2195,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	}
 
 	function schedulePreviewThenNative(stateRevision: number, nativeDelayMs: number): void {
+		if (!_layerRevisionPerformanceChange.has(stateRevision)) {
+			registerLayerPerformanceRevision(stateRevision, false);
+		}
 		if (!shouldUseLayerInteractionPreview(layerManager.canvasWidth, layerManager.canvasHeight)) {
+			layerPerformanceChange(stateRevision, false).previewSkipped = 'document ≤1500px';
 			scheduleRecomposite(0, false, stateRevision);
 			return;
 		}

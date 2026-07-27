@@ -3,6 +3,7 @@
 import type { CompositeRegion, CompositeResult, Layer } from './layer-compositor.js';
 
 export type LayerCompositorBackend = 'webgpu' | 'gpu' | 'wasm' | 'javascript';
+export type LayerCompositorBackendSelection = 'auto' | LayerCompositorBackend;
 type WorkerCompositorBackend = Exclude<LayerCompositorBackend, 'webgpu' | 'gpu'>;
 
 type TypedPixels = Uint8Array | Uint8ClampedArray | Uint16Array | Uint32Array | Int8Array | Int16Array | Int32Array | Float32Array | Float64Array;
@@ -135,6 +136,18 @@ export class LayerCompositorWorkerClient {
 			});
 		}
 		return this.startPromise;
+	}
+
+	async isWasmAvailable(): Promise<boolean> {
+		await this.start();
+		if (!this.ready || !this.worker) { return false; }
+		if (this.rustCapabilityKnown) { return this.rustCompositor; }
+		try {
+			await this.waitForRustCapability();
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	private async boot(): Promise<void> {
@@ -476,6 +489,10 @@ export class LayerCompositorWorkerClient {
 		this.active = null;
 		if (message.type === 'composite-result') {
 			let result = message.result as CompositeResult;
+			(result as CompositeResult & { compositorTiming?: { backend: string; durationMs: number } }).compositorTiming = {
+				backend: String(message.backend || active.backend),
+				durationMs: Number(message.durationMs || 0),
+			};
 			if (active.scale === 1 && active.region && this.lastResult) {
 				const merged = this.mergeRegion(this.lastResult, result, active.region);
 				if (!merged) {
