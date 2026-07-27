@@ -111,7 +111,7 @@ class FormatInfoMessageHandler implements MessageHandler {
 
 		// Update normalization status bar with format info
 		if (message.value && message.value.bitsPerSample !== undefined && message.value.sampleFormat !== undefined) {
-			preview.getNormalizationStatusBarEntry().updateFormatInfo(message.value.bitsPerSample, message.value.sampleFormat);
+			preview.getNormalizationStatusBarEntry().updateFormatInfo(message.value);
 		}
 
 		// Store format info in app state for access by commands

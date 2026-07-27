@@ -19,6 +19,13 @@ export interface ScientificArrayProcessorConfig {
 export class ScientificArrayProcessor extends PfmProcessor {
 	config: ScientificArrayProcessorConfig;
 	metadata: Record<string, any> = {};
+	numericDomain: ScientificDecodedImage['numericDomain'] = {
+		bitsPerSample: 32,
+		sampleFormat: 3,
+		typeMin: 0,
+		typeMax: 1,
+		sourceNumericType: 'float32',
+	};
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi, config: ScientificArrayProcessorConfig) {
 		super(settingsManager, vscode);
@@ -40,6 +47,7 @@ export class ScientificArrayProcessor extends PfmProcessor {
 		);
 		this._cachedStats = undefined;
 		this.metadata = decoded.metadata || {};
+		this.numericDomain = decoded.numericDomain;
 		this._lastRaw = {
 			width: decoded.width,
 			height: decoded.height,
@@ -62,7 +70,10 @@ export class ScientificArrayProcessor extends PfmProcessor {
 			return { canvas, imageData: new ImageData(decoded.width, decoded.height) };
 		}
 
-		const imageData = this._toImageDataFloat(decoded.data, decoded.width, decoded.height, decoded.channels);
+		const imageData = this._toImageDataFloat(decoded.data, decoded.width, decoded.height, decoded.channels, {
+			typeMin: this.numericDomain.typeMin,
+			typeMax: this.numericDomain.typeMax,
+		});
 		this.vscode.postMessage({ type: 'refresh-status' });
 		return { canvas, imageData };
 	}
@@ -78,8 +89,12 @@ export class ScientificArrayProcessor extends PfmProcessor {
 				photometricInterpretation: decoded.channels >= 3 ? 2 : 1,
 				planarConfig: 1,
 				samplesPerPixel: decoded.channels,
-				bitsPerSample: 32,
-				sampleFormat: 3,
+				bitsPerSample: this.numericDomain.bitsPerSample,
+				sampleFormat: this.numericDomain.sampleFormat,
+				typeMin: this.numericDomain.typeMin,
+				typeMax: this.numericDomain.typeMax,
+				sourceNumericType: this.numericDomain.sourceNumericType,
+				floatCarrier: true,
 				formatLabel: this.config.formatLabel,
 				formatType: this.config.formatType,
 				isInitialLoad: this._isInitialLoad,
@@ -91,6 +106,10 @@ export class ScientificArrayProcessor extends PfmProcessor {
 	renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
 		if (!this._lastRaw) { return null; }
 		const { width, height, data, channels } = this._lastRaw;
-		return this._toImageDataFloat(data, width, height, channels, renderOptions);
+		return this._toImageDataFloat(data, width, height, channels, {
+			...renderOptions,
+			typeMin: this.numericDomain.typeMin,
+			typeMax: this.numericDomain.typeMax,
+		});
 	}
 }

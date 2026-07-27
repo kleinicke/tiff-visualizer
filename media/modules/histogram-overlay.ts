@@ -29,6 +29,7 @@ interface HistogramOptions {
 	channels?: number;
 	settings?: ImageSettings;
 	isFloat?: boolean;
+	typeMin?: number;
 	typeMax?: number;
 	stats?: { min: number, max: number } | null;
 	lut?: Uint8Array | null;
@@ -486,6 +487,7 @@ export class HistogramOverlay {
 		const isGammaMode = settings.normalization?.gammaMode || false;
 		const isAutoNormalize = settings.normalization?.autoNormalize || false;
 		const isFloat = options.isFloat || false;
+		const typeMin = options.typeMin ?? 0;
 		const typeMax = options.typeMax ?? (isFloat ? 1.0 : 255);
 
 		// Determine the value range for binning
@@ -494,13 +496,13 @@ export class HistogramOverlay {
 			normMin = options.stats.min;
 			normMax = options.stats.max;
 		} else if (isGammaMode) {
-			normMin = 0;
+			normMin = typeMin;
 			normMax = typeMax;
 		} else if (settings.normalization?.min !== undefined && settings.normalization?.max !== undefined) {
 			normMin = settings.normalization.min;
 			normMax = settings.normalization.max;
 		} else {
-			normMin = 0;
+			normMin = typeMin;
 			normMax = typeMax;
 		}
 

@@ -33,6 +33,28 @@ export interface ImageSettings {
   loadStartTime?: number;
   jxlWasmSrc?: string;
   surfaceMode?: 'editor' | 'layers';
+  extensionVersion?: string;
+  vscodeVersion?: string;
+}
+
+export function webviewStateMatchesVersions(
+  state: any,
+  extensionVersion: string | undefined,
+  vscodeVersion: string | undefined,
+): boolean {
+  return !!state &&
+    typeof extensionVersion === 'string' &&
+    typeof vscodeVersion === 'string' &&
+    state.extensionVersion === extensionVersion &&
+    state.vscodeVersion === vscodeVersion;
+}
+
+export function withWebviewStateVersions<T extends Record<string, any>>(
+  state: T,
+  extensionVersion: string | undefined,
+  vscodeVersion: string | undefined,
+): T & { extensionVersion?: string; vscodeVersion?: string } {
+  return { ...state, extensionVersion, vscodeVersion };
 }
 
 export interface SettingsConstants {

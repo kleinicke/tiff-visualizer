@@ -1157,6 +1157,17 @@ body img {
 	font-weight: 600;
 }
 
+.layers-compositor-select {
+	width: 58px;
+	min-width: 58px;
+	padding: 1px 2px;
+	font: inherit;
+	color: var(--vscode-dropdown-foreground, inherit);
+	background: var(--vscode-dropdown-background, transparent);
+	border: 1px solid var(--vscode-dropdown-border, var(--vscode-editorWidget-border, #454545));
+	border-radius: 3px;
+}
+
 .layers-btn {
 	background: var(--vscode-button-secondaryBackground, #3a3d41);
 	color: var(--vscode-button-secondaryForeground, #ccc);

@@ -8,14 +8,16 @@
 
 import { BLEND_MODES, MASK_CONDITIONS, Layer, LayerAdjustment, composite, evaluateCurvePoints } from './layer-compositor.js';
 import type { LayerManager } from './layer-manager.js';
+import type { LayerCompositorBackend, LayerCompositorBackendSelection } from './layer-compositor-worker-client.js';
 
 export interface LayersPanelCallbacks {
-	onChange: (options?: { interactive?: boolean }) => void;
+	onChange: (options?: { interactive?: boolean; settled?: boolean }) => void;
 	onBackgroundChange?: (brightness: number | null) => void;
 	onVisibilityChange?: (visible: boolean) => void;
 	onPersist?: () => void;
 	onAddLayer?: () => void;
 	onExport?: () => void;
+	onCompositorBackendChange?: (backend: LayerCompositorBackendSelection) => void;
 }
 
 export interface LayersPanelOptions {
@@ -164,12 +166,13 @@ export function buildLayerDisplayTree(layers: Layer[]): DisplayItem[] {
 
 export class LayersPanel {
 	manager: LayerManager;
-	onChange: (options?: { interactive?: boolean }) => void;
+	onChange: (options?: { interactive?: boolean; settled?: boolean }) => void;
 	onBackgroundChange?: (brightness: number | null) => void;
 	onVisibilityChange?: (visible: boolean) => void;
 	onPersist?: () => void;
 	onAddLayer?: () => void;
 	onExport?: () => void;
+	onCompositorBackendChange?: (backend: LayerCompositorBackendSelection) => void;
 	closable: boolean;
 	root: HTMLElement | null;
 	listEl: HTMLElement | null;
@@ -179,6 +182,9 @@ export class LayersPanel {
 	backgroundEl: HTMLElement | null;
 	backgroundSlider: HTMLInputElement | null;
 	backgroundBrightness: number | null;
+	compositorBackend: LayerCompositorBackendSelection;
+	resolvedCompositorBackend: LayerCompositorBackend = 'javascript';
+	compositorSelect: HTMLSelectElement | null;
 	themeBackgroundBrightness: number;
 	/** id of the layer currently armed for drag-to-move, or null */
 	movingLayerId: string | null;
@@ -198,6 +204,7 @@ export class LayersPanel {
 		this.onPersist = callbacks.onPersist;
 		this.onAddLayer = callbacks.onAddLayer;
 		this.onExport = callbacks.onExport;
+		this.onCompositorBackendChange = callbacks.onCompositorBackendChange;
 		// In a dedicated Layers window the panel can't be closed (close the tab
 		// instead); only the minimize control is shown.
 		this.closable = options.closable !== false;
@@ -209,6 +216,8 @@ export class LayersPanel {
 		this.backgroundEl = null;
 		this.backgroundSlider = null;
 		this.backgroundBrightness = null;
+		this.compositorBackend = 'auto';
+		this.compositorSelect = null;
 		this.themeBackgroundBrightness = 50;
 		this.movingLayerId = null;
 		this._pendingRemoveId = null;
@@ -255,6 +264,28 @@ export class LayersPanel {
 		exportBtn.textContent = 'Export…';
 		exportBtn.addEventListener('click', () => this.onExport?.());
 
+		const compositorSelect = document.createElement('select');
+		compositorSelect.className = 'layers-compositor-select';
+		compositorSelect.title = 'Strict layer compositor: unsupported features fail instead of falling back';
+		for (const [value, label] of [
+			['auto', 'Auto'],
+			['webgpu', 'WebGPU'],
+			['gpu', 'WebGL'],
+			['wasm', 'Wasm'],
+			['javascript', 'JS (diagnostic)'],
+		] as const) {
+			const option = document.createElement('option');
+			option.value = value;
+			option.textContent = label;
+			compositorSelect.appendChild(option);
+		}
+		compositorSelect.value = this.compositorBackend;
+		compositorSelect.addEventListener('change', () => {
+			this.compositorBackend = compositorSelect.value as LayerCompositorBackendSelection;
+			this.onCompositorBackendChange?.(this.compositorBackend);
+		});
+		this.compositorSelect = compositorSelect;
+
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
 		minimizeBtn.title = 'Minimize / expand panel';
@@ -283,6 +314,7 @@ export class LayersPanel {
 		this.groupsBtn = groupsBtn;
 
 		header.appendChild(title);
+		header.appendChild(compositorSelect);
 		header.appendChild(addBtn);
 		header.appendChild(exportBtn);
 		header.appendChild(groupsBtn);
@@ -382,6 +414,22 @@ export class LayersPanel {
 		}
 	}
 
+	setCompositorBackend(backend: LayerCompositorBackendSelection): void {
+		this.compositorBackend = backend;
+		if (this.compositorSelect) { this.compositorSelect.value = backend; }
+	}
+
+	setResolvedCompositorBackend(backend: LayerCompositorBackend): void {
+		this.resolvedCompositorBackend = backend;
+		const option = this.compositorSelect?.querySelector<HTMLOptionElement>('option[value="auto"]');
+		if (option) {
+			const labels: Record<LayerCompositorBackend, string> = {
+				webgpu: 'WebGPU', gpu: 'WebGL', wasm: 'Wasm', javascript: 'JS',
+			};
+			option.textContent = `Auto (${labels[backend]})`;
+		}
+	}
+
 	isVisible(): boolean {
 		return !!this.root && !this.root.hasAttribute('hidden');
 	}
@@ -421,7 +469,7 @@ export class LayersPanel {
 		}
 		if (this.titleEl) {
 			const n = this.manager.layers.length;
-			this.titleEl.textContent = this.collapsed ? `Layers (${n})` : `Layers · ${n}`;
+			this.titleEl.textContent = `${n} layer${n === 1 ? '' : 's'}`;
 		}
 		if (this.groupsBtn) { this.groupsBtn.disabled = !this.manager.layers.some(layer => layer.kind === 'group' || layer.groupPath?.length); }
 	}
@@ -544,7 +592,7 @@ export class LayersPanel {
 			const opacity = document.createElement('input'); opacity.type = 'range'; opacity.className = 'layer-opacity layer-group-opacity';
 			opacity.min = '0'; opacity.max = '100'; opacity.dataset.defaultValue = '100'; opacity.value = String(Math.round((group.group.opacity ?? 1) * 100));
 			opacity.title = 'Group opacity · Double-click to reset to 100%';
-			this._bindContinuousHistory(opacity);
+			this._bindContinuousHistory(opacity, () => this.onChange({ settled: true }));
 			opacity.addEventListener('input', () => { this.manager.updateLayer(group.key, { opacity: Number(opacity.value) / 100 }); this.onChange({ interactive: true }); });
 			opacity.addEventListener('change', () => opacity.blur()); controls.appendChild(opacity);
 			row.appendChild(controls);
@@ -782,6 +830,7 @@ export class LayersPanel {
 					const up = () => {
 						window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
 						this.manager.endHistoryGroup(); this._applyCollapsed();
+						this.onChange({ settled: true });
 					};
 					window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 				});
@@ -946,7 +995,7 @@ export class LayersPanel {
 		const colors = document.createElement('div'); colors.className = 'layer-gradient-colors';
 		for (const [label, index] of [['Dark', 0], ['Light', stops.length - 1]] as [string, number][]) {
 			const input = document.createElement('input'); input.type = 'color'; input.value = toHex(stops[index].color); input.title = `${label} gradient color`;
-			this._bindContinuousHistory(input);
+			this._bindContinuousHistory(input, () => this.onChange({ settled: true }));
 			const field = this._labeledAdjustmentControl(label, input); colors.appendChild(field);
 			input.addEventListener('input', () => { const latest = layer.adjustment as typeof adjustment, next = [...(latest.stops || stops)]; next[index] = { ...next[index], color: fromHex(input.value) }; commit({ ...latest, stops: next }); });
 		}
@@ -970,7 +1019,7 @@ export class LayersPanel {
 		const caption = document.createElement('span'); caption.textContent = label; field.append(caption, control); return field;
 	}
 
-	_bindContinuousHistory(control: HTMLElement): void {
+	_bindContinuousHistory(control: HTMLElement, onEnd?: () => void): void {
 		let active = false;
 		const begin = () => {
 			if (active) { return; }
@@ -982,6 +1031,7 @@ export class LayersPanel {
 			active = false;
 			this.manager.endHistoryGroup();
 			this._applyCollapsed();
+			onEnd?.();
 		};
 		control.addEventListener('pointerdown', begin);
 		control.addEventListener('keydown', begin);
@@ -996,7 +1046,7 @@ export class LayersPanel {
 		const input = document.createElement('input'); input.type = 'range'; input.min = String(min); input.max = String(max); input.step = String(step);
 		input.value = String(value); input.dataset.defaultValue = String(defaultValue); input.title = `${label} · Double-click to reset`;
 		const output = document.createElement('output'); output.textContent = `${Number(value).toFixed(decimals)}${suffix}`;
-		this._bindContinuousHistory(input);
+		this._bindContinuousHistory(input, () => this.onChange({ settled: true }));
 		input.addEventListener('input', () => { const next = Number(input.value); output.textContent = `${next.toFixed(decimals)}${suffix}`; onInput(next); });
 		field.append(caption, input, output); return field;
 	}
@@ -1190,7 +1240,7 @@ export class LayersPanel {
 		const opacityValue = document.createElement('span');
 		opacityValue.className = 'layer-opacity-value';
 		opacityValue.textContent = `${opacity.value}%`;
-		this._bindContinuousHistory(opacity);
+		this._bindContinuousHistory(opacity, () => this.onChange({ settled: true }));
 		opacity.addEventListener('input', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
 			opacityValue.textContent = `${opacity.value}%`;
@@ -1198,7 +1248,6 @@ export class LayersPanel {
 		});
 		opacity.addEventListener('change', () => {
 			this.manager.updateLayer(id, { opacity: Number(opacity.value) / 100 });
-			this.onChange({ interactive: true });
 			opacity.blur();
 		});
 		opacity.addEventListener('pointerup', () => opacity.blur());
@@ -1414,7 +1463,7 @@ export class LayersPanel {
 		const meta = MASK_CONDITIONS.find(c => c.id === cond.op);
 		if (meta && !meta.needsThreshold) { thr.style.display = 'none'; }
 		row.appendChild(thr);
-		this._bindContinuousHistory(thr);
+		this._bindContinuousHistory(thr, () => this.onChange({ settled: true }));
 
 		const readCond = () => ({ op: opSel.value, threshold: parseFloat(thr.value) });
 		opSel.addEventListener('change', () => {
@@ -1424,7 +1473,7 @@ export class LayersPanel {
 		});
 		thr.addEventListener('input', () => {
 			this.manager.updateLayer(id, { maskCondition: readCond() });
-			this.onChange();
+			this.onChange({ interactive: true });
 		});
 
 		return row;

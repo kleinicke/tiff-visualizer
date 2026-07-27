@@ -467,9 +467,10 @@ Specification: <https://www.openraster.org/>. ORA is intentionally simple: a
 ZIP container with XML stack metadata and PNG/SVG layer assets.
 
 **Implementation status:** the worker now validates and parses `stack.xml`,
-selectively extracts referenced PNG layers, retains groups and source-node
-properties, reconstructs normal alpha compositions, measures them against
-`mergedimage.png`, and exposes an Integrated/Reconstructed switch. Compatible
+shows `mergedimage.png` immediately in a preview-only pass, then selectively
+extracts referenced PNG layers in a background layer-only pass. It retains
+groups and source-node properties, reconstructs normal alpha compositions,
+measures them against `mergedimage.png`, and exposes an Integrated/Reconstructed switch. Compatible
 raster nodes can be expanded into the existing Layers View. The unified exporter
 writes an authoritative merged PNG plus editable raster/group entries; filters
 are retained in the merged result and reported because ORA has no adjustment
@@ -515,6 +516,8 @@ and color-balance adjustment layers/filter masks are translated from
 `.filterconfig` into editable approximate compositor filters. Pass-through groups,
 non-8-bit/color-managed paint devices, cached projections, advanced filters,
 vector/generator nodes, and animation remain.
+Opening uses complementary preview-only and background layer-only worker passes,
+so the integrated image does not wait for paint-device and mask decoding.
 The exporter writes 8-bit paint devices, hierarchy, merged/preview images, and
 the supported filter configurations; raster masks and unsupported operations
 are currently baked or reported. It also stores exact non-8-bit raster samples
@@ -550,7 +553,10 @@ and PSB behavior against representative fixtures.
 opacity, kind, blend mode, cached raster pixels, common masks, clipping, and
 supported adjustment descriptors. The exporter writes a new 8-bit PSD with an
 authoritative composite, raster/group hierarchy, masks, clipping, and the
-supported adjustment layers. Lazy decode, thumbnails, color profiles,
+supported adjustment layers. PSD/PSB opening now performs complementary
+composite-only and background layer-only worker passes, and ordinary 8-bit RGBA
+composites use a zero-copy identity display path. Per-layer visibility-driven
+loading, thumbnails, color profiles,
 blend/group semantics, effects, smart objects, and genuinely large PSB files
 remain unsupported or inspect-only.
 
@@ -691,18 +697,66 @@ for native layer reconstruction.
 
 ### Layer compositor performance
 
-The editable compositor remains a framework-free TypeScript/JavaScript CPU
-reference, but full-resolution work now runs in a dedicated worker. Raster
-assets are copied into that worker once and retained across edits. Slider and
-curve gestures request a preview capped at 768 pixels on the longest side,
-followed by a full-resolution render after the gesture settles. Worker startup
-and failures retain the synchronous main-thread fallback.
+The editable compositor now has four explicitly selectable implementations:
+WebGPU, WebGL2, Rust/Wasm, and the TypeScript/JavaScript CPU reference. The development
+selector is intentionally strict: a selected backend must render the document
+itself or report the exact unsupported feature/error; it never silently changes
+backend. The production default probes and selects WebGPU, then WebGL2, then
+Rust/Wasm; JavaScript remains only as the final availability fallback and
+manual correctness reference. Full-resolution CPU work runs in a dedicated
+worker. Slider and curve
+gestures request a preview capped at 768 pixels on the longest side. Their
+trailing native render remains debounced while input is moving, but pointer/key
+release cancels that timer and starts the final native-resolution render
+immediately if the preview is already visible. A direct slider click first
+presents its queued preview, then starts native work on the following animation
+frame. Documents at or below 1500×1500 render natively without a preview pass;
+discrete edits on larger documents use a short 60 ms settle delay.
+Production compositor telemetry is aggregated per edit/slider gesture into one
+line containing the preview count and timings plus the final native render;
+per-pass phase logs remain console-only behind a code diagnostic flag.
+
+The target architecture is:
+
+- TypeScript owns the document model, UI, history, scheduling, and golden
+  correctness implementation.
+- Rust/Wasm now implements the current CPU compositor contract: all editable
+  adjustments, global and clipped scope, clipped rasters, nested isolated
+  groups, raster/adjustment/group masks, 1–4 channels, all integer/float
+  storage types, creative and scientific blend modes, brightness masks, and
+  NaN propagation. The remaining architecture step is to retain document
+  assets and scratch surfaces in Wasm memory so edits pass compact parameter
+  changes instead of recopied multi-hundred-megabyte pixel arrays.
+- The WebGL2 compositor now implements the same current semantic surface for
+  interactive and native-resolution display, including mixed TIFF/creative
+  layers. Unsupported GPU environments and hardware limits are diagnosed, but
+  the backend does not silently omit document features or switch renderers.
+  Its ping-pong compositor clears only surfaces that provide an initial
+  transparent input; full-canvas destination passes no longer receive
+  redundant clears.
+- A strict WebGPU renderer now covers the same raster/adjustment, clipping,
+  mask, nested-group, common/scientific blend, NaN, normalization, and display
+  semantics. It uses byte composition surfaces for ordinary 8-bit documents
+  and half-float surfaces only when numeric inputs or arithmetic modes require
+  them, avoiding unnecessary 5k texture memory. Preview and native surface sets
+  are retained separately, pipelines compile concurrently, and redundant
+  full-surface clears are omitted. Identical layer states reuse their retained
+  final composition independently at preview and native resolution. Phase
+  timing separates scheduling, queueing, initialization, preparation, encoding,
+  GPU completion, validation, canvas copy, upload CPU time, allocations, and
+  total latency. WebGPU availability and device limits fail explicitly;
+  selecting it never falls back to WebGL, Wasm, or JS.
+- All four implementations run the same golden document corpus. Backend parity
+  is measured per pixel with documented precision tolerances.
 
 Caching now operates at four levels:
 
 - display-only changes reuse the last composed float surface;
 - prepared Levels/Curves LUTs are retained by adjustment identity;
 - unchanged clipping stacks and isolated group branches reuse their surfaces;
+- WebGL2 retains filtered raster-stack textures independently at preview and
+  native resolution, invalidating only the stack whose pixels/filter settings
+  changed;
 - localized ordinary-raster edits recompose and patch only the union of the
   old/new drawable bounds. Adjustment, group, mask, and clipped-node changes
   conservatively retain the full-render path.
@@ -717,18 +771,28 @@ Repeatable commands and results from the July 2026 development machine:
   approximately 4.82 s;
 - the 768×432 four-RGBA-layer interaction workload is approximately 122 ms
   median before worker messaging, visualization, and canvas upload.
+- the strict WebGL2 conformance workload with three 5000×5000 RGBA rasters and
+  nine adjustments measures approximately 6.27 s cold, 1.07 s when every
+  filtered stack is retained, on Playwright's browser environment. A
+  single-stack filter edit is separately tested so unchanged stacks remain
+  cached; hardware-backed VS Code measurements are still required.
+- the strict WebGPU native 5000×5000 single-RGBA-layer cold path measures
+  approximately 1.29 s on Playwright's software WebGPU environment, including
+  upload, composition, display conversion, and strict GPU/CPU sample checks.
 
-**Acceleration decision:** the measurements are dominated by parallel
-per-pixel blend/filter passes. Prefer an optional WebGPU compute prototype for
-the next acceleration tier, retaining the worker CPU compositor for unsupported
-environments and golden-result comparisons. Do not duplicate the compositor in
-Rust/WASM yet: without a threaded WASM memory design it remains another
-single-worker CPU implementation, while introducing substantial parity and
-maintenance cost.
+**Acceleration programme:** finish the persistent Rust/Wasm document engine,
+dirty tiles, cached group/filter surfaces, and Wasm SIMD where available.
+Extend retained WebGL2 surfaces to nested group branches and add tiled GPU
+surfaces for documents beyond `MAX_TEXTURE_SIZE`. Extend WebGPU retention to
+unchanged filtered stacks/group branches and evaluate compute kernels for
+compute-heavy masks and filters. Keep the shared conformance corpus as the
+semantic contract instead of allowing backend-specific layer behavior.
 
 Remaining performance validation is platform coverage: record worker,
 visualization, and canvas-upload timings on the supported desktop and web VS
-Code targets, then define release budgets and GPU enablement thresholds.
+Code targets, then define release budgets and GPU enablement thresholds. Add
+separate cold/warm measurements for asset upload, interactive 768 px rendering,
+native rendering, filter-only edits, visibility changes, and export.
 
 This is a **Difficulty: 5 programme**, not one feature. The first useful
 increments (KRA integrated preview or ORA raster layers) are Difficulty 2–3;

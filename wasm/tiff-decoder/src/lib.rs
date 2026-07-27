@@ -3429,3 +3429,1661 @@ fn compute_stats_f64(data: &[f64]) -> (f64, f64) {
     }
     (min, max)
 }
+
+/// Persistent full-resolution RGBA compositor used by the layer worker.
+///
+/// Keeping the accumulation buffer in WASM is important: only each source
+/// layer crosses the JS/WASM boundary once and only the finished composite is
+/// copied back. The TypeScript compositor remains the correctness fallback for
+/// hierarchy, masks, adjustments, arithmetic modes, and non-RGBA stacks.
+#[wasm_bindgen]
+pub struct RgbaLayerCompositor {
+    width: u32,
+    height: u32,
+    type_max: f32,
+    data: Vec<f32>,
+    isolated: Option<Vec<f32>>,
+    isolated_clip_alpha: Option<Vec<f32>>,
+    isolated_snapshot: Option<Vec<f32>>,
+    covered_count: u32,
+}
+
+#[wasm_bindgen]
+impl RgbaLayerCompositor {
+    fn validate_mask<T>(
+        &self,
+        mask: &[T],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+    ) -> Result<(), JsValue> {
+        if channels == 0 {
+            return Err(JsValue::from_str("Raster mask must have at least one channel"));
+        }
+        self.validate_type_max(type_max)?;
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(channels as usize))
+            .ok_or_else(|| JsValue::from_str("Raster mask dimensions overflow"))?;
+        if mask.len() != expected {
+            return Err(JsValue::from_str(
+                "Raster mask length does not match its dimensions",
+            ));
+        }
+        Ok(())
+    }
+
+    fn mask_factor<T, F>(
+        mask: &[T],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+        canvas_x: u32,
+        canvas_y: u32,
+        convert: &F,
+    ) -> f32
+    where
+        F: Fn(&T) -> f32,
+    {
+        let mask_x = canvas_x as i64 - offset_x as i64;
+        let mask_y = canvas_y as i64 - offset_y as i64;
+        let mut factor = if mask_x < 0
+            || mask_y < 0
+            || mask_x >= width as i64
+            || mask_y >= height as i64
+        {
+            0.0
+        } else {
+            let index =
+                (mask_y as usize * width as usize + mask_x as usize) * channels as usize;
+            let value = convert(&mask[index]);
+            if value.is_finite() {
+                (value / type_max).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        if invert {
+            factor = 1.0 - factor;
+        }
+        factor
+    }
+
+    fn apply_isolated_alpha_mask<T, F>(
+        &mut self,
+        mask: &[T],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+        convert: F,
+    ) -> Result<(), JsValue>
+    where
+        F: Fn(&T) -> f32,
+    {
+        self.validate_mask(mask, width, height, channels, type_max)?;
+        let canvas_width = self.width;
+        let mut clip_alpha = self.isolated_clip_alpha.as_mut();
+        let surface = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        for (pixel_index, pixel) in surface.chunks_exact_mut(4).enumerate() {
+            let x = pixel_index as u32 % canvas_width;
+            let y = pixel_index as u32 / canvas_width;
+            let factor = Self::mask_factor(
+                mask, width, height, channels, type_max, offset_x, offset_y, invert, x, y,
+                &convert,
+            );
+            pixel[3] *= factor;
+            if let Some(alpha) = clip_alpha.as_deref_mut() {
+                alpha[pixel_index] *= factor;
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_isolated_masked_adjustment<T, F>(
+        &mut self,
+        mask: &[T],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+        convert: F,
+    ) -> Result<(), JsValue>
+    where
+        F: Fn(&T) -> f32,
+    {
+        self.validate_mask(mask, width, height, channels, type_max)?;
+        let original = self
+            .isolated_snapshot
+            .take()
+            .ok_or_else(|| JsValue::from_str("No masked adjustment snapshot is active"))?;
+        let canvas_width = self.width;
+        let adjusted = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        for (pixel_index, (output, before)) in adjusted
+            .chunks_exact_mut(4)
+            .zip(original.chunks_exact(4))
+            .enumerate()
+        {
+            let x = pixel_index as u32 % canvas_width;
+            let y = pixel_index as u32 / canvas_width;
+            let factor = Self::mask_factor(
+                mask, width, height, channels, type_max, offset_x, offset_y, invert, x, y,
+                &convert,
+            );
+            for channel in 0..3 {
+                output[channel] = before[channel] + (output[channel] - before[channel]) * factor;
+            }
+            output[3] = before[3];
+        }
+        Ok(())
+    }
+
+    fn add_channels<T, F>(
+        &mut self,
+        source: &[T],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+        convert: F,
+    ) -> Result<(), JsValue>
+    where
+        F: Fn(&T) -> f32,
+    {
+        if !(1..=4).contains(&channels) {
+            return Err(JsValue::from_str("Layer source must have one to four channels"));
+        }
+        self.validate_type_max(source_type_max)?;
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(channels as usize))
+            .ok_or_else(|| JsValue::from_str("Layer source dimensions overflow"))?;
+        if source.len() != expected {
+            return Err(JsValue::from_str(
+                "Layer source length does not match its dimensions and channel count",
+            ));
+        }
+        self.add_source_channels(
+            width,
+            height,
+            channels,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            source_type_max,
+            |index| convert(&source[index]),
+        );
+        Ok(())
+    }
+
+    #[wasm_bindgen(constructor)]
+    pub fn new(width: u32, height: u32, type_max: f32) -> Result<RgbaLayerCompositor, JsValue> {
+        if width == 0 || height == 0 || !type_max.is_finite() || type_max <= 0.0 {
+            return Err(JsValue::from_str("Invalid RGBA compositor dimensions or type maximum"));
+        }
+        let pixel_count = (width as usize)
+            .checked_mul(height as usize)
+            .ok_or_else(|| JsValue::from_str("RGBA compositor dimensions overflow"))?;
+        let value_count = pixel_count
+            .checked_mul(4)
+            .ok_or_else(|| JsValue::from_str("RGBA compositor allocation overflow"))?;
+        Ok(RgbaLayerCompositor {
+            width,
+            height,
+            type_max,
+            data: vec![0.0; value_count],
+            isolated: None,
+            isolated_clip_alpha: None,
+            isolated_snapshot: None,
+            covered_count: 0,
+        })
+    }
+
+    pub fn add_u8(
+        &mut self,
+        source: &[u8],
+        width: u32,
+        height: u32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), width, height)?;
+        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, 255.0, |index| {
+            source[index] as f32
+        });
+        Ok(())
+    }
+
+    pub fn add_u16(
+        &mut self,
+        source: &[u16],
+        width: u32,
+        height: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), width, height)?;
+        self.validate_type_max(source_type_max)?;
+        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, source_type_max, |index| {
+            source[index] as f32
+        });
+        Ok(())
+    }
+
+    pub fn add_f32(
+        &mut self,
+        source: &[f32],
+        width: u32,
+        height: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), width, height)?;
+        self.validate_type_max(source_type_max)?;
+        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, source_type_max, |index| {
+            source[index]
+        });
+        Ok(())
+    }
+
+    pub fn add_channels_u8(
+        &mut self,
+        source: &[u8],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn add_channels_u16(
+        &mut self,
+        source: &[u16],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn add_channels_u32(
+        &mut self,
+        source: &[u32],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn add_channels_i8(
+        &mut self,
+        source: &[i8],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn add_channels_i16(
+        &mut self,
+        source: &[i16],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn add_channels_i32(
+        &mut self,
+        source: &[i32],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn add_channels_f32(
+        &mut self,
+        source: &[f32],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value,
+        )
+    }
+
+    pub fn add_channels_f64(
+        &mut self,
+        source: &[f64],
+        width: u32,
+        height: u32,
+        channels: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.add_channels(
+            source,
+            width,
+            height,
+            channels,
+            source_type_max,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            |value| *value as f32,
+        )
+    }
+
+    /// Start an isolated clipping surface from one 8-bit RGBA raster. Filters
+    /// modify this straight-colour surface before its original blend mode and
+    /// opacity are applied to the main document.
+    pub fn begin_isolated_u8(
+        &mut self,
+        source: &[u8],
+        width: u32,
+        height: u32,
+        offset_x: i32,
+        offset_y: i32,
+    ) -> Result<(), JsValue> {
+        let mut surface = RgbaLayerCompositor::new(self.width, self.height, self.type_max)?;
+        surface.add_u8(source, width, height, offset_x, offset_y, 1.0, 0)?;
+        self.isolated_clip_alpha = Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
+        self.isolated = Some(surface.data);
+        Ok(())
+    }
+
+    pub fn begin_isolated_u16(
+        &mut self,
+        source: &[u16],
+        width: u32,
+        height: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+    ) -> Result<(), JsValue> {
+        let mut surface = RgbaLayerCompositor::new(self.width, self.height, self.type_max)?;
+        surface.add_u16(
+            source,
+            width,
+            height,
+            source_type_max,
+            offset_x,
+            offset_y,
+            1.0,
+            0,
+        )?;
+        self.isolated_clip_alpha = Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
+        self.isolated = Some(surface.data);
+        Ok(())
+    }
+
+    pub fn begin_isolated_f32(
+        &mut self,
+        source: &[f32],
+        width: u32,
+        height: u32,
+        source_type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+    ) -> Result<(), JsValue> {
+        let mut surface = RgbaLayerCompositor::new(self.width, self.height, self.type_max)?;
+        surface.add_f32(
+            source,
+            width,
+            height,
+            source_type_max,
+            offset_x,
+            offset_y,
+            1.0,
+            0,
+        )?;
+        self.isolated_clip_alpha = Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
+        self.isolated = Some(surface.data);
+        Ok(())
+    }
+
+    pub fn isolated_apply_alpha_mask_u8(
+        &mut self,
+        mask: &[u8],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+    ) -> Result<(), JsValue> {
+        self.apply_isolated_alpha_mask(
+            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn isolated_apply_alpha_mask_u16(
+        &mut self,
+        mask: &[u16],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+    ) -> Result<(), JsValue> {
+        self.apply_isolated_alpha_mask(
+            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn isolated_apply_alpha_mask_f32(
+        &mut self,
+        mask: &[f32],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+    ) -> Result<(), JsValue> {
+        self.apply_isolated_alpha_mask(
+            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            |value| *value,
+        )
+    }
+
+    pub fn isolated_begin_masked_adjustment(&mut self) -> Result<(), JsValue> {
+        let surface = self
+            .isolated
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        self.isolated_snapshot = Some(surface.clone());
+        Ok(())
+    }
+
+    pub fn isolated_finish_masked_adjustment_u8(
+        &mut self,
+        mask: &[u8],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+    ) -> Result<(), JsValue> {
+        self.finish_isolated_masked_adjustment(
+            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn isolated_finish_masked_adjustment_u16(
+        &mut self,
+        mask: &[u16],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+    ) -> Result<(), JsValue> {
+        self.finish_isolated_masked_adjustment(
+            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            |value| *value as f32,
+        )
+    }
+
+    pub fn isolated_finish_masked_adjustment_f32(
+        &mut self,
+        mask: &[f32],
+        width: u32,
+        height: u32,
+        channels: u32,
+        type_max: f32,
+        offset_x: i32,
+        offset_y: i32,
+        invert: bool,
+    ) -> Result<(), JsValue> {
+        self.finish_isolated_masked_adjustment(
+            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            |value| *value,
+        )
+    }
+
+    /// Apply three 256-entry channel LUTs to the active isolated surface.
+    /// Values in the LUT use the compositor's native value range.
+    pub fn isolated_apply_lut(&mut self, tables: &[f32], amount: f32) -> Result<(), JsValue> {
+        if tables.len() != 256 * 3 {
+            return Err(JsValue::from_str(
+                "Layer adjustment LUT must contain three 256-entry tables",
+            ));
+        }
+        let amount = amount.clamp(0.0, 1.0);
+        let type_max = self.type_max;
+        let surface = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        if amount <= 0.0 {
+            return Ok(());
+        }
+        for pixel in surface.chunks_exact_mut(4) {
+            if pixel[3] <= 0.0 {
+                continue;
+            }
+            for channel in 0..3 {
+                let original = pixel[channel];
+                if !original.is_finite() {
+                    continue;
+                }
+                let position = (original * 255.0 / type_max).clamp(0.0, 255.0);
+                let low = position.floor() as usize;
+                let high = (low + 1).min(255);
+                let fraction = position - low as f32;
+                let base = channel * 256;
+                let adjusted =
+                    tables[base + low] + (tables[base + high] - tables[base + low]) * fraction;
+                pixel[channel] = original + (adjusted - original) * amount;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn isolated_apply_hue(
+        &mut self,
+        hue_degrees: f32,
+        saturation_delta: f32,
+        lightness_delta: f32,
+        colorize: bool,
+        amount: f32,
+    ) -> Result<(), JsValue> {
+        let amount = amount.clamp(0.0, 1.0);
+        let type_max = self.type_max;
+        let surface = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        if amount <= 0.0 {
+            return Ok(());
+        }
+        for pixel in surface.chunks_exact_mut(4) {
+            if pixel[3] <= 0.0 || pixel[..3].iter().any(|value| !value.is_finite()) {
+                continue;
+            }
+            let original = [pixel[0], pixel[1], pixel[2]];
+            let (mut hue, mut saturation, mut lightness) = rgb_to_hsl_f32(
+                original[0] / type_max,
+                original[1] / type_max,
+                original[2] / type_max,
+            );
+            if colorize {
+                hue = hue_degrees.rem_euclid(360.0);
+                saturation = saturation_delta.clamp(0.0, 1.0);
+                let delta = lightness_delta.clamp(-1.0, 1.0);
+                lightness = if delta < 0.0 {
+                    lightness * (1.0 + delta)
+                } else {
+                    lightness + (1.0 - lightness) * delta
+                };
+            } else {
+                hue = (hue + hue_degrees).rem_euclid(360.0);
+                saturation = (saturation + saturation_delta).clamp(0.0, 1.0);
+                lightness = (lightness + lightness_delta).clamp(0.0, 1.0);
+            }
+            let adjusted = hsl_to_rgb_f32(hue, saturation, lightness);
+            for channel in 0..3 {
+                let value = adjusted[channel] * type_max;
+                pixel[channel] = original[channel] + (value - original[channel]) * amount;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply master plus six selective hue/saturation ranges. `parameters`
+    /// contains master H/S/L followed by six records of
+    /// a/b/c/d/H/S/L for red, yellow, green, cyan, blue, and magenta.
+    pub fn isolated_apply_selective_hue(
+        &mut self,
+        parameters: &[f32],
+        amount: f32,
+    ) -> Result<(), JsValue> {
+        if parameters.len() != 45 {
+            return Err(JsValue::from_str(
+                "Selective hue parameters must contain 45 values",
+            ));
+        }
+        let amount = amount.clamp(0.0, 1.0);
+        let type_max = self.type_max;
+        let surface = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        if amount <= 0.0 {
+            return Ok(());
+        }
+        let centers = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0];
+        for pixel in surface.chunks_exact_mut(4) {
+            if pixel[3] <= 0.0 || pixel[..3].iter().any(|value| !value.is_finite()) {
+                continue;
+            }
+            let original = [pixel[0], pixel[1], pixel[2]];
+            let (mut hue, mut saturation, mut lightness) = rgb_to_hsl_f32(
+                original[0] / type_max,
+                original[1] / type_max,
+                original[2] / type_max,
+            );
+            let source_hue = hue;
+            hue = (hue + parameters[0]).rem_euclid(360.0);
+            saturation = (saturation + parameters[1] / 100.0).clamp(0.0, 1.0);
+            lightness = (lightness + parameters[2] / 100.0).clamp(0.0, 1.0);
+            for range in 0..6 {
+                let base = 3 + range * 7;
+                let weight = configured_hue_range_weight_f32(
+                    source_hue,
+                    [
+                        parameters[base],
+                        parameters[base + 1],
+                        parameters[base + 2],
+                        parameters[base + 3],
+                    ],
+                    centers[range],
+                );
+                hue = (hue + parameters[base + 4] * weight).rem_euclid(360.0);
+                saturation =
+                    (saturation + parameters[base + 5] / 100.0 * weight).clamp(0.0, 1.0);
+                lightness =
+                    (lightness + parameters[base + 6] / 100.0 * weight).clamp(0.0, 1.0);
+            }
+            let adjusted = hsl_to_rgb_f32(hue, saturation, lightness);
+            for channel in 0..3 {
+                let value = adjusted[channel] * type_max;
+                pixel[channel] = original[channel] + (value - original[channel]) * amount;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the remaining pixel-local document adjustments. The operation
+    /// codes and compact parameter layouts are defined by the layer worker:
+    /// 2 brightness/contrast, 3 exposure, 4 invert, 5 channel mixer,
+    /// 6 color balance, 7 black & white, 8 threshold, 9 posterize,
+    /// 10 gradient-map LUT.
+    pub fn isolated_apply_direct(
+        &mut self,
+        operation: u32,
+        parameters: &[f32],
+        amount: f32,
+    ) -> Result<(), JsValue> {
+        validate_direct_adjustment(operation, parameters)?;
+        let amount = amount.clamp(0.0, 1.0);
+        let type_max = self.type_max;
+        let surface = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        if amount <= 0.0 {
+            return Ok(());
+        }
+        for pixel in surface.chunks_exact_mut(4) {
+            if pixel[3] <= 0.0 || pixel[..3].iter().any(|value| !value.is_finite()) {
+                continue;
+            }
+            let original = [pixel[0], pixel[1], pixel[2]];
+            let adjusted = apply_direct_adjustment(
+                operation,
+                parameters,
+                [
+                    original[0] / type_max,
+                    original[1] / type_max,
+                    original[2] / type_max,
+                ],
+            );
+            for channel in 0..3 {
+                let value = adjusted[channel] * type_max;
+                pixel[channel] = original[channel] + (value - original[channel]) * amount;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn isolated_add_f32_surface(
+        &mut self,
+        source: &[f32],
+        source_type_max: f32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), self.width, self.height)?;
+        self.validate_type_max(source_type_max)?;
+        let clip_alpha = self
+            .isolated_clip_alpha
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("No isolated clipping base is active"))?;
+        let surface = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        let opacity = opacity.clamp(0.0, 1.0);
+        let value_scale = self.type_max / source_type_max;
+        for (pixel_index, output) in surface.chunks_exact_mut(4).enumerate() {
+            let source_index = pixel_index * 4;
+            let alpha_value = source[source_index + 3];
+            let clip = clip_alpha[pixel_index] / self.type_max;
+            if !alpha_value.is_finite() || !clip.is_finite() {
+                output[0] = f32::NAN;
+                output[1] = f32::NAN;
+                output[2] = f32::NAN;
+                output[3] = self.type_max;
+                continue;
+            }
+            let source_alpha =
+                (alpha_value / source_type_max * opacity * clip).clamp(0.0, 1.0);
+            if source_alpha <= 0.0 {
+                continue;
+            }
+            let destination_alpha = output[3] / self.type_max;
+            let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+            for channel in 0..3 {
+                output[channel] = composite_rgba_channel(
+                    output[channel],
+                    source[source_index + channel] * value_scale,
+                    blend_mode,
+                    source_alpha,
+                    destination_alpha,
+                    output_alpha,
+                    self.type_max,
+                );
+            }
+            output[3] = output_alpha * self.type_max;
+        }
+        Ok(())
+    }
+
+    pub fn isolated_add_arithmetic_f32_surface(
+        &mut self,
+        source: &[f32],
+        source_type_max: f32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), self.width, self.height)?;
+        self.validate_type_max(source_type_max)?;
+        if !(8..=15).contains(&blend_mode) {
+            return Err(JsValue::from_str("Invalid isolated arithmetic blend mode"));
+        }
+        let clip_alpha = self
+            .isolated_clip_alpha
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("No isolated clipping base is active"))?;
+        let output = self
+            .isolated
+            .as_mut()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        let opacity = opacity.clamp(0.0, 1.0);
+        for pixel_index in 0..(self.width as usize * self.height as usize) {
+            let index = pixel_index * 4;
+            let factor = (source[index + 3] / source_type_max
+                * clip_alpha[pixel_index]
+                / self.type_max
+                * opacity)
+                .clamp(0.0, 1.0);
+            if factor <= 0.0 {
+                continue;
+            }
+            let was_covered = output[index + 3] > 0.0;
+            for channel in 0..3 {
+                let value = source[index + channel];
+                if !was_covered {
+                    output[index + channel] = value;
+                } else {
+                    let below = output[index + channel];
+                    let result = arithmetic_layer_channel(below, value, blend_mode);
+                    output[index + channel] = if factor >= 1.0 {
+                        result
+                    } else if result.is_finite() && below.is_finite() {
+                        below + (result - below) * factor
+                    } else {
+                        f32::NAN
+                    };
+                }
+            }
+            output[index + 3] = self.type_max;
+        }
+        Ok(())
+    }
+
+    pub fn apply_brightness_mask_f32_surface(
+        &mut self,
+        source: &[f32],
+        source_type_max: f32,
+        condition: u32,
+        threshold: f32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), self.width, self.height)?;
+        self.validate_type_max(source_type_max)?;
+        let value_scale = self.type_max / source_type_max;
+        for pixel_index in 0..(self.width as usize * self.height as usize) {
+            let destination = pixel_index * 4;
+            if self.data[destination + 3] <= 0.0 || source[destination + 3] <= 0.0 {
+                continue;
+            }
+            let value = (0.2126 * source[destination]
+                + 0.7152 * source[destination + 1]
+                + 0.0722 * source[destination + 2])
+                * value_scale;
+            let keep = match condition {
+                1 => value > threshold,
+                2 => value >= threshold,
+                3 => value < threshold,
+                4 => value <= threshold,
+                5 => value == threshold,
+                6 => value.is_finite(),
+                7 => !value.is_finite(),
+                _ => true,
+            };
+            if !keep {
+                self.data[destination] = 0.0;
+                self.data[destination + 1] = 0.0;
+                self.data[destination + 2] = 0.0;
+                self.data[destination + 3] = 0.0;
+                self.covered_count = self.covered_count.saturating_sub(1);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_arithmetic_f32_surface(
+        &mut self,
+        source: &[f32],
+        source_type_max: f32,
+        opacity: f32,
+        blend_mode: u32,
+    ) -> Result<(), JsValue> {
+        self.validate_source(source.len(), self.width, self.height)?;
+        self.validate_type_max(source_type_max)?;
+        if !(8..=15).contains(&blend_mode) {
+            return Err(JsValue::from_str("Invalid arithmetic layer blend mode"));
+        }
+        let opacity = opacity.clamp(0.0, 1.0);
+        for pixel_index in 0..(self.width as usize * self.height as usize) {
+            let index = pixel_index * 4;
+            let factor = (source[index + 3] / source_type_max * opacity).clamp(0.0, 1.0);
+            if factor <= 0.0 {
+                continue;
+            }
+            let was_covered = self.data[index + 3] > 0.0;
+            for channel in 0..3 {
+                let value = source[index + channel];
+                if !was_covered {
+                    self.data[index + channel] = value;
+                } else {
+                    let below = self.data[index + channel];
+                    let result = arithmetic_layer_channel(below, value, blend_mode);
+                    self.data[index + channel] = if factor >= 1.0 {
+                        result
+                    } else if result.is_finite() && below.is_finite() {
+                        below + (result - below) * factor
+                    } else {
+                        f32::NAN
+                    };
+                }
+            }
+            self.data[index + 3] = self.type_max;
+            if !was_covered {
+                self.covered_count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn take_isolated_surface(&mut self) -> Result<Vec<f32>, JsValue> {
+        self.isolated_clip_alpha = None;
+        self.isolated_snapshot = None;
+        self.isolated
+            .take()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))
+    }
+
+    pub fn finish_isolated(&mut self, opacity: f32, blend_mode: u32) -> Result<(), JsValue> {
+        let surface = self
+            .isolated
+            .take()
+            .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
+        self.add_source(
+            self.width,
+            self.height,
+            0,
+            0,
+            opacity,
+            blend_mode,
+            self.type_max,
+            |index| surface[index],
+        );
+        self.isolated_clip_alpha = None;
+        self.isolated_snapshot = None;
+        Ok(())
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn covered_count(&self) -> u32 {
+        self.covered_count
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn min_value(&self) -> f32 {
+        self.stats().0
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn max_value(&self) -> f32 {
+        self.stats().1
+    }
+
+    pub fn take_data(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.data)
+    }
+
+    pub fn take_data_as_channels(&mut self, channels: u32) -> Result<Vec<f32>, JsValue> {
+        if channels == 4 {
+            return Ok(std::mem::take(&mut self.data));
+        }
+        if channels != 1 && channels != 3 {
+            return Err(JsValue::from_str(
+                "RGBA compositor output must use one, three, or four channels",
+            ));
+        }
+        let mut output = Vec::with_capacity(
+            (self.width as usize)
+                .saturating_mul(self.height as usize)
+                .saturating_mul(channels as usize),
+        );
+        for pixel in self.data.chunks_exact(4) {
+            if pixel[3] <= 0.0 {
+                for _ in 0..channels {
+                    output.push(f32::NAN);
+                }
+            } else if channels == 1 {
+                output.push(pixel[0]);
+            } else {
+                output.extend_from_slice(&pixel[..3]);
+            }
+        }
+        self.data.clear();
+        Ok(output)
+    }
+}
+
+fn rgb_to_hsl_f32(red: f32, green: f32, blue: f32) -> (f32, f32, f32) {
+    let maximum = red.max(green).max(blue);
+    let minimum = red.min(green).min(blue);
+    let delta = maximum - minimum;
+    let lightness = (maximum + minimum) * 0.5;
+    if delta <= 0.0 {
+        return (0.0, 0.0, lightness);
+    }
+    let raw_hue = if maximum == red {
+        ((green - blue) / delta).rem_euclid(6.0)
+    } else if maximum == green {
+        (blue - red) / delta + 2.0
+    } else {
+        (red - green) / delta + 4.0
+    };
+    let saturation = delta / (1.0 - (2.0 * lightness - 1.0).abs()).max(1e-6);
+    ((raw_hue * 60.0).rem_euclid(360.0), saturation, lightness)
+}
+
+fn hsl_to_rgb_f32(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let section = hue.rem_euclid(360.0) / 60.0;
+    let x = chroma * (1.0 - (section.rem_euclid(2.0) - 1.0).abs());
+    let (red, green, blue) = if section < 1.0 {
+        (chroma, x, 0.0)
+    } else if section < 2.0 {
+        (x, chroma, 0.0)
+    } else if section < 3.0 {
+        (0.0, chroma, x)
+    } else if section < 4.0 {
+        (0.0, x, chroma)
+    } else if section < 5.0 {
+        (x, 0.0, chroma)
+    } else {
+        (chroma, 0.0, x)
+    };
+    let offset = lightness - chroma * 0.5;
+    [red + offset, green + offset, blue + offset]
+}
+
+fn clamp_unit_f32(value: f32) -> f32 {
+    value.clamp(0.0, 1.0)
+}
+
+fn luminance_f32(color: [f32; 3]) -> f32 {
+    0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2]
+}
+
+fn hue_range_weight_f32(hue: f32, center: f32) -> f32 {
+    let distance = ((hue - center + 540.0).rem_euclid(360.0) - 180.0).abs();
+    if distance <= 30.0 {
+        1.0
+    } else if distance >= 60.0 {
+        0.0
+    } else {
+        (60.0 - distance) / 30.0
+    }
+}
+
+fn configured_hue_range_weight_f32(
+    hue: f32,
+    mut boundaries: [f32; 4],
+    fallback_center: f32,
+) -> f32 {
+    if boundaries.iter().any(|value| !value.is_finite()) {
+        return hue_range_weight_f32(hue, fallback_center);
+    }
+    while boundaries[1] < boundaries[0] {
+        boundaries[1] += 360.0;
+    }
+    while boundaries[2] < boundaries[1] {
+        boundaries[2] += 360.0;
+    }
+    while boundaries[3] < boundaries[2] {
+        boundaries[3] += 360.0;
+    }
+    let mut weight: f32 = 0.0;
+    let mut candidate = hue - 360.0;
+    while candidate <= hue + 720.0 {
+        if candidate >= boundaries[0] && candidate <= boundaries[3] {
+            let value = if candidate < boundaries[1] {
+                (candidate - boundaries[0]) / (boundaries[1] - boundaries[0]).max(1e-6)
+            } else if candidate <= boundaries[2] {
+                1.0
+            } else {
+                (boundaries[3] - candidate) / (boundaries[3] - boundaries[2]).max(1e-6)
+            };
+            weight = weight.max(value);
+        }
+        candidate += 360.0;
+    }
+    weight.clamp(0.0, 1.0)
+}
+
+fn validate_direct_adjustment(operation: u32, parameters: &[f32]) -> Result<(), JsValue> {
+    let valid = match operation {
+        2 => parameters.len() >= 2,
+        3 => parameters.len() >= 3,
+        4 => true,
+        5 => parameters.len() >= 17,
+        6 => parameters.len() >= 10,
+        7 => parameters.len() >= 6,
+        8 | 9 => !parameters.is_empty(),
+        10 => parameters.len() == 256 * 3,
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(JsValue::from_str(
+            "Invalid Rust/Wasm direct adjustment operation or parameters",
+        ))
+    }
+}
+
+fn apply_direct_adjustment(operation: u32, parameters: &[f32], color: [f32; 3]) -> [f32; 3] {
+    let [mut red, mut green, mut blue] = color;
+    match operation {
+        2 => {
+            let brightness = parameters[0] / 100.0;
+            let contrast = (parameters[1] / 100.0).clamp(-0.99, 0.99);
+            let factor = (1.0 + contrast) / (1.0 - contrast);
+            red = (red - 0.5) * factor + 0.5 + brightness;
+            green = (green - 0.5) * factor + 0.5 + brightness;
+            blue = (blue - 0.5) * factor + 0.5 + brightness;
+        }
+        3 => {
+            let multiplier = 2.0_f32.powf(parameters[0]);
+            let offset = parameters[1];
+            let gamma = parameters[2].max(0.01);
+            red = (red * multiplier + offset).max(0.0).powf(1.0 / gamma);
+            green = (green * multiplier + offset)
+                .max(0.0)
+                .powf(1.0 / gamma);
+            blue = (blue * multiplier + offset).max(0.0).powf(1.0 / gamma);
+        }
+        4 => {
+            red = 1.0 - red;
+            green = 1.0 - green;
+            blue = 1.0 - blue;
+        }
+        5 => {
+            let source = [red, green, blue];
+            let mix = |base: usize| {
+                source[0] * parameters[base] / 100.0
+                    + source[1] * parameters[base + 1] / 100.0
+                    + source[2] * parameters[base + 2] / 100.0
+                    + parameters[base + 3] / 100.0
+            };
+            if parameters[0] > 0.5 {
+                let gray = mix(13);
+                red = gray;
+                green = gray;
+                blue = gray;
+            } else {
+                red = mix(1);
+                green = mix(5);
+                blue = mix(9);
+            }
+        }
+        6 => {
+            let original_lightness = rgb_to_hsl_f32(red, green, blue).2;
+            let light = luminance_f32([red, green, blue]);
+            let weights = [
+                clamp_unit_f32((0.5 - light) * 2.0),
+                1.0 - (light - 0.5).abs() * 2.0,
+                clamp_unit_f32((light - 0.5) * 2.0),
+            ];
+            for range in 0..3 {
+                let base = range * 3;
+                red += parameters[base] / 100.0 * weights[range];
+                green += parameters[base + 1] / 100.0 * weights[range];
+                blue += parameters[base + 2] / 100.0 * weights[range];
+            }
+            if parameters[9] > 0.5 {
+                let (hue, saturation, _) =
+                    rgb_to_hsl_f32(clamp_unit_f32(red), clamp_unit_f32(green), clamp_unit_f32(blue));
+                [red, green, blue] = hsl_to_rgb_f32(hue, saturation, original_lightness);
+            }
+        }
+        7 => {
+            let (hue, saturation, _) = rgb_to_hsl_f32(red, green, blue);
+            let centers = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0];
+            let mut weighted = 0.0;
+            let mut total = 0.0;
+            for index in 0..6 {
+                let weight = hue_range_weight_f32(hue, centers[index]);
+                weighted += parameters[index] * weight;
+                total += weight;
+            }
+            let gray = luminance_f32([red, green, blue])
+                + (((if total > 0.0 { weighted / total } else { 50.0 }) - 50.0) / 100.0)
+                    * saturation
+                    * 0.5;
+            red = gray;
+            green = gray;
+            blue = gray;
+        }
+        8 => {
+            let value = if luminance_f32([red, green, blue]) * 255.0 >= parameters[0] {
+                1.0
+            } else {
+                0.0
+            };
+            red = value;
+            green = value;
+            blue = value;
+        }
+        9 => {
+            let levels = parameters[0].round().clamp(2.0, 255.0);
+            let quantize = |value: f32| (value * (levels - 1.0)).round() / (levels - 1.0);
+            red = quantize(red);
+            green = quantize(green);
+            blue = quantize(blue);
+        }
+        10 => {
+            let position = clamp_unit_f32(luminance_f32([red, green, blue])) * 255.0;
+            let low = position.floor() as usize;
+            let high = (low + 1).min(255);
+            let fraction = position - low as f32;
+            for channel in 0..3 {
+                let base = channel * 256;
+                let value = parameters[base + low]
+                    + (parameters[base + high] - parameters[base + low]) * fraction;
+                match channel {
+                    0 => red = value,
+                    1 => green = value,
+                    _ => blue = value,
+                }
+            }
+        }
+        _ => {}
+    }
+    [clamp_unit_f32(red), clamp_unit_f32(green), clamp_unit_f32(blue)]
+}
+
+impl RgbaLayerCompositor {
+    fn validate_source(&self, length: usize, width: u32, height: u32) -> Result<(), JsValue> {
+        let expected = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| JsValue::from_str("RGBA source dimensions overflow"))?;
+        if length != expected {
+            return Err(JsValue::from_str("RGBA source length does not match its dimensions"));
+        }
+        Ok(())
+    }
+
+    fn validate_type_max(&self, source_type_max: f32) -> Result<(), JsValue> {
+        if !source_type_max.is_finite() || source_type_max <= 0.0 {
+            return Err(JsValue::from_str("Invalid RGBA source type maximum"));
+        }
+        Ok(())
+    }
+
+    fn add_source<F>(
+        &mut self,
+        source_width: u32,
+        source_height: u32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+        source_type_max: f32,
+        sample: F,
+    )
+    where
+        F: Fn(usize) -> f32,
+    {
+        let opacity = opacity.clamp(0.0, 1.0);
+        if opacity <= 0.0 {
+            return;
+        }
+        let x_start = offset_x.max(0) as u32;
+        let y_start = offset_y.max(0) as u32;
+        let x_end = self.width.min((offset_x as i64 + source_width as i64).max(0) as u32);
+        let y_end = self.height.min((offset_y as i64 + source_height as i64).max(0) as u32);
+        if x_start >= x_end || y_start >= y_end {
+            return;
+        }
+        let value_scale = self.type_max / source_type_max;
+        for y in y_start..y_end {
+            let source_y = (y as i64 - offset_y as i64) as usize;
+            for x in x_start..x_end {
+                let source_x = (x as i64 - offset_x as i64) as usize;
+                let source_index = (source_y * source_width as usize + source_x) * 4;
+                let destination_index = (y as usize * self.width as usize + x as usize) * 4;
+                let source_alpha_value = sample(source_index + 3);
+                if !source_alpha_value.is_finite() {
+                    self.cover_invalid(destination_index);
+                    continue;
+                }
+                let source_alpha = (source_alpha_value / source_type_max * opacity).clamp(0.0, 1.0);
+                if source_alpha <= 0.0 {
+                    continue;
+                }
+                let destination_alpha = self.data[destination_index + 3] / self.type_max;
+                let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+                let was_covered = destination_alpha > 0.0;
+                for channel in 0..3 {
+                    let source_value = sample(source_index + channel) * value_scale;
+                    let below = self.data[destination_index + channel];
+                    self.data[destination_index + channel] = composite_rgba_channel(
+                        below,
+                        source_value,
+                        blend_mode,
+                        source_alpha,
+                        destination_alpha,
+                        output_alpha,
+                        self.type_max,
+                    );
+                }
+                self.data[destination_index + 3] = output_alpha * self.type_max;
+                if !was_covered {
+                    self.covered_count += 1;
+                }
+            }
+        }
+    }
+
+    fn add_source_channels<F>(
+        &mut self,
+        source_width: u32,
+        source_height: u32,
+        channels: u32,
+        offset_x: i32,
+        offset_y: i32,
+        opacity: f32,
+        blend_mode: u32,
+        source_type_max: f32,
+        sample: F,
+    ) where
+        F: Fn(usize) -> f32,
+    {
+        let opacity = opacity.clamp(0.0, 1.0);
+        if opacity <= 0.0 {
+            return;
+        }
+        let x_start = offset_x.max(0) as u32;
+        let y_start = offset_y.max(0) as u32;
+        let x_end = self
+            .width
+            .min((offset_x as i64 + source_width as i64).max(0) as u32);
+        let y_end = self
+            .height
+            .min((offset_y as i64 + source_height as i64).max(0) as u32);
+        if x_start >= x_end || y_start >= y_end {
+            return;
+        }
+        let value_scale = self.type_max / source_type_max;
+        for y in y_start..y_end {
+            let source_y = (y as i64 - offset_y as i64) as usize;
+            for x in x_start..x_end {
+                let source_x = (x as i64 - offset_x as i64) as usize;
+                let source_index =
+                    (source_y * source_width as usize + source_x) * channels as usize;
+                let destination_index = (y as usize * self.width as usize + x as usize) * 4;
+                if (8..=15).contains(&blend_mode) {
+                    let was_covered = self.data[destination_index + 3] > 0.0;
+                    for channel in 0..3 {
+                        let source_channel = if channels <= 2 {
+                            0
+                        } else {
+                            channel.min(channels as usize - 1)
+                        };
+                        let source_value = sample(source_index + source_channel);
+                        if !was_covered {
+                            self.data[destination_index + channel] = source_value;
+                        } else {
+                            let below = self.data[destination_index + channel];
+                            let result =
+                                arithmetic_layer_channel(below, source_value, blend_mode);
+                            self.data[destination_index + channel] = if opacity >= 1.0 {
+                                result
+                            } else if result.is_finite() && below.is_finite() {
+                                below + (result - below) * opacity
+                            } else {
+                                f32::NAN
+                            };
+                        }
+                    }
+                    self.data[destination_index + 3] = self.type_max;
+                    if !was_covered {
+                        self.covered_count += 1;
+                    }
+                    continue;
+                }
+                let source_alpha_value = if channels == 2 || channels == 4 {
+                    sample(source_index + channels as usize - 1)
+                } else {
+                    source_type_max
+                };
+                if !source_alpha_value.is_finite() {
+                    self.cover_invalid(destination_index);
+                    continue;
+                }
+                let source_alpha =
+                    (source_alpha_value / source_type_max * opacity).clamp(0.0, 1.0);
+                if source_alpha <= 0.0 {
+                    continue;
+                }
+                let destination_alpha = self.data[destination_index + 3] / self.type_max;
+                let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+                let was_covered = destination_alpha > 0.0;
+                for channel in 0..3 {
+                    let source_channel = if channels <= 2 {
+                        0
+                    } else {
+                        channel.min(channels as usize - 1)
+                    };
+                    let source_value = sample(source_index + source_channel) * value_scale;
+                    let below = self.data[destination_index + channel];
+                    self.data[destination_index + channel] = composite_rgba_channel(
+                        below,
+                        source_value,
+                        blend_mode,
+                        source_alpha,
+                        destination_alpha,
+                        output_alpha,
+                        self.type_max,
+                    );
+                }
+                self.data[destination_index + 3] = output_alpha * self.type_max;
+                if !was_covered {
+                    self.covered_count += 1;
+                }
+            }
+        }
+    }
+
+    fn cover_invalid(&mut self, destination_index: usize) {
+        if self.data[destination_index + 3] <= 0.0 {
+            self.covered_count += 1;
+        }
+        self.data[destination_index] = f32::NAN;
+        self.data[destination_index + 1] = f32::NAN;
+        self.data[destination_index + 2] = f32::NAN;
+        self.data[destination_index + 3] = self.type_max;
+    }
+
+    fn stats(&self) -> (f32, f32) {
+        let mut minimum = f32::INFINITY;
+        let mut maximum = f32::NEG_INFINITY;
+        for pixel in self.data.chunks_exact(4) {
+            if pixel[3] <= 0.0 {
+                continue;
+            }
+            for value in &pixel[..3] {
+                if value.is_finite() {
+                    minimum = minimum.min(*value);
+                    maximum = maximum.max(*value);
+                }
+            }
+        }
+        if minimum == f32::INFINITY {
+            (0.0, 0.0)
+        } else {
+            (minimum, maximum)
+        }
+    }
+}
+
+fn composite_rgba_channel(
+    below: f32,
+    source: f32,
+    mode: u32,
+    source_alpha: f32,
+    destination_alpha: f32,
+    output_alpha: f32,
+    type_max: f32,
+) -> f32 {
+    if destination_alpha <= 0.0 || source_alpha >= 1.0 && mode == 0 {
+        return source;
+    }
+    if !below.is_finite() || !source.is_finite() {
+        return f32::NAN;
+    }
+    if mode == 0 {
+        return (source * source_alpha + below * destination_alpha * (1.0 - source_alpha)) / output_alpha;
+    }
+    let blended = match mode {
+        1 => below * source / type_max,
+        2 => type_max - (type_max - below) * (type_max - source) / type_max,
+        3 => {
+            if below <= type_max * 0.5 {
+                2.0 * below * source / type_max
+            } else {
+                type_max - 2.0 * (type_max - below) * (type_max - source) / type_max
+            }
+        }
+        4 => below.min(source),
+        5 => below.max(source),
+        6 => (below - source).abs(),
+        7 => below + source - 2.0 * below * source / type_max,
+        _ => source,
+    };
+    ((1.0 - source_alpha) * destination_alpha * below
+        + (1.0 - destination_alpha) * source_alpha * source
+        + destination_alpha * source_alpha * blended)
+        / output_alpha
+}
+
+fn arithmetic_layer_channel(below: f32, source: f32, mode: u32) -> f32 {
+    match mode {
+        8 => below + source,
+        9 => below - source,
+        10 => (below - source).abs(),
+        11 => below * source,
+        12 => {
+            if source == 0.0 {
+                f32::NAN
+            } else {
+                below / source
+            }
+        }
+        13 => below.min(source),
+        14 => below.max(source),
+        15 => (below + source) * 0.5,
+        _ => source,
+    }
+}

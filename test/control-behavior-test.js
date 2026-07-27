@@ -7,12 +7,27 @@ async function main() {
 	const managerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-manager.js');
 	const controlsPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'range-controls.js');
 	const compositorWorkerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-compositor-worker-client.js');
+	const settingsManagerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'settings-manager.js');
 	const { LayerManager } = await import(managerPath);
 	const { resetRangeToDefault } = await import(controlsPath);
-	const { layerDisplayScale } = await import(compositorWorkerPath);
+	const { layerDisplayScale, shouldUseLayerInteractionPreview } = await import(compositorWorkerPath);
+	const { webviewStateMatchesVersions, withWebviewStateVersions } = await import(settingsManagerPath);
+
+	const versionedState = withWebviewStateVersions({ layers: [{ id: 'saved' }] }, '1.9.0', '1.102.0');
+	assert.strictEqual(webviewStateMatchesVersions(versionedState, '1.9.0', '1.102.0'), true,
+		'state survives reloads when both versions are unchanged');
+	assert.strictEqual(webviewStateMatchesVersions(versionedState, '1.9.1', '1.102.0'), false,
+		'an extension update invalidates persisted state');
+	assert.strictEqual(webviewStateMatchesVersions(versionedState, '1.9.0', '1.103.0'), false,
+		'a VS Code update invalidates persisted state');
+	assert.strictEqual(webviewStateMatchesVersions({ layers: [] }, '1.9.0', '1.102.0'), false,
+		'unversioned legacy state is not restored');
 
 	assert.strictEqual(layerDisplayScale(1024, 768, false), 1, 'ordinary documents render at full display resolution');
-	assert.strictEqual(layerDisplayScale(5000, 4000, false), 2048 / 5000, '5K settled display composites are bounded to 2048 px');
+	assert.strictEqual(layerDisplayScale(1500, 1500, true), 1, '1500px documents skip the interaction preview');
+	assert.strictEqual(shouldUseLayerInteractionPreview(1500, 1499), false, 'both dimensions at or below 1500px render natively');
+	assert.strictEqual(shouldUseLayerInteractionPreview(1501, 100), true, 'a document exceeding 1500px on either edge uses a preview');
+	assert.strictEqual(layerDisplayScale(5000, 4000, false), 1, 'settled layer composites retain native document resolution');
 	assert.strictEqual(layerDisplayScale(5000, 4000, true), 768 / 5000, '5K interaction previews are bounded to 768 px');
 
 	const manager = new LayerManager();

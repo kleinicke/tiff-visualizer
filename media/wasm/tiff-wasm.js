@@ -124,6 +124,61 @@ function takeFromExternrefTable0(idx) {
     wasm.__externref_table_dealloc(idx);
     return value;
 }
+
+function passArrayF32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getFloat32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+let cachedFloat64ArrayMemory0 = null;
+
+function getFloat64ArrayMemory0() {
+    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+    }
+    return cachedFloat64ArrayMemory0;
+}
+
+function passArrayF64ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 8, 8) >>> 0;
+    getFloat64ArrayMemory0().set(arg, ptr / 8);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+let cachedUint16ArrayMemory0 = null;
+
+function getUint16ArrayMemory0() {
+    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
+        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
+    }
+    return cachedUint16ArrayMemory0;
+}
+
+function passArray16ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 2, 2) >>> 0;
+    getUint16ArrayMemory0().set(arg, ptr / 2);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
+let cachedUint32ArrayMemory0 = null;
+
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
+}
+
+function passArray32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getUint32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
 /**
  * Decode a TIFF file from an ArrayBuffer
  * Returns TiffResult with image data and metadata
@@ -294,27 +349,9 @@ export function decode_jpeg_fast(data) {
     return JpegResult.__wrap(ret[0]);
 }
 
-let cachedFloat64ArrayMemory0 = null;
-
-function getFloat64ArrayMemory0() {
-    if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
-        cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
-    }
-    return cachedFloat64ArrayMemory0;
-}
-
 function getArrayF64FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
-}
-
-let cachedUint16ArrayMemory0 = null;
-
-function getUint16ArrayMemory0() {
-    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
-        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
-    }
-    return cachedUint16ArrayMemory0;
 }
 
 function getArrayU16FromWasm0(ptr, len) {
@@ -682,6 +719,597 @@ export class PngResult {
 }
 if (Symbol.dispose) PngResult.prototype[Symbol.dispose] = PngResult.prototype.free;
 
+const RgbaLayerCompositorFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_rgbalayercompositor_free(ptr >>> 0, 1));
+/**
+ * Persistent full-resolution RGBA compositor used by the layer worker.
+ *
+ * Keeping the accumulation buffer in WASM is important: only each source
+ * layer crosses the JS/WASM boundary once and only the finished composite is
+ * copied back. The TypeScript compositor remains the correctness fallback for
+ * hierarchy, masks, adjustments, arithmetic modes, and non-RGBA stacks.
+ */
+export class RgbaLayerCompositor {
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        RgbaLayerCompositorFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_rgbalayercompositor_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get covered_count() {
+        const ret = wasm.rgbalayercompositor_covered_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @param {Int8Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_i8(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray8ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_i8(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint8Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_u8(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray8ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_u8(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    finish_isolated(opacity, blend_mode) {
+        const ret = wasm.rgbalayercompositor_finish_isolated(this.__wbg_ptr, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_f32(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_f32(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float64Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_f64(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArrayF64ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_f64(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Int16Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_i16(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray16ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_i16(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Int32Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_i32(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_i32(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint16Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_u16(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray16ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_u16(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint32Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_channels_u32(source, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_channels_u32(this.__wbg_ptr, ptr0, len0, width, height, channels, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Start an isolated clipping surface from one 8-bit RGBA raster. Filters
+     * modify this straight-colour surface before its original blend mode and
+     * opacity are applied to the main document.
+     * @param {Uint8Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} offset_x
+     * @param {number} offset_y
+     */
+    begin_isolated_u8(source, width, height, offset_x, offset_y) {
+        const ptr0 = passArray8ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_begin_isolated_u8(this.__wbg_ptr, ptr0, len0, width, height, offset_x, offset_y);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     */
+    begin_isolated_f32(source, width, height, source_type_max, offset_x, offset_y) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_begin_isolated_f32(this.__wbg_ptr, ptr0, len0, width, height, source_type_max, offset_x, offset_y);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint16Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     */
+    begin_isolated_u16(source, width, height, source_type_max, offset_x, offset_y) {
+        const ptr0 = passArray16ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_begin_isolated_u16(this.__wbg_ptr, ptr0, len0, width, height, source_type_max, offset_x, offset_y);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} hue_degrees
+     * @param {number} saturation_delta
+     * @param {number} lightness_delta
+     * @param {boolean} colorize
+     * @param {number} amount
+     */
+    isolated_apply_hue(hue_degrees, saturation_delta, lightness_delta, colorize, amount) {
+        const ret = wasm.rgbalayercompositor_isolated_apply_hue(this.__wbg_ptr, hue_degrees, saturation_delta, lightness_delta, colorize, amount);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Apply three 256-entry channel LUTs to the active isolated surface.
+     * Values in the LUT use the compositor's native value range.
+     * @param {Float32Array} tables
+     * @param {number} amount
+     */
+    isolated_apply_lut(tables, amount) {
+        const ptr0 = passArrayF32ToWasm0(tables, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_apply_lut(this.__wbg_ptr, ptr0, len0, amount);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Apply the remaining pixel-local document adjustments. The operation
+     * codes and compact parameter layouts are defined by the layer worker:
+     * 2 brightness/contrast, 3 exposure, 4 invert, 5 channel mixer,
+     * 6 color balance, 7 black & white, 8 threshold, 9 posterize,
+     * 10 gradient-map LUT.
+     * @param {number} operation
+     * @param {Float32Array} parameters
+     * @param {number} amount
+     */
+    isolated_apply_direct(operation, parameters, amount) {
+        const ptr0 = passArrayF32ToWasm0(parameters, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_apply_direct(this.__wbg_ptr, operation, ptr0, len0, amount);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} channels
+     * @returns {Float32Array}
+     */
+    take_data_as_channels(channels) {
+        const ret = wasm.rgbalayercompositor_take_data_as_channels(this.__wbg_ptr, channels);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_isolated_surface() {
+        const ret = wasm.rgbalayercompositor_take_isolated_surface(this.__wbg_ptr);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} source_type_max
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    isolated_add_f32_surface(source, source_type_max, opacity, blend_mode) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_add_f32_surface(this.__wbg_ptr, ptr0, len0, source_type_max, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} source_type_max
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_arithmetic_f32_surface(source, source_type_max, opacity, blend_mode) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_arithmetic_f32_surface(this.__wbg_ptr, ptr0, len0, source_type_max, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint8Array} mask
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {boolean} invert
+     */
+    isolated_apply_alpha_mask_u8(mask, width, height, channels, type_max, offset_x, offset_y, invert) {
+        const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_apply_alpha_mask_u8(this.__wbg_ptr, ptr0, len0, width, height, channels, type_max, offset_x, offset_y, invert);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Apply master plus six selective hue/saturation ranges. `parameters`
+     * contains master H/S/L followed by six records of
+     * a/b/c/d/H/S/L for red, yellow, green, cyan, blue, and magenta.
+     * @param {Float32Array} parameters
+     * @param {number} amount
+     */
+    isolated_apply_selective_hue(parameters, amount) {
+        const ptr0 = passArrayF32ToWasm0(parameters, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_apply_selective_hue(this.__wbg_ptr, ptr0, len0, amount);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} mask
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {boolean} invert
+     */
+    isolated_apply_alpha_mask_f32(mask, width, height, channels, type_max, offset_x, offset_y, invert) {
+        const ptr0 = passArrayF32ToWasm0(mask, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_apply_alpha_mask_f32(this.__wbg_ptr, ptr0, len0, width, height, channels, type_max, offset_x, offset_y, invert);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint16Array} mask
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {boolean} invert
+     */
+    isolated_apply_alpha_mask_u16(mask, width, height, channels, type_max, offset_x, offset_y, invert) {
+        const ptr0 = passArray16ToWasm0(mask, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_apply_alpha_mask_u16(this.__wbg_ptr, ptr0, len0, width, height, channels, type_max, offset_x, offset_y, invert);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    isolated_begin_masked_adjustment() {
+        const ret = wasm.rgbalayercompositor_isolated_begin_masked_adjustment(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} source_type_max
+     * @param {number} condition
+     * @param {number} threshold
+     */
+    apply_brightness_mask_f32_surface(source, source_type_max, condition, threshold) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_apply_brightness_mask_f32_surface(this.__wbg_ptr, ptr0, len0, source_type_max, condition, threshold);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} source_type_max
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    isolated_add_arithmetic_f32_surface(source, source_type_max, opacity, blend_mode) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_add_arithmetic_f32_surface(this.__wbg_ptr, ptr0, len0, source_type_max, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint8Array} mask
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {boolean} invert
+     */
+    isolated_finish_masked_adjustment_u8(mask, width, height, channels, type_max, offset_x, offset_y, invert) {
+        const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_finish_masked_adjustment_u8(this.__wbg_ptr, ptr0, len0, width, height, channels, type_max, offset_x, offset_y, invert);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} mask
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {boolean} invert
+     */
+    isolated_finish_masked_adjustment_f32(mask, width, height, channels, type_max, offset_x, offset_y, invert) {
+        const ptr0 = passArrayF32ToWasm0(mask, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_finish_masked_adjustment_f32(this.__wbg_ptr, ptr0, len0, width, height, channels, type_max, offset_x, offset_y, invert);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint16Array} mask
+     * @param {number} width
+     * @param {number} height
+     * @param {number} channels
+     * @param {number} type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {boolean} invert
+     */
+    isolated_finish_masked_adjustment_u16(mask, width, height, channels, type_max, offset_x, offset_y, invert) {
+        const ptr0 = passArray16ToWasm0(mask, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_isolated_finish_masked_adjustment_u16(this.__wbg_ptr, ptr0, len0, width, height, channels, type_max, offset_x, offset_y, invert);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {number} width
+     * @param {number} height
+     * @param {number} type_max
+     */
+    constructor(width, height, type_max) {
+        const ret = wasm.rgbalayercompositor_new(width, height, type_max);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        RgbaLayerCompositorFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {Uint8Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_u8(source, width, height, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray8ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_u8(this.__wbg_ptr, ptr0, len0, width, height, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Float32Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_f32(source, width, height, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArrayF32ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_f32(this.__wbg_ptr, ptr0, len0, width, height, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint16Array} source
+     * @param {number} width
+     * @param {number} height
+     * @param {number} source_type_max
+     * @param {number} offset_x
+     * @param {number} offset_y
+     * @param {number} opacity
+     * @param {number} blend_mode
+     */
+    add_u16(source, width, height, source_type_max, offset_x, offset_y, opacity, blend_mode) {
+        const ptr0 = passArray16ToWasm0(source, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.rgbalayercompositor_add_u16(this.__wbg_ptr, ptr0, len0, width, height, source_type_max, offset_x, offset_y, opacity, blend_mode);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get max_value() {
+        const ret = wasm.rgbalayercompositor_max_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get min_value() {
+        const ret = wasm.rgbalayercompositor_min_value(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_data() {
+        const ret = wasm.rgbalayercompositor_take_data(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+}
+if (Symbol.dispose) RgbaLayerCompositor.prototype[Symbol.dispose] = RgbaLayerCompositor.prototype.free;
+
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_tiffresult_free(ptr >>> 0, 1));
@@ -1037,6 +1665,7 @@ function __wbg_finalize_init(instance, module) {
     cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
     cachedUint16ArrayMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

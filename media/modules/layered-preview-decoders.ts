@@ -242,7 +242,15 @@ function restoreNumericLayerSidecars(files: Record<string, Uint8Array>, assets: 
 	}
 }
 
-function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { width: number; height: number; data: Uint8Array }, xml: string, declaredWidth: number, declaredHeight: number): DecodedLayeredPreview {
+function decodeOraResult(
+	buffer: ArrayBuffer,
+	previewName: string,
+	decoded: { width: number; height: number; data: Uint8Array },
+	xml: string,
+	declaredWidth: number,
+	declaredHeight: number,
+	layersOnly = false,
+): DecodedLayeredPreview {
 	const xmlRoots = parseOraTree(xml);
 	const sourcePaths = new Set<string>();
 	const collectPaths = (nodes: OraXmlNode[]) => nodes.forEach(node => {
@@ -308,7 +316,7 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		return output;
 	};
 	const reconstructed = renderNodes(root);
-	const comparable = decoded.width === declaredWidth && decoded.height === declaredHeight;
+	const comparable = !layersOnly && decoded.width === declaredWidth && decoded.height === declaredHeight;
 	const rasterAssetCount = assets.filter(asset => asset.kind !== 'group' && asset.data).length;
 	const reconstruction: NonNullable<LayeredDocumentSummary['reconstruction']> = rasterAssetCount === 0
 		? { available: false }
@@ -320,14 +328,16 @@ function decodeOraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 	}
 	const document: LayeredDocumentSummary = {
 		format: 'ora', width: declaredWidth, height: declaredHeight, bitDepth: 8, colorMode: 'RGBA',
-		previewKind: 'merged', previewIsAuthoritative: previewName === 'mergedimage.png' && comparable,
+		previewKind: 'merged', previewIsAuthoritative: previewName === 'mergedimage.png' &&
+			(layersOnly || (decoded.width === declaredWidth && decoded.height === declaredHeight)),
 		previewWidth: decoded.width, previewHeight: decoded.height, layerCount: assets.length, root, warnings, reconstruction,
 	};
 	return {
 		...decoded, channels: 4, bitDepth: 8, sampleFormat: 1,
-		integratedData: decoded.data, ...(assets.length ? { reconstructedData: reconstructed } : {}), layerAssets: assets,
+		...(!layersOnly ? { integratedData: decoded.data } : {}),
+		...(assets.length ? { reconstructedData: reconstructed } : {}), layerAssets: assets,
 		formatLabel: 'OpenRaster integrated preview', formatType: 'ora', document,
-		metadata: { container: 'ZIP', previewEntry: previewName, previewAuthoritative: document.previewIsAuthoritative, layerCount: assets.length, documentWidth: declaredWidth, documentHeight: declaredHeight, reconstructionMeanError: reconstruction.meanAbsoluteError ?? 0, reconstructionDifferentPixels: reconstruction.differentPixelRatio ?? 0 },
+		metadata: { container: 'ZIP', previewEntry: previewName, previewAuthoritative: document.previewIsAuthoritative, layerCount: assets.length, documentWidth: declaredWidth, documentHeight: declaredHeight, reconstructionMeanError: reconstruction.meanAbsoluteError ?? 0, reconstructionDifferentPixels: reconstruction.differentPixelRatio ?? 0, layersOnly },
 	};
 }
 
@@ -521,7 +531,15 @@ function decodeKraPaintDevice(bytes: Uint8Array, width: number, height: number, 
 	return output;
 }
 
-function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { width: number; height: number; data: Uint8Array }, xml: string, declaredWidth: number, declaredHeight: number): DecodedLayeredPreview {
+function decodeKraResult(
+	buffer: ArrayBuffer,
+	previewName: string,
+	decoded: { width: number; height: number; data: Uint8Array },
+	xml: string,
+	declaredWidth: number,
+	declaredHeight: number,
+	layersOnly = false,
+): DecodedLayeredPreview {
 	const roots = parseKraTree(xml);
 	const documentName = xmlAttribute(xml, 'name') || '';
 	const filenames = new Set<string>();
@@ -650,7 +668,7 @@ function decodeKraResult(buffer: ArrayBuffer, previewName: string, decoded: { wi
 		previewKind: 'merged', previewIsAuthoritative: previewName === 'mergedimage.png' && decoded.width === declaredWidth && decoded.height === declaredHeight,
 		previewWidth: decoded.width, previewHeight: decoded.height, layerCount: flattenNodeCount(root), root, warnings,
 	};
-	return { ...decoded, channels: 4, bitDepth: 8, sampleFormat: 1, layerAssets: assets, formatLabel: 'Krita integrated preview', formatType: 'kra', document, metadata: { container: 'ZIP', previewEntry: previewName, previewAuthoritative: document.previewIsAuthoritative, layerCount: document.layerCount, editableNodeCount: assets.length, documentWidth: declaredWidth, documentHeight: declaredHeight } };
+	return { ...decoded, channels: 4, bitDepth: 8, sampleFormat: 1, layerAssets: assets, formatLabel: 'Krita integrated preview', formatType: 'kra', document, metadata: { container: 'ZIP', previewEntry: previewName, previewAuthoritative: document.previewIsAuthoritative, layerCount: document.layerCount, editableNodeCount: assets.length, documentWidth: declaredWidth, documentHeight: declaredHeight, layersOnly } };
 }
 
 function unzipSelected(buffer: ArrayBuffer, wanted: (name: string) => boolean): Record<string, Uint8Array> {
@@ -677,7 +695,10 @@ function unzipSelected(buffer: ArrayBuffer, wanted: (name: string) => boolean): 
 function archivePreviewResult(
 	format: 'ora' | 'kra',
 	buffer: ArrayBuffer,
+	options: { previewOnly?: boolean; layersOnly?: boolean } = {},
 ): DecodedLayeredPreview {
+	const previewOnly = options.previewOnly === true;
+	const layersOnly = options.layersOnly === true;
 	const wantedNames = format === 'ora'
 		? new Set(['mergedimage.png', 'Thumbnails/thumbnail.png', 'stack.xml', 'mimetype'])
 		: new Set(['mergedimage.png', 'preview.png', 'documentinfo.xml', 'maindoc.xml', 'mimetype']);
@@ -686,18 +707,44 @@ function archivePreviewResult(
 		? (files['mergedimage.png'] ? 'mergedimage.png' : 'Thumbnails/thumbnail.png')
 		: (files['mergedimage.png'] ? 'mergedimage.png' : 'preview.png');
 	const previewBytes = files[previewName];
-	if (!previewBytes) {
+	if (!layersOnly && !previewBytes) {
 		throw new Error(`${format.toUpperCase()} contains no integrated preview image`);
 	}
-	const decoded = decodePngRgba(previewBytes);
 	const xmlName = format === 'ora' ? 'stack.xml' : 'maindoc.xml';
 	const xml = decodeXml(files[xmlName]);
 	const layerCount = countMatches(xml, /<layer\b/gi);
-	const declaredWidth = Number(xmlAttribute(xml, 'w') || xmlAttribute(xml, 'width') || decoded.width);
-	const declaredHeight = Number(xmlAttribute(xml, 'h') || xmlAttribute(xml, 'height') || decoded.height);
+	const decodedPreview = previewBytes && !layersOnly ? decodePngRgba(previewBytes) : undefined;
+	const declaredWidth = Number(xmlAttribute(xml, 'w') || xmlAttribute(xml, 'width') || decodedPreview?.width);
+	const declaredHeight = Number(xmlAttribute(xml, 'h') || xmlAttribute(xml, 'height') || decodedPreview?.height);
+	assertDimensions(declaredWidth, declaredHeight, 4);
+	const decoded = decodedPreview || { width: declaredWidth, height: declaredHeight, data: new Uint8Array() };
 	const isFullSize = decoded.width === declaredWidth && decoded.height === declaredHeight;
+	if (previewOnly) {
+		const warnings: string[] = [];
+		if (!xml.trim()) { warnings.push(`${format === 'ora' ? 'OpenRaster stack.xml' : 'Krita maindoc.xml'} is missing; only the integrated preview is available`); }
+		if (format === 'ora') {
+			const mime = decodeXml(files.mimetype).trim();
+			if (mime !== 'image/openraster') { warnings.push(mime ? `Unexpected OpenRaster MIME marker: ${mime}` : 'OpenRaster MIME marker is missing'); }
+		}
+		const document: LayeredDocumentSummary = {
+			format, width: declaredWidth, height: declaredHeight, bitDepth: 8,
+			colorMode: format === 'kra' ? xmlAttribute(xml, 'colorspacename') || 'RGBA' : 'RGBA',
+			previewKind: 'merged', previewIsAuthoritative: previewName === 'mergedimage.png' && isFullSize,
+			previewWidth: decoded.width, previewHeight: decoded.height, layerCount, root: [], warnings,
+		};
+		return {
+			...decoded, channels: 4, bitDepth: 8, sampleFormat: 1, layerAssets: [],
+			formatLabel: format === 'ora' ? 'OpenRaster integrated preview' : 'Krita integrated preview',
+			formatType: format, document,
+			metadata: {
+				container: 'ZIP', previewEntry: previewName,
+				previewAuthoritative: document.previewIsAuthoritative, layerCount,
+				documentWidth: declaredWidth, documentHeight: declaredHeight, previewOnly,
+			},
+		};
+	}
 	if (format === 'ora' && isFullSize) {
-		const result = decodeOraResult(buffer, previewName, decoded, xml, declaredWidth, declaredHeight);
+		const result = decodeOraResult(buffer, previewName, decoded, xml, declaredWidth, declaredHeight, layersOnly);
 		const mime = decodeXml(files.mimetype).trim();
 		if (mime !== 'image/openraster') {
 			result.document.warnings.unshift(mime ? `Unexpected OpenRaster MIME marker: ${mime}` : 'OpenRaster MIME marker is missing');
@@ -705,7 +752,7 @@ function archivePreviewResult(
 		return result;
 	}
 	if (format === 'kra') {
-		return decodeKraResult(buffer, previewName, decoded, xml, declaredWidth, declaredHeight);
+		return decodeKraResult(buffer, previewName, decoded, xml, declaredWidth, declaredHeight, layersOnly);
 	}
 	const warnings: string[] = [];
 	if (format === 'ora' && !xml.trim()) { warnings.push('OpenRaster stack.xml is missing; only the integrated preview is available'); }
@@ -879,16 +926,23 @@ function flattenNodeCount(nodes: LayerNodeSummary[]): number {
 	return count;
 }
 
-function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPreview {
+function decodePsdPreview(
+	buffer: ArrayBuffer,
+	psb: boolean,
+	options: { previewOnly?: boolean; layersOnly?: boolean } = {},
+): DecodedLayeredPreview {
 	ensurePsdImageDataFactory();
 	let layerDecodeWarning = '';
 	let psd: any;
+	const previewOnly = options.previewOnly === true;
+	const layersOnly = options.layersOnly === true;
 	try {
 		psd = readPsd(buffer, {
-			useImageData: true, skipLayerImageData: false, skipThumbnail: true,
+			useImageData: true, skipLayerImageData: previewOnly, skipCompositeImageData: layersOnly, skipThumbnail: true,
 			skipLinkedFilesData: true, logMissingFeatures: false, totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
 		});
 	} catch (error) {
+		if (previewOnly || layersOnly) { throw error; }
 		// A valid integrated preview remains useful when decoding every layer would
 		// exceed the bounded memory budget or encounters an unsupported payload.
 		layerDecodeWarning = `PSD editable layers were unavailable: ${error instanceof Error ? error.message : String(error)}`;
@@ -897,10 +951,10 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 			skipLinkedFilesData: true, logMissingFeatures: false, totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
 		});
 	}
-	if (!psd.imageData?.data) { throw new Error('PSD contains no decodable composite image'); }
+	if (!layersOnly && !psd.imageData?.data) { throw new Error('PSD contains no decodable composite image'); }
 	const bitDepth = Number(psd.bitsPerChannel || 8);
 	assertDimensions(psd.width, psd.height, bitDepth === 32 ? 16 : bitDepth === 16 ? 8 : 4);
-	const data = psd.imageData.data as LayeredPixelArray;
+	const data = layersOnly ? new Uint8Array() : psd.imageData.data as LayeredPixelArray;
 	const root = summarizePsdLayers(psd.children);
 	const layerCount = flattenNodeCount(root);
 	const colorModes: Record<number, string> = { 0: 'Bitmap', 1: 'Grayscale', 2: 'Indexed', 3: 'RGB', 4: 'CMYK', 7: 'Multichannel', 8: 'Duotone', 9: 'Lab' };
@@ -909,7 +963,7 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 	if (layerDecodeWarning) { warnings.push(layerDecodeWarning); }
 	if (Number(psd.colorMode) !== 3) { warnings.push(`${colorMode} is converted to RGB by the PSD decoder; exact Photoshop color-management parity is unavailable`); }
 	if (bitDepth !== 8) { warnings.push(`${bitDepth}-bit PSD layers depend on decoder conversion and may not match Photoshop exactly`); }
-	const layerAssets = buildPsdAssets(psd.children, warnings, bitDepth);
+	const layerAssets = previewOnly ? [] : buildPsdAssets(psd.children, warnings, bitDepth);
 	const document: LayeredDocumentSummary = {
 		format: psb ? 'psb' : 'psd', width: psd.width, height: psd.height, bitDepth, colorMode,
 		previewKind: 'integrated', previewIsAuthoritative: true,
@@ -931,6 +985,8 @@ function decodePsdPreview(buffer: ArrayBuffer, psb: boolean): DecodedLayeredPrev
 			colorMode, bitDepth, layerCount, editableNodeCount: layerAssets.length,
 			previewAuthoritative: true,
 			decoder: 'ag-psd',
+			previewOnly,
+			layersOnly,
 		},
 	};
 }
@@ -1415,14 +1471,18 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 	};
 }
 
-export function decodeLayeredPreview(format: string, buffer: ArrayBuffer): DecodedLayeredPreview {
+export function decodeLayeredPreview(
+	format: string,
+	buffer: ArrayBuffer,
+	options: { previewOnly?: boolean; layersOnly?: boolean } = {},
+): DecodedLayeredPreview {
 	const started = performance.now();
 	let result: DecodedLayeredPreview;
 	switch (format) {
-		case 'ora': result = archivePreviewResult('ora', buffer); break;
-		case 'kra': result = archivePreviewResult('kra', buffer); break;
-		case 'psd': result = decodePsdPreview(buffer, false); break;
-		case 'psb': result = decodePsdPreview(buffer, true); break;
+		case 'ora': result = archivePreviewResult('ora', buffer, options); break;
+		case 'kra': result = archivePreviewResult('kra', buffer, options); break;
+		case 'psd': result = decodePsdPreview(buffer, false, options); break;
+		case 'psb': result = decodePsdPreview(buffer, true, options); break;
 		case 'xcf': result = decodeXcfPreview(buffer); break;
 		case 'affinity': result = decodeAffinityPreview(buffer); break;
 		default: throw new Error(`Unknown layered document format: ${format}`);

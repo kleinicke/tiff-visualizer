@@ -16,19 +16,20 @@ export class NormalizationHelper {
      * @param stats - Image statistics {min, max}
      * @param typeMax - Maximum value for the data type (e.g., 255, 65535, or 1.0 for float)
      * @param isFloat - Whether the image data is floating point
+     * @param typeMin - Minimum value for the source numeric domain
      * @returns Calculated min/max range
      */
-    static getNormalizationRange(settings: ImageSettings, stats: { min: number, max: number } | null | undefined, typeMax: number, isFloat = false): { min: number, max: number } {
+    static getNormalizationRange(settings: ImageSettings, stats: { min: number, max: number } | null | undefined, typeMax: number, isFloat = false, typeMin = 0): { min: number, max: number } {
         let normMin: number, normMax: number;
 
         if (settings.normalization && settings.normalization.autoNormalize) {
             // Auto-normalize: use stats
             // Fallback to 0-typeMax if stats are missing/invalid
-            normMin = (stats && Number.isFinite(stats.min)) ? stats.min : 0;
+            normMin = (stats && Number.isFinite(stats.min)) ? stats.min : typeMin;
             normMax = (stats && Number.isFinite(stats.max)) ? stats.max : typeMax;
         } else if (settings.normalization && settings.normalization.gammaMode) {
             // Gamma mode: use full range of the type
-            normMin = 0;
+            normMin = typeMin;
             normMax = typeMax;
         } else if (settings.normalization && (settings.normalization.min !== undefined && settings.normalization.max !== undefined)) {
             // Manual mode: use user-specified range
@@ -38,12 +39,13 @@ export class NormalizationHelper {
             // If normalized float mode is enabled for integer images, scale up the range
             // (User provides 0.0-1.0, we map to 0-typeMax)
             if (settings.normalizedFloatMode && !isFloat) {
-                normMin *= typeMax;
-                normMax *= typeMax;
+                const typeRange = typeMax - typeMin;
+                normMin = typeMin + normMin * typeRange;
+                normMax = typeMin + normMax * typeRange;
             }
         } else {
             // Default fallback (usually behaves like gamma mode)
-            normMin = 0;
+            normMin = typeMin;
             normMax = typeMax;
         }
 
@@ -431,6 +433,7 @@ export class ImageRenderer {
     static _renderInternal(data: ArrayLike<number>, width: number, height: number, channels: number, isFloat: boolean, stats: { min: number, max: number } | null | undefined, settings: ImageSettings, options: RenderOptions = {}): ImageData {
         // Determine typeMax based on data type
         let typeMax: number;
+        const typeMin = options.typeMin ?? 0;
         if (options.typeMax !== undefined) {
             typeMax = options.typeMax;
         } else if (isFloat) {
@@ -451,12 +454,12 @@ export class ImageRenderer {
         let min: number, max: number;
         if (isGammaMode && isIdentity) {
             // Gamma mode + identity: use full type range, no stats needed
-            min = 0;
+            min = typeMin;
             max = typeMax;
         } else {
             // Other modes: need to calculate proper normalization range from stats
             const range = NormalizationHelper.getNormalizationRange(
-                settings, stats, typeMax, isFloat
+                settings, stats, typeMax, isFloat, typeMin
             );
             min = range.min;
             max = range.max;

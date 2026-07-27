@@ -521,18 +521,19 @@ export function registerImagePreviewCommands(
 
 		// Check if we have an RGB image (3 or more channels)
 		const formatInfo = activePreview?.getManager().appStateManager.uiState.formatInfo;
-		const isSingleChannelUint = formatInfo && formatInfo.samplesPerPixel === 1 && formatInfo.sampleFormat !== 3; // Not float
+		const isSingleChannelUint = formatInfo && formatInfo.samplesPerPixel === 1 && formatInfo.sampleFormat !== 3 && !formatInfo.floatCarrier; // Not float
 		const normalizedFloatModeEnabled = previewManager.appStateManager.imageSettings.normalizedFloatMode;
 
 		// Gamma mode normalizes to the full type range: 0-1 for float images, but
 		// 0-typeMax for integer images (e.g. 0-255 for uint8, 0-65535 for uint16).
 		// Reflect the actual range in the labels so it isn't misleading.
 		const isFloatImage = !formatInfo || formatInfo.sampleFormat === 3;
-		const gammaMax = (isFloatImage || normalizedFloatModeEnabled)
+		const gammaMin = normalizedFloatModeEnabled ? 0 : (formatInfo?.typeMin ?? 0);
+		const gammaMax = normalizedFloatModeEnabled
 			? 1
-			: (Math.pow(2, formatInfo.bitsPerSample || 8) - 1);
+			: (formatInfo?.typeMax ?? (isFloatImage ? 1 : (Math.pow(2, formatInfo.bitsPerSample || 8) - 1)));
 		const gammaRangeLabel = formatInfo
-			? `0-${gammaMax}`
+			? `${gammaMin}-${gammaMax}`
 			: '0-1 (float) or 0-255/0-65535 (integer)';
 
 		// First show a QuickPick with options

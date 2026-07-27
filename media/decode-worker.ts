@@ -574,6 +574,7 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 				return {
 					width, height, channels, data,
 					metadata: { ...frame.metadata, decoder: 'Rust/WASM zune-jpeg' },
+					numericDomain: frame.numericDomain,
 					decodeTimings: [{ name: 'decode-dicom-rust', durationMs: performance.now() - started }],
 				};
 			}
@@ -586,7 +587,10 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		case 'psb':
 		case 'xcf':
 		case 'affinity':
-			return decodeLayeredPreview(format, buffer);
+			return decodeLayeredPreview(format, buffer, {
+				previewOnly: options?.previewOnly === true,
+				layersOnly: options?.layersOnly === true,
+			});
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}
