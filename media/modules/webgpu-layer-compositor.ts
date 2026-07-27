@@ -96,6 +96,7 @@ export class WebGPULayerCompositor {
 	private activeTiming: WebGPURenderTiming | null = null;
 	private objectIds = new WeakMap<object, number>();
 	private nextObjectId = 1;
+	private generation = 0;
 	private logger: (message: string) => void = message => console.warn(message);
 
 	setLogger(logger: (message: string) => void): void { this.logger = logger; }
@@ -189,6 +190,7 @@ export class WebGPULayerCompositor {
 		const requestedLayers = this.snapshotLayers(layers);
 		const requestedSettings = this.snapshotSettings(settings);
 		const requestedNanColor = { ...nanColor };
+		const requestedGeneration = this.generation;
 		const timing: WebGPURenderTiming = {
 			requestedAt: performance.now(), startedAt: 0, queueMs: 0,
 			initializationMs: 0, prepareMs: 0, encodeMs: 0, gpuMs: 0,
@@ -197,6 +199,9 @@ export class WebGPULayerCompositor {
 			compositionCacheHit: false,
 		};
 		const operation = this.renderQueue.then(async () => {
+			if (requestedGeneration !== this.generation) {
+				throw new Error('WebGPU render cancelled because the compositor was reset');
+			}
 			timing.startedAt = performance.now();
 			timing.queueMs = timing.startedAt - timing.requestedAt;
 			this.activeTiming = timing;
@@ -377,6 +382,7 @@ export class WebGPULayerCompositor {
 	}
 
 	dispose(): void {
+		this.generation++;
 		for (const texture of this.ownedTextures) { try { texture.destroy(); } catch { /* already lost */ } }
 		this.ownedTextures.clear();
 		this.textureCache = new WeakMap();
@@ -426,6 +432,10 @@ export class WebGPULayerCompositor {
 				usage: TEXTURE_USAGE.RENDER_ATTACHMENT | TEXTURE_USAGE.COPY_SRC,
 			});
 			device.lost.then((info: any) => {
+				// An explicit cold reset destroys the previous device. Its lost
+				// callback may arrive after a replacement device was created and
+				// must never dispose that new backend instance.
+				if (this.device !== device) { return; }
 				this.logger(`[LayerCompositor] WebGPU device lost: ${info?.message || info?.reason || 'unknown reason'}`);
 				this.dispose();
 			});

@@ -59,7 +59,15 @@ test('WebGL2 layer compositor matches the CPU reference and rejects unsupported 
 		if (emptyCanvas) { emptyOutput.getContext('2d')!.drawImage(emptyCanvas, 0, 0); }
 		const empty = Array.from(emptyOutput.getContext('2d')!.getImageData(0, 0, 1, 1).data);
 		compositor.dispose();
-		return { output, unsupported, empty };
+		const cold = new Compositor();
+		cold.render([{
+			id: 'cold', kind: 'raster', data: new Uint8Array([1, 2, 3, 255]),
+			width: 1, height: 1, channels: 4, typeMax: 255, visible: true,
+		}], 1, 1, 1, settings, { r: 255, g: 0, b: 255 }, true);
+		const texturesBeforeDispose = (cold as any).ownedTextures.size;
+		cold.dispose();
+		const texturesAfterDispose = (cold as any).ownedTextures.size;
+		return { output, unsupported, empty, texturesBeforeDispose, texturesAfterDispose };
 	}, MODES);
 
 	const compositorPath = path.join(__dirname, '..', '..', 'out', 'media', 'modules', 'layer-compositor.js');
@@ -82,6 +90,8 @@ test('WebGL2 layer compositor matches the CPU reference and rejects unsupported 
 	}
 	expect(gpuResults.unsupported).toBe(false);
 	expect(gpuResults.empty).toEqual([0, 0, 0, 0]);
+	expect(gpuResults.texturesBeforeDispose).toBeGreaterThan(0);
+	expect(gpuResults.texturesAfterDispose).toBe(0);
 });
 
 test('WebGL2 layer compositor handles uint16 sources and re-renders a large cached stack promptly', async ({ page }) => {

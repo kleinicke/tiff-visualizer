@@ -1,6 +1,6 @@
 "use strict";
 
-import { SettingsManager } from './modules/settings-manager.js';
+import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions } from './modules/settings-manager.js';
 import type { ImageSettings, SettingsUpdateResult } from './modules/settings-manager.js';
 import type { DeferredRenderOptions } from './modules/types.js';
 import { TiffProcessor, tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-processor.js';
@@ -111,6 +111,21 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
 	const originalVscode = acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
+	const settingsManager = new SettingsManager();
+	const stateExtensionVersion = settingsManager.settings.extensionVersion;
+	const stateVsCodeVersion = settingsManager.settings.vscodeVersion;
+	const initialPersistedState = originalVscode.getState();
+	if (initialPersistedState && !webviewStateMatchesVersions(
+		initialPersistedState,
+		stateExtensionVersion,
+		stateVsCodeVersion,
+	)) {
+		console.info(
+			`[State] Discarding persisted preview state from extension ${initialPersistedState.extensionVersion || 'unknown'} ` +
+			`/ VS Code ${initialPersistedState.vscodeVersion || 'unknown'}`,
+		);
+		originalVscode.setState(withWebviewStateVersions({}, stateExtensionVersion, stateVsCodeVersion));
+	}
 
 	// Format info tracking for context menu
 	let currentFormatInfo: FormatInfo | null = null;
@@ -130,12 +145,18 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			}
 			return originalVscode.postMessage(message);
 		},
-		setState: originalVscode.setState,
-		getState: originalVscode.getState
+		setState: (state: any) => originalVscode.setState(
+			withWebviewStateVersions(state || {}, stateExtensionVersion, stateVsCodeVersion),
+		),
+		getState: () => {
+			const state = originalVscode.getState();
+			return webviewStateMatchesVersions(state, stateExtensionVersion, stateVsCodeVersion)
+				? state
+				: undefined;
+		},
 	};
 
 	// Initialize all modules
-	const settingsManager = new SettingsManager();
 	const tiffProcessor = new TiffProcessor(settingsManager, vscode);
 	const exrProcessor = new ExrProcessor(settingsManager, vscode);
 	const zoomController = new ZoomController(settingsManager, vscode);
@@ -280,11 +301,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		onExport: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' }); },
 		onCompositorBackendChange: (selection: LayerCompositorBackendSelection) => {
 			_layerCompositorSelection = selection;
+			// Backend selection is also an explicit benchmark boundary. Release
+			// every accelerator first so source pixels and composition surfaces
+			// cannot remain uploaded in both WebGPU and WebGL (or retained by the
+			// CPU worker) after a switch.
+			coldResetLayerCompositorBackends();
 			if (selection === 'auto') {
-				void selectAutomaticLayerBackend(true);
+				void selectAutomaticLayerBackend(true, true);
 			} else {
-				_automaticBackendGeneration++;
-				applyLayerCompositorBackend(selection, true);
+				applyLayerCompositorBackend(selection, true, true);
 			}
 		},
 		onVisibilityChange: (visible: boolean) => {
@@ -307,6 +332,24 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	layeredPreviewProcessor.onLayersReady = () => {
 		if (currentLoadFormat !== 'Layered Document') { return; }
 		updateLayeredPreviewOverlay();
+		// A restored source-document stack must be rebuilt only after its real
+		// raster/group/filter assets exist. Restoring against the earlier
+		// integrated-preview placeholder would briefly create one fake layer and
+		// would also lose the saved per-node edits.
+		if (_pendingLayerRestore) {
+			_layersRestoreDone = false;
+			maybeRestoreLayers();
+			return;
+		}
+		// Dedicated Layers windows remain on the integrated preview until the
+		// deferred graph is ready. Showing the panel now lets its visibility
+		// callback install the complete graph directly, without a placeholder.
+		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown) {
+			_layerSurfaceShown = true;
+			layersPanel.show();
+			vscode.postMessage({ type: 'requestInitialLayers' });
+			return;
+		}
 		if (!layerManager.active && !layersPanel.isVisible() && settingsManager.settings.surfaceMode !== 'layers') {
 			return;
 		}
@@ -772,11 +815,23 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	layerGpuCompositor.setLogger(logLayerPerformance);
 	layerWebGpuCompositor.setLogger(logLayerPerformance);
 
-	function applyLayerCompositorBackend(backend: LayerCompositorBackend, rerender: boolean): void {
+	function coldResetLayerCompositorBackends(): void {
+		_automaticBackendGeneration++;
+		layerCompositorWorker.dispose();
+		layerGpuCompositor.dispose();
+		layerWebGpuCompositor.dispose();
+		layerManager.invalidateComposite();
+	}
+
+	function applyLayerCompositorBackend(
+		backend: LayerCompositorBackend,
+		rerender: boolean,
+		forceColdRender = false,
+	): void {
 		const changed = _layerCompositorBackend !== backend;
 		_layerCompositorBackend = backend;
 		layersPanel.setResolvedCompositorBackend(backend);
-		if (!changed) {
+		if (!changed && !forceColdRender) {
 			if (rerender) { scheduleSaveState(); }
 			return;
 		}
@@ -790,7 +845,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		scheduleSaveState();
 	}
 
-	async function selectAutomaticLayerBackend(rerender: boolean): Promise<void> {
+	async function selectAutomaticLayerBackend(rerender: boolean, forceColdRender = false): Promise<void> {
 		const generation = ++_automaticBackendGeneration;
 		let backend: LayerCompositorBackend = 'javascript';
 		if (settingsManager.settings.gpuAcceleration !== false && await layerWebGpuCompositor.isAvailable()) {
@@ -801,7 +856,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			backend = 'wasm';
 		}
 		if (generation !== _automaticBackendGeneration || _layerCompositorSelection !== 'auto') { return; }
-		applyLayerCompositorBackend(backend, rerender);
+		applyLayerCompositorBackend(backend, rerender, forceColdRender);
 	}
 
 	if (_layerCompositorSelection === 'auto') {
@@ -1514,7 +1569,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		PerfTrace.mark('layers-restore');
 		// In a dedicated Layers window, open the panel automatically on first load
 		// and ask the extension for any images to stack on top (e.g. a collection).
-		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown) {
+		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown &&
+			!layeredPreviewProcessor.hasDeferredLayersPending()) {
 			_layerSurfaceShown = true;
 			layersPanel.show();
 			if (!_pendingLayerRestore) {
@@ -2265,9 +2321,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	/** Kick off layer-stack restore once the base image has loaded. */
 	function maybeRestoreLayers() {
 		if (_layersRestoreDone || !_pendingLayerRestore) { return; }
-		_layersRestoreDone = true;
 
 		const metas = _pendingLayerRestore.layers || [];
+		const restoresSourceDocument = metas.some(meta => !!meta.sourceNodeId);
+		if (restoresSourceDocument && layeredPreviewProcessor.hasDeferredLayersPending() &&
+			!layeredPreviewProcessor._lastRaw?.layerAssets?.length) {
+			return;
+		}
+		_layersRestoreDone = true;
 		const baseMeta = metas.find(m => m.isBase);
 		const currentUri = settingsManager.settings.resourceUri;
 		// Only restore if the saved stack belongs to the image now showing.
@@ -2388,7 +2449,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 		layerManager.setLayers(rebuilt, layerManager.canvasWidth, layerManager.canvasHeight);
 		layersPanel.collapsed = !!pending.collapsed;
-		if (pending.active) {
+		if (pending.active || settingsManager.settings.surfaceMode === 'layers') {
+			if (settingsManager.settings.surfaceMode === 'layers') { _layerSurfaceShown = true; }
 			layersPanel.show(); // sets active, notifies the extension and recomposites
 		} else {
 			layersPanel.refresh();
@@ -4369,8 +4431,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// Window beforeunload
 		window.addEventListener('beforeunload', () => {
 			zoomController.saveState();
-			layerCompositorWorker.dispose();
-			layerGpuCompositor.dispose();
+			coldResetLayerCompositorBackends();
 		});
 	}
 

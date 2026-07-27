@@ -88,7 +88,8 @@ export class ImagePreview extends MediaPreview {
 		colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
 		private readonly _manager: IImagePreviewManager,
 		openTimestamp?: number,
-		surfaceMode: 'editor' | 'layers' = 'editor'
+		surfaceMode: 'editor' | 'layers' = 'editor',
+		private readonly _extensionVersion = 'unknown',
 	) {
 		super(extensionRoot, resource, webviewEditor, binarySizeStatusBarEntry);
 		this._openTimestamp = openTimestamp || Date.now();
@@ -1031,6 +1032,8 @@ export class ImagePreview extends MediaPreview {
 			folder: folderUri.toString(),
 			version: version,
 			surfaceMode: this._surfaceMode, // 'layers' = dedicated Layers window
+			extensionVersion: this._extensionVersion,
+			vscodeVersion: vscode.version,
 			loadStartTime: this._openTimestamp // For total elapsed time measurement (captured when file was opened)
 		};
 

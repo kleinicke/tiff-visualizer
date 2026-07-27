@@ -67,6 +67,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		private readonly layersStatusBarEntry: LayersStatusBarEntry,
 		private readonly histogramStatusBarEntry: HistogramStatusBarEntry,
 		private readonly colorPickerModeStatusBarEntry: ColorPickerModeStatusBarEntry,
+		private readonly extensionVersion: string,
 	) {
 		// Listen for active editor changes to hide status bar items when switching away
 		// This handles text editors
@@ -245,7 +246,7 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		openTimestamp?: number,
 		surfaceMode: 'editor' | 'layers' = 'editor'
 	): any {
-		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.layersStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp, surfaceMode);
+		const preview = new PreviewClass(extensionRoot, document.uri, webviewEditor, this.sizeStatusBarEntry, this.binarySizeStatusBarEntry, this.zoomStatusBarEntry, this.normalizationStatusBarEntry, this.gammaStatusBarEntry, this.brightnessStatusBarEntry, this.layersStatusBarEntry, this.histogramStatusBarEntry, this.colorPickerModeStatusBarEntry, this, openTimestamp, surfaceMode, this.extensionVersion);
 		this._previews.add(preview);
 		this.setActivePreview(preview);
 

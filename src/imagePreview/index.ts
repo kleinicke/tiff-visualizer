@@ -58,7 +58,8 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		brightnessStatusBarEntry,
 		layersStatusBarEntry,
 		histogramStatusBarEntry,
-		colorPickerModeStatusBarEntry
+		colorPickerModeStatusBarEntry,
+		String(context.extension.packageJSON.version || 'unknown'),
 	);
 
 	// Register the primary custom editor provider (default priority)
@@ -83,7 +84,10 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	disposables.push(vscode.window.registerWebviewPanelSerializer(ImagePreviewManager.layerViewType, {
 		async deserializeWebviewPanel(panel: vscode.WebviewPanel, state: any) {
 			const resourceUri = state?.currentResourceUri;
-			if (!resourceUri) {
+			const extensionVersion = String(context.extension.packageJSON.version || 'unknown');
+			const compatible = state?.extensionVersion === extensionVersion &&
+				state?.vscodeVersion === vscode.version;
+			if (!resourceUri || !compatible) {
 				panel.dispose();
 				return;
 			}

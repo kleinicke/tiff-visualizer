@@ -67,7 +67,12 @@ test('WebGPU composites PSD-style colorize and screen stacks with strict parity'
 				}], 2, 1, 1, {
 					...settings, normalization: { min: 0, max: 255, autoNormalize: true, gammaMode: false },
 				}, { r: 255, g: 0, b: 255 }, true);
-				return { supported: true, logs };
+				await compositor.render(layers, 2, 1, 1, settings, { r: 255, g: 0, b: 255 }, true);
+				const cachedUploads = compositor.pendingUpload(layers).count;
+				compositor.dispose();
+				const releasedUploads = compositor.pendingUpload(layers).count;
+				await compositor.render(layers, 2, 1, 1, settings, { r: 255, g: 0, b: 255 }, true);
+				return { supported: true, logs, cachedUploads, releasedUploads };
 			} catch (error) {
 				return { supported: false, error: error instanceof Error ? error.message : String(error) };
 			} finally {
@@ -76,6 +81,8 @@ test('WebGPU composites PSD-style colorize and screen stacks with strict parity'
 		});
 		expect(result.supported, result.error).toBe(true);
 		expect(result.logs, result.logs?.join('\n')).toEqual([]);
+		expect(result.cachedUploads).toBe(0);
+		expect(result.releasedUploads).toBeGreaterThan(0);
 	} finally {
 		await new Promise<void>(resolve => server.close(() => resolve()));
 	}

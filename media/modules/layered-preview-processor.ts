@@ -158,6 +158,8 @@ export class LayeredPreviewProcessor {
 
 	hasReconstruction(): boolean { return !!this._lastRaw?.reconstructedData; }
 
+	hasDeferredLayersPending(): boolean { return this._deferredLayersPromise !== null; }
+
 	activeData(): LayeredPixelArray {
 		if (!this._lastRaw) { return new Uint8Array(); }
 		return this.previewMode === 'reconstructed' && this._lastRaw.reconstructedData
