@@ -12,7 +12,7 @@ async function main() {
 	const { layerDisplayScale } = await import(compositorWorkerPath);
 
 	assert.strictEqual(layerDisplayScale(1024, 768, false), 1, 'ordinary documents render at full display resolution');
-	assert.strictEqual(layerDisplayScale(5000, 4000, false), 2048 / 5000, '5K settled display composites are bounded to 2048 px');
+	assert.strictEqual(layerDisplayScale(5000, 4000, false), 1, 'settled layer composites retain native document resolution');
 	assert.strictEqual(layerDisplayScale(5000, 4000, true), 768 / 5000, '5K interaction previews are bounded to 768 px');
 
 	const manager = new LayerManager();

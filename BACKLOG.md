@@ -691,18 +691,40 @@ for native layer reconstruction.
 
 ### Layer compositor performance
 
-The editable compositor remains a framework-free TypeScript/JavaScript CPU
-reference, but full-resolution work now runs in a dedicated worker. Raster
-assets are copied into that worker once and retained across edits. Slider and
-curve gestures request a preview capped at 768 pixels on the longest side,
-followed by a full-resolution render after the gesture settles. Worker startup
-and failures retain the synchronous main-thread fallback.
+The editable compositor now has three explicitly selectable implementations:
+WebGL2, Rust/Wasm, and the TypeScript/JavaScript CPU reference. The development
+selector is intentionally strict: a selected backend must render the document
+itself or report the exact unsupported feature/error; it never silently changes
+backend. Full-resolution CPU work runs in a dedicated worker. Slider and curve
+gestures request a preview capped at 768 pixels on the longest side, followed
+by a native-resolution render after the gesture settles.
+
+The target architecture is:
+
+- TypeScript owns the document model, UI, history, scheduling, and golden
+  correctness implementation.
+- Rust/Wasm now implements the current CPU compositor contract: all editable
+  adjustments, global and clipped scope, clipped rasters, nested isolated
+  groups, raster/adjustment/group masks, 1–4 channels, all integer/float
+  storage types, creative and scientific blend modes, brightness masks, and
+  NaN propagation. The remaining architecture step is to retain document
+  assets and scratch surfaces in Wasm memory so edits pass compact parameter
+  changes instead of recopied multi-hundred-megabyte pixel arrays.
+- The WebGL2 compositor now implements the same current semantic surface for
+  interactive and native-resolution display, including mixed TIFF/creative
+  layers. Unsupported GPU environments and hardware limits are diagnosed, but
+  the backend does not silently omit document features or switch renderers.
+- All three implementations run the same golden document corpus. Backend parity
+  is measured per pixel with documented precision tolerances.
 
 Caching now operates at four levels:
 
 - display-only changes reuse the last composed float surface;
 - prepared Levels/Curves LUTs are retained by adjustment identity;
 - unchanged clipping stacks and isolated group branches reuse their surfaces;
+- WebGL2 retains filtered raster-stack textures independently at preview and
+  native resolution, invalidating only the stack whose pixels/filter settings
+  changed;
 - localized ordinary-raster edits recompose and patch only the union of the
   old/new drawable bounds. Adjustment, group, mask, and clipped-node changes
   conservatively retain the full-render path.
@@ -717,18 +739,25 @@ Repeatable commands and results from the July 2026 development machine:
   approximately 4.82 s;
 - the 768×432 four-RGBA-layer interaction workload is approximately 122 ms
   median before worker messaging, visualization, and canvas upload.
+- the strict WebGL2 conformance workload with three 5000×5000 RGBA rasters and
+  nine adjustments measures approximately 6.27 s cold, 1.07 s when every
+  filtered stack is retained, on Playwright's browser environment. A
+  single-stack filter edit is separately tested so unchanged stacks remain
+  cached; hardware-backed VS Code measurements are still required.
 
-**Acceleration decision:** the measurements are dominated by parallel
-per-pixel blend/filter passes. Prefer an optional WebGPU compute prototype for
-the next acceleration tier, retaining the worker CPU compositor for unsupported
-environments and golden-result comparisons. Do not duplicate the compositor in
-Rust/WASM yet: without a threaded WASM memory design it remains another
-single-worker CPU implementation, while introducing substantial parity and
-maintenance cost.
+**Acceleration programme:** finish the persistent Rust/Wasm document engine,
+dirty tiles, cached group/filter surfaces, and Wasm SIMD where available.
+Extend retained WebGL2 surfaces to nested group branches and add tiled GPU
+surfaces for documents beyond `MAX_TEXTURE_SIZE`. Evaluate WebGPU compute after
+the shared conformance corpus is in place; it may simplify general filter
+kernels and compute-heavy masks, but must not create a fourth set of ambiguous
+layer semantics.
 
 Remaining performance validation is platform coverage: record worker,
 visualization, and canvas-upload timings on the supported desktop and web VS
-Code targets, then define release budgets and GPU enablement thresholds.
+Code targets, then define release budgets and GPU enablement thresholds. Add
+separate cold/warm measurements for asset upload, interactive 768 px rendering,
+native rendering, filter-only edits, visibility changes, and export.
 
 This is a **Difficulty: 5 programme**, not one feature. The first useful
 increments (KRA integrated preview or ORA raster layers) are Difficulty 2–3;

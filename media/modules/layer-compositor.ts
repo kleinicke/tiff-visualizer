@@ -569,7 +569,10 @@ function materializeGroupSurfaces(layers: Layer[], canvasWidth: number, canvasHe
 			surface = compositeFlat(children, canvasWidth, canvasHeight);
 			groupSurfaceCache.set(node, { snapshots, width: canvasWidth, height: canvasHeight, surface });
 		}
-		if (surface.coveredCount === 0) { continue; }
+		// Keep an empty group as a transparent raster surface. Removing it would
+		// allow a following clipped adjustment to attach to the previous,
+		// unrelated sibling when composing a region where this group happens to
+		// have no coverage.
 		output.push({
 			...node,
 			kind: 'raster',
@@ -914,7 +917,13 @@ function compositePrepared(layers: Layer[], canvasWidth: number, canvasHeight: n
 			for (let y = 0; y < canvasHeight; y++) for (let x = 0; x < canvasWidth; x++) {
 				const pixel = y * canvasWidth + x;
 				if (!covered[pixel]) { continue; }
-				const amount = opacity * rasterMaskFactor(layer, x, y) * (clipSurface ? clipSurface[pixel] : 1);
+				// A clipped adjustment changes the owning layer's straight colour
+				// fully wherever that layer has coverage. Its fractional alpha is
+				// applied once when the isolated clipping surface is blended into
+				// its parent; multiplying filter strength by alpha here weakens the
+				// effect and applies the same coverage a second time.
+				const clipCoverage = clipSurface ? (clipSurface[pixel] > 0 ? 1 : 0) : 1;
+				const amount = opacity * rasterMaskFactor(layer, x, y) * clipCoverage;
 				if (amount > 0) { applyAdjustmentPixel(data, pixel * outChannels, outChannels, prepared, max, amount); }
 			}
 			continue;

@@ -350,6 +350,20 @@ async function main() {
 		console.log('✅ Clipped adjustment stacks render before their base blend mode and remain cache-safe');
 	}
 
+	{
+		const translucent = layer({ data: new Uint8Array([64, 64, 64, 64]), width: 1, height: 1, channels: 4, typeMax: 255 });
+		const clippedInvert = layer({
+			kind: 'adjustment', clipped: true, adjustment: { type: 'invert' },
+			width: 1, height: 1, channels: 4, typeMax: 255,
+		});
+		const result = composite([translucent, clippedInvert], 1, 1);
+		assert.ok(approx(result.data[0], 191, 0.01),
+			`translucent clipped adjustment strength: ${result.data[0]}`);
+		assert.ok(approx(result.data[3], 64, 0.01),
+			`translucent clipped adjustment alpha: ${result.data[3]}`);
+		console.log('✅ Clipped adjustments apply once across translucent base coverage');
+	}
+
 	// 23. Additional professional adjustment families share the same scoped,
 	//     non-destructive compositor path.
 	{

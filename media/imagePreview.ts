@@ -23,6 +23,7 @@ import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
 import { LayerCompositorWorkerClient, layerDisplayScale } from './modules/layer-compositor-worker-client.js';
+import type { LayerCompositorBackend } from './modules/layer-compositor-worker-client.js';
 import { WebGL2LayerCompositor } from './modules/webgl2-layer-compositor.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
@@ -185,9 +186,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	}
 
 	// Layer compositing (GIMP-style) — manager holds the stack, panel is the UI.
-	// Canvas uploads are async for ordinary-sized images; this generation keeps
-	// an older visibility state from painting over a newer one.
-	let _layerCanvasRenderGeneration = 0;
+	// Multiple render qualities may represent the same layer state. Keep that
+	// state revision separate from request ordering so a completed 768 px
+	// interaction preview is not discarded merely because its native settled
+	// render has already been queued.
+	let _layerStateRevision = 0;
+	let _layerCompositorBackend: LayerCompositorBackend = 'gpu';
 	type PreviewBackgroundRgb = { red: number; green: number; blue: number };
 	let _themeBackgroundRgb: PreviewBackgroundRgb = { red: 30, green: 30, blue: 30 };
 	// A manual adjustment keeps the tint of the theme in which it was made. The
@@ -196,15 +200,16 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const layerManager = new LayerManager();
 	const layersPanel = new LayersPanel(layerManager, {
 		onChange: (options: { interactive?: boolean } = {}) => {
+			const stateRevision = ++_layerStateRevision;
 			if (options.interactive) {
-				scheduleRecomposite(0, true);
-				scheduleRecomposite(180, false);
+				scheduleRecomposite(0, true, stateRevision);
+				scheduleRecomposite(180, false, stateRevision);
 			} else {
 				// Structural/visibility edits need immediate feedback too. Large
-				// documents then settle to a bounded high-quality display render
-				// instead of blocking the queue with an automatic 5K composite.
-				scheduleRecomposite(0, true);
-				scheduleRecomposite(120, false);
+				// documents show a bounded interaction preview first, then settle
+				// to the native-resolution document render.
+				scheduleRecomposite(0, true, stateRevision);
+				scheduleRecomposite(120, false, stateRevision);
 			}
 			scheduleSaveState();
 		},
@@ -212,14 +217,25 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		onPersist: () => { scheduleSaveState(); },
 		onAddLayer: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.addLayer' }); },
 		onExport: () => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' }); },
+		onCompositorBackendChange: (backend: LayerCompositorBackend) => {
+			_layerCompositorBackend = backend;
+			layerCompositorWorker.invalidateCompositeCache();
+			if (backend === 'gpu') { layerGpuCompositor.retry(); }
+			const stateRevision = ++_layerStateRevision;
+			scheduleRecomposite(0, true, stateRevision);
+			scheduleRecomposite(120, false, stateRevision);
+			scheduleSaveState();
+		},
 		onVisibilityChange: (visible: boolean) => {
 			layerManager.active = visible;
-			if (!visible) { _layerCanvasRenderGeneration++; }
+			if (!visible) { _layerStateRevision++; }
 			// Tell the extension so it can track layer mode (and block collection ops).
 			vscode.postMessage({ type: 'layerModeChanged', active: visible });
 			if (visible) {
 				if (!installLayeredDocumentLayers()) { syncBaseLayer(); }
-				recompositeLayers();
+				const stateRevision = ++_layerStateRevision;
+				scheduleRecomposite(0, true, stateRevision);
+				scheduleRecomposite(120, false, stateRevision);
 			} else {
 				// Restore the normal single-image render.
 				updateImageWithNewSettings(null);
@@ -340,6 +356,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (Number.isFinite(persistedState.layerBackgroundBrightness)) {
 			layersPanel.backgroundBrightness = Math.max(0, Math.min(100, Number(persistedState.layerBackgroundBrightness)));
 		}
+		if (persistedState.layerCompositorBackend === 'gpu' || persistedState.layerCompositorBackend === 'wasm'
+			|| persistedState.layerCompositorBackend === 'javascript') {
+			_layerCompositorBackend = persistedState.layerCompositorBackend;
+			layersPanel.setCompositorBackend(_layerCompositorBackend);
+		}
 		const savedBackgroundTint = persistedState.layerBackgroundTint;
 		if (savedBackgroundTint && [savedBackgroundTint.red, savedBackgroundTint.green, savedBackgroundTint.blue].every(Number.isFinite)) {
 			_layerBackgroundTint = {
@@ -430,6 +451,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			layerActive: layerManager.active,
 			layerCollapsed: layersPanel.collapsed,
 			layerGroupCollapsed: [...layersPanel.collapsedGroups],
+			layerCompositorBackend: _layerCompositorBackend,
 			layerBackgroundBrightness: layersPanel.backgroundBrightness,
 			layerBackgroundTint: layersPanel.backgroundBrightness === null ? null : _layerBackgroundTint,
 			tiffPageIndex: tiffProcessor.pageIndex,
@@ -659,6 +681,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			value: message
 		});
 	}
+
+	function logLayerPerformance(message: string) {
+		console.log(message);
+		logToOutput(message);
+	}
+
+	layerCompositorWorker.setLogger(logLayerPerformance);
+	layerGpuCompositor.setLogger(logLayerPerformance);
 
 	// PerfTrace summaries go to both the webview console and the extension's
 	// Output channel, so timing is visible without opening Developer Tools.
@@ -1677,20 +1707,28 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	 * Composite the layer stack and draw the result to the main canvas.
 	 * @returns True if a composite was rendered.
 	 */
-	function recompositeLayers(interactive = false): boolean {
+	function recompositeLayers(interactive = false, requestedStateRevision?: number): boolean {
 		if (!layerManager.active || !canvas) { return false; }
-		const renderGeneration = ++_layerCanvasRenderGeneration;
+		const stateRevision = requestedStateRevision ?? ++_layerStateRevision;
 		const fullWidth = layerManager.canvasWidth, fullHeight = layerManager.canvasHeight;
 		const scale = layerDisplayScale(fullWidth, fullHeight, interactive);
-		const gpuSurface = layerGpuCompositor.render(
-			layerManager.layers,
-			fullWidth,
-			fullHeight,
-			scale,
-			settingsManager.settings,
-			getNanColorObj(),
-		);
-		if (gpuSurface) {
+		if (_layerCompositorBackend === 'gpu') {
+			const gpuStarted = performance.now();
+			let gpuSurface: HTMLCanvasElement;
+			try {
+				gpuSurface = layerGpuCompositor.render(
+					layerManager.layers,
+					fullWidth,
+					fullHeight,
+					scale,
+					settingsManager.settings,
+					getNanColorObj(),
+					true,
+				) as HTMLCanvasElement;
+			} catch (error) {
+				reportStrictCompositorFailure('GPU', error, stateRevision);
+				throw error;
+			}
 			const ctx = ensure2dCanvasContext();
 			if (!ctx) { return false; }
 			if (ctx.canvas.width !== fullWidth || ctx.canvas.height !== fullHeight) {
@@ -1701,12 +1739,17 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			ctx.imageSmoothingEnabled = true;
 			ctx.drawImage(gpuSurface, 0, 0, fullWidth, fullHeight);
 			ctx.restore();
+			logLayerPerformance(
+				`[LayerCompositor] ${gpuSurface.width}×${gpuSurface.height} at ${Math.round(scale * 100)}% ` +
+				`via webgl2 displayed in ${(performance.now() - gpuStarted).toFixed(1)}ms`,
+			);
 			return true;
 		}
-		const workerRequest = layerCompositorWorker.compose(layerManager.layers, fullWidth, fullHeight, scale);
+		const workerBackend = _layerCompositorBackend === 'wasm' ? 'wasm' : 'javascript';
+		const workerRequest = layerCompositorWorker.compose(layerManager.layers, fullWidth, fullHeight, scale, workerBackend);
 		if (workerRequest) {
 			void workerRequest.then(async result => {
-				if (!result || renderGeneration !== _layerCanvasRenderGeneration || !layerManager.active || !canvas) { return; }
+				if (!result || stateRevision !== _layerStateRevision || !layerManager.active || !canvas) { return; }
 				const imageData = layerManager.renderCompositeToImageData(result, settingsManager.settings, {
 					nanColor: getNanColorObj(),
 					cache: scale === 1,
@@ -1719,7 +1762,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					}
 					try {
 						const bitmap = await createImageBitmap(imageData);
-						if (renderGeneration === _layerCanvasRenderGeneration && layerManager.active) {
+						if (stateRevision === _layerStateRevision && layerManager.active) {
 							ctx.save();
 							ctx.globalCompositeOperation = 'copy';
 							ctx.imageSmoothingEnabled = true;
@@ -1731,35 +1774,41 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 						const previewCanvas = document.createElement('canvas');
 						previewCanvas.width = imageData.width; previewCanvas.height = imageData.height;
 						previewCanvas.getContext('2d')?.putImageData(imageData, 0, 0);
-						if (renderGeneration === _layerCanvasRenderGeneration && layerManager.active) {
+						if (stateRevision === _layerStateRevision && layerManager.active) {
 							ctx.save(); ctx.globalCompositeOperation = 'copy';
 							ctx.drawImage(previewCanvas, 0, 0, fullWidth, fullHeight); ctx.restore();
 						}
 					}
 				} else {
 					await renderImageDataToCanvas(imageData, ctx, () =>
-						renderGeneration === _layerCanvasRenderGeneration && layerManager.active);
-					if (renderGeneration === _layerCanvasRenderGeneration && layerManager.active) {
+						stateRevision === _layerStateRevision && layerManager.active);
+					if (stateRevision === _layerStateRevision && layerManager.active) {
 						primaryImageData = imageData;
 						updateHistogramData();
 					}
 				}
+			}).catch(error => {
+				if (stateRevision !== _layerStateRevision) { return; }
+				reportStrictCompositorFailure(_layerCompositorBackend === 'wasm' ? 'Rust/Wasm' : 'JavaScript', error, stateRevision);
+				setTimeout(() => { throw error; }, 0);
 			});
 			return true;
 		}
-		// Worker startup/failure fallback. Interactive gestures retain the last
-		// good frame; their scheduled final render uses the synchronous path.
-		if (interactive) { return true; }
-		const imageData = layerManager.renderToImageData(settingsManager.settings, { nanColor: getNanColorObj() });
-		if (!imageData) { return false; }
-		const ctx = ensure2dCanvasContext();
-		if (ctx) {
-			void renderImageDataToCanvas(imageData, ctx, () =>
-				renderGeneration === _layerCanvasRenderGeneration && layerManager.active);
-			primaryImageData = imageData;
-			updateHistogramData();
+		const error = new Error(`${workerBackend} compositor worker is unavailable`);
+		reportStrictCompositorFailure(workerBackend === 'wasm' ? 'Rust/Wasm' : 'JavaScript', error, stateRevision);
+		throw error;
+	}
+
+	function reportStrictCompositorFailure(backend: string, error: unknown, stateRevision: number): void {
+		if (stateRevision !== _layerStateRevision) { return; }
+		if (_interactiveRecompositeTimer) {
+			clearTimeout(_interactiveRecompositeTimer);
+			_interactiveRecompositeTimer = null;
 		}
-		return true;
+		const detail = error instanceof Error ? error.message : String(error);
+		const message = `[LayerCompositor] Strict ${backend} render failed: ${detail}`;
+		logLayerPerformance(message);
+		vscode.postMessage({ type: 'show-error', message });
 	}
 
 	// Coalesce rapid recomposite requests. Interactive drags get a short trailing
@@ -1767,13 +1816,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// seconds, and running one for every slider event makes the slider itself lag.
 	let _recompositeScheduled = false;
 	let _scheduledInteractive = false;
+	let _scheduledStateRevision = 0;
 	let _interactiveRecompositeTimer: ReturnType<typeof setTimeout> | null = null;
-	function scheduleRecomposite(delayMs: number = 0, interactive = false) {
+	function scheduleRecomposite(delayMs: number = 0, interactive = false, stateRevision = _layerStateRevision) {
 		if (delayMs > 0) {
 			if (_interactiveRecompositeTimer) { clearTimeout(_interactiveRecompositeTimer); }
 			_interactiveRecompositeTimer = setTimeout(() => {
 				_interactiveRecompositeTimer = null;
-				scheduleRecomposite(0, interactive);
+				scheduleRecomposite(0, interactive, stateRevision);
 			}, delayMs);
 			return;
 		}
@@ -1784,15 +1834,18 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (_recompositeScheduled) {
 			// A full render subsumes an interactive preview in the same frame.
 			if (!interactive) { _scheduledInteractive = false; }
+			_scheduledStateRevision = stateRevision;
 			return;
 		}
 		_recompositeScheduled = true;
 		_scheduledInteractive = interactive;
+		_scheduledStateRevision = stateRevision;
 		requestAnimationFrame(() => {
 			_recompositeScheduled = false;
 			const renderInteractive = _scheduledInteractive;
+			const renderStateRevision = _scheduledStateRevision;
 			_scheduledInteractive = false;
-			recompositeLayers(renderInteractive);
+			recompositeLayers(renderInteractive, renderStateRevision);
 		});
 	}
 

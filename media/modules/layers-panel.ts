@@ -8,6 +8,7 @@
 
 import { BLEND_MODES, MASK_CONDITIONS, Layer, LayerAdjustment, composite, evaluateCurvePoints } from './layer-compositor.js';
 import type { LayerManager } from './layer-manager.js';
+import type { LayerCompositorBackend } from './layer-compositor-worker-client.js';
 
 export interface LayersPanelCallbacks {
 	onChange: (options?: { interactive?: boolean }) => void;
@@ -16,6 +17,7 @@ export interface LayersPanelCallbacks {
 	onPersist?: () => void;
 	onAddLayer?: () => void;
 	onExport?: () => void;
+	onCompositorBackendChange?: (backend: LayerCompositorBackend) => void;
 }
 
 export interface LayersPanelOptions {
@@ -170,6 +172,7 @@ export class LayersPanel {
 	onPersist?: () => void;
 	onAddLayer?: () => void;
 	onExport?: () => void;
+	onCompositorBackendChange?: (backend: LayerCompositorBackend) => void;
 	closable: boolean;
 	root: HTMLElement | null;
 	listEl: HTMLElement | null;
@@ -179,6 +182,8 @@ export class LayersPanel {
 	backgroundEl: HTMLElement | null;
 	backgroundSlider: HTMLInputElement | null;
 	backgroundBrightness: number | null;
+	compositorBackend: LayerCompositorBackend;
+	compositorSelect: HTMLSelectElement | null;
 	themeBackgroundBrightness: number;
 	/** id of the layer currently armed for drag-to-move, or null */
 	movingLayerId: string | null;
@@ -198,6 +203,7 @@ export class LayersPanel {
 		this.onPersist = callbacks.onPersist;
 		this.onAddLayer = callbacks.onAddLayer;
 		this.onExport = callbacks.onExport;
+		this.onCompositorBackendChange = callbacks.onCompositorBackendChange;
 		// In a dedicated Layers window the panel can't be closed (close the tab
 		// instead); only the minimize control is shown.
 		this.closable = options.closable !== false;
@@ -209,6 +215,8 @@ export class LayersPanel {
 		this.backgroundEl = null;
 		this.backgroundSlider = null;
 		this.backgroundBrightness = null;
+		this.compositorBackend = 'gpu';
+		this.compositorSelect = null;
 		this.themeBackgroundBrightness = 50;
 		this.movingLayerId = null;
 		this._pendingRemoveId = null;
@@ -255,6 +263,22 @@ export class LayersPanel {
 		exportBtn.textContent = 'Export…';
 		exportBtn.addEventListener('click', () => this.onExport?.());
 
+		const compositorSelect = document.createElement('select');
+		compositorSelect.className = 'layers-compositor-select';
+		compositorSelect.title = 'Strict layer compositor: unsupported features fail instead of falling back';
+		for (const [value, label] of [['gpu', 'GPU'], ['wasm', 'Wasm'], ['javascript', 'JS']] as const) {
+			const option = document.createElement('option');
+			option.value = value;
+			option.textContent = label;
+			compositorSelect.appendChild(option);
+		}
+		compositorSelect.value = this.compositorBackend;
+		compositorSelect.addEventListener('change', () => {
+			this.compositorBackend = compositorSelect.value as LayerCompositorBackend;
+			this.onCompositorBackendChange?.(this.compositorBackend);
+		});
+		this.compositorSelect = compositorSelect;
+
 		const minimizeBtn = document.createElement('button');
 		minimizeBtn.className = 'layers-btn layers-minimize';
 		minimizeBtn.title = 'Minimize / expand panel';
@@ -283,6 +307,7 @@ export class LayersPanel {
 		this.groupsBtn = groupsBtn;
 
 		header.appendChild(title);
+		header.appendChild(compositorSelect);
 		header.appendChild(addBtn);
 		header.appendChild(exportBtn);
 		header.appendChild(groupsBtn);
@@ -380,6 +405,11 @@ export class LayersPanel {
 		if (this.backgroundBrightness === null) {
 			this.backgroundSlider.value = String(this.themeBackgroundBrightness);
 		}
+	}
+
+	setCompositorBackend(backend: LayerCompositorBackend): void {
+		this.compositorBackend = backend;
+		if (this.compositorSelect) { this.compositorSelect.value = backend; }
 	}
 
 	isVisible(): boolean {
