@@ -691,13 +691,18 @@ for native layer reconstruction.
 
 ### Layer compositor performance
 
-The editable compositor now has three explicitly selectable implementations:
-WebGL2, Rust/Wasm, and the TypeScript/JavaScript CPU reference. The development
+The editable compositor now has four explicitly selectable implementations:
+WebGPU, WebGL2, Rust/Wasm, and the TypeScript/JavaScript CPU reference. The development
 selector is intentionally strict: a selected backend must render the document
 itself or report the exact unsupported feature/error; it never silently changes
 backend. Full-resolution CPU work runs in a dedicated worker. Slider and curve
-gestures request a preview capped at 768 pixels on the longest side, followed
-by a native-resolution render after the gesture settles.
+gestures request a preview capped at 768 pixels on the longest side. Their
+trailing native render remains debounced while input is moving, but pointer/key
+release cancels that timer and starts the final native-resolution render
+immediately if the preview is already visible. A direct slider click first
+presents its queued preview, then starts native work on the following animation
+frame. Documents at or below 1500×1500 render natively without a preview pass;
+discrete edits on larger documents use a short 60 ms settle delay.
 
 The target architecture is:
 
@@ -714,7 +719,22 @@ The target architecture is:
   interactive and native-resolution display, including mixed TIFF/creative
   layers. Unsupported GPU environments and hardware limits are diagnosed, but
   the backend does not silently omit document features or switch renderers.
-- All three implementations run the same golden document corpus. Backend parity
+  Its ping-pong compositor clears only surfaces that provide an initial
+  transparent input; full-canvas destination passes no longer receive
+  redundant clears.
+- A strict WebGPU renderer now covers the same raster/adjustment, clipping,
+  mask, nested-group, common/scientific blend, NaN, normalization, and display
+  semantics. It uses byte composition surfaces for ordinary 8-bit documents
+  and half-float surfaces only when numeric inputs or arithmetic modes require
+  them, avoiding unnecessary 5k texture memory. Preview and native surface sets
+  are retained separately, pipelines compile concurrently, and redundant
+  full-surface clears are omitted. Identical layer states reuse their retained
+  final composition independently at preview and native resolution. Phase
+  timing separates scheduling, queueing, initialization, preparation, encoding,
+  GPU completion, validation, canvas copy, upload CPU time, allocations, and
+  total latency. WebGPU availability and device limits fail explicitly;
+  selecting it never falls back to WebGL, Wasm, or JS.
+- All four implementations run the same golden document corpus. Backend parity
   is measured per pixel with documented precision tolerances.
 
 Caching now operates at four levels:
@@ -744,14 +764,17 @@ Repeatable commands and results from the July 2026 development machine:
   filtered stack is retained, on Playwright's browser environment. A
   single-stack filter edit is separately tested so unchanged stacks remain
   cached; hardware-backed VS Code measurements are still required.
+- the strict WebGPU native 5000×5000 single-RGBA-layer cold path measures
+  approximately 1.29 s on Playwright's software WebGPU environment, including
+  upload, composition, display conversion, and strict GPU/CPU sample checks.
 
 **Acceleration programme:** finish the persistent Rust/Wasm document engine,
 dirty tiles, cached group/filter surfaces, and Wasm SIMD where available.
 Extend retained WebGL2 surfaces to nested group branches and add tiled GPU
-surfaces for documents beyond `MAX_TEXTURE_SIZE`. Evaluate WebGPU compute after
-the shared conformance corpus is in place; it may simplify general filter
-kernels and compute-heavy masks, but must not create a fourth set of ambiguous
-layer semantics.
+surfaces for documents beyond `MAX_TEXTURE_SIZE`. Extend WebGPU retention to
+unchanged filtered stacks/group branches and evaluate compute kernels for
+compute-heavy masks and filters. Keep the shared conformance corpus as the
+semantic contract instead of allowing backend-specific layer behavior.
 
 Remaining performance validation is platform coverage: record worker,
 visualization, and canvas-upload timings on the supported desktop and web VS

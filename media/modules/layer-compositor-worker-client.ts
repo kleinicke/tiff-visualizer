@@ -2,8 +2,8 @@
 
 import type { CompositeRegion, CompositeResult, Layer } from './layer-compositor.js';
 
-export type LayerCompositorBackend = 'gpu' | 'wasm' | 'javascript';
-type WorkerCompositorBackend = Exclude<LayerCompositorBackend, 'gpu'>;
+export type LayerCompositorBackend = 'webgpu' | 'gpu' | 'wasm' | 'javascript';
+type WorkerCompositorBackend = Exclude<LayerCompositorBackend, 'webgpu' | 'gpu'>;
 
 type TypedPixels = Uint8Array | Uint8ClampedArray | Uint16Array | Uint32Array | Int8Array | Int16Array | Int32Array | Float32Array | Float64Array;
 type PendingRequest = {
@@ -37,6 +37,12 @@ type TileStat = { min: number; max: number; covered: number };
 
 const COMPOSITE_TIMEOUT_MS = 120_000;
 export const INTERACTIVE_COMPOSITE_MAX_EDGE = 768;
+export const INTERACTIVE_PREVIEW_DOCUMENT_EDGE_THRESHOLD = 1500;
+
+export function shouldUseLayerInteractionPreview(width: number, height: number): boolean {
+	return width > INTERACTIVE_PREVIEW_DOCUMENT_EDGE_THRESHOLD ||
+		height > INTERACTIVE_PREVIEW_DOCUMENT_EDGE_THRESHOLD;
+}
 
 /**
  * The layer editor keeps original pixels at full precision. Interactive edits
@@ -44,7 +50,9 @@ export const INTERACTIVE_COMPOSITE_MAX_EDGE = 768;
  */
 export function layerDisplayScale(width: number, height: number, interactive = false): number {
 	const edge = Math.max(1, width, height);
-	return interactive ? Math.min(1, INTERACTIVE_COMPOSITE_MAX_EDGE / edge) : 1;
+	return interactive && shouldUseLayerInteractionPreview(width, height)
+		? Math.min(1, INTERACTIVE_COMPOSITE_MAX_EDGE / edge)
+		: 1;
 }
 
 function clonePixels(source: ArrayLike<number>): TypedPixels {

@@ -201,7 +201,6 @@ export class WebGL2LayerCompositor {
 			const surfaceCount = (maximumDepth + 1) * 2 + 3;
 			this.ensureOutputSurfaces(width, height, usesFloat, surfaceCount);
 			this.compositionTypeMax = renderLayers.find(layer => layer.visible !== false && (layer.opacity ?? 1) > 0 && layer.data)?.typeMax || 1;
-			this.clearOutputSurfaces();
 
 			const previous = this.drawStack(renderLayers, undefined, scale, 0, new Set<string>());
 			this.drawDisplay(previous, settings, layers, nanColor);
@@ -272,7 +271,9 @@ export class WebGL2LayerCompositor {
 
 	private drawStack(layers: Layer[], parentId: string | undefined, scale: number, depth: number, ancestors: Set<string>): number {
 		const first = depth * 2, second = first + 1;
-		this.clearSurface(first); this.clearSurface(second);
+		// Every destination pass covers the complete surface; only the initial
+		// transparent "below" surface must be cleared.
+		this.clearSurface(first);
 		let previous = first;
 		const siblings = layers.filter(layer => (layer.parentId || undefined) === parentId);
 		for (let index = 0; index < siblings.length;) {
@@ -311,7 +312,7 @@ export class WebGL2LayerCompositor {
 		const scratchBase = scratchSecond + 1;
 		let scratchPrevious = scratchFirst;
 		let scratchDestination = scratchPrevious + 1;
-		this.clearSurface(scratchPrevious); this.clearSurface(scratchDestination);
+		this.clearSurface(scratchPrevious);
 		this.drawSurfaceLayer((this.outputTextures as WebGLTexture[])[source], scratchPrevious, scratchDestination, 1, 'normal');
 		scratchPrevious = scratchDestination;
 		this.drawSurfaceLayer(
@@ -334,7 +335,6 @@ export class WebGL2LayerCompositor {
 		const groupOpacity = Math.max(0, Math.min(1, base.opacity ?? 1));
 		if (groupOpacity < 1 || base.rasterMask) {
 			scratchDestination = scratchPrevious === scratchFirst ? scratchSecond : scratchFirst;
-			this.clearSurface(scratchDestination);
 			this.clearSurface(scratchBase);
 			this.drawSurfaceLayer(
 				(this.outputTextures as WebGLTexture[])[scratchPrevious],
@@ -515,15 +515,6 @@ export class WebGL2LayerCompositor {
 		this.outputUsesFloat = usesFloat;
 	}
 
-	private clearOutputSurfaces(): void {
-		const gl = this.gl as WebGL2RenderingContext;
-		gl.clearColor(0, 0, 0, 0);
-		for (const framebuffer of this.framebuffers as WebGLFramebuffer[]) {
-			gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-			gl.clear(gl.COLOR_BUFFER_BIT);
-		}
-	}
-
 	private textureFor(data: SupportedPixels, width: number, height: number, channels: number): TextureEntry {
 		const cached = this.textureCache.get(data as object);
 		if (cached && cached.width === width && cached.height === height && cached.channels === channels) { return cached; }
@@ -614,8 +605,6 @@ export class WebGL2LayerCompositor {
 		let scratchPrevious = scratchFirst;
 		let scratchDestination = scratchPrevious + 1;
 		this.clearSurface(scratchPrevious);
-		this.clearSurface(scratchDestination);
-		this.clearSurface(scratchBase);
 		this.drawLayer(base, scale, scratchPrevious, scratchDestination, { opacity: 1, blendMode: 'normal' });
 		scratchPrevious = scratchDestination;
 		this.drawSurfaceLayer(
