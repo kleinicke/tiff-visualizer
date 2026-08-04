@@ -180,11 +180,77 @@ entire point — datasets too big for memory).
 - **Zarr** (plain) = same reader without the OME semantics.
 - **HDF5** is the hard one: a complex binary container. Needs a WASM build of a
   reader (e.g. `h5wasm`) — a substantial dependency and a different code path.
+  See the dedicated subsection below: the container is generic, so the work is
+  not "read HDF5" but "decide what an arbitrary HDF5 file means."
 - Remote support also means handling URLs, range requests, and caching in the
   decode worker; today everything assumes local file bytes.
 
 **Difficulty: 4 (OME-Zarr) → 5 (HDF5 + general remote/lazy infra).** Recommend
 scoping to **OME-Zarr, local first, then remote URLs**, and deferring HDF5.
+
+### HDF5: a container, not a format
+
+HDF5 says nothing about what is inside — like ZIP. `h5wasm` gives us groups,
+datasets, shapes, dtypes and attributes; it does not tell us which dataset is
+the image, which axis is Z and which is channel, or what a voxel measures. So
+the reader must be built in **two layers**, and the generic layer must ship
+first because it is also the fallback for every unrecognized file.
+
+**Layer 1 — generic browser and manual axis mapping (the honest baseline).**
+Show the group/dataset tree with shape, dtype and attributes. Let the user pick
+any dataset with 2–5 dimensions and assign each axis to X / Y / Z / C / T, with
+a size-based initial guess (an axis of extent ≤ 4 is probably C; the two
+largest are probably Y/X). Persist the chosen mapping in a sidecar keyed by
+dataset path, so sibling files from the same pipeline open correctly without
+re-asking. This alone makes arbitrary lab HDF5 files viewable, which is
+currently impossible in any editor.
+
+**Layer 2 — recognizers that skip the questions.** Detect a known convention
+and auto-configure the mapping. Each recognizer is small; the value is that
+common files never hit the manual path:
+
+| Convention | Detection | Self-describes |
+| --- | --- | --- |
+| **Imaris `.ims`** | `/DataSetInfo` group, `ImarisVersion` attribute | fully — see below |
+| **HDF5 dimension scales** | `DIMENSION_LIST` / `REFERENCE_LIST` attributes | axis names and coordinate values; the official HDF5 mechanism |
+| **NetCDF-4 / CF** | root `_NCProperties`; CF axis attributes | axis names, units, scaling |
+| **NeXus** | `NX_class` attributes, `@signal` / `@axes` on `NXdata` | fully; strongest standard in the space |
+| **BigDataViewer** | `/t00000/s00/<level>/cells` plus companion XML | resolution levels, per-setup transforms |
+| **ilastik** | `/exported_data` with a JSON `axistags` attribute | axis order explicitly |
+| **MATLAB v7.3 `.mat`** | `MATLAB_class` attributes | dtype only; axes still manual |
+
+The lesson from that table: the "unknown blob" problem is real, but three
+mechanisms (dimension scales, NeXus, and per-tool markers) cover most files
+that actually reach a viewer, and everything else falls back to Layer 1 rather
+than to an error.
+
+**Why `.ims` is the one worth targeting first.** It is a *specified* layout,
+published by Bitplane as the Imaris Open File Format, and stable across
+versions:
+
+- `/DataSet/ResolutionLevel <n>/TimePoint <t>/Channel <c>/Data` — a chunked 3D
+  array (uint8/uint16/float32). The pyramid, time and channel axes are separate
+  paths, so no axis guessing is needed at all.
+- `/DataSetInfo/Image`, `/DataSetInfo/Channel <c>`, `/DataSetInfo/TimeInfo` —
+  extents (`ExtMin0..2`, `ExtMax0..2`), dimensions, channel name, color, and
+  ranges. Physical voxel size follows from extent ÷ size, which feeds
+  calibration (item 7) and physical-unit readouts for free.
+- `/Thumbnail/Data` and per-dataset `Histogram` attributes exist and can be
+  reused directly.
+
+Two gotchas: **all attributes are fixed-length char arrays**, so every number
+must be parsed from ASCII rather than read as a numeric attribute; and the
+`Data` arrays are **padded to chunk boundaries**, so `ImageSizeX/Y/Z` from
+`/DataSetInfo/Image` is authoritative, not the dataset shape.
+
+The genuinely proprietary and poorly documented part is `/Scene/Content`, which
+holds Imaris analysis objects (Surfaces, Spots, Filaments, Tracks). That is
+explicitly **out of scope** — we would read the image, not the analysis
+results. That split is what makes `.ims` tractable while "support HDF5" in
+general is not.
+
+**Difficulty: 3** for Layer 1 plus `.ims`, given `h5wasm` is already a
+dependency by then; **+1** per additional recognizer, most of them far less.
 
 ---
 
@@ -856,21 +922,368 @@ largely already written and tested in the neighboring project).
 
 ---
 
+## 7. Measurement and quantitative analysis (ImageJ-class)
+
+> Make the viewer able to answer "how big is that object, how bright is this
+> region, how many of these are there" — the workflows people currently leave
+> the editor and open Fiji for.
+
+**Why this is worth doing:** ImageJ/Fiji is the de-facto standard in scientific
+imaging, but it is a separate heavyweight application with a 1997 AWT UI, one
+level of undo, and a proprietary binary ROI format. napari needs a Python
+environment, QuPath is scoped to digital pathology, CellProfiler has no
+interactive viewer. Nobody occupies "measurement where the image already is."
+There is currently **no VS Code extension** doing this — the only related work
+is `ijmScanner`, a language-support extension for writing `.ijm` macros, not
+published to the marketplace. This is an open niche, not a contested one.
+
+**Prerequisites:** none hard. Physical-unit calibration is much better with
+OME-TIFF metadata (item 2) already parsed, but works standalone from baseline
+TIFF resolution tags.
+
+### UI placement — one panel, zero bloat by default
+
+The guiding constraint: someone who opens a TIFF just to look at it must see
+**nothing** of this. Therefore:
+
+- **Entry point:** a single **Measure** item in the existing image context menu
+  (`imagePreview.ts`, the `custom-context-menu` builder), plus a status bar
+  toggle alongside Histogram, plus a keybinding. One entry, not seven.
+- **Surface:** a floating **Measure panel**, built on the exact pattern already
+  used by `debayer-panel.ts` / `metadata-panel.ts` / `layers-panel.ts` —
+  draggable, `show()`/`hide()`/`toggle()`/`isVisible()`, state persisted in the
+  webview state blob next to `isDebayerPanelVisible`. **No new UI paradigm.**
+- **Panel contents (tabs or stacked sections, one panel):** tool strip
+  (rectangle / ellipse / polygon / freehand / line / point / wand) · ROI list ·
+  measurement readout · calibration · segmentation controls.
+- **Canvas interaction:** ROI drawing lives in an overlay layer over the image
+  canvas, coexisting with the pan/zoom modal state in `zoom-controller.ts`.
+  Drawing is only armed while the panel is open and a tool is selected;
+  otherwise mouse behavior is exactly as today.
+- **Results:** the measurement table renders in the panel, and "Open as CSV"
+  posts to the extension host to open a real editor document — no modal
+  windows, no second webview.
+- **Reuse, do not duplicate:** the ROI histogram is `histogram-overlay.ts`
+  restricted to a mask; ROI statistics go through `ImageStatsCalculator`;
+  region growing / labeling / threshold sweeps belong in the existing Rust/WASM
+  crate next to `demosaic.rs`; heavy passes run in the decode worker.
+
+### Core features (all seven, not a subset)
+
+1. **Pixel calibration.** Auto-populate from TIFF `XResolution` /
+   `YResolution` / `ResolutionUnit` and OME `PhysicalSizeX/Y/Z` where present —
+   ImageJ usually asks; we should already know. Manual override by drawing a
+   line on a scale bar and typing its real length. Anisotropic X/Y supported.
+   Feeds a scale-bar overlay and physical-unit pixel readouts.
+2. **ROI tools.** Rectangle, ellipse, polygon, freehand, straight/segmented
+   line, multi-point. Editable vertices, move/resize, add/subtract composition,
+   named ROIs, per-ROI color.
+3. **Measurements.** Per ROI: area, perimeter, mean/min/max/median/StdDev,
+   integrated density, centroid and center of mass, bounding box, fitted
+   ellipse (major/minor/angle), Feret diameter (max/min/angle), circularity,
+   solidity, aspect ratio. Selectable column set (ImageJ's "Set Measurements",
+   without the modal dialog). Live-updating as an ROI is dragged.
+4. **Line profile.** Intensity along a line or polyline, with adjustable line
+   width (averaged perpendicular band). Reuses the plotting infrastructure from
+   `histogram-overlay.ts`. Multi-channel plots one series per channel. Export
+   as CSV.
+5. **Threshold and particle analysis.** See the dedicated subsection below —
+   this is where we do more than reimplement.
+6. **Wand / click-to-select.** Click inside a region, get an ROI. Not ImageJ's
+   naive fixed-tolerance flood fill; see below.
+7. **Multi-point counter.** Numbered markers, running count, categories with
+   distinct colors, export as CSV. Trivially cheap, heavily used.
+
+### Where we beat ImageJ
+
+- **ROIs as a text sidecar.** Persist as `image.tif.rois.json` next to the
+  image: human-readable, diffable, reviewable in a pull request, editable by
+  hand or by script. ImageJ's `.roi`/`RoiSet.zip` is opaque binary. This is the
+  single strongest argument for "measurement inside the editor" and something
+  none of Fiji/napari/QuPath offers.
+- **ImageJ `.roi` interop (read and write).** The format is a documented binary
+  header — magic `Iout`, version, type byte, bounds, then coordinates as int16
+  offsets from the bounding box (polygon/freehand/traced), plus subtypes for
+  ellipse/line/point and an optional trailing header2 with the name and
+  per-ROI properties. `RoiSet.zip` is a plain ZIP of those entries, and **pako
+  is already bundled**, so the container costs nothing. Import is the adoption
+  path (people arrive with existing ROI sets); export is the escape hatch that
+  makes trying us risk-free. Also worth supporting QuPath/GeoJSON on export.
+  **Difficulty: 2** for read, +1 for write.
+- **Measurements always on raw data.** Statistics run on the stored
+  Float32Array, never on the post-normalization/gamma display buffer. We
+  already model this distinction correctly (`colorPickerModeStatusBarEntry`,
+  the raw-versus-modified split); ImageJ silently measures the display
+  transform in several paths and it is a recurring source of wrong numbers.
+  NaN/Infinity are excluded from statistics and reported as a separate count,
+  using the same `!Number.isFinite()` guard as the render and histogram paths.
+- **Real undo.** Full ROI edit history. ImageJ has effectively one level.
+- **Interactivity.** Threshold and segmentation previews recompute per frame in
+  WASM/GPU; in Fiji these stutter on large images and people stop exploring.
+- **Results as an editor document.** CSV opens as a normal tab — copy, diff,
+  commit. No modal Results window.
+- **No setup.** No JVM, no Conda environment.
+
+### Threshold + particle analysis — improve the workflow, don't copy it
+
+The actual pain is not the computation, it is guessing the number. Four
+changes, roughly in order of value:
+
+- **Threshold stability curve.** Sweep the threshold across the full data range
+  once (cheap in Rust: one pass per candidate on a downsampled image, or an
+  incremental union-find over sorted pixels) and plot object count and total
+  area against threshold. Plateaus are exactly the values where the answer does
+  not depend on the guess. The user picks a plateau instead of nudging a slider
+  blind. This is the MSER insight applied to the UI, and nothing in the field
+  currently shows it.
+- **Auto-threshold gallery.** Otsu, Li, Triangle, Yen, Huang, IsoData,
+  MaxEntropy, Mean, Moments, Percentile, Shanbhag rendered as a live grid of
+  small previews with object counts. ImageJ's "Try all" produces a static
+  montage in a new window; ours is clickable and updates with the preprocessing
+  chain.
+- **Local adaptive thresholding** (Niblack, Sauvola, Phansalkar) plus optional
+  non-destructive preprocessing for segmentation only — rolling-ball background
+  subtraction, Gaussian blur — that never touches the displayed image. Uneven
+  illumination is the number one reason a global threshold fails, and it is why
+  people conclude "there is no right value".
+- **Watershed splitting** of touching objects, with a preview of the split
+  lines before committing.
+
+For "I just want to mark this one cell", global thresholding is the wrong tool
+entirely:
+
+- **Click-to-segment with hover preview.** Seeded region growing from the click
+  point with a tolerance derived from local statistics rather than a fixed
+  global number. Hovering already renders the ROI a click would produce, so
+  there is no click–undo–retry loop. Scroll wheel (or drag distance) widens or
+  tightens tolerance live, with the boundary redrawn each frame.
+- **Boundary-snapping trace (livewire / intelligent scissors)** for objects
+  region growing cannot separate: click a few points, the path snaps to the
+  strongest gradient between them.
+- **Brush refinement.** Add/subtract to an existing ROI mask with a circular
+  brush. Automatic segmentation is never perfect and every tool that lacks this
+  forces a restart from scratch.
+
+Explicitly **not** in scope: ML segmentation (Cellpose/StarDist/ilastik).
+Different league — needs model weights and a GPU backend, and it does not
+belong in an editor extension.
+
+### Results and export workflow — kill the copy-into-Excel step
+
+In practice, ImageJ output gets pasted into Excel almost universally. That is
+not a preference for spreadsheets; it is three gaps in the tool, and each one
+is fixable at the source.
+
+**Gap 1 — provenance is dropped on export.** The Results table says
+`Area 412.7` but not from which file, channel, Z-slice, calibration, or
+threshold. Users rebuild that context by hand. Fix: emit **long/tidy CSV with
+provenance columns by default** — `file`, `roi_id`, `roi_name`, `channel`,
+`page`/`slice`, `unit`, `pixel_size_x/y`, `threshold_method`,
+`threshold_value`, `preprocessing`, `extension_version`, `settings_hash`. One
+row per ROI per channel. This alone removes a large share of the manual work.
+
+**Gap 2 — no aggregation across images.** ImageJ measures one image at a time
+and produces N tables; the actual question is "mean per condition, n, SEM".
+Stacking those is the main reason Excel gets opened. Fix:
+
+- A **single appending results table across the whole Image Collection** —
+  that structure already exists in `imagePreview.ts` and needs no new concept.
+- **Grouping columns derived from filenames** via a user-supplied capture
+  pattern (e.g. `{condition}_{replicate}_{n}.tif` → real `condition` and
+  `replicate` columns). This is precisely the join people perform manually.
+- Optional per-group summary view (count, mean, SD, SEM) in the panel — for
+  reading, with the raw long table still the exported artifact.
+
+**Gap 3 — derived quantities.** Density as `IntDen/Area`, background
+subtraction, normalization to a control. Fix: saved expression columns, stored
+in the sidecar alongside the ROIs so a rerun reproduces them exactly.
+
+**Things only we can do:**
+
+- **Bidirectional row ↔ ROI linkage.** Selecting a table row highlights the ROI
+  on the image and vice versa. Copy-paste into Excel destroys this link
+  permanently — "which cell was row 47?" becomes unanswerable. Highest-value
+  single item in this subsection.
+- **Locale-correct and Excel-native output.** Write `.xlsx` directly in
+  addition to CSV, and emit CSV with a UTF-8 BOM and a configurable decimal
+  separator. German Excel reinterprets `412.7` as a date; that misparse is
+  itself a cause of manual rework.
+- **Python escape hatch.** Optionally drop an `analysis.py` or notebook next to
+  the export that loads the CSV with pandas and groups by condition. Many users
+  would prefer Python and are only avoiding the boilerplate — and we are
+  already inside the editor where that file would live.
+- **Reproducibility.** Because measurement settings live in the JSON sidecar,
+  rerunning on the same image yields byte-identical numbers, and the sidecar
+  diffs in review.
+
+**Not in scope here:** built-in statistics (t-tests, ANOVA) or anything
+resembling a spreadsheet. Export well and let Excel, pandas, or Prism do the
+statistics.
+
+**Difficulty: 2** for the CSV/provenance/collection-table core, +1 for xlsx
+writing, expression columns, and filename-pattern grouping.
+
+### Deliberately out of scope
+
+- **The ImageJ macro language.** An idiosyncratic bespoke language with a
+  recorder; enormous effort, and anyone who wants scripting reaches for Python.
+  If automation becomes necessary, a small declarative JSON/TS recipe format.
+- **3D/volume rendering, deconvolution, stitching, registration.** napari and
+  Imaris territory; would distort the architecture. 3D specifically is not
+  dropped but relocated — see item 10, which hands the volume to the
+  `ply-visualizer` extension instead of growing a second render path here.
+- **Full Bio-Formats** (~150 vendor microscopy formats, a Java monolith).
+  OME-TIFF covers the overwhelming majority of what reaches this viewer.
+- **A plugin API.** ImageJ's strength is a 25-year ecosystem; an empty plugin
+  surface is pure maintenance cost. Only if users ask.
+- **Destructive editing** (apply a filter, save the pixels). Non-destructiveness
+  is a feature of this viewer, not a limitation.
+
+### Suggested delivery order
+
+1. Calibration (auto from tags + manual) and the Measure panel shell.
+2. ROI tools, overlay layer, ROI list, JSON sidecar persistence.
+3. Measurement table with the full column set, live update, bidirectional
+   row ↔ ROI selection, and long-format CSV export with provenance columns.
+4. Line profile.
+5. ImageJ `.roi` / `RoiSet.zip` import, then export.
+6. Threshold: live preview, auto-threshold gallery, stability curve, local
+   adaptive methods, preprocessing chain.
+7. Particle analysis: connected-component labeling in Rust, per-object
+   measurements, size/shape filters, watershed.
+8. Click-to-segment with hover preview, brush refinement, livewire.
+9. Multi-point counter, scale-bar overlay, physical-unit readouts everywhere.
+10. Collection-wide appending results table, filename-pattern grouping columns,
+    expression columns, `.xlsx` output, optional pandas starter script.
+
+**Difficulty: 4** overall (a multi-week epic; steps 1–4 alone are a **2–3** and
+already deliver a usable product).
+
+---
+
+## 8. Multi-channel compositing (scientific "Display Adjustment")
+
+> GFP green + DAPI blue + RFP red, additively blended, each channel with its own
+> LUT, opacity and min/max — instead of one channel at a time.
+
+**Why:** this is the single most recognizable feature of Imaris/arivis/Fiji's
+Composite mode, and the point at which a microscopy user decides whether a
+viewer was built for them. Item 2 already parses channel names and colors from
+OME metadata, but the viewer still shows one channel per page.
+
+**Do not confuse this with item 5.** The blend/composite machinery in the
+layered-document work is about *authoring* semantics (Photoshop/GIMP blend
+modes, clipping, groups, application-specific blend spaces). This is *raw
+arithmetic* over scientific channels: each channel is scaled by its own
+normalization range, tinted by its LUT color, and summed. It belongs to the
+scientific arithmetic side of the blend-mode registry split described in item 5,
+and should reuse that split rather than the creative blend path.
+
+**Implementation notes:**
+
+- A **Channels panel**, same pattern as `debayer-panel.ts` / `metadata-panel.ts`
+  — one row per channel: visibility, color swatch (from OME `Channel/@Color`
+  where present, otherwise a sensible cycle), opacity, and its own min/max
+  slider pair backed by that channel's statistics.
+- Composite rendering is a GPU-natural operation: upload the per-channel planes
+  once, blend in the fragment shader in `webgl2-float-renderer.ts` / the WebGPU
+  path. The CPU path stays as the fallback and correctness reference, as
+  everywhere else.
+- Per-channel statistics must be computed and cached separately; the existing
+  `ImageStatsCalculator` currently reasons about the image as a whole.
+- The histogram overlay already supports per-channel display — extend it to
+  reflect the per-channel ranges rather than the global one.
+- Colormaps: `getColormapLut()` supplies the tint LUTs, so pseudocolor and
+  compositing share one source of truth.
+- Interaction with the existing single-channel view is a mode, not a
+  replacement: single-channel inspection stays the default for 1-channel images
+  and remains reachable via channel solo.
+
+**Difficulty: 2.** Highest value-per-effort item remaining after item 1.
+
+---
+
+## 9. Time and Z playback, frame export
+
+> Press play and watch the time series, instead of dragging the T slider.
+
+The C/Z/T sliders from item 2 and the page navigation from item 1 exist, but
+everything is manual. Playback needs no new render path — only a timer over the
+existing page-change path plus the already-planned neighbor prefetch.
+
+**Implementation notes:**
+
+- Play/pause/loop with configurable FPS, bound to the T axis by default and
+  switchable to Z. Reuse the page overlay UI; a transport control belongs next
+  to the existing slice indicator, not in a new panel.
+- Playback makes the "cache decoded pages and preload neighbors" follow-up from
+  item 1 a hard prerequisite rather than a nicety: stuttering playback is worse
+  than no playback.
+- **Frame export:** write the current view (with all display settings applied)
+  across a T or Z range as a numbered PNG sequence, through the existing export
+  path. Animated GIF/WebP output is a possible later addition; a numbered
+  sequence is what people feed into ffmpeg anyway.
+- Keyframe/camera animation as Imaris offers it is deliberately excluded — it
+  only becomes meaningful with a 3D camera, and therefore belongs with item 10.
+
+**Difficulty: 2** (playback), **+1** for frame-sequence export.
+
+---
+
+## 10. Hand a volume to the 3D viewer (ply-visualizer bridge)
+
+> "Open stack in 3D viewer" — volume rendering and isosurfaces without a second
+> render path in this extension.
+
+Item 7 rules out 3D/volume rendering here, and that stays correct: the render
+pipeline is 2D `ImageData`/canvas plus per-slice GPU paths, and a volume
+raycaster is a fundamentally different renderer. But the neighboring
+`ply-visualizer` extension already has Three.js, WebGPU, camera controls and
+transform matrices — and knows nothing about intensity stacks, channels or
+normalization, which is exactly what this extension does know.
+
+So neither extension should grow the other's half. Build a **bridge** instead:
+
+- A command that takes the currently decoded stack — the full Z (and optionally
+  C/T) volume, voxel spacing from OME metadata, per-channel LUTs and
+  normalization ranges — and hands it to `ply-visualizer`.
+- Transfer as a typed-array payload with an explicit descriptor
+  (dimensions, dtype, spacing, units, channel table), versioned, so the two
+  repositories can evolve independently. This is the one piece of shared
+  contract; everything else stays local to each extension.
+- The 3D side (volume raycasting with a transfer-function editor, clipping
+  planes, marching-cubes isosurface extraction, object/track overlays) is
+  tracked in `ply-visualizer/docs/BACKLOG.md` and is not this repository's work.
+- Isosurface extraction is the interesting split: the heavy pass would run in
+  the Rust/WASM crate here (next to `demosaic.rs`), and the resulting mesh is an
+  ordinary mesh for the 3D viewer to render — its core competence.
+
+**Prerequisites:** item 1 (all pages decodable) and item 2 (voxel spacing,
+channel semantics). Memory is the real constraint: a full float volume can be
+gigabytes, so the descriptor must support sending a downsampled level, and
+pyramidal loading (item 3 / whole-slide tiling) is what makes large volumes
+practical.
+
+**Difficulty: 3** for the bridge and payload contract on this side; the 3D
+renderer itself is separate and lives in the other repository.
+
+---
+
 ## Other ideas worth considering
 
 - **Physical-unit readouts everywhere.** Once voxel spacing exists (item 2), show
   scale bars, measure distances/areas in µm, and report pixel positions in real
-  units. Cheap once the metadata is parsed. **Difficulty: 2.**
+  units. Cheap once the metadata is parsed. Folded into item 7. **Difficulty: 2.**
 - **Orthogonal views / max-intensity projection** for Z-stacks (XY / XZ / YZ, and
   MIP). Natural follow-on to items 1–2; leverages that all pages are decoded.
   **Difficulty: 3.**
 - **Pyramidal/tiled BigTIFF viewport loading.** Many whole-slide (`.svs`) and
   large OME-TIFFs are pyramidal — decode only the visible tiles at the right
   resolution level. Shares the lazy-loading infra with item 3. **Difficulty: 4.**
-- **Region-of-interest statistics.** Draw a rectangle/polygon, get min/max/mean/std
-  for that region — high value for scientific users, mostly webview UI on top of
-  existing stats code. **Difficulty: 2.**
+- **Region-of-interest statistics.** Superseded by item 7, which covers this as
+  its first deliverable.
 - **Remove geotiff fallback.** Make sure the rust implementation covers all cases currently geotiff covers
+- **Add debayering mode for grey scale images** Have a small menu, where you can select the typical debayering pattern, the offset and also allow infrared output. Then allow selecting the shown channel, rgb, just a single color channel or f.e. an infrared channel. All interactive and quick, thanks to rust. What is typical also done during debayering? Some white balancing or is this not required there?
 - **Testdata:** Keep in mind a lot of test data is currently stored at /Users/florian/Projects/cursor/test_data/testfiles.
 
 ---
@@ -919,3 +1332,9 @@ largely already written and tested in the neighboring project).
    appropriate level for whole-slide and very large OME-TIFF data.
 7. **Lens undistortion.** Independent and ready to schedule when calibrated
    camera workflows become a priority.
+8. **Measurement and ROI analysis (item 7).** The largest unclaimed
+   user-facing niche — no VS Code extension does it, and the incumbents are all
+   separate heavyweight applications. Independent of the format and accelerator
+   work, so it can run in parallel. Start with calibration + ROI tools +
+   measurement table; the threshold/segmentation half is where the genuine
+   workflow improvements over ImageJ live.

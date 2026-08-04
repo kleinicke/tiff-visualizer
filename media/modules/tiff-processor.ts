@@ -1,6 +1,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
+import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, TagEntry } from './tiff-tag-utils.js';
@@ -407,6 +408,11 @@ export class TiffProcessor {
 					const predictor = wasmResult.predictor;
 					const photometricInterpretation = wasmResult.photometricInterpretation;
 					const planarConfig = wasmResult.planarConfiguration;
+					// PhotometricInterpretation 32803 means the file declares itself
+					// a CFA mosaic, so the debayer panel can offer itself. Most
+					// machine-vision TIFFs are untagged grayscale, so a negative
+					// here proves nothing -- the user picks the pattern manually.
+					announceCfaDetection(isDeclaredCfa(photometricInterpretation));
 					const layoutInfo = this._getTiffLayoutInfo(wasmResult);
 					console.log(`[TiffProcessor] Using metadata from WASM: compression=${compression}, predictor=${predictor}`);
 					this._logTiffLayout(layoutInfo);

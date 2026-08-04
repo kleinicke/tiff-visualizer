@@ -349,6 +349,42 @@ export function decode_jpeg_fast(data) {
     return JpegResult.__wrap(ret[0]);
 }
 
+/**
+ * Demosaic a single-channel plane.
+ *
+ * `black`/`white` bracket the sensor's usable range and are applied first;
+ * pass `black = 0`, `white = 0` to skip level normalisation entirely. When
+ * `auto_wb` is set, gray-world gains are computed and the explicit gains are
+ * ignored.
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {string} pattern
+ * @param {string} algorithm
+ * @param {number} offset_x
+ * @param {number} offset_y
+ * @param {number} black
+ * @param {number} white
+ * @param {boolean} auto_wb
+ * @param {number} gain_r
+ * @param {number} gain_g
+ * @param {number} gain_b
+ * @returns {DemosaicResult}
+ */
+export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DemosaicResult.__wrap(ret[0]);
+}
+
 function getArrayF64FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
@@ -358,6 +394,89 @@ function getArrayU16FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
 }
+
+const DemosaicResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_demosaicresult_free(ptr >>> 0, 1));
+/**
+ * Result handed back to JS: interleaved f32, `channels` samples per pixel.
+ */
+export class DemosaicResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(DemosaicResult.prototype);
+        obj.__wbg_ptr = ptr;
+        DemosaicResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DemosaicResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_demosaicresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.demosaicresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get gain_b() {
+        const ret = wasm.demosaicresult_gain_b(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get gain_g() {
+        const ret = wasm.demosaicresult_gain_g(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Gains actually applied, so the UI can show what auto-WB resolved to.
+     * @returns {number}
+     */
+    get gain_r() {
+        const ret = wasm.demosaicresult_gain_r(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.demosaicresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.demosaicresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Moves the buffer out; the result is empty afterwards.
+     * @returns {Float32Array}
+     */
+    take_data() {
+        const ret = wasm.demosaicresult_take_data(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+}
+if (Symbol.dispose) DemosaicResult.prototype[Symbol.dispose] = DemosaicResult.prototype.free;
 
 const ExrResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -599,21 +718,21 @@ export class JpegResult {
      * @returns {number}
      */
     get width() {
-        const ret = wasm.jpegresult_width(this.__wbg_ptr);
+        const ret = wasm.demosaicresult_width(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
     get height() {
-        const ret = wasm.jpegresult_height(this.__wbg_ptr);
+        const ret = wasm.demosaicresult_height(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
     get channels() {
-        const ret = wasm.jpegresult_channels(this.__wbg_ptr);
+        const ret = wasm.demosaicresult_channels(this.__wbg_ptr);
         return ret >>> 0;
     }
 }

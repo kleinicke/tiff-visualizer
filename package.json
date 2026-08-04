@@ -222,6 +222,11 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleDebayer",
+        "title": "Debayer (Demosaic CFA Image)",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.revertToOriginal",
         "title": "Revert to Original Image",
         "category": "TIFF Visualizer"
@@ -325,13 +330,14 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer",
     "test:unit": "npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
     "test:scientific-formats": "node test/scientific-formats-test.js",
 	"test:dicom-dataset": "node test/dicom-dataset-test.js",
     "test:visualization": "node test/visualization-test.js",
+    "test:debayer": "node test/debayer-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",
     "test:control-behavior": "node test/control-behavior-test.js",
@@ -344,6 +350,8 @@
     "test:image-renderer-channels": "node test/image-renderer-channels-test.js",
     "test:collection-switch": "tsc -p tsconfig.json && node test/collection-switch-render-test.js",
     "benchmark:layers": "npm run compile:quick && node test/layer-compositor-benchmark.js",
+    "benchmark:accelerators": "npm run compile:quick && playwright test test/playwright/accelerator-speed.spec.ts --workers=1 --headed",
+    "benchmark:accelerators:software": "npm run compile:quick && playwright test test/playwright/accelerator-speed.spec.ts --workers=1",
     "benchmark:layers:4k": "npm run compile:quick && LAYER_BENCH_PRESET=4k node test/layer-compositor-benchmark.js",
     "benchmark:layers:8k": "npm run compile:quick && LAYER_BENCH_PRESET=8k node test/layer-compositor-benchmark.js",
     "test:ui": "npm run compile && extest setup-and-run out/test/ui/**/*.js",

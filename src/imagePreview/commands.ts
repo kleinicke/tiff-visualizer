@@ -1658,6 +1658,28 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	// Debayer: opens the CFA control panel in the webview. All the actual
+	// controls (pattern, phase, method, levels, white balance, channel view)
+	// live in that panel because they are interactive and interdependent -- a
+	// chain of QuickPicks would be miserable for something you tune by eye.
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleDebayer', async () => {
+		logCommand('toggleDebayer', 'start');
+		const activePreview = previewManager.activePreview;
+		if (!activePreview) {
+			vscode.window.showErrorMessage('No active image preview found.');
+			logCommand('toggleDebayer', 'error', 'No active preview');
+			return;
+		}
+
+		const preview = activePreview as any;
+		if (preview.getWebview) {
+			preview.getWebview().postMessage({ type: 'toggleDebayer' });
+			logCommand('toggleDebayer', 'success');
+		} else {
+			logCommand('toggleDebayer', 'error', 'No webview available');
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.revertToOriginal', async () => {
 		logCommand('revertToOriginal', 'start');
 		const activePreview = previewManager.activePreview;

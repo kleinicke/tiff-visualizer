@@ -2,6 +2,7 @@
 
 import { PerfTrace } from './perf-trace.js';
 import { getColormapLut } from './colormaps.js';
+import { demosaicPlane, extractView, shouldDebayer } from './debayer.js';
 import type { ImageSettings } from './settings-manager.js';
 import type { RenderOptions } from './types.js';
 
@@ -407,6 +408,29 @@ export class ImageRenderer {
      */
     static render(data: Uint8Array | Uint16Array | Float32Array | ArrayLike<number>, width: number, height: number, channels: number, isFloat: boolean, stats: { min: number, max: number } | null | undefined, settings: ImageSettings, options: RenderOptions = {}): ImageData {
         const perfStart = performance.now();
+
+        // Debayer a CFA mosaic before anything else. This is a non-destructive
+        // view transform on the same footing as displayColormap: the caller's
+        // plane is never modified, and the demosaiced buffer is cached so that
+        // gamma/brightness/normalization changes do not re-run interpolation.
+        // Only single-channel data qualifies (see shouldDebayer), so enabling
+        // the mode cannot corrupt an already-demosaiced image.
+        if (shouldDebayer(settings?.debayer, channels)) {
+            const debayer = settings.debayer!;
+            const demosaiced = demosaicPlane(data, width, height, debayer);
+            const view = extractView(demosaiced, debayer.view);
+            data = view.data;
+            channels = view.channels;
+            // Demosaic always emits float, and black/white levelling rescales
+            // into 0..1 -- so the incoming stats and typeMax no longer describe
+            // this buffer and must be recomputed.
+            isFloat = true;
+            if (debayer.whiteLevel > debayer.blackLevel) {
+                options = { ...options, typeMax: 1.0, typeMin: 0 };
+            }
+            stats = ImageStatsCalculator.calculateFloatStats(view.data, width, height, view.channels);
+        }
+
         const result = this._renderInternal(data, width, height, channels, isFloat, stats, settings, options);
 
         // Apply a display colormap (pseudocolor) to single-channel images. This is

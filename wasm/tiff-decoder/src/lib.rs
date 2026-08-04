@@ -4,6 +4,9 @@
 //! through WebAssembly. It's designed to be a drop-in replacement for slow parts of
 //! geotiff.js while maintaining compatibility with existing JavaScript code.
 
+mod demosaic;
+pub use demosaic::{demosaic, DemosaicResult};
+
 use wasm_bindgen::prelude::*;
 use std::io::Cursor;
 use std::mem;
@@ -1599,6 +1602,14 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
 
     let start_time = js_sys::Date::now();
 
+    // CFA (Bayer) files declare PhotometricInterpretation 32803, which the tiff
+    // crate refuses in Decoder::new. Their pixels are an ordinary single-channel
+    // plane, so decode against a copy that says BlackIsZero and put the real
+    // value back afterwards -- the webview keys CFA auto-detection off it.
+    let cfa_patched = demosaic::neutralize_cfa_photometric(data);
+    let data: &[u8] = cfa_patched.as_deref().unwrap_or(data);
+    let cfa_photometric = cfa_patched.as_ref().map(|_| demosaic::PHOTOMETRIC_CFA);
+
     let cursor = Cursor::new(data);
     let mut decoder = Decoder::new(cursor)
         .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
@@ -1666,7 +1677,10 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
     let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor)
         .unwrap_or(1);
     
-    // Get photometric interpretation (default to 1 = BlackIsZero if not found)
+    // Get photometric interpretation (default to 1 = BlackIsZero if not found).
+    // For a neutralized CFA file this reads the substituted BlackIsZero, which
+    // is what the decode paths below should branch on; the real 32803 is put
+    // back only when the result is assembled.
     let photometric_interpretation = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
         .unwrap_or(1);
     
@@ -2062,7 +2076,8 @@ fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result
         sample_format,
         compression,
         predictor,
-        photometric_interpretation,
+        // Report the file's real CFA tag, not the BlackIsZero we substituted.
+        photometric_interpretation: cfa_photometric.unwrap_or(photometric_interpretation),
         planar_configuration,
         rows_per_strip,
         strip_count,

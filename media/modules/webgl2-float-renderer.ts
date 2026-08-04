@@ -87,6 +87,10 @@ export class WebGL2FloatRenderer {
 		if (!ArrayBuffer.isView(params.data)) { return false; }
 		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && params.channels === 3;
 		const wantsScalar = params.channels === 1;
+		// Debayering happens on the CPU inside NormalizationHelper.render(), which
+		// this path bypasses. Decline so the mosaic is not shown as raw grayscale.
+		const debayer = params.settings?.debayer;
+		if (debayer?.enabled && params.channels === 1 && debayer.view !== 'mosaic') { return false; }
 		const wantsColor = !wantsRgb24 && (params.channels === 3 || params.channels === 4);
 		if (params.isFloat) {
 			if (params.data.BYTES_PER_ELEMENT !== 4) { return false; }

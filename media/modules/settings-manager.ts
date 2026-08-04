@@ -1,5 +1,7 @@
 "use strict";
 
+import type { DebayerSettings } from './debayer.js';
+
 export interface NormalizationSettings {
   min: number;
   max: number;
@@ -22,6 +24,7 @@ export interface ImageSettings {
   brightness?: BrightnessSettings;
   nanColor?: string;
   displayColormap?: string;
+  debayer?: DebayerSettings;
   rgbAs24BitGrayscale?: boolean;
   scale24BitFactor?: number;
   normalizedFloatMode?: boolean;
@@ -178,6 +181,10 @@ export class SettingsManager {
       (oldSettings.displayColormap ?? 'none') !== newSettings.displayColormap;
     const gpuAccelerationChanged = newSettings.gpuAcceleration !== undefined &&
       (oldSettings.gpuAcceleration ?? true) !== newSettings.gpuAcceleration;
+    // Compared structurally: the debayer panel replaces the whole object on
+    // every control change, so identity comparison would always report a change.
+    const debayerChanged = newSettings.debayer !== undefined &&
+      JSON.stringify(oldSettings.debayer ?? null) !== JSON.stringify(newSettings.debayer);
 
     const colorPickerModeChanged = newSettings.colorPickerShowModified !== undefined &&
       oldSettings.colorPickerShowModified !== newSettings.colorPickerShowModified;
@@ -193,6 +200,7 @@ export class SettingsManager {
       [floatModeChanged, 'normalizedFloatMode'],
       [nanColorChanged, 'nanColor'],
       [displayColormapChanged, 'displayColormap'],
+      [debayerChanged, 'debayer'],
       [gpuAccelerationChanged, 'gpuAcceleration'],
       [colorPickerModeChanged, 'colorPickerShowModified'],
     ];
@@ -205,7 +213,7 @@ export class SettingsManager {
 
     // If only gamma, brightness, normalization ranges, nanColor, or colorPickerMode changed, it's parameters-only
     if (changes.changed &&
-      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || displayColormapChanged || colorPickerModeChanged) &&
+      ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || displayColormapChanged || debayerChanged || colorPickerModeChanged) &&
         !rgbModeChanged && !scaleModeChanged && !floatModeChanged && !gpuAccelerationChanged)) {
       changes.parametersOnly = true;
     } else if (changes.changedStructure) {

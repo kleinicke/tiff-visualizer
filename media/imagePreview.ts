@@ -16,6 +16,8 @@ import { JxlProcessor } from './modules/jxl-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
+import { DebayerPanel } from './modules/debayer-panel.js';
+import { DEFAULT_DEBAYER, warmUpDebayer, invalidateDebayerCache, shouldDebayer, CFA_DETECTED_EVENT, getLastDebayerGains, type DebayerSettings } from './modules/debayer.js';
 import { MetadataPanel } from './modules/metadata-panel.js';
 import type { MetadataInfo } from './modules/metadata-panel.js';
 import type { TagEntry } from './modules/tiff-tag-utils.js';
@@ -192,6 +194,16 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const metadataPanel = new MetadataPanel(settingsManager, vscode);
+	const debayerPanel = new DebayerPanel(settings => { void handleDebayerSettingsChanged(settings); });
+	// The render path calls into WASM synchronously, so load it up front.
+	warmUpDebayer();
+	// A file that declares itself a CFA mosaic gets the panel opened for it;
+	// the mode still has to be switched on deliberately, so nothing about the
+	// image changes without the user asking.
+	window.addEventListener(CFA_DETECTED_EVENT, (event: Event) => {
+		const detected = (event as CustomEvent).detail?.detected;
+		if (detected && !debayerPanel.isVisible()) { debayerPanel.show(); }
+	});
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
@@ -476,6 +488,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (persistedState.displayColormap) {
 			settingsManager.settings.displayColormap = persistedState.displayColormap;
 		}
+		if (persistedState.debayer) {
+			settingsManager.settings.debayer = persistedState.debayer;
+			debayerPanel.setSettings(persistedState.debayer);
+			if (persistedState.isDebayerPanelVisible) { debayerPanel.show(); }
+		}
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
 		}
@@ -543,6 +560,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			currentResourceUri: settingsManager.settings.resourceUri,
 			colormapConversionState: colormapConversionState,
 			displayColormap: settingsManager.settings.displayColormap,
+			debayer: settingsManager.settings.debayer,
+			isDebayerPanelVisible: debayerPanel.isVisible(),
 			isHistogramVisible: histogramOverlay.getVisibility(),
 			netcdfSelection,
 			// Include zoom so it isn't erased when the app-level state is written
@@ -1736,6 +1755,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		}
 		const base = deriveBaseLayer();
 		if (!base?.data || base.channels < 1 || base.channels > 4) {
+			return false;
+		}
+		// Debayering runs on the CPU inside ImageRenderer.render(), which this
+		// path bypasses entirely. Without this the GPU would keep painting the
+		// raw mosaic and every debayer control would look like a no-op.
+		if (shouldDebayer(settingsManager.settings.debayer, base.channels)) {
 			return false;
 		}
 		const generation = _loadGeneration;
@@ -2982,6 +3007,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				// (hasLoadedImage=false), a stale sendSettingsUpdate from the extension
 				// can carry a different resourceUri — don't let it hijack the in-progress load.
 				else if (oldResourceUri !== newResourceUri && hasLoadedImage) {
+					// The cached demosaic belongs to the outgoing image; drop it so
+					// a full-resolution buffer is not held alive across the switch.
+					invalidateDebayerCache();
 					reloadImage();
 				} else {
 					// Update rendering with new settings, using optimization hints
@@ -3178,6 +3206,44 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				// Apply (or clear) a render-time pseudocolor colormap.
 				await handleSetDisplayColormap(message.colormap || 'none');
 				break;
+
+			case 'toggleDebayer':
+				// Open/close the debayer control panel. Opening it on a
+				// single-channel image turns the mode on straight away, so the
+				// command produces a visible result instead of an inert panel.
+				debayerPanel.toggle();
+				if (debayerPanel.isVisible() && !settingsManager.settings.debayer?.enabled) {
+					// Safe to enable unconditionally: shouldDebayer() ignores the
+					// setting for anything that is not single-channel, so this
+					// cannot disturb an already-demosaiced image.
+					const current = settingsManager.settings.debayer ?? DEFAULT_DEBAYER;
+					debayerPanel.setSettings({ enabled: true });
+					await handleDebayerSettingsChanged({ ...current, enabled: true });
+				}
+				break;
+		}
+	}
+
+	/**
+	 * Apply a debayer settings change and re-render.
+	 *
+	 * Mirrors handleSetDisplayColormap: the raw plane is untouched, the render
+	 * path picks the new settings up, and the demosaic cache means only the
+	 * parameters that actually affect interpolation cause recomputation.
+	 */
+	async function handleDebayerSettingsChanged(settings: DebayerSettings) {
+		settingsManager.settings.debayer = settings;
+		saveState();
+		await updateImageWithNewSettings({
+			changed: true,
+			changedKeys: ['debayer'],
+			parametersOnly: true,
+			changedStructure: false
+		});
+		// Auto WB resolves gains during the render; show the user what it picked.
+		if (settings.autoWb) {
+			const resolved = getLastDebayerGains();
+			if (resolved) { debayerPanel.reportGains(resolved); }
 		}
 	}
 
