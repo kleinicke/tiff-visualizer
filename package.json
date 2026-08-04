@@ -163,12 +163,12 @@
       },
       {
         "command": "tiffVisualizer.selectForCompare",
-        "title": "Select for Compare",
+        "title": "Select Image for Side-by-Side Compare",
         "category": "TIFF Visualizer"
       },
       {
         "command": "tiffVisualizer.compareWithSelected",
-        "title": "Compare with Selected",
+        "title": "Compare Side by Side with Selected",
         "category": "TIFF Visualizer"
       },
       {
@@ -193,7 +193,7 @@
       },
       {
         "command": "tiffVisualizer.openComparisonPanel",
-        "title": "Open Image Comparison Panel",
+        "title": "Open Comparison Gallery (Legacy Renderer)",
         "category": "TIFF Visualizer"
       },
       {

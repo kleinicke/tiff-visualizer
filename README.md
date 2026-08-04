@@ -41,6 +41,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 - **Dynamic Normalization**: Adjust the visualization range interactively, use automatic min/max normalization, or view integer images as normalized float values.
 - **Gamma and Brightness Correction**: Adjust source gamma, target gamma, and brightness while preserving linear-space behavior.
 - **Histogram View**: Show a histogram overlay to inspect the current image distribution while tuning the visualization.
+- **Automatic GPU Rendering**: Normal images, HDR/scientific images, and collections prefer WebGPU automatically, then fall back to WebGL2 and CPU rendering. Layers View retains its explicit backend diagnostics and controls.
 - **Image Collections**: Group related images in one preview and quickly move between them without opening a tab for every file. Add individual images, folders, paths, or wildcard matches from the command palette and editor context menu.
   ![collection](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/Collection.gif)
 - **Layers View**: Open one or more images in a dedicated Layers window for compositing and visual comparison. Imported layered documents retain collapsible nested groups, group visibility and Shift-solo controls, source-compatibility badges, inline renaming, editable/removable filters, persistent group expansion state, and keyboard undo/redo for layer/filter changes.
@@ -59,6 +60,10 @@ Use the status bar or right-click menu to change normalization, gamma, brightnes
 For browsing a related set of files, use **Add Images to Collection** from the command palette or Explorer context menu. The collection overlay shows the current image and lets you navigate or remove entries.
 
 Use **Open Layers View** from the command palette or status bar to create a new Layers window from the currently displayed image. When viewing a collection, choose whether to use only the current image or stack the complete collection. Add further images using the Layers panel's **+** button or **Add Image as Layer**.
+
+Layers View and collections are intentionally exclusive. If a Layers window is active, **Add Images to Collection** explains that the image should be added as a layer instead. Pixel inspection reports the rendered composite there; switching between original and modified source values is intentionally unavailable. A visible histogram follows layer edits using a bounded sample of the rendered composite, while a hidden histogram adds no readback or scheduled work.
+
+For a full-feature comparison, run **Select Image for Side-by-Side Compare**, open the other image, and run **Compare Side by Side with Selected**. This uses VS Code's native editor-group layout with a complete Scientific Image Visualizer on each side, including HDR/scientific decoding, acceleration, histogram, and pixel inspection. VS Code's built-in image diff remains available for browser-native formats, but its internal image renderer cannot be replaced by a custom TIFF/HDR renderer.
 
 Float Image Visualization Options:
 ![float-options](assets/tiffVisualizerFloatOptions.png)

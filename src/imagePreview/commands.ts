@@ -4,7 +4,6 @@ import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
-import { ComparisonPanel } from '../comparisonPanel/comparisonPanel';
 import { getOutputChannel } from '../extension';
 import { scanDicomFolder } from './dicomDataset';
 
@@ -309,11 +308,18 @@ async function addUrisToCollection(
 	activePreview: {
 		addToImageCollection(uri: vscode.Uri): Promise<boolean>;
 		ensureLocalResourceRoots(uris: vscode.Uri[]): void;
+		getViewMode(): 'layers' | 'collection' | 'normal';
 	},
 	uris: vscode.Uri[],
 ): Promise<{ added: number; skipped: number }> {
 	const result = { added: 0, skipped: 0 };
 	if (uris.length === 0) {
+		return result;
+	}
+	if (activePreview.getViewMode() === 'layers') {
+		vscode.window.showInformationMessage(
+			'Image collections are unavailable in Layers View. Use “Add Image as Layer” to add another image to the composition.'
+		);
 		return result;
 	}
 
@@ -1314,7 +1320,10 @@ export function registerImagePreviewCommands(
 		logCommand('browseAndAddToCollection', 'success', `Added ${added}, skipped ${skipped}`);
 	}));
 
-	// Comparison Panel Commands
+	// Full-feature comparison uses VS Code's native editor-group layout. VS Code
+	// does not expose its built-in binary image-diff surface to custom editors,
+	// so opening two custom editors side by side is the only route that preserves
+	// scientific decoding, HDR values, acceleration, histogram, and inspection.
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.selectForCompare', async () => {
 		logCommand('selectForCompare', 'start');
 		const activePreview = previewManager.activePreview;
@@ -1325,15 +1334,12 @@ export function registerImagePreviewCommands(
 		}
 
 		try {
-			// Add current image to the comparison panel
-			const panel = ComparisonPanel.create(context.extensionUri);
-			panel.addImage(activePreview.resource);
-
-			vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
-
-			// Set context to show that we have a comparison image
-			vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', true);
-			logCommand('selectForCompare', 'success', activePreview.resource.fsPath);
+			const selected = activePreview.getCurrentImage();
+			previewManager.setComparisonBase(selected);
+			vscode.window.showInformationMessage(
+				`${path.basename(selected.fsPath)} selected. Open another image and choose “Compare Side by Side with Selected”.`
+			);
+			logCommand('selectForCompare', 'success', selected.fsPath);
 		} catch (error) {
 			logCommand('selectForCompare', 'error', String(error));
 		}
@@ -1349,12 +1355,27 @@ export function registerImagePreviewCommands(
 		}
 
 		try {
-			// Get or create comparison panel and add current image
-			const panel = ComparisonPanel.create(context.extensionUri);
-			panel.addImage(activePreview.resource);
+			const selected = previewManager.getComparisonBase();
+			if (!selected) {
+				vscode.window.showWarningMessage('Select an image for comparison first.');
+				return;
+			}
+			const current = activePreview.getCurrentImage();
+			if (selected.toString() === current.toString()) {
+				vscode.window.showInformationMessage('Open a different image before comparing with the selected image.');
+				return;
+			}
 
-			vscode.window.showInformationMessage(`Added ${activePreview.resource.fsPath.split('/').pop()} to comparison panel.`);
-			logCommand('compareWithSelected', 'success', activePreview.resource.fsPath);
+			await vscode.commands.executeCommand(
+				'vscode.openWith',
+				selected,
+				ImagePreviewManager.getViewTypeForResource(selected),
+				vscode.ViewColumn.Beside,
+			);
+			vscode.window.showInformationMessage(
+				'Opened both images in native VS Code editor groups. Each side has the full visualizer feature set and its own viewport.'
+			);
+			logCommand('compareWithSelected', 'success', `${current.fsPath} ↔ ${selected.fsPath}`);
 		} catch (error) {
 			logCommand('compareWithSelected', 'error', String(error));
 		}
@@ -1668,6 +1689,13 @@ export function registerImagePreviewCommands(
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleColorPickerMode', () => {
 		logCommand('toggleColorPickerMode', 'start');
 		try {
+			if (previewManager.activePreview?.getViewMode() === 'layers') {
+				vscode.window.showInformationMessage(
+					'Original-versus-modified source values are unavailable in Layers View. Pixel inspection reports the rendered layer composite.'
+				);
+				logCommand('toggleColorPickerMode', 'success', 'Unavailable in Layers View');
+				return;
+			}
 			previewManager.settingsManager.toggleColorPickerShowModified();
 			const isEnabled = previewManager.settingsManager.getColorPickerShowModified();
 			const mode = isEnabled ? 'modified values' : 'original values';

@@ -95,40 +95,40 @@ dataset in the viewer.
 Implementation status for loading and navigating the complete logical dataset:
 
 - [x] Extend the OME parser so a plane mapping is
-  `(series, c, z, t) -> { fileName, uuid, ifd }`, rather than only
-  `(c, z, t) -> ifd`. Preserve `Image`/`Pixels` IDs and support both explicit
-  `TiffData` mappings and dimension-order-derived contiguous ranges.
+      `(series, c, z, t) -> { fileName, uuid, ifd }`, rather than only
+      `(c, z, t) -> ifd`. Preserve `Image`/`Pixels` IDs and support both explicit
+      `TiffData` mappings and dimension-order-derived contiguous ranges.
 - [x] When any member TIFF is opened, parse its embedded OME-XML and build a
-  dataset manifest. Resolve relative `FileName` references against the opened
-  file's directory through the extension host and match available siblings.
-  Follow `BinaryOnly MetadataFile` references to either a master OME-TIFF or a
-  standalone companion `.ome`/`.ome.xml` document. Do not require the user to
-  add the files to an ordinary image collection manually.
+      dataset manifest. Resolve relative `FileName` references against the opened
+      file's directory through the extension host and match available siblings.
+      Follow `BinaryOnly MetadataFile` references to either a master OME-TIFF or a
+      standalone companion `.ome`/`.ome.xml` document. Do not require the user to
+      add the files to an ordinary image collection manually.
 - [ ] Support a companion `.ome.xml` entry point as well: opening it should resolve
-  its referenced TIFFs and open the logical dataset. Standalone OME-XML without
-  resolvable pixel files remains useful as metadata, but cannot render an
-  image.
+      its referenced TIFFs and open the logical dataset. Standalone OME-XML without
+      resolvable pixel files remains useful as metadata, but cannot render an
+      image.
 - [x] Keep one dataset-level C/Z/T selection. Changing Z commonly selects a
-  different IFD in the current file; changing C or T may transparently switch
-  to another TIFF and then select its mapped IFD. The controls must reflect the
-  selected logical coordinate, not whichever mapping happened to be parsed
-  last.
+      different IFD in the current file; changing C or T may transparently switch
+      to another TIFF and then select its mapped IFD. The controls must reflect the
+      selected logical coordinate, not whichever mapping happened to be parsed
+      last.
 - [x] Reuse the collection switching infrastructure for smooth
-  visual transitions, while keeping dataset navigation semantically separate
-  from user-created collections. Continue showing the current plane while the
-  target file decodes, show a small dataset-loading indicator, discard stale
-  navigation results, and atomically replace the image when ready.
+      visual transitions, while keeping dataset navigation semantically separate
+      from user-created collections. Continue showing the current plane while the
+      target file decodes, show a small dataset-loading indicator, discard stale
+      navigation results, and atomically replace the image when ready.
 - [ ] Expand the current previous-plane decoded cache to nearby C/Z/T neighbors with a bounded
-  memory policy. Prefer the likely next file/IFD based on navigation direction;
-  avoid eagerly loading an entire large fileset into memory.
+      memory policy. Prefer the likely next file/IFD based on navigation direction;
+      avoid eagerly loading an entire large fileset into memory.
 - [x] Present the fileset as one item with useful context such as
-  `C 1/2 · Z 4/10 · T 12/43` and, where helpful, the current physical
-  filename. Add a dataset/series selector only when the OME-XML contains more
-  than one `Image`/`Pixels` series.
+      `C 1/2 · Z 4/10 · T 12/43` and, where helpful, the current physical
+      filename. Add a dataset/series selector only when the OME-XML contains more
+      than one `Image`/`Pixels` series.
 - [ ] Improve incomplete or moved dataset handling. Missing, unsafe, or
-  inaccessible referenced files should mark only the affected coordinates as
-  unavailable and produce a clear diagnostic listing the unresolved names,
-  rather than silently displaying a plane from the wrong channel/timepoint.
+      inaccessible referenced files should mark only the affected coordinates as
+      unavailable and produce a clear diagnostic listing the unresolved names,
+      rather than silently displaying a plane from the wrong channel/timepoint.
 - [ ] Validate referenced TIFF UUIDs, not only safe paths and file availability.
 
 **Acceptance test:** opening any member of the `tubhiswt-4D` sample discovers
@@ -140,20 +140,20 @@ UUID mismatch, rapid navigation cancellation, and session restore to a plane
 stored in a different member file.
 
 - [x] FITS, native/uncompressed DICOM, DICOM JPEG Baseline, and classic NetCDF
-  (CDF-1/CDF-2) decoding. NetCDF includes variable selection, non-spatial
-  dimension controls, regular raster views, and MPAS `nCells` polygon-mesh
-  projection. NetCDF-4/HDF5 and additional DICOM transfer
-  syntaxes (JPEG Lossless, JPEG-LS, JPEG 2000, RLE, and video) remain part of
-  the heavier codec/container follow-up described below.
+      (CDF-1/CDF-2) decoding. NetCDF includes variable selection, non-spatial
+      dimension controls, regular raster views, and MPAS `nCells` polygon-mesh
+      projection. NetCDF-4/HDF5 and additional DICOM transfer
+      syntaxes (JPEG Lossless, JPEG-LS, JPEG 2000, RLE, and video) remain part of
+      the heavier codec/container follow-up described below.
 - [x] DICOM folder datasets: an **Open Folder as DICOM Dataset** command detects
-  extensionless objects by content, ignores non-image objects, deduplicates SOP
-  instances, groups Series Instance UIDs, spatially orders slices from image
-  orientation/position with Instance Number fallback, and exposes series/slice
-  navigation through the shared dataset UI. Explicit temporal-position and echo
-  dimensions become additional axes. Basic multi-frame objects expose a Frame
-  axis, including JPEG Baseline frames. Enhanced multi-frame functional-group
-  semantics, additional compressed transfer syntaxes, and less-standard
-  acquisition dimensions remain follow-ups.
+      extensionless objects by content, ignores non-image objects, deduplicates SOP
+      instances, groups Series Instance UIDs, spatially orders slices from image
+      orientation/position with Instance Number fallback, and exposes series/slice
+      navigation through the shared dataset UI. Explicit temporal-position and echo
+      dimensions become additional axes. Basic multi-frame objects expose a Frame
+      axis, including JPEG Baseline frames. Enhanced multi-frame functional-group
+      semantics, additional compressed transfer syntaxes, and less-standard
+      acquisition dimensions remain follow-ups.
 
 ---
 
@@ -813,7 +813,7 @@ be slotted in whenever, including before OME-TIFF.
 
 **Reuse from ply-visualizer:** the neighboring `ply-visualizer` project already
 has most of the hard math. Its WASM crate lives at
-`ply-visualizer/wasm/tiff-decoder/src/camera_models.rs` — note it's the *same*
+`ply-visualizer/wasm/tiff-decoder/src/camera_models.rs` — note it's the _same_
 crate name (`tiff-wasm`) as this project's `wasm/tiff-decoder`, so porting is
 close to a direct copy, not a reimplementation. It implements `project`/
 `unproject` for six models (`pinhole-ideal`, `pinhole-opencv`,
@@ -827,7 +827,7 @@ handling (form + YAML parsing) is in `depth/calibrationForm.ts` /
 
 **The gap ply-visualizer doesn't fill:** it uses these models to project 3D
 points into pixel space for depth/point-cloud work, but never maps a
-rectified *image* back through per-pixel remapping — there's no "undistort this
+rectified _image_ back through per-pixel remapping — there's no "undistort this
 2D image" path today. That's the actual new work here:
 
 - For each output (rectified) pixel, cast a ray and run the model's forward
@@ -875,19 +875,47 @@ largely already written and tested in the neighboring project).
 
 ---
 
-## Suggested sequencing
+## Current hardening milestone — implemented
 
-1. **Multi-IFD decoding primitive** (item 0) — unblocks everything.
-2. **Multi-page navigation** (item 1) — highest value-per-effort.
-3. **OME-TIFF** (item 2) — the flagship feature; reuses layers + navigation.
-4. **FITS + DICOM** (item 4) — broad, tractable audiences.
-5. **OME-Zarr** (item 3, local then remote) — deferring HDF5 and the proprietary
-   microscopy formats until there's demand.
-6. **Layered-document foundation + ORA** (item 5) — introduce the dual preview/
-   reconstruction model and validate alpha, masks, groups, and professional
-   blend modes against the simplest open interchange format.
-7. **KRA preview, then PSD and XCF layer inspection** (item 5) — take the cheap
-   authoritative-preview wins first and expand reconstruction fidelity by
-   measured visual impact; keep Affinity limited to validated embedded previews.
-8. **Lens undistortion** (item 6) — independent of the format sequencing and
-   suitable to schedule whenever camera workflows become the priority.
+- [x] Replace the lightweight comparison-panel path for **Select for Compare** /
+      **Compare with Selected** with VS Code's native side-by-side editor layout.
+      Each side is a complete custom editor, so TIFF/HDR decoding, histogram,
+      pixel inspection, and acceleration remain available.
+- [x] Compare the currently displayed collection or dataset entry, not merely
+      the URI that originally created the editor.
+- [x] Refresh the Layers histogram from the rendered composite after edits on
+      every compositor backend.
+- [x] Keep hidden-histogram cost at zero readbacks/allocations/timers; when
+      visible, cap composite sampling at 262,144 pixels and debounce gestures.
+- [x] Explain that collections cannot be added inside Layers View and direct
+      users to **Add Image as Layer**.
+- [x] Hide/block original-versus-modified color-picker switching in Layers View,
+      where pixel inspection represents the rendered composite.
+- [x] Prefer WebGPU automatically for supported normal, HDR/scientific, dataset,
+      and collection rendering; retain WebGL2 and CPU fallback, honor live GPU
+      configuration changes, and expose the active renderer in Metadata.
+
+## Suggested next steps
+
+1. **Accelerator conformance and release budgets.** Expand the shared golden
+   corpus so WebGPU, WebGL2, Wasm, and JavaScript are compared across normal,
+   collection/dataset, and Layers surfaces, including HDR, NaN/Infinity,
+   1/2/3/4 channels, normalization, gamma, colormaps, masks, and large images.
+   Record cold/warm upload, settings-only rerender, canvas-copy, and histogram
+   costs on supported desktop and web VS Code targets.
+2. **Unify view-state semantics.** Give side-by-side full editors optional
+   synchronized zoom/pan and make the active backend/fallback reason visible
+   without opening developer tools. Keep settings session-wide, but viewports
+   independent unless synchronization is explicitly enabled.
+3. **Large-image GPU tiling.** Add texture tiling for normal and Layers views
+   beyond a device's `MAX_TEXTURE_SIZE`, retaining WebGL2/Wasm/CPU fallback
+   until all tiles are resident and avoiding full-canvas CPU readback.
+4. **OME channel-to-layer compositing.** This is the strongest user-facing next
+   feature now that multidimensional navigation and the layer engine both
+   exist; add per-channel tint/colormap settings and a merged channel view.
+5. **OME-Zarr, local first.** Reuse dataset navigation, then add chunked remote
+   access once local hierarchy, metadata, and cache behavior are stable.
+6. **Pyramidal/tiled viewport loading.** Decode only visible tiles at the
+   appropriate level for whole-slide and very large OME-TIFF data.
+7. **Lens undistortion.** Independent and ready to schedule when calibrated
+   camera workflows become a priority.

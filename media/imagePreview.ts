@@ -36,6 +36,7 @@ import { WebGPULayerCompositor } from './modules/webgpu-layer-compositor.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
+import type { Layer } from './modules/layer-compositor.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { installRangeDoubleClickReset } from './modules/range-controls.js';
@@ -186,6 +187,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	layerCompositorWorker.start();
 	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
+	const normalWebGpuCompositor = new WebGPULayerCompositor();
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
@@ -206,6 +208,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	function disposeWebglRenderers() {
 		layerGpuCompositor.dispose();
 		layerWebGpuCompositor.dispose();
+		normalWebGpuCompositor.dispose();
+		_normalRenderBackend = 'cpu';
 		for (const p of allProcessors) {
 			// Not every processor class exposes a _webglRenderer field; cast is a
 			// pre-existing (documented) type-only workaround, no behavior change.
@@ -411,6 +415,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let currentLoadFormat = '';
 	let currentLoadDecodeInfo: { engine: string, durationMs: number } | null = null;
 	let _deferredHistogramTimer: number | null = null;
+	let _layerHistogramTimer: number | null = null;
+	let _layerHistogramCanvas: HTMLCanvasElement | null = null;
+	let _normalRenderBackend: 'webgpu' | 'webgl2' | 'cpu' = 'cpu';
+	let _normalWebGpuFailureGeneration = -1;
 	let _previousDecodedImageCache: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 	let _restoreDecodedImageCandidate: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 	let _outgoingImageElement: HTMLElement | null = null;
@@ -1689,6 +1697,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
 			case 'HDR': return lastRawToLayer(hdrProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
+			case 'TGA': return lastRawToLayer(tgaProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'Web Image': return lastRawToLayer(webImageProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'JXL': return lastRawToLayer(jxlProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, scientificTypeInfo(fitsProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, scientificTypeInfo(dicomProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, scientificTypeInfo(netcdfProcessor), name, uri) || baseFromCanvas(name, uri);
@@ -1699,6 +1710,92 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			}
 			default: return baseFromCanvas(name, uri);
 		}
+	}
+
+	function hasRawNormalWebGpuSource(): boolean {
+		return currentLoadFormat === 'TIFF' || currentLoadFormat === 'EXR' ||
+			currentLoadFormat === 'PFM' || currentLoadFormat === 'PPM/PGM' ||
+			currentLoadFormat === 'PNG/JPEG' || currentLoadFormat === 'NPY/NPZ' ||
+			currentLoadFormat === 'HDR' || currentLoadFormat === 'TGA' ||
+			currentLoadFormat === 'Web Image' || currentLoadFormat === 'JXL' ||
+			currentLoadFormat === 'FITS' ||
+			currentLoadFormat === 'DICOM' || currentLoadFormat === 'NetCDF' ||
+			currentLoadFormat === 'Layered Document';
+	}
+
+	/**
+	 * Normal and collection views have no backend selector: prefer WebGPU, then
+	 * let the existing WebGL2/CPU processor path take over on unsupported
+	 * devices or sources. This uses the same retained renderer as Layers, so
+	 * settings-only changes reuse uploaded source textures.
+	 */
+	async function renderNormalWithWebGpu(): Promise<boolean> {
+		if (layerManager.active || settingsManager.settings.gpuAcceleration === false ||
+			!(navigator as any).gpu || !canvas || !hasRawNormalWebGpuSource()) {
+			return false;
+		}
+		const base = deriveBaseLayer();
+		if (!base?.data || base.channels < 1 || base.channels > 4) {
+			return false;
+		}
+		const generation = _loadGeneration;
+		const layer: Layer = {
+			...base,
+			id: 'normal-image',
+			kind: 'raster',
+			visible: true,
+			opacity: 1,
+			blendMode: 'normal',
+			offsetX: 0,
+			offsetY: 0,
+		};
+		try {
+			const { canvas: surface, timing } = await normalWebGpuCompositor.renderWithMetrics(
+				[layer], base.width, base.height, 1,
+				settingsManager.settings, getNanColorObj(), false,
+			);
+			if (!surface || generation !== _loadGeneration || layerManager.active || !canvas) {
+				return false;
+			}
+			const ctx = ensure2dCanvasContext();
+			if (!ctx) { return false; }
+			if (ctx.canvas.width !== base.width || ctx.canvas.height !== base.height) {
+				ctx.canvas.width = base.width;
+				ctx.canvas.height = base.height;
+			}
+			ctx.save();
+			ctx.globalCompositeOperation = 'copy';
+			ctx.imageSmoothingEnabled = false;
+			ctx.drawImage(surface, 0, 0);
+			ctx.restore();
+			_normalRenderBackend = 'webgpu';
+			PerfTrace.detail('normal-webgpu-render', timing.renderMs);
+			logToOutput(
+				`[Renderer] ${currentLoadFormat}: WebGPU (${base.width}×${base.height}, ` +
+				`${timing.compositionCacheHit ? 'retained' : 'uploaded'}, ${timing.renderMs.toFixed(1)}ms)`
+			);
+			updateHistogramData();
+			return true;
+		} catch (error) {
+			_normalRenderBackend = 'cpu';
+			if (_normalWebGpuFailureGeneration !== generation) {
+				_normalWebGpuFailureGeneration = generation;
+				logToOutput(`[Renderer] ${currentLoadFormat}: WebGPU unavailable; falling back to WebGL2/CPU (${String(error)})`);
+			}
+			return false;
+		}
+	}
+
+	function clearPendingNormalRender(): void {
+		for (const processor of allProcessors) {
+			if ('_pendingRenderData' in processor) {
+				(processor as any)._pendingRenderData = null;
+			}
+			if ('_isInitialLoad' in processor) {
+				(processor as any)._isInitialLoad = false;
+			}
+		}
+		vscode.postMessage({ type: 'refresh-status' });
 	}
 
 	/**
@@ -1931,6 +2028,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				ctx.imageSmoothingEnabled = true;
 				ctx.drawImage(gpuSurface, 0, 0, fullWidth, fullHeight);
 				ctx.restore();
+				scheduleLayerHistogramRefresh(stateRevision, interactive);
 				const displayedAt = performance.now();
 				if (interactive) {
 					recordLayerPreview(stateRevision, 'webgpu', gpuSurface.width, gpuSurface.height, timing.renderMs);
@@ -1998,6 +2096,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			ctx.imageSmoothingEnabled = true;
 			ctx.drawImage(gpuSurface, 0, 0, fullWidth, fullHeight);
 			ctx.restore();
+			scheduleLayerHistogramRefresh(stateRevision, interactive);
 			const displayedAt = performance.now();
 			const gpuRenderMs = renderFinished - gpuStarted;
 			if (interactive) {
@@ -2063,9 +2162,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 						stateRevision === _layerStateRevision && layerManager.active);
 					if (stateRevision === _layerStateRevision && layerManager.active) {
 						primaryImageData = imageData;
-						updateHistogramData();
 					}
 				}
+				scheduleLayerHistogramRefresh(stateRevision, interactive);
 				if (interactive && stateRevision === _layerStateRevision && layerManager.active) {
 					const timing = (result as typeof result & { compositorTiming?: { backend: string; durationMs: number } }).compositorTiming;
 					recordLayerPreview(
@@ -2708,6 +2807,19 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				const updateApplyDuration = performance.now() - updateApplyStart;
 				const newResourceUri = settingsManager.settings.resourceUri;
 				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
+				if (changes.changedKeys.includes('gpuAcceleration')) {
+					if (settingsManager.settings.gpuAcceleration === false) {
+						normalWebGpuCompositor.dispose();
+					} else {
+						normalWebGpuCompositor.retry();
+					}
+					if (_layerCompositorSelection === 'auto') {
+						// Select before the settings rerender below so an automatic
+						// Layers view cannot keep using a now-disabled GPU backend.
+						coldResetLayerCompositorBackends();
+						await selectAutomaticLayerBackend(false, true);
+					}
+				}
 
 				// formatInfo is posted from inside processTiff(), before handleTiff()
 				// receives and installs its canvas. Do not drop the immediate
@@ -2736,7 +2848,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					let deferredCanvasAlreadyRendered = false;
 					const pendingScientific = scientificProcessors.find(processor => !!processor._pendingRenderData);
 
-					if (tiffProcessor._pendingRenderData) {
+					if (await renderNormalWithWebGpu()) {
+						clearPendingNormalRender();
+						// A tiny non-null marker is sufficient here: WebGPU already
+						// populated the real canvas and all scientific values remain
+						// available from the processor's raw buffer.
+						deferredImageData = primaryImageData || new ImageData(1, 1);
+						primaryImageData = deferredImageData;
+						deferredCanvasAlreadyRendered = true;
+					} else if (tiffProcessor._pendingRenderData) {
 						deferredImageData = await tiffProcessor.performDeferredRender({
 							collectHistogram: histogramOverlay.getVisibility(),
 							targetCanvas: canvas,
@@ -3223,6 +3343,32 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				stats = null;
 			}
 		}
+		if (layerManager.active) {
+			fileFields['Renderer'] = _layerCompositorBackend === 'gpu' ? 'WebGL2' :
+				_layerCompositorBackend === 'webgpu' ? 'WebGPU' :
+					_layerCompositorBackend === 'wasm' ? 'Rust/Wasm' : 'JavaScript';
+		} else {
+			const activeProcessor = currentLoadFormat === 'TIFF' ? tiffProcessor :
+				currentLoadFormat === 'EXR' ? exrProcessor :
+					currentLoadFormat === 'PFM' ? pfmProcessor :
+						currentLoadFormat === 'PPM/PGM' ? ppmProcessor :
+							currentLoadFormat === 'PNG/JPEG' ? pngProcessor :
+								currentLoadFormat === 'NPY/NPZ' ? npyProcessor :
+									currentLoadFormat === 'HDR' ? hdrProcessor :
+										currentLoadFormat === 'TGA' ? tgaProcessor :
+											currentLoadFormat === 'JXL' ? jxlProcessor :
+												currentLoadFormat === 'FITS' ? fitsProcessor :
+													currentLoadFormat === 'DICOM' ? dicomProcessor :
+														currentLoadFormat === 'NetCDF' ? netcdfProcessor :
+															currentLoadFormat === 'Layered Document' ? layeredPreviewProcessor :
+																webImageProcessor;
+			const processorUsedWebGl = (activeProcessor as any)?._lastRenderUsedWebGL === true;
+			if (_normalRenderBackend !== 'webgpu') {
+				_normalRenderBackend = processorUsedWebGl ? 'webgl2' : 'cpu';
+			}
+			fileFields['Renderer'] = _normalRenderBackend === 'webgpu' ? 'WebGPU' :
+				_normalRenderBackend === 'webgl2' ? 'WebGL2' : 'CPU';
+		}
 
 		return { formatLabel, fileFields, tags, stats };
 	}
@@ -3243,6 +3389,49 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	}
 
 	/**
+	 * Refresh the Layers histogram from the rendered composite. This deliberately
+	 * starts with the visibility check: when the histogram is closed, layer edits
+	 * allocate nothing, read back nothing, and schedule no work. When visible, a
+	 * capped downsample keeps the readback bounded while still tracking every
+	 * compositor backend and every layer edit.
+	 */
+	function scheduleLayerHistogramRefresh(stateRevision = _layerStateRevision, interactive = false) {
+		if (!histogramOverlay.getVisibility() || !layerManager.active || !canvas) {
+			return;
+		}
+		if (_layerHistogramTimer !== null) {
+			clearTimeout(_layerHistogramTimer);
+		}
+		_layerHistogramTimer = window.setTimeout(() => {
+			_layerHistogramTimer = null;
+			if (!histogramOverlay.getVisibility() || !layerManager.active ||
+				stateRevision !== _layerStateRevision || !canvas) {
+				return;
+			}
+			const sourceWidth = canvas.width;
+			const sourceHeight = canvas.height;
+			if (sourceWidth < 1 || sourceHeight < 1) { return; }
+			const maxPixels = 262_144;
+			const scale = Math.min(1, Math.sqrt(maxPixels / (sourceWidth * sourceHeight)));
+			const width = Math.max(1, Math.round(sourceWidth * scale));
+			const height = Math.max(1, Math.round(sourceHeight * scale));
+			_layerHistogramCanvas ||= document.createElement('canvas');
+			if (_layerHistogramCanvas.width !== width) { _layerHistogramCanvas.width = width; }
+			if (_layerHistogramCanvas.height !== height) { _layerHistogramCanvas.height = height; }
+			const ctx = _layerHistogramCanvas.getContext('2d', { willReadFrequently: true });
+			if (!ctx) { return; }
+			ctx.clearRect(0, 0, width, height);
+			ctx.drawImage(canvas, 0, 0, width, height);
+			const displayedComposite = ctx.getImageData(0, 0, width, height);
+			PerfTrace.mark('histogram-layer-composite');
+			histogramOverlay.update(displayedComposite, {
+				settings: settingsManager.settings,
+				sampleStep: 1,
+			});
+		}, interactive ? 80 : 0);
+	}
+
+	/**
 	 * Update histogram with current image data.
 	 * Uses raw image data when available for accurate value representation.
 	 */
@@ -3254,6 +3443,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 
 		// Only update histogram if it's visible - this is expensive
 		if (!histogramOverlay.getVisibility()) {
+			return;
+		}
+		if (layerManager.active && layerManager.hasCompositeStack()) {
+			scheduleLayerHistogramRefresh();
 			return;
 		}
 		try {
@@ -3692,6 +3885,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// source — re-render it (so normalization / gamma / display-colormap apply).
 		if (decodedColormapSource) {
 			await renderDecodedColormapSource();
+			return;
+		}
+
+		// Normal and collection views select WebGPU automatically. If it cannot
+		// render this device/source, continue into the existing WebGL2-first
+		// processor paths and finally the CPU fallback.
+		if (await renderNormalWithWebGpu()) {
 			return;
 		}
 
@@ -4284,7 +4484,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			// Add Toggle Color Picker Mode option - ONLY in Gamma Mode
 			// In other modes, we always show original values
 			const isGammaMode = settingsManager.settings.normalization && settingsManager.settings.normalization.gammaMode;
-			if (isGammaMode) {
+			if (isGammaMode && !layerManager.active) {
 				const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
 				const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
 				menu.appendChild(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {

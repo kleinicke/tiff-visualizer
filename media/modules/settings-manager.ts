@@ -176,6 +176,8 @@ export class SettingsManager {
       (oldSettings.nanColor ?? 'black') !== newSettings.nanColor;
     const displayColormapChanged = newSettings.displayColormap !== undefined &&
       (oldSettings.displayColormap ?? 'none') !== newSettings.displayColormap;
+    const gpuAccelerationChanged = newSettings.gpuAcceleration !== undefined &&
+      (oldSettings.gpuAcceleration ?? true) !== newSettings.gpuAcceleration;
 
     const colorPickerModeChanged = newSettings.colorPickerShowModified !== undefined &&
       oldSettings.colorPickerShowModified !== newSettings.colorPickerShowModified;
@@ -191,19 +193,20 @@ export class SettingsManager {
       [floatModeChanged, 'normalizedFloatMode'],
       [nanColorChanged, 'nanColor'],
       [displayColormapChanged, 'displayColormap'],
+      [gpuAccelerationChanged, 'gpuAcceleration'],
       [colorPickerModeChanged, 'colorPickerShowModified'],
     ];
     changes.changedKeys = changedFields.filter(([changed]) => changed).map(([, key]) => key);
     changes.changed = changes.changedKeys.length > 0;
 
-    if (rgbModeChanged || scaleModeChanged || floatModeChanged) {
+    if (rgbModeChanged || scaleModeChanged || floatModeChanged || gpuAccelerationChanged) {
       changes.changedStructure = true;
     }
 
     // If only gamma, brightness, normalization ranges, nanColor, or colorPickerMode changed, it's parameters-only
     if (changes.changed &&
       ((gammaChanged || brightnessChanged || normRangeChanged || normAutoChanged || normGammaModeChanged || nanColorChanged || displayColormapChanged || colorPickerModeChanged) &&
-        !rgbModeChanged && !scaleModeChanged && !floatModeChanged)) {
+        !rgbModeChanged && !scaleModeChanged && !floatModeChanged && !gpuAccelerationChanged)) {
       changes.parametersOnly = true;
     } else if (changes.changedStructure) {
       console.log('⚠️ Structural changes detected:', {

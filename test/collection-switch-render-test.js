@@ -38,6 +38,8 @@
  *     AppStateManager (out/imagePreview/*.js) through two formatInfo posts
  *     of the same 'tiff-int' formatType (12-bit then 14-bit, mirroring
  *     shapes_lzw_12bps.tif / shapes_lzw_14bps.tif in an image collection).
+ *     When the standalone test modules are not emitted, the same invariant is
+ *     checked directly in the TypeScript source instead of silently skipping.
  *   - Part 2 (webview source invariant): the deferred-render completion
  *     branch in media/imagePreview.js must acquire its 2D context via
  *     ensure2dCanvasContext(), not a raw canvas.getContext('2d', ...), so
@@ -60,7 +62,17 @@ function testMessageFlowReplaysOnSameFormatTypeSwitch() {
 	const extensionJsPath = path.join(__dirname, '..', 'out', 'extension.js');
 
 	if (!fs.existsSync(appStateModulePath) || !fs.existsSync(messageHandlersModulePath)) {
-		console.log('⚠️  out/imagePreview not built — run `npm run compile` first. Skipping.');
+		const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'messageHandlers.ts'), 'utf8');
+		const handlerStart = source.indexOf('class FormatInfoMessageHandler');
+		const handlerEnd = source.indexOf('class ReadyMessageHandler', handlerStart);
+		assert.ok(handlerStart !== -1 && handlerEnd > handlerStart, 'expected FormatInfoMessageHandler source');
+		const handler = source.slice(handlerStart, handlerEnd);
+		assert.match(
+			handler,
+			/if \(message\.value && message\.value\.isInitialLoad\)[\s\S]*?postMessage\(\{[\s\S]*?type: 'updateSettings'[\s\S]*?isInitialRender: true/,
+			'every initial formatInfo message must unconditionally trigger its deferred render'
+		);
+		console.log('✅ same-formatType collection switch keeps the unconditional initial-render reply (source invariant)');
 		return;
 	}
 
@@ -224,12 +236,51 @@ function testNetCdfControlsUseSeamlessReloads() {
 	console.log('✅ NetCDF variable and dimension controls use seamless decoder reloads');
 }
 
+function testViewModeAndAcceleratorConsistency() {
+	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
+	const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'modules', 'settings-manager.ts'), 'utf8');
+	const commandsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'commands.ts'), 'utf8');
+
+	assert.match(webviewSource, /if \(await renderNormalWithWebGpu\(\)\)[\s\S]*?else if \(tiffProcessor\._pendingRenderData\)/,
+		'initial normal/HDR rendering must try WebGPU before processor WebGL2/CPU fallbacks');
+	assert.match(webviewSource, /gpuAcceleration === false[\s\S]*?!\(navigator as any\)\.gpu/,
+		'normal WebGPU selection must honor the GPU setting and device availability');
+	assert.match(webviewSource, /currentLoadFormat === 'TGA'[\s\S]*?currentLoadFormat === 'Web Image'[\s\S]*?currentLoadFormat === 'JXL'/,
+		'TGA, browser-native formats, and JXL must participate in automatic WebGPU selection');
+	assert.match(settingsSource, /gpuAccelerationChanged[\s\S]*?\[gpuAccelerationChanged, 'gpuAcceleration'\]/,
+		'live GPU configuration changes must be tracked and cause a rerender');
+	assert.match(webviewSource, /changes\.changedKeys\.includes\('gpuAcceleration'\)[\s\S]*?coldResetLayerCompositorBackends\(\)[\s\S]*?selectAutomaticLayerBackend/,
+		'automatic Layers rendering must reselect and release its backend when GPU acceleration changes');
+
+	const histogramStart = webviewSource.indexOf('function scheduleLayerHistogramRefresh');
+	const histogramEnd = webviewSource.indexOf('/**', histogramStart + 20);
+	const histogramHelper = webviewSource.slice(histogramStart, histogramEnd);
+	assert.match(histogramHelper, /^function scheduleLayerHistogramRefresh[\s\S]*?if \(!histogramOverlay\.getVisibility\(\)/,
+		'Layers histogram work must begin with the hidden-state guard');
+	assert.ok(
+		histogramHelper.indexOf('if (!histogramOverlay.getVisibility()') < histogramHelper.indexOf("document.createElement('canvas')"),
+		'the hidden-state guard must run before any histogram canvas allocation'
+	);
+	assert.match(histogramHelper, /const maxPixels = 262_144/,
+		'visible Layers histogram sampling must remain explicitly bounded');
+
+	assert.match(commandsSource, /selectForCompare[\s\S]*?activePreview\.getCurrentImage\(\)/,
+		'comparison selection must use the displayed collection/dataset image');
+	assert.match(commandsSource, /compareWithSelected[\s\S]*?'vscode\.openWith'[\s\S]*?vscode\.ViewColumn\.Beside/,
+		'full-feature comparison must use native VS Code side-by-side editor groups');
+	assert.match(commandsSource, /getViewMode\(\) === 'layers'[\s\S]*?Add Image as Layer/,
+		'collection commands must explain the Layers View restriction');
+
+	console.log('✅ view modes share WebGPU-first rendering, bounded live Layers histograms, and full-editor comparison');
+}
+
 function main() {
 	console.log('🧪 Running collection-switch render regression tests...\n');
 	testMessageFlowReplaysOnSameFormatTypeSwitch();
 	testDeferredRenderUsesSafeCanvasContextHelper();
 	testSwitchKeepsOutgoingFrameUntilReplacementIsReady();
 	testNetCdfControlsUseSeamlessReloads();
+	testViewModeAndAcceleratorConsistency();
 	console.log('\n🎉 All collection-switch render tests passed.\n');
 }
 
