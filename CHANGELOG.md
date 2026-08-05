@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add full in-editor documentation. **TIFF Visualizer: Show Documentation**
+  (Command Palette, or the right-click menu inside an open image) opens it in
+  VS Code's markdown preview. Twelve pages covering formats, viewing,
+  normalization, datasets, collections, measurement, layers, export, a generated
+  command reference, and troubleshooting. Nothing opens on install.
+- `docs/commands.md` is generated from `package.json` by
+  `npm run docs:commands`; `pretest` fails if it is stale.
+
 - Add a **Measure** panel (context menu, or Ctrl/Cmd+Shift+M) with ROI drawing,
   measurements, thresholding, and particle analysis. Nothing about it is visible
   until the panel is opened.
@@ -45,8 +53,18 @@
 - Exported CSV, scripts, and spreadsheets open in a side editor without stealing
   focus, so the image preview stays visible and the measurement session is
   untouched.
-- Measure commands are available from the command palette: open the panel, save
-  or load ROIs, export results, and clear all ROIs.
+- **Measure** is available from the command palette.
+- The Segment tab leads with a draggable histogram: drag either edge of the
+  shaded band to set the threshold range and watch the mask on the image follow.
+- Global and local threshold methods are one list, so the hover preview always
+  shows what clicking would actually apply. Previously a local method could be
+  selected while the gallery kept previewing a global cut.
+- The stability curve is click- and drag-scrubbable, and picks the value under
+  the cursor instead of one offset by the plot margin.
+- Mask and ROI visibility toggle from the panel header or with M and O, and
+  holding H hides everything to compare against the raw image.
+- Hovering a row in the results table highlights its object on the image, so
+  finding an object no longer requires selecting it.
 - Results export in long/tidy form with provenance columns on every row, as CSV,
   German-locale CSV (semicolon separator, comma decimal mark), or `.xlsx`.
   Grouping columns can be captured from the filename, derived columns from

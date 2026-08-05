@@ -80,6 +80,12 @@ Float Image Visualization Options:
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.
 
+## Documentation
+
+Full documentation ships with the extension: run **TIFF Visualizer: Show Documentation** from the Command Palette, or right-click inside an open image and choose **Show Documentation**. It opens in VS Code's markdown preview — no browser needed.
+
+You can also read it on GitHub: [documentation index](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/index.md) — [formats](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/formats.md) · [viewing](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/viewing.md) · [normalization & gamma](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/rendering.md) · [measurement](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/measure.md) · [layers](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/layers.md) · [commands](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/commands.md) · [troubleshooting](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/troubleshooting.md)
+
 ## Feature Requests and Issues
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/tiff-visualizer/issues).

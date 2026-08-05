@@ -128,6 +128,12 @@ export class RoiOverlay {
 	private showScaleBar = true;
 	private showLabels = true;
 	private redrawHandle = 0;
+	/** ROI under the cursor in the results table or ROI list. */
+	private hoveredRoiId: string | null = null;
+	private showRois = true;
+	private showMask = true;
+	/** Held-key peek: everything measurement-related is hidden while true. */
+	private peeking = false;
 
 	private maskPreview: MaskPreview | null = null;
 	/** Rendered form of `maskPreview`, rebuilt only when the preview changes. */
@@ -157,6 +163,13 @@ export class RoiOverlay {
 		this.canvas.addEventListener('mousemove', e => this.onMouseMove(e));
 		this.canvas.addEventListener('mouseup', e => this.onMouseUp(e));
 		this.canvas.addEventListener('mouseleave', () => this.onMouseLeave());
+		// The container's click handler zooms the image. The overlay is a child of
+		// that container, so without swallowing the click here every stroke drawn
+		// with a tool would also zoom — most visibly when finishing a calibration
+		// line, where the zoom then invalidates the distance just measured.
+		this.canvas.addEventListener('click', e => {
+			if (this.tool !== 'select') { e.preventDefault(); e.stopPropagation(); }
+		});
 		this.canvas.addEventListener('dblclick', e => this.onDoubleClick(e));
 		this.canvas.addEventListener('contextmenu', e => this.onContextMenu(e));
 		this.canvas.addEventListener('wheel', e => this.onWheel(e), { passive: false });
@@ -208,6 +221,34 @@ export class RoiOverlay {
 
 	setShowScaleBar(show: boolean): void { this.showScaleBar = show; this.scheduleRedraw(); }
 	setShowLabels(show: boolean): void { this.showLabels = show; this.scheduleRedraw(); }
+
+	setShowRois(show: boolean): void { this.showRois = show; this.scheduleRedraw(); }
+	getShowRois(): boolean { return this.showRois; }
+	setShowMask(show: boolean): void { this.showMask = show; this.scheduleRedraw(); }
+	getShowMask(): boolean { return this.showMask; }
+
+	/**
+	 * Momentarily hide everything the subsystem draws.
+	 *
+	 * Bound to holding a key, because comparing an overlay against the image
+	 * underneath is a glance, not a setting: reaching for a checkbox in another
+	 * tab to look and then reaching back is enough friction that people stop
+	 * checking their own segmentation.
+	 */
+	setPeeking(peeking: boolean): void {
+		if (this.peeking === peeking) { return; }
+		this.peeking = peeking;
+		this.scheduleRedraw();
+	}
+
+	isPeeking(): boolean { return this.peeking; }
+
+	/** Highlight an ROI without selecting it, for table/list hover. */
+	setHoveredRoi(id: string | null): void {
+		if (this.hoveredRoiId === id) { return; }
+		this.hoveredRoiId = id;
+		this.scheduleRedraw();
+	}
 
 	/** Drop caches that depend on the image content. */
 	invalidateImage(): void {
@@ -376,8 +417,10 @@ export class RoiOverlay {
 		ctx.rect(rect.left, rect.top, rect.width, rect.height);
 		ctx.clip();
 
+		if (this.peeking) { ctx.restore(); return; }
+
 		// Segmentation preview first, so ROI outlines stay legible on top of it.
-		const previewCanvas = this.ensureMaskPreviewCanvas();
+		const previewCanvas = this.showMask ? this.ensureMaskPreviewCanvas() : null;
 		if (previewCanvas) {
 			// Nearest-neighbour: a smoothed mask edge would suggest a precision
 			// the segmentation does not have, and at high zoom it would no longer
@@ -387,8 +430,10 @@ export class RoiOverlay {
 			ctx.imageSmoothingEnabled = true;
 		}
 
-		for (const roi of this.manager.list()) {
-			this.drawRoi(ctx, roi, this.manager.isSelected(roi.id));
+		if (this.showRois) {
+			for (const roi of this.manager.list()) {
+				this.drawRoi(ctx, roi, this.manager.isSelected(roi.id));
+			}
 		}
 
 		this.drawPending(ctx);
@@ -401,8 +446,12 @@ export class RoiOverlay {
 	}
 
 	private drawRoi(ctx: CanvasRenderingContext2D, roi: Roi, selected: boolean): void {
-		const color = roi.color || '#ffd400';
-		ctx.lineWidth = selected ? 2 : 1.25;
+		const hovered = this.hoveredRoiId === roi.id;
+		// Hover and selection have to be told apart at a glance: hover is a
+		// transient "this row is that object", selection is what the tools act
+		// on. White and thick for hover, the ROI's own colour for selection.
+		const color = hovered ? '#ffffff' : (roi.color || '#ffd400');
+		ctx.lineWidth = hovered ? 2.5 : (selected ? 2 : 1.25);
 		ctx.strokeStyle = color;
 		ctx.setLineDash([]);
 
@@ -448,23 +497,21 @@ export class RoiOverlay {
 		if (isAreaKind(roi.kind)) { ctx.closePath(); }
 		ctx.stroke();
 
-		if (selected && isAreaKind(roi.kind)) {
+		if ((selected || hovered) && isAreaKind(roi.kind)) {
 			ctx.save();
-			ctx.globalAlpha = 0.12;
+			ctx.globalAlpha = hovered ? 0.25 : 0.12;
 			ctx.fillStyle = color;
 			ctx.fill();
 			ctx.restore();
 		}
 
-		if (selected) {
-			this.drawHandles(ctx, roi);
-			this.drawSelectionMarker(ctx, outline);
-		}
+		if (selected) { this.drawHandles(ctx, roi); }
+		if (selected || hovered) { this.drawSelectionMarker(ctx, outline); }
 
 		// A few hundred segmented objects would otherwise carry a few hundred
 		// name labels, which is unreadable and hides the outlines underneath.
 		const labelsUseful = this.showLabels && this.manager.count() <= 40;
-		if ((labelsUseful || selected) && roi.name) {
+		if ((labelsUseful || selected || hovered) && roi.name) {
 			const anchor = this.toClient(outline[0] + 0.5, outline[1] + 0.5);
 			if (anchor) { this.drawLabel(ctx, roi.name, anchor.x + 6, anchor.y - 6, color); }
 		}

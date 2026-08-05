@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md`; `package.json` selectors are the registration source of truth.
+This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
 
 ## Development Commands
 
@@ -314,6 +314,8 @@ test/
 
 example/
 └── Various test images in different formats
+
+docs/                                 # User documentation, ships in the VSIX (commands.md is generated)
 ```
 
 ## Common Development Tasks
@@ -342,6 +344,14 @@ example/
 4. Add webview message handling in [messageHandlers.ts](src/imagePreview/messageHandlers.ts) if UI interaction needed
 5. Add keyboard shortcut in [package.json](package.json) `contributes.keybindings` if desired
 6. Add to context menu in [package.json](package.json) `contributes.menus` if appropriate
+7. Run `npm run docs:commands`, and document user-visible behaviour on the matching page in [docs/](docs/)
+
+### User Documentation
+
+User docs live in [docs/](docs/), ship inside the VSIX, and open via the `tiffVisualizer.showDocumentation`
+command. `docs/commands.md` is generated — run `npm run docs:commands` after changing `contributes.*`
+(`pretest` fails if it is stale). Conventions and packaging gotchas are documented at the top of
+[scripts/generate-command-docs.js](scripts/generate-command-docs.js).
 
 ### Debugging Extension Host vs Webview
 - **Extension host** (TypeScript): Use VS Code debugger (F5), set breakpoints in `src/`

@@ -1437,32 +1437,6 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
-	// Direct actions, so the common things do not require opening the panel and
-	// finding the right tab first.
-	for (const [command, action] of [
-		['tiffVisualizer.saveRois', 'saveRois'],
-		['tiffVisualizer.loadRois', 'loadRois'],
-		['tiffVisualizer.exportMeasurements', 'exportCsv'],
-		['tiffVisualizer.clearRois', 'clearRois'],
-	] as const) {
-		disposables.push(vscode.commands.registerCommand(command, () => {
-			logCommand(command, 'start');
-			try {
-				const preview = previewManager.activePreview;
-				if (!preview) {
-					vscode.window.showInformationMessage(
-						'Open an image in the Scientific Image Visualizer first.');
-					logCommand(command, 'error', 'No active preview');
-					return;
-				}
-				preview.runMeasureCommand(action);
-				logCommand(command, 'success');
-			} catch (error) {
-				logCommand(command, 'error', String(error));
-			}
-		}));
-	}
-
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleMetadata', () => {
 		logCommand('toggleMetadata', 'start');
 		try {
@@ -1805,6 +1779,50 @@ export function registerImagePreviewCommands(
 				'Could not open as point cloud. Make sure the "3D Point Cloud and Mesh Visualizer" extension (kleinicke.ply-visualizer) is installed.'
 			);
 			logCommand('openAsPointCloud', 'error', 'ply-visualizer command failed');
+		}
+	}));
+
+	// The documentation ships inside the extension and opens in VS Code's own
+	// markdown preview. No webview of our own, no popup on install, and the same
+	// files render on GitHub and can be published as a site later.
+	//
+	// `page` lets a panel deep-link to the section it is about ("measure.md"),
+	// which is the only way documentation actually gets read: at the moment of
+	// confusion, one click from the thing causing it.
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.showDocumentation', async (page?: string) => {
+		logCommand('showDocumentation', 'start', page);
+
+		// Only ever resolve to a markdown file directly inside docs/, whatever we
+		// are handed. A deep-link argument is not a reason to open arbitrary paths.
+		const requested = typeof page === 'string' ? page : 'index.md';
+		const safe = /^[a-z0-9-]+\.md$/.test(requested) ? requested : 'index.md';
+		const target = vscode.Uri.joinPath(context.extensionUri, 'docs', safe);
+
+		try {
+			await vscode.workspace.fs.stat(target);
+		} catch {
+			vscode.window.showErrorMessage(
+				`Documentation page "${safe}" is missing from this installation. ` +
+				'It is also available on GitHub.'
+			);
+			logCommand('showDocumentation', 'error', `missing ${safe}`);
+			return;
+		}
+
+		try {
+			await vscode.commands.executeCommand('markdown.showPreview', target);
+			logCommand('showDocumentation', 'success', safe);
+		} catch (error) {
+			// Markdown preview is a built-in, but it can be disabled. Falling back to
+			// the raw file is worse-looking and still readable.
+			try {
+				const doc = await vscode.workspace.openTextDocument(target);
+				await vscode.window.showTextDocument(doc, { preview: true });
+				logCommand('showDocumentation', 'success', `${safe} (source fallback)`);
+			} catch {
+				vscode.window.showErrorMessage('Could not open the documentation.');
+				logCommand('showDocumentation', 'error', String(error));
+			}
 		}
 	}));
 

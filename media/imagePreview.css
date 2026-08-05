@@ -2373,3 +2373,41 @@ body img {
 	flex: 1;
 	font-family: var(--vscode-editor-font-family, monospace);
 }
+
+/* Header chips: overlay visibility, reachable from every tab. */
+.measure-chip {
+	background: transparent;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 3px;
+	padding: 1px 6px;
+	font-size: 10px;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.measure-chip:hover {
+	color: var(--vscode-editor-foreground, #cccccc);
+}
+
+.measure-chip.active {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #ffffff);
+	border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.measure-histogram {
+	width: 100%;
+	height: auto;
+	display: block;
+	margin: 4px 0;
+	border-radius: 3px;
+	background: var(--vscode-editorWidget-background, #252526);
+	cursor: ew-resize;
+	touch-action: none;
+}
+
+.measure-stability {
+	cursor: crosshair;
+	touch-action: none;
+}

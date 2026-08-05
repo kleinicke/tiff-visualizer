@@ -213,27 +213,7 @@
       },
       {
         "command": "tiffVisualizer.toggleMeasure",
-        "title": "Measure: Open Measure Panel",
-        "category": "TIFF Visualizer"
-      },
-      {
-        "command": "tiffVisualizer.saveRois",
-        "title": "Measure: Save ROIs Next to the Image",
-        "category": "TIFF Visualizer"
-      },
-      {
-        "command": "tiffVisualizer.loadRois",
-        "title": "Measure: Load ROIs",
-        "category": "TIFF Visualizer"
-      },
-      {
-        "command": "tiffVisualizer.exportMeasurements",
-        "title": "Measure: Export Results as CSV",
-        "category": "TIFF Visualizer"
-      },
-      {
-        "command": "tiffVisualizer.clearRois",
-        "title": "Measure: Clear All ROIs",
+        "title": "Measure",
         "category": "TIFF Visualizer"
       },
       {
@@ -274,6 +254,11 @@
       {
         "command": "tiffVisualizer.openAsPointCloud",
         "title": "Open as Point Cloud",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.showDocumentation",
+        "title": "Show Documentation",
         "category": "TIFF Visualizer"
       }
     ],
@@ -326,6 +311,11 @@
       ],
       "editor/context": [
         {
+          "command": "tiffVisualizer.showDocumentation",
+          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
+          "group": "z_help@1"
+        },
+        {
           "command": "tiffVisualizer.selectForCompare",
           "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
           "group": "comparison@1"
@@ -356,7 +346,9 @@
     "compile:quick": "npm run clean && node ./esbuild.js",
     "watch": "npm run clean && node ./esbuild.js --watch",
     "check": "npm run typecheck && npm run test",
-    "pretest": "npm run compile:quick && npm run lint",
+    "docs:commands": "node scripts/generate-command-docs.js",
+    "docs:check": "node scripts/generate-command-docs.js --check",
+    "pretest": "npm run compile:quick && npm run lint && npm run docs:check",
     "lint": "eslint src media/imagePreview.ts media/decode-worker.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules --ext ts,js",
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",

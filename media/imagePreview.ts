@@ -3417,10 +3417,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				});
 				break;
 
-			case 'measureCommand':
-				measurePanel.runCommand(message.action);
-				break;
-
 			case 'measureHint':
 				measurePanel.setHint(String(message.text || ''));
 				break;
@@ -4928,6 +4924,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		document.addEventListener('keydown', (e) => {
 			if (isEditableEventTarget(e.target)) { return; }
 			if (measurePanel.handleKey(e)) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		}, true);
+		// The peek shortcut is held rather than toggled, so it needs the release.
+		document.addEventListener('keyup', (e) => {
+			if (measurePanel.handleKeyUp(e)) {
 				e.preventDefault();
 				e.stopPropagation();
 			}

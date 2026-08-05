@@ -19,7 +19,6 @@ import { measureAll, sampleLineProfile } from './measure/statistics.js';
 import { gaussianBlur, subtractBackground } from './measure/segmentation.js';
 import {
 	autoThresholdBin,
-	binToValue,
 	buildHistogram,
 	computeStabilityCurve,
 	globalThresholdMask,
@@ -155,6 +154,8 @@ export class MeasurePanel {
 
 	private isDragging = false;
 	private dragOffset = { x: 0, y: 0 };
+	private maskToggle: HTMLButtonElement | null = null;
+	private roiToggle: HTMLButtonElement | null = null;
 
 	constructor(host: MeasurePanelHost) {
 		this.host = host;
@@ -170,12 +171,37 @@ export class MeasurePanel {
 		title.textContent = 'Measure';
 		const spacer = document.createElement('div');
 		spacer.className = 'measure-spacer';
+
+		// Visibility lives in the header, not inside a tab: turning the overlay
+		// off to look at the image underneath is something you do constantly and
+		// from wherever you happen to be, so it must not be three clicks away in
+		// another tab.
+		const maskToggle = document.createElement('button');
+		maskToggle.className = 'measure-chip';
+		maskToggle.textContent = 'Mask';
+		maskToggle.title = 'Show the threshold over the image (M)';
+		maskToggle.onclick = () => {
+			this.showMaskOverlay = !this.showMaskOverlay;
+			this.refreshMaskOverlay();
+			this.syncHeaderToggles();
+		};
+		const roiToggle = document.createElement('button');
+		roiToggle.className = 'measure-chip';
+		roiToggle.textContent = 'ROIs';
+		roiToggle.title = 'Show the ROI outlines (O). Hiding them does not delete anything.';
+		roiToggle.onclick = () => {
+			this.host.overlay.setShowRois(!this.host.overlay.getShowRois());
+			this.syncHeaderToggles();
+		};
+		this.maskToggle = maskToggle;
+		this.roiToggle = roiToggle;
+
 		const closeButton = document.createElement('button');
 		closeButton.className = 'measure-close';
 		closeButton.textContent = '×';
 		closeButton.title = 'Close the measure panel';
 		closeButton.onclick = () => this.hide();
-		header.append(title, spacer, closeButton);
+		header.append(title, spacer, maskToggle, roiToggle, closeButton);
 		header.style.cursor = 'move';
 		header.onmousedown = event => this.startDrag(event);
 
@@ -214,6 +240,12 @@ export class MeasurePanel {
 
 		document.body.appendChild(this.overlayRoot);
 		this.setTab('tools');
+		this.syncHeaderToggles();
+	}
+
+	private syncHeaderToggles(): void {
+		this.maskToggle?.classList.toggle('active', this.showMaskOverlay);
+		this.roiToggle?.classList.toggle('active', this.host.overlay.getShowRois());
 	}
 
 	// --- visibility ---------------------------------------------------------
@@ -291,6 +323,7 @@ export class MeasurePanel {
 	}
 
 	private render(): void {
+		this.syncHeaderToggles();
 		this.body.textContent = '';
 		switch (this.tab) {
 			case 'tools': this.renderTools(); break;
@@ -355,6 +388,9 @@ export class MeasurePanel {
 		const display = this.section('Overlay');
 		display.appendChild(this.checkbox('Show ROI names', true, checked => this.host.overlay.setShowLabels(checked)));
 		display.appendChild(this.checkbox('Show scale bar', true, checked => this.host.overlay.setShowScaleBar(checked)));
+		display.appendChild(this.note(
+			'Mask and ROIs toggle from the header, or with M and O. Hold H to hide everything and look at the raw image.',
+		));
 
 		const selected = this.host.manager.selectedRois();
 		const lineRoi = selected.find(roi => isLineKind(roi.kind)) as LineRoi | undefined;
@@ -439,6 +475,8 @@ export class MeasurePanel {
 		// Selecting from the list highlights it on the image; the results table
 		// does the same. Keeping the row, the overlay, and the table pointing at
 		// one object is the thing a spreadsheet copy destroys permanently.
+		row.onmouseenter = () => this.host.overlay.setHoveredRoi(roi.id);
+		row.onmouseleave = () => this.host.overlay.setHoveredRoi(null);
 		row.onclick = event => {
 			if (event.target === name) { return; }
 			const additive = event.shiftKey || event.ctrlKey || event.metaKey;
@@ -728,6 +766,10 @@ export class MeasurePanel {
 		for (const row of this.rows) {
 			const tr = document.createElement('tr');
 			tr.classList.toggle('selected', this.host.manager.isSelected(row.roiId));
+			// Hover is the cheap half of "which object is this row?" — no click, no
+			// selection change, just a highlight that follows the cursor.
+			tr.onmouseenter = () => this.host.overlay.setHoveredRoi(row.roiId);
+			tr.onmouseleave = () => this.host.overlay.setHoveredRoi(null);
 			tr.onclick = event => {
 				const additive = event.shiftKey || event.ctrlKey || event.metaKey;
 				this.host.manager.select([row.roiId], { additive });
@@ -821,19 +863,7 @@ export class MeasurePanel {
 
 		if (!this.histogram) { this.prepareThreshold(); }
 
-		const preview = this.section('Preview');
-		preview.appendChild(this.checkbox(
-			'Show the threshold on the image', this.showMaskOverlay,
-			checked => {
-				this.showMaskOverlay = checked;
-				this.refreshMaskOverlay();
-			},
-			'Red: selected by the threshold. Green: objects that pass the particle filters and would be added.',
-		));
-		preview.appendChild(this.note(
-			'Red = selected by the threshold · Green = survives the filters below and will be added. '
-			+ 'Hover a method to see its effect straight away.',
-		));
+		this.body.appendChild(this.buildHistogramSlider());
 
 		const pre = this.section('Preprocess (segmentation only)');
 		pre.appendChild(this.note(
@@ -850,48 +880,21 @@ export class MeasurePanel {
 			this.render();
 		}, { step: '5', min: 0 }, 'Rolling-ball background subtraction. 0 disables it. Fixes uneven illumination, the usual reason a global threshold appears to have no right value.'));
 
-		const methods = this.section('Auto-threshold');
+		const methods = this.section('Method');
 		methods.appendChild(this.checkbox('Objects are brighter than the background', this.threshold.darkBackground, checked => {
 			this.threshold.darkBackground = checked;
 			this.applyThreshold();
 			this.render();
 		}));
+		methods.appendChild(this.note(
+			this.threshold.manual
+				? 'Range set by hand. Pick a method below to go back to an automatic cut.'
+				: 'Hover any entry to see it on the image; click to keep it. "(local)" entries compute a threshold per neighbourhood, for unevenly lit images.',
+		));
 		methods.appendChild(this.buildMethodGallery());
 
-		const manual = this.section('Range');
-		manual.appendChild(this.numberRow('Low', this.threshold.low, value => {
-			this.threshold.low = value;
-			this.threshold.manual = true;
-			this.applyThreshold();
-			this.render();
-		}, { step: 'any' }));
-		manual.appendChild(this.numberRow('High', this.threshold.high, value => {
-			this.threshold.high = value;
-			this.threshold.manual = true;
-			this.applyThreshold();
-			this.render();
-		}, { step: 'any' }));
-
-		this.body.appendChild(this.buildStabilitySection());
-
-		const local = this.section('Local adaptive');
-		const select = document.createElement('select');
-		select.className = 'measure-select';
-		for (const method of LOCAL_METHODS) {
-			const option = document.createElement('option');
-			option.value = method.id;
-			option.textContent = method.label;
-			option.title = method.hint;
-			select.appendChild(option);
-		}
-		select.value = this.threshold.localMethod;
-		select.onchange = () => {
-			this.threshold.localMethod = select.value as LocalMethod;
-			this.applyThreshold();
-			this.render();
-		};
-		local.appendChild(this.labelled('Method', select));
 		if (this.threshold.localMethod !== 'none') {
+			const local = this.section('Local method settings');
 			local.appendChild(this.numberRow('Window radius', this.threshold.localRadius, value => {
 				this.threshold.localRadius = Math.max(1, Math.round(value));
 				this.applyThreshold();
@@ -901,8 +904,10 @@ export class MeasurePanel {
 				this.threshold.localK = value;
 				this.applyThreshold();
 				this.render();
-			}, { step: '0.05' }));
+			}, { step: '0.05' }, 'Higher is stricter. 0.25 is a good starting point.'));
 		}
+
+		this.body.appendChild(this.buildStabilitySection());
 
 		const particles = this.section('Particles');
 		// Every filter re-runs the analysis and repaints, so the effect of a
@@ -943,6 +948,146 @@ export class MeasurePanel {
 	}
 
 	/**
+	 * Histogram with draggable threshold handles.
+	 *
+	 * This is the control people arrive expecting, and it was the piece missing
+	 * from the first version: the stability curve answers "is this value
+	 * robust?", but the everyday question is "where in the distribution am I
+	 * cutting?", and that needs the histogram itself with the cut drawn on it and
+	 * grabbable. Dragging updates the mask on the image continuously, so the
+	 * threshold is chosen by watching the image, not by typing numbers.
+	 */
+	private buildHistogramSlider(): HTMLElement {
+		const section = document.createElement('div');
+		section.className = 'measure-section';
+		const heading = document.createElement('div');
+		heading.className = 'measure-section-title';
+		heading.textContent = 'Histogram';
+		section.appendChild(heading);
+
+		const histogram = this.histogram;
+		if (!histogram) { return section; }
+
+		const canvas = document.createElement('canvas');
+		canvas.className = 'measure-histogram';
+		canvas.width = 460;
+		canvas.height = 120;
+		section.appendChild(canvas);
+
+		const padding = { left: 8, right: 8, top: 6, bottom: 14 };
+		const plotWidth = canvas.width - padding.left - padding.right;
+
+		const valueAt = (clientX: number): number => {
+			const rect = canvas.getBoundingClientRect();
+			// Map through the *plot* area, not the canvas: ignoring the padding is
+			// what makes a click land a few units off the value under the cursor.
+			const fraction = ((clientX - rect.left) / rect.width * canvas.width - padding.left) / plotWidth;
+			const clamped = Math.max(0, Math.min(1, fraction));
+			return histogram.min + clamped * (histogram.max - histogram.min);
+		};
+
+		const draw = () => this.drawHistogramSlider(canvas, padding);
+		draw();
+
+		// Grab whichever handle is nearer, then track until release. Pointer
+		// capture keeps the drag alive when the cursor leaves the small canvas,
+		// which it will constantly at this size.
+		let dragging: 'low' | 'high' | null = null;
+		canvas.addEventListener('pointerdown', event => {
+			const value = valueAt(event.clientX);
+			dragging = Math.abs(value - this.threshold.low) <= Math.abs(value - this.threshold.high) ? 'low' : 'high';
+			canvas.setPointerCapture(event.pointerId);
+			this.threshold.manual = true;
+			if (dragging === 'low') { this.threshold.low = value; } else { this.threshold.high = value; }
+			this.applyThreshold();
+			draw();
+			event.preventDefault();
+		});
+		canvas.addEventListener('pointermove', event => {
+			if (!dragging) { return; }
+			const value = valueAt(event.clientX);
+			if (dragging === 'low') { this.threshold.low = Math.min(value, this.threshold.high); }
+			else { this.threshold.high = Math.max(value, this.threshold.low); }
+			this.applyThreshold();
+			draw();
+		});
+		const endDrag = () => {
+			if (!dragging) { return; }
+			dragging = null;
+			// Re-render once at the end so the object count and the green accepted
+			// layer catch up; doing that per pointermove would stall a large image.
+			this.render();
+		};
+		canvas.addEventListener('pointerup', endDrag);
+		canvas.addEventListener('pointercancel', endDrag);
+
+		section.appendChild(this.note(
+			`Drag either edge of the shaded band to set the range. Currently ${formatNumber(this.threshold.low, 4)} – ${formatNumber(this.threshold.high, 4)}.`,
+		));
+		return section;
+	}
+
+	private drawHistogramSlider(canvas: HTMLCanvasElement, padding: { left: number; right: number; top: number; bottom: number }): void {
+		const ctx = canvas.getContext('2d');
+		const histogram = this.histogram;
+		if (!ctx || !histogram) { return; }
+
+		const plotWidth = canvas.width - padding.left - padding.right;
+		const plotHeight = canvas.height - padding.top - padding.bottom;
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+		let peak = 1;
+		for (let i = 0; i < histogram.counts.length; i++) {
+			if (histogram.counts[i] > peak) { peak = histogram.counts[i]; }
+		}
+		// Log scale: a sparse foreground next to a background peak two orders of
+		// magnitude taller would otherwise be a flat line at the axis.
+		const barHeight = (count: number) => (Math.log1p(count) / Math.log1p(peak)) * plotHeight;
+
+		const toX = (value: number) => {
+			const span = histogram.max - histogram.min;
+			const fraction = span > 0 ? (value - histogram.min) / span : 0;
+			return padding.left + Math.max(0, Math.min(1, fraction)) * plotWidth;
+		};
+
+		const lowX = toX(this.threshold.low);
+		const highX = toX(this.threshold.high);
+
+		// Selected band behind the bars, so the cut reads as a region of the
+		// distribution rather than as two unrelated lines.
+		ctx.fillStyle = 'rgba(255, 80, 80, 0.18)';
+		ctx.fillRect(lowX, padding.top, Math.max(1, highX - lowX), plotHeight);
+
+		for (let x = 0; x < plotWidth; x++) {
+			const index = Math.floor((x / plotWidth) * histogram.counts.length);
+			const height = barHeight(histogram.counts[index]);
+			const value = histogram.min + (index / histogram.counts.length) * (histogram.max - histogram.min);
+			const inside = value >= this.threshold.low && value <= this.threshold.high;
+			ctx.fillStyle = inside ? 'rgba(255, 110, 110, 0.95)' : 'rgba(150, 150, 150, 0.65)';
+			ctx.fillRect(padding.left + x, padding.top + plotHeight - height, 1, height);
+		}
+
+		for (const x of [lowX, highX]) {
+			ctx.strokeStyle = '#ffffff';
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			ctx.moveTo(x, padding.top);
+			ctx.lineTo(x, padding.top + plotHeight);
+			ctx.stroke();
+			// A grip, so the line reads as draggable rather than decorative.
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(x - 3, padding.top + plotHeight / 2 - 7, 6, 14);
+		}
+
+		ctx.fillStyle = 'rgba(160, 160, 160, 0.9)';
+		ctx.font = '10px var(--vscode-editor-font-family, monospace)';
+		ctx.textAlign = 'left';
+		ctx.fillText(formatNumber(histogram.min, 4), padding.left, canvas.height - 3);
+		ctx.textAlign = 'right';
+		ctx.fillText(formatNumber(histogram.max, 4), padding.left + plotWidth, canvas.height - 3);
+	}
+
+	/**
 	 * The auto-threshold gallery.
 	 *
 	 * Every method is evaluated against the same 256-bin histogram, so showing
@@ -950,55 +1095,126 @@ export class MeasurePanel {
 	 * produces a static montage in a separate window; here each entry is a live
 	 * button that reports what it selected, which turns method choice into
 	 * looking rather than guessing.
+	 *
+	 * Global and local methods live in the same list because they are the same
+	 * choice: only one of them is ever in force. Splitting them across two
+	 * controls made the gallery lie — it kept previewing a global cut while a
+	 * local method was the one actually applied.
 	 */
 	private buildMethodGallery(): HTMLElement {
 		const grid = document.createElement('div');
 		grid.className = 'measure-method-grid';
 		const histogram = this.histogram;
-		if (!histogram) { return grid; }
+		const source = this.host.getSource();
+		if (!histogram || !source) { return grid; }
 
 		for (const method of THRESHOLD_METHODS) {
 			const bin = autoThresholdBin(histogram.counts, method.id);
-			const button = document.createElement('button');
-			button.className = 'measure-method';
-			button.classList.toggle('active', !this.threshold.manual && this.threshold.method === method.id);
-			button.disabled = bin < 0;
-			button.title = bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint;
-
-			const label = document.createElement('div');
-			label.className = 'measure-method-label';
-			label.textContent = method.label;
-			const value = document.createElement('div');
-			value.className = 'measure-method-value';
-			value.textContent = bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4);
-			button.append(label, value, this.buildHistogramSpark(histogram, bin));
-
-			// Hovering shows the method's effect on the image immediately. This is
-			// the interaction the gallery exists for: picking a method by looking
-			// at the result rather than by reading its name. Only the raw mask is
-			// shown, so sweeping across thirteen buttons stays instant.
-			button.onmouseenter = () => {
-				if (bin < 0 || !this.previewPlane) { return; }
-				const value = thresholdValueFromBin(histogram, bin);
-				const mask = this.threshold.darkBackground
-					? globalThresholdMask(this.previewPlane, value, histogram.max)
-					: globalThresholdMask(this.previewPlane, histogram.min, value);
-				this.showTemporaryMask(mask);
-				this.setHint(`${method.label}: cut at ${formatNumber(value, 4)} — release to keep the selected method.`);
-			};
-			button.onmouseleave = () => {
-				this.showTemporaryMask(null);
-			};
-
-			button.onclick = () => {
-				this.threshold.method = method.id;
-				this.threshold.manual = false;
-				this.applyThreshold();
-				this.render();
-			};
+			const active = !this.threshold.manual
+				&& this.threshold.localMethod === 'none'
+				&& this.threshold.method === method.id;
+			const button = this.methodButton({
+				label: method.label,
+				hint: bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint,
+				value: bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4),
+				active,
+				disabled: bin < 0,
+				spark: this.buildHistogramSpark(histogram, bin),
+				computeMask: () => {
+					if (bin < 0 || !this.previewPlane) { return null; }
+					const value = thresholdValueFromBin(histogram, bin);
+					return this.threshold.darkBackground
+						? globalThresholdMask(this.previewPlane, value, histogram.max)
+						: globalThresholdMask(this.previewPlane, histogram.min, value);
+				},
+				apply: () => {
+					this.threshold.method = method.id;
+					this.threshold.localMethod = 'none';
+					this.threshold.manual = false;
+				},
+			});
 			grid.appendChild(button);
 		}
+
+		// Local methods are the same choice as the global ones — only one is ever
+		// applied — so they belong in the same list. Keeping them in a separate
+		// dropdown made this gallery preview a global cut while a local method
+		// was what actually ran.
+		for (const method of LOCAL_METHODS) {
+			if (method.id === 'none') { continue; }
+			const active = this.threshold.localMethod === method.id;
+			const button = this.methodButton({
+				label: `${method.label} (local)`,
+				hint: method.hint,
+				value: `r=${this.threshold.localRadius}, k=${formatNumber(this.threshold.localK, 2)}`,
+				active,
+				disabled: false,
+				computeMask: () => this.previewPlane
+					? localThresholdMask(this.previewPlane, source.width, source.height, {
+						method: method.id,
+						radius: this.threshold.localRadius,
+						k: this.threshold.localK,
+						darkBackground: this.threshold.darkBackground,
+					})
+					: null,
+				apply: () => {
+					this.threshold.localMethod = method.id;
+					this.threshold.manual = false;
+				},
+			});
+			grid.appendChild(button);
+		}
+
 		return grid;
+	}
+
+	/**
+	 * One entry of the method gallery.
+	 *
+	 * `computeMask` is what the entry would actually produce, so the hover
+	 * preview and the click can never disagree about the result — the bug that
+	 * made local methods preview as global ones came from having those two paths
+	 * written separately.
+	 */
+	private methodButton(spec: {
+		label: string;
+		hint: string;
+		value: string;
+		active: boolean;
+		disabled: boolean;
+		spark?: HTMLCanvasElement;
+		computeMask: () => Uint8Array | null;
+		apply: () => void;
+	}): HTMLButtonElement {
+		const button = document.createElement('button');
+		button.className = 'measure-method';
+		button.classList.toggle('active', spec.active);
+		button.disabled = spec.disabled;
+		button.title = spec.hint;
+
+		const label = document.createElement('div');
+		label.className = 'measure-method-label';
+		label.textContent = spec.label;
+		const value = document.createElement('div');
+		value.className = 'measure-method-value';
+		value.textContent = spec.value;
+		button.append(label, value);
+		if (spec.spark) { button.appendChild(spec.spark); }
+
+		button.onmouseenter = () => {
+			if (spec.disabled) { return; }
+			const mask = spec.computeMask();
+			if (!mask) { return; }
+			this.showTemporaryMask(mask);
+			this.setHint(`${spec.label}: preview — click to keep it.`);
+		};
+		button.onmouseleave = () => this.showTemporaryMask(null);
+		button.onclick = () => {
+			spec.apply();
+			this.applyThreshold();
+			this.render();
+		};
+		return button;
 	}
 
 	/** A tiny histogram with the candidate threshold marked. */
@@ -1043,17 +1259,18 @@ export class MeasurePanel {
 		section.className = 'measure-section';
 		const heading = document.createElement('div');
 		heading.className = 'measure-section-title';
-		heading.textContent = 'Stability';
+		heading.textContent = 'How robust is this threshold?';
 		section.appendChild(heading);
 
 		if (!this.stability || !this.histogram) {
-			section.appendChild(this.button('Compute stability curve', () => {
+			section.appendChild(this.note(
+				'Sweeps the threshold across the whole range and plots how many objects each value gives. '
+				+ 'Flat stretches are values where the count does not depend on your exact choice — pick one of those and the result stops being a guess.',
+			));
+			section.appendChild(this.button('Compute', () => {
 				this.computeStability();
 				this.render();
 			}));
-			section.appendChild(this.note(
-				'Sweeps the threshold and plots how many objects result. Flat stretches are values where the count does not depend on your exact choice.',
-			));
 			return section;
 		}
 
@@ -1062,14 +1279,40 @@ export class MeasurePanel {
 		canvas.width = 460;
 		canvas.height = 120;
 		this.drawStability(canvas);
-		canvas.onclick = event => {
+		// Click *and* drag, mapped through the plot area rather than the whole
+		// canvas. Using the raw canvas width put every pick off by the left
+		// padding — small, but enough to land beside the plateau you aimed at.
+		const padding = { left: 34, right: 8 };
+		const plotWidth = canvas.width - padding.left - padding.right;
+		const pickAt = (clientX: number) => {
 			const rect = canvas.getBoundingClientRect();
-			const fraction = (event.clientX - rect.left) / rect.width;
+			const canvasX = (clientX - rect.left) / rect.width * canvas.width;
+			const fraction = (canvasX - padding.left) / plotWidth;
 			const points = this.stability!.points;
-			const point = points[Math.max(0, Math.min(points.length - 1, Math.round(fraction * (points.length - 1))))];
-			this.adoptThresholdValue(point.value);
+			const index = Math.round(Math.max(0, Math.min(1, fraction)) * (points.length - 1));
+			return points[index];
+		};
+
+		let scrubbing = false;
+		canvas.addEventListener('pointerdown', event => {
+			scrubbing = true;
+			canvas.setPointerCapture(event.pointerId);
+			this.adoptThresholdValue(pickAt(event.clientX).value);
+			this.drawStability(canvas);
+			event.preventDefault();
+		});
+		canvas.addEventListener('pointermove', event => {
+			if (!scrubbing) { return; }
+			this.adoptThresholdValue(pickAt(event.clientX).value);
+			this.drawStability(canvas);
+		});
+		const endScrub = () => {
+			if (!scrubbing) { return; }
+			scrubbing = false;
 			this.render();
 		};
+		canvas.addEventListener('pointerup', endScrub);
+		canvas.addEventListener('pointercancel', endScrub);
 		section.appendChild(canvas);
 
 		const suggested = thresholdValueFromBin(this.histogram, this.stability.suggestedBin);
@@ -1078,6 +1321,7 @@ export class MeasurePanel {
 				? `Widest plateau spans ${this.stability.plateauWidth} of ${this.stability.points.length} sampled thresholds; its centre is ${formatNumber(suggested, 4)}.`
 				: 'No clear plateau — the object count changes continuously, so this image may need local adaptive thresholding instead.',
 		));
+		section.appendChild(this.note('Click or drag across the plot to set the threshold.'));
 		section.appendChild(this.button('Use the most stable threshold', () => {
 			this.adoptThresholdValue(suggested);
 			this.render();
@@ -1564,45 +1808,6 @@ export class MeasurePanel {
 			: `Exported ${result.exported} ROIs as RoiSet.zip.`);
 	}
 
-	/**
-	 * Entry points for the command palette.
-	 *
-	 * The panel's tabs are convenient once it is open, but a user who knows what
-	 * they want should not have to open the panel and find the right tab to save
-	 * their ROIs. Each of these opens the panel first, so the result is visible
-	 * rather than happening invisibly in the background.
-	 */
-	runCommand(action: 'saveRois' | 'loadRois' | 'exportCsv' | 'clearRois'): void {
-		if (!this.isVisible()) { this.show(); }
-		switch (action) {
-			case 'saveRois':
-				if (this.host.manager.count() === 0) {
-					this.setHint('There are no ROIs to save yet.');
-					this.setTab('rois');
-					return;
-				}
-				this.saveSidecar();
-				break;
-			case 'loadRois':
-				this.host.requestImport('sidecar');
-				this.setTab('rois');
-				break;
-			case 'exportCsv':
-				if (this.rows.length === 0) {
-					this.setHint('There is nothing to export yet — draw or import an ROI first.');
-					this.setTab('rois');
-					return;
-				}
-				this.exportTable('csv');
-				this.setTab('results');
-				break;
-			case 'clearRois':
-				this.host.manager.clear();
-				this.setTab('rois');
-				break;
-		}
-	}
-
 	/** Adopt a loaded sidecar's derived columns; ROIs are applied by the caller. */
 	applyLoadedDerivedColumns(columns: DerivedColumn[] | undefined): void {
 		if (columns && columns.length > 0) { this.derivedColumns = columns.slice(); }
@@ -1610,6 +1815,16 @@ export class MeasurePanel {
 	}
 
 	// --- keyboard -----------------------------------------------------------
+
+	/** Release half of the held-key peek. */
+	handleKeyUp(event: KeyboardEvent): boolean {
+		if (!this.isVisible()) { return false; }
+		if (event.key.toLowerCase() === 'h' && this.host.overlay.isPeeking()) {
+			this.host.overlay.setPeeking(false);
+			return true;
+		}
+		return false;
+	}
 
 	/** Tool shortcuts. Returns true when the key was consumed. */
 	handleKey(event: KeyboardEvent): boolean {
@@ -1622,6 +1837,25 @@ export class MeasurePanel {
 			}
 			return false;
 		}
+		const key = event.key.toLowerCase();
+		if (key === 'm') {
+			this.showMaskOverlay = !this.showMaskOverlay;
+			this.refreshMaskOverlay();
+			this.syncHeaderToggles();
+			return true;
+		}
+		if (key === 'o') {
+			this.host.overlay.setShowRois(!this.host.overlay.getShowRois());
+			this.syncHeaderToggles();
+			return true;
+		}
+		if (key === 'h' && !event.repeat) {
+			// Held, not toggled: comparing against the raw image is a glance.
+			this.host.overlay.setPeeking(true);
+			this.setHint('Holding H — release to bring the overlay back.');
+			return true;
+		}
+
 		const match = TOOLS.find(tool => tool.key && tool.key.toLowerCase() === event.key.toLowerCase());
 		if (match) {
 			this.host.overlay.setTool(match.id);

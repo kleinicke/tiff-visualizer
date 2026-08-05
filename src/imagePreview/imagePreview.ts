@@ -423,12 +423,6 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
-	public runMeasureCommand(action: string): void {
-		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'measureCommand', action });
-		}
-	}
-
 	/**
 	 * Send the global histogram state to the webview.
 	 * Called when the webview becomes active to restore histogram visibility.
