@@ -87,6 +87,12 @@ See [export](./export.md).
 
 See [index](./index.md).
 
+## Other
+
+| Command | ID | Keybinding |
+| --- | --- | --- |
+| Channels | `tiffVisualizer.toggleChannels` |  |
+
 ## Keybindings
 
 These are active only while a Scientific Image Visualizer tab has focus, so

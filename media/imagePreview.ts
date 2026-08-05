@@ -21,6 +21,14 @@ import { DEFAULT_DEBAYER, warmUpDebayer, invalidateDebayerCache, shouldDebayer, 
 import { MetadataPanel } from './modules/metadata-panel.js';
 import type { MetadataInfo } from './modules/metadata-panel.js';
 import { MeasurePanel } from './modules/measure-panel.js';
+import { ChannelsPanel } from './modules/channels-panel.js';
+import {
+	compositeChannels,
+	defaultChannelSettings,
+	planesFromInterleaved,
+	type ChannelPlane,
+	type ChannelSettings,
+} from './modules/channel-composite.js';
 import { RoiManager } from './modules/measure/roi-manager.js';
 import { RoiOverlay } from './modules/measure/roi-overlay.js';
 import { autoCalibration, calibrationFromTagList } from './modules/measure/calibration.js';
@@ -217,6 +225,203 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		void handleDebayerSettingsChanged(debayerPanel.getSettings());
 	});
 
+
+	// --- multi-channel compositing ------------------------------------------
+	// Off unless switched on, and only offered for images that actually have
+	// several channels. Single-channel viewing is untouched.
+
+	let channelPlanes: ChannelPlane[] = [];
+	let channelSettings: ChannelSettings[] = [];
+	let channelSolo: number | null = null;
+	let compositeEnabled = false;
+	let channelGeneration = -1;
+	let compositeRenderHandle = 0;
+
+	/**
+	 * Separate the current image into channel planes.
+	 *
+	 * Two layouts have to be handled, and they are genuinely different: an
+	 * ordinary multi-sample image (RGB TIFF, EXR, NPY) keeps its channels
+	 * interleaved within one page, whereas an OME-TIFF with a C axis stores each
+	 * channel as its own IFD. The second is the microscopy case this feature
+	 * exists for, and it needs the sibling pages decoded — see
+	 * `loadOmeChannelPlanes`.
+	 */
+	function rebuildChannelPlanes(): void {
+		if (channelGeneration === _loadGeneration) { return; }
+		channelGeneration = _loadGeneration;
+		// Tints and opacities the user chose should survive stepping to the next
+		// image of a series; the display ranges belong to the data and are
+		// recomputed. Carrying either across a change in channel count would be
+		// meaningless, so that case starts fresh.
+		const previousSettings = channelSettings;
+		channelPlanes = [];
+		channelSettings = [];
+		channelSolo = null;
+
+		const source = getMeasurementSource();
+		if (!source) { return; }
+
+		const ome = tiffProcessor.rawTiffData?.ome || null;
+		const omeChannelCount = ome?.sizeC || 0;
+
+		if (omeChannelCount > 1 && (source.channels || 1) === 1) {
+			// Channels live on separate pages; fetch them in the background so the
+			// first page still appears immediately.
+			void loadOmeChannelPlanes(omeChannelCount, _loadGeneration);
+			return;
+		}
+
+		if ((source.channels || 1) < 2 || !source.data) { return; }
+
+		const names = ome?.channels?.map((channel: { name?: string }) => channel?.name).filter(Boolean) as string[] | undefined;
+		channelPlanes = planesFromInterleaved(
+			source.data, source.width, source.height, source.channels, names,
+		);
+		channelSettings = adoptChannelSettings(channelPlanes, previousSettings, {
+			colors: ome?.channels?.map((channel: { colorCss?: string }) => channel?.colorCss),
+		});
+		channelsPanel.render();
+	}
+
+	/**
+	 * Decode the sibling C planes of an OME-TIFF.
+	 *
+	 * The page currently on screen is only one channel; the rest are decoded
+	 * through the same worker path the main load uses, at the current Z/T. The
+	 * generation check makes a superseded load drop its results instead of
+	 * compositing planes from an image the user has already navigated away from.
+	 */
+	async function loadOmeChannelPlanes(channelCount: number, generation: number): Promise<void> {
+		const ome = tiffProcessor.omeMetadata;
+		const src = settingsManager.settings.src || '';
+		if (!ome || !src) { return; }
+
+		const current = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+		const planes: ChannelPlane[] = [];
+
+		for (let c = 0; c < channelCount; c++) {
+			if (generation !== _loadGeneration) { return; }
+			const ifd = omeCoordinatesToIfd(ome, { ...current, c });
+
+			let decoded: { data?: ArrayLike<number>; width?: number; height?: number; channels?: number } | null = null;
+			if (ifd === tiffProcessor.pageIndex && tiffProcessor.rawTiffData?.data) {
+				// The visible page is already decoded; re-decoding it would be
+				// pure waste on every navigation.
+				decoded = {
+					data: tiffProcessor.rawTiffData.data,
+					width: tiffProcessor.rawTiffData.ifd.width,
+					height: tiffProcessor.rawTiffData.ifd.height,
+					channels: tiffProcessor.rawTiffData.ifd.t277 || 1,
+				};
+			} else {
+				try {
+					const response = await fetch(src);
+					const buffer = await response.arrayBuffer();
+					const result = await decodeWorkerClient.decode('tiff', buffer, { pageIndex: ifd });
+					if (result?.ok && result.result?.data) { decoded = result.result; }
+				} catch (error) {
+					console.warn('[Channels] Could not decode channel page', ifd, error);
+				}
+			}
+
+			if (!decoded?.data || !decoded.width || !decoded.height) { continue; }
+			const pixels = decoded.width * decoded.height;
+			const stride = decoded.channels || 1;
+			const plane = new Float32Array(pixels);
+			for (let p = 0; p < pixels; p++) { plane[p] = Number(decoded.data[p * stride]); }
+			planes.push({
+				index: c,
+				name: ome.channels?.[c]?.name || `Channel ${c + 1}`,
+				data: plane,
+				width: decoded.width,
+				height: decoded.height,
+			});
+		}
+
+		if (generation !== _loadGeneration || planes.length < 2) { return; }
+		channelPlanes = planes;
+		channelSettings = adoptChannelSettings(planes, channelSettings, {
+			colors: ome.channels?.map(channel => channel?.colorCss),
+		});
+		channelsPanel.render();
+		if (compositeEnabled) { scheduleCompositeRender(); }
+	}
+
+	/** Draw the composite into the visible canvas. */
+	function renderComposite(): void {
+		if (!compositeEnabled || channelPlanes.length < 2) { return; }
+		const width = channelPlanes[0].width;
+		const height = channelPlanes[0].height;
+		const imageData = compositeChannels(channelPlanes, channelSettings, width, height, {
+			soloIndex: channelSolo,
+			nanColor: settingsManager.settings.nanColor === 'fuchsia' ? [255, 0, 255] : [0, 0, 0],
+		});
+		const context = ensure2dCanvasContext();
+		if (!context) { return; }
+		void renderImageDataToCanvas(imageData, context);
+		primaryImageData = imageData;
+	}
+
+	function scheduleCompositeRender(): void {
+		if (compositeRenderHandle) { return; }
+		compositeRenderHandle = requestAnimationFrame(() => {
+			compositeRenderHandle = 0;
+			renderComposite();
+		});
+	}
+
+	const channelsPanel = new ChannelsPanel({
+		getPlanes: () => { rebuildChannelPlanes(); return channelPlanes; },
+		getSettings: () => channelSettings,
+		setSettings: settings => { channelSettings = settings; },
+		isComposite: () => compositeEnabled,
+		setComposite: enabled => {
+			compositeEnabled = enabled;
+			if (enabled) {
+				rebuildChannelPlanes();
+				renderComposite();
+			} else {
+				// Leaving composite mode re-renders the image exactly as it was
+				// decoded, so the mode is genuinely a view and not a conversion.
+				void updateImageWithNewSettings(null);
+			}
+			scheduleSaveState();
+		},
+		getSolo: () => channelSolo,
+		setSolo: index => { channelSolo = index; },
+		onChange: () => { scheduleCompositeRender(); scheduleSaveState(); },
+	});
+
+	/**
+	 * Merge previously chosen appearance with freshly measured ranges.
+	 *
+	 * Ranges come from the new data — a different exposure needs a different
+	 * black point — while tint, visibility and opacity are decisions about how
+	 * the user wants to look at the series and should persist across it.
+	 */
+	function adoptChannelSettings(
+		planes: ChannelPlane[],
+		previous: ChannelSettings[],
+		options: { colors?: (string | undefined)[] },
+	): ChannelSettings[] {
+		const fresh = defaultChannelSettings(planes, options);
+		if (previous.length !== planes.length) { return fresh; }
+		return fresh.map((setting, index) => ({
+			...setting,
+			visible: previous[index].visible,
+			color: previous[index].color,
+			opacity: previous[index].opacity,
+			colormap: previous[index].colormap,
+		}));
+	}
+
+	/** True when the current image has channels worth compositing. */
+	function hasCompositableChannels(): boolean {
+		rebuildChannelPlanes();
+		return channelPlanes.length >= 2;
+	}
+
 	// --- measurement subsystem ----------------------------------------------
 	// Everything below is inert until the Measure panel is opened: the overlay
 	// canvas is hidden and takes no pointer events, and no scalar plane is
@@ -401,6 +606,11 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		scalarPlaneCache = null;
 		refreshMeasureCalibration();
 		measurePanel.onImageChanged();
+		// Channel planes belong to the image, so a new one invalidates them. The
+		// composite is re-drawn only if it was already on, so navigating does not
+		// silently switch modes.
+		rebuildChannelPlanes();
+		if (compositeEnabled) { scheduleCompositeRender(); }
 		// Ask whether this image has ROIs saved beside it. Cheap, silent when
 		// there are none, and it is what makes the sidecar feel like part of the
 		// image rather than a file you have to remember to open.
@@ -731,6 +941,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			roiManager.withoutHistory(() => roiManager.replaceAll(restored, { recordHistory: false }));
 		}
 		if (persistedState.isMeasurePanelVisible) { measurePanel.show(); }
+		if (Array.isArray(persistedState.channelSettings)) {
+			channelSettings = persistedState.channelSettings;
+		}
+		if (typeof persistedState.channelSolo === 'number') { channelSolo = persistedState.channelSolo; }
+		compositeEnabled = persistedState.compositeEnabled === true;
+		if (persistedState.isChannelsPanelVisible) { channelsPanel.show(); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
 		}
@@ -801,6 +1017,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			debayer: settingsManager.settings.debayer,
 			isDebayerPanelVisible: debayerPanel.isVisible(),
 			isMeasurePanelVisible: measurePanel.isVisible(),
+			isChannelsPanelVisible: channelsPanel.isVisible(),
+			// Channel planes are re-derived from the image; only the user's
+			// choices are worth persisting.
+			compositeEnabled,
+			channelSettings,
+			channelSolo,
 			// ROIs and their calibration ride along with the webview state.
 			// The JSON sidecar is the durable store, but a webview can be
 			// reloaded for reasons the user never asked for — moving the tab,
@@ -3413,6 +3635,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				updateMetadataData();
 				break;
 
+			case 'toggleChannels':
+				if (!hasCompositableChannels()) {
+					// Say so rather than opening a panel with one row in it.
+					console.log('[Channels] This image has a single channel.');
+				}
+				channelsPanel.toggle();
+				break;
+
 			case 'toggleMeasure':
 				measurePanel.toggle();
 				vscode.postMessage({
@@ -4242,6 +4472,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			return;
 		}
 
+		// Channel compositing owns the canvas the same way the layer stack does:
+		// the per-processor paths below would draw a single channel over it.
+		// Checked first because a channel composite is the more specific mode.
+		if (compositeEnabled && channelPlanes.length >= 2) {
+			renderComposite();
+			return;
+		}
+
 		// When compositing is active with extra layers, the composite owns the
 		// canvas — re-render it through the central pipeline and skip the
 		// per-processor paths below.
@@ -4772,6 +5010,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			menu.appendChild(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
+
+			if (hasCompositableChannels()) {
+				menu.appendChild(createMenuItem(
+					channelsPanel.isVisible() ? 'Close Channels Panel' : 'Channels…',
+					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleChannels' }); },
+				));
+			}
 
 			// Measurement is one entry, not a submenu of eleven: the tools live
 			// inside the panel, so the menu stays as short as it is today.

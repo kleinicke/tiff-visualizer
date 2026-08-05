@@ -31,6 +31,7 @@ Command Palette, or right-click inside an open image and choose
 | Page | What it covers |
 | --- | --- |
 | [Measurement](./measure.md) | ROIs, statistics, thresholding, particle analysis, profiles, CSV/Excel export |
+| [Channels](./channels.md) | Multi-channel compositing — tint, range and opacity per channel |
 | [Layers view](./layers.md) | Compositing, blend modes, filters, layered documents |
 | [Export and interchange](./export.md) | PNG, OpenRaster, XCF, Krita, PSD, clipboard, point clouds |
 

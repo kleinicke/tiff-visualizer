@@ -217,6 +217,11 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleChannels",
+        "title": "Channels",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.convertColormapToFloat",
         "title": "Decode Colormap Image to Float",
         "category": "TIFF Visualizer"
@@ -353,7 +358,7 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:channels",
     "test:unit": "npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
@@ -362,6 +367,7 @@
     "test:visualization": "node test/visualization-test.js",
     "test:debayer": "node test/debayer-test.js",
     "test:measurement": "node test/measurement-test.js",
+    "test:channels": "node test/channel-composite-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",
     "test:control-behavior": "node test/control-behavior-test.js",

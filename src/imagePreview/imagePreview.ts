@@ -423,6 +423,12 @@ export class ImagePreview extends MediaPreview {
 		}
 	}
 
+	public toggleChannels(): void {
+		if (this.previewState === PreviewState.Active) {
+			this._webviewEditor.webview.postMessage({ type: 'toggleChannels' });
+		}
+	}
+
 	/**
 	 * Send the global histogram state to the webview.
 	 * Called when the webview becomes active to restore histogram visibility.

@@ -10,6 +10,15 @@
 - `docs/commands.md` is generated from `package.json` by
   `npm run docs:commands`; `pretest` fails if it is stale.
 
+- Add a **Channels** panel (right-click menu or command palette) for
+  multi-channel compositing: several channels shown at once, each with its own
+  tint, display range and opacity, added together the way emission combines at
+  the detector. Channel names and colours are taken from OME metadata where the
+  file provides them. Works for interleaved multi-sample images and for OME-TIFF
+  where each channel is its own page, whose sibling planes are decoded in the
+  background. Solo dims the other channels rather than reconfiguring them, and
+  "Auto" uses a percentile range so one hot pixel cannot flatten the signal.
+  Compositing is off until switched on, so single-channel viewing is unchanged.
 - Add a **Measure** panel (context menu, or Ctrl/Cmd+Shift+M) with ROI drawing,
   measurements, thresholding, and particle analysis. Nothing about it is visible
   until the panel is opened.

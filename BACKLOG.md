@@ -1204,7 +1204,7 @@ language), plus one cross-item follow-up recorded under item 9.
 
 ---
 
-## 8. Multi-channel compositing (scientific "Display Adjustment")
+## 8. Multi-channel compositing (scientific "Display Adjustment") — implemented
 
 > GFP green + DAPI blue + RFP red, additively blended, each channel with its own
 > LUT, opacity and min/max — instead of one channel at a time.
@@ -1243,6 +1243,34 @@ and should reuse that split rather than the creative blend path.
   and remains reachable via channel solo.
 
 **Difficulty: 2.** Highest value-per-effort item remaining after item 1.
+
+### Delivered
+
+- [x] Channels panel (`channels-panel.ts`) with per-channel visibility, tint,
+      opacity, black/white points and solo, plus auto/full range for one channel
+      or all.
+- [x] Additive compositing over raw values (`channel-composite.ts`), with
+      per-channel statistics and a percentile auto-range. Covered by
+      `test/channel-composite-test.js` (`npm run test:channels`).
+- [x] Channel names and colours from OME `Channel/@Name` / `@Color`, with a
+      distinguishable fallback palette.
+- [x] Both storage layouts: interleaved multi-sample images, and OME-TIFF where
+      each channel is its own IFD — sibling planes are decoded through the
+      existing worker path at the current Z/T, generation-checked so a
+      superseded navigation drops its results.
+- [x] Colormap per channel as an alternative to a flat tint, sharing
+      `getColormapLut()` with the pseudocolor path.
+
+### Remaining
+
+- **GPU compositing.** Currently CPU only: a LUT read and three multiplies per
+  channel per pixel, interactive at ordinary sizes. Moving it into
+  `webgl2-float-renderer.ts` / the WebGPU path is the natural next step for
+  large images, with the CPU path staying as the correctness reference.
+  **Difficulty: 2.**
+- **Per-channel histograms.** The histogram overlay supports per-channel display
+  but still reflects the image as a whole rather than each channel's own range.
+  **Difficulty: 1.**
 
 ---
 
@@ -1503,10 +1531,9 @@ attempted before them.
    appropriate level for whole-slide and very large OME-TIFF data.
 7. **Lens undistortion.** Independent and ready to schedule when calibrated
    camera workflows become a priority.
-8. **Multi-channel compositing (item 8).** The strongest next step now that
-   item 7 is complete, and the two compound: measuring per-channel intensities
-   in the same ROIs is the standard microscopy workflow ("count DAPI nuclei,
-   read GFP intensity in each"), and the measurement side already emits one row
-   per ROI per channel. Item 8 makes visible a capability that already exists.
-9. **Playback (item 9).** After item 8, and after the page cache/prefetch
-   follow-up from item 1 — stuttering playback is worse than none.
+8. **Playback (item 9).** After the page cache/prefetch follow-up from item 1 —
+   stuttering playback is worse than none. Its cross-item follow-up (measuring
+   one ROI across every frame) is what turns it from a viewing convenience into
+   an analysis feature.
+9. **GPU channel compositing and per-channel histograms** (item 8 remainder),
+   whenever composite-mode performance on large images becomes a complaint.
