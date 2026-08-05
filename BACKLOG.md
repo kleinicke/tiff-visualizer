@@ -922,7 +922,7 @@ largely already written and tested in the neighboring project).
 
 ---
 
-## 7. Measurement and quantitative analysis (ImageJ-class)
+## 7. Measurement and quantitative analysis (ImageJ-class) — implemented
 
 > Make the viewer able to answer "how big is that object, how bright is this
 > region, how many of these are there" — the workflows people currently leave
@@ -1139,25 +1139,56 @@ writing, expression columns, and filename-pattern grouping.
 - **Destructive editing** (apply a filter, save the pixels). Non-destructiveness
   is a feature of this viewer, not a limitation.
 
-### Suggested delivery order
+### Delivery status
 
-1. Calibration (auto from tags + manual) and the Measure panel shell.
-2. ROI tools, overlay layer, ROI list, JSON sidecar persistence.
-3. Measurement table with the full column set, live update, bidirectional
-   row ↔ ROI selection, and long-format CSV export with provenance columns.
-4. Line profile.
-5. ImageJ `.roi` / `RoiSet.zip` import, then export.
-6. Threshold: live preview, auto-threshold gallery, stability curve, local
-   adaptive methods, preprocessing chain.
-7. Particle analysis: connected-component labeling in Rust, per-object
-   measurements, size/shape filters, watershed.
-8. Click-to-segment with hover preview, brush refinement, livewire.
-9. Multi-point counter, scale-bar overlay, physical-unit readouts everywhere.
-10. Collection-wide appending results table, filename-pattern grouping columns,
-    expression columns, `.xlsx` output, optional pandas starter script.
+- [x] Calibration (auto from OME and TIFF resolution tags, manual, and from a
+      drawn line of known length) and the Measure panel shell.
+- [x] ROI tools, overlay layer, ROI list, JSON sidecar persistence.
+- [x] Measurement table with the full column set, live update, bidirectional
+      row ↔ ROI selection, and long-format CSV export with provenance columns.
+- [x] Line profile, with perpendicular band averaging and CSV export.
+- [x] ImageJ `.roi` / `RoiSet.zip` import and export.
+- [x] Threshold: live preview, auto-threshold gallery, stability curve, local
+      adaptive methods, preprocessing chain.
+- [x] Particle analysis: connected-component labelling, per-object
+      measurements, size/shape filters, hole filling, watershed. Implemented in
+      TypeScript rather than Rust — it is fast enough at these image sizes, and
+      keeping it beside the ROI model avoids a WASM boundary for every slider
+      drag. Move it to the crate only if a real image proves it too slow.
+- [x] Click-to-segment with hover preview, brush refinement, livewire.
+- [x] Multi-point counter, scale-bar overlay, physical-unit readouts.
+- [x] Filename-pattern grouping columns, expression columns, `.xlsx` output,
+      pandas starter script.
 
-**Difficulty: 4** overall (a multi-week epic; steps 1–4 alone are a **2–3** and
-already deliver a usable product).
+**Implementation notes:** the subsystem lives in `media/modules/measure/`
+(`types`, `geometry`, `statistics`, `threshold`, `particles`, `segmentation`,
+`imagej-roi`, `roi-io`, `expression`, `calibration`, `roi-manager`,
+`roi-overlay`, `xlsx-writer`) with the UI in `media/modules/measure-panel.ts`.
+`test/measurement-test.js` (`npm run test:measurement`) checks the numbers
+against analytic answers and synthetic images with planted objects, not against
+recorded output.
+
+### Remaining follow-ups
+
+- **Collection-wide appending results table.** Grouping columns and per-group
+  summaries exist, but each export still covers one image. The "measure a whole
+  folder into one table" workflow needs the results model to accumulate across
+  collection entries. **Difficulty: 2.**
+- **Automatic sidecar loading.** `image.tif.rois.json` is written and read, but
+  reading is still an explicit action; opening an image that has a sidecar
+  should offer (or perform) the load. **Difficulty: 1.**
+- **Per-column visibility UI.** `MeasurementColumn` and a default set exist in
+  the model; the table currently shows a fixed useful subset and exports every
+  populated column. Wiring a chooser is presentation work only. **Difficulty: 1.**
+- **Rotated rectangle/ellipse handles.** The ROI model carries `angle` and the
+  rasteriser honours it, but nothing in the overlay sets it yet.
+  **Difficulty: 2.**
+- [x] ~~Threshold preview overlay on the image.~~ Implemented: the threshold is
+  painted over the image (red = selected, green = survives the particle
+  filters), hovering a method in the gallery previews its effect immediately,
+  and selecting a results row scrolls its object into view and boxes it.
+
+**Difficulty: 4** overall (delivered as a multi-week epic).
 
 ---
 
@@ -1269,6 +1300,127 @@ renderer itself is separate and lives in the other repository.
 
 ---
 
+## 11. Shared core, host abstraction, and a possible desktop app
+
+> Three steps in order. Step 1 pays off on its own, step 2 pays off on its own,
+> and only both together make step 3 a shell rather than a port.
+
+**The measurements this is based on** (August 2026): tiff-visualizer is ~40,100
+lines of TypeScript against 5,800 lines of Rust; ply-visualizer is ~47,800
+lines of TypeScript/Svelte against 7,560 of Rust. **Rust is roughly 13% of the
+combined codebase** — the renderers, panels, layer compositor and format
+processors are all web code. Any plan that implies rewriting those is not worth
+evaluating.
+
+### Do not merge the two extensions
+
+Stated here so the question stops being reopened. Against a merge: two
+marketplace listings are two discovery paths for two audiences; the render
+stacks share nothing (a Three.js scene with camera controls versus a 2D
+canvas/WebGPU pipeline with normalization and a layer compositor), so a merge
+means maintaining both inside one extension; and the only real synergy — 3D
+volumes — is already covered by item 10 at difficulty 3 instead of 5.
+
+Merge the **building blocks**, not the products. That is step 1.
+
+### Step 1 — extract a shared core
+
+There is genuine duplication today: ply-visualizer reads TIFF, PNG, PFM, NPY,
+NPZ and EXR as depth images — exactly six formats for which this repository
+already has mature decoders, including the Rust/WASM path. Colormap tables
+exist twice.
+
+- Inventory first: which parsers are actually equivalent versus superficially
+  similar (ply's depth readers care about camera models and invalid-pixel
+  semantics this viewer does not model, and this viewer preserves sample depth
+  and metadata that a depth reader discards). Only genuinely equivalent code
+  moves.
+- Shape: an npm workspace for the TypeScript side, a Cargo workspace for the
+  crates. `wasm/tiff-decoder` and `ply-visualizer/wasm/pointcloud-parser`
+  become members rather than islands.
+- Candidates in likely order of payoff: format decoders → colormaps →
+  statistics helpers → the WASM loading/worker plumbing.
+- Low risk and reversible: neither product changes behavior, and both keep
+  shipping independently. Combine with item 10, whose payload descriptor is the
+  first real consumer of a shared type.
+
+**Difficulty: 3**, mostly inventory and packaging rather than new logic.
+
+### Step 2 — host abstraction in the webview
+
+**The number that matters: 153 `postMessage` call sites across 18 modules**,
+reaching down into the format processors themselves. The webview is not
+host-agnostic, and that is the entire cost of running this code anywhere other
+than a VS Code webview.
+
+- Introduce one `Host` interface (message transport, file/byte access,
+  persisted state, configuration, "open document" style commands) and route
+  every current call through it. Format processors should not know what a
+  `vscode` API is.
+- The VS Code implementation is the existing `acquireVsCodeApi` transport; a
+  plain-browser implementation is a few dozen lines.
+- **This is worth doing even if the desktop app never happens.** ply-visualizer
+  demonstrates the payoff: its standalone `engine/` page is its fastest test
+  surface, because Playwright runs against a browser page instead of booting
+  VS Code/Electron. This repository's Playwright suite currently pays the
+  Electron cost on every run.
+- Secondary benefit: a standalone web build becomes a public demo, the same way
+  the point-cloud engine is.
+
+**Difficulty: 3.** Mechanical but broad; do it incrementally, one module group
+at a time, with the VS Code host as the only implementation until the last
+call site is converted.
+
+### Step 3 — one Tauri desktop app (optional, and only after 1 and 2)
+
+If a desktop app happens, it should be **one** app covering both images and 3D,
+not two — the marketplace-discovery argument that keeps the extensions separate
+does not exist off-marketplace, and "one scientific data viewer" is the
+stronger desktop positioning.
+
+**Framework: Tauri 2, not a Rust UI toolkit.** egui, iced, Slint and Dioxus
+native are UI frameworks; adopting one means rewriting ~88,000 lines of
+renderer and UI. Tauri keeps the webview frontend and makes the Rust side
+native instead of WASM.
+
+What that actually buys, in order of importance to this project's roadmap:
+
+- **Memory.** wasm32 is capped at a 4 GB address space, and the VS Code webview
+  adds its own heap limit on top. Native Rust has neither. This is the binding
+  constraint for whole-slide TIFFs (item 3), volumes (item 10) and large
+  collections — not a micro-optimization.
+- **Real threads.** `rayon` instead of WASM threads with their COOP/COEP and
+  SharedArrayBuffer requirements. Debayering, marching cubes, threshold sweeps
+  and particle analysis (item 7) are all embarrassingly parallel.
+- **File access.** `mmap`, lazy range reads, directory watching, OS-level file
+  associations — which makes tile-driven pyramid loading substantially simpler
+  than through the VS Code file API.
+- **Native GPU** via `wgpu`, without the WebGPU subset.
+
+Honest costs:
+
+- Tauri uses the **OS webview** (WKWebView / WebView2 / WebKitGTK), whose
+  WebGPU support is uneven and weakest on WebKitGTK. Having just gone
+  WebGPU-first, expect to fall back to WebGL2 on some desktops — survivable
+  because that fallback exists, but it is not the "native" win one imagines.
+- Code signing and notarization (Apple ~$99/year, a Windows certificate),
+  auto-update, crash reporting, three-OS testing. Permanent overhead that the
+  extension model provides for free.
+- **Strategic:** the reason people use this is *that it is in the editor* — no
+  setup, no JVM, no Conda, works over SSH remotes and in vscode.dev. A desktop
+  app competes head-on with Fiji, napari and Imaris and gives up the one
+  argument that distinguishes it. This is a second product with a different
+  market, not an improvement of the existing one.
+
+A cheaper intermediate exists: an installable PWA of the standalone build from
+step 2 costs almost nothing and gives a window and an icon — but none of the
+memory or threading benefits, which are the only reasons to leave the browser.
+
+**Difficulty: 4** as a shell once steps 1 and 2 are done; **5** and a rewrite if
+attempted before them.
+
+---
+
 ## Other ideas worth considering
 
 - **Physical-unit readouts everywhere.** Once voxel spacing exists (item 2), show
@@ -1332,9 +1484,7 @@ renderer itself is separate and lives in the other repository.
    appropriate level for whole-slide and very large OME-TIFF data.
 7. **Lens undistortion.** Independent and ready to schedule when calibrated
    camera workflows become a priority.
-8. **Measurement and ROI analysis (item 7).** The largest unclaimed
-   user-facing niche — no VS Code extension does it, and the incumbents are all
-   separate heavyweight applications. Independent of the format and accelerator
-   work, so it can run in parallel. Start with calibration + ROI tools +
-   measurement table; the threshold/segmentation half is where the genuine
-   workflow improvements over ImageJ live.
+8. **Measurement follow-ups (item 7).** The subsystem is implemented; what
+   remains is the collection-wide results table, automatic sidecar loading, a
+   column chooser, rotated ROI handles, and painting the threshold mask over
+   the image while tuning it.

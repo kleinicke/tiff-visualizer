@@ -1418,6 +1418,51 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleMeasure', () => {
+		logCommand('toggleMeasure', 'start');
+		try {
+			const preview = previewManager.activePreview;
+			if (!preview) {
+				// Silently doing nothing is the worst answer here: from the command
+				// palette there is no other feedback that the command was even run.
+				vscode.window.showInformationMessage(
+					'Open an image in the Scientific Image Visualizer first, then run Measure.');
+				logCommand('toggleMeasure', 'error', 'No active preview');
+				return;
+			}
+			preview.toggleMeasure();
+			logCommand('toggleMeasure', 'success');
+		} catch (error) {
+			logCommand('toggleMeasure', 'error', String(error));
+		}
+	}));
+
+	// Direct actions, so the common things do not require opening the panel and
+	// finding the right tab first.
+	for (const [command, action] of [
+		['tiffVisualizer.saveRois', 'saveRois'],
+		['tiffVisualizer.loadRois', 'loadRois'],
+		['tiffVisualizer.exportMeasurements', 'exportCsv'],
+		['tiffVisualizer.clearRois', 'clearRois'],
+	] as const) {
+		disposables.push(vscode.commands.registerCommand(command, () => {
+			logCommand(command, 'start');
+			try {
+				const preview = previewManager.activePreview;
+				if (!preview) {
+					vscode.window.showInformationMessage(
+						'Open an image in the Scientific Image Visualizer first.');
+					logCommand(command, 'error', 'No active preview');
+					return;
+				}
+				preview.runMeasureCommand(action);
+				logCommand(command, 'success');
+			} catch (error) {
+				logCommand(command, 'error', String(error));
+			}
+		}));
+	}
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleMetadata', () => {
 		logCommand('toggleMetadata', 'start');
 		try {

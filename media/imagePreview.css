@@ -1932,3 +1932,444 @@ body img {
 .vscode-light .debayer-close:hover {
 	background: var(--vscode-toolbar-hoverBackground, #e8e8e8);
 }
+
+/* ---------------------------------------------------------------------------
+   Measurement subsystem
+   ---------------------------------------------------------------------------
+   The overlay canvas spans the viewport and maps image coordinates through
+   getBoundingClientRect() at draw time, so it needs no geometry of its own —
+   see roi-overlay.ts for why that is simpler than mirroring the image element.
+   The panel follows the debayer/metadata panel conventions: theme variables,
+   fixed positioning, dragged by its header.
+--------------------------------------------------------------------------- */
+
+.measure-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	/* Above the image (which has no stacking context of its own) but below every
+	   piece of chrome: the collection/dataset indicators sit at 18, the floating
+	   panels at 50 and 1000+. The overlay spans the whole viewport, so anything
+	   it covered would also stop receiving clicks. */
+	z-index: 17;
+	cursor: crosshair;
+}
+
+.measure-panel {
+	position: fixed;
+	top: 20px;
+	right: 20px;
+	width: 340px;
+	max-height: calc(100vh - 40px);
+	background: var(--vscode-editor-background, #1e1e1e);
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px;
+	z-index: 1000;
+	font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+	font-size: 12px;
+	color: var(--vscode-editor-foreground, #cccccc);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	display: flex;
+	flex-direction: column;
+	box-sizing: border-box;
+	user-select: none;
+}
+
+.measure-header {
+	display: flex;
+	align-items: center;
+	padding: 8px 12px;
+	background: var(--vscode-sideBarSectionHeader-background, #252526);
+	border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 6px 6px 0 0;
+	gap: 8px;
+}
+
+.measure-title {
+	font-weight: 600;
+	font-size: 13px;
+}
+
+.measure-spacer {
+	flex: 1;
+}
+
+.measure-close {
+	background: transparent;
+	border: none;
+	color: var(--vscode-editor-foreground, #cccccc);
+	cursor: pointer;
+	font-size: 16px;
+	line-height: 1;
+	padding: 0 4px;
+	opacity: 0.7;
+}
+
+.measure-close:hover {
+	opacity: 1;
+}
+
+.measure-tabs {
+	display: flex;
+	border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+	background: var(--vscode-sideBarSectionHeader-background, #252526);
+}
+
+.measure-tab {
+	flex: 1;
+	background: transparent;
+	border: none;
+	border-bottom: 2px solid transparent;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	cursor: pointer;
+	padding: 6px 4px;
+	font-size: 11px;
+	font-family: inherit;
+}
+
+.measure-tab:hover {
+	color: var(--vscode-editor-foreground, #cccccc);
+}
+
+.measure-tab.active {
+	color: var(--vscode-editor-foreground, #cccccc);
+	border-bottom-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.measure-body {
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 8px 12px;
+	flex: 1;
+	min-height: 0;
+}
+
+.measure-hint {
+	padding: 6px 12px;
+	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	font-size: 10.5px;
+	line-height: 1.4;
+	min-height: 14px;
+}
+
+.measure-section {
+	margin-bottom: 12px;
+}
+
+.measure-section-title {
+	font-size: 10.5px;
+	text-transform: uppercase;
+	letter-spacing: 0.6px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	margin-bottom: 5px;
+}
+
+.measure-note {
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	font-size: 10.5px;
+	line-height: 1.45;
+	margin: 4px 0;
+}
+
+.measure-error {
+	color: var(--vscode-errorForeground, #f48771);
+	font-size: 10.5px;
+	margin: 2px 0 6px;
+}
+
+.measure-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin: 4px 0;
+}
+
+.measure-label {
+	flex: 0 0 118px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.measure-input,
+.measure-select {
+	flex: 1;
+	min-width: 0;
+	background: var(--vscode-input-background, #3c3c3c);
+	color: var(--vscode-input-foreground, #cccccc);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 3px;
+	padding: 3px 5px;
+	font-family: inherit;
+	font-size: 11px;
+}
+
+.measure-input.invalid {
+	border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.measure-unit-input {
+	max-width: 64px;
+}
+
+.measure-checkbox {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 5px 0;
+	cursor: pointer;
+	line-height: 1.35;
+}
+
+.measure-button,
+.measure-tool,
+.measure-method {
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	color: var(--vscode-button-secondaryForeground, #cccccc);
+	border: 1px solid transparent;
+	border-radius: 3px;
+	padding: 4px 8px;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 11px;
+}
+
+.measure-button:hover:not(:disabled),
+.measure-tool:hover:not(:disabled),
+.measure-method:hover:not(:disabled) {
+	background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+
+.measure-button:disabled,
+.measure-tool:disabled,
+.measure-method:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.measure-tool.active,
+.measure-method.active {
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #ffffff);
+	border-color: var(--vscode-focusBorder, #007fd4);
+}
+
+.measure-button-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	margin: 5px 0;
+}
+
+.measure-tool-grid {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 4px;
+}
+
+.measure-method-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 4px;
+	margin-top: 5px;
+}
+
+.measure-method {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 2px;
+	padding: 4px;
+	text-align: left;
+}
+
+.measure-method-label {
+	font-weight: 600;
+}
+
+.measure-method-value {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.measure-method.active .measure-method-value {
+	color: inherit;
+}
+
+.measure-spark {
+	width: 100%;
+	height: 24px;
+	display: block;
+}
+
+.measure-stability,
+.measure-profile {
+	width: 100%;
+	height: auto;
+	display: block;
+	margin: 4px 0;
+	border-radius: 3px;
+	background: var(--vscode-editorWidget-background, #252526);
+}
+
+.measure-roi-list {
+	max-height: 240px;
+	overflow-y: auto;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 3px;
+}
+
+.measure-roi-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 6px;
+	cursor: pointer;
+	border-bottom: 1px solid var(--vscode-panel-border, #33333380);
+}
+
+.measure-roi-row:last-child {
+	border-bottom: none;
+}
+
+.measure-roi-row:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.measure-roi-row.selected {
+	background: var(--vscode-list-activeSelectionBackground, #094771);
+	color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+.measure-roi-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+	flex: 0 0 auto;
+}
+
+.measure-roi-name {
+	flex: 1;
+	min-width: 0;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 2px;
+	color: inherit;
+	font-family: inherit;
+	font-size: 11px;
+	padding: 1px 3px;
+}
+
+.measure-roi-name:focus {
+	background: var(--vscode-input-background, #3c3c3c);
+	border-color: var(--vscode-focusBorder, #007fd4);
+	outline: none;
+}
+
+.measure-roi-kind {
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	flex: 0 0 auto;
+}
+
+.measure-roi-row.selected .measure-roi-kind {
+	color: inherit;
+	opacity: 0.8;
+}
+
+.measure-roi-remove {
+	background: transparent;
+	border: none;
+	color: inherit;
+	cursor: pointer;
+	opacity: 0.5;
+	font-size: 13px;
+	line-height: 1;
+	padding: 0 2px;
+	flex: 0 0 auto;
+}
+
+.measure-roi-remove:hover {
+	opacity: 1;
+}
+
+.measure-table-wrapper {
+	max-height: 260px;
+	overflow: auto;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	border-radius: 3px;
+}
+
+.measure-table {
+	border-collapse: collapse;
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 10.5px;
+	width: 100%;
+}
+
+.measure-table th {
+	position: sticky;
+	top: 0;
+	background: var(--vscode-sideBarSectionHeader-background, #252526);
+	text-align: right;
+	padding: 3px 6px;
+	white-space: nowrap;
+	font-weight: 600;
+	border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.measure-table th:first-child,
+.measure-table td:first-child {
+	text-align: left;
+}
+
+.measure-table td {
+	padding: 2px 6px;
+	text-align: right;
+	white-space: nowrap;
+}
+
+.measure-table tbody tr {
+	cursor: pointer;
+}
+
+.measure-table tbody tr:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.measure-table tbody tr.selected {
+	background: var(--vscode-list-activeSelectionBackground, #094771);
+	color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+
+.measure-quick-stats {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	gap: 2px 10px;
+	font-size: 11px;
+}
+
+.measure-quick-label {
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.measure-quick-value {
+	font-family: var(--vscode-editor-font-family, monospace);
+	text-align: right;
+}
+
+.measure-derived-row {
+	display: flex;
+	gap: 5px;
+	align-items: center;
+	margin-top: 4px;
+}
+
+.measure-derived-name {
+	flex: 0 0 88px;
+}
+
+.measure-derived-expression {
+	flex: 1;
+	font-family: var(--vscode-editor-font-family, monospace);
+}

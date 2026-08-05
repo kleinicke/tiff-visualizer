@@ -50,6 +50,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 - **Session-Wide Settings**: A single VS Code window keeps visualization settings across opened images.
 - **VS Code Native Controls**: Most options are available from the right-click menu inside the webview, command palette, or clickable status bar entries.
 - **Metadata panel** shows file info, image statistics (min/max/mean/std) and Exif/GPS sub-IFD tags.
+- **Measurement and quantitative analysis**: Draw regions of interest and measure them — area, perimeter, mean/StdDev/min/max, integrated density, centroid, fitted ellipse, Feret diameters, circularity — in physical units, with the scale read automatically from OME-TIFF or TIFF resolution tags. Includes an intensity profile along a line, a magic wand that previews its selection on hover and picks its own tolerance, thresholding with all thirteen auto-threshold methods shown side by side plus a stability curve that makes a robust threshold visible instead of guessed, local adaptive thresholding for uneven illumination, and particle analysis with watershed splitting. Statistics always run on the raw sample values, never on the displayed image, and NaN/Infinity are excluded and reported rather than silently counted as zero. ROIs are stored as a readable JSON file next to the image so they diff in review; ImageJ `.roi` and `RoiSet.zip` are supported for exchange. Results export as long/tidy CSV with full provenance, as German-locale CSV, or as `.xlsx`, optionally with a pandas starter script.
 
 ## How to Use
 
@@ -64,6 +65,8 @@ Use **Open Layers View** from the command palette or status bar to create a new 
 Layers View and collections are intentionally exclusive. If a Layers window is active, **Add Images to Collection** explains that the image should be added as a layer instead. Pixel inspection reports the rendered composite there; switching between original and modified source values is intentionally unavailable. A visible histogram follows layer edits using a bounded sample of the rendered composite, while a hidden histogram adds no readback or scheduled work.
 
 For a full-feature comparison, run **Select Image for Side-by-Side Compare**, open the other image, and run **Compare Side by Side with Selected**. This uses VS Code's native editor-group layout with a complete Scientific Image Visualizer on each side, including HDR/scientific decoding, acceleration, histogram, and pixel inspection. VS Code's built-in image diff remains available for browser-native formats, but its internal image renderer cannot be replaced by a custom TIFF/HDR renderer.
+
+To measure something, open **Measure** from the right-click menu or press Ctrl/Cmd+Shift+M. Everything lives in that one panel; nothing about it is visible until you open it. Pick a tool, draw on the image, and the Results tab fills in — clicking a row highlights its ROI and vice versa.
 
 Float Image Visualization Options:
 ![float-options](assets/tiffVisualizerFloatOptions.png)

@@ -65,4 +65,6 @@ export interface IImagePreview {
 	getManager(): IImagePreviewManager;
 	toggleHistogram(): void;
 	toggleMetadata(): void;
+	toggleMeasure(): void;
+	runMeasureCommand(action: string): void;
 }

@@ -48,6 +48,10 @@ export class MessageRouter {
 		this.handlers.set('requestInitialLayers', new RequestInitialLayersMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
+		this.handlers.set('measureSaveText', new MeasureSaveTextMessageHandler());
+		this.handlers.set('measureSaveBinary', new MeasureSaveBinaryMessageHandler());
+		this.handlers.set('measureSaveSidecar', new MeasureSaveSidecarMessageHandler());
+		this.handlers.set('measureRequestImport', new MeasureRequestImportMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -345,5 +349,134 @@ class PositionCopiedMessageHandler implements MessageHandler {
 				(manager as any).setCopiedPosition(message.state);
 			}
 		}
+	}
+}
+
+
+// ---------------------------------------------------------------------------
+// Measurement file I/O
+// ---------------------------------------------------------------------------
+
+/**
+ * Default directory for measurement output: next to the image being measured.
+ *
+ * Keeping results beside the data is the point of doing this inside an editor —
+ * the CSV, the ROI sidecar, and the image end up in the same folder and the
+ * same commit, instead of in whatever directory a separate application happened
+ * to be pointed at.
+ */
+function measurementDirectory(preview: ImagePreview): vscode.Uri {
+	return vscode.Uri.joinPath(preview.getCurrentImage(), '..');
+}
+
+async function writeMeasurementFile(
+	preview: ImagePreview,
+	fileName: string,
+	bytes: Uint8Array,
+	options: { open?: boolean } = {},
+): Promise<void> {
+	const defaultUri = vscode.Uri.joinPath(measurementDirectory(preview), fileName);
+	const target = await vscode.window.showSaveDialog({ defaultUri });
+	if (!target) { return; }
+	try {
+		await vscode.workspace.fs.writeFile(target, bytes);
+	} catch (error) {
+		vscode.window.showErrorMessage(`Could not write ${fileName}: ${error}`);
+		return;
+	}
+	if (options.open) {
+		// Opening the result as an ordinary editor tab is what makes it
+		// diffable and copyable without a detour through another application.
+		//
+		// Beside, and without stealing focus: replacing the image editor would
+		// hide the preview, and coming back to a hidden preview re-navigates a
+		// multi-image collection, which resets the measurement session the
+		// export was made from. Keeping both visible avoids that entirely.
+		const document = await vscode.workspace.openTextDocument(target);
+		await vscode.window.showTextDocument(document, {
+			preview: false,
+			viewColumn: vscode.ViewColumn.Beside,
+			preserveFocus: true,
+		});
+	} else {
+		vscode.window.showInformationMessage(`Saved ${vscode.workspace.asRelativePath(target)}`);
+	}
+}
+
+class MeasureSaveTextMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		const bytes = new TextEncoder().encode(String(message.content ?? ''));
+		void writeMeasurementFile(preview, String(message.fileName || 'results.csv'), bytes, {
+			open: message.open !== false,
+		});
+	}
+}
+
+class MeasureSaveBinaryMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		// The webview cannot transfer a typed array, so bytes arrive as a plain
+		// number array and are rebuilt here.
+		const bytes = Uint8Array.from(Array.isArray(message.bytes) ? message.bytes : []);
+		void writeMeasurementFile(preview, String(message.fileName || 'export.bin'), bytes);
+	}
+}
+
+/**
+ * Save the ROI sidecar next to the image, without a dialog.
+ *
+ * The path is derived from the image name (`image.tif.rois.json`) precisely so
+ * that reopening the image can find it again; prompting for a location every
+ * time would break that convention and make the file just another loose export.
+ */
+class MeasureSaveSidecarMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		const image = preview.getCurrentImage();
+		const target = image.with({ path: `${image.path}.rois.json` });
+		const bytes = new TextEncoder().encode(String(message.content ?? ''));
+		void (async () => {
+			try {
+				await vscode.workspace.fs.writeFile(target, bytes);
+				preview.getWebview().postMessage({
+					type: 'measureHint',
+					text: `Saved ${vscode.workspace.asRelativePath(target)}`,
+				});
+			} catch (error) {
+				vscode.window.showErrorMessage(`Could not save ROIs: ${error}`);
+			}
+		})();
+	}
+}
+
+class MeasureRequestImportMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		const kind = message.kind === 'imagej' ? 'imagej' : 'sidecar';
+		void (async () => {
+			const image = preview.getCurrentImage();
+			// Offer the conventional sidecar first, so the common case is one
+			// click rather than a directory hunt.
+			const defaultUri = kind === 'sidecar'
+				? image.with({ path: `${image.path}.rois.json` })
+				: vscode.Uri.joinPath(measurementDirectory(preview), 'RoiSet.zip');
+			const picked = await vscode.window.showOpenDialog({
+				defaultUri,
+				canSelectMany: false,
+				openLabel: kind === 'imagej' ? 'Import ROIs' : 'Load ROIs',
+				filters: kind === 'imagej'
+					? { 'ImageJ ROIs': ['roi', 'zip'] }
+					: { 'ROI sidecar': ['json'] },
+			});
+			if (!picked || picked.length === 0) { return; }
+			try {
+				const bytes = await vscode.workspace.fs.readFile(picked[0]);
+				preview.getWebview().postMessage({
+					type: 'measureImportResult',
+					kind,
+					fileName: picked[0].path.split('/').pop() || '',
+					bytes: Array.from(bytes),
+				});
+			} catch (error) {
+				vscode.window.showErrorMessage(`Could not read the ROI file: ${error}`);
+			}
+		})();
 	}
 }

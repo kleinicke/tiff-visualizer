@@ -212,6 +212,31 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleMeasure",
+        "title": "Measure: Open Measure Panel",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.saveRois",
+        "title": "Measure: Save ROIs Next to the Image",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.loadRois",
+        "title": "Measure: Load ROIs",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.exportMeasurements",
+        "title": "Measure: Export Results as CSV",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.clearRois",
+        "title": "Measure: Clear All ROIs",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.convertColormapToFloat",
         "title": "Decode Colormap Image to Float",
         "category": "TIFF Visualizer"
@@ -263,6 +288,12 @@
         "command": "tiffVisualizer.toggleMetadata",
         "key": "ctrl+m",
         "mac": "cmd+m",
+        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
+      },
+      {
+        "command": "tiffVisualizer.toggleMeasure",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m",
         "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
       },
       {
@@ -330,7 +361,7 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement",
     "test:unit": "npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
@@ -338,6 +369,7 @@
 	"test:dicom-dataset": "node test/dicom-dataset-test.js",
     "test:visualization": "node test/visualization-test.js",
     "test:debayer": "node test/debayer-test.js",
+    "test:measurement": "node test/measurement-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",
     "test:control-behavior": "node test/control-behavior-test.js",

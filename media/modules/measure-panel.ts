@@ -1,0 +1,1758 @@
+"use strict";
+
+import { areaUnit, calibrationFromKnownDistance, describeCalibration, formatNumber } from './measure/calibration.js';
+import { maskContour } from './measure/geometry.js';
+import { compileExpression, ExpressionError } from './measure/expression.js';
+import { exportImageJRois } from './measure/imagej-roi.js';
+import { analyzeParticles, particleToRoi } from './measure/particles.js';
+import type { RoiManager } from './measure/roi-manager.js';
+import {
+	buildPandasScript,
+	buildSidecar,
+	matchFilenamePattern,
+	rowsToDelimitedText,
+	summarizeByGroup,
+	type DerivedColumn,
+} from './measure/roi-io.js';
+import type { MeasureTool, RoiOverlay } from './measure/roi-overlay.js';
+import { measureAll, sampleLineProfile } from './measure/statistics.js';
+import { gaussianBlur, subtractBackground } from './measure/segmentation.js';
+import {
+	autoThresholdBin,
+	binToValue,
+	buildHistogram,
+	computeStabilityCurve,
+	globalThresholdMask,
+	localThresholdMask,
+	LOCAL_METHODS,
+	THRESHOLD_METHODS,
+	thresholdValueFromBin,
+	valueToBin,
+	type LocalMethod,
+	type ScalarHistogram,
+	type StabilityCurve,
+	type ThresholdMethod,
+} from './measure/threshold.js';
+import { buildXlsx } from './measure/xlsx-writer.js';
+import {
+	isLineKind,
+	type Calibration,
+	type LineRoi,
+	type MeasurementProvenance,
+	type MeasurementRow,
+	type MeasurementSource,
+	type Roi,
+} from './measure/types.js';
+
+/**
+ * The Measure panel.
+ *
+ * One surface for the whole subsystem, opened from a single context-menu entry
+ * and a status-bar toggle. That is the entire visible footprint: someone who
+ * opens a TIFF to look at it sees nothing of any of this, which was the design
+ * constraint the feature had to satisfy before anything else.
+ *
+ * Structurally it follows the panel pattern already established by
+ * `debayer-panel.ts` and `metadata-panel.ts` — its own DOM tree on
+ * `document.body`, theme variables for styling, drag by the header, visibility
+ * persisted by the caller — so it adds a surface, not a paradigm.
+ */
+
+export type MeasureTab = 'tools' | 'rois' | 'results' | 'segment' | 'setup';
+
+export interface MeasurePanelHost {
+	manager: RoiManager;
+	overlay: RoiOverlay;
+	getSource: () => MeasurementSource | null;
+	getScalarPlane: () => Float32Array | null;
+	getCalibration: () => Calibration;
+	setCalibration: (calibration: Calibration) => void;
+	/** Ask the extension host to write a file and open it in an editor tab. */
+	saveTextFile: (fileName: string, content: string, options?: { open?: boolean }) => void;
+	saveBinaryFile: (fileName: string, bytes: Uint8Array) => void;
+	/** Ask the extension host to open a file picker and return its bytes. */
+	requestImport: (kind: 'imagej' | 'sidecar') => void;
+	/** Persist the ROI sidecar next to the image. */
+	saveSidecar: (json: string) => void;
+	extensionVersion?: string;
+}
+
+interface ThresholdState {
+	method: ThresholdMethod;
+	localMethod: LocalMethod;
+	localRadius: number;
+	localK: number;
+	low: number;
+	high: number;
+	darkBackground: boolean;
+	blurSigma: number;
+	backgroundRadius: number;
+	watershed: boolean;
+	fillHoles: boolean;
+	excludeEdges: boolean;
+	minArea: number;
+	maxArea: number;
+	minCircularity: number;
+	manual: boolean;
+}
+
+const DEFAULT_THRESHOLD: ThresholdState = {
+	method: 'otsu',
+	localMethod: 'none',
+	localRadius: 15,
+	localK: 0.25,
+	low: 0,
+	high: 1,
+	darkBackground: true,
+	blurSigma: 0,
+	backgroundRadius: 0,
+	watershed: false,
+	fillHoles: true,
+	excludeEdges: false,
+	minArea: 10,
+	maxArea: Number.POSITIVE_INFINITY,
+	minCircularity: 0,
+	manual: false,
+};
+
+const TOOLS: { id: MeasureTool; label: string; key?: string }[] = [
+	{ id: 'select', label: 'Select', key: 'V' },
+	{ id: 'rect', label: 'Rect', key: 'R' },
+	{ id: 'ellipse', label: 'Ellipse', key: 'E' },
+	{ id: 'polygon', label: 'Polygon', key: 'P' },
+	{ id: 'freehand', label: 'Freehand', key: 'F' },
+	{ id: 'line', label: 'Line', key: 'L' },
+	{ id: 'polyline', label: 'Polyline' },
+	{ id: 'point', label: 'Points', key: 'N' },
+	{ id: 'wand', label: 'Wand', key: 'W' },
+	{ id: 'brush', label: 'Brush', key: 'B' },
+	{ id: 'livewire', label: 'Trace edge' },
+];
+
+export class MeasurePanel {
+	private overlayRoot: HTMLDivElement;
+	private body: HTMLDivElement;
+	private hintLine: HTMLDivElement;
+	private tabButtons = new Map<MeasureTab, HTMLButtonElement>();
+	private tab: MeasureTab = 'tools';
+	private host: MeasurePanelHost;
+
+	private rows: MeasurementRow[] = [];
+	private derivedColumns: DerivedColumn[] = [];
+	private groupPattern = '';
+	private channelMode: 'first' | 'all' = 'first';
+	private threshold: ThresholdState = { ...DEFAULT_THRESHOLD };
+	private histogram: ScalarHistogram | null = null;
+	private stability: StabilityCurve | null = null;
+	private thresholdMask: Uint8Array | null = null;
+	private previewPlane: Float32Array | null = null;
+	private pendingCalibrationDistance = 0;
+	private measureHandle = 0;
+	/** Cached particle pass, so the stats line and the preview agree and the
+	 *  analysis is not run twice per render. */
+	private particleResult: ReturnType<typeof analyzeParticles> | null = null;
+	private showMaskOverlay = true;
+
+	private isDragging = false;
+	private dragOffset = { x: 0, y: 0 };
+
+	constructor(host: MeasurePanelHost) {
+		this.host = host;
+
+		this.overlayRoot = document.createElement('div');
+		this.overlayRoot.className = 'measure-panel';
+		this.overlayRoot.style.display = 'none';
+
+		const header = document.createElement('div');
+		header.className = 'measure-header';
+		const title = document.createElement('div');
+		title.className = 'measure-title';
+		title.textContent = 'Measure';
+		const spacer = document.createElement('div');
+		spacer.className = 'measure-spacer';
+		const closeButton = document.createElement('button');
+		closeButton.className = 'measure-close';
+		closeButton.textContent = '×';
+		closeButton.title = 'Close the measure panel';
+		closeButton.onclick = () => this.hide();
+		header.append(title, spacer, closeButton);
+		header.style.cursor = 'move';
+		header.onmousedown = event => this.startDrag(event);
+
+		const tabs = document.createElement('div');
+		tabs.className = 'measure-tabs';
+		const tabDefinitions: { id: MeasureTab; label: string }[] = [
+			{ id: 'tools', label: 'Tools' },
+			{ id: 'rois', label: 'ROIs' },
+			{ id: 'results', label: 'Results' },
+			{ id: 'segment', label: 'Segment' },
+			{ id: 'setup', label: 'Scale' },
+		];
+		for (const definition of tabDefinitions) {
+			const button = document.createElement('button');
+			button.className = 'measure-tab';
+			button.textContent = definition.label;
+			button.onclick = () => this.setTab(definition.id);
+			tabs.appendChild(button);
+			this.tabButtons.set(definition.id, button);
+		}
+
+		this.body = document.createElement('div');
+		this.body.className = 'measure-body';
+
+		this.hintLine = document.createElement('div');
+		this.hintLine.className = 'measure-hint';
+
+		this.overlayRoot.append(header, tabs, this.body, this.hintLine);
+
+		// Panel interaction must not reach the image's pan/zoom handlers. The
+		// omission of 'mouseup' matches debayer-panel.ts: swallowing it strands
+		// the drag listeners and glues the panel to the cursor.
+		for (const type of ['mousedown', 'click', 'dblclick', 'wheel', 'contextmenu']) {
+			this.overlayRoot.addEventListener(type, event => event.stopPropagation());
+		}
+
+		document.body.appendChild(this.overlayRoot);
+		this.setTab('tools');
+	}
+
+	// --- visibility ---------------------------------------------------------
+
+	show(): void {
+		this.overlayRoot.style.display = 'flex';
+		this.host.overlay.setActive(true);
+		this.refresh();
+	}
+
+	hide(): void {
+		this.overlayRoot.style.display = 'none';
+		this.host.overlay.setActive(false);
+		this.host.overlay.setTool('select');
+		this.host.overlay.setMaskPreview(null);
+	}
+
+	isVisible(): boolean { return this.overlayRoot.style.display !== 'none'; }
+
+	toggle(): void { if (this.isVisible()) { this.hide(); } else { this.show(); } }
+
+	setHint(text: string): void { this.hintLine.textContent = text; }
+
+	setTab(tab: MeasureTab): void {
+		this.tab = tab;
+		for (const [id, button] of this.tabButtons) { button.classList.toggle('active', id === tab); }
+		this.render();
+	}
+
+	/** Called when the displayed image changes. */
+	onImageChanged(): void {
+		this.histogram = null;
+		this.stability = null;
+		this.thresholdMask = null;
+		this.previewPlane = null;
+		this.particleResult = null;
+		this.showMaskOverlay = true;
+		this.host.overlay.invalidateImage();
+		this.scheduleMeasure();
+	}
+
+	// --- measurement --------------------------------------------------------
+
+	/**
+	 * Recompute the results table.
+	 *
+	 * Coalesced through a frame callback because it is driven by ROI edits,
+	 * which arrive once per mouse move while a vertex is being dragged.
+	 */
+	scheduleMeasure(): void {
+		if (this.measureHandle) { return; }
+		this.measureHandle = requestAnimationFrame(() => {
+			this.measureHandle = 0;
+			this.measure();
+			if (this.tab === 'results' || this.tab === 'rois' || this.tab === 'tools') { this.render(); }
+		});
+	}
+
+	private measure(): void {
+		const source = this.host.getSource();
+		if (!source) { this.rows = []; return; }
+		const channels = this.channelMode === 'all'
+			? Array.from({ length: source.channels || 1 }, (_, i) => i)
+			: [0];
+		this.rows = measureAll(this.host.manager.list(), source, this.host.getCalibration(), channels);
+	}
+
+	getRows(): MeasurementRow[] { return this.rows; }
+
+	// --- rendering ----------------------------------------------------------
+
+	refresh(): void {
+		this.measure();
+		this.render();
+	}
+
+	private render(): void {
+		this.body.textContent = '';
+		switch (this.tab) {
+			case 'tools': this.renderTools(); break;
+			case 'rois': this.renderRois(); break;
+			case 'results': this.renderResults(); break;
+			case 'segment': this.renderSegment(); break;
+			case 'setup': this.renderSetup(); break;
+		}
+	}
+
+	private renderTools(): void {
+		const strip = this.section('Tool');
+		const grid = document.createElement('div');
+		grid.className = 'measure-tool-grid';
+		for (const tool of TOOLS) {
+			const button = document.createElement('button');
+			button.className = 'measure-tool';
+			button.textContent = tool.label;
+			button.title = tool.key ? `${tool.label} (${tool.key})` : tool.label;
+			button.classList.toggle('active', this.host.overlay.getTool() === tool.id);
+			button.onclick = () => {
+				this.host.overlay.setTool(tool.id);
+				this.render();
+			};
+			grid.appendChild(button);
+		}
+		strip.appendChild(grid);
+
+		const tool = this.host.overlay.getTool();
+
+		if (tool === 'wand') {
+			const settings = this.section('Wand');
+			const auto = this.host.overlay.getWandTolerance() === null;
+			settings.appendChild(this.checkbox(
+				'Choose tolerance automatically', auto,
+				checked => {
+					this.host.overlay.setWandTolerance(checked ? null : 1);
+					this.render();
+				},
+				'Sweeps the tolerance and keeps the value at which the region stops growing — the object boundary — instead of asking you to guess one.',
+			));
+			if (!auto) {
+				settings.appendChild(this.numberRow(
+					'Tolerance', this.host.overlay.getWandTolerance() ?? 1,
+					value => this.host.overlay.setWandTolerance(value),
+					{ step: 'any', min: 0 },
+				));
+			}
+			settings.appendChild(this.note('Hover to preview, scroll to adjust, Shift-click to merge into the selected object.'));
+		}
+
+		if (tool === 'brush') {
+			const settings = this.section('Brush');
+			settings.appendChild(this.numberRow(
+				'Radius (px)', this.host.overlay.getBrushRadius(),
+				value => this.host.overlay.setBrushRadius(value),
+				{ step: '1', min: 1 },
+			));
+			settings.appendChild(this.note('Paints into the selected object. Alt-drag erases, scroll resizes.'));
+		}
+
+		const display = this.section('Overlay');
+		display.appendChild(this.checkbox('Show ROI names', true, checked => this.host.overlay.setShowLabels(checked)));
+		display.appendChild(this.checkbox('Show scale bar', true, checked => this.host.overlay.setShowScaleBar(checked)));
+
+		const selected = this.host.manager.selectedRois();
+		const lineRoi = selected.find(roi => isLineKind(roi.kind)) as LineRoi | undefined;
+		if (lineRoi) { this.body.appendChild(this.buildProfileSection(lineRoi)); }
+		else if (selected.length === 1) { this.body.appendChild(this.buildQuickStats(selected[0])); }
+	}
+
+	private renderRois(): void {
+		const manager = this.host.manager;
+		const list = this.section(`ROIs (${manager.count()})`);
+
+		if (manager.count() === 0) {
+			list.appendChild(this.note('No ROIs yet. Pick a tool and draw on the image, or import an ImageJ ROI set below.'));
+		} else {
+			const container = document.createElement('div');
+			container.className = 'measure-roi-list';
+			for (const roi of manager.list()) {
+				container.appendChild(this.buildRoiRow(roi));
+			}
+			list.appendChild(container);
+		}
+
+		const actions = this.section('Edit');
+		const buttons = document.createElement('div');
+		buttons.className = 'measure-button-row';
+		buttons.append(
+			this.button('Undo', () => manager.undo(), !manager.canUndo()),
+			this.button('Redo', () => manager.redo(), !manager.canRedo()),
+			this.button('Delete selected', () => manager.remove(manager.selectedIds()), manager.selectedIds().length === 0),
+			this.button('Renumber', () => manager.renumber(), manager.count() === 0),
+			this.button('Clear all', () => manager.clear(), manager.count() === 0),
+		);
+		actions.appendChild(buttons);
+
+		const io = this.section('Store and exchange');
+		const ioButtons = document.createElement('div');
+		ioButtons.className = 'measure-button-row';
+		ioButtons.append(
+			this.button('Save ROIs', () => this.saveSidecar(), manager.count() === 0),
+			this.button('Load ROIs', () => this.host.requestImport('sidecar')),
+			this.button('Import ImageJ…', () => this.host.requestImport('imagej')),
+			this.button('Export ImageJ', () => this.exportImageJ(), manager.count() === 0),
+		);
+		io.appendChild(ioButtons);
+		io.appendChild(this.note(
+			'ROIs are saved as a readable JSON file next to the image, so they diff in review and can be edited by hand. '
+			+ 'ImageJ .roi / RoiSet.zip is supported for exchange.',
+		));
+	}
+
+	private buildRoiRow(roi: Roi): HTMLElement {
+		const manager = this.host.manager;
+		const row = document.createElement('div');
+		row.className = 'measure-roi-row';
+		row.classList.toggle('selected', manager.isSelected(roi.id));
+
+		const swatch = document.createElement('span');
+		swatch.className = 'measure-roi-swatch';
+		swatch.style.background = roi.color || '#ffd400';
+
+		const name = document.createElement('input');
+		name.className = 'measure-roi-name';
+		name.value = roi.name;
+		name.onchange = () => manager.rename(roi.id, name.value.trim() || roi.name);
+		// Typing a name must not be interpreted as a tool shortcut.
+		name.onkeydown = event => event.stopPropagation();
+
+		const kind = document.createElement('span');
+		kind.className = 'measure-roi-kind';
+		kind.textContent = roi.kind;
+
+		const remove = document.createElement('button');
+		remove.className = 'measure-roi-remove';
+		remove.textContent = '×';
+		remove.title = 'Delete this ROI';
+		remove.onclick = event => {
+			event.stopPropagation();
+			manager.remove([roi.id]);
+		};
+
+		row.append(swatch, name, kind, remove);
+		// Selecting from the list highlights it on the image; the results table
+		// does the same. Keeping the row, the overlay, and the table pointing at
+		// one object is the thing a spreadsheet copy destroys permanently.
+		row.onclick = event => {
+			if (event.target === name) { return; }
+			const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+			manager.select([roi.id], { additive });
+			if (!additive) { this.host.overlay.revealRoi(roi.id); }
+		};
+		return row;
+	}
+
+	private buildQuickStats(roi: Roi): HTMLElement {
+		const section = document.createElement('div');
+		section.className = 'measure-section';
+		const heading = document.createElement('div');
+		heading.className = 'measure-section-title';
+		heading.textContent = roi.name;
+		section.appendChild(heading);
+
+		const row = this.rows.find(candidate => candidate.roiId === roi.id);
+		if (!row) { section.appendChild(this.note('Not measurable on this image.')); return section; }
+
+		const calibration = this.host.getCalibration();
+		const table = document.createElement('div');
+		table.className = 'measure-quick-stats';
+		const entries: [string, string][] = [];
+		if (row.area !== undefined) { entries.push(['Area', `${formatNumber(row.area)} ${areaUnit(calibration)}`]); }
+		if (row.length !== undefined) { entries.push(['Length', `${formatNumber(row.length)} ${calibration.unit}`]); }
+		if (row.perimeter !== undefined) { entries.push(['Perimeter', `${formatNumber(row.perimeter)} ${calibration.unit}`]); }
+		if (row.mean !== undefined) { entries.push(['Mean', formatNumber(row.mean, 6)]); }
+		if (row.stdDev !== undefined) { entries.push(['StdDev', formatNumber(row.stdDev, 6)]); }
+		if (row.min !== undefined) { entries.push(['Min / Max', `${formatNumber(row.min, 6)} / ${formatNumber(row.max as number, 6)}`]); }
+		if (row.circularity !== undefined) { entries.push(['Circularity', formatNumber(row.circularity, 3)]); }
+		if (row.feret !== undefined) { entries.push(['Feret', `${formatNumber(row.feret)} ${calibration.unit}`]); }
+		if (row.pixelCount !== undefined) { entries.push(['Pixels', String(row.pixelCount)]); }
+		if (row.nonFiniteCount) { entries.push(['NaN / Inf pixels', String(row.nonFiniteCount)]); }
+
+		for (const [label, value] of entries) {
+			const cellLabel = document.createElement('div');
+			cellLabel.className = 'measure-quick-label';
+			cellLabel.textContent = label;
+			const cellValue = document.createElement('div');
+			cellValue.className = 'measure-quick-value';
+			cellValue.textContent = value;
+			table.append(cellLabel, cellValue);
+		}
+		section.appendChild(table);
+		return section;
+	}
+
+	/**
+	 * Intensity profile along a line ROI.
+	 *
+	 * Drawn on a canvas rather than assembled from DOM nodes: a profile has one
+	 * sample per pixel of line length, and a thousand `<div>`s would be both
+	 * slower and unreadable.
+	 */
+	private buildProfileSection(roi: LineRoi): HTMLElement {
+		const section = document.createElement('div');
+		section.className = 'measure-section';
+		const heading = document.createElement('div');
+		heading.className = 'measure-section-title';
+		heading.textContent = `Profile — ${roi.name}`;
+		section.appendChild(heading);
+
+		const source = this.host.getSource();
+		if (!source) { section.appendChild(this.note('No image loaded.')); return section; }
+
+		const calibration = this.host.getCalibration();
+		const channels = Math.min(source.channels || 1, 4);
+		const series: { values: Float64Array; color: string }[] = [];
+		const colors = ['#ff6b6b', '#5ac85a', '#5a9cff', '#cccccc'];
+		let distances: Float64Array = new Float64Array(0);
+		for (let channel = 0; channel < channels; channel++) {
+			const profile = sampleLineProfile(source, roi, channel);
+			distances = profile.distance;
+			series.push({ values: profile.value, color: channels === 1 ? '#ffd400' : colors[channel] });
+		}
+
+		const canvas = document.createElement('canvas');
+		canvas.className = 'measure-profile';
+		canvas.width = 460;
+		canvas.height = 150;
+		this.drawProfile(canvas, distances, series, calibration);
+		section.appendChild(canvas);
+
+		const controls = document.createElement('div');
+		controls.className = 'measure-row';
+		controls.appendChild(this.numberRow(
+			'Line width (px)', roi.lineWidth || 1,
+			value => this.host.manager.update(roi.id, current => ({ ...current, lineWidth: Math.max(1, Math.round(value)) } as Roi)),
+			{ step: '1', min: 1 },
+		));
+		section.appendChild(controls);
+
+		section.appendChild(this.button('Export profile as CSV', () => this.exportProfile(roi)));
+		return section;
+	}
+
+	private drawProfile(
+		canvas: HTMLCanvasElement,
+		distances: Float64Array,
+		series: { values: Float64Array; color: string }[],
+		calibration: Calibration,
+	): void {
+		const ctx = canvas.getContext('2d');
+		if (!ctx || distances.length === 0) { return; }
+		const width = canvas.width;
+		const height = canvas.height;
+		const padding = { left: 46, right: 8, top: 8, bottom: 20 };
+
+		let min = Infinity;
+		let max = -Infinity;
+		for (const entry of series) {
+			for (let i = 0; i < entry.values.length; i++) {
+				const value = entry.values[i];
+				if (!Number.isFinite(value)) { continue; }
+				if (value < min) { min = value; }
+				if (value > max) { max = value; }
+			}
+		}
+		if (!Number.isFinite(min) || !Number.isFinite(max)) { return; }
+		if (max === min) { max = min + 1; }
+
+		ctx.clearRect(0, 0, width, height);
+		const plotWidth = width - padding.left - padding.right;
+		const plotHeight = height - padding.top - padding.bottom;
+
+		ctx.strokeStyle = 'rgba(128, 128, 128, 0.4)';
+		ctx.lineWidth = 1;
+		ctx.strokeRect(padding.left, padding.top, plotWidth, plotHeight);
+
+		ctx.fillStyle = 'rgba(160, 160, 160, 0.9)';
+		ctx.font = '10px var(--vscode-editor-font-family, monospace)';
+		ctx.textAlign = 'right';
+		ctx.fillText(formatNumber(max, 4), padding.left - 4, padding.top + 8);
+		ctx.fillText(formatNumber(min, 4), padding.left - 4, padding.top + plotHeight);
+		ctx.textAlign = 'center';
+		const totalDistance = distances[distances.length - 1] * calibration.pixelWidth;
+		ctx.fillText('0', padding.left, height - 6);
+		ctx.fillText(`${formatNumber(totalDistance, 4)} ${calibration.unit}`, padding.left + plotWidth, height - 6);
+
+		for (const entry of series) {
+			ctx.strokeStyle = entry.color;
+			ctx.lineWidth = 1.25;
+			ctx.beginPath();
+			let started = false;
+			for (let i = 0; i < entry.values.length; i++) {
+				const value = entry.values[i];
+				if (!Number.isFinite(value)) { started = false; continue; }
+				const x = padding.left + (i / Math.max(1, entry.values.length - 1)) * plotWidth;
+				const y = padding.top + plotHeight - ((value - min) / (max - min)) * plotHeight;
+				if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, y); }
+			}
+			ctx.stroke();
+		}
+	}
+
+	// --- results ------------------------------------------------------------
+
+	private renderResults(): void {
+		const source = this.host.getSource();
+		const calibration = this.host.getCalibration();
+
+		const options = this.section('Table');
+		if (source && (source.channels || 1) > 1) {
+			options.appendChild(this.checkbox(
+				'Measure every channel', this.channelMode === 'all',
+				checked => {
+					this.channelMode = checked ? 'all' : 'first';
+					this.refresh();
+				},
+				'One row per ROI per channel. Off measures only the first channel.',
+			));
+		}
+		options.appendChild(this.note(describeCalibration(calibration)));
+
+		const tableSection = this.section(`Measurements (${this.rows.length} rows)`);
+		if (this.rows.length === 0) {
+			tableSection.appendChild(this.note('Draw or import an ROI to populate the table.'));
+		} else {
+			tableSection.appendChild(this.buildResultsTable());
+		}
+
+		const derived = this.section('Derived columns');
+		derived.appendChild(this.note(
+			'Expressions over the columns above, e.g. rawIntegratedDensity / area. Saved with the ROIs and included in exports.',
+		));
+		for (let index = 0; index < this.derivedColumns.length; index++) {
+			derived.appendChild(this.buildDerivedRow(index));
+		}
+		derived.appendChild(this.button('Add column', () => {
+			this.derivedColumns.push({ name: `derived${this.derivedColumns.length + 1}`, expression: 'mean' });
+			this.render();
+		}));
+
+		const grouping = this.section('Grouping');
+		grouping.appendChild(this.textRow(
+			'Filename pattern', this.groupPattern,
+			value => { this.groupPattern = value; this.render(); },
+			'e.g. {condition}_{replicate}_{index}.tif — braces become columns.',
+		));
+		const groups = this.groupPattern && source?.fileName
+			? matchFilenamePattern(source.fileName, this.groupPattern)
+			: null;
+		if (this.groupPattern) {
+			grouping.appendChild(this.note(groups
+				? `Matched: ${Object.entries(groups).map(([key, value]) => `${key}=${value}`).join(', ')}`
+				: 'The pattern does not match this filename.'));
+		}
+		if (groups && this.rows.length > 0) {
+			const summaries = summarizeByGroup(this.rows, 'area', () => Object.values(groups).join(' / '));
+			for (const summary of summaries) {
+				grouping.appendChild(this.note(
+					`${summary.key}: n=${summary.n}, mean area ${formatNumber(summary.mean)} ± ${formatNumber(summary.sem)} (SEM)`,
+				));
+			}
+		}
+
+		const exportSection = this.section('Export');
+		const exportButtons = document.createElement('div');
+		exportButtons.className = 'measure-button-row';
+		exportButtons.append(
+			this.button('CSV', () => this.exportTable('csv'), this.rows.length === 0),
+			this.button('CSV (de)', () => this.exportTable('csv-de'), this.rows.length === 0),
+			this.button('Excel .xlsx', () => this.exportTable('xlsx'), this.rows.length === 0),
+			this.button('pandas script', () => this.exportPandasScript(), this.rows.length === 0),
+		);
+		exportSection.appendChild(exportButtons);
+		exportSection.appendChild(this.note(
+			'Long/tidy form: one row per ROI per channel with provenance on every row, so several exports concatenate without manual bookkeeping. '
+			+ '"CSV (de)" uses a semicolon separator and a comma decimal mark for German-locale Excel. '
+			+ 'The pandas script is written from this session — the columns that exist, the scale in force, the threshold used, and your derived columns as real expressions.',
+		));
+	}
+
+	/**
+	 * The results table.
+	 *
+	 * Clicking a row selects its ROI on the image. That link is the thing a
+	 * spreadsheet copy destroys permanently — "which object was row 47?" becomes
+	 * unanswerable the moment the numbers leave the tool.
+	 */
+	private buildResultsTable(): HTMLElement {
+		const calibration = this.host.getCalibration();
+		const wrapper = document.createElement('div');
+		wrapper.className = 'measure-table-wrapper';
+
+		const table = document.createElement('table');
+		table.className = 'measure-table';
+
+		const columns: { key: keyof MeasurementRow; label: string; digits?: number }[] = [
+			{ key: 'roiName', label: 'ROI' },
+			{ key: 'channel', label: 'Ch' },
+			{ key: 'area', label: `Area (${areaUnit(calibration)})` },
+			{ key: 'perimeter', label: `Perim. (${calibration.unit})` },
+			{ key: 'length', label: `Length (${calibration.unit})` },
+			{ key: 'mean', label: 'Mean', digits: 6 },
+			{ key: 'stdDev', label: 'StdDev', digits: 6 },
+			{ key: 'min', label: 'Min', digits: 6 },
+			{ key: 'max', label: 'Max', digits: 6 },
+			{ key: 'circularity', label: 'Circ.', digits: 3 },
+			{ key: 'feret', label: 'Feret' },
+		];
+		const present = columns.filter(column =>
+			column.key === 'roiName' || column.key === 'channel'
+			|| this.rows.some(row => row[column.key] !== undefined && row[column.key] !== null));
+
+		const head = document.createElement('thead');
+		const headRow = document.createElement('tr');
+		for (const column of present) {
+			const cell = document.createElement('th');
+			cell.textContent = column.label;
+			headRow.appendChild(cell);
+		}
+		for (const derived of this.derivedColumns) {
+			const cell = document.createElement('th');
+			cell.textContent = derived.name;
+			headRow.appendChild(cell);
+		}
+		head.appendChild(headRow);
+		table.appendChild(head);
+
+		const bodyElement = document.createElement('tbody');
+		const compiled = this.derivedColumns.map(column => {
+			try { return compileExpression(column.expression); } catch { return null; }
+		});
+
+		for (const row of this.rows) {
+			const tr = document.createElement('tr');
+			tr.classList.toggle('selected', this.host.manager.isSelected(row.roiId));
+			tr.onclick = event => {
+				const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+				this.host.manager.select([row.roiId], { additive });
+				// Selecting from the table is exactly the case where the object
+				// may be off-screen, so bring it into view.
+				if (!additive) { this.host.overlay.revealRoi(row.roiId); }
+			};
+			for (const column of present) {
+				const cell = document.createElement('td');
+				const value = row[column.key];
+				cell.textContent = typeof value === 'number'
+					? formatNumber(value, column.digits ?? 4)
+					: (value === undefined || value === null ? '' : String(value));
+				tr.appendChild(cell);
+			}
+			const scope: Record<string, number> = {};
+			for (const key of Object.keys(row)) {
+				const value = row[key as keyof MeasurementRow];
+				if (typeof value === 'number') { scope[key] = value; }
+			}
+			for (const evaluate of compiled) {
+				const cell = document.createElement('td');
+				let text = '';
+				if (evaluate) {
+					try { text = formatNumber(evaluate(scope), 5); } catch { text = ''; }
+				}
+				cell.textContent = text;
+				tr.appendChild(cell);
+			}
+			bodyElement.appendChild(tr);
+		}
+		table.appendChild(bodyElement);
+		wrapper.appendChild(table);
+		return wrapper;
+	}
+
+	private buildDerivedRow(index: number): HTMLElement {
+		const column = this.derivedColumns[index];
+		const row = document.createElement('div');
+		row.className = 'measure-derived-row';
+
+		const name = document.createElement('input');
+		name.className = 'measure-input measure-derived-name';
+		name.value = column.name;
+		name.onchange = () => { column.name = name.value.trim() || column.name; this.render(); };
+		name.onkeydown = event => event.stopPropagation();
+
+		const expression = document.createElement('input');
+		expression.className = 'measure-input measure-derived-expression';
+		expression.value = column.expression;
+		expression.onkeydown = event => event.stopPropagation();
+		const error = document.createElement('div');
+		error.className = 'measure-error';
+		const validate = () => {
+			try {
+				compileExpression(expression.value);
+				error.textContent = '';
+				expression.classList.remove('invalid');
+			} catch (thrown) {
+				const message = thrown instanceof ExpressionError
+					? `${thrown.message} at position ${thrown.position + 1}`
+					: (thrown as Error).message;
+				error.textContent = message;
+				expression.classList.add('invalid');
+			}
+		};
+		expression.oninput = validate;
+		expression.onchange = () => { column.expression = expression.value; validate(); this.render(); };
+		validate();
+
+		const remove = document.createElement('button');
+		remove.className = 'measure-roi-remove';
+		remove.textContent = '×';
+		remove.onclick = () => { this.derivedColumns.splice(index, 1); this.render(); };
+
+		row.append(name, expression, remove);
+		const container = document.createElement('div');
+		container.append(row, error);
+		return container;
+	}
+
+	// --- segmentation -------------------------------------------------------
+
+	private renderSegment(): void {
+		const source = this.host.getSource();
+		const plane = this.host.getScalarPlane();
+		if (!source || !plane) {
+			this.section('Threshold').appendChild(this.note('No measurable image is loaded.'));
+			return;
+		}
+
+		if (!this.histogram) { this.prepareThreshold(); }
+
+		const preview = this.section('Preview');
+		preview.appendChild(this.checkbox(
+			'Show the threshold on the image', this.showMaskOverlay,
+			checked => {
+				this.showMaskOverlay = checked;
+				this.refreshMaskOverlay();
+			},
+			'Red: selected by the threshold. Green: objects that pass the particle filters and would be added.',
+		));
+		preview.appendChild(this.note(
+			'Red = selected by the threshold · Green = survives the filters below and will be added. '
+			+ 'Hover a method to see its effect straight away.',
+		));
+
+		const pre = this.section('Preprocess (segmentation only)');
+		pre.appendChild(this.note(
+			'Applied to a copy used for thresholding. The displayed image is never modified.',
+		));
+		pre.appendChild(this.numberRow('Gaussian blur σ', this.threshold.blurSigma, value => {
+			this.threshold.blurSigma = Math.max(0, value);
+			this.prepareThreshold();
+			this.render();
+		}, { step: '0.5', min: 0 }));
+		pre.appendChild(this.numberRow('Background radius', this.threshold.backgroundRadius, value => {
+			this.threshold.backgroundRadius = Math.max(0, Math.round(value));
+			this.prepareThreshold();
+			this.render();
+		}, { step: '5', min: 0 }, 'Rolling-ball background subtraction. 0 disables it. Fixes uneven illumination, the usual reason a global threshold appears to have no right value.'));
+
+		const methods = this.section('Auto-threshold');
+		methods.appendChild(this.checkbox('Objects are brighter than the background', this.threshold.darkBackground, checked => {
+			this.threshold.darkBackground = checked;
+			this.applyThreshold();
+			this.render();
+		}));
+		methods.appendChild(this.buildMethodGallery());
+
+		const manual = this.section('Range');
+		manual.appendChild(this.numberRow('Low', this.threshold.low, value => {
+			this.threshold.low = value;
+			this.threshold.manual = true;
+			this.applyThreshold();
+			this.render();
+		}, { step: 'any' }));
+		manual.appendChild(this.numberRow('High', this.threshold.high, value => {
+			this.threshold.high = value;
+			this.threshold.manual = true;
+			this.applyThreshold();
+			this.render();
+		}, { step: 'any' }));
+
+		this.body.appendChild(this.buildStabilitySection());
+
+		const local = this.section('Local adaptive');
+		const select = document.createElement('select');
+		select.className = 'measure-select';
+		for (const method of LOCAL_METHODS) {
+			const option = document.createElement('option');
+			option.value = method.id;
+			option.textContent = method.label;
+			option.title = method.hint;
+			select.appendChild(option);
+		}
+		select.value = this.threshold.localMethod;
+		select.onchange = () => {
+			this.threshold.localMethod = select.value as LocalMethod;
+			this.applyThreshold();
+			this.render();
+		};
+		local.appendChild(this.labelled('Method', select));
+		if (this.threshold.localMethod !== 'none') {
+			local.appendChild(this.numberRow('Window radius', this.threshold.localRadius, value => {
+				this.threshold.localRadius = Math.max(1, Math.round(value));
+				this.applyThreshold();
+				this.render();
+			}, { step: '1', min: 1 }));
+			local.appendChild(this.numberRow('k', this.threshold.localK, value => {
+				this.threshold.localK = value;
+				this.applyThreshold();
+				this.render();
+			}, { step: '0.05' }));
+		}
+
+		const particles = this.section('Particles');
+		// Every filter re-runs the analysis and repaints, so the effect of a
+		// filter is visible on the image rather than only as a changed count.
+		const refilter = () => {
+			this.particleResult = null;
+			this.refreshMaskOverlay();
+			this.render();
+		};
+		particles.appendChild(this.checkbox('Split touching objects (watershed)', this.threshold.watershed, checked => {
+			this.threshold.watershed = checked;
+			refilter();
+		}));
+		particles.appendChild(this.checkbox('Fill holes', this.threshold.fillHoles, checked => {
+			this.threshold.fillHoles = checked;
+			refilter();
+		}));
+		particles.appendChild(this.checkbox('Exclude objects touching the edge', this.threshold.excludeEdges, checked => {
+			this.threshold.excludeEdges = checked;
+			refilter();
+		}, 'Edge objects are cut off, so their area and shape are not measurable.'));
+		particles.appendChild(this.numberRow('Min area (px)', this.threshold.minArea, value => {
+			this.threshold.minArea = Math.max(0, value);
+			refilter();
+		}, { step: '1', min: 0 }));
+		particles.appendChild(this.numberRow('Min circularity', this.threshold.minCircularity, value => {
+			this.threshold.minCircularity = value;
+			refilter();
+		}, { step: '0.05', min: 0, max: 1 }));
+
+		const counts = this.currentMaskStats();
+		particles.appendChild(this.note(counts));
+		particles.appendChild(this.button('Add objects as ROIs', () => this.commitParticles(), !this.thresholdMask));
+
+		// The analysis above is cached, so adding the accepted-objects layer to
+		// the preview costs nothing beyond building the overlay bitmap.
+		this.refreshMaskOverlay();
+	}
+
+	/**
+	 * The auto-threshold gallery.
+	 *
+	 * Every method is evaluated against the same 256-bin histogram, so showing
+	 * all of them costs about as much as showing one. ImageJ's equivalent
+	 * produces a static montage in a separate window; here each entry is a live
+	 * button that reports what it selected, which turns method choice into
+	 * looking rather than guessing.
+	 */
+	private buildMethodGallery(): HTMLElement {
+		const grid = document.createElement('div');
+		grid.className = 'measure-method-grid';
+		const histogram = this.histogram;
+		if (!histogram) { return grid; }
+
+		for (const method of THRESHOLD_METHODS) {
+			const bin = autoThresholdBin(histogram.counts, method.id);
+			const button = document.createElement('button');
+			button.className = 'measure-method';
+			button.classList.toggle('active', !this.threshold.manual && this.threshold.method === method.id);
+			button.disabled = bin < 0;
+			button.title = bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint;
+
+			const label = document.createElement('div');
+			label.className = 'measure-method-label';
+			label.textContent = method.label;
+			const value = document.createElement('div');
+			value.className = 'measure-method-value';
+			value.textContent = bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4);
+			button.append(label, value, this.buildHistogramSpark(histogram, bin));
+
+			// Hovering shows the method's effect on the image immediately. This is
+			// the interaction the gallery exists for: picking a method by looking
+			// at the result rather than by reading its name. Only the raw mask is
+			// shown, so sweeping across thirteen buttons stays instant.
+			button.onmouseenter = () => {
+				if (bin < 0 || !this.previewPlane) { return; }
+				const value = thresholdValueFromBin(histogram, bin);
+				const mask = this.threshold.darkBackground
+					? globalThresholdMask(this.previewPlane, value, histogram.max)
+					: globalThresholdMask(this.previewPlane, histogram.min, value);
+				this.showTemporaryMask(mask);
+				this.setHint(`${method.label}: cut at ${formatNumber(value, 4)} — release to keep the selected method.`);
+			};
+			button.onmouseleave = () => {
+				this.showTemporaryMask(null);
+			};
+
+			button.onclick = () => {
+				this.threshold.method = method.id;
+				this.threshold.manual = false;
+				this.applyThreshold();
+				this.render();
+			};
+			grid.appendChild(button);
+		}
+		return grid;
+	}
+
+	/** A tiny histogram with the candidate threshold marked. */
+	private buildHistogramSpark(histogram: ScalarHistogram, bin: number): HTMLCanvasElement {
+		const canvas = document.createElement('canvas');
+		canvas.className = 'measure-spark';
+		canvas.width = 96;
+		canvas.height = 24;
+		const ctx = canvas.getContext('2d');
+		if (!ctx) { return canvas; }
+
+		let peak = 1;
+		for (let i = 0; i < histogram.counts.length; i++) { if (histogram.counts[i] > peak) { peak = histogram.counts[i]; } }
+		// A log scale keeps a sparse foreground visible next to a background peak
+		// that is typically two orders of magnitude taller.
+		const scale = (value: number) => Math.log1p(value) / Math.log1p(peak);
+
+		ctx.fillStyle = 'rgba(140, 140, 140, 0.55)';
+		for (let x = 0; x < canvas.width; x++) {
+			const index = Math.floor((x / canvas.width) * histogram.counts.length);
+			const height = scale(histogram.counts[index]) * canvas.height;
+			ctx.fillRect(x, canvas.height - height, 1, height);
+		}
+		if (bin >= 0) {
+			ctx.fillStyle = '#ff6b6b';
+			const x = (bin / histogram.counts.length) * canvas.width;
+			ctx.fillRect(x, 0, 1.5, canvas.height);
+		}
+		return canvas;
+	}
+
+	/**
+	 * The stability curve.
+	 *
+	 * Object count against threshold, with the widest plateau marked. A user
+	 * dragging a slider cannot otherwise tell whether the value they picked sits
+	 * on a knife edge or in a broad basin where the answer does not depend on
+	 * the guess — this shows it directly, and clicking the plateau adopts it.
+	 */
+	private buildStabilitySection(): HTMLElement {
+		const section = document.createElement('div');
+		section.className = 'measure-section';
+		const heading = document.createElement('div');
+		heading.className = 'measure-section-title';
+		heading.textContent = 'Stability';
+		section.appendChild(heading);
+
+		if (!this.stability || !this.histogram) {
+			section.appendChild(this.button('Compute stability curve', () => {
+				this.computeStability();
+				this.render();
+			}));
+			section.appendChild(this.note(
+				'Sweeps the threshold and plots how many objects result. Flat stretches are values where the count does not depend on your exact choice.',
+			));
+			return section;
+		}
+
+		const canvas = document.createElement('canvas');
+		canvas.className = 'measure-stability';
+		canvas.width = 460;
+		canvas.height = 120;
+		this.drawStability(canvas);
+		canvas.onclick = event => {
+			const rect = canvas.getBoundingClientRect();
+			const fraction = (event.clientX - rect.left) / rect.width;
+			const points = this.stability!.points;
+			const point = points[Math.max(0, Math.min(points.length - 1, Math.round(fraction * (points.length - 1))))];
+			this.adoptThresholdValue(point.value);
+			this.render();
+		};
+		section.appendChild(canvas);
+
+		const suggested = thresholdValueFromBin(this.histogram, this.stability.suggestedBin);
+		section.appendChild(this.note(
+			this.stability.plateauWidth > 1
+				? `Widest plateau spans ${this.stability.plateauWidth} of ${this.stability.points.length} sampled thresholds; its centre is ${formatNumber(suggested, 4)}.`
+				: 'No clear plateau — the object count changes continuously, so this image may need local adaptive thresholding instead.',
+		));
+		section.appendChild(this.button('Use the most stable threshold', () => {
+			this.adoptThresholdValue(suggested);
+			this.render();
+		}));
+		return section;
+	}
+
+	private drawStability(canvas: HTMLCanvasElement): void {
+		const ctx = canvas.getContext('2d');
+		const curve = this.stability;
+		if (!ctx || !curve || curve.points.length === 0) { return; }
+
+		const width = canvas.width;
+		const height = canvas.height;
+		const padding = { left: 34, right: 8, top: 8, bottom: 18 };
+		const plotWidth = width - padding.left - padding.right;
+		const plotHeight = height - padding.top - padding.bottom;
+
+		let maxCount = 1;
+		for (const point of curve.points) { if (point.objectCount > maxCount) { maxCount = point.objectCount; } }
+
+		ctx.clearRect(0, 0, width, height);
+		ctx.strokeStyle = 'rgba(128, 128, 128, 0.4)';
+		ctx.strokeRect(padding.left, padding.top, plotWidth, plotHeight);
+
+		// Area fraction as a filled backdrop, object count as the line on top.
+		ctx.fillStyle = 'rgba(90, 156, 255, 0.18)';
+		ctx.beginPath();
+		ctx.moveTo(padding.left, padding.top + plotHeight);
+		curve.points.forEach((point, index) => {
+			const x = padding.left + (index / (curve.points.length - 1)) * plotWidth;
+			ctx.lineTo(x, padding.top + plotHeight - point.areaFraction * plotHeight);
+		});
+		ctx.lineTo(padding.left + plotWidth, padding.top + plotHeight);
+		ctx.closePath();
+		ctx.fill();
+
+		ctx.strokeStyle = '#ffd400';
+		ctx.lineWidth = 1.5;
+		ctx.beginPath();
+		curve.points.forEach((point, index) => {
+			const x = padding.left + (index / (curve.points.length - 1)) * plotWidth;
+			const y = padding.top + plotHeight - (point.objectCount / maxCount) * plotHeight;
+			if (index === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
+		});
+		ctx.stroke();
+
+		// Mark the currently selected threshold.
+		if (this.histogram) {
+			const bin = valueToBin(this.histogram, this.threshold.darkBackground ? this.threshold.low : this.threshold.high);
+			const index = curve.points.findIndex(point => point.bin >= bin);
+			if (index >= 0) {
+				const x = padding.left + (index / (curve.points.length - 1)) * plotWidth;
+				ctx.strokeStyle = '#ff6b6b';
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				ctx.moveTo(x, padding.top);
+				ctx.lineTo(x, padding.top + plotHeight);
+				ctx.stroke();
+			}
+		}
+
+		ctx.fillStyle = 'rgba(160, 160, 160, 0.9)';
+		ctx.font = '10px var(--vscode-editor-font-family, monospace)';
+		ctx.textAlign = 'right';
+		ctx.fillText(String(maxCount), padding.left - 4, padding.top + 8);
+		ctx.fillText('0', padding.left - 4, padding.top + plotHeight);
+		ctx.textAlign = 'left';
+		ctx.fillText('objects (line) · area (fill)', padding.left + 2, height - 5);
+	}
+
+	// --- threshold plumbing -------------------------------------------------
+
+	private preprocessedPlane(): Float32Array | null {
+		const plane = this.host.getScalarPlane();
+		const source = this.host.getSource();
+		if (!plane || !source) { return null; }
+		let working = plane;
+		if (this.threshold.blurSigma > 0) {
+			working = gaussianBlur(working, source.width, source.height, this.threshold.blurSigma);
+		}
+		if (this.threshold.backgroundRadius > 0) {
+			working = subtractBackground(
+				working, source.width, source.height,
+				this.threshold.backgroundRadius, !this.threshold.darkBackground,
+			);
+		}
+		return working;
+	}
+
+	private prepareThreshold(): void {
+		const source = this.host.getSource();
+		const plane = this.preprocessedPlane();
+		if (!source || !plane) { return; }
+		this.previewPlane = plane;
+		// Subsample the histogram on large images; every method below is
+		// scale-invariant in the counts, so the chosen bin does not move.
+		const step = Math.max(1, Math.floor(plane.length / 1_000_000));
+		this.histogram = buildHistogram(plane, step);
+		this.stability = null;
+		if (!this.threshold.manual) { this.applyThreshold(); }
+	}
+
+	private applyThreshold(): void {
+		const source = this.host.getSource();
+		const plane = this.previewPlane;
+		const histogram = this.histogram;
+		if (!source || !plane || !histogram) { return; }
+
+		if (!this.threshold.manual && this.threshold.localMethod === 'none') {
+			const bin = autoThresholdBin(histogram.counts, this.threshold.method);
+			if (bin >= 0) {
+				const value = thresholdValueFromBin(histogram, bin);
+				if (this.threshold.darkBackground) {
+					this.threshold.low = value;
+					this.threshold.high = histogram.max;
+				} else {
+					this.threshold.low = histogram.min;
+					this.threshold.high = value;
+				}
+			}
+		}
+
+		this.thresholdMask = this.threshold.localMethod === 'none'
+			? globalThresholdMask(plane, this.threshold.low, this.threshold.high)
+			: localThresholdMask(plane, source.width, source.height, {
+				method: this.threshold.localMethod,
+				radius: this.threshold.localRadius,
+				k: this.threshold.localK,
+				darkBackground: this.threshold.darkBackground,
+			});
+		this.particleResult = null;
+		// Raw mask only: this runs on every keystroke in the range fields, and a
+		// full labelling pass per keystroke would stall a large image. The green
+		// accepted layer is added once per render, where the particle analysis
+		// has to happen anyway for the object count.
+		this.refreshMaskOverlay({ withParticles: false });
+	}
+
+	/**
+	 * Paint the current threshold over the image.
+	 *
+	 * Without this a threshold is chosen blind: the object count and the
+	 * stability curve say how many things were found, but not *which* things,
+	 * and a user has no way to tell a correct segmentation from a plausible
+	 * number. Red is everything the threshold selected, green the subset that
+	 * survives the particle filters — so "selected but filtered out" is visible
+	 * rather than merely implied by a smaller count.
+	 *
+	 * `analyzeParticles` is only run when a result is already cached or cheap to
+	 * obtain; the hover previews below deliberately show the raw mask alone so
+	 * that sweeping the method gallery stays instant on large images.
+	 */
+	private refreshMaskOverlay(options: { withParticles?: boolean } = {}): void {
+		const source = this.host.getSource();
+		if (!this.showMaskOverlay || !this.thresholdMask || !source) {
+			this.host.overlay.setMaskPreview(null);
+			return;
+		}
+
+		let accepted: Uint8Array | null = null;
+		if (options.withParticles !== false) {
+			const result = this.ensureParticles();
+			if (result) {
+				accepted = new Uint8Array(source.width * source.height);
+				for (const particle of result.particles) {
+					for (let row = 0; row < particle.height; row++) {
+						const target = (particle.y + row) * source.width + particle.x;
+						for (let col = 0; col < particle.width; col++) {
+							if (particle.mask[row * particle.width + col]) { accepted[target + col] = 1; }
+						}
+					}
+				}
+			}
+		}
+
+		this.host.overlay.setMaskPreview({
+			width: source.width,
+			height: source.height,
+			mask: this.thresholdMask,
+			accepted,
+		});
+	}
+
+	/** Temporarily show another mask, e.g. while hovering a method button. */
+	private showTemporaryMask(mask: Uint8Array | null): void {
+		const source = this.host.getSource();
+		if (!this.showMaskOverlay || !source) { return; }
+		if (!mask) { this.refreshMaskOverlay(); return; }
+		this.host.overlay.setMaskPreview({
+			width: source.width,
+			height: source.height,
+			mask,
+			accepted: null,
+		});
+	}
+
+	private adoptThresholdValue(value: number): void {
+		if (!this.histogram) { return; }
+		this.threshold.manual = true;
+		if (this.threshold.darkBackground) {
+			this.threshold.low = value;
+			this.threshold.high = this.histogram.max;
+		} else {
+			this.threshold.low = this.histogram.min;
+			this.threshold.high = value;
+		}
+		this.applyThreshold();
+	}
+
+	private computeStability(): void {
+		const source = this.host.getSource();
+		const plane = this.previewPlane;
+		if (!source || !plane || !this.histogram) { return; }
+		this.stability = computeStabilityCurve(plane, source.width, source.height, this.histogram, {
+			darkBackground: this.threshold.darkBackground,
+		});
+	}
+
+	private currentMaskStats(): string {
+		const source = this.host.getSource();
+		if (!this.thresholdMask || !source) { return 'No threshold applied yet.'; }
+		const result = this.ensureParticles();
+		if (!result) { return 'No threshold applied yet.'; }
+		const rejected = result.rejected;
+		const dropped = rejected.tooSmall + rejected.tooLarge + rejected.shape + rejected.edge;
+		const parts = [`${result.particles.length} objects`];
+		if (dropped > 0) {
+			const reasons: string[] = [];
+			if (rejected.tooSmall) { reasons.push(`${rejected.tooSmall} too small`); }
+			if (rejected.tooLarge) { reasons.push(`${rejected.tooLarge} too large`); }
+			if (rejected.shape) { reasons.push(`${rejected.shape} by shape`); }
+			if (rejected.edge) { reasons.push(`${rejected.edge} on the edge`); }
+			parts.push(`${dropped} filtered out (${reasons.join(', ')})`);
+		}
+		return parts.join(' · ');
+	}
+
+	private ensureParticles() {
+		if (this.particleResult) { return this.particleResult; }
+		this.particleResult = this.runParticles();
+		return this.particleResult;
+	}
+
+	private runParticles() {
+		const source = this.host.getSource();
+		if (!this.thresholdMask || !source) { return null; }
+		return analyzeParticles(this.thresholdMask, source.width, source.height, {
+			minArea: this.threshold.minArea,
+			maxArea: Number.isFinite(this.threshold.maxArea) ? this.threshold.maxArea : undefined,
+			minCircularity: this.threshold.minCircularity > 0 ? this.threshold.minCircularity : undefined,
+			excludeEdges: this.threshold.excludeEdges,
+			fillHoles: this.threshold.fillHoles,
+		}, {
+			watershed: this.threshold.watershed,
+		});
+	}
+
+	private commitParticles(): void {
+		const result = this.ensureParticles();
+		if (!result || result.particles.length === 0) { return; }
+		const manager = this.host.manager;
+		const rois: Roi[] = result.particles.map((particle, index) =>
+			particleToRoi(particle, manager.nextId(), `Object ${index + 1}`));
+		manager.addMany(rois, { select: false });
+		// The objects are real ROIs now and are drawn as outlines; leaving the
+		// filled preview underneath would double up and hide their boundaries.
+		this.showMaskOverlay = false;
+		this.host.overlay.setMaskPreview(null);
+		this.setHint(`Added ${rois.length} objects as ROIs. Their outlines are on the image; click a table row to highlight one.`);
+		this.setTab('results');
+	}
+
+	// --- calibration --------------------------------------------------------
+
+	private renderSetup(): void {
+		const calibration = this.host.getCalibration();
+		const section = this.section('Spatial calibration');
+		section.appendChild(this.note(describeCalibration(calibration)));
+
+		section.appendChild(this.numberRow('Pixel width', calibration.pixelWidth, value => {
+			this.host.setCalibration({ ...calibration, pixelWidth: value, origin: 'manual' });
+			this.refresh();
+		}, { step: 'any', min: 0 }));
+		section.appendChild(this.numberRow('Pixel height', calibration.pixelHeight, value => {
+			this.host.setCalibration({ ...calibration, pixelHeight: value, origin: 'manual' });
+			this.refresh();
+		}, { step: 'any', min: 0 }));
+		section.appendChild(this.textRow('Unit', calibration.unit, value => {
+			this.host.setCalibration({ ...calibration, unit: value || 'px', origin: 'manual' });
+			this.refresh();
+		}));
+
+		const fromLine = this.section('Set scale from a known distance');
+		fromLine.appendChild(this.note(
+			'Draw a line along a feature whose real length you know — a scale bar, a calibration grid — and enter that length.',
+		));
+		fromLine.appendChild(this.button('Draw calibration line', () => {
+			this.host.overlay.setTool('calibrate');
+			this.setTab('setup');
+		}));
+		if (this.pendingCalibrationDistance > 0) {
+			fromLine.appendChild(this.note(`Measured ${formatNumber(this.pendingCalibrationDistance, 5)} px.`));
+			const lengthInput = document.createElement('input');
+			lengthInput.className = 'measure-input';
+			lengthInput.type = 'number';
+			lengthInput.step = 'any';
+			lengthInput.placeholder = 'Known length';
+			lengthInput.onkeydown = event => event.stopPropagation();
+			const unitInput = document.createElement('input');
+			unitInput.className = 'measure-input measure-unit-input';
+			unitInput.value = calibration.unit === 'px' ? 'µm' : calibration.unit;
+			unitInput.onkeydown = event => event.stopPropagation();
+			const apply = this.button('Apply', () => {
+				const updated = calibrationFromKnownDistance(
+					this.pendingCalibrationDistance, parseFloat(lengthInput.value), unitInput.value.trim(),
+				);
+				if (updated) {
+					this.host.setCalibration(updated);
+					this.pendingCalibrationDistance = 0;
+					this.host.overlay.setTool('select');
+					this.refresh();
+				}
+			});
+			const row = document.createElement('div');
+			row.className = 'measure-button-row';
+			row.append(lengthInput, unitInput, apply);
+			fromLine.appendChild(row);
+		}
+
+		const reset = this.section('Reset');
+		reset.appendChild(this.button('Back to pixels', () => {
+			this.host.setCalibration({ pixelWidth: 1, pixelHeight: 1, unit: 'px', origin: 'none' });
+			this.refresh();
+		}));
+	}
+
+	/** Called by the overlay when a calibration line is finished. */
+	onCalibrationLine(pixelDistance: number): void {
+		this.pendingCalibrationDistance = pixelDistance;
+		this.setTab('setup');
+	}
+
+	// --- export -------------------------------------------------------------
+
+	private provenance(): MeasurementProvenance {
+		const calibration = this.host.getCalibration();
+		const source = this.host.getSource();
+		const preprocessing: string[] = [];
+		if (this.threshold.blurSigma > 0) { preprocessing.push(`gaussian:${this.threshold.blurSigma}`); }
+		if (this.threshold.backgroundRadius > 0) { preprocessing.push(`rollingBall:${this.threshold.backgroundRadius}`); }
+
+		return {
+			fileName: source?.fileName,
+			unit: calibration.unit,
+			pixelWidth: calibration.pixelWidth,
+			pixelHeight: calibration.pixelHeight,
+			calibrationOrigin: calibration.origin,
+			thresholdMethod: this.thresholdMask
+				? (this.threshold.localMethod !== 'none'
+					? `local:${this.threshold.localMethod}`
+					: (this.threshold.manual ? 'manual' : this.threshold.method))
+				: undefined,
+			thresholdLow: this.thresholdMask ? this.threshold.low : undefined,
+			thresholdHigh: this.thresholdMask ? this.threshold.high : undefined,
+			preprocessing: preprocessing.length > 0 ? preprocessing.join(' ') : undefined,
+			extensionVersion: this.host.extensionVersion,
+		};
+	}
+
+	private baseName(): string {
+		const source = this.host.getSource();
+		const name = source?.fileName || 'image';
+		return (name.split('/').pop() || name).replace(/\.[^.]+$/, '');
+	}
+
+	private extraColumns(): Record<string, string> {
+		const source = this.host.getSource();
+		if (!this.groupPattern || !source?.fileName) { return {}; }
+		return matchFilenamePattern(source.fileName, this.groupPattern) || {};
+	}
+
+	private exportTable(format: 'csv' | 'csv-de' | 'xlsx'): void {
+		const provenance = this.provenance();
+		const extraColumns = this.extraColumns();
+
+		if (format === 'xlsx') {
+			const text = rowsToDelimitedText(this.rows, provenance, {
+				delimiter: '\t',
+				derivedColumns: this.derivedColumns,
+				extraColumns,
+			});
+			const lines = text.trimEnd().split('\n');
+			const rows = lines.map(line => line.split('\t').map(cell => {
+				const unquoted = cell.replace(/^"|"$/g, '').replace(/""/g, '"');
+				const asNumber = Number(unquoted);
+				return unquoted !== '' && Number.isFinite(asNumber) ? asNumber : unquoted;
+			}));
+			this.host.saveBinaryFile(`${this.baseName()}-results.xlsx`, buildXlsx({ name: 'Results', rows }));
+			return;
+		}
+
+		const german = format === 'csv-de';
+		const text = rowsToDelimitedText(this.rows, provenance, {
+			delimiter: german ? ';' : ',',
+			decimal: german ? ',' : '.',
+			bom: true,
+			derivedColumns: this.derivedColumns,
+			extraColumns,
+		});
+		this.host.saveTextFile(`${this.baseName()}-results.csv`, text, { open: true });
+	}
+
+	private exportPandasScript(): void {
+		const calibration = this.host.getCalibration();
+		const source = this.host.getSource();
+		// Only columns the rows actually populate, so the script never refers to
+		// a column that is not in the CSV next to it.
+		const columns = new Set<string>();
+		for (const row of this.rows) {
+			for (const key of Object.keys(row)) {
+				const value = row[key as keyof MeasurementRow];
+				if (value !== undefined && value !== null) { columns.add(key); }
+			}
+		}
+		const provenance = this.provenance();
+
+		const script = buildPandasScript({
+			csvName: `${this.baseName()}-results.csv`,
+			columns: Array.from(columns).sort(),
+			unit: calibration.unit,
+			pixelWidth: calibration.pixelWidth,
+			pixelHeight: calibration.pixelHeight,
+			calibrationOrigin: calibration.origin,
+			groupColumns: Object.keys(this.extraColumns()),
+			derivedColumns: this.derivedColumns,
+			thresholdMethod: provenance.thresholdMethod,
+			roiCount: this.host.manager.count(),
+			channelCount: this.channelMode === 'all' ? (source?.channels || 1) : 1,
+		});
+		this.host.saveTextFile(`${this.baseName()}-analysis.py`, script, { open: true });
+	}
+
+	private exportProfile(roi: LineRoi): void {
+		const source = this.host.getSource();
+		if (!source) { return; }
+		const calibration = this.host.getCalibration();
+		const channels = source.channels || 1;
+		const profiles = Array.from({ length: channels }, (_, channel) => sampleLineProfile(source, roi, channel));
+		const header = ['distance_px', `distance_${calibration.unit}`]
+			.concat(Array.from({ length: channels }, (_, i) => `channel_${i}`));
+		const lines = [header.join(',')];
+		const samples = profiles[0]?.distance.length || 0;
+		for (let i = 0; i < samples; i++) {
+			const distance = profiles[0].distance[i];
+			const cells = [
+				String(distance),
+				String(distance * calibration.pixelWidth),
+				...profiles.map(profile => String(profile.value[i])),
+			];
+			lines.push(cells.join(','));
+		}
+		this.host.saveTextFile(`${this.baseName()}-profile.csv`, lines.join('\n') + '\n', { open: true });
+	}
+
+	private saveSidecar(): void {
+		const source = this.host.getSource();
+		const sidecar = buildSidecar(this.host.manager.list(), this.host.getCalibration(), {
+			image: source?.fileName,
+			imageWidth: source?.width,
+			imageHeight: source?.height,
+			derivedColumns: this.derivedColumns,
+			version: this.host.extensionVersion,
+		});
+		this.host.saveSidecar(JSON.stringify(sidecar, null, 2));
+	}
+
+	private exportImageJ(): void {
+		const result = exportImageJRois(this.host.manager.list(), roi =>
+			roi.kind === 'mask' ? maskContour(roi as never) : []);
+		this.host.saveBinaryFile(`${this.baseName()}-RoiSet.zip`, result.bytes);
+		this.setHint(result.skipped.length > 0
+			? `Exported ${result.exported} ROIs. Skipped: ${result.skipped.join(', ')}.`
+			: `Exported ${result.exported} ROIs as RoiSet.zip.`);
+	}
+
+	/**
+	 * Entry points for the command palette.
+	 *
+	 * The panel's tabs are convenient once it is open, but a user who knows what
+	 * they want should not have to open the panel and find the right tab to save
+	 * their ROIs. Each of these opens the panel first, so the result is visible
+	 * rather than happening invisibly in the background.
+	 */
+	runCommand(action: 'saveRois' | 'loadRois' | 'exportCsv' | 'clearRois'): void {
+		if (!this.isVisible()) { this.show(); }
+		switch (action) {
+			case 'saveRois':
+				if (this.host.manager.count() === 0) {
+					this.setHint('There are no ROIs to save yet.');
+					this.setTab('rois');
+					return;
+				}
+				this.saveSidecar();
+				break;
+			case 'loadRois':
+				this.host.requestImport('sidecar');
+				this.setTab('rois');
+				break;
+			case 'exportCsv':
+				if (this.rows.length === 0) {
+					this.setHint('There is nothing to export yet — draw or import an ROI first.');
+					this.setTab('rois');
+					return;
+				}
+				this.exportTable('csv');
+				this.setTab('results');
+				break;
+			case 'clearRois':
+				this.host.manager.clear();
+				this.setTab('rois');
+				break;
+		}
+	}
+
+	/** Adopt a loaded sidecar's derived columns; ROIs are applied by the caller. */
+	applyLoadedDerivedColumns(columns: DerivedColumn[] | undefined): void {
+		if (columns && columns.length > 0) { this.derivedColumns = columns.slice(); }
+		this.refresh();
+	}
+
+	// --- keyboard -----------------------------------------------------------
+
+	/** Tool shortcuts. Returns true when the key was consumed. */
+	handleKey(event: KeyboardEvent): boolean {
+		if (!this.isVisible()) { return false; }
+		if (this.host.overlay.handleKey(event)) { return true; }
+		if (event.ctrlKey || event.metaKey || event.altKey) {
+			if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+				if (event.shiftKey) { this.host.manager.redo(); } else { this.host.manager.undo(); }
+				return true;
+			}
+			return false;
+		}
+		const match = TOOLS.find(tool => tool.key && tool.key.toLowerCase() === event.key.toLowerCase());
+		if (match) {
+			this.host.overlay.setTool(match.id);
+			this.render();
+			return true;
+		}
+		return false;
+	}
+
+	// --- small DOM helpers --------------------------------------------------
+
+	private section(title: string): HTMLDivElement {
+		const section = document.createElement('div');
+		section.className = 'measure-section';
+		const heading = document.createElement('div');
+		heading.className = 'measure-section-title';
+		heading.textContent = title;
+		section.appendChild(heading);
+		this.body.appendChild(section);
+		return section;
+	}
+
+	private note(text: string): HTMLDivElement {
+		const note = document.createElement('div');
+		note.className = 'measure-note';
+		note.textContent = text;
+		return note;
+	}
+
+	private button(label: string, onClick: () => void, disabled = false): HTMLButtonElement {
+		const button = document.createElement('button');
+		button.className = 'measure-button';
+		button.textContent = label;
+		button.disabled = disabled;
+		button.onclick = onClick;
+		return button;
+	}
+
+	private labelled(label: string, control: HTMLElement): HTMLDivElement {
+		const row = document.createElement('div');
+		row.className = 'measure-row';
+		const text = document.createElement('div');
+		text.className = 'measure-label';
+		text.textContent = label;
+		row.append(text, control);
+		return row;
+	}
+
+	private checkbox(
+		label: string,
+		checked: boolean,
+		onChange: (checked: boolean) => void,
+		title?: string,
+	): HTMLLabelElement {
+		const wrapper = document.createElement('label');
+		wrapper.className = 'measure-checkbox';
+		if (title) { wrapper.title = title; }
+		const input = document.createElement('input');
+		input.type = 'checkbox';
+		input.checked = checked;
+		input.onchange = () => onChange(input.checked);
+		wrapper.append(input, document.createTextNode(label));
+		return wrapper;
+	}
+
+	private numberRow(
+		label: string,
+		value: number,
+		onChange: (value: number) => void,
+		attributes: { step?: string; min?: number; max?: number } = {},
+		title?: string,
+	): HTMLDivElement {
+		const input = document.createElement('input');
+		input.type = 'number';
+		input.className = 'measure-input';
+		input.value = Number.isFinite(value) ? String(value) : '';
+		if (attributes.step) { input.step = attributes.step; }
+		if (attributes.min !== undefined) { input.min = String(attributes.min); }
+		if (attributes.max !== undefined) { input.max = String(attributes.max); }
+		input.onkeydown = event => event.stopPropagation();
+		input.onchange = () => {
+			const parsed = parseFloat(input.value);
+			if (Number.isFinite(parsed)) { onChange(parsed); }
+		};
+		const row = this.labelled(label, input);
+		if (title) { row.title = title; }
+		return row;
+	}
+
+	private textRow(
+		label: string,
+		value: string,
+		onChange: (value: string) => void,
+		placeholder?: string,
+	): HTMLDivElement {
+		const input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'measure-input';
+		input.value = value;
+		if (placeholder) { input.placeholder = placeholder; }
+		input.onkeydown = event => event.stopPropagation();
+		input.onchange = () => onChange(input.value);
+		return this.labelled(label, input);
+	}
+
+	private startDrag(event: MouseEvent): void {
+		const rect = this.overlayRoot.getBoundingClientRect();
+		this.isDragging = true;
+		this.dragOffset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+
+		const onMouseMove = (moveEvent: MouseEvent) => {
+			if (!this.isDragging) { return; }
+			const x = moveEvent.clientX - this.dragOffset.x;
+			const y = moveEvent.clientY - this.dragOffset.y;
+			const maxX = window.innerWidth - this.overlayRoot.offsetWidth;
+			const maxY = window.innerHeight - this.overlayRoot.offsetHeight;
+			this.overlayRoot.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
+			this.overlayRoot.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
+			this.overlayRoot.style.right = 'auto';
+			this.overlayRoot.style.bottom = 'auto';
+		};
+		const onMouseUp = () => {
+			this.isDragging = false;
+			document.removeEventListener('mousemove', onMouseMove, true);
+			document.removeEventListener('mouseup', onMouseUp, true);
+			window.removeEventListener('blur', onMouseUp);
+		};
+		// Capture phase, and a blur fallback: releasing outside the webview never
+		// delivers a mouseup, which would otherwise leave the panel stuck.
+		document.addEventListener('mousemove', onMouseMove, true);
+		document.addEventListener('mouseup', onMouseUp, true);
+		window.addEventListener('blur', onMouseUp);
+	}
+}

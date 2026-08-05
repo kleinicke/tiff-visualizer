@@ -320,6 +320,30 @@ async function main() {
 		console.log(`✅ All ${Object.keys(expected).length} CFA patterns produce well-formed output`);
 	}
 
+	// 10. Every WASM entry point the load path touches must survive a CFA tag.
+	//     The tiff crate rejects PhotometricInterpretation 32803 in Decoder::new,
+	//     so any entry point missing the neutralization throws and the file shows
+	//     nothing at all -- decode_tiff alone working is not enough.
+	{
+		const cfaFiles = [
+			'chart_rggb_8bit_cfa_tagged.tif',
+			'underwater_bmx_rggb_8bit.tif',
+			'underwater_bmx_bggr_16bit_unbalanced.tif',
+			'chart_rgbi_4x4_8bit.tif',
+		];
+		for (const file of cfaFiles) {
+			const bytes = new Uint8Array(fs.readFileSync(path.join(bayerDir, file)));
+			assert.strictEqual(mod.tiff_page_count(bytes), 1, `${file}: tiff_page_count must not throw`);
+			const r = mod.decode_tiff(bytes);
+			assert.strictEqual(r.photometric_interpretation, 32803, `${file}: CFA tag must be reported`);
+			assert.ok(r.width > 0 && r.height > 0, `${file}: must decode`);
+			const tags = JSON.parse(r.all_tags_json);
+			assert.ok(Array.isArray(tags) && tags.length > 0,
+				`${file}: metadata tags must not come back empty`);
+		}
+		console.log(`✅ All WASM entry points handle CFA-tagged files (${cfaFiles.length} files)`);
+	}
+
 	await renderIntegrationTests();
 
 	console.log('\n🎉 All debayer tests passed');

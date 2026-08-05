@@ -289,6 +289,27 @@ export function getLastDebayerGains(): { r: number; g: number; b: number } | nul
     return cacheResult ? cacheResult.gains : null;
 }
 
+/**
+ * Demosaiced samples at a pixel, for the pixel inspector.
+ *
+ * Reads the buffer the last render produced, so it always agrees with what is
+ * on screen. Returns null when debayering is not active, letting the inspector
+ * fall through to the raw mosaic value.
+ *
+ * Note these are interpolated values, not measurements: only the one channel
+ * actually sampled at this site is real. Switch the view to Raw to read the
+ * sensor value back.
+ */
+export function getDebayeredPixel(x: number, y: number, width: number): number[] | null {
+    if (!cacheResult) { return null; }
+    const { data, channels } = cacheResult;
+    const index = (y * width + x) * channels;
+    if (index < 0 || index + channels > data.length) { return null; }
+    const out: number[] = [];
+    for (let c = 0; c < channels; c++) { out.push(data[index + c]); }
+    return out;
+}
+
 export function invalidateDebayerCache(): void {
     cacheSource = null;
     cacheSig = '';

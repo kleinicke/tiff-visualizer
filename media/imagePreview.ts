@@ -17,9 +17,16 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { DebayerPanel } from './modules/debayer-panel.js';
-import { DEFAULT_DEBAYER, warmUpDebayer, invalidateDebayerCache, shouldDebayer, CFA_DETECTED_EVENT, getLastDebayerGains, type DebayerSettings } from './modules/debayer.js';
+import { DEFAULT_DEBAYER, warmUpDebayer, invalidateDebayerCache, shouldDebayer, CFA_DETECTED_EVENT, getLastDebayerGains, getDebayeredPixel, type DebayerSettings } from './modules/debayer.js';
 import { MetadataPanel } from './modules/metadata-panel.js';
 import type { MetadataInfo } from './modules/metadata-panel.js';
+import { MeasurePanel } from './modules/measure-panel.js';
+import { RoiManager } from './modules/measure/roi-manager.js';
+import { RoiOverlay } from './modules/measure/roi-overlay.js';
+import { autoCalibration, calibrationFromTagList } from './modules/measure/calibration.js';
+import { importImageJRois } from './modules/measure/imagej-roi.js';
+import { deserializeRoi, parseSidecar, serializeRoi } from './modules/measure/roi-io.js';
+import { toScalarPlane, UNCALIBRATED, type Calibration, type MeasurementSource } from './modules/measure/types.js';
 import type { TagEntry } from './modules/tiff-tag-utils.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
@@ -201,9 +208,201 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// the mode still has to be switched on deliberately, so nothing about the
 	// image changes without the user asking.
 	window.addEventListener(CFA_DETECTED_EVENT, (event: Event) => {
-		const detected = (event as CustomEvent).detail?.detected;
-		if (detected && !debayerPanel.isVisible()) { debayerPanel.show(); }
+		if (!(event as CustomEvent).detail?.detected) { return; }
+		debayerPanel.show();
+		// Showing the panel is not enough: its checkbox reads from its own state,
+		// so without pushing that state into the settings the panel would claim
+		// the mode is on while the image stayed a raw mosaic -- and toggling off
+		// and on again would be the only way to fix it.
+		void handleDebayerSettingsChanged(debayerPanel.getSettings());
 	});
+
+	// --- measurement subsystem ----------------------------------------------
+	// Everything below is inert until the Measure panel is opened: the overlay
+	// canvas is hidden and takes no pointer events, and no scalar plane is
+	// built. Someone who only wants to look at a TIFF pays nothing for it.
+
+	const roiManager = new RoiManager();
+	let measureCalibration: Calibration = { ...UNCALIBRATED };
+	let measurementSourceCache: { generation: number; source: MeasurementSource | null } | null = null;
+	let scalarPlaneCache: { generation: number; plane: Float32Array | null } | null = null;
+
+	/**
+	 * The raw image a measurement runs against.
+	 *
+	 * Deliberately reads the same per-processor raw buffers the histogram uses,
+	 * rather than the displayed canvas: measurements must not change when the
+	 * user drags gamma or brightness. Interleaved `data` is preferred over
+	 * planar rasters where a processor offers both, since every consumer here
+	 * indexes by pixel.
+	 */
+	function buildMeasurementSource(): MeasurementSource | null {
+		const fileName = settingsManager.settings.resourceUri || settingsManager.settings.src || undefined;
+
+		if (tiffProcessor.rawTiffData?.data) {
+			const ifd = tiffProcessor.rawTiffData.ifd;
+			const width = ifd.width;
+			const height = ifd.height;
+			if (!width || !height) { return null; }
+			const bitsPerSample = ifd.t258 || 8;
+			const format = ifd.t339;
+			return {
+				width,
+				height,
+				channels: ifd.t277 || 1,
+				data: tiffProcessor.rawTiffData.data,
+				isFloat: tiffNeedsFloatCarrier(format, bitsPerSample),
+				typeMax: tiffTypeMax(format, bitsPerSample),
+				fileName,
+				page: ifd.pageIndex,
+				pageCount: ifd.pageCount,
+			};
+		}
+
+		const simple: { processor: any; isFloat: boolean; typeMax: (raw: any) => number }[] = [
+			{ processor: exrProcessor, isFloat: true, typeMax: () => 1.0 },
+			{ processor: pfmProcessor, isFloat: true, typeMax: () => 1.0 },
+			{ processor: hdrProcessor, isFloat: true, typeMax: () => 1.0 },
+			{ processor: npyProcessor, isFloat: true, typeMax: raw => (String(raw.dtype || '').includes('f') ? 1.0 : (String(raw.dtype).includes('16') ? 65535 : 255)) },
+			{ processor: ppmProcessor, isFloat: false, typeMax: raw => raw.maxval || 255 },
+			{ processor: pngProcessor, isFloat: false, typeMax: raw => raw.maxValue || 255 },
+			{ processor: tgaProcessor, isFloat: false, typeMax: () => 255 },
+			{ processor: webImageProcessor, isFloat: false, typeMax: () => 255 },
+			{ processor: jxlProcessor, isFloat: false, typeMax: () => 255 },
+			...scientificProcessors.map(processor => ({ processor, isFloat: true, typeMax: () => processor.numericDomain?.typeMax ?? 1.0 })),
+		];
+
+		// EXR keeps its raw buffer under a different field name than the rest.
+		const exrRaw = exrProcessor?.rawExrData;
+		if (exrRaw?.data && exrRaw.width && exrRaw.height) {
+			return {
+				width: exrRaw.width,
+				height: exrRaw.height,
+				channels: exrRaw.channels || 1,
+				data: exrRaw.data,
+				isFloat: true,
+				typeMax: 1.0,
+				fileName,
+			};
+		}
+
+		for (const entry of simple) {
+			const raw = entry.processor?._lastRaw;
+			if (!raw?.data || !raw.width || !raw.height) { continue; }
+			return {
+				width: raw.width,
+				height: raw.height,
+				channels: raw.channels || 1,
+				data: raw.data,
+				isFloat: entry.isFloat,
+				typeMax: entry.typeMax(raw),
+				fileName,
+			};
+		}
+
+		return null;
+	}
+
+	function getMeasurementSource(): MeasurementSource | null {
+		if (measurementSourceCache?.generation === _loadGeneration) { return measurementSourceCache.source; }
+		const source = buildMeasurementSource();
+		measurementSourceCache = { generation: _loadGeneration, source };
+		return source;
+	}
+
+	/**
+	 * Single-channel view of the image, built lazily and cached per load.
+	 *
+	 * The wand, livewire, and every threshold method need one scalar per pixel.
+	 * Materialising it once is far cheaper than the alternative of recomputing a
+	 * luma per probe, and it is only ever built after the panel is opened.
+	 */
+	function getScalarPlane(): Float32Array | null {
+		if (scalarPlaneCache?.generation === _loadGeneration) { return scalarPlaneCache.plane; }
+		const source = getMeasurementSource();
+		const plane = source ? toScalarPlane(source) : null;
+		scalarPlaneCache = { generation: _loadGeneration, plane };
+		return plane;
+	}
+
+	const roiOverlay = new RoiOverlay(roiManager, {
+		getImageElement: () => imageElement,
+		getSource: () => getMeasurementSource(),
+		getScalarPlane: () => getScalarPlane(),
+		getCalibration: () => measureCalibration,
+		onCalibrationLine: distance => measurePanel.onCalibrationLine(distance),
+		onRoiEdited: () => {
+			measurePanel.scheduleMeasure();
+			// Debounced, so dragging a vertex does not write state per mouse move.
+			scheduleSaveState();
+		},
+		onHint: text => measurePanel.setHint(text),
+	});
+
+	const measurePanel = new MeasurePanel({
+		manager: roiManager,
+		overlay: roiOverlay,
+		getSource: () => getMeasurementSource(),
+		getScalarPlane: () => getScalarPlane(),
+		getCalibration: () => measureCalibration,
+		setCalibration: calibration => {
+			measureCalibration = calibration;
+			roiOverlay.scheduleRedraw();
+			scheduleSaveState();
+		},
+		saveTextFile: (fileName, content, options) => vscode.postMessage({
+			type: 'measureSaveText', fileName, content, open: options?.open !== false,
+		}),
+		saveBinaryFile: (fileName, bytes) => vscode.postMessage({
+			type: 'measureSaveBinary', fileName, bytes: Array.from(bytes),
+		}),
+		requestImport: kind => vscode.postMessage({ type: 'measureRequestImport', kind }),
+		saveSidecar: json => vscode.postMessage({ type: 'measureSaveSidecar', content: json }),
+	});
+
+	/**
+	 * Adopt whatever spatial calibration the file already declares.
+	 *
+	 * Auto-populating is the main advantage over asking, as ImageJ does: a
+	 * forgotten or mistyped scale is the most common way a measurement ends up
+	 * silently wrong. A calibration the user set by hand is never overwritten.
+	 */
+	function refreshMeasureCalibration(): void {
+		if (measureCalibration.origin === 'manual') { return; }
+		const ome = tiffProcessor.rawTiffData?.ome || null;
+		const fromTags = calibrationFromTagList(tiffProcessor._lastAllTags as TagEntry[] | null);
+		measureCalibration = ome
+			? autoCalibration(ome, null)
+			: (fromTags || { ...UNCALIBRATED });
+		roiOverlay.scheduleRedraw();
+	}
+
+	/**
+	 * ROIs for `vscode.setState`, which only accepts structured-cloneable data.
+	 * Mask ROIs carry a Uint8Array, so they go through the same run-length
+	 * encoding the sidecar uses rather than being dropped.
+	 */
+	function serializeRoisForState(rois: ReturnType<RoiManager['list']>): unknown[] {
+		return rois.map(roi => serializeRoi(roi));
+	}
+
+	function deserializeRoisFromState(stored: unknown[]): ReturnType<RoiManager['list']> {
+		const out: ReturnType<RoiManager['list']> = [];
+		for (const entry of stored) {
+			const roi = deserializeRoi(entry as never);
+			if (roi) { out.push(roi); }
+		}
+		return out;
+	}
+
+	/** Drop measurement caches when the displayed image changes. */
+	function invalidateMeasurementForNewImage(): void {
+		measurementSourceCache = null;
+		scalarPlaneCache = null;
+		refreshMeasureCalibration();
+		measurePanel.onImageChanged();
+	}
+
 	const colormapConverter = new ColormapConverter();
 	mouseHandler.setNpyProcessor(npyProcessor);
 	mouseHandler.setPfmProcessor(pfmProcessor);
@@ -388,6 +587,16 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (x < 0 || y < 0 || x >= width || y >= height) { return null; }
 		return floatData[y * width + x];
 	};
+	// Pixel inspector reports demosaiced samples while debayering is active.
+	mouseHandler.debayerValueProvider = (x: number, y: number) => {
+		const debayer = settingsManager.settings.debayer;
+		if (!debayer?.enabled || debayer.view === 'mosaic') { return null; }
+		// The canvas is sized to the image, so its width is the row stride the
+		// cached demosaic buffer was built with.
+		const width = canvas?.width;
+		if (!width || x < 0 || y < 0) { return null; }
+		return getDebayeredPixel(x, y, width);
+	};
 	/** URI of the image currently used as the base layer. */
 	let _layerBaseUri: string | undefined;
 	/** Stable identity of that base layer even when the user reorders the stack. */
@@ -408,6 +617,19 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// Application state
 	let hasLoadedImage = false;
 	let canvas: HTMLCanvasElement | null = null;
+	/**
+	 * Overlay chrome that must survive an image swap.
+	 *
+	 * The load paths below clear the container of every `img`/`canvas` so a new
+	 * image starts on a clean background. Floating panels are `div`s and are
+	 * unaffected, but overlays that *are* canvases — the histogram, and the
+	 * measurement overlay — live on the same container and would be deleted with
+	 * the old image, silently and only on the second image opened.
+	 */
+	function isOverlayChrome(element: Element): boolean {
+		return !!element.closest('.histogram-overlay') || element.classList.contains('measure-overlay');
+	}
+
 	let imageElement: HTMLElement | null = null;
 	let primaryImageData: ImageData | null = null;
 	let peerImageData: ImageData | null = null;
@@ -493,6 +715,18 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			debayerPanel.setSettings(persistedState.debayer);
 			if (persistedState.isDebayerPanelVisible) { debayerPanel.show(); }
 		}
+		// Restore measurement work before showing the panel, so it opens onto the
+		// ROIs it had rather than an empty list.
+		if (persistedState.measureCalibration) {
+			measureCalibration = persistedState.measureCalibration;
+		}
+		if (Array.isArray(persistedState.measureRois) && persistedState.measureRois.length > 0) {
+			const restored = deserializeRoisFromState(persistedState.measureRois);
+			// No history entry: restoring is not an edit the user should be able
+			// to undo into an empty document.
+			roiManager.withoutHistory(() => roiManager.replaceAll(restored, { recordHistory: false }));
+		}
+		if (persistedState.isMeasurePanelVisible) { measurePanel.show(); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
 		}
@@ -562,6 +796,15 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			displayColormap: settingsManager.settings.displayColormap,
 			debayer: settingsManager.settings.debayer,
 			isDebayerPanelVisible: debayerPanel.isVisible(),
+			isMeasurePanelVisible: measurePanel.isVisible(),
+			// ROIs and their calibration ride along with the webview state.
+			// The JSON sidecar is the durable store, but a webview can be
+			// reloaded for reasons the user never asked for — moving the tab,
+			// splitting the editor, an extension host restart — and losing an
+			// afternoon of segmentation to that is not acceptable. Masks are
+			// run-length encoded, so even a few hundred objects stay small.
+			measureRois: serializeRoisForState(roiManager.list()),
+			measureCalibration,
 			isHistogramVisible: histogramOverlay.getVisibility(),
 			netcdfSelection,
 			// Include zoom so it isn't erased when the app-level state is written
@@ -779,7 +1022,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// Remove any existing image/canvas elements, but NOT the histogram overlay canvas
 		const existingImages = container.querySelectorAll('img, canvas');
 		existingImages.forEach(el => {
-			if (!el.closest('.histogram-overlay')) {
+			if (!isOverlayChrome(el)) {
 				el.remove();
 			}
 		});
@@ -1058,7 +1301,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		clearCollectionLoadingState();
 		// Remove previous image/canvas so the error message shows on a clean background
 		container.querySelectorAll('img, canvas').forEach(el => {
-			if (!el.closest('.histogram-overlay')) {
+			if (!isOverlayChrome(el)) {
 				el.remove();
 			}
 		});
@@ -1511,6 +1754,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		zoomController.setCanvas(canvas);
 		zoomController.setImageLoaded();
 		mouseHandler.setImageElement(nextImageElement);
+		// The final pixels are on screen, so this is the one point where every
+		// load path — initial, collection switch, page change — has a decoded
+		// raw buffer to measure against.
+		invalidateMeasurementForNewImage();
 
 		// Send size information to VS Code
 		const sizeElement = nextImageElement as any;
@@ -1532,10 +1779,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			container.append(nextImageElement);
 		}
 
-		// Remove any other stale image/canvas elements, but preserve the histogram.
+		// Remove any other stale image/canvas elements, but preserve overlay chrome.
 		const existingImages = container.querySelectorAll('img, canvas');
 		existingImages.forEach(el => {
-			if (el !== nextImageElement && !el.closest('.histogram-overlay')) {
+			if (el !== nextImageElement && !isOverlayChrome(el)) {
 				el.remove();
 			}
 		});
@@ -3162,6 +3409,54 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				updateMetadataData();
 				break;
 
+			case 'toggleMeasure':
+				measurePanel.toggle();
+				vscode.postMessage({
+					type: 'measureVisibilityChanged',
+					isVisible: measurePanel.isVisible(),
+				});
+				break;
+
+			case 'measureCommand':
+				measurePanel.runCommand(message.action);
+				break;
+
+			case 'measureHint':
+				measurePanel.setHint(String(message.text || ''));
+				break;
+
+			case 'measureImportResult': {
+				// Bytes cross the message boundary as a plain array; postMessage
+				// cannot transfer a typed array to a webview.
+				const bytes = new Uint8Array(message.bytes || []);
+				if (message.kind === 'imagej') {
+					const imported = importImageJRois(bytes, message.fileName || 'RoiSet');
+					if (imported.length === 0) {
+						measurePanel.setHint('No ROIs could be read from that file.');
+					} else {
+						roiManager.addMany(imported.map(entry => entry.roi), { select: false });
+						const notes = imported.flatMap(entry => entry.notes);
+						measurePanel.setHint(notes.length > 0
+							? `Imported ${imported.length} ROIs. ${notes[0]}`
+							: `Imported ${imported.length} ROIs from ImageJ.`);
+					}
+				} else {
+					const parsed = parseSidecar(new TextDecoder().decode(bytes));
+					if (parsed.rois.length > 0) { roiManager.replaceAll(parsed.rois); }
+					// A stored calibration is authoritative for those ROIs; adopting
+					// it keeps reloaded measurements identical to the saved ones.
+					if (parsed.calibration) {
+						measureCalibration = { ...parsed.calibration, origin: 'imported' };
+					}
+					measurePanel.applyLoadedDerivedColumns(parsed.derivedColumns);
+					measurePanel.setHint(parsed.warnings.length > 0
+						? parsed.warnings[0]
+						: `Loaded ${parsed.rois.length} ROIs.`);
+				}
+				measurePanel.refresh();
+				break;
+			}
+
 			case 'restoreHistogramState':
 				// Restore histogram state from extension (global state)
 				// Skip notification since extension already knows the state
@@ -4471,6 +4766,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
 
+			// Measurement is one entry, not a submenu of eleven: the tools live
+			// inside the panel, so the menu stays as short as it is today.
+			menu.appendChild(createMenuItem(
+				measurePanel.isVisible() ? 'Close Measure Panel' : 'Measure…',
+				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMeasure' }); },
+			));
+
 			// Check if image is 8-bit uint RGB for interpretation options
 			const isRgb8BitUint = currentFormatInfo &&
 				(currentFormatInfo.samplesPerPixel ?? 0) >= 3 &&
@@ -4618,6 +4920,18 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			// Use extension command for cross-webview paste support
 			vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
 		});
+
+		// Measurement shortcuts run before every other key handler, but only
+		// while the panel is open — otherwise single letters like R and L would
+		// shadow the existing collection and comparison shortcuts for users who
+		// never opened it.
+		document.addEventListener('keydown', (e) => {
+			if (isEditableEventTarget(e.target)) { return; }
+			if (measurePanel.handleKey(e)) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+		}, true);
 
 		// Comparison toggle
 		document.addEventListener('keydown', async (e) => {

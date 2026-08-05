@@ -44,6 +44,8 @@ export class MouseHandler {
 	 * finite value, the pixel inspector shows that scalar.
 	 */
 	decodedValueProvider: ((x: number, y: number) => number | null) | null;
+	/** Demosaiced samples when the debayer view transform is active. */
+	debayerValueProvider: ((x: number, y: number) => number[] | null) | null;
 	physicalPixelSize: { x?: number; y?: number; xUnit?: string; yUnit?: string } | null;
 
 	// DOM elements
@@ -75,6 +77,7 @@ export class MouseHandler {
 		this.compositeValueProvider = null;
 
 		this.decodedValueProvider = null;
+		this.debayerValueProvider = null;
 		this.physicalPixelSize = null;
 
 		// DOM elements
@@ -280,6 +283,16 @@ export class MouseHandler {
 			const decoded = this.decodedValueProvider(x, y);
 			if (decoded !== null && decoded !== undefined) {
 				return this._formatCompositeValues([decoded]);
+			}
+		}
+
+		// Debayered images: report the demosaiced samples that are actually on
+		// screen. Without this the inspector reports the raw mosaic, so a colour
+		// image reads back as a single grey number.
+		if (this.debayerValueProvider) {
+			const demosaiced = this.debayerValueProvider(x, y);
+			if (demosaiced) {
+				return this._formatCompositeValues(demosaiced);
 			}
 		}
 

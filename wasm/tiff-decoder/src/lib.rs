@@ -470,10 +470,24 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
     decode_tiff_impl(data, true, 0)
 }
 
+/// Bytes safe to hand to `Decoder::new`, with a CFA photometric neutralized.
+///
+/// The `tiff` crate rejects PhotometricInterpretation 32803 when it opens a
+/// file, so *every* entry point that constructs a `Decoder` has to go through
+/// this or CFA/Bayer files fail before any pixels are touched. Borrows the
+/// input unchanged when there is no CFA tag, so the common path copies nothing.
+fn cfa_safe_bytes(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    match demosaic::neutralize_cfa_photometric(data) {
+        Some(patched) => std::borrow::Cow::Owned(patched),
+        None => std::borrow::Cow::Borrowed(data),
+    }
+}
+
 /// Return the number of top-level image file directories (pages) in a TIFF.
 #[wasm_bindgen]
 pub fn tiff_page_count(data: &[u8]) -> Result<u32, JsValue> {
-    let mut decoder = Decoder::new(Cursor::new(data))
+    let bytes = cfa_safe_bytes(data);
+    let mut decoder = Decoder::new(Cursor::new(bytes.as_ref()))
         .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
     let mut count = 1u32;
     while decoder.more_images() {
@@ -1201,7 +1215,8 @@ fn extract_all_tags_json(data: &[u8]) -> String {
 }
 
 fn extract_ome_xml(data: &[u8]) -> String {
-    let mut decoder = match Decoder::new(Cursor::new(data)) {
+    let data = cfa_safe_bytes(data);
+    let mut decoder = match Decoder::new(Cursor::new(data.as_ref())) {
         Ok(d) => d,
         Err(_) => return String::new(),
     };
@@ -1219,7 +1234,9 @@ fn extract_ome_xml(data: &[u8]) -> String {
 }
 
 fn extract_page_tags_json(data: &[u8], page_index: u32) -> String {
-    let mut decoder = match Decoder::new(Cursor::new(data)) {
+    // Without this the Metadata panel comes back empty for every CFA file.
+    let data = cfa_safe_bytes(data);
+    let mut decoder = match Decoder::new(Cursor::new(data.as_ref())) {
         Ok(d) => d,
         Err(_) => return "[]".to_string(),
     };

@@ -1,5 +1,60 @@
 # Change Log
 
+## Unreleased
+
+- Add a **Measure** panel (context menu, or Ctrl/Cmd+Shift+M) with ROI drawing,
+  measurements, thresholding, and particle analysis. Nothing about it is visible
+  until the panel is opened.
+- Spatial calibration is read automatically from OME-TIFF physical pixel sizes
+  or baseline TIFF resolution tags, and can be set from a drawn line of known
+  length. A scale bar and physical-unit readouts follow from it.
+- ROI tools: rectangle, ellipse, polygon, freehand, line, polyline, multi-point
+  counter, magic wand, brush, and an edge-snapping trace (livewire). Full undo
+  history.
+- Measurements per ROI: area, perimeter, mean/StdDev/min/max/median/mode,
+  integrated density, centroid and centre of mass, bounding box, fitted ellipse,
+  Feret diameters, circularity, solidity, aspect ratio, roundness. Statistics
+  always run on the raw sample values, never on the displayed (normalised,
+  gamma-corrected, colormapped) image, and NaN/Infinity are excluded and
+  reported rather than counted as zero.
+- Intensity profile along a line or polyline, with an averaged perpendicular
+  band and CSV export.
+- The threshold is painted over the image while you tune it: red for everything
+  it selected, green for the objects that survive the particle filters, so
+  "selected but filtered out" is visible instead of only implied by a smaller
+  count. Hovering a method in the gallery previews its effect immediately, and
+  clicking a row in the results table scrolls that object into view and boxes
+  it.
+- Thresholding shows all thirteen auto-threshold methods as a live gallery, a
+  **stability curve** that plots object count against threshold so a plateau —
+  a value the answer does not depend on — is visible rather than guessed, and
+  local adaptive methods (Sauvola, Niblack, Phansalkar, mean, median) for
+  unevenly illuminated images. Gaussian blur and rolling-ball background
+  subtraction can be applied to the segmentation copy without touching the
+  displayed image.
+- Particle analysis with connected-component labelling, hole filling, size and
+  shape filters, edge exclusion, and watershed splitting of touching objects.
+- The magic wand previews its selection on hover and can pick its own tolerance,
+  so a click produces the object instead of starting a click-undo-retry loop.
+- ROIs are stored as a readable JSON sidecar next to the image
+  (`image.tif.rois.json`), so they diff in review and can be edited by hand.
+  ImageJ `.roi` and `RoiSet.zip` are supported for import and export.
+- Measurement ROIs and their calibration survive a webview reload: they are kept
+  in the editor's own state as well as in the sidecar, so moving a tab, splitting
+  the editor, or an extension host restart no longer discards the work.
+- Exported CSV, scripts, and spreadsheets open in a side editor without stealing
+  focus, so the image preview stays visible and the measurement session is
+  untouched.
+- Measure commands are available from the command palette: open the panel, save
+  or load ROIs, export results, and clear all ROIs.
+- Results export in long/tidy form with provenance columns on every row, as CSV,
+  German-locale CSV (semicolon separator, comma decimal mark), or `.xlsx`.
+  Grouping columns can be captured from the filename, derived columns from
+  expressions, and a pandas script can be written alongside the CSV — generated
+  from the session, carrying the columns that exist, the scale and threshold in
+  force, and any derived expressions translated for pandas.
+  Selecting a table row highlights its ROI on the image and vice versa.
+
 ## 1.9.0 (2026-07-24)
 
 - Add a metadata panel with file details, image statistics, and EXIF/GPS tags.
