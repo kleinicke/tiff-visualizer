@@ -4,7 +4,7 @@ import { areaUnit, calibrationFromKnownDistance, describeCalibration, formatNumb
 import { maskContour } from './measure/geometry.js';
 import { compileExpression, ExpressionError } from './measure/expression.js';
 import { exportImageJRois } from './measure/imagej-roi.js';
-import { analyzeParticles, particleToRoi } from './measure/particles.js';
+import { analyzeParticles, countIntensityMaxima, particleToRoi, type SplitMode } from './measure/particles.js';
 import type { RoiManager } from './measure/roi-manager.js';
 import {
 	buildPandasScript,
@@ -12,6 +12,7 @@ import {
 	matchFilenamePattern,
 	rowsToDelimitedText,
 	summarizeByGroup,
+	summarizeRows,
 	type DerivedColumn,
 } from './measure/roi-io.js';
 import type { MeasureTool, RoiOverlay } from './measure/roi-overlay.js';
@@ -22,6 +23,7 @@ import {
 	buildHistogram,
 	computeStabilityCurve,
 	globalThresholdMask,
+	localAutoThresholdMask,
 	localThresholdMask,
 	LOCAL_METHODS,
 	THRESHOLD_METHODS,
@@ -59,6 +61,19 @@ import {
 
 export type MeasureTab = 'tools' | 'rois' | 'results' | 'segment' | 'setup';
 
+/**
+ * Escape a value for use inside an attribute selector.
+ *
+ * ROI ids are generated here and contain only safe characters, but ids also
+ * arrive from imported ImageJ sets and hand-edited sidecars, where they are
+ * whatever the file said.
+ */
+function cssEscape(value: string): string {
+	const native = (window as unknown as { CSS?: { escape?: (v: string) => string } }).CSS;
+	if (native && typeof native.escape === 'function') { return native.escape(value); }
+	return value.replace(/["\\]/g, '\\$&');
+}
+
 export interface MeasurePanelHost {
 	manager: RoiManager;
 	overlay: RoiOverlay;
@@ -79,6 +94,8 @@ export interface MeasurePanelHost {
 interface ThresholdState {
 	method: ThresholdMethod;
 	localMethod: LocalMethod;
+	/** Run the selected global method per window instead of once. */
+	localizeGlobal: boolean;
 	localRadius: number;
 	localK: number;
 	low: number;
@@ -86,18 +103,21 @@ interface ThresholdState {
 	darkBackground: boolean;
 	blurSigma: number;
 	backgroundRadius: number;
-	watershed: boolean;
+	split: SplitMode;
+	prominence: number;
 	fillHoles: boolean;
 	excludeEdges: boolean;
 	minArea: number;
 	maxArea: number;
 	minCircularity: number;
+	maxCircularity: number;
 	manual: boolean;
 }
 
 const DEFAULT_THRESHOLD: ThresholdState = {
 	method: 'otsu',
 	localMethod: 'none',
+	localizeGlobal: false,
 	localRadius: 15,
 	localK: 0.25,
 	low: 0,
@@ -105,12 +125,14 @@ const DEFAULT_THRESHOLD: ThresholdState = {
 	darkBackground: true,
 	blurSigma: 0,
 	backgroundRadius: 0,
-	watershed: false,
+	split: 'none',
+	prominence: 0,
 	fillHoles: true,
 	excludeEdges: false,
 	minArea: 10,
 	maxArea: Number.POSITIVE_INFINITY,
 	minCircularity: 0,
+	maxCircularity: 1,
 	manual: false,
 };
 
@@ -156,6 +178,14 @@ export class MeasurePanel {
 	private dragOffset = { x: 0, y: 0 };
 	private maskToggle: HTMLButtonElement | null = null;
 	private roiToggle: HTMLButtonElement | null = null;
+	/** Scroll offsets carried across the full rebuild every render performs. */
+	private scrollOffsets = new Map<string, number>();
+	/** Set while a table row is handling its own click. */
+	private selectionFromTable = false;
+	/** Selection key at the last render, to detect changes made elsewhere. */
+	private lastSelectionKey = '';
+	/** ROI whose row should be brought into view after the next render. */
+	private pendingRowReveal: string | null = null;
 
 	constructor(host: MeasurePanelHost) {
 		this.host = host;
@@ -272,6 +302,12 @@ export class MeasurePanel {
 	setTab(tab: MeasureTab): void {
 		this.tab = tab;
 		for (const [id, button] of this.tabButtons) { button.classList.toggle('active', id === tab); }
+		// Arriving at the table with something already selected should land on it
+		// rather than at row one.
+		if (tab === 'results') {
+			const selected = this.host.manager.selectedIds();
+			if (selected.length > 0) { this.pendingRowReveal = selected[0]; }
+		}
 		this.render();
 	}
 
@@ -324,6 +360,9 @@ export class MeasurePanel {
 
 	private render(): void {
 		this.syncHeaderToggles();
+		this.captureScrollOffsets();
+		this.noteSelectionChange();
+
 		this.body.textContent = '';
 		switch (this.tab) {
 			case 'tools': this.renderTools(); break;
@@ -332,6 +371,62 @@ export class MeasurePanel {
 			case 'segment': this.renderSegment(); break;
 			case 'setup': this.renderSetup(); break;
 		}
+
+		this.restoreScrollOffsets();
+	}
+
+	/**
+	 * Scrolling containers rebuilt on every render.
+	 *
+	 * The panel re-renders on any change, including a selection, and a rebuilt
+	 * list starts at the top. Without carrying the offset across, clicking row
+	 * 200 in a table of 465 objects throws you back to row 1 — which makes the
+	 * table unusable for exactly the case it exists for.
+	 */
+	private static readonly SCROLLABLES = ['.measure-results-wrapper', '.measure-roi-list'];
+
+	private captureScrollOffsets(): void {
+		for (const selector of MeasurePanel.SCROLLABLES) {
+			const element = this.body.querySelector(selector);
+			if (element) { this.scrollOffsets.set(selector, element.scrollTop); }
+		}
+	}
+
+	private restoreScrollOffsets(): void {
+		for (const selector of MeasurePanel.SCROLLABLES) {
+			const element = this.body.querySelector(selector) as HTMLElement | null;
+			const offset = this.scrollOffsets.get(selector);
+			if (element && offset !== undefined) { element.scrollTop = offset; }
+		}
+
+		// A selection made on the image should bring its row into view; one made
+		// in the table must leave the table exactly where it is.
+		if (this.pendingRowReveal) {
+			const id = this.pendingRowReveal;
+			this.pendingRowReveal = null;
+			const wrapper = this.body.querySelector('.measure-results-wrapper') as HTMLElement | null;
+			const row = wrapper?.querySelector(`[data-roi-id="${cssEscape(id)}"]`) as HTMLElement | null;
+			if (wrapper && row) {
+				// Centre it rather than using scrollIntoView, which would also
+				// scroll the panel body and move the whole table out from under
+				// the cursor.
+				const target = row.offsetTop - (wrapper.clientHeight - row.offsetHeight) / 2;
+				wrapper.scrollTop = Math.max(0, target);
+				this.scrollOffsets.set('.measure-results-wrapper', wrapper.scrollTop);
+			}
+		}
+	}
+
+	private noteSelectionChange(): void {
+		const key = this.host.manager.selectedIds().join(',');
+		if (key !== this.lastSelectionKey) {
+			// Only reveal when the change came from somewhere other than the table
+			// itself — otherwise every click would re-centre the row under the
+			// cursor and shift the next one out from under it.
+			if (!this.selectionFromTable && key) { this.pendingRowReveal = key.split(',')[0]; }
+			this.lastSelectionKey = key;
+		}
+		this.selectionFromTable = false;
 	}
 
 	private renderTools(): void {
@@ -386,7 +481,11 @@ export class MeasurePanel {
 		}
 
 		const display = this.section('Overlay');
-		display.appendChild(this.checkbox('Show ROI names', true, checked => this.host.overlay.setShowLabels(checked)));
+		display.appendChild(this.checkbox(
+			'Show all ROI names', false,
+			checked => this.host.overlay.setShowLabels(checked),
+			'Off by default: only the object you point at or have selected is named, so a segmented field stays readable.',
+		));
 		display.appendChild(this.checkbox('Show scale bar', true, checked => this.host.overlay.setShowScaleBar(checked)));
 		display.appendChild(this.note(
 			'Mask and ROIs toggle from the header, or with M and O. Hold H to hide everything and look at the raw image.',
@@ -480,6 +579,7 @@ export class MeasurePanel {
 		row.onclick = event => {
 			if (event.target === name) { return; }
 			const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+			this.selectionFromTable = true;
 			manager.select([roi.id], { additive });
 			if (!additive) { this.host.overlay.revealRoi(roi.id); }
 		};
@@ -694,6 +794,14 @@ export class MeasurePanel {
 			}
 		}
 
+		if (this.rows.length > 1) {
+			const summary = this.section('Summary');
+			summary.appendChild(this.note(
+				`${this.rows.length} measured row(s). This is the line you actually write down.`,
+			));
+			summary.appendChild(this.buildSummaryTable());
+		}
+
 		const exportSection = this.section('Export');
 		const exportButtons = document.createElement('div');
 		exportButtons.className = 'measure-button-row';
@@ -721,7 +829,7 @@ export class MeasurePanel {
 	private buildResultsTable(): HTMLElement {
 		const calibration = this.host.getCalibration();
 		const wrapper = document.createElement('div');
-		wrapper.className = 'measure-table-wrapper';
+		wrapper.className = 'measure-table-wrapper measure-results-wrapper';
 
 		const table = document.createElement('table');
 		table.className = 'measure-table';
@@ -765,6 +873,7 @@ export class MeasurePanel {
 
 		for (const row of this.rows) {
 			const tr = document.createElement('tr');
+			tr.dataset.roiId = row.roiId;
 			tr.classList.toggle('selected', this.host.manager.isSelected(row.roiId));
 			// Hover is the cheap half of "which object is this row?" — no click, no
 			// selection change, just a highlight that follows the cursor.
@@ -772,6 +881,9 @@ export class MeasurePanel {
 			tr.onmouseleave = () => this.host.overlay.setHoveredRoi(null);
 			tr.onclick = event => {
 				const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+				// Marks the selection as originating here, so the re-render keeps
+				// the table where it is instead of scrolling to the new row.
+				this.selectionFromTable = true;
 				this.host.manager.select([row.roiId], { additive });
 				// Selecting from the table is exactly the case where the object
 				// may be off-screen, so bring it into view.
@@ -802,6 +914,64 @@ export class MeasurePanel {
 			bodyElement.appendChild(tr);
 		}
 		table.appendChild(bodyElement);
+		wrapper.appendChild(table);
+		return wrapper;
+	}
+
+	/**
+	 * ImageJ's "Summarize": one line per measured column across every ROI.
+	 *
+	 * The per-object table is the evidence, but the sentence that ends up in a
+	 * methods section is "465 cells, mean area 212 µm² ± 8". Computing it here
+	 * rather than leaving it to a spreadsheet is the difference between the tool
+	 * answering the question and merely supplying the raw material.
+	 */
+	private buildSummaryTable(): HTMLElement {
+		const calibration = this.host.getCalibration();
+		const wrapper = document.createElement('div');
+		wrapper.className = 'measure-table-wrapper';
+		const table = document.createElement('table');
+		table.className = 'measure-table';
+
+		const head = document.createElement('thead');
+		const headRow = document.createElement('tr');
+		for (const label of ['Column', 'n', 'Mean', 'SD', 'SEM', 'Min', 'Max']) {
+			const cell = document.createElement('th');
+			cell.textContent = label;
+			headRow.appendChild(cell);
+		}
+		head.appendChild(headRow);
+		table.appendChild(head);
+
+		const body = document.createElement('tbody');
+		const unitFor = (column: string): string => {
+			if (column === 'area') { return ` ${areaUnit(calibration)}`; }
+			if (['perimeter', 'length', 'feret', 'minFeret', 'major', 'minor', 'width', 'height'].indexOf(column) >= 0) {
+				return ` ${calibration.unit}`;
+			}
+			return '';
+		};
+
+		for (const entry of summarizeRows(this.rows)) {
+			const tr = document.createElement('tr');
+			const unit = unitFor(entry.column);
+			const cells = [
+				entry.column + unit,
+				String(entry.summary.n),
+				formatNumber(entry.summary.mean, 5),
+				formatNumber(entry.summary.stdDev, 5),
+				formatNumber(entry.summary.sem, 5),
+				formatNumber(entry.summary.min, 5),
+				formatNumber(entry.summary.max, 5),
+			];
+			for (const text of cells) {
+				const td = document.createElement('td');
+				td.textContent = text;
+				tr.appendChild(td);
+			}
+			body.appendChild(tr);
+		}
+		table.appendChild(body);
 		wrapper.appendChild(table);
 		return wrapper;
 	}
@@ -889,22 +1059,39 @@ export class MeasurePanel {
 		methods.appendChild(this.note(
 			this.threshold.manual
 				? 'Range set by hand. Pick a method below to go back to an automatic cut.'
-				: 'Hover any entry to see it on the image; click to keep it. "(local)" entries compute a threshold per neighbourhood, for unevenly lit images.',
+				: 'Hover any entry to see it on the image; click to keep it.',
+		));
+		methods.appendChild(this.checkbox(
+			'Apply the chosen method per window', this.threshold.localizeGlobal,
+			checked => {
+				this.threshold.localizeGlobal = checked;
+				if (checked) {
+					// The two are alternatives: Sauvola and friends are their own
+					// criteria, not a mode of Otsu.
+					this.threshold.localMethod = 'none';
+					this.threshold.manual = false;
+				}
+				this.applyThreshold();
+				this.render();
+			},
+			'Runs the selected method on the histogram of a local neighbourhood instead of the whole image — ImageJ\'s "Auto Local Threshold". Use it when the same criterion is right but the illumination is not even.',
 		));
 		methods.appendChild(this.buildMethodGallery());
 
-		if (this.threshold.localMethod !== 'none') {
-			const local = this.section('Local method settings');
+		if (this.threshold.localMethod !== 'none' || this.threshold.localizeGlobal) {
+			const local = this.section('Neighbourhood');
 			local.appendChild(this.numberRow('Window radius', this.threshold.localRadius, value => {
 				this.threshold.localRadius = Math.max(1, Math.round(value));
 				this.applyThreshold();
 				this.render();
-			}, { step: '1', min: 1 }));
-			local.appendChild(this.numberRow('k', this.threshold.localK, value => {
-				this.threshold.localK = value;
-				this.applyThreshold();
-				this.render();
-			}, { step: '0.05' }, 'Higher is stricter. 0.25 is a good starting point.'));
+			}, { step: '1', min: 1 }, 'Somewhat larger than your objects: the window has to contain both object and background to tell them apart.'));
+			if (this.threshold.localMethod !== 'none') {
+				local.appendChild(this.numberRow('Sensitivity (k)', this.threshold.localK, value => {
+					this.threshold.localK = value;
+					this.applyThreshold();
+					this.render();
+				}, { step: '0.05' }, 'Higher is stricter — fewer pixels pass. 0.25 is a good starting point.'));
+			}
 		}
 
 		this.body.appendChild(this.buildStabilitySection());
@@ -917,10 +1104,45 @@ export class MeasurePanel {
 			this.refreshMaskOverlay();
 			this.render();
 		};
-		particles.appendChild(this.checkbox('Split touching objects (watershed)', this.threshold.watershed, checked => {
-			this.threshold.watershed = checked;
+
+		const splitSelect = document.createElement('select');
+		splitSelect.className = 'measure-select';
+		const splitModes: { id: SplitMode; label: string; title: string }[] = [
+			{ id: 'none', label: 'Do not split', title: 'Each connected region is one object.' },
+			{ id: 'shape', label: 'By shape (watershed)', title: 'Distance-transform watershed. Separates round objects that overlap.' },
+			{ id: 'intensity', label: 'By intensity maxima', title: 'Splits at local intensity peaks — ImageJ\'s Find Maxima with "Segmented Particles", restricted to the threshold mask. Use when objects touch without their outline pinching.' },
+		];
+		for (const mode of splitModes) {
+			const option = document.createElement('option');
+			option.value = mode.id;
+			option.textContent = mode.label;
+			option.title = mode.title;
+			splitSelect.appendChild(option);
+		}
+		splitSelect.value = this.threshold.split;
+		splitSelect.onchange = () => {
+			this.threshold.split = splitSelect.value as SplitMode;
+			if (this.threshold.split === 'intensity' && this.threshold.prominence <= 0) {
+				// A prominence of zero splits at every pixel of noise. Start from
+				// a tenth of the data range, which is a usable first guess on
+				// almost any image and is then tuned against the live count.
+				const histogram = this.histogram;
+				this.threshold.prominence = histogram ? (histogram.max - histogram.min) / 10 : 1;
+			}
 			refilter();
-		}));
+		};
+		particles.appendChild(this.labelled('Split touching', splitSelect));
+
+		if (this.threshold.split === 'intensity') {
+			particles.appendChild(this.numberRow('Prominence', this.threshold.prominence, value => {
+				this.threshold.prominence = Math.max(0, value);
+				refilter();
+			}, { step: 'any', min: 0 }, 'How far a peak must rise above the saddle joining it to a brighter one before it counts as its own object. Raise it until the centre count matches what you see.'));
+			const centres = this.countMaxima();
+			if (centres !== null) {
+				particles.appendChild(this.note(`${centres} centre(s) at this prominence.`));
+			}
+		}
 		particles.appendChild(this.checkbox('Fill holes', this.threshold.fillHoles, checked => {
 			this.threshold.fillHoles = checked;
 			refilter();
@@ -933,18 +1155,96 @@ export class MeasurePanel {
 			this.threshold.minArea = Math.max(0, value);
 			refilter();
 		}, { step: '1', min: 0 }));
+		particles.appendChild(this.numberRow(
+			'Max area (px)',
+			Number.isFinite(this.threshold.maxArea) ? this.threshold.maxArea : 0,
+			value => {
+				// 0 means "no upper limit", so the field has a way to express the
+				// default without needing a separate checkbox.
+				this.threshold.maxArea = value > 0 ? value : Number.POSITIVE_INFINITY;
+				refilter();
+			},
+			{ step: '1', min: 0 },
+			'0 means no upper limit. Use it to drop merged clumps that survived splitting.',
+		));
 		particles.appendChild(this.numberRow('Min circularity', this.threshold.minCircularity, value => {
 			this.threshold.minCircularity = value;
 			refilter();
 		}, { step: '0.05', min: 0, max: 1 }));
 
-		const counts = this.currentMaskStats();
-		particles.appendChild(this.note(counts));
-		particles.appendChild(this.button('Add objects as ROIs', () => this.commitParticles(), !this.thresholdMask));
+		particles.appendChild(this.note(this.currentMaskStats()));
+		// The two colours on the image are the only way to tell "filtered out"
+		// from "never selected", and nothing else on screen explains them.
+		particles.appendChild(this.buildOverlayLegend());
+
+		// Committing the objects is the step the whole tab exists for, and a
+		// plain button at the bottom of a list of filters does not read as one.
+		// It gets its own block, its own weight, and a label that names the
+		// number — so it reads as "you have 465 objects, take them" rather than
+		// as one more option.
+		this.body.appendChild(this.buildCommitAction());
 
 		// The analysis above is cached, so adding the accepted-objects layer to
 		// the preview costs nothing beyond building the overlay bitmap.
 		this.refreshMaskOverlay();
+	}
+
+	/**
+	 * Legend for the two overlay colours.
+	 *
+	 * Swatches rather than prose, and placed next to the object count, because
+	 * the question the colours answer — "why is the count lower than what I can
+	 * see?" — is asked while looking at that number.
+	 */
+	private buildOverlayLegend(): HTMLElement {
+		const legend = document.createElement('div');
+		legend.className = 'measure-legend';
+
+		const entries: [string, string, string][] = [
+			['rgb(40, 220, 120)', 'Green', 'part of an object that will be added'],
+			['rgb(255, 60, 60)', 'Red', 'passed the threshold but was filtered out — too small or large, wrong shape, on the edge, or a line where two touching objects were split'],
+		];
+		for (const [swatchColor, label, meaning] of entries) {
+			const row = document.createElement('div');
+			row.className = 'measure-legend-row';
+			const swatch = document.createElement('span');
+			swatch.className = 'measure-legend-swatch';
+			swatch.style.background = swatchColor;
+			const text = document.createElement('span');
+			text.textContent = `${label} — ${meaning}`;
+			row.append(swatch, text);
+			legend.appendChild(row);
+		}
+		return legend;
+	}
+
+	/** The call to action that turns the segmentation into measurable ROIs. */
+	private buildCommitAction(): HTMLElement {
+		const block = document.createElement('div');
+		block.className = 'measure-cta';
+
+		const result = this.thresholdMask ? this.ensureParticles() : null;
+		const count = result ? result.particles.length : 0;
+
+		const button = document.createElement('button');
+		button.className = 'measure-cta-button';
+		button.disabled = count === 0;
+		button.textContent = count === 0
+			? 'No objects to add'
+			: `Add ${count} object${count === 1 ? '' : 's'} as ROIs`;
+		button.onclick = () => this.commitParticles();
+		block.appendChild(button);
+
+		const caption = document.createElement('div');
+		caption.className = 'measure-cta-caption';
+		caption.textContent = count === 0
+			? (this.thresholdMask
+				? 'Every object was filtered out. Loosen the size or shape limits above.'
+				: 'Pick a threshold method above first.')
+			: 'They become measurable ROIs: the Results table fills in, and each one can be renamed, exported, or measured on another channel.';
+		block.appendChild(caption);
+
+		return block;
 	}
 
 	/**
@@ -997,7 +1297,13 @@ export class MeasurePanel {
 			const value = valueAt(event.clientX);
 			dragging = Math.abs(value - this.threshold.low) <= Math.abs(value - this.threshold.high) ? 'low' : 'high';
 			canvas.setPointerCapture(event.pointerId);
+			// Dragging the range is a global, manual cut. An adaptive method
+			// computes its own threshold per pixel and would simply ignore these
+			// handles, so taking hold of them has to switch it off — otherwise the
+			// control silently does nothing.
 			this.threshold.manual = true;
+			this.threshold.localMethod = 'none';
+			this.threshold.localizeGlobal = false;
 			if (dragging === 'low') { this.threshold.low = value; } else { this.threshold.high = value; }
 			this.applyThreshold();
 			draw();
@@ -1021,9 +1327,11 @@ export class MeasurePanel {
 		canvas.addEventListener('pointerup', endDrag);
 		canvas.addEventListener('pointercancel', endDrag);
 
-		section.appendChild(this.note(
-			`Drag either edge of the shaded band to set the range. Currently ${formatNumber(this.threshold.low, 4)} – ${formatNumber(this.threshold.high, 4)}.`,
-		));
+		const adaptive = this.threshold.localMethod !== 'none' || this.threshold.localizeGlobal;
+		section.appendChild(this.note(adaptive
+			? 'An adaptive method is active, so it computes its own threshold per neighbourhood and this range is not in use. Drag a handle to take manual control.'
+			: `Drag either edge of the shaded band to set the range. Currently ${formatNumber(this.threshold.low, 4)} – ${formatNumber(this.threshold.high, 4)}.`));
+		if (adaptive) { canvas.classList.add('measure-histogram-inactive'); }
 		return section;
 	}
 
@@ -1110,18 +1418,29 @@ export class MeasurePanel {
 
 		for (const method of THRESHOLD_METHODS) {
 			const bin = autoThresholdBin(histogram.counts, method.id);
+			const localized = this.threshold.localizeGlobal;
 			const active = !this.threshold.manual
 				&& this.threshold.localMethod === 'none'
 				&& this.threshold.method === method.id;
 			const button = this.methodButton({
-				label: method.label,
+				label: localized ? `${method.label} · per window` : method.label,
 				hint: bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint,
-				value: bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4),
+				value: localized
+					? `r=${this.threshold.localRadius}`
+					: (bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4)),
 				active,
-				disabled: bin < 0,
-				spark: this.buildHistogramSpark(histogram, bin),
+				disabled: bin < 0 && !localized,
+				spark: localized ? undefined : this.buildHistogramSpark(histogram, bin),
 				computeMask: () => {
-					if (bin < 0 || !this.previewPlane) { return null; }
+					if (!this.previewPlane) { return null; }
+					if (localized) {
+						return localAutoThresholdMask(this.previewPlane, source.width, source.height, {
+							method: method.id,
+							radius: this.threshold.localRadius,
+							darkBackground: this.threshold.darkBackground,
+						});
+					}
+					if (bin < 0) { return null; }
 					const value = thresholdValueFromBin(histogram, bin);
 					return this.threshold.darkBackground
 						? globalThresholdMask(this.previewPlane, value, histogram.max)
@@ -1159,6 +1478,7 @@ export class MeasurePanel {
 					: null,
 				apply: () => {
 					this.threshold.localMethod = method.id;
+					this.threshold.localizeGlobal = false;
 					this.threshold.manual = false;
 				},
 			});
@@ -1206,7 +1526,7 @@ export class MeasurePanel {
 			const mask = spec.computeMask();
 			if (!mask) { return; }
 			this.showTemporaryMask(mask);
-			this.setHint(`${spec.label}: preview — click to keep it.`);
+			this.setHint(`${spec.label}: preview in red — click to keep it, then the filters mark kept objects green.`);
 		};
 		button.onmouseleave = () => this.showTemporaryMask(null);
 		button.onclick = () => {
@@ -1431,7 +1751,11 @@ export class MeasurePanel {
 		const histogram = this.histogram;
 		if (!source || !plane || !histogram) { return; }
 
-		if (!this.threshold.manual && this.threshold.localMethod === 'none') {
+		const usingGlobalAuto = !this.threshold.manual
+			&& this.threshold.localMethod === 'none'
+			&& !this.threshold.localizeGlobal;
+
+		if (usingGlobalAuto) {
 			const bin = autoThresholdBin(histogram.counts, this.threshold.method);
 			if (bin >= 0) {
 				const value = thresholdValueFromBin(histogram, bin);
@@ -1445,14 +1769,22 @@ export class MeasurePanel {
 			}
 		}
 
-		this.thresholdMask = this.threshold.localMethod === 'none'
-			? globalThresholdMask(plane, this.threshold.low, this.threshold.high)
-			: localThresholdMask(plane, source.width, source.height, {
+		if (this.threshold.localMethod !== 'none') {
+			this.thresholdMask = localThresholdMask(plane, source.width, source.height, {
 				method: this.threshold.localMethod,
 				radius: this.threshold.localRadius,
 				k: this.threshold.localK,
 				darkBackground: this.threshold.darkBackground,
 			});
+		} else if (this.threshold.localizeGlobal && !this.threshold.manual) {
+			this.thresholdMask = localAutoThresholdMask(plane, source.width, source.height, {
+				method: this.threshold.method,
+				radius: this.threshold.localRadius,
+				darkBackground: this.threshold.darkBackground,
+			});
+		} else {
+			this.thresholdMask = globalThresholdMask(plane, this.threshold.low, this.threshold.high);
+		}
 		this.particleResult = null;
 		// Raw mask only: this runs on every keystroke in the range fields, and a
 		// full labelling pass per keystroke would stall a large image. The green
@@ -1573,11 +1905,23 @@ export class MeasurePanel {
 			minArea: this.threshold.minArea,
 			maxArea: Number.isFinite(this.threshold.maxArea) ? this.threshold.maxArea : undefined,
 			minCircularity: this.threshold.minCircularity > 0 ? this.threshold.minCircularity : undefined,
+			maxCircularity: this.threshold.maxCircularity < 1 ? this.threshold.maxCircularity : undefined,
 			excludeEdges: this.threshold.excludeEdges,
 			fillHoles: this.threshold.fillHoles,
 		}, {
-			watershed: this.threshold.watershed,
+			split: this.threshold.split,
+			prominence: this.threshold.prominence,
+			plane: this.previewPlane || undefined,
 		});
+	}
+
+	/** Centres the current prominence would accept, for the live readout. */
+	private countMaxima(): number | null {
+		const source = this.host.getSource();
+		if (!this.thresholdMask || !this.previewPlane || !source) { return null; }
+		return countIntensityMaxima(
+			this.previewPlane, this.thresholdMask, source.width, source.height, this.threshold.prominence,
+		);
 	}
 
 	private commitParticles(): void {
@@ -1687,7 +2031,11 @@ export class MeasurePanel {
 				: undefined,
 			thresholdLow: this.thresholdMask ? this.threshold.low : undefined,
 			thresholdHigh: this.thresholdMask ? this.threshold.high : undefined,
-			preprocessing: preprocessing.length > 0 ? preprocessing.join(' ') : undefined,
+			preprocessing: [
+				...preprocessing,
+				this.threshold.split === 'shape' ? 'watershed' : '',
+				this.threshold.split === 'intensity' ? `maxima:${this.threshold.prominence}` : '',
+			].filter(Boolean).join(' ') || undefined,
 			extensionVersion: this.host.extensionVersion,
 		};
 	}

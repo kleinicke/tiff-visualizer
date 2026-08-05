@@ -276,51 +276,65 @@ export function distanceTransform(mask: Uint8Array, width: number, height: numbe
 }
 
 /**
- * Split touching objects by a distance-transform watershed.
+ * Watershed by basin dynamics, over an arbitrary height map.
  *
- * Pixels are flooded in order of decreasing distance-to-background, so each
- * object's centre creates a basin before its rim is reached. Where two basins
- * meet, the decision to split or merge is made on **basin dynamics**: the depth
- * of the saddle below the shallower of the two peaks. Two cells that merely
- * touch have a deep saddle and are separated; a single cell with a slightly
- * ragged outline produces two peaks a fraction of a pixel apart and is kept
- * whole.
+ * Pixels are flooded in order of decreasing height, so each peak creates a
+ * basin before its slopes are reached. Where two basins meet, the decision to
+ * split or merge is made on the depth of the saddle below the *shallower* of the
+ * two peaks: a real boundary between two objects sits deep, while a ragged
+ * outline or a noisy plateau produces two peaks a hair apart and is kept whole.
  *
- * `tolerance` is that depth, in pixels. Comparing the two *adjacent pixels'*
- * distances instead — the obvious-looking alternative — always merges, because
- * neighbouring pixels of a distance map never differ by more than about one.
+ * `tolerance` is that depth, in the units of `height`. Comparing the two
+ * adjacent pixels' heights instead — the obvious-looking alternative — always
+ * merges, because neighbouring pixels of a smooth height map never differ by
+ * much.
+ *
+ * The same routine drives two very different tools, which is the point of
+ * factoring it out: run it on a distance transform and `tolerance` is a shape
+ * criterion in pixels; run it on the image itself and `tolerance` is prominence,
+ * the intensity a peak must rise above its surroundings to count as its own
+ * object.
  */
-export function watershedSplit(
+export function dynamicsWatershed(
+	height: Float64Array | Float32Array,
 	mask: Uint8Array,
 	width: number,
-	height: number,
-	tolerance = 0.5,
-): Uint8Array {
-	// The transform returns squared distances; take the root so `tolerance`
-	// means pixels rather than pixels squared.
-	const squared = distanceTransform(mask, width, height);
-	const distance = new Float64Array(squared.length);
-	for (let i = 0; i < squared.length; i++) { distance[i] = Math.sqrt(squared[i]); }
-	const size = width * height;
+	imageHeight: number,
+	tolerance: number,
+): { labels: Int32Array; count: number } {
+	const size = width * imageHeight;
+	const labels = new Int32Array(size);
 
-	// Rank pixels by descending distance. A counting sort over quantised
-	// distances avoids an O(n log n) comparison sort on megapixel images.
-	let maxDistance = 0;
-	for (let i = 0; i < size; i++) { if (distance[i] > maxDistance) { maxDistance = distance[i]; } }
-	if (maxDistance === 0) { return mask.slice(); }
+	let maxHeight = -Infinity;
+	let minHeight = Infinity;
+	for (let i = 0; i < size; i++) {
+		if (!mask[i]) { continue; }
+		const value = height[i];
+		if (!Number.isFinite(value)) { continue; }
+		if (value > maxHeight) { maxHeight = value; }
+		if (value < minHeight) { minHeight = value; }
+	}
+	if (!Number.isFinite(maxHeight) || maxHeight === minHeight) {
+		// Nothing to split: hand back a single basin covering the mask.
+		let any = 0;
+		for (let i = 0; i < size; i++) { if (mask[i]) { labels[i] = 1; any = 1; } }
+		return { labels, count: any };
+	}
 
-	const levels = 2048;
-	const scale = (levels - 1) / maxDistance;
+	// Counting sort over quantised heights: an O(n log n) comparison sort on a
+	// megapixel image would dominate the whole pass.
+	const levels = 4096;
+	const scale = (levels - 1) / (maxHeight - minHeight);
 	const bucketCounts = new Int32Array(levels + 1);
 	const quantised = new Int32Array(size);
 	for (let i = 0; i < size; i++) {
-		if (!mask[i]) { quantised[i] = -1; continue; }
-		const level = Math.round(distance[i] * scale);
+		if (!mask[i] || !Number.isFinite(height[i])) { quantised[i] = -1; continue; }
+		const level = Math.round((height[i] - minHeight) * scale);
 		quantised[i] = level;
 		bucketCounts[level]++;
 	}
 	const bucketStart = new Int32Array(levels + 2);
-	// Descending order, so the deepest interior is flooded first.
+	// Descending, so the peaks are flooded first.
 	for (let level = levels - 1; level >= 0; level--) {
 		bucketStart[level] = bucketStart[level + 1] + bucketCounts[level + 1];
 	}
@@ -335,12 +349,7 @@ export function watershedSplit(
 	}
 
 	const WATERSHED = -1;
-	const labels = new Int32Array(size);
-	// Peak height of each basin. Because pixels arrive in descending distance
-	// order, the pixel that creates a label *is* that basin's maximum.
 	const peaks: number[] = [0];
-	// Union-find over labels, so merging two basins is O(1) rather than a full
-	// relabelling sweep of the image.
 	const parent: number[] = [0];
 	const find = (label: number): number => {
 		let root = label;
@@ -351,18 +360,17 @@ export function watershedSplit(
 	};
 
 	let nextLabel = 0;
-
 	for (let k = 0; k < ordered; k++) {
 		const index = order[k];
 		const x = index % width;
 		const y = (index / width) | 0;
-		const own = distance[index];
+		const own = height[index];
 
 		let assigned = 0;
 		let conflict = false;
 		for (let dy = -1; dy <= 1; dy++) {
 			const ny = y + dy;
-			if (ny < 0 || ny >= height) { continue; }
+			if (ny < 0 || ny >= imageHeight) { continue; }
 			for (let dx = -1; dx <= 1; dx++) {
 				if (!dx && !dy) { continue; }
 				const nx = x + dx;
@@ -373,9 +381,6 @@ export function watershedSplit(
 				if (assigned === 0) { assigned = neighbour; continue; }
 				if (assigned === neighbour) { continue; }
 
-				// Two basins meet here, so this pixel is their saddle. Merge when
-				// the shallower peak rises less than `tolerance` above it: that
-				// bump is boundary noise, not a second object.
 				const depth = Math.min(peaks[assigned], peaks[neighbour]) - own;
 				if (depth <= tolerance) {
 					const to = Math.min(assigned, neighbour);
@@ -401,9 +406,88 @@ export function watershedSplit(
 		}
 	}
 
-	const out = new Uint8Array(size);
-	for (let i = 0; i < size; i++) { out[i] = labels[i] > 0 ? 1 : 0; }
+	// Renumber to dense roots so the caller gets a usable component count.
+	const remap = new Int32Array(nextLabel + 1);
+	let count = 0;
+	for (let i = 0; i < size; i++) {
+		const label = labels[i];
+		if (label <= 0) { labels[i] = label === WATERSHED ? 0 : 0; continue; }
+		const root = find(label);
+		if (remap[root] === 0) { remap[root] = ++count; }
+		labels[i] = remap[root];
+	}
+
+	return { labels, count };
+}
+
+/**
+ * Split touching objects by a distance-transform watershed.
+ *
+ * The classic shape-based separation: two round cells that overlap have two
+ * distinct distance-to-background peaks with a saddle between them, so they come
+ * apart even though thresholding merged them. `tolerance` is in pixels.
+ */
+export function watershedSplit(
+	mask: Uint8Array,
+	width: number,
+	height: number,
+	tolerance = 0.5,
+): Uint8Array {
+	// The transform returns squared distances; take the root so `tolerance`
+	// means pixels rather than pixels squared.
+	const squared = distanceTransform(mask, width, height);
+	const distance = new Float64Array(squared.length);
+	for (let i = 0; i < squared.length; i++) { distance[i] = Math.sqrt(squared[i]); }
+
+	const { labels } = dynamicsWatershed(distance, mask, width, height, tolerance);
+	const out = new Uint8Array(mask.length);
+	for (let i = 0; i < out.length; i++) { out[i] = labels[i] > 0 ? 1 : 0; }
 	return out;
+}
+
+/**
+ * Split by intensity maxima — the equivalent of ImageJ's "Find Maxima" with
+ * output "Segmented Particles", restricted to a thresholded mask.
+ *
+ * Where the distance transform separates by *shape*, this separates by
+ * *brightness*: each local intensity maximum that rises at least `prominence`
+ * above the saddle connecting it to a brighter one becomes its own object. That
+ * is the right tool when cells touch without their outline pinching — nuclei
+ * packed edge to edge, where a distance-transform watershed finds one blob.
+ *
+ * In ImageJ this workflow needs two images and an AND in the Image Calculator:
+ * one from Find Maxima, one from the threshold. Here the threshold mask is
+ * simply the region the maxima are computed in, so the combination is implicit
+ * and there is nothing to keep in sync.
+ */
+export function splitByIntensityMaxima(
+	plane: Float32Array,
+	mask: Uint8Array,
+	width: number,
+	height: number,
+	prominence: number,
+): Uint8Array {
+	const { labels } = dynamicsWatershed(plane, mask, width, height, prominence);
+	const out = new Uint8Array(mask.length);
+	for (let i = 0; i < out.length; i++) { out[i] = labels[i] > 0 ? 1 : 0; }
+	return out;
+}
+
+/**
+ * Count the intensity maxima a given prominence would accept.
+ *
+ * Used to report "this prominence finds N centres" while the value is being
+ * adjusted, which is how ImageJ's preview point selection is normally used —
+ * turn the number until the count matches what you can see.
+ */
+export function countIntensityMaxima(
+	plane: Float32Array,
+	mask: Uint8Array,
+	width: number,
+	height: number,
+	prominence: number,
+): number {
+	return dynamicsWatershed(plane, mask, width, height, prominence).count;
 }
 
 export interface AnalyzeParticlesResult {
@@ -413,18 +497,44 @@ export interface AnalyzeParticlesResult {
 	totalBeforeFilters: number;
 }
 
-/** Full particle pass: optional hole filling and watershed, then filtering. */
+export type SplitMode = 'none' | 'shape' | 'intensity';
+
+export interface AnalyzeParticlesOptions {
+	/**
+	 * How to separate objects that thresholding merged.
+	 *
+	 * - `shape` — distance-transform watershed; for round objects that overlap.
+	 * - `intensity` — split at intensity maxima; for objects that touch without
+	 *   their outline pinching, where a shape watershed finds one blob.
+	 */
+	split?: SplitMode;
+	/** Saddle depth in pixels for `shape`. */
+	watershedTolerance?: number;
+	/** Prominence in data units for `intensity`. */
+	prominence?: number;
+	/** Required for `intensity`: the scalar image the mask was thresholded from. */
+	plane?: Float32Array;
+	/** Back-compatible alias for `split: 'shape'`. */
+	watershed?: boolean;
+}
+
+/** Full particle pass: optional hole filling and splitting, then filtering. */
 export function analyzeParticles(
 	mask: Uint8Array,
 	width: number,
 	height: number,
 	filter: ParticleFilter = {},
-	options: { watershed?: boolean; watershedTolerance?: number } = {},
+	options: AnalyzeParticlesOptions = {},
 ): AnalyzeParticlesResult {
 	let working = mask;
 
-	if (options.watershed) {
+	const split: SplitMode = options.split ?? (options.watershed ? 'shape' : 'none');
+	if (split === 'shape') {
 		working = watershedSplit(working, width, height, options.watershedTolerance ?? 0.5);
+	} else if (split === 'intensity' && options.plane) {
+		working = splitByIntensityMaxima(
+			options.plane, working, width, height, options.prominence ?? 0,
+		);
 	}
 
 	const labelResult = labelComponents(working, width, height, filter.connectivity ?? 8);

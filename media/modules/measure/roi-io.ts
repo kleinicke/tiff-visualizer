@@ -425,6 +425,37 @@ export function summarizeByGroup(
 	return summaries;
 }
 
+/**
+ * Summarise every numeric column across all measured rows.
+ *
+ * This is ImageJ's "Summarize", and it is usually the actual deliverable: the
+ * per-object table is evidence, but the sentence someone writes down is "465
+ * cells, mean area 212 µm² ± 8". Producing it in the panel means the number is
+ * read off the tool rather than pasted into a spreadsheet to be computed.
+ *
+ * Columns that are identifiers rather than measurements are skipped — averaging
+ * a channel index or an ROI id is meaningless and would only add noise.
+ */
+const NON_SUMMARY_KEYS = new Set<string>([
+	'roiId', 'roiName', 'roiKind', 'group', 'fileName', 'channel', 'page',
+]);
+
+export function summarizeRows(rows: MeasurementRow[]): { column: string; summary: GroupSummary }[] {
+	if (rows.length === 0) { return []; }
+	const columns: string[] = [];
+	for (const row of rows) {
+		for (const key of Object.keys(row)) {
+			if (NON_SUMMARY_KEYS.has(key)) { continue; }
+			if (typeof row[key as keyof MeasurementRow] !== 'number') { continue; }
+			if (columns.indexOf(key) < 0) { columns.push(key); }
+		}
+	}
+	return columns.map(column => ({
+		column,
+		summary: summarizeByGroup(rows, column as keyof MeasurementRow, () => 'all')[0],
+	})).filter(entry => !!entry.summary);
+}
+
 // ---------------------------------------------------------------------------
 // Python starter script
 // ---------------------------------------------------------------------------

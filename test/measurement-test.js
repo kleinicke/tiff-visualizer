@@ -274,6 +274,87 @@ async function main() {
 		assert.ok(suggested > 20 && suggested < 200, `suggested threshold ${suggested} is outside the gap`);
 	});
 
+	test('a global method applied per window handles patchy illumination', () => {
+		// Two halves lit differently, with one object in each. The left object is
+		// *darker* than the right half's background, so no single global cut can
+		// catch both — this is the situation per-window thresholding exists for.
+		const width = 128;
+		const height = 128;
+		const data = new Float32Array(width * height);
+		let seed = 1;
+		const noise = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff) * 4; };
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) { data[y * width + x] = (x < 64 ? 20 : 120) + noise(); }
+		}
+		const stamp = (cx, cy, value) => {
+			for (let y = cy - 9; y <= cy + 9; y++) {
+				for (let x = cx - 9; x <= cx + 9; x++) {
+					if ((x - cx) ** 2 + (y - cy) ** 2 <= 81) { data[y * width + x] = value + noise(); }
+				}
+			}
+		};
+		stamp(32, 64, 80);
+		stamp(96, 64, 180);
+
+		const expected = Math.PI * 81;
+		const looksLikeObject = particle => Math.abs(particle.area - expected) / expected < 0.15;
+
+		const histogram = threshold.buildHistogram(data);
+		const globalBin = threshold.autoThresholdBin(histogram.counts, 'otsu');
+		const globalMask = threshold.globalThresholdMask(
+			data, threshold.thresholdValueFromBin(histogram, globalBin), Infinity);
+		const globalFound = particles.analyzeParticles(globalMask, width, height, { minArea: 30 }, {});
+		assert.ok(globalFound.particles.filter(looksLikeObject).length < 2,
+			'a global cut was expected to fail here, so the comparison is meaningful');
+
+		const localMask = threshold.localAutoThresholdMask(data, width, height, {
+			method: 'otsu', radius: 16, darkBackground: true,
+		});
+		const localFound = particles.analyzeParticles(localMask, width, height, { minArea: 30 }, {});
+		const objects = localFound.particles.filter(looksLikeObject);
+		assert.strictEqual(objects.length, 2,
+			`per-window Otsu should recover both objects, found ${objects.length} of ${localFound.particles.length} components`);
+	});
+
+	test('per-window thresholding leaves uniform background alone', () => {
+		// The contrast guard: a window holding nothing but flat background has no
+		// split to make, and every method above would otherwise invent one.
+		const width = 96;
+		const height = 96;
+		const data = new Float32Array(width * height);
+		let seed = 7;
+		const noise = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed / 0x7fffffff) * 3; };
+		for (let i = 0; i < data.length; i++) { data[i] = 40 + noise(); }
+		for (let y = 40; y < 56; y++) {
+			for (let x = 40; x < 56; x++) { data[y * width + x] = 200; }
+		}
+
+		const mask = threshold.localAutoThresholdMask(data, width, height, {
+			method: 'otsu', radius: 12, darkBackground: true,
+		});
+		let selected = 0;
+		for (let i = 0; i < mask.length; i++) { if (mask[i]) { selected++; } }
+		// The planted square is 256 px; anything far above that means background
+		// windows were split.
+		assert.ok(selected < 700, `background was carved up: ${selected} px selected for a 256 px object`);
+		assert.ok(selected >= 200, `the object itself was lost: only ${selected} px selected`);
+	});
+
+	test('every global method survives being applied per window', () => {
+		const source = discImage(96, 96, 48, 48, 20, 190, 25);
+		for (const method of threshold.THRESHOLD_METHODS) {
+			const mask = threshold.localAutoThresholdMask(source.data, 96, 96, {
+				method: method.id, radius: 12, darkBackground: true,
+			});
+			assert.strictEqual(mask.length, 96 * 96, `${method.id} returned a wrong-sized mask`);
+			let selected = 0;
+			for (let i = 0; i < mask.length; i++) { if (mask[i]) { selected++; } }
+			// A method that selects everything or nothing everywhere would mean the
+			// per-window path silently degenerated.
+			assert.ok(selected < mask.length, `${method.id} selected the entire image`);
+		}
+	});
+
 	test('local adaptive thresholding beats a global one under a gradient', () => {
 		// Background ramps from 0 to 150 across the frame; two objects sit 60
 		// above their local background. No single global value can catch both.
@@ -410,6 +491,107 @@ async function main() {
 
 		const split = particles.analyzeParticles(mask, width, height, { minArea: 50 }, { watershed: true });
 		assert.strictEqual(split.particles.length, 2, `watershed produced ${split.particles.length} objects`);
+	});
+
+	test('intensity maxima split cells that touch without pinching', () => {
+		// Two bright nuclei sharing a flat border: the union is a single rounded
+		// rectangle, so a distance-transform watershed sees one object. Only the
+		// two intensity peaks distinguish them — this is the case ImageJ solves
+		// with Find Maxima plus an AND in the Image Calculator.
+		const width = 120;
+		const height = 60;
+		const plane = new Float32Array(width * height).fill(10);
+		const mask = new Uint8Array(width * height);
+		for (let y = 10; y < 50; y++) {
+			for (let x = 10; x < 110; x++) {
+				mask[y * width + x] = 1;
+				// Two Gaussian-ish peaks at x = 35 and x = 85.
+				const a = 120 * Math.exp(-(((x - 35) ** 2) / 200 + ((y - 30) ** 2) / 200));
+				const b = 120 * Math.exp(-(((x - 85) ** 2) / 200 + ((y - 30) ** 2) / 200));
+				plane[y * width + x] = 10 + a + b;
+			}
+		}
+
+		const byShape = particles.analyzeParticles(mask, width, height, { minArea: 50 }, { split: 'shape' });
+		assert.strictEqual(byShape.particles.length, 1,
+			'a flat-bordered pair has no shape saddle, so this control must find one object');
+
+		const byIntensity = particles.analyzeParticles(mask, width, height, { minArea: 50 }, {
+			split: 'intensity', prominence: 30, plane,
+		});
+		assert.strictEqual(byIntensity.particles.length, 2,
+			`intensity maxima should separate the two nuclei, got ${byIntensity.particles.length}`);
+	});
+
+	test('prominence controls how many centres are accepted', () => {
+		const width = 100;
+		const height = 40;
+		const plane = new Float32Array(width * height).fill(0);
+		const mask = new Uint8Array(width * height).fill(1);
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				// Three peaks: two tall, one lesser bump between them. The bump's
+				// *prominence* is its height above the saddle joining it to a
+				// taller peak — about 21 here — not its absolute height of 40.
+				// Confusing the two is the usual reason a prominence value
+				// behaves unexpectedly.
+				const a = 100 * Math.exp(-((x - 20) ** 2) / 120);
+				const b = 100 * Math.exp(-((x - 80) ** 2) / 120);
+				const c = 40 * Math.exp(-((x - 50) ** 2) / 120);
+				plane[y * width + x] = a + b + c;
+			}
+		}
+
+		const lenient = particles.countIntensityMaxima(plane, mask, width, height, 10);
+		const strict = particles.countIntensityMaxima(plane, mask, width, height, 40);
+		assert.strictEqual(lenient, 3, `a prominence below the bump's should keep it, got ${lenient}`);
+		assert.strictEqual(strict, 2, `a prominence above it should keep only the two real peaks, got ${strict}`);
+		// Monotone: raising the prominence can only ever merge, never split.
+		let previous = Infinity;
+		for (const prominence of [1, 5, 10, 20, 30, 50, 80]) {
+			const count = particles.countIntensityMaxima(plane, mask, width, height, prominence);
+			assert.ok(count <= previous, `count rose from ${previous} to ${count} at prominence ${prominence}`);
+			previous = count;
+		}
+	});
+
+	test('the maximum-area filter drops merged clumps', () => {
+		const width = 80;
+		const height = 40;
+		const mask = new Uint8Array(width * height);
+		// One small object and one large one.
+		for (let y = 5; y < 10; y++) { for (let x = 5; x < 10; x++) { mask[y * width + x] = 1; } }
+		for (let y = 15; y < 35; y++) { for (let x = 40; x < 70; x++) { mask[y * width + x] = 1; } }
+
+		const all = particles.analyzeParticles(mask, width, height, {}, {});
+		assert.strictEqual(all.particles.length, 2);
+
+		const capped = particles.analyzeParticles(mask, width, height, { maxArea: 100 }, {});
+		assert.strictEqual(capped.particles.length, 1);
+		assert.strictEqual(capped.rejected.tooLarge, 1);
+	});
+
+	test('the summary reports n, mean, SD and SEM per measured column', () => {
+		const rows = [
+			{ roiId: '1', roiName: 'A', roiKind: 'mask', channel: 0, area: 10, mean: 100 },
+			{ roiId: '2', roiName: 'B', roiKind: 'mask', channel: 0, area: 20, mean: 110 },
+			{ roiId: '3', roiName: 'C', roiKind: 'mask', channel: 0, area: 30, mean: 120 },
+		];
+		const summary = roiIo.summarizeRows(rows);
+		const byColumn = new Map(summary.map(entry => [entry.column, entry.summary]));
+
+		assert.ok(byColumn.has('area') && byColumn.has('mean'));
+		// Identifier-like columns must not be averaged.
+		assert.ok(!byColumn.has('channel'), 'channel is an index, not a measurement');
+		assert.ok(!byColumn.has('roiName'));
+
+		const area = byColumn.get('area');
+		assert.strictEqual(area.n, 3);
+		close(area.mean, 20, 1e-9, 'summary mean');
+		close(area.stdDev, 10, 1e-9, 'summary SD');
+		close(area.sem, 10 / Math.sqrt(3), 1e-9, 'summary SEM');
+		close(area.min, 10, 1e-9, 'summary min');
+		close(area.max, 30, 1e-9, 'summary max');
 	});
 
 	console.log('\n🪄 Interactive segmentation');

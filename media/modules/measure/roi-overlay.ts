@@ -126,7 +126,7 @@ export class RoiOverlay {
 	private brushRadius = 8;
 	private wandTolerance: number | null = null;
 	private showScaleBar = true;
-	private showLabels = true;
+	private showLabels = false;
 	private redrawHandle = 0;
 	/** ROI under the cursor in the results table or ROI list. */
 	private hoveredRoiId: string | null = null;
@@ -134,6 +134,8 @@ export class RoiOverlay {
 	private showMask = true;
 	/** Held-key peek: everything measurement-related is hidden while true. */
 	private peeking = false;
+	/** Set when a select-mode press hit an ROI, so the click does not zoom. */
+	private consumeNextClick = false;
 
 	private maskPreview: MaskPreview | null = null;
 	/** Rendered form of `maskPreview`, rebuilt only when the preview changes. */
@@ -168,7 +170,14 @@ export class RoiOverlay {
 		// with a tool would also zoom — most visibly when finishing a calibration
 		// line, where the zoom then invalidates the distance just measured.
 		this.canvas.addEventListener('click', e => {
-			if (this.tool !== 'select') { e.preventDefault(); e.stopPropagation(); }
+			// Drawing tools always swallow the click. In select mode it depends on
+			// whether the press landed on an ROI: picking one must not also zoom,
+			// but a click on empty space still belongs to the image.
+			if (this.tool !== 'select' || this.consumeNextClick) {
+				e.preventDefault();
+				e.stopPropagation();
+			}
+			this.consumeNextClick = false;
 		});
 		this.canvas.addEventListener('dblclick', e => this.onDoubleClick(e));
 		this.canvas.addEventListener('contextmenu', e => this.onContextMenu(e));
@@ -447,11 +456,12 @@ export class RoiOverlay {
 
 	private drawRoi(ctx: CanvasRenderingContext2D, roi: Roi, selected: boolean): void {
 		const hovered = this.hoveredRoiId === roi.id;
-		// Hover and selection have to be told apart at a glance: hover is a
-		// transient "this row is that object", selection is what the tools act
-		// on. White and thick for hover, the ROI's own colour for selection.
-		const color = hovered ? '#ffffff' : (roi.color || '#ffd400');
-		ctx.lineWidth = hovered ? 2.5 : (selected ? 2 : 1.25);
+		// The ROI keeps its own colour in every state. Colour identifies the
+		// object — replacing it on hover throws that away exactly when the user
+		// is trying to match a table row to a shape. Emphasis comes from a white
+		// halo drawn underneath and from line weight instead.
+		const color = roi.color || '#ffd400';
+		ctx.lineWidth = selected ? 2 : (hovered ? 1.75 : 1.25);
 		ctx.strokeStyle = color;
 		ctx.setLineDash([]);
 
@@ -495,11 +505,22 @@ export class RoiOverlay {
 			else { ctx.lineTo(client.x, client.y); }
 		}
 		if (isAreaKind(roi.kind)) { ctx.closePath(); }
+
+		// Halo first, so the outline sits on top of it and stays its own colour.
+		if (hovered || selected) {
+			ctx.save();
+			ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+			ctx.lineWidth = (selected ? 2 : 1.75) + 2.5;
+			ctx.stroke();
+			ctx.restore();
+		}
 		ctx.stroke();
 
 		if ((selected || hovered) && isAreaKind(roi.kind)) {
 			ctx.save();
-			ctx.globalAlpha = hovered ? 0.25 : 0.12;
+			// Kept light: the fill is a hint, and a heavy one hides the pixels the
+			// measurement is actually made from.
+			ctx.globalAlpha = selected ? 0.18 : 0.10;
 			ctx.fillStyle = color;
 			ctx.fill();
 			ctx.restore();
@@ -508,10 +529,13 @@ export class RoiOverlay {
 		if (selected) { this.drawHandles(ctx, roi); }
 		if (selected || hovered) { this.drawSelectionMarker(ctx, outline); }
 
-		// A few hundred segmented objects would otherwise carry a few hundred
-		// name labels, which is unreadable and hides the outlines underneath.
-		const labelsUseful = this.showLabels && this.manager.count() <= 40;
-		if ((labelsUseful || selected || hovered) && roi.name) {
+		// Only the object being pointed at or worked on is named. Labelling every
+		// ROI turns a segmented field into unreadable text, and the number of an
+		// object nobody asked about is noise. "Show all ROI names" opts back in,
+		// and even then a label is skipped when the object is too small on screen
+		// to carry one legibly.
+		const labelAll = this.showLabels && this.roiScreenExtent(outline) >= 26;
+		if ((labelAll || selected || hovered) && roi.name) {
 			const anchor = this.toClient(outline[0] + 0.5, outline[1] + 0.5);
 			if (anchor) { this.drawLabel(ctx, roi.name, anchor.x + 6, anchor.y - 6, color); }
 		}
@@ -577,6 +601,20 @@ export class RoiOverlay {
 			top: client.y - window.innerHeight / 2,
 			behavior: 'smooth',
 		});
+	}
+
+	/** Larger on-screen dimension of an outline, in CSS pixels. */
+	private roiScreenExtent(outline: number[]): number {
+		if (outline.length < 4) { return 0; }
+		let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+		for (let i = 0; i + 1 < outline.length; i += 2) {
+			if (outline[i] < minX) { minX = outline[i]; }
+			if (outline[i] > maxX) { maxX = outline[i]; }
+			if (outline[i + 1] < minY) { minY = outline[i + 1]; }
+			if (outline[i + 1] > maxY) { maxY = outline[i + 1]; }
+		}
+		const scale = this.pixelScale();
+		return Math.max(maxX - minX, maxY - minY) * scale;
 	}
 
 	private drawHandles(ctx: CanvasRenderingContext2D, roi: Roi): void {
@@ -879,6 +917,14 @@ export class RoiOverlay {
 			return;
 		}
 
+		// In select mode the image itself behaves like the results table: whatever
+		// is under the cursor lights up, so an object can be identified without
+		// clicking it and without going to the list.
+		if (this.tool === 'select') {
+			const hit = this.hitTest(point, HIT_TOLERANCE_SCREEN / this.pixelScale());
+			this.setHoveredRoi(hit ? hit.id : null);
+		}
+
 		if (this.tool === 'wand') { this.updateWandPreview(point); }
 		if (this.tool === 'livewire' && this.pending.length >= 2) { this.updateLivewirePreview(point); }
 		if (this.tool === 'brush' || this.pending.length >= 2) { this.scheduleRedraw(); }
@@ -1075,6 +1121,7 @@ export class RoiOverlay {
 				if (Math.hypot(handles[i].x - point.x, handles[i].y - point.y) <= tolerance) {
 					event.preventDefault();
 					event.stopPropagation();
+					this.consumeNextClick = true;
 					this.manager.beginEdit();
 					this.drag = {
 						tool: 'select',
@@ -1093,6 +1140,7 @@ export class RoiOverlay {
 		if (!hit) {
 			// Nothing under the cursor: let the click reach the image so pan and
 			// the pixel inspector keep working exactly as before.
+			this.consumeNextClick = false;
 			this.manager.clearSelection();
 			this.forwardToImage(event);
 			return;
@@ -1100,6 +1148,9 @@ export class RoiOverlay {
 
 		event.preventDefault();
 		event.stopPropagation();
+		// The click that follows this press would otherwise reach the container
+		// and zoom the image, so every selection would also change the view.
+		this.consumeNextClick = true;
 		if (event.shiftKey || event.ctrlKey || event.metaKey) {
 			this.manager.toggleSelection(hit.id);
 		} else if (!this.manager.isSelected(hit.id)) {

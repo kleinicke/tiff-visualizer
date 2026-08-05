@@ -889,6 +889,164 @@ function localMedianMask(
 	return out;
 }
 
+/**
+ * Run any of the global methods **per neighbourhood** instead of once.
+ *
+ * The thirteen statistical methods above are all functions of a histogram, so
+ * there is nothing global about them in principle — feed each one the histogram
+ * of a local window and it becomes an adaptive threshold. That is what ImageJ's
+ * "Auto Local Threshold" does, and it is a genuinely different tool from
+ * Sauvola/Niblack: those model the local mean and σ directly, whereas this keeps
+ * whichever criterion you already decided suits your data and only stops
+ * applying it globally.
+ *
+ * Computing a full histogram centred on every pixel would be quadratic in the
+ * radius. Instead the threshold is evaluated on a grid of tiles and bilinearly
+ * interpolated between them, which is the standard approximation: the threshold
+ * surface of a real image varies on the scale of the illumination, not per
+ * pixel, so interpolating it loses nothing while making the cost linear.
+ */
+export function localAutoThresholdMask(
+	plane: Float32Array,
+	width: number,
+	height: number,
+	options: {
+		method: ThresholdMethod;
+		radius: number;
+		darkBackground?: boolean;
+		/**
+		 * Minimum window contrast, as a fraction of the image's full range,
+		 * before a window is allowed to split at all.
+		 *
+		 * Without this the mode is unusable: every method above *always* returns
+		 * a threshold, including for a window containing nothing but background,
+		 * so uniform regions get carved into spurious objects. Requiring real
+		 * contrast before splitting is Bernsen's criterion, and it is what turns
+		 * "apply Otsu per window" from a curiosity into a tool.
+		 */
+		minContrast?: number;
+	},
+): Uint8Array {
+	const radius = Math.max(4, Math.round(options.radius));
+	const darkBackground = options.darkBackground !== false;
+	const minContrastFraction = options.minContrast ?? 0.25;
+	const out = new Uint8Array(width * height);
+
+	let min = Infinity;
+	let max = -Infinity;
+	for (let i = 0; i < plane.length; i++) {
+		const v = plane[i];
+		if (!Number.isFinite(v)) { continue; }
+		if (v < min) { min = v; }
+		if (v > max) { max = v; }
+	}
+	if (!Number.isFinite(min) || max <= min) { return out; }
+	const binScale = HISTOGRAM_BINS / (max - min);
+
+	// One tile per radius, so a window spans three tiles and neighbouring tiles
+	// see overlapping data — without that the interpolated surface shows the
+	// tile grid.
+	const tile = radius;
+	const tilesX = Math.max(2, Math.ceil(width / tile) + 1);
+	const tilesY = Math.max(2, Math.ceil(height / tile) + 1);
+	const grid = new Float64Array(tilesX * tilesY);
+	// Whether a tile contained enough contrast to be split at all. Kept separate
+	// from the threshold grid because it must *not* be interpolated: blending a
+	// real threshold into an empty neighbour drags a usable cut out over blank
+	// background and carves objects out of it.
+	const valid = new Uint8Array(tilesX * tilesY);
+	const counts = new Int32Array(HISTOGRAM_BINS);
+
+	for (let ty = 0; ty < tilesY; ty++) {
+		const centreY = ty * tile;
+		const y0 = Math.max(0, centreY - radius);
+		const y1 = Math.min(height - 1, centreY + radius);
+		for (let tx = 0; tx < tilesX; tx++) {
+			const centreX = tx * tile;
+			const x0 = Math.max(0, centreX - radius);
+			const x1 = Math.min(width - 1, centreX + radius);
+
+			counts.fill(0);
+			let total = 0;
+			let windowMin = Infinity;
+			let windowMax = -Infinity;
+			for (let y = y0; y <= y1; y++) {
+				const row = y * width;
+				for (let x = x0; x <= x1; x++) {
+					const v = plane[row + x];
+					if (!Number.isFinite(v)) { continue; }
+					if (v < windowMin) { windowMin = v; }
+					if (v > windowMax) { windowMax = v; }
+					let bin = Math.floor((v - min) * binScale);
+					if (bin >= HISTOGRAM_BINS) { bin = HISTOGRAM_BINS - 1; }
+					if (bin < 0) { bin = 0; }
+					counts[bin]++;
+					total++;
+				}
+			}
+
+			// A cut above the window's maximum leaves it empty, which is the
+			// correct answer for a window that holds no object.
+			const empty = max + Math.abs(max - min) + 1;
+			let value = empty;
+			let isValid = false;
+			if (total > 0 && (windowMax - windowMin) >= minContrastFraction * (max - min)) {
+				const bin = autoThresholdBin(counts, options.method);
+				if (bin >= 0) {
+					value = min + ((bin + 1) / HISTOGRAM_BINS) * (max - min);
+					isValid = true;
+				}
+			}
+			grid[ty * tilesX + tx] = value;
+			valid[ty * tilesX + tx] = isValid ? 1 : 0;
+		}
+	}
+
+	for (let y = 0; y < height; y++) {
+		const gy = y / tile;
+		const ty0 = Math.min(tilesY - 1, Math.floor(gy));
+		const ty1 = Math.min(tilesY - 1, ty0 + 1);
+		const fy = gy - ty0;
+		const nearestY = Math.min(tilesY - 1, Math.round(gy));
+		for (let x = 0; x < width; x++) {
+			const value = plane[y * width + x];
+			if (!Number.isFinite(value)) { continue; }
+			const gx = x / tile;
+			const nearestX = Math.min(tilesX - 1, Math.round(gx));
+			// Validity is taken from the nearest tile alone, so blank regions stay
+			// blank right up to the tile that actually contains an object.
+			if (!valid[nearestY * tilesX + nearestX]) { continue; }
+
+			const tx0 = Math.min(tilesX - 1, Math.floor(gx));
+			const tx1 = Math.min(tilesX - 1, tx0 + 1);
+			const fx = gx - tx0;
+
+			// Interpolate only over tiles that produced a real threshold; an empty
+			// neighbour would otherwise pull the surface towards its sentinel.
+			let weighted = 0;
+			let weight = 0;
+			const corners: [number, number, number][] = [
+				[ty0, tx0, (1 - fx) * (1 - fy)],
+				[ty0, tx1, fx * (1 - fy)],
+				[ty1, tx0, (1 - fx) * fy],
+				[ty1, tx1, fx * fy],
+			];
+			for (const [cy, cx, w] of corners) {
+				const index = cy * tilesX + cx;
+				if (!valid[index] || w <= 0) { continue; }
+				weighted += grid[index] * w;
+				weight += w;
+			}
+			if (weight <= 0) { continue; }
+			const threshold = weighted / weight;
+
+			if (darkBackground ? value >= threshold : value <= threshold) { out[y * width + x] = 1; }
+		}
+	}
+
+	return out;
+}
+
 /** Binary mask from a global value window. */
 export function globalThresholdMask(
 	plane: Float32Array,

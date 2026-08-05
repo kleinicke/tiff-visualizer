@@ -1183,10 +1183,23 @@ recorded output.
 - **Rotated rectangle/ellipse handles.** The ROI model carries `angle` and the
   rasteriser honours it, but nothing in the overlay sets it yet.
   **Difficulty: 2.**
-- [x] ~~Threshold preview overlay on the image.~~ Implemented: the threshold is
-  painted over the image (red = selected, green = survives the particle
-  filters), hovering a method in the gallery previews its effect immediately,
-  and selecting a results row scrolls its object into view and boxes it.
+### Delivered after the first pass
+
+Kept here so the history of what was added when stays legible:
+
+- [x] Threshold preview overlay on the image (red = selected, green = survives
+      the particle filters), hover previews in the method gallery, and results
+      rows that scroll their object into view.
+- [x] Draggable histogram range, scrubbable stability curve.
+- [x] Split touching objects by intensity maxima with an adjustable prominence
+      — ImageJ's Find Maxima with "Segmented Particles". Replaces the two-image
+      AND workflow the Image Calculator needs there.
+- [x] Any global method applied per window ("Auto Local Threshold"), with a
+      minimum-contrast guard so uniform background is not carved up.
+- [x] Maximum-area filter, and a **Summary** table (n, mean, SD, SEM, min, max
+      per column) — ImageJ's "Summarize".
+- [x] ROIs and calibration persisted in webview state, so a reload does not
+      discard unsaved work.
 
 **Difficulty: 4** overall (delivered as a multi-week epic).
 

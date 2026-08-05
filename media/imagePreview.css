@@ -2411,3 +2411,84 @@ body img {
 	cursor: crosshair;
 	touch-action: none;
 }
+
+/* The Segment tab's call to action. Deliberately heavier than the surrounding
+   controls: it is the step the tab exists for, and it sits after a list of
+   filters that all look alike. */
+.measure-cta {
+	margin: 14px 0 4px;
+	padding: 10px;
+	border: 1px solid var(--vscode-focusBorder, #007fd4);
+	border-radius: 4px;
+	/* A plain translucent wash rather than color-mix(): if the function is
+	   unsupported the declaration is dropped and the block loses its fill
+	   silently, which is exactly the emphasis this element exists for. */
+	background: rgba(14, 99, 156, 0.14);
+}
+
+.measure-cta-button {
+	display: block;
+	width: 100%;
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #ffffff);
+	border: none;
+	border-radius: 3px;
+	padding: 8px 10px;
+	font-family: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.measure-cta-button:hover:not(:disabled) {
+	background: var(--vscode-button-hoverBackground, #1177bb);
+}
+
+.measure-cta-button:disabled {
+	background: var(--vscode-button-secondaryBackground, #3a3d41);
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	cursor: default;
+}
+
+.measure-cta-caption {
+	margin-top: 6px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	font-size: 10.5px;
+	line-height: 1.45;
+}
+
+/* The range handles do nothing while an adaptive method computes its own
+   threshold per pixel; saying so visually beats a control that silently
+   ignores input. */
+.measure-histogram-inactive {
+	opacity: 0.5;
+	cursor: pointer;
+}
+
+/* Legend for the segmentation overlay colours. */
+.measure-legend {
+	margin: 6px 0 2px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.measure-legend-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	font-size: 10.5px;
+	line-height: 1.4;
+}
+
+.measure-legend-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 2px;
+	flex: 0 0 auto;
+	margin-top: 2px;
+	/* The overlay is drawn semi-transparent over the image; a solid swatch would
+	   not match what is on screen. */
+	opacity: 0.75;
+}

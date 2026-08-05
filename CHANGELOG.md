@@ -33,7 +33,8 @@
   count. Hovering a method in the gallery previews its effect immediately, and
   clicking a row in the results table scrolls that object into view and boxes
   it.
-- Thresholding shows all thirteen auto-threshold methods as a live gallery, a
+- Thresholding shows thirteen global and five local auto-threshold methods as a
+  live gallery that previews each on hover, a
   **stability curve** that plots object count against threshold so a plateau —
   a value the answer does not depend on — is visible rather than guessed, and
   local adaptive methods (Sauvola, Niblack, Phansalkar, mean, median) for
@@ -41,7 +42,15 @@
   subtraction can be applied to the segmentation copy without touching the
   displayed image.
 - Particle analysis with connected-component labelling, hole filling, size and
-  shape filters, edge exclusion, and watershed splitting of touching objects.
+  shape filters, edge exclusion, and two ways to separate touching objects:
+  a distance-transform watershed for overlapping round objects, and a split at
+  intensity maxima with an adjustable prominence — the equivalent of ImageJ's
+  Find Maxima with "Segmented Particles", for objects that touch without their
+  outline pinching. In ImageJ that workflow needs two images combined with an
+  AND in the Image Calculator; here the threshold mask is simply the region the
+  maxima are found in.
+- A **Summary** table (n, mean, SD, SEM, min, max per measured column) — ImageJ's
+  "Summarize", which is usually the number that actually gets written down.
 - The magic wand previews its selection on hover and can pick its own tolerance,
   so a click produces the object instead of starting a click-undo-retry loop.
 - ROIs are stored as a readable JSON sidecar next to the image
