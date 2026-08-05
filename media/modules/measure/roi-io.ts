@@ -198,6 +198,16 @@ export interface ExportOptions {
 	derivedColumns?: DerivedColumn[];
 	/** Extra constant columns, e.g. grouping captured from the filename. */
 	extraColumns?: Record<string, string | number>;
+	/**
+	 * Provenance per row rather than one set for the whole table.
+	 *
+	 * Needed when rows from several images are exported together: repeating the
+	 * *current* image's threshold and scale on rows measured from a different
+	 * one would be worse than omitting them, because it looks authoritative.
+	 */
+	provenanceForRow?: (row: MeasurementRow) => MeasurementProvenance | undefined;
+	/** Per-row grouping columns, for the same reason. */
+	extraColumnsForRow?: (row: MeasurementRow) => Record<string, string | number> | undefined;
 }
 
 const PROVENANCE_KEYS: (keyof MeasurementProvenance)[] = [
@@ -247,11 +257,19 @@ export function rowsToDelimitedText(
 		}
 	}).filter((entry): entry is { name: string; evaluate: (scope: ExpressionScope) => number } => !!entry);
 
-	const extraKeys = Object.keys(options.extraColumns || {});
+	// Union of grouping keys across every row, so an image whose filename did
+	// not match the pattern still lines up with the others.
+	const extraKeys = new Set<string>(Object.keys(options.extraColumns || {}));
+	if (options.extraColumnsForRow) {
+		for (const row of rows) {
+			for (const key of Object.keys(options.extraColumnsForRow(row) || {})) { extraKeys.add(key); }
+		}
+	}
+	const extraKeyList = Array.from(extraKeys);
 	const presentKeys = ROW_KEYS.filter(key => rows.some(row => row[key] !== undefined && row[key] !== null));
 
 	const header: string[] = [
-		...extraKeys,
+		...extraKeyList,
 		...presentKeys.map(String),
 		...derived.map(column => column.name),
 		...(includeProvenance ? PROVENANCE_KEYS.filter(key => provenance[key] !== undefined).map(String) : []),
@@ -284,7 +302,10 @@ export function rowsToDelimitedText(
 		}
 
 		const cells: string[] = [];
-		for (const key of extraKeys) { cells.push(quote(formatValue(options.extraColumns![key]))); }
+		const rowExtras = options.extraColumnsForRow
+			? (options.extraColumnsForRow(row) || {})
+			: (options.extraColumns || {});
+		for (const key of extraKeyList) { cells.push(quote(formatValue(rowExtras[key]))); }
 		for (const key of presentKeys) { cells.push(quote(formatValue(row[key]))); }
 		for (const column of derived) {
 			let value: number;
@@ -292,9 +313,12 @@ export function rowsToDelimitedText(
 			cells.push(quote(formatValue(value)));
 		}
 		if (includeProvenance) {
+			const rowProvenance = options.provenanceForRow
+				? (options.provenanceForRow(row) || provenance)
+				: provenance;
 			for (const key of PROVENANCE_KEYS) {
 				if (provenance[key] === undefined) { continue; }
-				cells.push(quote(formatValue(provenance[key])));
+				cells.push(quote(formatValue(rowProvenance[key])));
 			}
 		}
 		lines.push(cells.join(delimiter));

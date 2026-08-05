@@ -47,7 +47,7 @@ without the clutter.
 
 | Tool | Key | Notes |
 | --- | :---: | --- |
-| Select | `V` | Move and reshape existing ROIs |
+| Select | `V` | Move and reshape existing ROIs. Rectangles and ellipses get a round grip above them to rotate; corners resize in the rotated frame |
 | Rect | `R` | |
 | Ellipse | `E` | |
 | Polygon | `P` | Click vertices; double-click or `Enter` closes, `Esc` cancels |
@@ -123,8 +123,13 @@ CSV/xlsx:
 | Quality | Count of non-finite samples excluded |
 
 Geometry is calibrated; intensities are not, because a pixel value in µm-space
-is still a pixel value. There is no column chooser yet — the visible set is
-fixed and exports include everything present.
+is still a pixel value.
+
+**Columns** in the Results tab chooses what the table shows, grouped the way
+ImageJ's "Set Measurements" is — "Area" and "Mean and StdDev" are one decision
+each, not five. It governs the table only: exports always contain every measured
+column, because a results file that quietly omits a number because of a display
+setting is a trap.
 
 Multi-channel images produce one row per channel per ROI, marked in the **Ch**
 column, once **Measure every channel** is switched on.
@@ -154,6 +159,17 @@ mean, SD, SEM, min and max for every measured column. This is ImageJ's
 "Summarize", and usually it is the actual deliverable — the per-object table is
 the evidence, but the sentence that ends up in a methods section is "465 cells,
 mean area 212 µm² ± 8".
+
+### Measuring a whole folder
+
+**Collect results from every image I measure** keeps each image's rows as you
+step through a collection, so one export covers the folder. Each row keeps the
+scale, threshold and grouping columns it was measured with — repeating the
+currently open image's provenance across rows from other images would look
+authoritative and be wrong.
+
+The table itself keeps showing the current image, so clicking a row still finds
+its object. The Summary and the exports cover everything collected.
 
 ### Grouping
 
@@ -365,7 +381,9 @@ zero the button says so and points at whichever filter removed everything.
 ## Saving and sharing ROIs
 
 ROIs are stored in a readable JSON sidecar next to the image
-(`image.tif.rois.json`), not in an opaque binary. Consequences:
+(`image.tif.rois.json`), not in an opaque binary. Opening an image that has one
+loads it automatically — unless ROIs are already on screen, in which case the
+panel says so and leaves your work alone. Consequences of the format:
 
 - ROI changes **diff in code review** like any other file
 - You can edit or generate them from a script
@@ -408,11 +426,9 @@ starting point that already matches your data, rather than a generic template.
 
 Worth knowing before you plan a workflow around this:
 
-- No column chooser — the visible table is a fixed set, exports include all
-  populated columns. ImageJ's "Set Measurements" has no equivalent; everything
-  is always measured
-- One image per export; there is no folder-wide results table yet
-- The ROI sidecar is written and read on request, not loaded automatically when
-  an image opens
-- No rotated rectangle/ellipse handles
-- No machine-learning segmentation — that is deliberately out of scope
+- No machine-learning segmentation (Cellpose, StarDist, ilastik) — deliberately
+  out of scope: it needs model weights and a GPU backend
+- No 3D or volume measurement; no deconvolution, stitching or registration
+- No ImageJ macro language, and no plugin API
+- Measuring the same ROI across a time series in one pass — planned alongside
+  playback

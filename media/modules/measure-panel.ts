@@ -36,9 +36,14 @@ import {
 } from './measure/threshold.js';
 import { buildXlsx } from './measure/xlsx-writer.js';
 import {
+	COLUMN_GROUPS,
+	COLUMN_LABELS,
+	DEFAULT_COLUMNS,
 	isLineKind,
+	LENGTH_COLUMNS,
 	type Calibration,
 	type LineRoi,
+	type MeasurementColumn,
 	type MeasurementProvenance,
 	type MeasurementRow,
 	type MeasurementSource,
@@ -160,6 +165,20 @@ export class MeasurePanel {
 
 	private rows: MeasurementRow[] = [];
 	private derivedColumns: DerivedColumn[] = [];
+	private visibleColumns: MeasurementColumn[] = [...DEFAULT_COLUMNS];
+	/**
+	 * Measure a whole folder into one table.
+	 *
+	 * Each image's rows are snapshotted together with the provenance that
+	 * produced them, so an export spanning several images reports each row's own
+	 * scale and threshold rather than whichever image happens to be open.
+	 */
+	private collecting = false;
+	private collected = new Map<string, {
+		rows: MeasurementRow[];
+		provenance: MeasurementProvenance;
+		extraColumns: Record<string, string>;
+	}>();
 	private groupPattern = '';
 	private channelMode: 'first' | 'all' = 'first';
 	private threshold: ThresholdState = { ...DEFAULT_THRESHOLD };
@@ -347,6 +366,27 @@ export class MeasurePanel {
 			? Array.from({ length: source.channels || 1 }, (_, i) => i)
 			: [0];
 		this.rows = measureAll(this.host.manager.list(), source, this.host.getCalibration(), channels);
+
+		if (this.collecting && source.fileName && this.rows.length > 0) {
+			this.collected.set(source.fileName, {
+				rows: this.rows.map(row => ({ ...row })),
+				provenance: this.provenance(),
+				extraColumns: this.extraColumns(),
+			});
+		}
+	}
+
+	/** Rows an export should cover: the collected set, or just this image. */
+	private exportRows(): MeasurementRow[] {
+		if (!this.collecting) { return this.rows; }
+		const all: MeasurementRow[] = [];
+		for (const snapshot of this.collected.values()) { all.push(...snapshot.rows); }
+		return all;
+	}
+
+	/** Look up the snapshot a row came from, for its own provenance. */
+	private snapshotFor(row: MeasurementRow) {
+		return row.fileName ? this.collected.get(row.fileName) : undefined;
 	}
 
 	getRows(): MeasurementRow[] { return this.rows; }
@@ -752,6 +792,26 @@ export class MeasurePanel {
 		}
 		options.appendChild(this.note(describeCalibration(calibration)));
 
+		const chooser = this.section('Columns');
+		chooser.appendChild(this.note(
+			'What the table shows. Exports always contain every measured column — a results file that quietly omits a number because of a display setting is a trap.',
+		));
+		const grid = document.createElement('div');
+		grid.className = 'measure-column-grid';
+		for (const group of COLUMN_GROUPS) {
+			grid.appendChild(this.checkbox(
+				group.label,
+				this.visibleColumns.indexOf(group.id) >= 0,
+				checked => {
+					const index = this.visibleColumns.indexOf(group.id);
+					if (checked && index < 0) { this.visibleColumns.push(group.id); }
+					if (!checked && index >= 0) { this.visibleColumns.splice(index, 1); }
+					this.render();
+				},
+			));
+		}
+		chooser.appendChild(grid);
+
 		const tableSection = this.section(`Measurements (${this.rows.length} rows)`);
 		if (this.rows.length === 0) {
 			tableSection.appendChild(this.note('Draw or import an ROI to populate the table.'));
@@ -794,22 +854,49 @@ export class MeasurePanel {
 			}
 		}
 
-		if (this.rows.length > 1) {
+		const across = this.section('Across images');
+		across.appendChild(this.checkbox(
+			'Collect results from every image I measure', this.collecting,
+			checked => {
+				this.collecting = checked;
+				if (!checked) { this.collected.clear(); }
+				this.refresh();
+			},
+			'Keeps each image\'s rows as you step through a collection, so one export covers the whole folder. Each row keeps the scale and threshold it was measured with.',
+		));
+		if (this.collecting) {
+			const images = this.collected.size;
+			const total = this.exportRows().length;
+			across.appendChild(this.note(images === 0
+				? 'Nothing collected yet. Step to the next image and its rows are added.'
+				: `${total} row(s) from ${images} image(s). The table below still shows this image, so clicking a row still finds its object.`));
+			if (images > 0) {
+				across.appendChild(this.button('Forget collected rows', () => {
+					this.collected.clear();
+					this.refresh();
+				}));
+			}
+		}
+
+		const summaryRows = this.exportRows();
+		if (summaryRows.length > 1) {
 			const summary = this.section('Summary');
 			summary.appendChild(this.note(
-				`${this.rows.length} measured row(s). This is the line you actually write down.`,
+				this.collecting && this.collected.size > 1
+					? `${summaryRows.length} row(s) across ${this.collected.size} images. This is the line you actually write down.`
+					: `${summaryRows.length} measured row(s). This is the line you actually write down.`,
 			));
-			summary.appendChild(this.buildSummaryTable());
+			summary.appendChild(this.buildSummaryTable(summaryRows));
 		}
 
 		const exportSection = this.section('Export');
 		const exportButtons = document.createElement('div');
 		exportButtons.className = 'measure-button-row';
 		exportButtons.append(
-			this.button('CSV', () => this.exportTable('csv'), this.rows.length === 0),
-			this.button('CSV (de)', () => this.exportTable('csv-de'), this.rows.length === 0),
-			this.button('Excel .xlsx', () => this.exportTable('xlsx'), this.rows.length === 0),
-			this.button('pandas script', () => this.exportPandasScript(), this.rows.length === 0),
+			this.button('CSV', () => this.exportTable('csv'), summaryRows.length === 0),
+			this.button('CSV (de)', () => this.exportTable('csv-de'), summaryRows.length === 0),
+			this.button('Excel .xlsx', () => this.exportTable('xlsx'), summaryRows.length === 0),
+			this.button('pandas script', () => this.exportPandasScript(), summaryRows.length === 0),
 		);
 		exportSection.appendChild(exportButtons);
 		exportSection.appendChild(this.note(
@@ -837,16 +924,23 @@ export class MeasurePanel {
 		const columns: { key: keyof MeasurementRow; label: string; digits?: number }[] = [
 			{ key: 'roiName', label: 'ROI' },
 			{ key: 'channel', label: 'Ch' },
-			{ key: 'area', label: `Area (${areaUnit(calibration)})` },
-			{ key: 'perimeter', label: `Perim. (${calibration.unit})` },
-			{ key: 'length', label: `Length (${calibration.unit})` },
-			{ key: 'mean', label: 'Mean', digits: 6 },
-			{ key: 'stdDev', label: 'StdDev', digits: 6 },
-			{ key: 'min', label: 'Min', digits: 6 },
-			{ key: 'max', label: 'Max', digits: 6 },
-			{ key: 'circularity', label: 'Circ.', digits: 3 },
-			{ key: 'feret', label: 'Feret' },
 		];
+		// Column order follows the group list, not the user's clicking order, so
+		// the table looks the same whichever way a set was assembled.
+		for (const group of COLUMN_GROUPS) {
+			if (this.visibleColumns.indexOf(group.id) < 0) { continue; }
+			for (const key of group.keys) {
+				const label = COLUMN_LABELS[key] || String(key);
+				const unit = key === 'area'
+					? ` (${areaUnit(calibration)})`
+					: (LENGTH_COLUMNS.indexOf(key) >= 0 ? ` (${calibration.unit})` : '');
+				const digits = ['mean', 'stdDev', 'min', 'max', 'median', 'mode'].indexOf(String(key)) >= 0
+					? 6
+					: (['circularity', 'aspectRatio', 'roundness', 'solidity'].indexOf(String(key)) >= 0 ? 3 : undefined);
+				columns.push({ key, label: label + unit, digits });
+			}
+		}
+
 		const present = columns.filter(column =>
 			column.key === 'roiName' || column.key === 'channel'
 			|| this.rows.some(row => row[column.key] !== undefined && row[column.key] !== null));
@@ -926,7 +1020,7 @@ export class MeasurePanel {
 	 * rather than leaving it to a spreadsheet is the difference between the tool
 	 * answering the question and merely supplying the raw material.
 	 */
-	private buildSummaryTable(): HTMLElement {
+	private buildSummaryTable(rows: MeasurementRow[]): HTMLElement {
 		const calibration = this.host.getCalibration();
 		const wrapper = document.createElement('div');
 		wrapper.className = 'measure-table-wrapper';
@@ -952,7 +1046,7 @@ export class MeasurePanel {
 			return '';
 		};
 
-		for (const entry of summarizeRows(this.rows)) {
+		for (const entry of summarizeRows(rows)) {
 			const tr = document.createElement('tr');
 			const unit = unitFor(entry.column);
 			const cells = [
@@ -2055,30 +2149,43 @@ export class MeasurePanel {
 	private exportTable(format: 'csv' | 'csv-de' | 'xlsx'): void {
 		const provenance = this.provenance();
 		const extraColumns = this.extraColumns();
+		const rows = this.exportRows();
+		// Per-row lookups only when collecting; a single-image export has one
+		// provenance and does not need the indirection.
+		const provenanceForRow = this.collecting
+			? (row: MeasurementRow) => this.snapshotFor(row)?.provenance
+			: undefined;
+		const extraColumnsForRow = this.collecting
+			? (row: MeasurementRow) => this.snapshotFor(row)?.extraColumns
+			: undefined;
 
 		if (format === 'xlsx') {
-			const text = rowsToDelimitedText(this.rows, provenance, {
+			const text = rowsToDelimitedText(rows, provenance, {
 				delimiter: '\t',
 				derivedColumns: this.derivedColumns,
 				extraColumns,
+				provenanceForRow,
+				extraColumnsForRow,
 			});
 			const lines = text.trimEnd().split('\n');
-			const rows = lines.map(line => line.split('\t').map(cell => {
+			const sheetRows = lines.map(line => line.split('\t').map(cell => {
 				const unquoted = cell.replace(/^"|"$/g, '').replace(/""/g, '"');
 				const asNumber = Number(unquoted);
 				return unquoted !== '' && Number.isFinite(asNumber) ? asNumber : unquoted;
 			}));
-			this.host.saveBinaryFile(`${this.baseName()}-results.xlsx`, buildXlsx({ name: 'Results', rows }));
+			this.host.saveBinaryFile(`${this.baseName()}-results.xlsx`, buildXlsx({ name: 'Results', rows: sheetRows }));
 			return;
 		}
 
 		const german = format === 'csv-de';
-		const text = rowsToDelimitedText(this.rows, provenance, {
+		const text = rowsToDelimitedText(rows, provenance, {
 			delimiter: german ? ';' : ',',
 			decimal: german ? ',' : '.',
 			bom: true,
 			derivedColumns: this.derivedColumns,
 			extraColumns,
+			provenanceForRow,
+			extraColumnsForRow,
 		});
 		this.host.saveTextFile(`${this.baseName()}-results.csv`, text, { open: true });
 	}
@@ -2089,7 +2196,7 @@ export class MeasurePanel {
 		// Only columns the rows actually populate, so the script never refers to
 		// a column that is not in the CSV next to it.
 		const columns = new Set<string>();
-		for (const row of this.rows) {
+		for (const row of this.exportRows()) {
 			for (const key of Object.keys(row)) {
 				const value = row[key as keyof MeasurementRow];
 				if (value !== undefined && value !== null) { columns.add(key); }
@@ -2107,7 +2214,7 @@ export class MeasurePanel {
 			groupColumns: Object.keys(this.extraColumns()),
 			derivedColumns: this.derivedColumns,
 			thresholdMethod: provenance.thresholdMethod,
-			roiCount: this.host.manager.count(),
+			roiCount: this.collecting ? this.exportRows().length : this.host.manager.count(),
 			channelCount: this.channelMode === 'all' ? (source?.channels || 1) : 1,
 		});
 		this.host.saveTextFile(`${this.baseName()}-analysis.py`, script, { open: true });
@@ -2141,6 +2248,7 @@ export class MeasurePanel {
 			image: source?.fileName,
 			imageWidth: source?.width,
 			imageHeight: source?.height,
+			columns: this.visibleColumns,
 			derivedColumns: this.derivedColumns,
 			version: this.host.extensionVersion,
 		});
@@ -2157,8 +2265,9 @@ export class MeasurePanel {
 	}
 
 	/** Adopt a loaded sidecar's derived columns; ROIs are applied by the caller. */
-	applyLoadedDerivedColumns(columns: DerivedColumn[] | undefined): void {
+	applyLoadedDerivedColumns(columns: DerivedColumn[] | undefined, visible?: MeasurementColumn[]): void {
 		if (columns && columns.length > 0) { this.derivedColumns = columns.slice(); }
+		if (visible && visible.length > 0) { this.visibleColumns = visible.slice(); }
 		this.refresh();
 	}
 

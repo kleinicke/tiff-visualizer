@@ -311,9 +311,62 @@ export type MeasurementColumn =
 export const DEFAULT_COLUMNS: MeasurementColumn[] = [
 	'area',
 	'perimeter',
+	'length',
 	'intensity',
 	'minMax',
-	'centroid',
+	'shape',
+	'feret',
+];
+
+/**
+ * What each selectable group puts in the table.
+ *
+ * The grouping mirrors ImageJ's "Set Measurements" because that is the mental
+ * model people arrive with — "area and mean gray value" is one decision there,
+ * not five. Exports are unaffected and always contain every populated column:
+ * a results file that silently omits a measurement because of a display setting
+ * is a trap, and disk is cheap.
+ */
+export const COLUMN_GROUPS: {
+	id: MeasurementColumn;
+	label: string;
+	keys: (keyof MeasurementRow)[];
+}[] = [
+	{ id: 'area', label: 'Area', keys: ['area'] },
+	{ id: 'perimeter', label: 'Perimeter', keys: ['perimeter'] },
+	{ id: 'length', label: 'Length (lines)', keys: ['length'] },
+	{ id: 'intensity', label: 'Mean and StdDev', keys: ['mean', 'stdDev'] },
+	{ id: 'minMax', label: 'Min and max', keys: ['min', 'max'] },
+	{ id: 'median', label: 'Median', keys: ['median'] },
+	{ id: 'mode', label: 'Mode', keys: ['mode'] },
+	{ id: 'moments', label: 'Skewness and kurtosis', keys: ['skewness', 'kurtosis'] },
+	{ id: 'integratedDensity', label: 'Integrated density', keys: ['integratedDensity', 'rawIntegratedDensity'] },
+	{ id: 'centroid', label: 'Centroid', keys: ['centroidX', 'centroidY'] },
+	{ id: 'centerOfMass', label: 'Centre of mass', keys: ['centerOfMassX', 'centerOfMassY'] },
+	{ id: 'bounds', label: 'Bounding box', keys: ['bx', 'by', 'width', 'height'] },
+	{ id: 'fitEllipse', label: 'Fitted ellipse', keys: ['major', 'minor', 'angle'] },
+	{ id: 'feret', label: 'Feret diameter', keys: ['feret', 'minFeret', 'feretAngle'] },
+	{ id: 'shape', label: 'Shape descriptors', keys: ['circularity', 'aspectRatio', 'roundness', 'solidity'] },
+];
+
+/** Short header labels, so the table stays narrow. */
+export const COLUMN_LABELS: Partial<Record<keyof MeasurementRow, string>> = {
+	area: 'Area', perimeter: 'Perim.', length: 'Length',
+	mean: 'Mean', stdDev: 'StdDev', min: 'Min', max: 'Max',
+	median: 'Median', mode: 'Mode', skewness: 'Skew', kurtosis: 'Kurt',
+	integratedDensity: 'IntDen', rawIntegratedDensity: 'RawIntDen',
+	centroidX: 'X', centroidY: 'Y', centerOfMassX: 'XM', centerOfMassY: 'YM',
+	bx: 'BX', by: 'BY', width: 'W', height: 'H',
+	major: 'Major', minor: 'Minor', angle: 'Angle',
+	feret: 'Feret', minFeret: 'MinFeret', feretAngle: 'FeretAng',
+	circularity: 'Circ.', aspectRatio: 'AR', roundness: 'Round', solidity: 'Solidity',
+};
+
+/** Columns carrying a calibrated length, for unit-suffixed headers. */
+export const LENGTH_COLUMNS: (keyof MeasurementRow)[] = [
+	'perimeter', 'length', 'major', 'minor', 'feret', 'minFeret',
+	'centroidX', 'centroidY', 'centerOfMassX', 'centerOfMassY',
+	'bx', 'by', 'width', 'height',
 ];
 
 /** Provenance recorded alongside every export, so a row is self-explanatory. */

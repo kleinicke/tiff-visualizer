@@ -1168,21 +1168,6 @@ writing, expression columns, and filename-pattern grouping.
 against analytic answers and synthetic images with planted objects, not against
 recorded output.
 
-### Remaining follow-ups
-
-- **Collection-wide appending results table.** Grouping columns and per-group
-  summaries exist, but each export still covers one image. The "measure a whole
-  folder into one table" workflow needs the results model to accumulate across
-  collection entries. **Difficulty: 2.**
-- **Automatic sidecar loading.** `image.tif.rois.json` is written and read, but
-  reading is still an explicit action; opening an image that has a sidecar
-  should offer (or perform) the load. **Difficulty: 1.**
-- **Per-column visibility UI.** `MeasurementColumn` and a default set exist in
-  the model; the table currently shows a fixed useful subset and exports every
-  populated column. Wiring a chooser is presentation work only. **Difficulty: 1.**
-- **Rotated rectangle/ellipse handles.** The ROI model carries `angle` and the
-  rasteriser honours it, but nothing in the overlay sets it yet.
-  **Difficulty: 2.**
 ### Delivered after the first pass
 
 Kept here so the history of what was added when stays legible:
@@ -1200,6 +1185,20 @@ Kept here so the history of what was added when stays legible:
       per column) — ImageJ's "Summarize".
 - [x] ROIs and calibration persisted in webview state, so a reload does not
       discard unsaved work.
+- [x] Collection-wide results: rows accumulate across images, each keeping the
+      scale, threshold and grouping it was measured with, so one export covers a
+      whole folder without a per-image column lying about the others.
+- [x] Automatic sidecar loading. Opening an image with `*.rois.json` beside it
+      loads it, unless ROIs are already on screen — an automatic action must
+      never discard work.
+- [x] Column chooser, grouped the way ImageJ's "Set Measurements" is. It governs
+      the table only; exports always carry every measured column.
+- [x] Rotated rectangle and ellipse handles, with resizing done in the shape's
+      own frame so a rotated box resizes rather than shears.
+
+**Nothing from item 7 is outstanding.** What remains excluded is what its scope
+excluded from the start (ML segmentation, 3D, a plugin API, the macro
+language), plus one cross-item follow-up recorded under item 9.
 
 **Difficulty: 4** overall (delivered as a multi-week epic).
 
@@ -1269,6 +1268,13 @@ existing page-change path plus the already-planned neighbor prefetch.
   sequence is what people feed into ffmpeg anyway.
 - Keyframe/camera animation as Imaris offers it is deliberately excluded — it
   only becomes meaningful with a 3D camera, and therefore belongs with item 10.
+- **Measure an ROI across the axis** (item 7 × item 9). Once frames can be
+  stepped automatically, the natural extension is measuring the same ROI on
+  every T (or Z) and emitting one row per frame — a kinetic curve instead of a
+  single value. The measurement side needs nothing new beyond driving the page
+  change and tagging each row with its frame index; the ROI model already
+  carries `page`. This is the cheapest way to turn playback from a viewing
+  convenience into an analysis feature. **Difficulty: 1** on top of playback.
 
 **Difficulty: 2** (playback), **+1** for frame-sequence export.
 
@@ -1497,7 +1503,10 @@ attempted before them.
    appropriate level for whole-slide and very large OME-TIFF data.
 7. **Lens undistortion.** Independent and ready to schedule when calibrated
    camera workflows become a priority.
-8. **Measurement follow-ups (item 7).** The subsystem is implemented; what
-   remains is the collection-wide results table, automatic sidecar loading, a
-   column chooser, rotated ROI handles, and painting the threshold mask over
-   the image while tuning it.
+8. **Multi-channel compositing (item 8).** The strongest next step now that
+   item 7 is complete, and the two compound: measuring per-channel intensities
+   in the same ROIs is the standard microscopy workflow ("count DAPI nuclei,
+   read GFP intensity in each"), and the measurement side already emits one row
+   per ROI per channel. Item 8 makes visible a capability that already exists.
+9. **Playback (item 9).** After item 8, and after the page cache/prefetch
+   follow-up from item 1 — stuttering playback is worse than none.

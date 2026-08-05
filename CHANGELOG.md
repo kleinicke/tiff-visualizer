@@ -63,6 +63,17 @@
   focus, so the image preview stays visible and the measurement session is
   untouched.
 - **Measure** is available from the command palette.
+- A column chooser for the results table, grouped the way ImageJ's "Set
+  Measurements" is. Exports are unaffected and always carry every measured
+  column.
+- Opening an image that has `*.rois.json` beside it loads those ROIs
+  automatically — unless ROIs are already on screen, in which case nothing is
+  discarded and the panel says the file is there.
+- **Collect results from every image I measure** accumulates rows across a
+  collection into one export, with each row keeping the scale, threshold and
+  grouping columns it was actually measured with.
+- Rectangles and ellipses can be rotated by a grip above the shape; corner
+  handles then resize in the shape's own frame instead of shearing it.
 - The Segment tab leads with a draggable histogram: drag either edge of the
   shaded band to set the threshold range and watch the mask on the image follow.
 - Global and local threshold methods are one list, so the hover preview always

@@ -401,6 +401,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		scalarPlaneCache = null;
 		refreshMeasureCalibration();
 		measurePanel.onImageChanged();
+		// Ask whether this image has ROIs saved beside it. Cheap, silent when
+		// there are none, and it is what makes the sidecar feel like part of the
+		// image rather than a file you have to remember to open.
+		vscode.postMessage({ type: 'measureCheckSidecar' });
 	}
 
 	const colormapConverter = new ColormapConverter();
@@ -3437,6 +3441,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 							: `Imported ${imported.length} ROIs from ImageJ.`);
 					}
 				} else {
+					// An automatic load must never discard work. If anything is
+					// already drawn, the sidecar is ignored and only mentioned —
+					// the user can still load it deliberately from the ROIs tab.
+					if (message.automatic && roiManager.count() > 0) {
+						measurePanel.setHint('This image has a saved ROI file. Load it from the ROIs tab to replace what is on screen.');
+						break;
+					}
 					const parsed = parseSidecar(new TextDecoder().decode(bytes));
 					if (parsed.rois.length > 0) { roiManager.replaceAll(parsed.rois); }
 					// A stored calibration is authoritative for those ROIs; adopting
@@ -3444,10 +3455,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					if (parsed.calibration) {
 						measureCalibration = { ...parsed.calibration, origin: 'imported' };
 					}
-					measurePanel.applyLoadedDerivedColumns(parsed.derivedColumns);
+					measurePanel.applyLoadedDerivedColumns(parsed.derivedColumns, parsed.columns);
 					measurePanel.setHint(parsed.warnings.length > 0
 						? parsed.warnings[0]
-						: `Loaded ${parsed.rois.length} ROIs.`);
+						: `Loaded ${parsed.rois.length} ROIs${message.automatic ? ' saved next to this image' : ''}.`);
 				}
 				measurePanel.refresh();
 				break;

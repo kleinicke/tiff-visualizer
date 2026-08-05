@@ -52,6 +52,7 @@ export class MessageRouter {
 		this.handlers.set('measureSaveBinary', new MeasureSaveBinaryMessageHandler());
 		this.handlers.set('measureSaveSidecar', new MeasureSaveSidecarMessageHandler());
 		this.handlers.set('measureRequestImport', new MeasureRequestImportMessageHandler());
+		this.handlers.set('measureCheckSidecar', new MeasureCheckSidecarMessageHandler());
 	}
 
 	public handle(message: any): void {
@@ -477,6 +478,36 @@ class MeasureRequestImportMessageHandler implements MessageHandler {
 			} catch (error) {
 				vscode.window.showErrorMessage(`Could not read the ROI file: ${error}`);
 			}
+		})();
+	}
+}
+
+/**
+ * Look for `image.tif.rois.json` beside the image and offer it to the webview.
+ *
+ * Silence when there is nothing to load: an image without a sidecar must not
+ * produce a message, an error, or a prompt. The webview decides whether to apply
+ * what comes back — it will not overwrite ROIs the user is working on.
+ */
+class MeasureCheckSidecarMessageHandler implements MessageHandler {
+	handle(_message: any, preview: ImagePreview): void {
+		void (async () => {
+			const image = preview.getCurrentImage();
+			const sidecar = image.with({ path: `${image.path}.rois.json` });
+			let bytes: Uint8Array;
+			try {
+				bytes = await vscode.workspace.fs.readFile(sidecar);
+			} catch {
+				// No sidecar. This is the common case and is not a problem.
+				return;
+			}
+			preview.getWebview().postMessage({
+				type: 'measureImportResult',
+				kind: 'sidecar',
+				automatic: true,
+				fileName: sidecar.path.split('/').pop() || '',
+				bytes: Array.from(bytes),
+			});
 		})();
 	}
 }

@@ -619,17 +619,25 @@ export class RoiOverlay {
 
 	private drawHandles(ctx: CanvasRenderingContext2D, roi: Roi): void {
 		const handles = this.handlePositions(roi);
+		const rotatable = roi.kind === 'rect' || roi.kind === 'ellipse';
 		ctx.fillStyle = '#ffffff';
 		ctx.strokeStyle = roi.color || '#ffd400';
 		ctx.lineWidth = 1.5;
-		for (const handle of handles) {
-			const client = this.toClient(handle.x + 0.5, handle.y + 0.5);
+		for (let i = 0; i < handles.length; i++) {
+			const client = this.toClient(handles[i].x + 0.5, handles[i].y + 0.5);
 			if (!client) { continue; }
+			const isRotationGrip = rotatable && i === 4;
 			ctx.beginPath();
-			ctx.rect(
-				client.x - HANDLE_RADIUS_SCREEN, client.y - HANDLE_RADIUS_SCREEN,
-				HANDLE_RADIUS_SCREEN * 2, HANDLE_RADIUS_SCREEN * 2,
-			);
+			if (isRotationGrip) {
+				// Round, and tethered to the shape, so it reads as "turn me"
+				// rather than as a fifth corner.
+				ctx.arc(client.x, client.y, HANDLE_RADIUS_SCREEN, 0, Math.PI * 2);
+			} else {
+				ctx.rect(
+					client.x - HANDLE_RADIUS_SCREEN, client.y - HANDLE_RADIUS_SCREEN,
+					HANDLE_RADIUS_SCREEN * 2, HANDLE_RADIUS_SCREEN * 2,
+				);
+			}
 			ctx.fill();
 			ctx.stroke();
 		}
@@ -648,11 +656,28 @@ export class RoiOverlay {
 			case 'rect':
 			case 'ellipse': {
 				const r = roi as RectRoi;
+				const angle = r.angle || 0;
+				const cx = r.x + r.width / 2;
+				const cy = r.y + r.height / 2;
+				const spin = (px: number, py: number) => {
+					if (!angle) { return { x: px, y: py }; }
+					const cos = Math.cos(angle);
+					const sin = Math.sin(angle);
+					const dx = px - cx;
+					const dy = py - cy;
+					return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+				};
+				// Four corners, then a rotation grip standing off the top edge.
+				// Corners follow the rotation so they stay on the shape, and the
+				// grip is offset in the rotated frame so it always leads the
+				// shape rather than drifting across it.
+				const standoff = Math.max(12, r.height * 0.25);
 				return [
-					{ x: r.x, y: r.y },
-					{ x: r.x + r.width, y: r.y },
-					{ x: r.x + r.width, y: r.y + r.height },
-					{ x: r.x, y: r.y + r.height },
+					spin(r.x, r.y),
+					spin(r.x + r.width, r.y),
+					spin(r.x + r.width, r.y + r.height),
+					spin(r.x, r.y + r.height),
+					spin(cx, r.y - standoff),
 				];
 			}
 			case 'polygon':
@@ -1184,14 +1209,39 @@ export class RoiOverlay {
 
 		if (original.kind === 'rect' || original.kind === 'ellipse') {
 			const r = original as RectRoi;
+			const cx = r.x + r.width / 2;
+			const cy = r.y + r.height / 2;
+
+			if (index === 4) {
+				// Rotation. The grip starts above the centre, so the angle is the
+				// bearing to the pointer measured from straight up.
+				const angle = Math.atan2(point.y - cy, point.x - cx) + Math.PI / 2;
+				this.manager.update(drag.roiId, () => ({ ...r, angle } as Roi), { interactive: true });
+				return;
+			}
+
+			// Resizing happens in the shape's own frame: with a rotated ROI the
+			// pointer has to be un-rotated first, or dragging a corner shears the
+			// box instead of resizing it.
+			const angle = r.angle || 0;
+			const unspin = (px: number, py: number) => {
+				if (!angle) { return { x: px, y: py }; }
+				const cos = Math.cos(-angle);
+				const sin = Math.sin(-angle);
+				const dx = px - cx;
+				const dy = py - cy;
+				return { x: cx + dx * cos - dy * sin, y: cy + dx * sin + dy * cos };
+			};
+			const local = unspin(point.x, point.y);
+
 			let left = r.x;
 			let top = r.y;
 			let right = r.x + r.width;
 			let bottom = r.y + r.height;
-			if (index === 0) { left = point.x; top = point.y; }
-			else if (index === 1) { right = point.x; top = point.y; }
-			else if (index === 2) { right = point.x; bottom = point.y; }
-			else { left = point.x; bottom = point.y; }
+			if (index === 0) { left = local.x; top = local.y; }
+			else if (index === 1) { right = local.x; top = local.y; }
+			else if (index === 2) { right = local.x; bottom = local.y; }
+			else { left = local.x; bottom = local.y; }
 			const updated = {
 				...r,
 				x: Math.min(left, right),

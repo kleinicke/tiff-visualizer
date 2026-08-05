@@ -2492,3 +2492,9 @@ body img {
 	   not match what is on screen. */
 	opacity: 0.75;
 }
+
+.measure-column-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 0 10px;
+}

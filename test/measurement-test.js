@@ -764,6 +764,65 @@ async function main() {
 		assert.ok(text.includes('Inf'), 'Infinity was not preserved');
 	});
 
+	test('a multi-image export carries each row\'s own provenance', () => {
+		// The trap this guards against: repeating the currently open image's
+		// scale and threshold on rows measured from a different one looks
+		// authoritative and is wrong.
+		const rows = [
+			{ roiId: '1', roiName: 'A', roiKind: 'mask', channel: 0, area: 10, fileName: 'a.tif' },
+			{ roiId: '2', roiName: 'B', roiKind: 'mask', channel: 0, area: 20, fileName: 'b.tif' },
+		];
+		const perImage = {
+			'a.tif': {
+				provenance: {
+					fileName: 'a.tif', unit: 'µm', pixelWidth: 0.5, pixelHeight: 0.5,
+					calibrationOrigin: 'ome', thresholdMethod: 'otsu',
+				},
+				extras: { condition: 'control' },
+			},
+			'b.tif': {
+				provenance: {
+					fileName: 'b.tif', unit: 'µm', pixelWidth: 0.25, pixelHeight: 0.25,
+					calibrationOrigin: 'ome', thresholdMethod: 'li',
+				},
+				extras: { condition: 'treated' },
+			},
+		};
+
+		const text = roiIo.rowsToDelimitedText(rows, perImage['a.tif'].provenance, {
+			provenanceForRow: row => perImage[row.fileName].provenance,
+			extraColumnsForRow: row => perImage[row.fileName].extras,
+		});
+		const lines = text.trim().split('\n');
+		assert.strictEqual(lines.length, 3);
+		assert.ok(lines[1].includes('otsu') && lines[1].includes('control'), `row 1 lost its own provenance: ${lines[1]}`);
+		assert.ok(lines[2].includes('li') && lines[2].includes('treated'), `row 2 got the wrong provenance: ${lines[2]}`);
+		assert.ok(!lines[2].includes('otsu'), 'row 2 inherited the other image\'s threshold');
+		// Each image's own pixel size has to travel too, or areas are not
+		// comparable across the table.
+		assert.ok(lines[1].includes('0.5') && lines[2].includes('0.25'), 'per-image calibration was lost');
+	});
+
+	test('grouping columns are unioned across images', () => {
+		// One filename matches the pattern, one does not; the columns must still
+		// line up so the two exports concatenate.
+		const rows = [
+			{ roiId: '1', roiName: 'A', roiKind: 'mask', channel: 0, area: 10, fileName: 'a.tif' },
+			{ roiId: '2', roiName: 'B', roiKind: 'mask', channel: 0, area: 20, fileName: 'b.tif' },
+		];
+		const text = roiIo.rowsToDelimitedText(rows, {
+			unit: 'px', pixelWidth: 1, pixelHeight: 1, calibrationOrigin: 'none',
+		}, {
+			extraColumnsForRow: row => (row.fileName === 'a.tif' ? { condition: 'control' } : {}),
+		});
+		const lines = text.trim().split('\n');
+		const columnCount = lines[0].split(',').length;
+		for (const line of lines) {
+			assert.strictEqual(line.split(',').length, columnCount, `ragged row: ${line}`);
+		}
+		assert.ok(lines[0].startsWith('condition'), 'the grouping column is missing from the header');
+	});
+
 	test('filename patterns become grouping columns', () => {
 		const matched = roiIo.matchFilenamePattern('control_rep2_005.tif', '{condition}_{replicate}_{index}.tif');
 		assert.deepStrictEqual(matched, { condition: 'control', replicate: 'rep2', index: '005' });
