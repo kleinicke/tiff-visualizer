@@ -57,7 +57,7 @@ import type { LayerInput } from './modules/layer-manager.js';
 import type { Layer } from './modules/layer-compositor.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
-import { installRangeDoubleClickReset } from './modules/range-controls.js';
+import { installRangeDoubleClickReset, datasetAxisSignature } from './modules/range-controls.js';
 import { analyzeLayerExports, LayerExportFormat, writeLayerDocument } from './modules/layer-document-writers.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
@@ -5589,18 +5589,44 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		select.value = String(datasetSeriesIndex);
 		seriesRow.style.display = manifest.series.length > 1 ? 'grid' : 'none';
 		const controls = datasetOverlay.querySelector('.dataset-axis-controls') as HTMLElement;
-		controls.replaceChildren(...series.axes.map(axis => {
-			const row = document.createElement('label'); row.className = 'dataset-axis';
-			const axisLabel = document.createElement('span'); axisLabel.className = 'dataset-axis-label'; axisLabel.textContent = axis.label;
-			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, axis.size - 1)); input.step = '1'; input.dataset.defaultValue = '0'; input.value = String(datasetCoordinates[axis.key] || 0); input.title = `${axis.label} · Double-click to reset`;
+
+		// Rebuild the sliders only when the axes actually change shape.
+		//
+		// This used to replaceChildren() unconditionally, which made dragging a
+		// slider impossible: the `input` handler below calls
+		// requestDatasetNavigation, which calls straight back into this function,
+		// which destroyed the very element the pointer was dragging. The drag
+		// died with it, so a slice slider could only ever be nudged one step at a
+		// time. Reusing the elements and writing only their values keeps the drag
+		// alive across the loads it triggers.
+		const signature = datasetAxisSignature(series.axes);
+		if (controls.dataset.axisSignature !== signature) {
+			controls.dataset.axisSignature = signature;
+			controls.replaceChildren(...series.axes.map(axis => {
+				const row = document.createElement('label'); row.className = 'dataset-axis'; row.dataset.axisKey = axis.key;
+				const axisLabel = document.createElement('span'); axisLabel.className = 'dataset-axis-label'; axisLabel.textContent = axis.label;
+				const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, axis.size - 1)); input.step = '1'; input.dataset.defaultValue = '0'; input.title = `${axis.label} · Double-click to reset`;
+				const value = document.createElement('span'); value.className = 'dataset-axis-value';
+				input.addEventListener('input', () => {
+					datasetCoordinates = { ...datasetCoordinates, [axis.key]: Number(input.value) };
+					requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
+				});
+				row.append(axisLabel, input, value); return row;
+			}));
+		}
+
+		for (const axis of series.axes) {
+			const row = controls.querySelector(`.dataset-axis[data-axis-key="${CSS.escape(axis.key)}"]`);
+			if (!row) { continue; }
+			const input = row.querySelector('input') as HTMLInputElement;
+			const value = row.querySelector('.dataset-axis-value') as HTMLElement;
 			const axisValue = datasetCoordinates[axis.key] || 0;
-			const value = document.createElement('span'); value.className = 'dataset-axis-value'; value.textContent = `${axisValue + 1} / ${axis.size}${axis.valueLabels?.[axisValue] ? ` · ${axis.valueLabels[axisValue]}` : ''}`;
-			input.addEventListener('input', () => {
-				datasetCoordinates = { ...datasetCoordinates, [axis.key]: Number(input.value) };
-				requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
-			});
-			row.append(axisLabel, input, value); return row;
-		}));
+			// Never write into the control the user is holding: a load that
+			// resolves mid-drag would otherwise yank the thumb back to where the
+			// drag started.
+			if (document.activeElement !== input) { input.value = String(axisValue); }
+			value.textContent = `${axisValue + 1} / ${axis.size}${axis.valueLabels?.[axisValue] ? ` · ${axis.valueLabels[axisValue]}` : ''}`;
+		}
 		datasetOverlay.classList.toggle('dataset-overlay--loading', loading);
 		datasetOverlay.style.display = 'flex';
 		if (tiffPageOverlay) tiffPageOverlay.style.display = 'none';

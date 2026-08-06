@@ -116,6 +116,11 @@
 		"title": "Open Folder as DICOM Dataset",
 		"category": "TIFF Visualizer"
 	  },
+	  {
+		"command": "tiffVisualizer.openVolumeIn3D",
+		"title": "Open DICOM Volume in 3D Viewer",
+		"category": "TIFF Visualizer"
+	  },
       {
         "command": "tiffVisualizer.zoomIn",
         "title": "Zoom In",
@@ -316,6 +321,11 @@
       ],
       "editor/context": [
         {
+          "command": "tiffVisualizer.openVolumeIn3D",
+          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
+          "group": "navigation@1"
+        },
+        {
           "command": "tiffVisualizer.showDocumentation",
           "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
           "group": "z_help@1"
@@ -358,12 +368,13 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:channels",
+    "test": "npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:ppm && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:volume-export && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:channels",
     "test:unit": "npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
     "test:scientific-formats": "node test/scientific-formats-test.js",
 	"test:dicom-dataset": "node test/dicom-dataset-test.js",
+    "test:volume-export": "node test/volume-export-test.js",
     "test:visualization": "node test/visualization-test.js",
     "test:debayer": "node test/debayer-test.js",
     "test:measurement": "node test/measurement-test.js",

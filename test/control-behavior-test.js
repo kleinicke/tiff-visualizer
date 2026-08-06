@@ -9,7 +9,7 @@ async function main() {
 	const compositorWorkerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-compositor-worker-client.js');
 	const settingsManagerPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'settings-manager.js');
 	const { LayerManager } = await import(managerPath);
-	const { resetRangeToDefault } = await import(controlsPath);
+	const { resetRangeToDefault, datasetAxisSignature } = await import(controlsPath);
 	const { layerDisplayScale, shouldUseLayerInteractionPreview } = await import(compositorWorkerPath);
 	const { webviewStateMatchesVersions, withWebviewStateVersions } = await import(settingsManagerPath);
 
@@ -29,6 +29,25 @@ async function main() {
 	assert.strictEqual(shouldUseLayerInteractionPreview(1501, 100), true, 'a document exceeding 1500px on either edge uses a preview');
 	assert.strictEqual(layerDisplayScale(5000, 4000, false), 1, 'settled layer composites retain native document resolution');
 	assert.strictEqual(layerDisplayScale(5000, 4000, true), 768 / 5000, '5K interaction previews are bounded to 768 px');
+
+
+	// A dataset slider must survive the navigation it triggers. Dragging fires
+	// `input` on every step, each of which re-renders the overlay; if that
+	// rebuilt the <input>, the drag would die and a DICOM slice slider could
+	// only advance one slice per press. So the signature must be stable across
+	// a position change, and change only when the axes themselves do.
+	const zAxis = [{ key: 'z', size: 44, label: 'Slice' }];
+	assert.strictEqual(datasetAxisSignature(zAxis), datasetAxisSignature([{ key: 'z', size: 44, label: 'Slice' }]),
+		'navigating within a series must not rebuild its sliders');
+	assert.notStrictEqual(datasetAxisSignature(zAxis), datasetAxisSignature([{ key: 'z', size: 26, label: 'Slice' }]),
+		'a differently sized axis needs a new slider range');
+	assert.notStrictEqual(datasetAxisSignature(zAxis), datasetAxisSignature([{ key: 't', size: 44, label: 'Time' }]),
+		'a different axis needs a new slider');
+	assert.notStrictEqual(
+		datasetAxisSignature(zAxis),
+		datasetAxisSignature([{ key: 'z', size: 44, label: 'Slice' }, { key: 't', size: 3, label: 'Time' }]),
+		'gaining an axis needs a rebuild');
+	assert.strictEqual(datasetAxisSignature([]), '', 'a series with no axes has no controls');
 
 	const manager = new LayerManager();
 	manager.layers = [

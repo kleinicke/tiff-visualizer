@@ -5,11 +5,15 @@
 		"outDir": "out",
 		"lib": ["ES2020", "dom"],
 		"sourceMap": true,
-		"rootDir": "src",
 		"strict": true,
 		"esModuleInterop": true,
 		"types": ["node"]
 	},
-	"include": ["src/**/*"],
+	// `rootDir` used to pin this to src/, but the extension host now shares one
+	// module with the webview: the DICOM pixel decoder, which the 3D volume
+	// export reuses rather than reimplementing. This check is `--noEmit` (the
+	// shipped bundle comes from esbuild), so dropping rootDir constrains
+	// nothing and only widens what gets type-checked.
+	"include": ["src/**/*", "media/modules/scientific-format-parsers.ts"],
 	"exclude": ["node_modules", ".vscode-test", "test-resources"]
 }

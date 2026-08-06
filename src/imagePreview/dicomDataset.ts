@@ -4,7 +4,7 @@ import type { DatasetManifest, DatasetPlane, DatasetSeries } from './datasetType
 
 interface ElementLocation { offset: number; length: number; vr: string; }
 
-interface DicomImageHeader {
+export interface DicomImageHeader {
 	studyUid: string;
 	seriesUid: string;
 	sopUid: string;
@@ -17,6 +17,16 @@ interface DicomImageHeader {
 	frameOfReferenceUid?: string;
 	position?: number[];
 	orientation?: number[];
+	/**
+	 * Pixel Spacing (0028,0030) as [between rows, between columns] in mm.
+	 *
+	 * Read for the 3D bridge, not for the 2D viewer: position and orientation
+	 * alone only pin down slice *order*, and a volume handed to a 3D viewer
+	 * without in-plane millimetres is unmeasurable.
+	 */
+	pixelSpacing?: number[];
+	/** Slice Thickness (0018,0050) in mm. Ignores gaps, so it is only a fallback. */
+	sliceThickness?: number;
 	rows?: number;
 	columns?: number;
 	frames: number;
@@ -168,6 +178,8 @@ export function parseDicomImageHeader(data: Uint8Array): DicomImageHeader | null
 		frameOfReferenceUid: text(0x00200052) || undefined,
 		position: parseNumbers(text(0x00200032)),
 		orientation: parseNumbers(text(0x00200037)),
+		pixelSpacing: parseNumbers(text(0x00280030)),
+		sliceThickness: number(0x00180050),
 		rows: ushort(0x00280010),
 		columns: ushort(0x00280011),
 		frames: Math.max(1, Math.trunc(number(0x00280008) || 1)),

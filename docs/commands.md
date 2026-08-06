@@ -91,6 +91,7 @@ See [index](./index.md).
 
 | Command | ID | Keybinding |
 | --- | --- | --- |
+| Open DICOM Volume in 3D Viewer | `tiffVisualizer.openVolumeIn3D` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
 
 ## Keybindings

@@ -6,6 +6,8 @@ import { SizeStatusBarEntry } from './sizeStatusBarEntry';
 import { ImagePreviewManager } from './imagePreviewManager';
 import { getOutputChannel } from '../extension';
 import { scanDicomFolder } from './dicomDataset';
+import { buildVolumeFromSeries, volumeExportUri } from './volumeExport';
+import type { DatasetManifest } from './datasetTypes';
 
 const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
 
@@ -1248,6 +1250,121 @@ export function registerImagePreviewCommands(
 			if (String(error).includes('cancelled')) { return; }
 			vscode.window.showErrorMessage(`Could not open DICOM dataset: ${error instanceof Error ? error.message : String(error)}`);
 			logCommand('openDicomFolder', 'error', String(error));
+		}
+	}));
+
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openVolumeIn3D', async (resource?: vscode.Uri) => {
+		logCommand('openVolumeIn3D', 'start');
+
+		// The 3D viewer is a separate extension on purpose — a volume raycaster
+		// is a different renderer from this one's 2D pipeline — so check for it
+		// rather than failing obscurely at the openWith call.
+		const viewer = vscode.extensions.getExtension('kleinicke.ply-visualizer')
+			?? vscode.extensions.getExtension('undefined_publisher.ply-visualizer');
+		if (!viewer) {
+			const choice = await vscode.window.showErrorMessage(
+				'Opening a volume in 3D needs the 3D Visualizer extension.',
+				'Show Extension',
+			);
+			if (choice) {
+				await vscode.commands.executeCommand('workbench.extensions.search', 'ply-visualizer');
+			}
+			logCommand('openVolumeIn3D', 'error', 'ply-visualizer not installed');
+			return;
+		}
+
+		// Prefer the dataset already on screen. Making the user pick the same
+		// folder again — and re-scan every file in it — right after they opened
+		// it is the obvious wrong flow, and the manifest is already built.
+		const openDataset = (previewManager.activePreview as { datasetManifest?: DatasetManifest } | undefined)
+			?.datasetManifest;
+
+		let folder = resource;
+		if (folder) {
+			try {
+				const type = (await vscode.workspace.fs.stat(folder)).type;
+				if ((type & vscode.FileType.Directory) === 0) { folder = Utils.dirname(folder); }
+			} catch {
+				folder = undefined;
+			}
+		}
+		if (!folder && !openDataset) {
+			const selection = await vscode.window.showOpenDialog({
+				canSelectFiles: false,
+				canSelectFolders: true,
+				canSelectMany: false,
+				openLabel: 'Open Volume in 3D',
+				title: 'Select a folder containing a DICOM series',
+			});
+			folder = selection?.[0];
+			if (!folder) { return; }
+		}
+
+		try {
+			const result = await vscode.window.withProgress(
+				{ location: vscode.ProgressLocation.Notification, title: 'Building volume for the 3D viewer…', cancellable: true },
+				async (progress, token) => {
+					const manifest = folder
+						? await scanDicomFolder(
+							folder,
+							(done, total) => progress.report({ message: `Scanning ${done} / ${total} files` }),
+							() => token.isCancellationRequested,
+						)
+						: openDataset!;
+
+					// When the dataset is already open, the series the user is
+					// looking at is the one they mean.
+					const currentIndex = folder
+						? manifest.initialSeriesIndex || 0
+						: (previewManager.activePreview as { datasetSeriesIndex?: number } | undefined)
+							?.datasetSeriesIndex ?? 0;
+					let series = manifest.series[Math.max(0, Math.min(manifest.series.length - 1, currentIndex))];
+					if (manifest.series.length > 1) {
+						const picked = await vscode.window.showQuickPick(
+							manifest.series.map((candidate, index) => ({
+								label: index === currentIndex ? `${candidate.label} (showing)` : candidate.label,
+								description: `${candidate.planes.length} planes`,
+								index,
+							})),
+							{ title: 'Which series should be sent to the 3D viewer?' },
+						);
+						if (!picked) { return undefined; }
+						series = manifest.series[picked.index];
+					}
+
+					const volume = await buildVolumeFromSeries(
+						series,
+						(done, total) => progress.report({ message: `Decoding slice ${done} / ${total}` }),
+						() => token.isCancellationRequested,
+					);
+					return { volume, label: `${manifest.label}-${series.label}` };
+				},
+			);
+			if (!result) { return; }
+
+			const { volume, label } = result;
+			// Written to extension storage rather than the user's folder: this is
+			// a handover artefact, and NRRD beside the DICOM would look like
+			// something they created.
+			const storage = context.globalStorageUri;
+			await vscode.workspace.fs.createDirectory(storage);
+			const target = volumeExportUri(storage, label);
+			await vscode.workspace.fs.writeFile(target, volume.bytes);
+
+			await vscode.commands.executeCommand('vscode.openWith', target, 'plyViewer.plyEditor');
+
+			if (volume.geometry.kSource !== 'positions') {
+				vscode.window.showWarningMessage(
+					'Slice spacing could not be measured from slice positions, so ' +
+					`${volume.geometry.kSource === 'sliceThickness' ? 'Slice Thickness was used' : '1 mm was assumed'}. ` +
+					'Distances along the through-plane axis may be wrong.',
+				);
+			}
+			logCommand('openVolumeIn3D', 'success', `${volume.sizes.join('x')} ${volume.intensityUnits || 'raw'}`);
+		} catch (error) {
+			if (String(error).includes('cancelled')) { return; }
+			vscode.window.showErrorMessage(`Could not open the volume in 3D: ${error instanceof Error ? error.message : String(error)}`);
+			logCommand('openVolumeIn3D', 'error', String(error));
 		}
 	}));
 

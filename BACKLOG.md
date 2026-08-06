@@ -1347,6 +1347,58 @@ practical.
 **Difficulty: 3** for the bridge and payload contract on this side; the 3D
 renderer itself is separate and lives in the other repository.
 
+### Implemented (August 2026) — DICOM series, uncompressed
+
+The payload is **NRRD**, not a bespoke descriptor. It is a documented standard
+(3D Slicer, ITK) that already carries a full affine, world units, dtype and
+endianness, so the two repositories share a format instead of a private
+contract they would have to version against each other — and the written file
+is independently useful rather than being a wire message.
+
+- `src/imagePreview/volumeExport.ts` assembles a series into one float volume
+  and writes gzip NRRD in LPS with `space directions`/`space origin`.
+- `dicomDataset.ts` now also reads `PixelSpacing` (0028,0030) and
+  `SliceThickness` (0018,0050). It already had position and orientation, but
+  only used them for a sort key; the 3D side needs the millimetres.
+- Slice spacing is measured from consecutive `ImagePositionPatient`, not from
+  `SliceThickness` — thickness describes how thick a slice is, not how far
+  apart consecutive slices sit, so it silently ignores gaps and overlap. When
+  positions are unusable the export falls back and *says so* in a warning.
+- `PixelSpacing` is `[between rows, between columns]`, so it cross-assigns to
+  the column/row direction vectors. Swapping the two is the classic way to
+  produce a subtly stretched volume.
+- Rescale slope/intercept were already applied by `parseDicom`, so CT volumes
+  carry true Hounsfield units; the export labels them `units:=HU` (CT only) and
+  the 3D side uses that to default its isosurface to a physically meaningful
+  threshold instead of an arbitrary one.
+- Command: **Open DICOM Volume in 3D Viewer**
+  (`tiffVisualizer.openVolumeIn3D`). Writes to extension global storage, not
+  beside the user's DICOM, then hands off with `vscode.openWith`.
+- `test/volume-export-test.js` covers the geometry derivation and round-trips a
+  real 640x640x44 MR series through ply-visualizer's own NRRD parser.
+
+**Known limit:** the host-side path uses `parseDicom`, which handles only
+uncompressed transfer syntaxes. Compressed series (JPEG Baseline, JPEG-LS,
+JPEG-2000) decode in the webview's WASM codecs, which the extension host cannot
+reach — the export reports this rather than producing a volume with holes.
+Fixing it means either running the assembly in the webview and posting bytes
+back, or exposing the codecs host-side; the latter is item 11's shared-core
+work.
+
+**Gotcha this hit, worth remembering:** `src/` is bundled twice — `platform:
+'node'` for `out/extension.js` and `platform: 'browser'` for
+`out/extension.web.js`. So nothing under `src/` may import a Node builtin or use
+`Buffer`; `import * as zlib from 'zlib'` type-checks and passes the Node build,
+then fails the web build with "Could not resolve". The volume writer uses
+`CompressionStream` and hand-rolled byte concatenation instead, which also keeps
+it symmetric with the `DecompressionStream` the reader on the other side uses.
+
+**Note on the tsconfig change this needed:** `rootDir: "src"` was dropped so the
+host can import `media/modules/scientific-format-parsers.ts` rather than
+reimplementing DICOM pixel reading. `typecheck:src` is `--noEmit` and the
+shipped bundle comes from esbuild, so this constrains nothing and only widens
+what is type-checked. It is a small down payment on item 11.
+
 ---
 
 ## 11. Shared core, host abstraction, and a possible desktop app

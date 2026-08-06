@@ -456,6 +456,22 @@ export class ImagePreview extends MediaPreview {
 		return this._imageCollection[this._currentImageIndex] ?? this.resource;
 	}
 
+	/**
+	 * The dataset currently open, if this preview is showing one.
+	 *
+	 * Exposed so commands can act on what the user is already looking at — the
+	 * 3D volume export in particular, which would otherwise make them pick the
+	 * same folder a second time and re-scan it.
+	 */
+	public get datasetManifest(): DatasetManifest | undefined {
+		return this._datasetManifest;
+	}
+
+	/** Which series of `datasetManifest` is on screen. */
+	public get datasetSeriesIndex(): number {
+		return this._datasetSeriesIndex;
+	}
+
 	public setDatasetManifest(manifest: DatasetManifest): void {
 		this._datasetManifest = manifest;
 		this._datasetSeriesIndex = Math.max(0, Math.min(manifest.series.length - 1, manifest.initialSeriesIndex || 0));
