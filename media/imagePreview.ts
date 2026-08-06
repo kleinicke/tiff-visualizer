@@ -22,6 +22,7 @@ import { MetadataPanel } from './modules/metadata-panel.js';
 import type { MetadataInfo } from './modules/metadata-panel.js';
 import { MeasurePanel } from './modules/measure-panel.js';
 import { ChannelsPanel } from './modules/channels-panel.js';
+import { WebGPUChannelCompositor } from './modules/webgpu-channel-compositor.js';
 import {
 	compositeChannels,
 	defaultChannelSettings,
@@ -236,6 +237,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let compositeEnabled = false;
 	let channelGeneration = -1;
 	let compositeRenderHandle = 0;
+	// WebGPU is tried first and the CPU compositor is the fallback and the
+	// correctness reference. There is deliberately no WebGL2 variant: both paths
+	// build their colour tables with the same `prepareChannels()`, and a third
+	// implementation would only add surface for a backend on its way out.
+	const channelGpuCompositor = new WebGPUChannelCompositor();
+	let channelBackend: 'webgpu' | 'cpu' = 'cpu';
+	let channelGpuRequested = false;
 
 	/**
 	 * Separate the current image into channel planes.
@@ -353,14 +361,49 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (!compositeEnabled || channelPlanes.length < 2) { return; }
 		const width = channelPlanes[0].width;
 		const height = channelPlanes[0].height;
-		const imageData = compositeChannels(channelPlanes, channelSettings, width, height, {
-			soloIndex: channelSolo,
-			nanColor: settingsManager.settings.nanColor === 'fuchsia' ? [255, 0, 255] : [0, 0, 0],
-		});
+		const nanColor: [number, number, number] =
+			settingsManager.settings.nanColor === 'fuchsia' ? [255, 0, 255] : [0, 0, 0];
+		const options = { soloIndex: channelSolo, nanColor };
+
+		// Kick off device creation once, in the background. The first composite
+		// therefore lands on the CPU rather than waiting on an adapter, and every
+		// later one uses the GPU.
+		if (!channelGpuRequested && WebGPUChannelCompositor.isSupported()) {
+			channelGpuRequested = true;
+			void channelGpuCompositor.initialize().then(ready => {
+				if (ready && compositeEnabled) { scheduleCompositeRender(); }
+			});
+		}
+
+		if (channelGpuCompositor.isReady()) {
+			const gpuCanvas = channelGpuCompositor.render(
+				channelPlanes, channelSettings, width, height, options,
+			);
+			if (gpuCanvas) {
+				const context = ensure2dCanvasContext();
+				if (context) {
+					if (canvas && (canvas.width !== width || canvas.height !== height)) {
+						canvas.width = width;
+						canvas.height = height;
+					}
+					context.clearRect(0, 0, width, height);
+					context.drawImage(gpuCanvas, 0, 0);
+					// Pixel inspection and the histogram read `primaryImageData`,
+					// so it has to reflect what is on screen. Reading it back
+					// costs one copy and only happens after a settled render.
+					primaryImageData = context.getImageData(0, 0, width, height);
+					channelBackend = 'webgpu';
+					return;
+				}
+			}
+		}
+
+		const imageData = compositeChannels(channelPlanes, channelSettings, width, height, options);
 		const context = ensure2dCanvasContext();
 		if (!context) { return; }
 		void renderImageDataToCanvas(imageData, context);
 		primaryImageData = imageData;
+		channelBackend = 'cpu';
 	}
 
 	function scheduleCompositeRender(): void {
@@ -368,6 +411,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		compositeRenderHandle = requestAnimationFrame(() => {
 			compositeRenderHandle = 0;
 			renderComposite();
+			if (histogramOverlay.getVisibility()) { updateHistogramData(); }
 		});
 	}
 
@@ -391,6 +435,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		getSolo: () => channelSolo,
 		setSolo: index => { channelSolo = index; },
 		onChange: () => { scheduleCompositeRender(); scheduleSaveState(); },
+		getBackend: () => (channelGpuCompositor.isReady() ? channelBackend : 'cpu'),
 	});
 
 	/**
@@ -4100,6 +4145,23 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				PerfTrace.mark('histogram-from-render');
 				return;
 			}
+
+			// In composite mode the histogram describes the channels, not the
+			// rendered RGB: each has its own display range, and binning them on
+			// one axis would flatten a dim channel into the leftmost few pixels.
+			if (compositeEnabled && channelPlanes.length >= 2) {
+				histogramOverlay.updateFromChannels(channelPlanes.map((plane, index) => ({
+					name: plane.name,
+					color: channelSettings[index]?.color || '#ffffff',
+					min: channelSettings[index]?.min ?? 0,
+					max: channelSettings[index]?.max ?? 1,
+					visible: (channelSettings[index]?.visible ?? true)
+						&& (channelSolo === null || channelSolo === plane.index),
+					data: plane.data,
+				})));
+				return;
+			}
+			histogramOverlay.clearChannelHistograms();
 
 			const settings = settingsManager.settings;
 			let histogramOptions: any = {

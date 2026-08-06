@@ -1261,16 +1261,18 @@ and should reuse that split rather than the creative blend path.
 - [x] Colormap per channel as an alternative to a flat tint, sharing
       `getColormapLut()` with the pseudocolor path.
 
-### Remaining
+- [x] WebGPU compositing (`webgpu-channel-compositor.ts`), with the CPU path as
+      the fallback and the correctness reference. The colour lookup table is
+      built by the shared `prepareChannels()` for both backends, so the shader
+      only normalises and accumulates and the two cannot drift apart. No WebGL2
+      variant, deliberately: a second GPU path would double the surface for a
+      backend on its way out. Over eight visible channels falls back to the CPU
+      rather than truncating.
+- [x] Per-channel histograms: one tinted curve per visible channel over its own
+      display range, honouring solo, with out-of-range samples collected in the
+      end bins so clipping stays visible.
 
-- **GPU compositing.** Currently CPU only: a LUT read and three multiplies per
-  channel per pixel, interactive at ordinary sizes. Moving it into
-  `webgl2-float-renderer.ts` / the WebGPU path is the natural next step for
-  large images, with the CPU path staying as the correctness reference.
-  **Difficulty: 2.**
-- **Per-channel histograms.** The histogram overlay supports per-channel display
-  but still reflects the image as a whole rather than each channel's own range.
-  **Difficulty: 1.**
+**Nothing from item 8 is outstanding.**
 
 ---
 
@@ -1535,5 +1537,5 @@ attempted before them.
    stuttering playback is worse than none. Its cross-item follow-up (measuring
    one ROI across every frame) is what turns it from a viewing convenience into
    an analysis feature.
-9. **GPU channel compositing and per-channel histograms** (item 8 remainder),
-   whenever composite-mode performance on large images becomes a complaint.
+9. **OME-Zarr, local first** (item 3), reusing the dataset navigation before
+   adding chunked remote access.

@@ -876,9 +876,147 @@ export class HistogramOverlay {
 	}
 
 	/**
+	 * Show one histogram per channel, each over that channel's own display range.
+	 *
+	 * A separate path from the RGB binning above, because the question is
+	 * different. That one describes the *rendered* image, so it bins everything
+	 * on one axis. Here each channel has its own black and white point — the
+	 * whole premise of compositing — so a shared axis would put a dim channel in
+	 * the leftmost few pixels and say nothing useful about it. Each curve is
+	 * therefore drawn against its own range and tinted with its own colour, and
+	 * the display range is marked so the sliders in the Channels panel and the
+	 * distribution can be read together.
+	 */
+	updateFromChannels(channels: {
+		name: string;
+		color: string;
+		min: number;
+		max: number;
+		visible: boolean;
+		data: ArrayLike<number>;
+	}[]): void {
+		this.channelHistograms = [];
+		const BINS = 256;
+
+		for (const channel of channels) {
+			if (!channel.visible) { continue; }
+			const counts = new Int32Array(BINS);
+			const span = channel.max - channel.min;
+			const scale = span !== 0 ? BINS / span : 0;
+			// Subsample large planes: the shape of a distribution is not improved
+			// by binning every one of sixteen million samples, and the overlay
+			// redraws on every slider move.
+			const step = Math.max(1, Math.floor(channel.data.length / 500_000));
+			let total = 0;
+			for (let i = 0; i < channel.data.length; i += step) {
+				const value = Number(channel.data[i]);
+				if (!Number.isFinite(value)) { continue; }
+				let bin = Math.floor((value - channel.min) * scale);
+				// Out-of-range samples land in the end bins rather than being
+				// dropped, so clipping is visible as a spike instead of silently
+				// vanishing.
+				if (bin < 0) { bin = 0; }
+				if (bin >= BINS) { bin = BINS - 1; }
+				counts[bin]++;
+				total++;
+			}
+			this.channelHistograms.push({
+				name: channel.name,
+				color: channel.color,
+				min: channel.min,
+				max: channel.max,
+				counts,
+				total,
+			});
+		}
+
+		if (this.isVisible) { this.render(); }
+	}
+
+	/** Leave per-channel mode and go back to describing the rendered image. */
+	clearChannelHistograms(): void {
+		if (this.channelHistograms.length === 0) { return; }
+		this.channelHistograms = [];
+		if (this.isVisible) { this.render(); }
+	}
+
+	private channelHistograms: {
+		name: string;
+		color: string;
+		min: number;
+		max: number;
+		counts: Int32Array;
+		total: number;
+	}[] = [];
+
+	/**
+	 * Draw the per-channel curves.
+	 *
+	 * Returns false when there is nothing in per-channel mode, so `render()` can
+	 * fall through to the ordinary path.
+	 */
+	private renderChannelHistograms(): boolean {
+		if (this.channelHistograms.length === 0 || !this.ctx || !this.canvas) { return false; }
+
+		const ctx = this.ctx;
+		const width = this.canvas.width;
+		const height = this.canvas.height;
+		const padding = 5;
+		const graphWidth = width - 2 * padding;
+		const graphHeight = height - 2 * padding;
+
+		ctx.clearRect(0, 0, width, height);
+
+		const useSqrt = this.scaleMode === 'sqrt';
+		for (const channel of this.channelHistograms) {
+			let peak = 1;
+			for (let i = 0; i < channel.counts.length; i++) {
+				if (channel.counts[i] > peak) { peak = channel.counts[i]; }
+			}
+			const scaleCount = (count: number) => {
+				const normalised = count / peak;
+				return (useSqrt ? Math.sqrt(normalised) : normalised) * graphHeight;
+			};
+
+			ctx.strokeStyle = channel.color;
+			ctx.lineWidth = 1.25;
+			ctx.globalAlpha = 0.9;
+			ctx.beginPath();
+			for (let bin = 0; bin < channel.counts.length; bin++) {
+				const x = padding + (bin / (channel.counts.length - 1)) * graphWidth;
+				const y = padding + graphHeight - scaleCount(channel.counts[bin]);
+				if (bin === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
+			}
+			ctx.stroke();
+
+			// A translucent fill makes overlapping channels readable; outlines
+			// alone become a tangle past two or three.
+			ctx.globalAlpha = 0.18;
+			ctx.fillStyle = channel.color;
+			ctx.lineTo(padding + graphWidth, padding + graphHeight);
+			ctx.lineTo(padding, padding + graphHeight);
+			ctx.closePath();
+			ctx.fill();
+			ctx.globalAlpha = 1;
+		}
+
+		// Each curve already spans its own range, so the axis is "0 % to 100 % of
+		// this channel's display range" and the same for all of them.
+		ctx.fillStyle = 'rgba(160, 160, 160, 0.85)';
+		ctx.font = '9px var(--vscode-editor-font-family, monospace)';
+		ctx.textAlign = 'left';
+		ctx.fillText('black point', padding + 1, height - 1);
+		ctx.textAlign = 'right';
+		ctx.fillText('white point', padding + graphWidth - 1, height - 1);
+
+		return true;
+	}
+
+	/**
 	 * Render the histogram to canvas
 	 */
 	render(): void {
+		if (this.renderChannelHistograms()) { return; }
 		if (!this.histogramData || !this.ctx || !this.canvas) return;
 
 		const width = this.canvas.width;

@@ -85,10 +85,36 @@ The composite is a view; measurements always read the raw data. Switching
 channel, which is the other half of the standard workflow: count nuclei in one
 channel, read intensity in each of the others for the same regions.
 
-## Not yet
+## Histogram
 
-- Compositing runs on the CPU. It is a lookup and three multiplies per channel
-  per pixel, which is interactive at ordinary image sizes, but the GPU paths
-  used elsewhere do not handle it yet.
-- Per-channel histograms in the histogram overlay still reflect the image as a
-  whole rather than each channel's own range.
+With compositing on, the histogram overlay shows **one curve per visible
+channel**, each over that channel's own display range and drawn in its own
+tint. Solo applies there too.
+
+This is a different question from the ordinary histogram, which describes the
+rendered image on one axis. Here every channel has its own black and white
+point — that is the whole premise of compositing — so a shared axis would
+squeeze a dim channel into the leftmost few pixels and say nothing useful about
+it. Samples outside a channel's range land in the end bins rather than being
+dropped, so clipping shows up as a spike instead of vanishing.
+
+## Rendering backend
+
+Compositing runs on **WebGPU** where the platform provides it, and on the CPU
+otherwise. The panel says which is in use.
+
+The arithmetic is not duplicated between them. Both call the same function to
+build each channel's colour lookup table, and the shader does only what the CPU
+loop also does: normalise a sample into the channel's range and add the entry it
+lands on. A shader that re-derived tint, opacity, gamma and colormap would drift
+from the CPU path silently, and a composite that disagrees with the
+[measurement](./measure.md) subsystem about what a pixel contains is worse than
+a slow one.
+
+There is deliberately no WebGL2 variant. A second GPU path would double the
+surface for a backend on its way out, and the CPU fallback already covers
+everything it would have. More than eight visible channels fall back to the CPU
+rather than being truncated.
+
+The first composite after opening the panel is drawn on the CPU while the GPU
+device is being created in the background; subsequent ones use the GPU.

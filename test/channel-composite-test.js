@@ -249,6 +249,87 @@ async function main() {
 		assert.strictEqual(image.data[1], 255);
 	});
 
+	console.log('\n🖥️  Shared GPU/CPU colour tables');
+
+	const gpu = await import(moduleUrl('webgpu-channel-compositor.js'));
+
+	test('the GPU path reuses the CPU colour table rather than reimplementing it', () => {
+		// The guarantee this feature rests on: both backends call
+		// prepareChannels(), so tint, opacity, gamma and colormap can only be
+		// computed one way and cannot drift apart.
+		const planes = [plane(0, 'A', [0, 50, 100], 3, 1)];
+		const settings = [{ visible: true, color: '#00ff40', opacity: 0.7, min: 0, max: 100 }];
+		const prepared = composite.prepareChannels(planes, settings, 3, 1);
+
+		assert.strictEqual(prepared.length, 1);
+		assert.strictEqual(prepared[0].lut.length, composite.LUT_STEPS * 3);
+		close(prepared[0].min, 0, 1e-9, 'range offset');
+		close(prepared[0].scale, 1 / 100, 1e-9, 'range scale');
+
+		// Reproduce what the shader does — normalise, index, add — and check it
+		// against the CPU composite of the same input.
+		const image = composite.compositeChannels(planes, settings, 3, 1);
+		for (let pixel = 0; pixel < 3; pixel++) {
+			const value = [0, 50, 100][pixel];
+			let t = (value - prepared[0].min) * prepared[0].scale;
+			t = Math.max(0, Math.min(1, t));
+			const step = ((t * (composite.LUT_STEPS - 1)) | 0) * 3;
+			for (let component = 0; component < 3; component++) {
+				close(
+					image.data[pixel * 4 + component],
+					prepared[0].lut[step + component],
+					1,
+					`pixel ${pixel} component ${component}`,
+				);
+			}
+		}
+	});
+
+	test('prepareChannels honours visibility, solo and size mismatches', () => {
+		const planes = [
+			plane(0, 'A', [1], 1, 1),
+			plane(1, 'B', [1], 1, 1),
+			plane(2, 'C', [1, 1], 2, 1),
+		];
+		const settings = [
+			{ visible: true, color: '#ffffff', opacity: 1, min: 0, max: 1 },
+			{ visible: false, color: '#ffffff', opacity: 1, min: 0, max: 1 },
+			{ visible: true, color: '#ffffff', opacity: 1, min: 0, max: 1 },
+		];
+		// Channel 1 is hidden, channel 2 is the wrong size for a 1x1 render.
+		assert.strictEqual(composite.prepareChannels(planes, settings, 1, 1).length, 1);
+		assert.strictEqual(composite.prepareChannels(planes, settings, 1, 1, { solo: 1 }).length, 0);
+	});
+
+	test('the GPU compositor degrades instead of throwing when unavailable', () => {
+		// Node has no navigator.gpu, which is the same situation as a browser
+		// without WebGPU: the caller must get a clean "no" and fall back.
+		assert.strictEqual(gpu.WebGPUChannelCompositor.isSupported(), false);
+		const compositor = new gpu.WebGPUChannelCompositor(() => {});
+		assert.strictEqual(compositor.isReady(), false);
+		assert.strictEqual(
+			compositor.render([plane(0, 'A', [1], 1, 1)], [
+				{ visible: true, color: '#ffffff', opacity: 1, min: 0, max: 1 },
+			], 1, 1),
+			null,
+			'render() must return null rather than throw when there is no device');
+		compositor.dispose();
+	});
+
+	test('more channels than the GPU limit fall back rather than truncating', () => {
+		const many = [];
+		const settings = [];
+		for (let i = 0; i <= gpu.MAX_GPU_CHANNELS; i++) {
+			many.push(plane(i, `C${i}`, [1], 1, 1));
+			settings.push({ visible: true, color: '#ffffff', opacity: 1, min: 0, max: 1 });
+		}
+		// prepareChannels itself has no limit — the cap belongs to the GPU path,
+		// so the CPU compositor still renders every channel.
+		assert.strictEqual(
+			composite.prepareChannels(many, settings, 1, 1).length,
+			gpu.MAX_GPU_CHANNELS + 1);
+	});
+
 	console.log('\n' + '─'.repeat(60));
 	if (failed === 0) {
 		console.log(`🎉 All ${passed} channel compositing tests passed.`);

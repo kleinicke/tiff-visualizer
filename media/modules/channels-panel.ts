@@ -30,6 +30,8 @@ export interface ChannelsPanelHost {
 	setSolo: (index: number | null) => void;
 	/** Re-render the image with the current settings. */
 	onChange: (options?: { interactive?: boolean }) => void;
+	/** Which backend drew the last composite, for the status line. */
+	getBackend?: () => 'webgpu' | 'cpu';
 }
 
 export class ChannelsPanel {
@@ -152,8 +154,9 @@ export class ChannelsPanel {
 
 		const hint = document.createElement('div');
 		hint.className = 'measure-note';
+		const backend = this.host.getBackend?.() ?? 'cpu';
 		hint.textContent = this.host.isComposite()
-			? 'Channels are added together, each scaled by its own range — the way emission combines at the detector.'
+			? `Channels are added together, each scaled by its own range — the way emission combines at the detector. Compositing on ${backend === 'webgpu' ? 'the GPU (WebGPU)' : 'the CPU'}.`
 			: 'Composite is off; the image is shown as decoded. Turn it on to blend the channels.';
 		this.body.appendChild(hint);
 	}

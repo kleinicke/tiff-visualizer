@@ -164,6 +164,80 @@ export interface CompositeOptions {
 	soloIndex?: number | null;
 }
 
+/** Number of steps in the per-channel colour lookup table. */
+export const LUT_STEPS = 1024;
+
+/**
+ * A channel prepared for compositing: its plane plus the colour it contributes
+ * at every normalised level.
+ *
+ * Split out so the CPU path and the GPU path build the table with exactly the
+ * same code. A GPU compositor that reimplemented tint, gamma, opacity and
+ * colormap in a shader would drift from the CPU reference silently, and the CPU
+ * path is the correctness reference for the whole render stack.
+ */
+export interface PreparedChannel {
+	plane: ChannelPlane;
+	/** LUT_STEPS entries of premultiplied colour, 0..255 per component. */
+	lut: Float32Array;
+	min: number;
+	/** 1 / (max - min), or 0 for a degenerate range. */
+	scale: number;
+}
+
+export function prepareChannels(
+	planes: ChannelPlane[],
+	settings: ChannelSettings[],
+	width: number,
+	height: number,
+	options: { gamma?: number; solo?: number | null; identityGamma?: boolean } = {},
+): PreparedChannel[] {
+	const gamma = options.gamma && options.gamma > 0 ? options.gamma : 1;
+	const identityGamma = options.identityGamma ?? Math.abs(gamma - 1) < 1e-6;
+	const solo = options.solo ?? null;
+	const prepared: PreparedChannel[] = [];
+
+	for (let i = 0; i < planes.length; i++) {
+		const plane = planes[i];
+		const setting = settings[i];
+		if (!setting || !setting.visible) { continue; }
+		if (solo !== null && plane.index !== solo) { continue; }
+		if (plane.width !== width || plane.height !== height) { continue; }
+
+		const range = setting.max - setting.min;
+		const scale = range !== 0 ? 1 / range : 0;
+		const opacity = Math.max(0, Math.min(1, setting.opacity));
+
+		// A colormap replaces the flat tint entirely: its own colour already
+		// encodes the value, so multiplying it by a tint as well would just
+		// darken it.
+		const colormapLut = setting.colormap && setting.colormap !== 'none'
+			? getColormapLut(setting.colormap)
+			: null;
+		const [tintR, tintG, tintB] = parseColor(setting.color);
+
+		const lut = new Float32Array(LUT_STEPS * 3);
+		for (let s = 0; s < LUT_STEPS; s++) {
+			let t = s / (LUT_STEPS - 1);
+			if (!identityGamma) { t = Math.pow(t, gamma); }
+			if (colormapLut) {
+				const entry = Math.min(255, Math.max(0, Math.round(t * 255)));
+				lut[s * 3] = colormapLut[entry * 3] * opacity;
+				lut[s * 3 + 1] = colormapLut[entry * 3 + 1] * opacity;
+				lut[s * 3 + 2] = colormapLut[entry * 3 + 2] * opacity;
+			} else {
+				lut[s * 3] = tintR * t * opacity;
+				lut[s * 3 + 1] = tintG * t * opacity;
+				lut[s * 3 + 2] = tintB * t * opacity;
+			}
+		}
+
+		prepared.push({ plane, lut, min: setting.min, scale });
+	}
+
+	return prepared;
+}
+
 /**
  * Composite the visible channels into RGBA.
  *
@@ -184,61 +258,7 @@ export function compositeChannels(
 	const identityGamma = Math.abs(gamma - 1) < 1e-6;
 	const solo = options.soloIndex ?? null;
 
-	// Per-channel lookup tables over 1024 normalised steps. Building them once
-	// turns the inner loop into a table read plus three multiplies, which is
-	// what keeps a four-channel megapixel composite interactive on the CPU.
-	const STEPS = 1024;
-	interface Prepared {
-		plane: ChannelPlane;
-		lutR: Float32Array;
-		lutG: Float32Array;
-		lutB: Float32Array;
-		min: number;
-		scale: number;
-	}
-	const prepared: Prepared[] = [];
-
-	for (let i = 0; i < planes.length; i++) {
-		const plane = planes[i];
-		const setting = settings[i];
-		if (!setting || !setting.visible) { continue; }
-		if (solo !== null && plane.index !== solo) { continue; }
-		if (plane.width !== width || plane.height !== height) { continue; }
-
-		const range = setting.max - setting.min;
-		const scale = range !== 0 ? 1 / range : 0;
-		const opacity = Math.max(0, Math.min(1, setting.opacity));
-
-		const lutR = new Float32Array(STEPS);
-		const lutG = new Float32Array(STEPS);
-		const lutB = new Float32Array(STEPS);
-
-		// A colormap replaces the flat tint entirely: its own colour already
-		// encodes the value, so multiplying it by a tint as well would just
-		// darken it.
-		const colormapLut = setting.colormap && setting.colormap !== 'none'
-			? getColormapLut(setting.colormap)
-			: null;
-		const [tintR, tintG, tintB] = parseColor(setting.color);
-
-		for (let s = 0; s < STEPS; s++) {
-			let t = s / (STEPS - 1);
-			if (!identityGamma) { t = Math.pow(t, gamma); }
-			if (colormapLut) {
-				const entry = Math.min(255, Math.max(0, Math.round(t * 255)));
-				lutR[s] = colormapLut[entry * 3] * opacity;
-				lutG[s] = colormapLut[entry * 3 + 1] * opacity;
-				lutB[s] = colormapLut[entry * 3 + 2] * opacity;
-			} else {
-				lutR[s] = tintR * t * opacity;
-				lutG[s] = tintG * t * opacity;
-				lutB[s] = tintB * t * opacity;
-			}
-		}
-
-		prepared.push({ plane, lutR, lutG, lutB, min: setting.min, scale });
-	}
-
+	const prepared = prepareChannels(planes, settings, width, height, { gamma, solo, identityGamma });
 	const [nanR, nanG, nanB] = options.nanColor || [0, 0, 0];
 
 	for (let p = 0; p < pixels; p++) {
@@ -258,10 +278,10 @@ export function compositeChannels(
 			let t = (value - entry.min) * entry.scale;
 			if (t <= 0) { continue; }
 			if (t > 1) { t = 1; }
-			const step = (t * (STEPS - 1)) | 0;
-			r += entry.lutR[step];
-			g += entry.lutG[step];
-			b += entry.lutB[step];
+			const step = ((t * (LUT_STEPS - 1)) | 0) * 3;
+			r += entry.lut[step];
+			g += entry.lut[step + 1];
+			b += entry.lut[step + 2];
 		}
 
 		const offset = p * 4;
