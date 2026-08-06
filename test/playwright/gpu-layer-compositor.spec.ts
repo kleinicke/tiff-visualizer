@@ -570,6 +570,7 @@ test('WebGL2 matches translucent clipped adjustment stacks used by PSD', async (
 });
 
 test('WebGL2 renders a native 1600px three-channel adjustment document promptly', async ({ page }) => {
+	if (process.env.CI) { test.setTimeout(120_000); }
 	const bundle = buildSync({
 		entryPoints: [path.join(__dirname, '..', '..', 'media', 'modules', 'webgl2-layer-compositor.ts')],
 		bundle: true,
@@ -644,7 +645,9 @@ test('WebGL2 renders a native 1600px three-channel adjustment document promptly'
 	expect(result.nativePixel.slice(0, 3).every(channel => channel > 20)).toBe(true);
 	expect(result.cachedNativePixel).toEqual(result.nativePixel);
 	expect(result.changedNativePixel).not.toEqual(result.nativePixel);
-	const performanceLimitMs = testSize > 1600 ? 30_000 : 5000;
+	// CI runs on SwiftShader/shared hardware, several times slower than a
+	// developer machine with a real GPU, so the budget scales there.
+	const performanceLimitMs = (testSize > 1600 ? 30_000 : 5000) * (process.env.CI ? 4 : 1);
 	expect(result.durationMs).toBeLessThan(performanceLimitMs);
 	expect(result.cachedNativeMs).toBeLessThan(performanceLimitMs);
 	expect(result.changedNativeMs).toBeLessThan(performanceLimitMs);
