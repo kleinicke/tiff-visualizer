@@ -3,15 +3,46 @@ import { buildSync } from 'esbuild';
 import http from 'http';
 import path from 'path';
 
-// Headless CI runners (GitHub ubuntu-latest) expose no WebGPU adapter: Dawn
-// fails adapter creation with "A valid external Instance reference no longer
-// exists". These tests are a real-GPU gate, so skip instead of failing there.
+// Headless CI runners (GitHub ubuntu-latest) have no usable WebGPU: with
+// --enable-unsafe-webgpu they still hand out an adapter, then Dawn fails at
+// first real use with "A valid external Instance reference no longer exists".
+// These tests are a real-GPU gate, so skip instead of failing there — the probe
+// therefore has to submit actual GPU work, not just ask for an adapter.
 async function hasWebGpuAdapter(page: import('@playwright/test').Page): Promise<boolean> {
 	return page.evaluate(async () => {
 		const gpu = (navigator as any).gpu;
 		if (!gpu) { return false; }
-		try { return !!(await gpu.requestAdapter()); } catch { return false; }
+		try {
+			const adapter = await gpu.requestAdapter();
+			if (!adapter) { return false; }
+			const device = await adapter.requestDevice();
+			if (!device) { return false; }
+			let lost = false;
+			device.lost.then(() => { lost = true; });
+			const buffer = device.createBuffer({ size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+			device.queue.writeBuffer(buffer, 0, new Uint8Array(16));
+			const texture = device.createTexture({
+				size: { width: 1, height: 1 }, format: 'rgba8unorm',
+				usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+			});
+			const encoder = device.createCommandEncoder();
+			encoder.beginRenderPass({
+				colorAttachments: [{ view: texture.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+			}).end();
+			device.queue.submit([encoder.finish()]);
+			await device.queue.onSubmittedWorkDone();
+			buffer.destroy(); texture.destroy(); device.destroy();
+			return !lost;
+		} catch { return false; }
 	});
+}
+
+// A runner can also lose its GPU mid-test, after the probe passed. The same
+// Dawn/adapter failures then surface as the compositor's error string.
+const GPU_UNAVAILABLE = /valid external Instance|device (is |was )?lost|no adapter|adapter is unavailable|navigator\.gpu is unavailable|requestDevice/i;
+
+function skipWhenGpuDied(error: string | undefined): void {
+	test.skip(!!error && GPU_UNAVAILABLE.test(error), `WebGPU became unusable on this runner: ${error}`);
 }
 
 // Software rasterizers and shared CI hardware are several times slower than a
@@ -95,6 +126,7 @@ test('WebGPU composites PSD-style colorize and screen stacks with strict parity'
 				compositor.dispose();
 			}
 		});
+		skipWhenGpuDied(result.error);
 		expect(result.supported, result.error).toBe(true);
 		expect(result.logs, result.logs?.join('\n')).toEqual([]);
 		expect(result.cachedUploads).toBe(0);
@@ -228,6 +260,7 @@ test('WebGPU preserves every filter, groups, masks, clipping, numeric types, and
 			} finally { nan.dispose(); }
 			return output;
 		});
+		for (const result of results) { skipWhenGpuDied(result.error); }
 		for (const result of results) { expect(result.ok, `${result.name}: ${result.error || 'failed'}`).toBe(true); }
 	} finally {
 		await new Promise<void>(resolve => server.close(() => resolve()));
@@ -287,6 +320,7 @@ test('WebGPU renders a native 5000×5000 byte document within the interactive ba
 				return { ok: false, duration: performance.now() - started, error: error instanceof Error ? error.message : String(error) };
 			} finally { compositor.dispose(); }
 		});
+		skipWhenGpuDied(result.error);
 		expect(result.ok, result.error).toBe(true);
 		expect(result.duration).toBeLessThan(10_000 * performanceScale);
 		expect(result.reused?.surfaceCacheHit).toBe(true);
