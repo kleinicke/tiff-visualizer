@@ -20,13 +20,13 @@ import type { DatasetSeries } from './datasetTypes';
 
 /** What the 3D side needs that the 2D viewer never had to care about. */
 export interface VolumeGeometry {
-	/** Column direction (i axis) in LPS, already scaled to millimetres. */
+	/** Column direction (i axis) in LPS, scaled to metres. */
 	iVector: [number, number, number];
-	/** Row direction (j axis) in LPS, scaled. */
+	/** Row direction (j axis) in LPS, scaled to metres. */
 	jVector: [number, number, number];
-	/** Slice-to-slice step in LPS, derived from consecutive slice positions. */
+	/** Slice-to-slice step in LPS metres, derived from consecutive slice positions. */
 	kVector: [number, number, number];
-	/** ImagePositionPatient of the first slice. */
+	/** ImagePositionPatient of the first slice, converted to metres. */
 	origin: [number, number, number];
 	/** How the k vector was determined, for reporting to the user. */
 	kSource: 'positions' | 'sliceThickness' | 'assumed';
@@ -51,6 +51,7 @@ function scale(v: number[], factor: number): [number, number, number] {
  * single-slice or position-less series.
  */
 export function deriveGeometry(first: DicomImageHeader, last: DicomImageHeader, sliceCount: number): VolumeGeometry {
+	const metresPerMillimetre = 0.001;
 	const orientation = first.orientation && first.orientation.length >= 6
 		? first.orientation
 		: [1, 0, 0, 0, 1, 0];
@@ -62,8 +63,8 @@ export function deriveGeometry(first: DicomImageHeader, last: DicomImageHeader, 
 	// is the classic way to get a subtly stretched volume out of anisotropic
 	// pixels.
 	const spacing = first.pixelSpacing && first.pixelSpacing.length >= 2 ? first.pixelSpacing : [1, 1];
-	const iVector = scale(rowDirection, spacing[1]);
-	const jVector = scale(columnDirection, spacing[0]);
+	const iVector = scale(rowDirection, spacing[1] * metresPerMillimetre);
+	const jVector = scale(columnDirection, spacing[0] * metresPerMillimetre);
 
 	const origin = (first.position && first.position.length >= 3 ? first.position : [0, 0, 0]) as number[];
 
@@ -77,14 +78,14 @@ export function deriveGeometry(first: DicomImageHeader, last: DicomImageHeader, 
 		];
 		const length = Math.hypot(span[0], span[1], span[2]);
 		if (length > 1e-6) {
-			kVector = scale(span, 1 / (sliceCount - 1));
+			kVector = scale(span, metresPerMillimetre / (sliceCount - 1));
 			kSource = 'positions';
 		} else {
-			kVector = scale(cross(rowDirection, columnDirection), first.sliceThickness || 1);
+			kVector = scale(cross(rowDirection, columnDirection), (first.sliceThickness || 1) * metresPerMillimetre);
 			kSource = first.sliceThickness ? 'sliceThickness' : 'assumed';
 		}
 	} else {
-		kVector = scale(cross(rowDirection, columnDirection), first.sliceThickness || 1);
+		kVector = scale(cross(rowDirection, columnDirection), (first.sliceThickness || 1) * metresPerMillimetre);
 		kSource = first.sliceThickness ? 'sliceThickness' : 'assumed';
 	}
 
@@ -92,7 +93,7 @@ export function deriveGeometry(first: DicomImageHeader, last: DicomImageHeader, 
 		iVector,
 		jVector,
 		kVector,
-		origin: [origin[0], origin[1], origin[2]],
+		origin: [origin[0] * metresPerMillimetre, origin[1] * metresPerMillimetre, origin[2] * metresPerMillimetre],
 		kSource,
 	};
 }
@@ -146,7 +147,7 @@ export async function writeNrrd(
 		'space: left-posterior-superior',
 		`space directions: ${formatVector(geometry.iVector)} ${formatVector(geometry.jVector)} ${formatVector(geometry.kVector)}`,
 		`space origin: ${formatVector(geometry.origin)}`,
-		'space units: "mm" "mm" "mm"',
+		'space units: "m" "m" "m"',
 		'kinds: domain domain domain',
 		'encoding: gzip',
 		'endian: little',
@@ -205,12 +206,28 @@ export async function buildVolumeFromSeries(
 		throw new Error('This series has no slices to export.');
 	}
 
+	// Only DICOM planes are decodable here. An OME-TIFF dataset produces planes
+	// with `format: 'tiff'`, which would otherwise be handed to the DICOM parser
+	// and fail with a misleading "not a DICOM file". Microscopy stacks also need
+	// their voxel geometry read from OME-XML rather than from DICOM tags, so
+	// supporting them is real work, not a decoder swap — say so plainly.
+	const foreign = series.planes.find(plane => plane.format !== 'dicom');
+	if (foreign) {
+		throw new Error(
+			`This series contains ${foreign.format.toUpperCase()} planes; the 3D volume export currently ` +
+			'handles DICOM only. OME-TIFF support needs its voxel spacing read from OME-XML.',
+		);
+	}
+
 	let samples: Float32Array | undefined;
 	let width = 0;
 	let height = 0;
 	let firstHeader: DicomImageHeader | undefined;
 	let lastHeader: DicomImageHeader | undefined;
 	let modality: string | undefined;
+	let windowCenter: number | undefined;
+	let windowWidth: number | undefined;
+	let photometricInterpretation: string | undefined;
 
 	for (let index = 0; index < zValues.length; index++) {
 		if (isCancelled?.()) {
@@ -246,6 +263,9 @@ export async function buildVolumeFromSeries(
 			samples = new Float32Array(width * height * zValues.length);
 			firstHeader = header ?? undefined;
 			modality = (decoded.metadata as { modality?: string }).modality;
+			windowCenter = firstHeader?.windowCenter ?? Number((decoded.metadata as { windowCenter?: number }).windowCenter);
+			windowWidth = firstHeader?.windowWidth ?? Number((decoded.metadata as { windowWidth?: number }).windowWidth);
+			photometricInterpretation = firstHeader?.photometricInterpretation ?? (decoded.metadata as { photometric?: string }).photometric;
 		} else if (decoded.width !== width || decoded.height !== height) {
 			throw new Error(
 				`Slice ${index + 1} is ${decoded.width}x${decoded.height} but the first slice is ${width}x${height}; ` +
@@ -275,6 +295,19 @@ export async function buildVolumeFromSeries(
 	}
 	if (intensityUnits) {
 		extras['units'] = intensityUnits;
+	}
+	if (Number.isFinite(windowCenter)) {
+		extras['window center'] = String(windowCenter);
+	}
+	if (Number.isFinite(windowWidth) && windowWidth! > 0) {
+		extras['window width'] = String(windowWidth);
+	}
+	if (photometricInterpretation) {
+		// parseDicom normalises MONOCHROME1 samples to black-low/white-high for
+		// presentation. Describe the exported samples honestly while retaining
+		// the source tag for inspection.
+		extras['photometric interpretation'] = 'MONOCHROME2';
+		extras['source photometric interpretation'] = photometricInterpretation;
 	}
 
 	return {

@@ -1359,7 +1359,11 @@ is independently useful rather than being a wire message.
   and writes gzip NRRD in LPS with `space directions`/`space origin`.
 - `dicomDataset.ts` now also reads `PixelSpacing` (0028,0030) and
   `SliceThickness` (0018,0050). It already had position and orientation, but
-  only used them for a sort key; the 3D side needs the millimetres.
+  only used them for a sort key; the 3D side needs the physical geometry.
+- The bridge converts DICOM millimetres to the 3D viewer's metre-based world
+  space while writing the NRRD affine and declares `space units: "m"`.
+- DICOM window center/width and photometric interpretation are carried as NRRD
+  key/value metadata for the 3D viewer's orthogonal-slice presentation.
 - Slice spacing is measured from consecutive `ImagePositionPatient`, not from
   `SliceThickness` — thickness describes how thick a slice is, not how far
   apart consecutive slices sit, so it silently ignores gaps and overlap. When
@@ -1372,10 +1376,13 @@ is independently useful rather than being a wire message.
   the 3D side uses that to default its isosurface to a physically meaningful
   threshold instead of an arbitrary one.
 - Command: **Open DICOM Volume in 3D Viewer**
-  (`tiffVisualizer.openVolumeIn3D`). Writes to extension global storage, not
-  beside the user's DICOM, then hands off with `vscode.openWith`.
-- `test/volume-export-test.js` covers the geometry derivation and round-trips a
-  real 640x640x44 MR series through ply-visualizer's own NRRD parser.
+  (`tiffVisualizer.openVolumeIn3D`). Its multi-select defaults to the series
+  currently on screen, writes every chosen series into a unique handoff folder
+  in extension global storage, then asks ply-visualizer to open the first NRRD
+  and add the remainder to the same scene. Large selections warn before decode.
+- `test/volume-export-test.js` covers the geometry derivation, exports every
+  series in the real dataset, and round-trips the 640x640x44 MR series through
+  ply-visualizer's own NRRD parser.
 
 **Known limit:** the host-side path uses `parseDicom`, which handles only
 uncompressed transfer syntaxes. Compressed series (JPEG Baseline, JPEG-LS,

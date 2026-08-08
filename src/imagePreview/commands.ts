@@ -1318,49 +1318,89 @@ export function registerImagePreviewCommands(
 						? manifest.initialSeriesIndex || 0
 						: (previewManager.activePreview as { datasetSeriesIndex?: number } | undefined)
 							?.datasetSeriesIndex ?? 0;
-					let series = manifest.series[Math.max(0, Math.min(manifest.series.length - 1, currentIndex))];
+					let selected = [Math.max(0, Math.min(manifest.series.length - 1, currentIndex))];
 					if (manifest.series.length > 1) {
 						const picked = await vscode.window.showQuickPick(
 							manifest.series.map((candidate, index) => ({
 								label: index === currentIndex ? `${candidate.label} (showing)` : candidate.label,
 								description: `${candidate.planes.length} planes`,
 								index,
+								picked: index === currentIndex,
 							})),
-							{ title: 'Which series should be sent to the 3D viewer?' },
+							{
+								title: 'Which series should be sent to the 3D viewer?',
+								placeHolder: 'Select one or more series',
+								canPickMany: true,
+							},
 						);
-						if (!picked) { return undefined; }
-						series = manifest.series[picked.index];
+						if (!picked || picked.length === 0) { return undefined; }
+						selected = picked.map(item => item.index);
 					}
 
-					const volume = await buildVolumeFromSeries(
-						series,
-						(done, total) => progress.report({ message: `Decoding slice ${done} / ${total}` }),
-						() => token.isCancellationRequested,
+					const totalPlanes = selected.reduce(
+						(sum, index) => sum + manifest.series[index].planes.length,
+						0,
 					);
-					return { volume, label: `${manifest.label}-${series.label}` };
+					if (selected.length > 1 && totalPlanes > 256) {
+						const answer = await vscode.window.showWarningMessage(
+							`The selected ${selected.length} series contain ${totalPlanes} slices. ` +
+								'Opening all of them can use several hundred MB of memory.',
+							{ modal: true },
+							'Open All',
+						);
+						if (answer !== 'Open All') { return undefined; }
+					}
+
+					const results = [];
+					for (let position = 0; position < selected.length; position++) {
+						const series = manifest.series[selected[position]];
+						const volume = await buildVolumeFromSeries(
+							series,
+							(done, total) => progress.report({
+								message: `Series ${position + 1} / ${selected.length} · slice ${done} / ${total}`,
+							}),
+							() => token.isCancellationRequested,
+						);
+						results.push({ volume, label: `${manifest.label}-${series.label}` });
+					}
+					return results;
 				},
 			);
-			if (!result) { return; }
+			if (!result || result.length === 0) { return; }
 
-			const { volume, label } = result;
 			// Written to extension storage rather than the user's folder: this is
 			// a handover artefact, and NRRD beside the DICOM would look like
 			// something they created.
 			const storage = context.globalStorageUri;
 			await vscode.workspace.fs.createDirectory(storage);
-			const target = volumeExportUri(storage, label);
-			await vscode.workspace.fs.writeFile(target, volume.bytes);
+			const handoffStorage = Utils.joinPath(storage, `volume-handoff-${Date.now()}`);
+			await vscode.workspace.fs.createDirectory(handoffStorage);
+			const targets: vscode.Uri[] = [];
+			const fallbackSpacing: string[] = [];
+			for (const { volume, label } of result) {
+				const target = volumeExportUri(handoffStorage, label);
+				await vscode.workspace.fs.writeFile(target, volume.bytes);
+				targets.push(target);
+				if (volume.geometry.kSource !== 'positions') {
+					fallbackSpacing.push(
+						`${label}: ${volume.geometry.kSource === 'sliceThickness' ? 'Slice Thickness' : '1 mm assumed'}`,
+					);
+				}
+			}
 
-			await vscode.commands.executeCommand('vscode.openWith', target, 'plyViewer.plyEditor');
+			await vscode.commands.executeCommand('plyViewer.openMultipleFiles', targets);
 
-			if (volume.geometry.kSource !== 'positions') {
+			if (fallbackSpacing.length > 0) {
 				vscode.window.showWarningMessage(
-					'Slice spacing could not be measured from slice positions, so ' +
-					`${volume.geometry.kSource === 'sliceThickness' ? 'Slice Thickness was used' : '1 mm was assumed'}. ` +
-					'Distances along the through-plane axis may be wrong.',
+					'Slice spacing could not be measured for: ' + fallbackSpacing.join('; ') +
+						'. Distances along the through-plane axis may be wrong.',
 				);
 			}
-			logCommand('openVolumeIn3D', 'success', `${volume.sizes.join('x')} ${volume.intensityUnits || 'raw'}`);
+			logCommand(
+				'openVolumeIn3D',
+				'success',
+				`${result.length} series: ${result.map(({ volume }) => volume.sizes.join('x')).join(', ')}`,
+			);
 		} catch (error) {
 			if (String(error).includes('cancelled')) { return; }
 			vscode.window.showErrorMessage(`Could not open the volume in 3D: ${error instanceof Error ? error.message : String(error)}`);

@@ -49,6 +49,9 @@ async function main() {
 	const header = parseDicomImageHeader(synthetic);
 	assert.ok(header?.hasPixelData);
 	assert.strictEqual(header.transferSyntax, '1.2.840.10008.1.2.1');
+	assert.strictEqual(header.windowCenter, -640);
+	assert.strictEqual(header.windowWidth, 1500);
+	assert.strictEqual(header.photometricInterpretation, 'MONOCHROME2');
 
 	const realFolder = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/MRT OSG Februar 2023';
 	if (fs.existsSync(realFolder)) {

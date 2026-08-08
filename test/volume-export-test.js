@@ -119,11 +119,12 @@ function testDeriveGeometry(deriveGeometry) {
 	const last = { ...axial, position: [-100, -100, 60] };
 	const geometry = deriveGeometry(axial, last, 31);
 
-	assert.deepStrictEqual(geometry.iVector, [0.75, 0, 0], 'i axis follows the row direction at column spacing');
-	assert.deepStrictEqual(geometry.jVector, [0, 0.5, 0], 'j axis follows the column direction at row spacing');
+	assert.deepStrictEqual(geometry.iVector, [0.00075, 0, 0], 'i axis follows the row direction in metres');
+	assert.deepStrictEqual(geometry.jVector, [0, 0.0005, 0], 'j axis follows the column direction in metres');
 	// 60 mm over 30 gaps is 2 mm, which is NOT the 5 mm SliceThickness claims -
 	// exactly the overlap case thickness gets wrong.
-	assert.ok(Math.abs(geometry.kVector[2] - 2) < 1e-9, `k step should be 2 mm, got ${geometry.kVector[2]}`);
+	assert.ok(Math.abs(geometry.kVector[2] - 0.002) < 1e-9, `k step should be 0.002 m, got ${geometry.kVector[2]}`);
+	assert.deepStrictEqual(geometry.origin, [-0.1, -0.1, 0]);
 	assert.strictEqual(geometry.kSource, 'positions');
 	console.log('✅ deriveGeometry: spacing cross-assignment and measured slice step');
 
@@ -131,7 +132,7 @@ function testDeriveGeometry(deriveGeometry) {
 	// silently claiming millimetres it never measured.
 	const single = deriveGeometry(axial, axial, 1);
 	assert.strictEqual(single.kSource, 'sliceThickness');
-	assert.ok(Math.abs(single.kVector[2] - 5) < 1e-9);
+	assert.ok(Math.abs(single.kVector[2] - 0.005) < 1e-9);
 
 	const bare = deriveGeometry({ orientation: [1, 0, 0, 0, 1, 0] }, {}, 1);
 	assert.strictEqual(bare.kSource, 'assumed');
@@ -143,18 +144,18 @@ function testDeriveGeometry(deriveGeometry) {
 		{ orientation: [0.9848, 0.1736, 0, 0, 0, -1], position: [0, 0, -10] },
 		11,
 	);
-	assert.ok(Math.abs(oblique.iVector[1] - 0.1736) < 1e-6, 'oblique row direction should survive');
-	assert.ok(Math.abs(oblique.jVector[2] + 1) < 1e-6, 'oblique column direction should survive');
+	assert.ok(Math.abs(oblique.iVector[1] - 0.0001736) < 1e-9, 'oblique row direction should survive');
+	assert.ok(Math.abs(oblique.jVector[2] + 0.001) < 1e-9, 'oblique column direction should survive');
 	console.log('✅ deriveGeometry: oblique orientation preserved');
 }
 
 async function testWriteNrrd(writeNrrd) {
 	const samples = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8]);
 	const geometry = {
-		iVector: [0.7, 0, 0],
-		jVector: [0, 0.7, 0],
-		kVector: [0, 0, 2.5],
-		origin: [-10, -20, 30],
+		iVector: [0.0007, 0, 0],
+		jVector: [0, 0.0007, 0],
+		kVector: [0, 0, 0.0025],
+		origin: [-0.01, -0.02, 0.03],
 		kSource: 'positions',
 	};
 	const bytes = await writeNrrd(samples, [2, 2, 2], geometry, { units: 'HU', modality: 'CT' });
@@ -164,8 +165,9 @@ async function testWriteNrrd(writeNrrd) {
 	assert.strictEqual(header['sizes'], '2 2 2');
 	assert.strictEqual(header['encoding'], 'gzip');
 	assert.strictEqual(header['space'], 'left-posterior-superior');
-	assert.strictEqual(header['space directions'], '(0.7,0,0) (0,0.7,0) (0,0,2.5)');
-	assert.strictEqual(header['space origin'], '(-10,-20,30)');
+	assert.strictEqual(header['space directions'], '(0.0007,0,0) (0,0.0007,0) (0,0,0.0025)');
+	assert.strictEqual(header['space origin'], '(-0.01,-0.02,0.03)');
+	assert.strictEqual(header['space units'], '"m" "m" "m"');
 	assert.strictEqual(header['units'], 'HU');
 	assert.strictEqual(header['modality'], 'CT');
 
@@ -195,7 +197,7 @@ async function testAgainstRealReader(bytes, expected) {
 		`i vector x should negate: file ${expected.geometry.iVector[0]}, read ${volume.ijkToWorld[0]}`);
 	assert.ok(Math.abs(volume.ijkToWorld[10] - expected.geometry.kVector[2]) < 1e-6,
 		`k vector z should pass through: file ${expected.geometry.kVector[2]}, read ${volume.ijkToWorld[10]}`);
-	assert.strictEqual(volume.spaceUnits, 'mm');
+	assert.strictEqual(volume.spaceUnits, 'm');
 	console.log(`✅ Round-trip through ply-visualizer's NrrdParser: ${volume.sizes.join('x')} in ${volume.spaceUnits}`);
 	return volume;
 }
@@ -239,6 +241,19 @@ async function main() {
 	assert.strictEqual(result.intensityUnits, undefined, 'only CT carries HU');
 	assert.strictEqual(result.geometry.kSource, 'positions', 'a real series has measurable slice spacing');
 	console.log(`✅ Real MR series exported: ${result.sizes.join('x')}, modality ${result.modality}`);
+
+	const remainingSizes = [];
+	for (const candidate of manifest.series.slice(1)) {
+		const candidateResult = await buildVolumeFromSeries(candidate);
+		assert.strictEqual(
+			candidateResult.sizes[2],
+			candidate.planes.length,
+			`every slice from ${candidate.label} should reach its volume`,
+		);
+		remainingSizes.push(candidateResult.sizes.join('x'));
+	}
+	assert.strictEqual(remainingSizes.length + 1, manifest.series.length);
+	console.log(`✅ Every DICOM series exports independently: ${[result.sizes.join('x'), ...remainingSizes].join(', ')}`);
 
 	const volume = await testAgainstRealReader(result.bytes, result);
 	if (volume) {

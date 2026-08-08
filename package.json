@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "Scientific Image Visualizer",
   "description": "Analyze more than 25 integer and floating-point image formats with precise pixel inspection, multidimensional navigation, interactive visualization, comparison, and layer compositing.",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "publisher": "kleinicke",
   "icon": "icon.png",
   "license": "MIT",
@@ -111,16 +111,16 @@
       }
     ],
     "commands": [
-	  {
-		"command": "tiffVisualizer.openDicomFolder",
-		"title": "Open Folder as DICOM Dataset",
-		"category": "TIFF Visualizer"
-	  },
-	  {
-		"command": "tiffVisualizer.openVolumeIn3D",
-		"title": "Open DICOM Volume in 3D Viewer",
-		"category": "TIFF Visualizer"
-	  },
+      {
+        "command": "tiffVisualizer.openDicomFolder",
+        "title": "Open Folder as DICOM Dataset",
+        "category": "TIFF Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.openVolumeIn3D",
+        "title": "Open DICOM Volume in 3D Viewer",
+        "category": "TIFF Visualizer"
+      },
       {
         "command": "tiffVisualizer.zoomIn",
         "title": "Zoom In",
@@ -373,7 +373,7 @@
     "test:integration": "npm run test:playwright",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
     "test:scientific-formats": "node test/scientific-formats-test.js",
-	"test:dicom-dataset": "node test/dicom-dataset-test.js",
+    "test:dicom-dataset": "node test/dicom-dataset-test.js",
     "test:volume-export": "node test/volume-export-test.js",
     "test:visualization": "node test/visualization-test.js",
     "test:debayer": "node test/debayer-test.js",

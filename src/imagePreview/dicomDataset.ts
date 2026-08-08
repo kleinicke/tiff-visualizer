@@ -27,6 +27,9 @@ export interface DicomImageHeader {
 	pixelSpacing?: number[];
 	/** Slice Thickness (0018,0050) in mm. Ignores gaps, so it is only a fallback. */
 	sliceThickness?: number;
+	windowCenter?: number;
+	windowWidth?: number;
+	photometricInterpretation?: string;
 	rows?: number;
 	columns?: number;
 	frames: number;
@@ -180,6 +183,9 @@ export function parseDicomImageHeader(data: Uint8Array): DicomImageHeader | null
 		orientation: parseNumbers(text(0x00200037)),
 		pixelSpacing: parseNumbers(text(0x00280030)),
 		sliceThickness: number(0x00180050),
+		windowCenter: number(0x00281050),
+		windowWidth: number(0x00281051),
+		photometricInterpretation: text(0x00280004) || undefined,
 		rows: ushort(0x00280010),
 		columns: ushort(0x00280011),
 		frames: Math.max(1, Math.trunc(number(0x00280008) || 1)),
