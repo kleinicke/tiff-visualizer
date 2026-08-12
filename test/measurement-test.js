@@ -957,6 +957,47 @@ async function main() {
 		assert.strictEqual(result.origin, 'manual');
 	});
 
+	test('DICOM Pixel Spacing is read as row-then-column', () => {
+		// Anisotropic on purpose: square spacing would hide a swapped pair.
+		const result = calibration.calibrationFromDicom({
+			pixelSpacing: '0.5\\0.75',
+			sliceThickness: '3.0',
+		});
+		close(result.pixelHeight, 0.5, 1e-12, 'spacing between rows is the pixel height');
+		close(result.pixelWidth, 0.75, 1e-12, 'spacing between columns is the pixel width');
+		close(result.pixelDepth, 3.0, 1e-12, 'slice thickness is the pixel depth');
+		assert.strictEqual(result.unit, 'mm');
+		assert.strictEqual(result.origin, 'dicom');
+	});
+
+	test('Spacing Between Slices wins over Slice Thickness for depth', () => {
+		const result = calibration.calibrationFromDicom({
+			pixelSpacing: '1\\1', sliceThickness: '5', spacingBetweenSlices: '2.5',
+		});
+		close(result.pixelDepth, 2.5, 1e-12, 'reconstructed slice spacing');
+	});
+
+	test('Imager Pixel Spacing is used only when patient spacing is absent', () => {
+		const detector = calibration.calibrationFromDicom({ imagerPixelSpacing: '0.2\\0.2' });
+		assert.strictEqual(detector.origin, 'dicom-detector');
+		close(detector.pixelWidth, 0.2, 1e-12, 'detector-plane pixel width');
+
+		const patient = calibration.calibrationFromDicom({
+			pixelSpacing: '0.4\\0.4', imagerPixelSpacing: '0.2\\0.2',
+		});
+		assert.strictEqual(patient.origin, 'dicom');
+		close(patient.pixelWidth, 0.4, 1e-12, 'patient-plane pixel width');
+	});
+
+	test('missing or malformed DICOM spacing leaves the image uncalibrated', () => {
+		assert.strictEqual(calibration.calibrationFromDicom({}), null);
+		assert.strictEqual(calibration.calibrationFromDicom(null), null);
+		// A single value, a zero, or a non-number is not a usable pair.
+		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: '0.5' }), null);
+		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: '0\\0' }), null);
+		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: 'n/a\\n/a' }), null);
+	});
+
 	test('the scale bar picks a round number', () => {
 		const bar = calibration.chooseScaleBarLength(
 			1000, { pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'manual' }, 0.2);

@@ -141,7 +141,7 @@ export interface Calibration {
 	pixelDepth?: number;
 	unit: string;
 	/** Where these numbers came from, shown in the panel and exported. */
-	origin: 'none' | 'tiff-resolution' | 'ome' | 'manual' | 'imported';
+	origin: 'none' | 'tiff-resolution' | 'ome' | 'dicom' | 'dicom-detector' | 'manual' | 'imported';
 }
 
 export const UNCALIBRATED: Calibration = {

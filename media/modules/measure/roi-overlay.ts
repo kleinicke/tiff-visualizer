@@ -126,6 +126,15 @@ export class RoiOverlay {
 	private brushRadius = 8;
 	private wandTolerance: number | null = null;
 	private showScaleBar = true;
+	/**
+	 * Keep the scale bar on screen while the measurement panel is closed.
+	 *
+	 * Standard practice in DICOM and microscopy viewers, and for good reason: a
+	 * calibrated image read without any indication of scale is the case where a
+	 * wrong size estimate is easiest to make and hardest to notice. It costs
+	 * nothing when the file is uncalibrated, where nothing is drawn at all.
+	 */
+	private scaleBarWhenIdle = true;
 	private showLabels = false;
 	private redrawHandle = 0;
 	/** ROI under the cursor in the results table or ROI list. */
@@ -194,11 +203,10 @@ export class RoiOverlay {
 
 	setActive(active: boolean): void {
 		this.active = active;
-		this.canvas.style.display = active ? 'block' : 'none';
 		// With `select` there is nothing to draw over the image, so let clicks
 		// fall through to pan/zoom rather than swallowing them.
-		this.updatePointerEvents();
-		if (active) { this.scheduleRedraw(); }
+		this.updateVisibility();
+		this.scheduleRedraw();
 	}
 
 	isActive(): boolean { return this.active; }
@@ -228,7 +236,22 @@ export class RoiOverlay {
 
 	getWandTolerance(): number | null { return this.wandTolerance; }
 
-	setShowScaleBar(show: boolean): void { this.showScaleBar = show; this.scheduleRedraw(); }
+	setShowScaleBar(show: boolean): void {
+		this.showScaleBar = show;
+		this.updateVisibility();
+		this.scheduleRedraw();
+	}
+
+	getShowScaleBar(): boolean { return this.showScaleBar; }
+
+	/** Toggle the idle (panel-closed) scale bar; returns the new state. */
+	toggleScaleBar(): boolean {
+		this.showScaleBar = !this.showScaleBar;
+		this.updateVisibility();
+		this.scheduleRedraw();
+		return this.showScaleBar;
+	}
+
 	setShowLabels(show: boolean): void { this.showLabels = show; this.scheduleRedraw(); }
 
 	setShowRois(show: boolean): void { this.showRois = show; this.scheduleRedraw(); }
@@ -330,6 +353,23 @@ export class RoiOverlay {
 		this.canvas.style.pointerEvents = this.active ? 'auto' : 'none';
 	}
 
+	/**
+	 * Whether the canvas is shown purely to carry the scale bar, with the
+	 * measurement panel closed. Nothing else is drawn in that state and the
+	 * canvas never takes pointer events, so pan and zoom are untouched.
+	 */
+	private isIdleScaleBarVisible(): boolean {
+		return !this.active
+			&& this.showScaleBar
+			&& this.scaleBarWhenIdle
+			&& this.host.getCalibration().origin !== 'none';
+	}
+
+	private updateVisibility(): void {
+		this.canvas.style.display = (this.active || this.isIdleScaleBarVisible()) ? 'block' : 'none';
+		this.updatePointerEvents();
+	}
+
 	// --- coordinate mapping -------------------------------------------------
 
 	private imageRect(): DOMRect | null {
@@ -391,7 +431,13 @@ export class RoiOverlay {
 	}
 
 	redraw(): void {
-		if (!this.active || !this.ctx) { return; }
+		if (!this.ctx) { return; }
+		// The calibration can change under us (a new image, a manual edit), so
+		// visibility is settled here rather than only at the call sites that
+		// change it.
+		this.updateVisibility();
+		const idleScaleBarOnly = !this.active;
+		if (idleScaleBarOnly && !this.isIdleScaleBarVisible()) { return; }
 
 		// The image load path clears the container of every img/canvas to put a
 		// new image on a clean background, and this overlay is a canvas on that
@@ -419,6 +465,11 @@ export class RoiOverlay {
 
 		const rect = this.imageRect();
 		if (!rect) { return; }
+
+		if (idleScaleBarOnly) {
+			this.drawScaleBar(ctx, rect);
+			return;
+		}
 
 		// Clip to the image so ROIs never paint over the surrounding chrome.
 		ctx.save();

@@ -227,6 +227,11 @@
         "category": "TIFF Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleScaleBar",
+        "title": "Toggle Scale Bar",
+        "category": "TIFF Visualizer"
+      },
+      {
         "command": "tiffVisualizer.convertColormapToFloat",
         "title": "Decode Colormap Image to Float",
         "category": "TIFF Visualizer"

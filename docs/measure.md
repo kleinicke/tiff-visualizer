@@ -186,6 +186,14 @@ aggregate.
 The **Scale** tab sets pixel size and unit. It is pre-filled automatically from
 the file where the file says something:
 
+- **DICOM** `Pixel Spacing` (0028,0030), in mm. The first value is the spacing
+  between rows (the pixel *height*), the second between columns (the width).
+  `Spacing Between Slices` (0018,0088), or failing that `Slice Thickness`
+  (0018,0050), becomes the depth for stacks.
+- **DICOM** `Imager Pixel Spacing` (0018,1164) when the file has no patient-plane
+  spacing at all — projection images (CR/DX/MG) only carry the detector-plane
+  value. It is reported as such, because for a magnified acquisition it is not
+  the size of the anatomy.
 - **OME-TIFF** physical pixel sizes (preferred — the acquisition software wrote
   them deliberately)
 - **TIFF resolution tags** (`XResolution`, `YResolution`, `ResolutionUnit`)
@@ -212,6 +220,17 @@ path, since one line cannot separate the two axes; enter anisotropic sizes
 directly in the fields above instead.
 
 A calibration you set by hand is never overwritten by a later automatic one.
+
+### The scale bar
+
+Whenever an image is calibrated, a scale bar is drawn at the bottom left — and
+it stays there with this panel closed, as DICOM and microscopy viewers do. Its
+length is always a round number (1, 2 or 5 × a power of ten) in the calibrated
+unit and it re-picks itself as you zoom, so it never has to be read off a
+fractional value. An uncalibrated image draws nothing.
+
+**Toggle Scale Bar** (command palette) turns it off and on; the *Show scale bar*
+checkbox under **Overlay** is the same switch.
 
 ## Thresholding
 

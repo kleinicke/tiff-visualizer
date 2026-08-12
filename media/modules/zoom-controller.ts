@@ -19,6 +19,12 @@ export class ZoomController {
 	imageElement: HTMLElement | null;
 	canvas: HTMLCanvasElement | null;
 	hasLoadedImage: boolean;
+	/**
+	 * Notified after every scale change. Overlays drawn in viewport coordinates
+	 * (the ROI canvas and its scale bar) otherwise only refresh on scroll and
+	 * resize, which a zoom on an image smaller than the viewport never produces.
+	 */
+	onScaleChanged: (() => void) | null = null;
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -156,6 +162,8 @@ export class ZoomController {
 			type: 'zoom',
 			value: this.scale
 		});
+
+		this.onScaleChanged?.();
 	}
 
 	/**

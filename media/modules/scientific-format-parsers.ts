@@ -315,6 +315,14 @@ function dicomImageInfo(context: DicomContext) {
 			windowCenter: decimal(0x00281050, NaN), windowWidth: decimal(0x00281051, NaN),
 			modality: text(0x00080060) || undefined,
 			pixelSpacing: text(0x00280030) || undefined,
+			// Projection radiography (CR/DX/MG) has no Pixel Spacing at the patient,
+			// only at the detector, so Imager Pixel Spacing is the only scale those
+			// images carry. Kept separate rather than merged: the two are measured
+			// in different planes and conflating them would misreport magnified
+			// acquisitions.
+			imagerPixelSpacing: text(0x00181164) || undefined,
+			sliceThickness: text(0x00180050) || undefined,
+			spacingBetweenSlices: text(0x00180088) || undefined,
 		},
 	};
 }

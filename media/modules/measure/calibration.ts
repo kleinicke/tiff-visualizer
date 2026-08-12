@@ -132,6 +132,55 @@ export function calibrationFromOme(ome: {
 }
 
 /**
+ * Derive calibration from DICOM spacing tags.
+ *
+ * Pixel Spacing (0028,0030) is `row spacing\column spacing`: the first value is
+ * the distance between the centres of adjacent *rows*, i.e. the vertical pixel
+ * size, and the second the horizontal one. Getting that pair the wrong way round
+ * is invisible on the square pixels of most CT/MR and wrong on everything else,
+ * so the mapping is spelled out here rather than assumed.
+ *
+ * All DICOM spacing tags are millimetres by definition, which is why this is the
+ * one source where a fixed unit string is safe.
+ */
+export function calibrationFromDicom(metadata: {
+	pixelSpacing?: unknown;
+	imagerPixelSpacing?: unknown;
+	sliceThickness?: unknown;
+	spacingBetweenSlices?: unknown;
+} | null | undefined): Calibration | null {
+	if (!metadata) { return null; }
+
+	// DICOM decimal strings are backslash-separated; the panel and worker paths
+	// both hand them over as raw text.
+	const values = (raw: unknown): number[] => String(raw ?? '')
+		.split('\\')
+		.map(part => parseFloat(part.trim()))
+		.filter(value => Number.isFinite(value) && value > 0);
+	const single = (raw: unknown): number | undefined => values(raw)[0];
+
+	// Patient-plane spacing first; the detector-plane fallback is only right for
+	// projection images, and then only approximately.
+	const patient = values(metadata.pixelSpacing);
+	const detector = values(metadata.imagerPixelSpacing);
+	const spacing = patient.length >= 2 ? patient : detector;
+	if (spacing.length < 2) { return null; }
+
+	// Spacing Between Slices is the reconstructed centre-to-centre distance and
+	// is what a depth measurement needs; Slice Thickness only matches it when the
+	// slices neither overlap nor leave gaps.
+	const depth = single(metadata.spacingBetweenSlices) ?? single(metadata.sliceThickness);
+
+	return {
+		pixelWidth: spacing[1],
+		pixelHeight: spacing[0],
+		pixelDepth: depth,
+		unit: 'mm',
+		origin: spacing === patient ? 'dicom' : 'dicom-detector',
+	};
+}
+
+/**
  * Pick the best available automatic calibration.
  *
  * OME wins over baseline tags: when a file carries both, the OME block is the
@@ -177,8 +226,10 @@ export function describeCalibration(calibration: Calibration): string {
 		: `${formatNumber(calibration.pixelWidth)} × ${formatNumber(calibration.pixelHeight)} ${calibration.unit}/px`;
 	const sourceLabel = calibration.origin === 'ome' ? 'from OME metadata'
 		: calibration.origin === 'tiff-resolution' ? 'from TIFF resolution tags'
-			: calibration.origin === 'imported' ? 'from the ROI file'
-				: 'set manually';
+			: calibration.origin === 'dicom' ? 'from DICOM Pixel Spacing'
+				: calibration.origin === 'dicom-detector' ? 'from DICOM Imager Pixel Spacing (detector plane)'
+					: calibration.origin === 'imported' ? 'from the ROI file'
+						: 'set manually';
 	return `${size} (${sourceLabel})`;
 }
 

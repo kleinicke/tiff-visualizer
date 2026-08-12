@@ -32,7 +32,7 @@ import {
 } from './modules/channel-composite.js';
 import { RoiManager } from './modules/measure/roi-manager.js';
 import { RoiOverlay } from './modules/measure/roi-overlay.js';
-import { autoCalibration, calibrationFromTagList } from './modules/measure/calibration.js';
+import { autoCalibration, calibrationFromDicom, calibrationFromTagList } from './modules/measure/calibration.js';
 import { importImageJRois } from './modules/measure/imagej-roi.js';
 import { deserializeRoi, parseSidecar, serializeRoi } from './modules/measure/roi-io.js';
 import { toScalarPlane, UNCALIBRATED, type Calibration, type MeasurementSource } from './modules/measure/types.js';
@@ -589,6 +589,8 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		onHint: text => measurePanel.setHint(text),
 	});
 
+	zoomController.onScaleChanged = () => roiOverlay.scheduleRedraw();
+
 	const measurePanel = new MeasurePanel({
 		manager: roiManager,
 		overlay: roiOverlay,
@@ -619,11 +621,14 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	 */
 	function refreshMeasureCalibration(): void {
 		if (measureCalibration.origin === 'manual') { return; }
+		// `_lastRaw` is the gate rather than the metadata itself: a processor keeps
+		// the metadata of the file it decoded last, so without it a DICOM viewed
+		// earlier in the collection would go on calibrating a later TIFF in mm.
+		const dicom = dicomProcessor._lastRaw ? calibrationFromDicom(dicomProcessor.metadata) : null;
 		const ome = tiffProcessor.rawTiffData?.ome || null;
 		const fromTags = calibrationFromTagList(tiffProcessor._lastAllTags as TagEntry[] | null);
-		measureCalibration = ome
-			? autoCalibration(ome, null)
-			: (fromTags || { ...UNCALIBRATED });
+		measureCalibration = dicom
+			|| (ome ? autoCalibration(ome, null) : (fromTags || { ...UNCALIBRATED }));
 		roiOverlay.scheduleRedraw();
 	}
 
@@ -3679,6 +3684,20 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 				metadataPanel.toggle();
 				updateMetadataData();
 				break;
+
+			case 'toggleScaleBar': {
+				const shown = roiOverlay.toggleScaleBar();
+				// An uncalibrated image draws nothing either way, so without this the
+				// command looks broken on the files where it is least obvious why.
+				if (shown && measureCalibration.origin === 'none') {
+					vscode.postMessage({
+						type: 'showMessage',
+						level: 'info',
+						message: 'This image carries no physical pixel size, so no scale bar can be drawn. Set the scale in the Measure panel.',
+					});
+				}
+				break;
+			}
 
 			case 'toggleChannels':
 				if (!hasCompositableChannels()) {

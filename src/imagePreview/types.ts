@@ -67,4 +67,5 @@ export interface IImagePreview {
 	toggleMetadata(): void;
 	toggleMeasure(): void;
 	toggleChannels(): void;
+	toggleScaleBar(): void;
 }

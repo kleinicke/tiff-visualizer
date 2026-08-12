@@ -93,6 +93,7 @@ See [index](./index.md).
 | --- | --- | --- |
 | Open DICOM Volume in 3D Viewer | `tiffVisualizer.openVolumeIn3D` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
+| Toggle Scale Bar | `tiffVisualizer.toggleScaleBar` |  |
 
 ## Keybindings
 

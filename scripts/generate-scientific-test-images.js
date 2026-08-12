@@ -53,10 +53,15 @@ function writeDicom() {
 	}
 	const dataset = Buffer.concat([
 		dicomElement(0x0008, 0x0060, 'CS', text('OT')),
+		// Spacing tags, so the sample exercises spatial calibration. Anisotropic
+		// on purpose: square pixels would hide a row/column mix-up.
+		dicomElement(0x0018, 0x0050, 'DS', text('3.0')),
+		dicomElement(0x0018, 0x0088, 'DS', text('2.5')),
 		dicomElement(0x0028, 0x0002, 'US', us(1)),
 		dicomElement(0x0028, 0x0004, 'CS', text('MONOCHROME2')),
 		dicomElement(0x0028, 0x0010, 'US', us(height)),
 		dicomElement(0x0028, 0x0011, 'US', us(width)),
+		dicomElement(0x0028, 0x0030, 'DS', text('0.5\\0.75')),
 		dicomElement(0x0028, 0x0100, 'US', us(16)),
 		dicomElement(0x0028, 0x0101, 'US', us(12)),
 		dicomElement(0x0028, 0x0102, 'US', us(11)),

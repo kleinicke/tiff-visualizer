@@ -48,6 +48,7 @@ export class MessageRouter {
 		this.handlers.set('requestInitialLayers', new RequestInitialLayersMessageHandler());
 		this.handlers.set('log', new LogMessageHandler());
 		this.handlers.set('positionCopied', new PositionCopiedMessageHandler());
+		this.handlers.set('showMessage', new ShowMessageMessageHandler());
 		this.handlers.set('measureSaveText', new MeasureSaveTextMessageHandler());
 		this.handlers.set('measureSaveBinary', new MeasureSaveBinaryMessageHandler());
 		this.handlers.set('measureSaveSidecar', new MeasureSaveSidecarMessageHandler());
@@ -338,6 +339,23 @@ class LogMessageHandler implements MessageHandler {
 			const output = require('../extension').getOutputChannel();
 			output.appendLine(message.value);
 		}
+	}
+}
+
+/**
+ * Surface a short webview-side notice through the VS Code notification API.
+ *
+ * The webview has no notification surface of its own, so anything it needs to
+ * tell the user about a command they just ran — a toggle that could not do
+ * anything, for instance — has to come back out here.
+ */
+class ShowMessageMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		const text = String(message.message || '').trim();
+		if (!text) { return; }
+		if (message.level === 'warning') { vscode.window.showWarningMessage(text); }
+		else if (message.level === 'error') { vscode.window.showErrorMessage(text); }
+		else { vscode.window.showInformationMessage(text); }
 	}
 }
 

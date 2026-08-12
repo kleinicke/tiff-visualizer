@@ -1575,6 +1575,16 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleScaleBar', () => {
+		logCommand('toggleScaleBar', 'start');
+		try {
+			previewManager.activePreview?.toggleScaleBar();
+			logCommand('toggleScaleBar', 'success');
+		} catch (error) {
+			logCommand('toggleScaleBar', 'error', String(error));
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleMeasure', () => {
 		logCommand('toggleMeasure', 'start');
 		try {
