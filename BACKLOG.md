@@ -1547,13 +1547,18 @@ The migratable surface is roughly **12,000 of the 44,000 webview lines** — abo
 27% by volume, but close to 100% of the code where correctness bugs and
 frame-time actually live. Expect the crate to grow to roughly 15–18k lines.
 
-### Phase 0 — split the crate first (prerequisite)
+### Phase 0 — split the crate first (prerequisite) — implemented
 
-`lib.rs` is already 5,121 lines. Everything below at least doubles it, so
-modularize before adding: `formats/{tiff,exr,hdr,png,jpeg}.rs`,
-`pipeline/`, `measure/`, `writers/`, with `lib.rs` reduced to
-`#[wasm_bindgen]` surface and the result structs. Also settle the boundary
-conventions now, because they get replicated ~30 times:
+`lib.rs` was 5,121 lines. It is now 572 lines holding only the
+`#[wasm_bindgen]` surface and the result structs, with the logic moved verbatim
+into `formats/{exr,hdr,png}.rs`, `formats/tiff/{mod,tags,strips,codecs,
+orientation,cmyk}.rs`, `pipeline/stats.rs`, and
+`compositor/{mod,adjustments,blend}.rs` (`demosaic.rs` unchanged). No
+`formats/jpeg.rs` exists: the whole JPEG path is `#[wasm_bindgen]` surface, so
+it stayed in `lib.rs`. The generated `pkg/tiff_wasm.d.ts` is byte-identical to
+the pre-split build, so the exported API did not move.
+
+Still to settle as the ports land — these conventions get replicated ~30 times:
 
 - Zero-copy out via `take_data_as_f32()`/`take_data_as_u8()` — the existing
   pattern; never return `Vec` by clone.
@@ -1564,7 +1569,7 @@ conventions now, because they get replicated ~30 times:
 - One `wasm-pack` build feeding both the decode worker and the compositor
   worker; do not create a second crate.
 
-**Difficulty: 2.** Pure refactor, no behavior change.
+**Difficulty: 2.** Pure refactor, no behavior change. Done.
 
 ### Phase 1 — remaining decoders (~3,500 lines)
 

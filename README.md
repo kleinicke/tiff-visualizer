@@ -1,12 +1,12 @@
 # Scientific Image Visualizer for Visual Studio Code
 
-Inspect high-bit-depth, floating-point, scientific, and standard image files directly inside Visual Studio Code.
+Rust-based image decoding and GPU accelerated rendering for high-bit-depth, floating-point, scientific, and standard image files inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), FITS, DICOM, classic NetCDF, Zeiss CZI, EXR, NPY/NPZ,
-PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM. Layered creative documents
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF and Zeiss CZI.
+Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
-The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export rendered or layered results. Uses Rust for decoding several formats and the GPU for rendering to provide the fastest possible extension.
+The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export rendered or layered results. Decoding runs in Rust compiled to WebAssembly and compositing runs on the GPU, so large scientific images open and respond at native speed.
 
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
@@ -33,8 +33,7 @@ Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as
 
 ## Features
 
-- **Fast and versatile TIFF Support**: Fast TIFF decoding using [Rust](https://github.com/image-rs/image-tiff). Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files.
-- **Advanced TIFF Support**: Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files. Fast TIFF loading via Rust/WebAssembly, with geotiff.js fallback for compatibility.
+- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files.
 - **Scientific Image Inspection**: Inspect uint8, uint16, float16, and float32 image data in grayscale, RGB, and RGBA images.
 - **Dataset Navigation**: Browse DICOM series/slices and multi-file OME C/Z/T planes as one logical dataset while the viewer switches physical files transparently.
 - **Interactive Pixel Values**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.

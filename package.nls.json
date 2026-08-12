@@ -1,6 +1,6 @@
 {
 	"displayName": "Scientific Image Visualizer",
-	"description": "Provides scientific image visualization to VS Code",
+	"description": "Native-speed scientific image visualization for VS Code, with Rust/WebAssembly decoding and GPU rendering",
 	"customEditor.tiffVisualizer.displayName": "Scientific Image Visualizer",
 	"command.zoomIn": "Zoom in",
 	"command.zoomOut": "Zoom out",

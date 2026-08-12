@@ -1,7 +1,7 @@
 {
   "name": "tiff-visualizer",
   "displayName": "Scientific Image Visualizer",
-  "description": "Analyze more than 25 integer and floating-point image formats with precise pixel inspection, multidimensional navigation, interactive visualization, comparison, and layer compositing.",
+  "description": "Rust-based decoding and GPU rendering for more than 25 integer and floating-point image formats, with precise pixel inspection, multidimensional navigation, interactive visualization, comparison, and layer compositing.",
   "version": "1.9.1",
   "publisher": "kleinicke",
   "icon": "icon.png",
