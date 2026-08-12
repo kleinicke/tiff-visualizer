@@ -27,7 +27,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_jpeg_fast, decode_png16_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_jpeg_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { NpyProcessor } from './modules/npy-processor.js';
 import { PfmProcessor } from './modules/pfm-processor.js';
 import { PpmProcessor } from './modules/ppm-processor.js';
@@ -505,15 +505,158 @@ async function decodePng16(buffer: ArrayBuffer) {
 	}
 }
 
-function decodePpmWorker(buffer: ArrayBuffer) {
+function decodePfmWasm(buffer: ArrayBuffer) {
+	if (!tiffWasmReady || typeof decode_pfm_fast !== 'function') {
+		throw new Error('PFM WASM decoder not initialized');
+	}
+	const timings = [];
+	const phaseStart = performance.now();
+	// The worker always wants the vertical flip applied (row 0 = topmost),
+	// matching the TS parser's `{ topDown: true }` call in decodeFormat below.
+	const result = decode_pfm_fast(new Uint8Array(buffer), true);
+	const now = performance.now();
+	timings.push({ name: 'decode-pfm-rust', durationMs: now - phaseStart });
+
+	const data = result.take_data_as_f32();
+	return {
+		width: result.width,
+		height: result.height,
+		channels: result.channels,
+		data,
+		decodedWith: 'rust-pfm-wasm (worker)',
+		decodeTimings: timings
+	};
+}
+
+function decodePfmFallback(buffer: ArrayBuffer, wasmError = '') {
 	const start = performance.now();
-	const result = ppmParser._parsePpm(buffer);
+	const result: any = pfmParser._parsePfm(buffer, { topDown: true });
+	result.decodedWith = 'ts-pfm-parser (worker)';
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
+	result.decodeTimings = [{ name: 'decode-pfm-parse', durationMs: performance.now() - start }];
+	return result;
+}
+
+async function decodePfm(buffer: ArrayBuffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodePfmWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM PFM decode failed');
+		console.warn('[DecodeWorker] PFM WASM decode failed, using TS parser in worker:', message);
+		return decodePfmFallback(buffer, message);
+	}
+}
+
+function decodePpmWasm(buffer: ArrayBuffer) {
+	if (!tiffWasmReady || typeof decode_ppm_fast !== 'function') {
+		throw new Error('PPM WASM decoder not initialized');
+	}
+	const timings = [];
+	const phaseStart = performance.now();
+	const result = decode_ppm_fast(new Uint8Array(buffer));
+	const now = performance.now();
+	timings.push({ name: 'decode-ppm-rust', durationMs: now - phaseStart });
+
+	const data = result.is_16bit ? result.take_data_as_u16() : result.take_data_as_u8();
+	return {
+		width: result.width,
+		height: result.height,
+		channels: result.channels,
+		data,
+		maxval: result.maxval,
+		format: result.format,
+		decodedWith: 'rust-ppm-wasm (worker)',
+		decodeTimings: timings
+	};
+}
+
+function decodePpmFallback(buffer: ArrayBuffer, wasmError = '') {
+	const start = performance.now();
+	const result: any = ppmParser._parsePpm(buffer);
 	const parseTimings = Array.isArray(result.decodeTimings) ? result.decodeTimings : [];
+	result.decodedWith = 'ts-ppm-parser (worker)';
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
 	result.decodeTimings = [
 		{ name: 'decode-ppm-parse', durationMs: performance.now() - start },
 		...parseTimings
 	];
 	return result;
+}
+
+async function decodePpm(buffer: ArrayBuffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodePpmWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM PPM decode failed');
+		console.warn('[DecodeWorker] PPM WASM decode failed, using TS parser in worker:', message);
+		return decodePpmFallback(buffer, message);
+	}
+}
+
+function decodeNpyWasm(buffer: ArrayBuffer) {
+	if (!tiffWasmReady || typeof decode_npy_fast !== 'function') {
+		throw new Error('NPY WASM decoder not initialized');
+	}
+	const timings = [];
+	const phaseStart = performance.now();
+	// decode_npy_fast dispatches internally between plain .npy and .npz
+	// (ZIP) archives on the local-file-header signature.
+	const result = decode_npy_fast(new Uint8Array(buffer));
+	const now = performance.now();
+	timings.push({ name: 'decode-npy-rust', durationMs: now - phaseStart });
+
+	const data = result.take_data_as_f32();
+	return {
+		width: result.width,
+		height: result.height,
+		channels: result.channels,
+		dtype: result.dtype,
+		showNorm: result.show_norm,
+		data,
+		decodedWith: 'rust-npy-wasm (worker)',
+		decodeTimings: timings
+	};
+}
+
+function decodeNpyFallback(buffer: ArrayBuffer, wasmError = '') {
+	const start = performance.now();
+	const view = new DataView(buffer);
+	// NPZ (ZIP) signature 0x04034b50
+	const result: any = (buffer.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50)
+		? npyParser._parseNpz(buffer)
+		: npyParser._parseNpy(buffer);
+	result.decodedWith = 'ts-npy-parser (worker)';
+	if (wasmError) {
+		result.wasmFallbackReason = wasmError;
+	}
+	result.decodeTimings = [{ name: 'decode-npy-parse', durationMs: performance.now() - start }];
+	return result;
+}
+
+async function decodeNpy(buffer: ArrayBuffer) {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
+	}
+	try {
+		return decodeNpyWasm(buffer);
+	} catch (error) {
+		const message = String((error instanceof Error ? error.message : error) || 'WASM NPY decode failed');
+		console.warn('[DecodeWorker] NPY WASM decode failed, using TS parser in worker:', message);
+		return decodeNpyFallback(buffer, message);
+	}
 }
 
 async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}) {
@@ -522,18 +665,12 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeTiff(buffer, Number(options.pageIndex || 0));
 		case 'exr':
 			return decodeExr(buffer);
-		case 'npy': {
-			const view = new DataView(buffer);
-			// NPZ (ZIP) signature 0x04034b50
-			if (buffer.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50) {
-				return npyParser._parseNpz(buffer);
-			}
-			return npyParser._parseNpy(buffer);
-		}
+		case 'npy':
+			return decodeNpy(buffer);
 		case 'pfm':
-			return pfmParser._parsePfm(buffer, { topDown: true });
+			return decodePfm(buffer);
 		case 'ppm':
-			return decodePpmWorker(buffer);
+			return decodePpm(buffer);
 		case 'png16':
 			return decodePng16(buffer);
 		case 'hdr':

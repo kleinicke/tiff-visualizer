@@ -18,6 +18,9 @@ use formats::tiff::tags::extract_bare_ifd_tags_json;
 use formats::exr::decode_exr_impl;
 use formats::png::decode_png16_impl;
 use formats::hdr::decode_hdr_impl;
+use formats::pfm::decode_pfm_impl;
+use formats::netpbm::decode_ppm_impl;
+use formats::npy::decode_npy_impl;
 
 use wasm_bindgen::prelude::*;
 use std::io::Cursor;
@@ -108,6 +111,111 @@ pub struct HdrResult {
     data_f32: Vec<f32>,
     metadata_f64: Vec<f64>,
     all_tags_json: String,
+}
+
+#[wasm_bindgen]
+pub struct PfmResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    data_f32: Vec<f32>,
+}
+
+#[wasm_bindgen]
+pub struct PpmResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    maxval: u32,
+    is_16bit: bool,
+    format: String,
+    data_u8: Vec<u8>,
+    data_u16: Vec<u16>,
+}
+
+#[wasm_bindgen]
+pub struct NpyResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    dtype: String,
+    show_norm: bool,
+    data_f32: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl NpyResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 { self.channels }
+
+    #[wasm_bindgen(getter)]
+    pub fn dtype(&self) -> String { self.dtype.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn show_norm(&self) -> bool { self.show_norm }
+
+    #[wasm_bindgen]
+    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
+        mem::take(&mut self.data_f32)
+    }
+}
+
+#[wasm_bindgen]
+impl PfmResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 { self.channels }
+
+    #[wasm_bindgen]
+    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
+        mem::take(&mut self.data_f32)
+    }
+}
+
+#[wasm_bindgen]
+impl PpmResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 { self.channels }
+
+    #[wasm_bindgen(getter)]
+    pub fn maxval(&self) -> u32 { self.maxval }
+
+    #[wasm_bindgen(getter)]
+    pub fn is_16bit(&self) -> bool { self.is_16bit }
+
+    #[wasm_bindgen(getter)]
+    pub fn format(&self) -> String { self.format.clone() }
+
+    /// Returns the raster as `Vec<u8>` when `is_16bit` is false; otherwise an
+    /// empty `Vec`.
+    #[wasm_bindgen]
+    pub fn take_data_as_u8(&mut self) -> Vec<u8> {
+        mem::take(&mut self.data_u8)
+    }
+
+    /// Returns the raster as `Vec<u16>` when `is_16bit` is true; otherwise an
+    /// empty `Vec`.
+    #[wasm_bindgen]
+    pub fn take_data_as_u16(&mut self) -> Vec<u16> {
+        mem::take(&mut self.data_u16)
+    }
 }
 
 /// Small, format-neutral result used when a container (currently DICOM)
@@ -569,4 +677,44 @@ pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, JsValue> {
     console_error_panic_hook::set_once();
 
     decode_hdr_impl(data)
+}
+
+/// Decode a Portable Float Map (PFM). `top_down` requests a vertical flip so
+/// row 0 of the output is the PFM file's last (topmost, in image space) row —
+/// the worker always passes `true` to match the existing TS parser's
+/// `{ topDown: true }` call.
+#[wasm_bindgen]
+pub fn decode_pfm_fast(data: &[u8], top_down: bool) -> Result<PfmResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    decode_pfm_impl(data, top_down)
+}
+
+/// Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
+#[wasm_bindgen]
+pub fn decode_ppm_fast(data: &[u8]) -> Result<PpmResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    decode_ppm_impl(data)
+}
+
+/// Decode a NumPy `.npy` file or a `.npz` archive. Dispatches internally on
+/// the ZIP local-file-header signature in the first 4 bytes, mirroring the
+/// worker's existing `case 'npy':` dispatch.
+#[wasm_bindgen]
+pub fn decode_npy_fast(data: &[u8]) -> Result<NpyResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    let parsed = decode_npy_impl(data)?;
+    Ok(NpyResult {
+        width: parsed.width,
+        height: parsed.height,
+        channels: parsed.channels,
+        dtype: parsed.dtype,
+        show_norm: parsed.show_norm,
+        data_f32: parsed.data,
+    })
 }

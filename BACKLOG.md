@@ -1580,16 +1580,38 @@ collapses a WASM-plus-JS-fallback pair into one code path.
   (1,050) — FITS, DICOM, NetCDF. DICOM is the strongest candidate of the three:
   transfer syntaxes and pixel representation are exactly where hand-written JS
   accumulates edge cases, and `dicom-rs` exists.
-- [`npy-processor.ts`](media/modules/npy-processor.ts) (539),
-  [`ppm-processor.ts`](media/modules/ppm-processor.ts) (552),
-  [`pfm-processor.ts`](media/modules/pfm-processor.ts) (356) — small, fully
-  specified, ideal first ports to validate the boundary conventions.
-- [`ome-tiff.ts`](media/modules/ome-tiff.ts) (384) XML/metadata parsing, and CZI.
+- [x] [`pfm-processor.ts`](media/modules/pfm-processor.ts) `_parsePfm` →
+      [`formats/pfm.rs`](wasm/tiff-decoder/src/formats/pfm.rs),
+      [`ppm-processor.ts`](media/modules/ppm-processor.ts) `_parsePpm` →
+      [`formats/netpbm.rs`](wasm/tiff-decoder/src/formats/netpbm.rs), and
+      [`npy-processor.ts`](media/modules/npy-processor.ts)
+      `_parseNpy`/`_parseNpz` → [`formats/npy.rs`](wasm/tiff-decoder/src/formats/npy.rs).
+      These validated the boundary conventions. **Note the line counts above were
+      misleading:** only ~65 / ~215 / ~130 lines of each file are byte-parsing;
+      the rest is render orchestration that correctly stays TypeScript.
+      The worker prefers WASM and falls back to the TS parser
+      (`decodePfm`/`decodePpm`/`decodeNpy`, mirroring `decodePng16`), so the
+      fallback pair is not collapsed yet — see below.
+- [ ] [`ome-tiff.ts`](media/modules/ome-tiff.ts) (384) XML/metadata parsing, and CZI.
+- [ ] **Collapse the fallbacks.** The three ports above are conformance-tested
+      (`test:rust-netpbm` 25 checks, `test:rust-npy` 32 checks — TS vs Rust,
+      element-wise, on fixtures plus synthesized inputs covering the dtype
+      matrix, big-endian rasters, NaN/±Inf/−0, and matching error text). The TS
+      parsers are retained only as a WASM-init-failure fallback. Deleting them
+      is a separate decision, since it makes `wasm-pack` output a hard runtime
+      requirement rather than an optimization.
 - Retires the standing **"remove geotiff fallback"** item below, plus the
   `parse-exr`, `upng` and `pako` fallbacks, once each Rust path is conformance-
   tested against the golden corpus.
 
 **Difficulty: 3.** Mostly volume; DICOM alone is a 3.
+
+**Bug-for-bug porting.** The ports reproduce TS quirks rather than fixing them,
+so conformance is provable. Two are latent TS bugs now mirrored in Rust and
+worth fixing in both at once, deliberately, rather than silently diverging:
+`>f8` NPY (big-endian float64) is read little-endian because the TS uses a
+native-endian `Float64Array` view; and NPZ entries whose ZIP `compSize` is the
+`0xFFFFFFFF` data-descriptor placeholder rely on `ArrayBuffer.slice` clamping.
 
 ### Phase 2 — the pixel pipeline (~3,000 lines)
 
