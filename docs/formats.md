@@ -10,6 +10,7 @@
 | EXR | No | No | Yes | Yes | HDR floating-point |
 | NPY / NPZ | Yes | Yes | Yes | Yes | Also float64 and signed/unsigned integers up to 64 bit |
 | FITS / DICOM / NetCDF | Yes | Yes | No | Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes |
+| CZI | Yes | Yes | No | Yes | Zeiss microscopy; uncompressed subblocks, Z/C/T plane selection, mosaic tiles |
 | HDR | No | No | No | Yes | Radiance RGBE, decoded to float32 |
 | PFM | No | No | No | Yes | Portable Float Map |
 | PPM / PGM / PBM | Yes | Yes | No | No | PBM is 1-bit, shown as 8-bit |
@@ -74,9 +75,9 @@ arrays for selection.
 This is usually the shortest path from a research script to a picture: save an
 intermediate tensor with `np.save`, click it in the Explorer.
 
-### FITS, DICOM and NetCDF
+### FITS, DICOM, NetCDF and CZI
 
-These three share a lifecycle: parse the container, list the numeric arrays it
+These share a lifecycle: parse the container, list the numeric arrays it
 holds, let you pick one, then treat it as an image with extra dimensions.
 
 - **FITS** — numeric HDUs from astronomy pipelines.
@@ -87,6 +88,12 @@ holds, let you pick one, then treat it as an image with extra dimensions.
 - **NetCDF** — classic (v3) format. Regular X/Y variables render as rasters;
   MPAS `nCells` fields render on their unstructured cell polygons in an
   equirectangular mesh view.
+- **CZI** — Zeiss microscopy (ZISRAW). Each plane is stored as its own
+  subblock, so the overlay gives one slider per non-spatial axis (Z, C, T, ...)
+  and mosaic tiles are assembled into the full frame. Channel sliders are
+  labelled with the dye name from the embedded metadata, and pixel scaling is
+  reported in micrometres. Only uncompressed subblocks decode; JPEG, JPEG XR
+  and Zstd subblocks report the codec they would need.
 
 See [datasets](./datasets.md) for navigation.
 
@@ -118,6 +125,7 @@ one that looks plausible and is wrong.
 ## Not supported
 
 - NetCDF-4 / HDF5 containers (classic NetCDF only)
+- Compressed CZI subblocks (JPEG, JPEG XR, Zstd) and multi-file CZI sets
 - DICOM compression other than JPEG Baseline
 - Writing back to any scientific format — export targets are listed in
   [export](./export.md)

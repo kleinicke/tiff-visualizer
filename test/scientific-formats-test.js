@@ -8,7 +8,7 @@ const parserPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'scient
 if (!fs.existsSync(parserPath)) {
 	throw new Error('Compile first with npm run compile');
 }
-const { extractDicomJpegFrame, parseFits, parseDicom, parseNetCdf } = require(parserPath);
+const { extractDicomJpegFrame, parseFits, parseDicom, parseNetCdf, parseCzi } = require(parserPath);
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');
 
 function arrayBuffer(file) {
@@ -100,14 +100,58 @@ function testMpasNetCdf() {
 	console.log('✅ Real MPAS NetCDF: variable selection and nCells mesh projection');
 }
 
+
+function testCzi() {
+	const buffer = arrayBuffer('synthetic-stack.czi');
+	const image = parseCzi(buffer);
+	// Two 16px tiles blitted side by side into one 32px-wide plane.
+	assert.deepStrictEqual([image.width, image.height, image.channels], [32, 24, 1]);
+	assert.strictEqual(image.metadata.pixelTypeName, 'Gray8');
+	assert.strictEqual(image.metadata.tileCount, 2, 'both mosaic tiles should be assembled');
+	assert.strictEqual(image.metadata.subBlockCount, 12);
+	assert.deepStrictEqual(image.numericDomain, {
+		bitsPerSample: 8, sampleFormat: 1,
+		typeMin: 0, typeMax: 255, sourceNumericType: 'uint8',
+	});
+	// Pixel value is (tileOffset + x + z * 40 + c * 100); Z=0, C=0 here.
+	assert.strictEqual(image.data[0], 0);
+	assert.strictEqual(image.data[15], 15);
+	assert.strictEqual(image.data[16], 16, 'second tile should start at x=16');
+	assert.strictEqual(image.data[31], 31);
+
+	// Selectors expose only the axes with more than one coordinate; M is a
+	// mosaic axis and must not be offered as a plane selector.
+	assert.deepStrictEqual(image.metadata.selectors, [
+		{ name: 'C', size: 2, value: 0 },
+		{ name: 'Z', size: 3, value: 0 },
+	]);
+	assert.deepStrictEqual(image.metadata.channelNames, ['DAPI', 'GFP']);
+	assert.strictEqual(image.metadata.channelName, 'DAPI');
+	assert.ok(Math.abs(image.metadata.scalingXUm - 0.1) < 1e-9);
+	assert.ok(Math.abs(image.metadata.scalingZUm - 0.5) < 1e-9);
+
+	const plane = parseCzi(buffer, { indices: { Z: 2, C: 1 } });
+	assert.strictEqual(plane.data[0], 2 * 40 + 100);
+	assert.strictEqual(plane.metadata.channelName, 'GFP');
+	assert.strictEqual(plane.metadata.selectors.find(s => s.name === 'Z').value, 2);
+
+	// Out-of-range coordinates clamp instead of throwing.
+	const clamped = parseCzi(buffer, { indices: { Z: 99 } });
+	assert.strictEqual(clamped.metadata.selectors.find(s => s.name === 'Z').value, 2);
+
+	assert.throws(() => parseCzi(new Uint8Array(64).buffer), /Invalid CZI signature/);
+	console.log('✅ CZI: mosaic assembly, Z/C plane selection, channel names, scaling');
+}
+
 async function main() {
-	console.log('Running FITS/DICOM/NetCDF parser tests...');
+	console.log('Running FITS/DICOM/NetCDF/CZI parser tests...');
 	testFits();
 	testDicom();
 	await testJpegBaselineDicom();
 	testNetCdf();
+	testCzi();
 	testMpasNetCdf();
-	console.log('FITS, DICOM, and NetCDF parser tests passed.');
+	console.log('FITS, DICOM, NetCDF, and CZI parser tests passed.');
 }
 
 main().catch(error => {

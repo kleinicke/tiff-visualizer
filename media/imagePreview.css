@@ -382,7 +382,8 @@ body img {
 	white-space: nowrap;
 }
 
-.netcdf-view-info {
+.netcdf-view-info,
+.czi-view-info {
 	padding-top: 4px;
 	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 	color: var(--vscode-descriptionForeground, #aaa);

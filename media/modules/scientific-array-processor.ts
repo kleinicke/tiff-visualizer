@@ -9,9 +9,9 @@ import type { ScientificDecodedImage } from './scientific-format-parsers.js';
 type VsCodeApi = { postMessage: (msg: any) => any };
 
 export interface ScientificArrayProcessorConfig {
-	workerFormat: 'fits' | 'dicom' | 'netcdf';
+	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi';
 	formatLabel: string;
-	formatType: 'fits' | 'dicom' | 'netcdf';
+	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi';
 	parse: (buffer: ArrayBuffer, options?: Record<string, any>) => ScientificDecodedImage | Promise<ScientificDecodedImage>;
 }
 

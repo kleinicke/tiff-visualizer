@@ -2,7 +2,7 @@
 
 Inspect high-bit-depth, floating-point, scientific, and standard image files directly inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), FITS, DICOM, classic NetCDF, EXR, NPY/NPZ,
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), FITS, DICOM, classic NetCDF, Zeiss CZI, EXR, NPY/NPZ,
 PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM and PGM. Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
@@ -17,7 +17,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | TIFF / OME-TIFF                              |   Yes |     Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation                                                                                                                                                                  |
 | EXR                                          |    No |      No |     Yes |     Yes | HDR floating-point format                                                                                                                                                                                                           |
 | NPY / NPZ                                    |   Yes |     Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit                                                                                                                                                                     |
-| FITS / DICOM / NetCDF                        |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, and MPAS meshes                                                                                                                                                        |
+| FITS / DICOM / NetCDF / Zeiss CZI            |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, and MPAS meshes                                                                                                                                                        |
 | HDR                                          |    No |      No |      No |     Yes | Radiance RGBE, decoded to float32                                                                                                                                                                                                   |
 | PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
@@ -27,7 +27,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
-NetCDF-4/HDF5 and DICOM compression other than JPEG Baseline are not yet supported.
+NetCDF-4/HDF5, compressed CZI subblocks (JPEG, JPEG XR, Zstd), and DICOM compression other than JPEG Baseline are not yet supported.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
 Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as DICOM Dataset**. The viewer scans technical headers, groups images by series, removes duplicate SOP instances, and orders slices spatially.
 
@@ -77,6 +77,7 @@ Float Image Visualization Options:
 - **OME-TIFF:** Navigate images/series, channels, Z slices, and timepoints from OME-XML. Multi-file datasets are presented as one logical image while C/Z/T changes transparently select the referenced TIFF and IFD. `BinaryOnly` members automatically follow metadata stored in a master OME-TIFF or companion `.ome`/`.ome.xml` file.
 - **DICOM:** Use **TIFF Visualizer: Open Folder as DICOM Dataset**, select an acquisition series, and navigate its slices and available time, echo, and frame dimensions. Physical files remain grouped by DICOM identity instead of being mixed into a filename-sorted collection. Multi-frame objects, including JPEG Baseline objects, expose a Frame control.
 - **Ordinary multi-page TIFF:** Navigate top-level pages even when no semantic dimension metadata is available.
+- **CZI:** Move through Z, C and T with one slider per axis; channel sliders show the dye name from the embedded metadata. Mosaic tiles are assembled into the full frame.
 - **NetCDF:** Select a numeric variable and move through its non-spatial dimensions. Regular X/Y arrays render as rasters; MPAS `nCells` fields render on their unstructured cell polygons in an equirectangular mesh view.
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.

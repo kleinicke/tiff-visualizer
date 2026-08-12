@@ -1031,7 +1031,7 @@ export class ImagePreview extends MediaPreview {
 		const isTga = lower.endsWith('.tga');
 		const isWebImage = lower.endsWith('.webp') || lower.endsWith('.avif') || lower.endsWith('.bmp') || lower.endsWith('.ico');
 		const isJxl = lower.endsWith('.jxl');
-		const isScientificArray = /\.(?:fits|fit|fts|dcm|dicom|nc|cdf)$/.test(lower);
+		const isScientificArray = /\.(?:fits|fit|fts|dcm|dicom|nc|cdf|czi)$/.test(lower);
 		const isLayeredDocument = /\.(?:ora|kra|psd|psb|xcf|afphoto|af)$/.test(lower);
 		this._isTiff = isTiff || isPpm || isPng || isPfm || isNpy || isExr || isHdr || isTga || isWebImage || isJxl || isScientificArray || isLayeredDocument;
 

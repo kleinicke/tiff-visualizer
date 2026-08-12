@@ -115,7 +115,115 @@ function writeNetCdf() {
 	fs.writeFileSync(path.join(outputDir, 'synthetic-temperature.nc'), Buffer.concat([headerWithoutBegin, u32(dataOffset), data]));
 }
 
+
+/**
+ * Synthetic CZI: a 2x1 mosaic (so tile blitting is covered) across Z=0..2 and
+ * C=0..1, Gray8, uncompressed. Segments are laid out exactly as ZISRAW requires:
+ * a 512-byte file header, then subblocks, then the subblock directory.
+ */
+function writeCzi() {
+	const tileWidth = 16;
+	const tileHeight = height;
+	const tilesX = 2;
+	const sizeZ = 3;
+	const sizeC = 2;
+	const segment = (id, data, allocated = data.length) => {
+		const header = Buffer.alloc(32);
+		header.write(id, 0, 'ascii');
+		header.writeBigInt64LE(BigInt(allocated), 16);
+		header.writeBigInt64LE(BigInt(data.length), 24);
+		return Buffer.concat([header, data, Buffer.alloc(allocated - data.length)]);
+	};
+	// DirectoryEntryDV: 32 fixed bytes + 20 bytes per dimension entry.
+	const directoryEntry = (filePosition, dims) => {
+		const entry = Buffer.alloc(32 + dims.length * 20);
+		entry.write('DV', 0, 'ascii');
+		entry.writeInt32LE(0, 2);                    // PixelType Gray8
+		entry.writeBigInt64LE(BigInt(filePosition), 6);
+		entry.writeInt32LE(0, 14);                   // FilePart
+		entry.writeInt32LE(0, 18);                   // Compression: uncompressed
+		entry.writeInt32LE(dims.length, 28);
+		dims.forEach(([name, start, size], index) => {
+			const at = 32 + index * 20;
+			entry.write(name, at, 'ascii');
+			entry.writeInt32LE(start, at + 4);
+			entry.writeInt32LE(size, at + 8);
+			entry.writeFloatLE(0, at + 12);
+			entry.writeInt32LE(size, at + 16);       // StoredSize == Size: full resolution
+		});
+		return entry;
+	};
+
+	const xml = Buffer.from(`<ImageDocument><Metadata><Information><Image>`
+		+ `<SizeX>${tileWidth * tilesX}</SizeX><SizeY>${tileHeight}</SizeY>`
+		+ `<SizeZ>${sizeZ}</SizeZ><SizeC>${sizeC}</SizeC><PixelType>Gray8</PixelType>`
+		+ `<Dimensions><Channels>`
+		+ `<Channel Id="C0"><DyeName>DAPI</DyeName></Channel>`
+		+ `<Channel Id="C1"><DyeName>GFP</DyeName></Channel>`
+		+ `</Channels></Dimensions></Image></Information>`
+		+ `<Scaling><Items><Distance Id="X"><Value>1e-007</Value></Distance></Items></Scaling>`
+		+ `<ScalingX>1e-007</ScalingX><ScalingY>1e-007</ScalingY><ScalingZ>5e-007</ScalingZ>`
+		+ `</Metadata></ImageDocument>`, 'utf8');
+	const metadataSegment = segment('ZISRAWMETADATA', Buffer.concat([
+		(() => { const fixed = Buffer.alloc(256); fixed.writeInt32LE(xml.length, 0); return fixed; })(),
+		xml,
+	]));
+
+	const headerSize = 32 + 512;
+	const subBlocks = [];
+	const entries = [];
+	let position = headerSize + metadataSegment.length;
+	for (let z = 0; z < sizeZ; z++) {
+		for (let c = 0; c < sizeC; c++) {
+			for (let tile = 0; tile < tilesX; tile++) {
+				const dims = [
+					['X', tile * tileWidth, tileWidth], ['Y', 0, tileHeight],
+					['Z', z, 1], ['C', c, 1], ['M', tile, 1],
+				];
+				const pixels = Buffer.alloc(tileWidth * tileHeight);
+				for (let y = 0; y < tileHeight; y++) {
+					for (let x = 0; x < tileWidth; x++) {
+						// Encodes tile, z and c so tests can verify plane selection and placement.
+						pixels[y * tileWidth + x] = (tile * 16 + x + z * 40 + c * 100) & 0xff;
+					}
+				}
+				const inline = directoryEntry(position, dims);
+				const fixed = Buffer.alloc(Math.max(256, 16 + inline.length));
+				fixed.writeInt32LE(0, 0);                        // MetadataSize
+				fixed.writeInt32LE(0, 4);                        // AttachmentSize
+				fixed.writeBigInt64LE(BigInt(pixels.length), 8); // DataSize
+				inline.copy(fixed, 16);
+				const block = segment('ZISRAWSUBBLOCK', Buffer.concat([fixed, pixels]));
+				subBlocks.push(block);
+				entries.push(directoryEntry(position, dims));
+				position += block.length;
+			}
+		}
+	}
+
+	const directoryPosition = position;
+	const directoryData = Buffer.concat([
+		(() => { const fixed = Buffer.alloc(128); fixed.writeInt32LE(entries.length, 0); return fixed; })(),
+		...entries,
+	]);
+	const directorySegment = segment('ZISRAWDIRECTORY', directoryData);
+
+	const fileHeader = Buffer.alloc(512);
+	fileHeader.writeInt32LE(1, 0x00);   // Major
+	fileHeader.writeInt32LE(0, 0x04);   // Minor
+	fileHeader.writeInt32LE(0, 0x30);   // FilePart
+	fileHeader.writeBigInt64LE(BigInt(directoryPosition), 0x34);
+	fileHeader.writeBigInt64LE(BigInt(headerSize), 0x3c);  // MetadataPosition
+	fileHeader.writeInt32LE(0, 0x44);   // UpdatePending
+	fileHeader.writeBigInt64LE(0n, 0x48);
+
+	fs.writeFileSync(path.join(outputDir, 'synthetic-stack.czi'), Buffer.concat([
+		segment('ZISRAWFILE', fileHeader), metadataSegment, ...subBlocks, directorySegment,
+	]));
+}
+
 writeFits();
 writeDicom();
 writeNetCdf();
-console.log(`Generated FITS, DICOM, and NetCDF samples in ${outputDir}`);
+writeCzi();
+console.log(`Generated FITS, DICOM, NetCDF, and CZI samples in ${outputDir}`);

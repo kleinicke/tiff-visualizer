@@ -125,7 +125,7 @@ closes. See [rendering](./rendering.md).
 
 | Editor | Opens |
 | --- | --- |
-| Scientific Image Visualizer (`tiffVisualizer.previewEditor`) | `*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,ora,kra,psd,psb,xcf,afphoto,af}` |
+| Scientific Image Visualizer (`tiffVisualizer.previewEditor`) | `*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,czi,ora,kra,psd,psb,xcf,afphoto,af}` |
 | Scientific Image Visualizer (`tiffVisualizer.previewEditor.option`) | `*.{png,jpeg,jpg,bmp,ico,webp,avif}` |
 
 The `.option` editor is registered for formats VS Code already previews, so
