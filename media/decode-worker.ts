@@ -624,6 +624,14 @@ function collectTransferables(value: any, buffers: Set<ArrayBuffer> = new Set(),
 	return [...buffers];
 }
 
+/**
+ * Bytes of the most recently decoded source, retained for formats that decode
+ * one plane per request. A CZI stack re-decodes the same ~100MB file every time
+ * the user steps Z, and refetching plus re-transferring it dominates the decode
+ * itself. Only one entry is kept, so a different file simply evicts it.
+ */
+let sourceCache: { key: string, buffer: ArrayBuffer } | null = null;
+
 self.onmessage = async (event: MessageEvent<any>) => {
 	const msg = event.data;
 	if (msg.type === 'init') {
@@ -638,15 +646,40 @@ self.onmessage = async (event: MessageEvent<any>) => {
 	}
 
 	const { id, format, buffer, options } = msg;
+	const cacheKey = options?.sourceCacheKey ? String(options.sourceCacheKey) : '';
+	let servedFromCache = false;
 	try {
-		const result = await decodeFormat(format, buffer, options);
-		self.postMessage({ id, ok: true, result }, collectTransferables(result));
+		let source: ArrayBuffer = buffer;
+		if (cacheKey) {
+			if (!source?.byteLength && sourceCache?.key === cacheKey) {
+				source = sourceCache.buffer;
+				servedFromCache = true;
+			} else if (source?.byteLength) {
+				sourceCache = { key: cacheKey, buffer: source };
+			}
+			if (!source?.byteLength) {
+				// The caller withheld the bytes expecting a cache that is gone.
+				throw new Error('Source bytes are not cached in the decode worker');
+			}
+		}
+		const result = await decodeFormat(format, source, options);
+		// `sourceCached` tells the caller it may withhold the bytes next time.
+		// Decoders that opt in must copy out of the source rather than aliasing
+		// it, since the cached buffer outlives the response.
+		self.postMessage({ id, ok: true, result, sourceCached: !!cacheKey }, collectTransferables(result));
 	} catch (error) {
-		// Send the input bytes back (transferred) so the caller can fall back
-		// to its local decoder without refetching the file.
 		const message = String((error instanceof Error ? error.message : error) || 'decode failed');
+		// A failure involving the cache invalidates it: the caller has no bytes
+		// of its own to fall back on and must refetch.
+		if (cacheKey) { sourceCache = null; }
 		try {
-			self.postMessage({ id, ok: false, error: message, buffer }, [buffer]);
+			// Never transfer the cached buffer back — the caller did not send it,
+			// and detaching it would corrupt an entry another request may hold.
+			if (servedFromCache || !buffer?.byteLength) {
+				self.postMessage({ id, ok: false, error: message });
+			} else {
+				self.postMessage({ id, ok: false, error: message, buffer }, [buffer]);
+			}
 		} catch {
 			self.postMessage({ id, ok: false, error: message });
 		}

@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository Overview
 
 This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
+I want to move to more rust, so anything that touches pixels or parses bytes goes in Rust; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. Change it whenever possible.
 
 ## Development Commands
 

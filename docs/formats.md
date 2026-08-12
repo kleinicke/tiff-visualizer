@@ -90,7 +90,8 @@ holds, let you pick one, then treat it as an image with extra dimensions.
   equirectangular mesh view.
 - **CZI** — Zeiss microscopy (ZISRAW). Each plane is stored as its own
   subblock, so the overlay gives one slider per non-spatial axis (Z, C, T, ...)
-  and mosaic tiles are assembled into the full frame. Channel sliders are
+  and mosaic tiles are assembled into the full frame. Arrow keys step through Z
+  and `[` / `]` through channels, as for a dataset. Channel sliders are
   labelled with the dye name from the embedded metadata, and pixel scaling is
   reported in micrometres. Only uncompressed subblocks decode; JPEG, JPEG XR
   and Zstd subblocks report the codec they would need.

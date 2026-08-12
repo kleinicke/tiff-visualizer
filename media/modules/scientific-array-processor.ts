@@ -10,6 +10,12 @@ type VsCodeApi = { postMessage: (msg: any) => any };
 
 export interface ScientificArrayProcessorConfig {
 	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi';
+	/**
+	 * Keep the source bytes in the decode worker between requests. Worth it for
+	 * formats where one file is decoded repeatedly to show different planes, and
+	 * only safe when the parser copies out of the buffer instead of aliasing it.
+	 */
+	cacheSourceInWorker?: boolean;
 	formatLabel: string;
 	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi';
 	parse: (buffer: ArrayBuffer, options?: Record<string, any>) => ScientificDecodedImage | Promise<ScientificDecodedImage>;
@@ -19,6 +25,8 @@ export interface ScientificArrayProcessorConfig {
 export class ScientificArrayProcessor extends PfmProcessor {
 	config: ScientificArrayProcessorConfig;
 	metadata: Record<string, any> = {};
+	/** Source key the decode worker is believed to still hold, if any. */
+	_workerCachedSource = '';
 	numericDomain: ScientificDecodedImage['numericDomain'] = {
 		bitsPerSample: 32,
 		sampleFormat: 3,
@@ -34,17 +42,35 @@ export class ScientificArrayProcessor extends PfmProcessor {
 
 	async process(src: string, decodeOptions: Record<string, any> = {}) {
 		const signal = this.loadSignal;
-		const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, this.config.workerFormat);
+		// When the worker still holds this file, send no bytes at all: refetching
+		// a large stack per plane costs far more than the decode does. On a miss
+		// the worker fails the request and decodeWithFallback refetches.
+		const cacheKey = this.config.cacheSourceInWorker ? src : '';
+		const reuseWorkerSource = !!cacheKey
+			&& this._workerCachedSource === cacheKey
+			&& !!this.decodeWorker?.canDecode(this.config.workerFormat);
+		const buffer = reuseWorkerSource
+			? new ArrayBuffer(0)
+			: await DecodeWorkerClient.fetchArrayBuffer(src, signal, this.config.workerFormat);
 		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-		const decoded: ScientificDecodedImage = await DecodeWorkerClient.decodeWithFallback(
-			this.decodeWorker,
-			this.config.workerFormat,
-			buffer,
-			src,
-			signal,
-			(localBuffer, options) => this.config.parse(localBuffer, options),
-			decodeOptions,
-		);
+		const options = cacheKey ? { ...decodeOptions, sourceCacheKey: cacheKey } : decodeOptions;
+		let decoded: ScientificDecodedImage;
+		try {
+			decoded = await DecodeWorkerClient.decodeWithFallback(
+				this.decodeWorker,
+				this.config.workerFormat,
+				buffer,
+				src,
+				signal,
+				(localBuffer, opts) => this.config.parse(localBuffer, opts),
+				options,
+			);
+		} catch (error) {
+			// Never let a stale cache assumption strand the next load.
+			this._workerCachedSource = '';
+			throw error;
+		}
+		this._workerCachedSource = cacheKey;
 		this._cachedStats = undefined;
 		this.metadata = decoded.metadata || {};
 		this.numericDomain = decoded.numericDomain;

@@ -32,7 +32,7 @@ import {
 } from './modules/channel-composite.js';
 import { RoiManager } from './modules/measure/roi-manager.js';
 import { RoiOverlay } from './modules/measure/roi-overlay.js';
-import { autoCalibration, calibrationFromDicom, calibrationFromTagList } from './modules/measure/calibration.js';
+import { autoCalibration, calibrationFromCzi, calibrationFromDicom, calibrationFromTagList } from './modules/measure/calibration.js';
 import { importImageJRois } from './modules/measure/imagej-roi.js';
 import { deserializeRoi, parseSidecar, serializeRoi } from './modules/measure/roi-io.js';
 import { toScalarPlane, UNCALIBRATED, type Calibration, type MeasurementSource } from './modules/measure/types.js';
@@ -192,7 +192,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: parseFits });
 	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => parseDicomForBrowser(buffer, Number(options?.frameIndex || 0)) });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => parseNetCdf(buffer, options) });
-	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', parse: (buffer, options) => parseCzi(buffer, options) });
+	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => parseCzi(buffer, options) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
@@ -626,9 +626,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// the metadata of the file it decoded last, so without it a DICOM viewed
 		// earlier in the collection would go on calibrating a later TIFF in mm.
 		const dicom = dicomProcessor._lastRaw ? calibrationFromDicom(dicomProcessor.metadata) : null;
+		const czi = cziProcessor._lastRaw ? calibrationFromCzi(cziProcessor.metadata) : null;
 		const ome = tiffProcessor.rawTiffData?.ome || null;
 		const fromTags = calibrationFromTagList(tiffProcessor._lastAllTags as TagEntry[] | null);
-		measureCalibration = dicom
+		measureCalibration = dicom || czi
 			|| (ome ? autoCalibration(ome, null) : (fromTags || { ...UNCALIBRATED }));
 		roiOverlay.scheduleRedraw();
 	}
@@ -1049,6 +1050,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	let cziSelection: { indices: Record<string, number> } = persistedState?.cziSelection && typeof persistedState.cziSelection === 'object'
 		? { indices: { ...(persistedState.cziSelection.indices || {}) } }
 		: { indices: {} };
+	/** Plane axes of the loaded CZI, kept for keyboard navigation. */
+	let cziSelectors: { name: string, size: number, value: number }[] = [];
+	/** Axis signature currently rendered as slider rows, to avoid rebuilding them. */
+	let cziRenderedAxes = '';
+	let cziLoadInFlight = false;
+	let cziLoadPending = false;
 	let datasetManifest: DatasetManifest | null = null;
 	let datasetSeriesIndex = 0;
 	let datasetCoordinates: Record<string, number> = {};
@@ -1294,7 +1301,13 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// Without this, reverting a colormap decode would leave the menu/status
 		// bars showing the decoded single-channel-float format instead of the
 		// original image's format.
-		for (const p of allProcessors) { p._isInitialLoad = true; }
+		// A plane change stays inside the same file and format, so the per-format
+		// defaults have already been negotiated. Re-arming the flag would defer the
+		// render for another round trip to the extension host on every step, which
+		// is what made dragging a slider feel like reloading the file.
+		if (!options.planeChange) {
+			for (const p of allProcessors) { p._isInitialLoad = true; }
+		}
 
 		// Clear stats in UI to prevent stale values
 		vscode.postMessage({ type: 'stats', value: null });
@@ -1772,7 +1785,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			}
 			if (processor === cziProcessor) {
 				cziSelection = { indices: { ...(processor.metadata.selectedIndices || {}) } };
+				cziSelectors = Array.isArray(processor.metadata.selectors) ? processor.metadata.selectors : [];
 				updateCziOverlay(processor.metadata, false);
+				onCziLoadSettled();
 			}
 			if (processor === netcdfProcessor) {
 				netcdfSelection = {
@@ -1791,7 +1806,10 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
 			if (processor === netcdfProcessor) { netcdfOverlay?.classList.remove('dataset-overlay--loading'); }
-			if (processor === cziProcessor) { cziOverlay?.classList.remove('dataset-overlay--loading'); }
+			if (processor === cziProcessor) {
+				cziOverlay?.classList.remove('dataset-overlay--loading');
+				onCziLoadSettled();
+			}
 			console.error(`Error handling ${processor.config.formatLabel}:`, error);
 			onImageError(`Failed to load ${processor.config.formatLabel}: ${error instanceof Error ? error.message : String(error)}`);
 		}
@@ -3236,7 +3254,12 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const counter = overlayElement.querySelector('.image-counter');
 		if (counter && !activeCounterInput) {
 			const position = `${imageCollection.currentIndex + 1} of ${imageCollection.totalImages}`;
-			counter.innerHTML = `<span class="collection-loading-dot" aria-hidden="true"></span><span class="collection-loading-label">Loading</span> ${position}`;
+			// The loading signal is a pulsing dot drawn ahead of the ‹ button by
+			// CSS, laid out so it takes no width and nothing shifts. Putting a
+			// "Loading" word or an inline dot in the counter itself re-centred the
+			// position mid-switch, so it visibly jumped sideways and back.
+			// The state stays announced through aria-label for screen readers.
+			counter.textContent = position;
 			counter.setAttribute('aria-label', `Loading image ${position}`);
 		}
 		overlayElement.classList.add('image-collection-overlay--loading');
@@ -5035,6 +5058,32 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 			return !['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit'].includes(target.type);
 		};
 
+		/**
+		 * Keep keyboard focus off controls that do not need it.
+		 *
+		 * A focused range input or button consumes the arrow keys that drive
+		 * plane, page and collection navigation, so a single click on a slider
+		 * silently disabled every shortcut until the user clicked the image
+		 * again. Blurring on release costs nothing: dragging is pointer-driven
+		 * and has already finished by the time this runs.
+		 *
+		 * Text fields, dropdowns and contenteditable regions are left alone —
+		 * they are useless without focus.
+		 */
+		document.addEventListener('pointerup', (e) => {
+			const target = e.target;
+			if (!(target instanceof HTMLElement)) { return; }
+			if (isEditableEventTarget(target)) { return; }
+			if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLButtonElement)) { return; }
+			target.blur();
+		}, true);
+
+		// A dropdown needs focus while it is open, but not after a choice is
+		// made, or its own arrow-key handling would keep swallowing navigation.
+		document.addEventListener('change', (e) => {
+			if (e.target instanceof HTMLSelectElement) { e.target.blur(); }
+		}, true);
+
 		// Copy handling
 		document.addEventListener('copy', (e) => {
 			if (isEditableEventTarget(e.target)) { return; }
@@ -5333,11 +5382,21 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		// Capture collection and multi-page TIFF navigation before image panning or
 		// VS Code's webview focus handling can consume the physical arrow key.
 		window.addEventListener('keydown', (e) => {
-			const target = e.target as HTMLElement | null;
-			const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+			// Ranges and buttons are inputs, but they are not text entry: treating
+			// them as such let a focused slider suppress every navigation key.
+			const isTyping = isEditableEventTarget(e.target);
 			const isPlainKey = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 			const isRightArrow = e.key === 'ArrowRight' || e.code === 'ArrowRight';
 			const isLeftArrow = e.key === 'ArrowLeft' || e.code === 'ArrowLeft';
+			// A CZI stack navigates its own planes, but only while it is the sole
+			// image; a multi-image collection keeps arrow keys for switching files.
+			const cziArrowAxis = imageCollection.totalImages > 1 || datasetManifest ? undefined : cziPrimaryAxis();
+			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) && cziArrowAxis && cziArrowAxis.size > 1) {
+				e.preventDefault();
+				e.stopPropagation();
+				navigateCziAxis(cziArrowAxis, isRightArrow ? 1 : -1);
+				return;
+			}
 			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) &&
 				(datasetManifest || imageCollection.totalImages > 1 || tiffProcessor.pageCount > 1)) {
 				e.preventDefault();
@@ -5350,6 +5409,18 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 					void navigateTiffPage(isRightArrow ? 1 : -1);
 				}
 				return;
+			}
+			if (!isTyping && cziSelectors.length) {
+				const channelAxis = cziSecondaryAxis();
+				if (channelAxis && channelAxis.size > 1 && (e.key === ']' || e.code === 'PageDown')) {
+					e.preventDefault();
+					navigateCziAxis(channelAxis, 1);
+					return;
+				} else if (channelAxis && channelAxis.size > 1 && (e.key === '[' || e.code === 'PageUp')) {
+					e.preventDefault();
+					navigateCziAxis(channelAxis, -1);
+					return;
+				}
 			}
 			if (!isTyping && tiffProcessor.pageCount > 1) {
 				if (e.key === ']' || e.code === 'PageDown') {
@@ -5765,45 +5836,94 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		cziOverlay.innerHTML = `
 			<div class="dataset-title">CZI</div>
 			<div class="dataset-axis-controls czi-dimension-controls"></div>
+			<div class="czi-key-hints"></div>
 			<div class="czi-view-info"></div>
 		`;
 		document.body.appendChild(cziOverlay);
 	}
 
+
 	/** Render one slider per CZI plane axis (Z, C, T, ...) with size > 1. */
+	/**
+	 * Refresh the CZI overlay.
+	 *
+	 * Rows are rebuilt only when the axes themselves change. Re-creating them on
+	 * every plane load made the title flicker and dropped the slider the user was
+	 * dragging, so a same-axes update only writes values.
+	 */
 	function updateCziOverlay(metadata: Record<string, any>, loading = false) {
 		if (!cziOverlay) { return; }
 		const selectors = Array.isArray(metadata.selectors) ? metadata.selectors : [];
 		const channelNames: string[] = Array.isArray(metadata.channelNames) ? metadata.channelNames : [];
+		const title = cziOverlay.querySelector('.dataset-title') as HTMLElement;
 		const controls = cziOverlay.querySelector('.czi-dimension-controls') as HTMLElement;
-		controls.replaceChildren(...selectors.map((selector: any) => {
+		// The channel name lives in the title rather than beside the C slider: it
+		// varies in length, and a value label that resizes drags the slider with it.
+		const showChannel = (index: number) => {
+			const name = channelNames[index];
+			const next = name ? `CZI · ${name}` : 'CZI';
+			if (title.textContent !== next) { title.textContent = next; }
+		};
+		const axisSignature = selectors.map((selector: any) => `${selector.name}:${selector.size}`).join(',');
+		const rebuild = axisSignature !== cziRenderedAxes;
+
+		if (rebuild) {
+			controls.replaceChildren(...selectors.map((selector: any) => {
+				const size = Math.max(1, Number(selector.size));
+				const row = document.createElement('label'); row.className = 'dataset-axis';
+				row.dataset.axis = selector.name;
+				const label = document.createElement('span'); label.className = 'dataset-axis-label'; label.textContent = selector.name;
+				const input = document.createElement('input');
+				input.type = 'range'; input.min = '0'; input.max = String(size - 1); input.step = '1';
+				input.dataset.defaultValue = '0';
+				input.title = `${selector.name} · Double-click to reset`;
+				const value = document.createElement('span'); value.className = 'dataset-axis-value';
+				// Reserve the width of the largest reading ("29 / 29") so stepping the
+				// slider never reflows the row.
+				value.style.minWidth = `${String(size).length * 2 + 3}ch`;
+				// Update live while dragging rather than only on release.
+				input.addEventListener('input', () => {
+					const index = Number(input.value);
+					value.textContent = `${index + 1} / ${size}`;
+					if (selector.name === 'C') { showChannel(index); }
+					cziSelection.indices = { ...cziSelection.indices, [selector.name]: index };
+					requestCziPlane();
+				});
+				row.append(label, input, value); return row;
+			}));
+			cziRenderedAxes = axisSignature;
+		}
+
+		selectors.forEach((selector: any, index: number) => {
+			const row = controls.children[index] as HTMLElement | undefined;
+			if (!row) { return; }
 			const size = Math.max(1, Number(selector.size));
 			const current = Math.min(size - 1, Math.max(0, Number(selector.value) || 0));
-			const row = document.createElement('label'); row.className = 'dataset-axis';
-			const label = document.createElement('span'); label.className = 'dataset-axis-label'; label.textContent = selector.name;
-			const input = document.createElement('input');
-			input.type = 'range'; input.min = '0'; input.max = String(size - 1); input.step = '1';
-			input.dataset.defaultValue = '0'; input.value = String(current);
-			input.title = `${selector.name} · Double-click to reset`;
-			const value = document.createElement('span'); value.className = 'dataset-axis-value';
-			const describe = (index: number) => selector.name === 'C' && channelNames[index]
-				? `${index + 1} / ${size} · ${channelNames[index]}`
-				: `${index + 1} / ${size}`;
-			value.textContent = describe(current);
-			input.addEventListener('input', () => { value.textContent = describe(Number(input.value)); });
-			input.addEventListener('change', () => {
-				cziSelection.indices = { ...cziSelection.indices, [selector.name]: Number(input.value) };
-				reloadCziSelection();
-			});
-			row.append(label, input, value); return row;
-		}));
+			const input = row.querySelector('input') as HTMLInputElement;
+			const value = row.querySelector('.dataset-axis-value') as HTMLElement;
+			// Never fight the slider the user is holding.
+			if (document.activeElement !== input) { input.value = String(current); }
+			value.textContent = `${Number(input.value) + 1} / ${size}`;
+		});
+
+		const channelSelector = selectors.find((selector: any) => selector.name === 'C');
+		const channelRow = channelSelector ? controls.querySelector('.dataset-axis[data-axis="C"] input') as HTMLInputElement | null : null;
+		showChannel(channelRow ? Number(channelRow.value) : 0);
+
 		controls.style.display = selectors.length ? 'flex' : 'none';
+		const hints = cziOverlay.querySelector('.czi-key-hints') as HTMLElement;
+		const primary = cziPrimaryAxis();
+		const secondary = cziSecondaryAxis();
+		const hintParts = [
+			primary && primary.size > 1 ? `← → ${primary.name}` : null,
+			secondary && secondary.size > 1 ? `[ ] ${secondary.name}` : null,
+		].filter(Boolean);
+		hints.textContent = hintParts.join('   ');
+		hints.style.display = hintParts.length ? 'block' : 'none';
 		const info = cziOverlay.querySelector('.czi-view-info') as HTMLElement;
-		const scale = Number(metadata.scalingXUm);
-		info.textContent = [
-			metadata.pixelTypeName,
-			Number.isFinite(scale) ? `${scale.toFixed(3)} µm/px` : null,
-		].filter(Boolean).join(' · ');
+		// Pixel scaling is not repeated here: it feeds the measure calibration, so
+		// it is drawn as a real scale bar on the image like DICOM spacing is.
+		info.textContent = String(metadata.pixelTypeName || '');
 		cziOverlay.classList.toggle('dataset-overlay--loading', loading);
 		cziOverlay.style.display = 'flex';
 		if (datasetOverlay) { datasetOverlay.style.display = 'none'; }
@@ -5811,13 +5931,61 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		if (netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
 	}
 
+
+
+	/** Axis the arrow keys step through: Z for a stack, else the first plane axis. */
+	function cziPrimaryAxis(): { name: string, size: number, value: number } | undefined {
+		return cziSelectors.find(selector => selector.name === 'Z') || cziSelectors[0];
+	}
+
+	/** Axis the bracket/page keys step through: the channel, else the second axis. */
+	function cziSecondaryAxis(): { name: string, size: number, value: number } | undefined {
+		const primary = cziPrimaryAxis();
+		return cziSelectors.find(selector => selector.name === 'C' && selector !== primary)
+			|| cziSelectors.find(selector => selector !== primary);
+	}
+
+	/** Step a CZI plane axis, wrapping like DICOM dataset navigation does. */
+	function navigateCziAxis(axis: { name: string, size: number, value: number } | undefined, delta: number) {
+		if (!axis || axis.size <= 1) { return; }
+		const current = Number(cziSelection.indices[axis.name] ?? axis.value) || 0;
+		const next = (current + delta + axis.size) % axis.size;
+		cziSelection.indices = { ...cziSelection.indices, [axis.name]: next };
+		axis.value = next;
+		requestCziPlane();
+	}
+
+	/**
+	 * Request the plane in `cziSelection`, coalescing while one is in flight.
+	 *
+	 * Dragging a slider emits far more events than a decode-and-render cycle can
+	 * absorb. Rather than debouncing on a timer — which makes the image lag the
+	 * handle by a fixed delay — only one load runs at a time and the newest
+	 * position is kept as the trailing request, so the image tracks the slider as
+	 * fast as the machine allows and always lands on the released value.
+	 */
+	function requestCziPlane() {
+		if (cziLoadInFlight) { cziLoadPending = true; return; }
+		cziLoadInFlight = true;
+		reloadCziSelection();
+	}
+
+	/** Called when a CZI load settles, to run whatever the user asked for since. */
+	function onCziLoadSettled() {
+		cziLoadInFlight = false;
+		if (!cziLoadPending) { return; }
+		cziLoadPending = false;
+		requestCziPlane();
+	}
+
 	function reloadCziSelection() {
 		const src = settingsManager.settings.src || '';
 		const resourceUri = settingsManager.settings.resourceUri || '';
-		if (!src || !resourceUri) { return; }
+		if (!src || !resourceUri) { cziLoadInFlight = false; return; }
 		cziOverlay?.classList.add('dataset-overlay--loading');
-		switchToNewImage(src, resourceUri, { cziOptions: { indices: { ...cziSelection.indices } } });
+		switchToNewImage(src, resourceUri, { cziOptions: { indices: { ...cziSelection.indices } }, planeChange: true });
 	}
+
 
 	function reloadNetCdfSelection() {
 		const src = settingsManager.settings.src || '';
@@ -6252,7 +6420,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
-	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, cziOptions?: Record<string, any> } = {}) {
+	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, cziOptions?: Record<string, any>, planeChange?: boolean } = {}) {
 		// Every switch gets a new generation so any in-flight load from a
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
@@ -6352,7 +6520,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
 		if (!lower.endsWith('.nc') && !lower.endsWith('.cdf') && netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
-		if (!lower.endsWith('.czi') && cziOverlay) { cziOverlay.style.display = 'none'; }
+		if (!lower.endsWith('.czi')) { cziSelectors = []; cziRenderedAxes = ''; if (cziOverlay) { cziOverlay.style.display = 'none'; } }
 		if (tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
 			return;
 		}

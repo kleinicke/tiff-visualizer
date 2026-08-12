@@ -60,6 +60,34 @@ Plain multi-page TIFFs with no dimensional metadata are navigable by page with
 `[` / `]` or `PageUp` / `PageDown`, and with the arrow keys when no dataset or
 collection is loaded.
 
+## CZI
+
+Zeiss microscopy stacks. The overlay gives one slider per non-spatial axis
+(Z, C, T, ...), and channel sliders are labelled with the dye name read from the
+embedded metadata.
+
+- `←` / `→` step through **Z**, so a stack scrubs like a dataset does. They wrap
+  at either end, and defer to a dataset or a multi-image collection if one is
+  loaded.
+- `[` / `]` or `PageUp` / `PageDown` step through **channels**.
+
+The overlay repeats these bindings under the sliders. Dragging a slider updates
+the image continuously rather than on release: one plane loads at a time and the
+newest handle position is kept as the trailing request, so the image tracks the
+handle as fast as the machine allows and always settles on the released value.
+
+Mosaic tiles are assembled into the full frame rather than offered as a
+selectable axis. Only uncompressed subblocks decode; see
+[formats](./formats.md).
+
+Pixel scaling from the CZI metadata is adopted as the measure
+[calibration](./measure.md) in micrometres, including ScalingZ as the slice
+depth, so a stack draws a real scale bar and measures in µm without being told
+the scale.
+
+Stepping planes re-decodes from bytes the decode worker keeps between requests,
+so only the first plane of a file pays the read cost.
+
 ## NetCDF
 
 Classic (v3) NetCDF. Select a numeric **variable**, then move through its

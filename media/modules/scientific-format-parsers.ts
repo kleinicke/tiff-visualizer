@@ -777,17 +777,19 @@ const CZI_PIXEL_TYPES: Record<number, {
 	bgr: boolean,
 	bytesPerChannel: number,
 	read: (view: DataView, offset: number) => number,
+	/** Typed-array view matching the stored samples, for the bulk-copy path. */
+	array?: (buffer: ArrayBuffer, offset: number, length: number) => ArrayLike<number>,
 	domain: ScientificDecodedImage['numericDomain'],
 }> = {
-	0: { name: 'Gray8', channels: 1, bgr: false, bytesPerChannel: 1, read: (v, o) => v.getUint8(o), domain: { bitsPerSample: 8, sampleFormat: 1, typeMin: 0, typeMax: 255, sourceNumericType: 'uint8' } },
-	1: { name: 'Gray16', channels: 1, bgr: false, bytesPerChannel: 2, read: (v, o) => v.getUint16(o, true), domain: { bitsPerSample: 16, sampleFormat: 1, typeMin: 0, typeMax: 65535, sourceNumericType: 'uint16' } },
-	2: { name: 'Gray32Float', channels: 1, bgr: false, bytesPerChannel: 4, read: (v, o) => v.getFloat32(o, true), domain: { bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: 'float32' } },
+	0: { name: 'Gray8', channels: 1, bgr: false, bytesPerChannel: 1, read: (v, o) => v.getUint8(o), array: (b, o, n) => new Uint8Array(b, o, n), domain: { bitsPerSample: 8, sampleFormat: 1, typeMin: 0, typeMax: 255, sourceNumericType: 'uint8' } },
+	1: { name: 'Gray16', channels: 1, bgr: false, bytesPerChannel: 2, read: (v, o) => v.getUint16(o, true), array: (b, o, n) => new Uint16Array(b, o, n), domain: { bitsPerSample: 16, sampleFormat: 1, typeMin: 0, typeMax: 65535, sourceNumericType: 'uint16' } },
+	2: { name: 'Gray32Float', channels: 1, bgr: false, bytesPerChannel: 4, read: (v, o) => v.getFloat32(o, true), array: (b, o, n) => new Float32Array(b, o, n), domain: { bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: 'float32' } },
 	3: { name: 'Bgr24', channels: 3, bgr: true, bytesPerChannel: 1, read: (v, o) => v.getUint8(o), domain: { bitsPerSample: 8, sampleFormat: 1, typeMin: 0, typeMax: 255, sourceNumericType: 'uint8' } },
 	4: { name: 'Bgr48', channels: 3, bgr: true, bytesPerChannel: 2, read: (v, o) => v.getUint16(o, true), domain: { bitsPerSample: 16, sampleFormat: 1, typeMin: 0, typeMax: 65535, sourceNumericType: 'uint16' } },
 	8: { name: 'Bgr96Float', channels: 3, bgr: true, bytesPerChannel: 4, read: (v, o) => v.getFloat32(o, true), domain: { bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: 'float32' } },
 	9: { name: 'Bgra32', channels: 4, bgr: true, bytesPerChannel: 1, read: (v, o) => v.getUint8(o), domain: { bitsPerSample: 8, sampleFormat: 1, typeMin: 0, typeMax: 255, sourceNumericType: 'uint8' } },
-	12: { name: 'Gray32', channels: 1, bgr: false, bytesPerChannel: 4, read: (v, o) => v.getInt32(o, true), domain: { bitsPerSample: 32, sampleFormat: 2, typeMin: -2147483648, typeMax: 2147483647, sourceNumericType: 'int32' } },
-	13: { name: 'Gray64', channels: 1, bgr: false, bytesPerChannel: 8, read: (v, o) => v.getFloat64(o, true), domain: { bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: 'float64' } },
+	12: { name: 'Gray32', channels: 1, bgr: false, bytesPerChannel: 4, read: (v, o) => v.getInt32(o, true), array: (b, o, n) => new Int32Array(b, o, n), domain: { bitsPerSample: 32, sampleFormat: 2, typeMin: -2147483648, typeMax: 2147483647, sourceNumericType: 'int32' } },
+	13: { name: 'Gray64', channels: 1, bgr: false, bytesPerChannel: 8, read: (v, o) => v.getFloat64(o, true), array: (b, o, n) => new Float64Array(b, o, n), domain: { bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: 'float64' } },
 };
 
 const CZI_COMPRESSION_NAMES: Record<number, string> = {
@@ -1000,6 +1002,18 @@ export function parseCzi(buffer: ArrayBuffer, options: CziDecodeOptions = {}): S
 		if (pixels + stride * tileHeight > bytes.length) { throw new Error('CZI subblock data is truncated'); }
 		const originX = entry.dimensions.X.start - minX;
 		const originY = entry.dimensions.Y.start - minY;
+		// Fast path: single-channel samples are laid out exactly as the output
+		// wants them, so each row is a typed-array copy rather than a per-pixel
+		// DataView call. Typed arrays require natural alignment, so a subblock
+		// landing on an odd offset falls through to the generic loop.
+		const aligned = pixels % pixelType.bytesPerChannel === 0 && stride % pixelType.bytesPerChannel === 0;
+		if (channels === 1 && pixelType.array && aligned) {
+			for (let row = 0; row < tileHeight; row++) {
+				const source = pixelType.array(buffer, pixels + row * stride, tileWidth);
+				data.set(source as unknown as ArrayLike<number>, (originY + row) * width + originX);
+			}
+			continue;
+		}
 		for (let row = 0; row < tileHeight; row++) {
 			let source = pixels + row * stride;
 			let target = ((originY + row) * width + originX) * channels;

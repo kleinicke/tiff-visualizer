@@ -244,11 +244,23 @@ body img {
 	font-weight: 600;
 }
 
+/*
+ * Loading dots sit outside the text's layout box.
+ *
+ * A dot that takes part in inline layout widens the line, which re-centres the
+ * text beside it: the label visibly jumps sideways the moment loading starts.
+ * A negative margin equal to the dot's own width plus its gap makes the total
+ * inline advance zero, so the dot is drawn to the left of the text while the
+ * text stays exactly where it was. The overlays do not clip their content, so
+ * drawing outside the flow is safe.
+ */
 .tiff-page-overlay--loading .tiff-page-counter::before {
 	content: '';
 	display: inline-block;
 	width: 6px;
 	height: 6px;
+	/* -12px = -(6px width + 6px gap): zero net advance. */
+	margin-left: -12px;
 	margin-right: 6px;
 	border-radius: 50%;
 	background: var(--vscode-textLink-foreground, #3794ff);
@@ -382,6 +394,16 @@ body img {
 	white-space: nowrap;
 }
 
+.czi-key-hints {
+	padding-top: 2px;
+	font-size: 0.85em;
+	letter-spacing: 0.02em;
+	color: var(--vscode-descriptionForeground, #aaa);
+	opacity: 0.75;
+	text-align: center;
+	white-space: nowrap;
+}
+
 .netcdf-view-info,
 .czi-view-info {
 	padding-top: 4px;
@@ -395,6 +417,8 @@ body img {
 	display: inline-block;
 	width: 6px;
 	height: 6px;
+	/* -12px = -(6px width + 6px gap): zero net advance. */
+	margin-left: -12px;
 	margin-right: 6px;
 	border-radius: 50%;
 	background: var(--vscode-textLink-foreground, #3794ff);
@@ -578,26 +602,30 @@ body img {
 	background: var(--vscode-toolbar-hoverBackground, rgba(0,0,0,0.07));
 }
 
-/* Loading dot inside overlay badge (shown before counter text while switching) */
-.collection-loading-dot {
-	display: inline-block;
+/*
+ * Loading dot for the collection overlay.
+ *
+ * It sits ahead of the ‹ button rather than beside the counter, and like the
+ * other loading dots it is laid out to take no space: the row keeps its exact
+ * position while switching. The controls row is a flex container with a 4px
+ * gap, and a ::before becomes a flex item, so the gap counts toward the advance
+ * and has to be cancelled along with the dot's own width.
+ */
+.image-collection-overlay--loading .overlay-controls::before {
+	content: '';
+	flex: none;
 	width: 7px;
 	height: 7px;
 	background: var(--vscode-textLink-foreground, #3794ff);
 	border-radius: 50%;
-	margin-right: 5px;
-	vertical-align: middle;
+	/* -11px = -(7px width + 4px flex gap): zero net advance. */
+	margin-left: -11px;
 	animation: collection-dot-pulse 0.9s ease-in-out infinite;
 }
 
 .image-collection-overlay--loading .image-counter {
 	cursor: progress;
 	text-decoration: none;
-}
-
-.collection-loading-label {
-	font-weight: 400;
-	color: var(--vscode-descriptionForeground, #aaa);
 }
 
 @keyframes collection-dot-pulse {

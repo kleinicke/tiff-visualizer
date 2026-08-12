@@ -181,6 +181,37 @@ export function calibrationFromDicom(metadata: {
 }
 
 /**
+ * Derive calibration from CZI scaling metadata.
+ *
+ * CZI stores scaling in metres per pixel; the parser has already converted to
+ * micrometres, which is the unit microscopy works in and avoids reporting a
+ * sub-nanometre float for every measurement. ScalingZ becomes the depth so a
+ * z-stack measures through-plane distances correctly.
+ */
+export function calibrationFromCzi(metadata: {
+	scalingXUm?: unknown;
+	scalingYUm?: unknown;
+	scalingZUm?: unknown;
+} | null | undefined): Calibration | null {
+	if (!metadata) { return null; }
+	const positive = (raw: unknown): number | undefined => {
+		const value = typeof raw === 'number' ? raw : Number(raw);
+		return Number.isFinite(value) && value > 0 ? value : undefined;
+	};
+	const width = positive(metadata.scalingXUm);
+	// A CZI that declares only one lateral scaling is square by definition.
+	const height = positive(metadata.scalingYUm) ?? width;
+	if (!width || !height) { return null; }
+	return {
+		pixelWidth: width,
+		pixelHeight: height,
+		pixelDepth: positive(metadata.scalingZUm),
+		unit: 'µm',
+		origin: 'czi',
+	};
+}
+
+/**
  * Pick the best available automatic calibration.
  *
  * OME wins over baseline tags: when a file carries both, the OME block is the
@@ -228,7 +259,8 @@ export function describeCalibration(calibration: Calibration): string {
 		: calibration.origin === 'tiff-resolution' ? 'from TIFF resolution tags'
 			: calibration.origin === 'dicom' ? 'from DICOM Pixel Spacing'
 				: calibration.origin === 'dicom-detector' ? 'from DICOM Imager Pixel Spacing (detector plane)'
-					: calibration.origin === 'imported' ? 'from the ROI file'
+					: calibration.origin === 'czi' ? 'from CZI scaling metadata'
+						: calibration.origin === 'imported' ? 'from the ROI file'
 						: 'set manually';
 	return `${size} (${sourceLabel})`;
 }

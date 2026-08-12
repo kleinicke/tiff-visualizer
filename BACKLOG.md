@@ -1529,6 +1529,170 @@ attempted before them.
 
 ---
 
+## 12. Rust-first migration of the data and pixel layers
+
+> The goal is **not** "mainly Rust" measured in lines — that target is
+> unreachable and pursuing it produces worse code. The goal is a single rule:
+> **anything that parses bytes or touches pixels lives in Rust; anything that
+> touches the DOM, a GPU API, or the VS Code API stays in TypeScript.**
+> Consistent with item 11, this plan rewrites no renderer and no panel.
+
+**Measurements (August 2026):** ~7,300 lines of TypeScript in `src/`
+(extension host), ~44,000 in `media/` (webview), against 5,800 lines of Rust in
+[`wasm/tiff-decoder`](wasm/tiff-decoder/src/lib.rs). Rust already owns TIFF,
+EXR, HDR, PNG16, JPEG and demosaic, all reached through
+[`media/decode-worker.ts`](media/decode-worker.ts).
+
+The migratable surface is roughly **12,000 of the 44,000 webview lines** — about
+27% by volume, but close to 100% of the code where correctness bugs and
+frame-time actually live. Expect the crate to grow to roughly 15–18k lines.
+
+### Phase 0 — split the crate first (prerequisite)
+
+`lib.rs` is already 5,121 lines. Everything below at least doubles it, so
+modularize before adding: `formats/{tiff,exr,hdr,png,jpeg}.rs`,
+`pipeline/`, `measure/`, `writers/`, with `lib.rs` reduced to
+`#[wasm_bindgen]` surface and the result structs. Also settle the boundary
+conventions now, because they get replicated ~30 times:
+
+- Zero-copy out via `take_data_as_f32()`/`take_data_as_u8()` — the existing
+  pattern; never return `Vec` by clone.
+- Errors as `Result<_, JsValue>` with a structured reason string, so the
+  fallback-reason plumbing (`wasmFallbackReason`) keeps working unchanged.
+- Metadata as one JSON string per result (as `all_tags_json` already does)
+  rather than dozens of getters.
+- One `wasm-pack` build feeding both the decode worker and the compositor
+  worker; do not create a second crate.
+
+**Difficulty: 2.** Pure refactor, no behavior change.
+
+### Phase 1 — remaining decoders (~3,500 lines)
+
+Highest value, lowest risk: pure byte-in/array-out, no DOM, and each port
+collapses a WASM-plus-JS-fallback pair into one code path.
+
+- [`scientific-format-parsers.ts`](media/modules/scientific-format-parsers.ts)
+  (1,050) — FITS, DICOM, NetCDF. DICOM is the strongest candidate of the three:
+  transfer syntaxes and pixel representation are exactly where hand-written JS
+  accumulates edge cases, and `dicom-rs` exists.
+- [`npy-processor.ts`](media/modules/npy-processor.ts) (539),
+  [`ppm-processor.ts`](media/modules/ppm-processor.ts) (552),
+  [`pfm-processor.ts`](media/modules/pfm-processor.ts) (356) — small, fully
+  specified, ideal first ports to validate the boundary conventions.
+- [`ome-tiff.ts`](media/modules/ome-tiff.ts) (384) XML/metadata parsing, and CZI.
+- Retires the standing **"remove geotiff fallback"** item below, plus the
+  `parse-exr`, `upng` and `pako` fallbacks, once each Rust path is conformance-
+  tested against the golden corpus.
+
+**Difficulty: 3.** Mostly volume; DICOM alone is a 3.
+
+### Phase 2 — the pixel pipeline (~3,000 lines)
+
+[`normalization-helper.ts`](media/modules/normalization-helper.ts) (1,512) is
+the hottest file in the project: per-pixel normalization, gamma in/out,
+brightness, NaN/Infinity handling and LUT generation. It is exactly what the
+`wide` SIMD dependency is already in `Cargo.toml` for.
+
+- Also: histogram binning inside
+  [`histogram-overlay.ts`](media/modules/histogram-overlay.ts) (the *drawing*
+  stays TS), [`colormaps.ts`](media/modules/colormaps.ts) LUT generation and the
+  32³ inverse cube, [`colormap-converter.ts`](media/modules/colormap-converter.ts),
+  [`channel-composite.ts`](media/modules/channel-composite.ts), and the CPU
+  fallback in [`layer-compositor.ts`](media/modules/layer-compositor.ts).
+- **Caveat worth stating plainly:** on WebGPU/WebGL2 paths this math already
+  runs in shaders, so Phase 2 speeds up the *CPU fallback and the export
+  reference path*, not the common interactive case. Its real payoff is having
+  one authoritative implementation of the pipeline semantics that shaders are
+  validated against — today CPU, WASM and two shader backends each restate it.
+- Non-finite handling must stay bit-identical across backends (see the
+  `!Number.isFinite()` rule in CLAUDE.md); this is the conformance test that
+  gates the phase.
+
+**Difficulty: 3.**
+
+### Phase 3 — measurement algorithms (~3,800 lines)
+
+The `measure/` core is the best pure-compute fit in the repository:
+[`threshold.ts`](media/modules/measure/threshold.ts) (1,067),
+[`particles.ts`](media/modules/measure/particles.ts) (607),
+[`segmentation.ts`](media/modules/measure/segmentation.ts) (542),
+[`geometry.ts`](media/modules/measure/geometry.ts) (624),
+[`statistics.ts`](media/modules/measure/statistics.ts) (493),
+[`imagej-roi.ts`](media/modules/measure/imagej-roi.ts) (516),
+[`roi-io.ts`](media/modules/measure/roi-io.ts) (594).
+
+Connected-component labeling and particle analysis over large images are where
+JS hurts most, and interactive threshold sweeps (item 7) are the feature most
+limited by it. ROI *drawing and hit-testing*
+([`roi-overlay.ts`](media/modules/measure/roi-overlay.ts), 1,633) stays TS — it
+is canvas and pointer code.
+
+**Difficulty: 3–4.** Highest test burden, since ImageJ-comparable numeric output
+is the acceptance criterion.
+
+### Phase 4 — export writers (~1,500 lines)
+
+[`xcf-writer.ts`](media/modules/xcf-writer.ts) and
+[`layer-document-writers.ts`](media/modules/layer-document-writers.ts)
+(ORA/KRA/PSD): binary struct packing plus zip/zlib, where Rust has mature
+crates and JS has hand-rolled byte writers. Lowest urgency — export runs once
+per user action, so this is a correctness and maintenance win, not a
+performance one.
+
+**Difficulty: 2–3.**
+
+### What deliberately stays TypeScript (~18,000 lines)
+
+- **All of [`src/`](src/) (7,300).** The VS Code extension API is JS-only.
+  Commands, status bar entries, the custom-editor provider and message routing
+  have no Rust path that is not net-negative.
+- **The GPU compositors (~4,200):**
+  [`webgl2-layer-compositor.ts`](media/modules/webgl2-layer-compositor.ts),
+  [`webgpu-layer-compositor.ts`](media/modules/webgpu-layer-compositor.ts),
+  [`webgl2-float-renderer.ts`](media/modules/webgl2-float-renderer.ts),
+  [`webgpu-channel-compositor.ts`](media/modules/webgpu-channel-compositor.ts).
+  Driving WebGPU from WASM means wasm-bindgen glue per call while the actual
+  compute already lives in shaders. (Note the interaction with item 11 step 3:
+  under Tauri these would become native `wgpu`, which is a *different* rewrite
+  and not a reason to do this one now.)
+- **All DOM and UI (~7,000):** [`measure-panel.ts`](media/modules/measure-panel.ts)
+  (2,453), [`layers-panel.ts`](media/modules/layers-panel.ts) (1,494),
+  [`channels-panel.ts`](media/modules/channels-panel.ts),
+  [`debayer-panel.ts`](media/modules/debayer-panel.ts), histogram and ROI
+  drawing, [`zoom-controller.ts`](media/modules/zoom-controller.ts),
+  [`mouse-handler.ts`](media/modules/mouse-handler.ts).
+- **Orchestration:** [`imagePreview.ts`](media/imagePreview.ts) (6,871), worker
+  plumbing, `postMessage`, canvas/`ImageData` handoff.
+
+### Honest costs
+
+- Every port needs its boundary designed to avoid copies; a naive port can be
+  *slower* than the JS it replaces once marshalling is counted.
+- `wasm-pack` becomes a hard CI dependency rather than an optimization, and
+  `wasm-opt` is currently disabled in `Cargo.toml` to avoid exactly that kind of
+  build-time download.
+- Debugging regresses: stack traces, `console.log` and breakpoints are all worse
+  across the boundary.
+- wasm32's 4 GB address-space cap applies to everything moved into Rust — the
+  same constraint item 11 step 3 identifies.
+- Bundle size grows on every phase; the extension ships the `.wasm` in the VSIX.
+
+### Amendment to CLAUDE.md
+
+The current instruction — *"whenever you see the option to transition code to
+rust do it"* — is too broad and would justify porting click handlers. Replace it
+with the byte/pixel-versus-DOM/GPU/API rule at the top of this item.
+
+### Suggested order
+
+Phase 0 → 1 → 2 → 3 → 4. Phases 1 and 3 carry most of the value; phase 2 is
+worth doing mainly for the single-source-of-truth argument; phase 4 can slip
+indefinitely. Phase 1 also feeds item 11 step 1 directly — shared decoders are
+far easier to extract once they are one Rust crate rather than a Rust path plus
+a JS fallback.
+
+---
+
 ## Other ideas worth considering
 
 - **Physical-unit readouts everywhere.** Once voxel spacing exists (item 2), show
@@ -1542,7 +1706,7 @@ attempted before them.
   resolution level. Shares the lazy-loading infra with item 3. **Difficulty: 4.**
 - **Region-of-interest statistics.** Superseded by item 7, which covers this as
   its first deliverable.
-- **Remove geotiff fallback.** Make sure the rust implementation covers all cases currently geotiff covers
+- **Remove geotiff fallback.** Make sure the rust implementation covers all cases currently geotiff covers. Folded into item 12 phase 1, which retires the `parse-exr`, `upng` and `pako` fallbacks on the same conformance criterion.
 - **Add debayering mode for grey scale images** Have a small menu, where you can select the typical debayering pattern, the offset and also allow infrared output. Then allow selecting the shown channel, rgb, just a single color channel or f.e. an infrared channel. All interactive and quick, thanks to rust. What is typical also done during debayering? Some white balancing or is this not required there?
 - **Testdata:** Keep in mind a lot of test data is currently stored at /Users/florian/Projects/cursor/test_data/testfiles.
 
@@ -1598,3 +1762,7 @@ attempted before them.
    an analysis feature.
 9. **OME-Zarr, local first** (item 3), reusing the dataset navigation before
    adding chunked remote access.
+10. **Rust-first migration, phases 0 and 1** (item 12). Splitting the crate is a
+    prerequisite for anything else added to it, and porting the remaining
+    decoders is what finally retires the geotiff/parse-exr/upng fallbacks and
+    makes the shared-core extraction in item 11 step 1 tractable.

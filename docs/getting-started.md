@@ -60,12 +60,13 @@ These are active when a Scientific Image Visualizer tab has focus:
 | `Ctrl`/`Cmd` + `Shift` + `M` | Toggle measure panel |
 | `Ctrl`/`Cmd` + `Shift` + `I` | Copy image information to clipboard |
 | `←` / `→` | Step through the dataset, collection, or TIFF pages (see below) |
-| `[` / `]` or `PageUp` / `PageDown` | Previous / next page of a multi-page TIFF |
+| `[` / `]` or `PageUp` / `PageDown` | Previous / next page of a multi-page TIFF, or CZI channel |
 
 The arrow keys pick one target, in this order: the primary dimension of a
 [multi-dimensional dataset](./datasets.md) if one is loaded, otherwise the
 [collection](./collections.md) if it holds more than one image, otherwise the
-pages of a multi-page TIFF. They are ignored while you are typing in a panel
+Z planes of a [CZI](./formats.md) stack, otherwise the pages of a multi-page
+TIFF. They are ignored while you are typing in a panel
 field.
 
 Inside the [measure panel](./measure.md) single letters select tools: `V`
