@@ -254,9 +254,21 @@ export class WebGPULayerCompositor {
 			if (strict) { throw error; }
 			return null;
 		}
+		let errorScopesOpen = false;
 		try {
 			const initializationStarted = performance.now();
 			await this.ensureDevice();
+			// WebGPU reports allocation and validation failures ASYNCHRONOUSLY:
+			// createTexture/createBuffer return an object even when the device
+			// could not honour them, and the failure only surfaces later via an
+			// error scope or the uncapturederror event. Without these scopes a
+			// failed render still returned a canvas, the caller logged success,
+			// and the user got a blank image with working pixel readouts. Scope
+			// the whole render so a failure becomes a thrown error and the
+			// caller falls back to WebGL2/CPU.
+			this.device.pushErrorScope('out-of-memory');
+			this.device.pushErrorScope('validation');
+			errorScopesOpen = true;
 			if (this.activeTiming) {
 				this.activeTiming.initializationMs = performance.now() - initializationStarted;
 			}
@@ -363,6 +375,15 @@ export class WebGPULayerCompositor {
 			if (this.activeTiming) {
 				this.activeTiming.gpuMs += performance.now() - gpuStarted;
 			}
+			// Pop in reverse push order. Anything captured here means the
+			// surfaces we just "rendered" are not trustworthy.
+			errorScopesOpen = false;
+			const validationError = await this.device.popErrorScope();
+			const memoryError = await this.device.popErrorScope();
+			const gpuError = validationError || memoryError;
+			if (gpuError) {
+				throw new Error(`WebGPU render failed: ${gpuError.message || gpuError}`);
+			}
 			const validationStarted = performance.now();
 			if (validation) { await this.validateSamples(validation, layers, documentWidth, documentHeight); }
 			if (displayValidation) {
@@ -380,6 +401,17 @@ export class WebGPULayerCompositor {
 			this.logger(`[LayerCompositor] WebGPU failed: ${error instanceof Error ? error.message : String(error)}`);
 			if (strict) { throw error; }
 			return null;
+		} finally {
+			// Error scopes are a stack on the device: leaving one open would
+			// make the NEXT render pop this render's scope and misattribute or
+			// swallow its result. Balance them on every exit path.
+			if (errorScopesOpen && this.device) {
+				errorScopesOpen = false;
+				try {
+					await this.device.popErrorScope();
+					await this.device.popErrorScope();
+				} catch { /* device already lost; nothing to balance */ }
+			}
 		}
 	}
 

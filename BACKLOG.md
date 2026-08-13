@@ -1796,6 +1796,55 @@ a JS fallback.
 3. **Large-image GPU tiling.** Add texture tiling for normal and Layers views
    beyond a device's `MAX_TEXTURE_SIZE`, retaining WebGL2/Wasm/CPU fallback
    until all tiles are resident and avoiding full-canvas CPU readback.
+
+   **There are two independent ceilings; tiling addresses only the first.**
+
+   | Stage | Ceiling | 20480x20480 float32 |
+   | --- | --- | --- |
+   | Metadata | none (headers) | fine |
+   | Decode (Rust/wasm32) | 4 GB address space | 1.6 GB, near the wall |
+   | Raw samples in JS | multi-GB typed arrays | fine |
+   | Pixel inspection | none — O(1) index | fine |
+   | Histogram | subsamples to 262,144 px | fine |
+   | ImageData | width x height x 4 | 1.6 GB |
+   | **2D canvas** | **2^28 px (Chromium)** | **419 Mpx — exceeded** |
+
+   Display is the only stage that must materialize every pixel at once into a
+   browser-managed surface, which is why everything else keeps working on an
+   image that will not render. Today that costs three full-size buffers at
+   once (samples + ImageData + canvas backing store, ~4.8 GB at 20480x20480),
+   which is what actually killed the webview before the guard in
+   `renderImageDataToCanvas` was added. Tiled display removes the ImageData and
+   canvas copies, leaving only the decoded samples resident.
+
+   Passing the *decode* ceiling is separate work: it needs region-wise decoding,
+   which is natural for tiled TIFF and Zarr, awkward for stripped TIFF, and
+   impossible for formats that must be decoded whole.
+
+   **Decide the decode contract before writing any tiling code** — retrofitting
+   it later is expensive:
+
+   - Can a decoder be asked for a sub-region, and how does it advertise that?
+     Suggested shape: an optional `decode_region(data, x, y, w, h, level)`
+     alongside the existing whole-image entry point, with a capability flag per
+     format, so callers can ask rather than guess.
+   - What does a decoder that cannot do regions return — an error, or the whole
+     image with the region ignored? It must be explicit; a silent whole-image
+     decode inside a tile loop would decode the file once per tile.
+   - Who owns tile lifetime and eviction: the compositor, or a shared cache
+     used by all four backends?
+   - How do whole-image statistics (auto-normalize min/max, histogram) work
+     when no single tile sees the whole image? Either a pre-pass over tiles or
+     an explicitly documented approximation.
+   - Halo/overlap policy for any operation that reads neighbouring pixels;
+     getting this wrong shows up as visible seams.
+
+   **Prerequisite already met:** every backend must fail loudly rather than
+   silently. WebGPU used to report a successful render for a texture it could
+   not allocate — as one image that was a blank canvas, but per tile it would
+   be an intermittently blank patch, far harder to diagnose. `createTexture`
+   now rejects over-budget allocations up front and `renderNow` brackets the
+   whole render in `out-of-memory`/`validation` error scopes.
 4. **OME channel-to-layer compositing.** This is the strongest user-facing next
    feature now that multidimensional navigation and the layer engine both
    exist; add per-channel tint/colormap settings and a merged channel view.

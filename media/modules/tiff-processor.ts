@@ -158,10 +158,17 @@ export class TiffProcessor {
 		this.omeXml = null;
 		this._wasmProcessor.init().then(available => {
 			this._wasmAvailable = available;
+			// This runs once at webview startup, not when a file is opened, so
+			// the wording must describe a CAPABILITY rather than the current
+			// file. It previously read "Using geotiff.js fallback", which
+			// appeared while opening a DICOM or NetCDF and looked like that
+			// file was being decoded by geotiff.js. The shared wasm module now
+			// backs every format's main-thread path, so its availability is
+			// worth reporting — just not as a claim about this image.
 			if (available) {
-				console.log('[TiffProcessor] WASM decoder initialized successfully');
+				console.log('[Startup] Rust/WASM decoder ready (shared by all formats)');
 			} else {
-				console.log('[TiffProcessor] Using geotiff.js fallback');
+				console.log('[Startup] Rust/WASM decoder unavailable; TIFF will use geotiff.js and formats without a JS decoder will fail');
 			}
 		}).catch(err => {
 			console.warn('[TiffProcessor] WASM initialization failed:', err);

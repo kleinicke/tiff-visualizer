@@ -62,6 +62,7 @@ import { analyzeLayerExports, LayerExportFormat, writeLayerDocument } from './mo
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
+import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-registry.js';
 import { parseCzi } from './modules/scientific-format-parsers.js';
 import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/main-thread-decode.js';
 
@@ -820,16 +821,11 @@ import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/
 	let _layerBaseId: string | undefined;
 	let _expandedLayerDocumentUri: string | undefined;
 
-	const isTiffExtension = (lower: string): boolean => /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
-	const layeredFormatForPath = (lower: string): LayeredDocumentFormat | null => {
-		if (lower.endsWith('.ora')) { return 'ora'; }
-		if (lower.endsWith('.kra')) { return 'kra'; }
-		if (lower.endsWith('.psd')) { return 'psd'; }
-		if (lower.endsWith('.psb')) { return 'psb'; }
-		if (lower.endsWith('.xcf')) { return 'xcf'; }
-		if (lower.endsWith('.afphoto') || lower.endsWith('.af')) { return 'affinity'; }
-		return null;
-	};
+	// Both delegate to modules/format-registry.ts, the single place that maps a
+	// file extension to a decoder.
+	const isTiffExtension = (lower: string): boolean => isTiffPath(lower);
+	const layeredFormatForPath = (lower: string): LayeredDocumentFormat | null =>
+		(layeredFormatOf(lower) as LayeredDocumentFormat | null);
 
 	// Application state
 	let hasLoadedImage = false;
@@ -6494,35 +6490,38 @@ import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/
 		if (tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
 			return;
 		}
-		if (layeredFormat) {
+		// One lookup instead of an ordered if/else chain, so no branch can
+		// silently shadow another and the routing is inspectable in one table.
+		const format = resolveFormat(resourceUri, formatHint);
+		if (format?.kind === 'layered' && layeredFormat) {
 			handleLayeredPreview(layeredFormat, uri, gen);
-		} else if (formatHint === 'tiff' || isTiffExtension(lower)) {
+		} else if (format?.kind === 'tiff') {
 			handleTiff(uri, gen, pageIndex);
-		} else if (lower.endsWith('.exr')) {
+		} else if (format?.kind === 'exr') {
 			handleExr(uri, gen);
-		} else if (lower.endsWith('.pfm')) {
+		} else if (format?.kind === 'pfm') {
 			handlePfm(uri, gen);
-		} else if (lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) {
+		} else if (format?.kind === 'netpbm') {
 			handlePpm(uri, gen);
-		} else if (lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+		} else if (format?.kind === 'png') {
 			handlePng(uri, gen);
-		} else if (lower.endsWith('.npy') || lower.endsWith('.npz')) {
+		} else if (format?.kind === 'npy') {
 			handleNpy(uri, gen);
-		} else if (lower.endsWith('.hdr')) {
+		} else if (format?.kind === 'hdr') {
 			handleHdr(uri, gen);
-		} else if (lower.endsWith('.tga')) {
+		} else if (format?.kind === 'tga') {
 			handleTga(uri, gen);
-		} else if (lower.match(/\.(webp|avif|bmp|ico)$/)) {
+		} else if (format?.kind === 'web-image') {
 			handleWebImage(uri, gen);
-		} else if (lower.endsWith('.jxl')) {
+		} else if (format?.kind === 'jxl') {
 			handleJxl(uri, gen);
-		} else if (lower.endsWith('.fits') || lower.endsWith('.fit') || lower.endsWith('.fts')) {
+		} else if (format?.kind === 'fits') {
 			handleScientificArray(fitsProcessor, uri, gen);
-		} else if (formatHint === 'dicom' || lower.endsWith('.dcm') || lower.endsWith('.dicom') || !resourceUri.split('/').pop()?.includes('.')) {
+		} else if (format?.kind === 'dicom') {
 			handleScientificArray(dicomProcessor, uri, gen, { frameIndex: Number(frameIndex || 0) });
-		} else if (lower.endsWith('.nc') || lower.endsWith('.cdf')) {
+		} else if (format?.kind === 'netcdf') {
 			handleScientificArray(netcdfProcessor, uri, gen, netcdfOptions || netcdfSelection);
-		} else if (lower.endsWith('.czi')) {
+		} else if (format?.kind === 'czi') {
 			handleScientificArray(cziProcessor, uri, gen, cziOptions || cziSelection);
 		} else {
 			// Fallback to regular image loading

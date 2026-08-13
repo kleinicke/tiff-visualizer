@@ -27,7 +27,9 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
-NetCDF-4/HDF5, compressed CZI subblocks (JPEG, JPEG XR, Zstd), and DICOM compression other than JPEG Baseline are not yet supported.
+NetCDF-4/HDF5 and compressed CZI subblocks (JPEG, JPEG XR, Zstd) are not yet supported. DICOM decodes native, JPEG Baseline and RLE Lossless pixel data; other transfer syntaxes are not yet supported.
+
+Images above roughly 268 megapixels (for example 20480x20480) decode correctly and their pixel values, metadata and statistics remain fully available, but cannot be displayed: a browser canvas cannot exceed 2^28 pixels. Tiled rendering for images that large is planned.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
 Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as DICOM Dataset**. The viewer scans technical headers, groups images by series, removes duplicate SOP instances, and orders slices spatially.
 
