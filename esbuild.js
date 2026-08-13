@@ -254,6 +254,24 @@ function copyMediaAssets() {
     console.warn('WARNING: jxl_dec.wasm not found at', jxlWasmSrc);
   }
 
+  // Mirror the wasm-pack output into out/media/wasm.
+  //
+  // The webview runs the esbuild bundles, which inline the glue, so it does
+  // not need this. The Node-based tests do: they import the tsc/esbuild output
+  // under out/media/modules/, where `tiff-wasm-wrapper.js`'s static import of
+  // '../wasm/tiff-wasm.js' resolves to out/media/wasm/tiff-wasm.js. Without
+  // the copy that import is an unresolved-module error at load time.
+  const wasmSrcDir = path.join(__dirname, 'media/wasm');
+  const wasmDstDir = path.join(__dirname, 'out/media/wasm');
+  if (fs.existsSync(wasmSrcDir)) {
+    fs.mkdirSync(wasmDstDir, { recursive: true });
+    for (const name of fs.readdirSync(wasmSrcDir)) {
+      fs.copyFileSync(path.join(wasmSrcDir, name), path.join(wasmDstDir, name));
+    }
+    console.log('Copied media/wasm ->', path.relative(__dirname, wasmDstDir));
+  } else {
+    console.warn('WARNING: media/wasm not found; run `npm run build:wasm` first');
+  }
 }
 
 async function buildAll() {

@@ -12,6 +12,8 @@ type Pixels =
 	| Int8Array | Int16Array | Int32Array | Float32Array | Float64Array;
 type TextureEntry = {
 	key: object; texture: any; width: number; height: number; channels: number; typeMax: number;
+	/** Expansion the shader must apply: 0 = already RGBA, 1 = r32float, 2 = rg32float. */
+	shaderChannels: number;
 };
 type SurfaceEntry = {
 	textures: any[];
@@ -722,6 +724,10 @@ export class WebGPULayerCompositor {
 			['gt', 'ge', 'lt', 'le', 'eq', 'isfinite', 'isnan'].indexOf(layer.maskCondition?.op || '') + 1,
 			(layer.maskCondition?.threshold || 0) / (layer.typeMax || typeMax),
 			typeMax,
+			// p[22]: how the shader must expand this source texture. 0 = the
+			// texture is already RGBA; 1 = r32float (replicate red into rgb,
+			// alpha 1); 2 = rg32float (red into rgb, green into alpha).
+			source.shaderChannels,
 		]);
 		this.runBlend(
 			encoder, buffers, this.surfaces[previous], source.texture,
@@ -981,8 +987,23 @@ export class WebGPULayerCompositor {
 		}
 		const uploadStarted = performance.now();
 		const isByte = data instanceof Uint8Array || data instanceof Uint8ClampedArray;
+		// Scalar and two-channel float data used to be expanded to rgba32float,
+		// costing 16 bytes per pixel to carry 4 bytes of information. That is
+		// the common case for scientific imagery (a depth map is one channel),
+		// and at 5120×5120 it meant a 400 MB texture instead of 100 MB —
+		// enough to exceed the device budget and fail to render at all. Upload
+		// the narrow formats instead and let the shader expand, which is free.
+		//
+		// `shaderChannels` tells the shader which expansion to apply: 0 means
+		// the texture is already RGBA (byte data, or float with 3+ channels).
+		const shaderChannels = isByte ? 0 : (channels === 1 ? 1 : channels === 2 ? 2 : 0);
+		const format = isByte ? 'rgba8unorm'
+			: shaderChannels === 1 ? 'r32float'
+			: shaderChannels === 2 ? 'rg32float'
+			: 'rgba32float';
+		const bytesPerPixel = isByte ? 4 : shaderChannels === 1 ? 4 : shaderChannels === 2 ? 8 : 16;
 		const texture = this.createTexture(
-			width, height, isByte ? 'rgba8unorm' : 'rgba32float',
+			width, height, format,
 			TEXTURE_USAGE.TEXTURE_BINDING | TEXTURE_USAGE.COPY_DST,
 		);
 		if (isByte) {
@@ -992,17 +1013,20 @@ export class WebGPULayerCompositor {
 				{ texture }, rgba, { bytesPerRow: width * 4, rowsPerImage: height }, { width, height },
 			);
 		} else {
-			const rgba = this.expandFloats(data, width, height, channels, typeMax);
+			const samples = shaderChannels === 0
+				? this.expandFloats(data, width, height, channels, typeMax)
+				: this.narrowFloats(data, width, height, channels, shaderChannels, typeMax);
 			this.device.queue.writeTexture(
-				{ texture }, rgba, { bytesPerRow: width * 16, rowsPerImage: height }, { width, height },
+				{ texture }, samples,
+				{ bytesPerRow: width * bytesPerPixel, rowsPerImage: height }, { width, height },
 			);
 		}
-		const entry = { key: data as object, texture, width, height, channels, typeMax };
+		const entry = { key: data as object, texture, width, height, channels, typeMax, shaderChannels };
 		this.textureCache.set(data as object, entry);
 		this.textureEntries.add(entry);
 		if (this.activeTiming) {
 			this.activeTiming.uploadCount++;
-			this.activeTiming.uploadBytes += width * height * (isByte ? 4 : 16);
+			this.activeTiming.uploadBytes += width * height * bytesPerPixel;
 			this.activeTiming.uploadCpuMs += performance.now() - uploadStarted;
 		}
 		return entry;
@@ -1068,6 +1092,27 @@ export class WebGPULayerCompositor {
 			output[target + 1] = channels < 3 ? gray : Number(data[source + 1]);
 			output[target + 2] = channels < 3 ? gray : Number(data[source + 2]);
 			output[target + 3] = channels === 2 ? Number(data[source + 1]) : channels === 4 ? Number(data[source + 3]) : 255;
+		}
+		return output;
+	}
+
+	/**
+	 * Packs 1- or 2-channel float data for an r32float / rg32float texture.
+	 * The shader reconstructs the same vec4 that `expandFloats` would have
+	 * produced (gray replicated into rgb; alpha from channel 1, or 1.0).
+	 */
+	private narrowFloats(
+		data: ArrayLike<number>, width: number, height: number,
+		channels: number, outputChannels: number, typeMax: number,
+	): Float32Array {
+		const output = new Float32Array(width * height * outputChannels);
+		const maximum = typeMax || 1;
+		for (let pixel = 0; pixel < width * height; pixel++) {
+			const source = pixel * channels, target = pixel * outputChannels;
+			output[target] = Number(data[source]) / maximum;
+			if (outputChannels === 2) {
+				output[target + 1] = Number(data[source + 1]) / maximum;
+			}
 		}
 		return output;
 	}
@@ -1452,7 +1497,17 @@ fn keepMask(value: f32, condition: i32) -> bool {
 	if (any(local < vec2i(0)) || any(local >= layerSize)) { return below; }
 	let sourceSize = vec2i(i32(p[2]), i32(p[3]));
 	let coordinate = min(sourceSize - 1, vec2i((vec2f(local) + 0.5) * vec2f(sourceSize) / vec2f(layerSize)));
-	let source = textureLoad(sourceTexture, coordinate, 0);
+	var source = textureLoad(sourceTexture, coordinate, 0);
+	// Narrow float sources (r32float / rg32float) carry the same information
+	// as a full rgba32float upload at a quarter or half the memory; rebuild
+	// the vec4 the rest of this shader expects. p[22] == 0 means the texture
+	// is already RGBA, which is the byte and 3+ channel float case.
+	let sourceChannels = i32(p[22]);
+	if (sourceChannels == 1) {
+		source = vec4f(source.r, source.r, source.r, 1.0);
+	} else if (sourceChannels == 2) {
+		source = vec4f(source.r, source.r, source.r, source.g);
+	}
 	let mode = i32(p[17]);
 	if (mode == 16) {
 		let value = dot(source.rgb, vec3f(0.2126, 0.7152, 0.0722));

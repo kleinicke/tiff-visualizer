@@ -1406,6 +1406,25 @@ import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/
 	async function renderImageDataToCanvas(imageData: ImageData, ctx: CanvasRenderingContext2D | null, shouldDraw: () => boolean = () => true) {
 		if (!ctx) return;
 		if (!shouldDraw()) return;
+		// Chromium refuses to back a 2D canvas larger than 2^28 pixels. Beyond
+		// that the canvas silently becomes unusable and the surrounding work
+		// (an ImageData plus a canvas backing store, several GB together) takes
+		// the whole webview process down with it — the renderer dies and VS
+		// Code shows its crashed-webview placeholder. Report it instead;
+		// displaying images this large needs tiled rendering, which does not
+		// exist yet.
+		const MAX_CANVAS_AREA = 268_435_456;
+		const area = imageData.width * imageData.height;
+		if (area > MAX_CANVAS_AREA) {
+			const message = `Image is ${imageData.width}x${imageData.height} (${(area / 1e6).toFixed(0)} megapixels), `
+				+ `above the ${(MAX_CANVAS_AREA / 1e6).toFixed(0)} megapixel limit a browser canvas can display. `
+				+ `The pixel data decoded correctly and values can still be inspected; tiled rendering for images `
+				+ `this large is not implemented yet.`;
+			console.warn(`[Canvas] ${message}`);
+			logToOutput(`[Canvas] ${message}`);
+			vscode.postMessage({ type: 'show-error', message });
+			return;
+		}
 		// Ensure the canvas matches the image size. Without this, drawing a smaller
 		// image onto a canvas still sized for a previous (larger) image leaves the
 		// old pixels visible around the new one — both images appear overlaid.

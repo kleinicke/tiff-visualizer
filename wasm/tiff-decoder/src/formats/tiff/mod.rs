@@ -99,8 +99,16 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
     let cfa_photometric = cfa_patched.as_ref().map(|_| demosaic::PHOTOMETRIC_CFA);
 
     let cursor = Cursor::new(data);
+    // The tiff crate's default limits cap a decoded buffer at 256 MiB, which
+    // rejects ordinary large scientific rasters outright: a 10240x10240
+    // float32 image needs 400 MB and fails with "decoder limits exceeded",
+    // silently demoting the file to the geotiff.js fallback. Those defaults
+    // exist to bound untrusted input; the ceiling that actually protects us
+    // here is wasm32's own address space, and an over-large allocation fails
+    // as a normal allocation error rather than a security problem.
     let mut decoder = Decoder::new(cursor)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?;
+        .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
 
     for current in 0..page_index {
         if !decoder.more_images() {

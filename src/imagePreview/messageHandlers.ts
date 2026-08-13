@@ -29,6 +29,7 @@ export class MessageRouter {
 		this.handlers.set('didExportLayerDocument', new ExportLayerDocumentMessageHandler());
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
+		this.handlers.set('show-error', new ShowErrorMessageHandler());
 		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
 		this.handlers.set('comparisonStateResponse', new ComparisonStateResponseMessageHandler());
 		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
@@ -60,6 +61,12 @@ export class MessageRouter {
 		const handler = this.handlers.get(message.type);
 		if (handler) {
 			handler.handle(message, this.preview);
+		} else {
+			// Previously an unregistered type was dropped without a trace, so a
+			// webview posting a message nobody listened for looked identical to
+			// one that was handled. That is how 'show-error' went unnoticed:
+			// the webview reported failures the user never saw.
+			console.warn(`[MessageRouter] No handler registered for webview message type: ${message.type}`);
 		}
 	}
 }
@@ -207,6 +214,22 @@ class InitialDataMessageHandler implements MessageHandler {
 class RegisterDicomFramesMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.registerDicomFrames(Number(message.frames || 1));
+	}
+}
+
+/**
+ * Surfaces a webview-side failure as a VS Code notification.
+ *
+ * The webview cannot show notifications itself, so without this the message
+ * only reached the output channel and the developer console — where a user
+ * never looks. They just saw a blank image and no explanation. Several call
+ * sites in `media/imagePreview.ts` have been posting this type for a while
+ * with nothing listening for it.
+ */
+class ShowErrorMessageHandler implements MessageHandler {
+	handle(message: any, _preview: ImagePreview): void {
+		const text = String(message?.message || 'The image could not be displayed.');
+		void vscode.window.showErrorMessage(text);
 	}
 }
 
