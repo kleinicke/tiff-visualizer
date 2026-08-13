@@ -1601,22 +1601,43 @@ collapses a WASM-plus-JS-fallback pair into one code path.
       BLANK, NaN/±Inf, multi-block headers, 3-axis cubes, CDF-1/CDF-2, record
       dimensions, scale/offset, `_FillValue`, every NetCDF element type, and
       matching rejection text.
-- [ ] [`ome-tiff.ts`](media/modules/ome-tiff.ts) (384) XML/metadata parsing, and CZI.
-- [ ] **Delete the TypeScript parsers for ported formats.** A fallback is only
-      worth its cost when the two paths cover *different* things — true for
+- [x] Zeiss CZI → [`formats/czi.rs`](wasm/tiff-decoder/src/formats/czi.rs). The last
+      TypeScript byte-parser; `media/modules/scientific-format-parsers.ts` no longer
+      exists. Fixed a latent table bug on the way: `CZI_PIXEL_TYPES[13]` (Gray64)
+      reported 32 bits per sample, copied from the float32 entries above it.
+- [x] **Deleted the TypeScript parsers for every ported format.** A fallback is
+      only worth its cost when the two paths cover *different* things — true for
       WebGPU (hardware varies) and still true for geotiff.js (it covers TIFF
-      cases Rust does not yet). It is NOT true for PFM/NetPBM/NPY/FITS/NetCDF:
-      the Rust is conformance-proven identical, so the TS parser only guards
-      "the wasm failed to load", a scenario already fatal for TIFF. Meanwhile it
-      costs two parsers to keep in sync forever and silently masks Rust bugs
-      behind a `console.warn`.
-      **Sequencing:** those TS parsers are currently the conformance *oracle*.
-      Convert each suite to absolute golden assertions first (the direction the
-      `>f8` fix already pushed them), then delete the TS and make the wasm path
-      the only one.
+      cases Rust does not yet). It was NOT true for the ported formats: the Rust
+      is conformance-proven identical, so the TS parser only guarded "the wasm
+      failed to load", a scenario already fatal for TIFF, while costing two
+      parsers to keep in sync and masking Rust bugs behind a `console.warn`.
+      The suites moved to golden + hand-computed assertions first, so deleting
+      the oracle cost no coverage; every golden's `dataDigest` is unchanged
+      across the whole migration.
+- [ ] **`ome-tiff.ts` stays TypeScript — deliberately, not pending.** The
+      byte-level half is already Rust (`extract_ome_xml` pulls the document out
+      of TIFF tag 270). What remains maps XML *text* onto a typed model
+      (`OmeMetadata`, channels, objectives, `TiffData`) consumed by
+      dataset-navigation UI in four files across both bundles. Rust's advantage
+      here is nil — the bugs it prevents (buffer overruns, byte order, integer
+      overflow) do not occur in text parsing, while the bugs that do occur
+      (namespace handling, `DimensionOrder` mapping) are unaffected. Porting it
+      would send the model over the boundary as JSON for TypeScript to re-parse
+      into the same interfaces, costing type safety and adding an XML dependency
+      to the crate for something that is not a decoder.
+      The one cost of keeping it here would be a split shared surface: a crate
+      consumer gets pixels plus the raw OME-XML string and would have to
+      interpret it itself. That cost does not apply to the extraction actually
+      planned — the consuming library has no use for OME metadata, only for the
+      pixel decoders. So this is settled, not deferred.
+      **Revisit only if** a future consumer genuinely needs the OME model; then
+      expose `parse_ome_xml(xml) -> json` from the crate rather than moving the
+      typed model across the boundary.
 - Retires the standing **"remove geotiff fallback"** item below, plus the
   `parse-exr`, `upng` and `pako` fallbacks, once each Rust path is conformance-
-  tested against the golden corpus.
+  tested against the golden corpus. Those four remain only for cases Rust does
+  not yet cover; they are no longer general fallbacks for anything ported.
 
 **Difficulty: 3.** Mostly volume; DICOM alone is a 3.
 

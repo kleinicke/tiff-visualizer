@@ -1,7 +1,7 @@
 "use strict";
 /**
- * Main-thread Rust/WASM decode path for the six formats that have no
- * TypeScript parser: PFM, NetPBM, NPY/NPZ, FITS, NetCDF and DICOM.
+ * Main-thread Rust/WASM decode path for the seven formats that have no
+ * TypeScript parser: PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM and CZI.
  *
  * `DecodeWorkerClient.decodeWithFallback` runs these when the decode worker is
  * unavailable or its response is not ok. That used to be where the TypeScript
@@ -19,6 +19,7 @@
  */
 import { initWasm } from './tiff-wasm-wrapper.js';
 import {
+	decodeCziWithWasm,
 	decodeDicomWithWasm,
 	decodeFitsWithWasm,
 	decodeNetcdfWithWasm,
@@ -70,4 +71,9 @@ export async function decodeNetcdfLocal(buffer: ArrayBuffer, options: Record<str
 export async function decodeDicomLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	const wasm = await requireWasm('DICOM');
 	return decodeDicomWithWasm(wasm.decode_dicom_fast, buffer, Number(options.frameIndex || 0), 'main');
+}
+
+export async function decodeCziLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
+	const wasm = await requireWasm('CZI');
+	return decodeCziWithWasm(wasm.decode_czi_fast, buffer, options, 'main');
 }

@@ -24,6 +24,7 @@ use formats::npy::decode_npy_impl;
 use formats::fits::decode_fits_impl;
 use formats::netcdf::decode_netcdf_impl;
 use formats::dicom::decode_dicom_impl;
+use formats::czi::decode_czi_impl;
 
 use wasm_bindgen::prelude::*;
 use std::io::Cursor;
@@ -116,44 +117,25 @@ pub struct HdrResult {
     all_tags_json: String,
 }
 
+/// Unified result type for every format whose decoder needs nothing beyond a
+/// plain raster: PFM, NetPBM (PBM/PGM/PPM), NPY/NPZ, FITS, classic NetCDF and
+/// DICOM. These used to be four near-identical structs (`PfmResult`,
+/// `PpmResult`, `NpyResult`, `ScientificResult`) that each restated the same
+/// handful of concepts in slightly different words; `DecodedArray` is the one
+/// shape all six `decode_*_fast` entry points below return.
+///
+/// - `sample_format`: 1 = unsigned int, 2 = signed int, 3 = float (the same
+///   TIFF convention `TiffResult.sample_format` already uses).
+/// - `sample_kind`: which `take_data_as_*` getter actually holds data —
+///   0 = `take_data_as_f32`, 1 = `take_data_as_u8`, 2 = `take_data_as_u16`.
+///   The other two getters return an empty `Vec` for a given result.
+/// - `format_label`: a human sub-variant string (e.g. "PGM (Binary)"); `""`
+///   when the format has no such concept.
+/// - `metadata_json`: a JSON object string (`formats/json_value.rs`), mirroring
+///   the TS `metadata: Record<string, any>` shape; `"{}"` when the format has
+///   no extra metadata.
 #[wasm_bindgen]
-pub struct PfmResult {
-    width: u32,
-    height: u32,
-    channels: u32,
-    data_f32: Vec<f32>,
-}
-
-#[wasm_bindgen]
-pub struct PpmResult {
-    width: u32,
-    height: u32,
-    channels: u32,
-    maxval: u32,
-    is_16bit: bool,
-    format: String,
-    data_u8: Vec<u8>,
-    data_u16: Vec<u16>,
-}
-
-#[wasm_bindgen]
-pub struct NpyResult {
-    width: u32,
-    height: u32,
-    channels: u32,
-    dtype: String,
-    show_norm: bool,
-    data_f32: Vec<f32>,
-}
-
-/// Shared result type for the FITS and NetCDF decoders (and, later, DICOM),
-/// mirroring the TS `ScientificDecodedImage` interface in
-/// `media/modules/scientific-format-parsers.ts`. `metadata_json` carries the
-/// TS `metadata: Record<string, any>` object serialized as JSON — see
-/// `formats/json_value.rs` — so the surface stays a handful of getters
-/// instead of one per possible metadata key.
-#[wasm_bindgen]
-pub struct ScientificResult {
+pub struct DecodedArray {
     width: u32,
     height: u32,
     channels: u32,
@@ -162,12 +144,18 @@ pub struct ScientificResult {
     type_min: f64,
     type_max: f64,
     source_numeric_type: String,
+    sample_kind: u32,
+    format_label: String,
     metadata_json: String,
     data_f32: Vec<f32>,
+    data_u8: Vec<u8>,
+    data_u16: Vec<u16>,
+    /// Guards the one-shot `take_data_as_*` contract below.
+    taken: bool,
 }
 
 #[wasm_bindgen]
-impl ScientificResult {
+impl DecodedArray {
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 { self.width }
 
@@ -193,17 +181,67 @@ impl ScientificResult {
     pub fn source_numeric_type(&self) -> String { self.source_numeric_type.clone() }
 
     #[wasm_bindgen(getter)]
+    pub fn sample_kind(&self) -> u32 { self.sample_kind }
+
+    #[wasm_bindgen(getter)]
+    pub fn format_label(&self) -> String { self.format_label.clone() }
+
+    #[wasm_bindgen(getter)]
     pub fn metadata_json(&self) -> String { self.metadata_json.clone() }
 
+    /// Moves the raster out as `Vec<f32>` (valid when `sample_kind == 0`).
+    ///
+    /// ONE-SHOT. The samples are moved rather than copied, because copying a
+    /// multi-hundred-megabyte raster to satisfy a second caller would be a
+    /// serious cost to pay for a mistake. A second call therefore CANNOT
+    /// return the data — but it now fails loudly instead of handing back an
+    /// empty `Vec`, which is what silently produced blank images and
+    /// `undefined` samples twice in this project's history.
     #[wasm_bindgen]
-    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
-        mem::take(&mut self.data_f32)
+    pub fn take_data_as_f32(&mut self) -> Result<Vec<f32>, JsValue> {
+        self.claim("take_data_as_f32")?;
+        Ok(mem::take(&mut self.data_f32))
+    }
+
+    /// Moves the raster out as `Vec<u8>` (valid when `sample_kind == 1`).
+    /// One-shot; see [`DecodedArray::take_data_as_f32`].
+    #[wasm_bindgen]
+    pub fn take_data_as_u8(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.claim("take_data_as_u8")?;
+        Ok(mem::take(&mut self.data_u8))
+    }
+
+    /// Moves the raster out as `Vec<u16>` (valid when `sample_kind == 2`).
+    /// One-shot; see [`DecodedArray::take_data_as_f32`].
+    #[wasm_bindgen]
+    pub fn take_data_as_u16(&mut self) -> Result<Vec<u16>, JsValue> {
+        self.claim("take_data_as_u16")?;
+        Ok(mem::take(&mut self.data_u16))
     }
 }
 
-impl From<formats::scientific_common::ScientificParsed> for ScientificResult {
+impl DecodedArray {
+    /// Enforces the one-shot contract shared by the three takers. The samples
+    /// live in ONE of the three buffers, so claiming any of them consumes the
+    /// result: asking for the wrong carrier is a caller bug too, and is better
+    /// reported than answered with an empty array.
+    fn claim(&mut self, method: &str) -> Result<(), JsValue> {
+        if self.taken {
+            return Err(JsValue::from_str(&format!(
+                "DecodedArray::{method} called more than once. The decoded samples are \
+                 moved out on the first call, not copied. Take them once and reuse that \
+                 array (media/modules/wasm-decoders.ts does this for every format)."
+            )));
+        }
+        self.taken = true;
+        Ok(())
+    }
+}
+
+impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
     fn from(p: formats::scientific_common::ScientificParsed) -> Self {
-        ScientificResult {
+        DecodedArray {
+            taken: false,
             width: p.width,
             height: p.height,
             channels: p.channels,
@@ -212,84 +250,13 @@ impl From<formats::scientific_common::ScientificParsed> for ScientificResult {
             type_min: p.type_min,
             type_max: p.type_max,
             source_numeric_type: p.source_numeric_type,
+            sample_kind: 0,
+            format_label: String::new(),
             metadata_json: p.metadata_json,
             data_f32: p.data,
+            data_u8: Vec::new(),
+            data_u16: Vec::new(),
         }
-    }
-}
-
-#[wasm_bindgen]
-impl NpyResult {
-    #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
-
-    #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
-
-    #[wasm_bindgen(getter)]
-    pub fn channels(&self) -> u32 { self.channels }
-
-    #[wasm_bindgen(getter)]
-    pub fn dtype(&self) -> String { self.dtype.clone() }
-
-    #[wasm_bindgen(getter)]
-    pub fn show_norm(&self) -> bool { self.show_norm }
-
-    #[wasm_bindgen]
-    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
-        mem::take(&mut self.data_f32)
-    }
-}
-
-#[wasm_bindgen]
-impl PfmResult {
-    #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
-
-    #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
-
-    #[wasm_bindgen(getter)]
-    pub fn channels(&self) -> u32 { self.channels }
-
-    #[wasm_bindgen]
-    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
-        mem::take(&mut self.data_f32)
-    }
-}
-
-#[wasm_bindgen]
-impl PpmResult {
-    #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
-
-    #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
-
-    #[wasm_bindgen(getter)]
-    pub fn channels(&self) -> u32 { self.channels }
-
-    #[wasm_bindgen(getter)]
-    pub fn maxval(&self) -> u32 { self.maxval }
-
-    #[wasm_bindgen(getter)]
-    pub fn is_16bit(&self) -> bool { self.is_16bit }
-
-    #[wasm_bindgen(getter)]
-    pub fn format(&self) -> String { self.format.clone() }
-
-    /// Returns the raster as `Vec<u8>` when `is_16bit` is false; otherwise an
-    /// empty `Vec`.
-    #[wasm_bindgen]
-    pub fn take_data_as_u8(&mut self) -> Vec<u8> {
-        mem::take(&mut self.data_u8)
-    }
-
-    /// Returns the raster as `Vec<u16>` when `is_16bit` is true; otherwise an
-    /// empty `Vec`.
-    #[wasm_bindgen]
-    pub fn take_data_as_u16(&mut self) -> Vec<u16> {
-        mem::take(&mut self.data_u16)
     }
 }
 
@@ -759,7 +726,7 @@ pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, JsValue> {
 /// the worker always passes `true` to match the existing TS parser's
 /// `{ topDown: true }` call.
 #[wasm_bindgen]
-pub fn decode_pfm_fast(data: &[u8], top_down: bool) -> Result<PfmResult, JsValue> {
+pub fn decode_pfm_fast(data: &[u8], top_down: bool) -> Result<DecodedArray, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -768,7 +735,7 @@ pub fn decode_pfm_fast(data: &[u8], top_down: bool) -> Result<PfmResult, JsValue
 
 /// Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
 #[wasm_bindgen]
-pub fn decode_ppm_fast(data: &[u8]) -> Result<PpmResult, JsValue> {
+pub fn decode_ppm_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -779,24 +746,16 @@ pub fn decode_ppm_fast(data: &[u8]) -> Result<PpmResult, JsValue> {
 /// the ZIP local-file-header signature in the first 4 bytes, mirroring the
 /// worker's existing `case 'npy':` dispatch.
 #[wasm_bindgen]
-pub fn decode_npy_fast(data: &[u8]) -> Result<NpyResult, JsValue> {
+pub fn decode_npy_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
-    let parsed = decode_npy_impl(data)?;
-    Ok(NpyResult {
-        width: parsed.width,
-        height: parsed.height,
-        channels: parsed.channels,
-        dtype: parsed.dtype,
-        show_norm: parsed.show_norm,
-        data_f32: parsed.data,
-    })
+    decode_npy_impl(data)
 }
 
 /// Decode a FITS file's first primary/IMAGE HDU with at least two axes.
 #[wasm_bindgen]
-pub fn decode_fits_fast(data: &[u8]) -> Result<ScientificResult, JsValue> {
+pub fn decode_fits_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -807,7 +766,7 @@ pub fn decode_fits_fast(data: &[u8]) -> Result<ScientificResult, JsValue> {
 /// an MPAS `nCells` polygon mesh. `options_json` is the JSON-serialized
 /// `NetCdfDecodeOptions` (`{ variableName?, indices? }`).
 #[wasm_bindgen]
-pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<ScientificResult, JsValue> {
+pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -821,9 +780,22 @@ pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<ScientificR
 /// fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
 /// working unchanged against this decoder.
 #[wasm_bindgen]
-pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<ScientificResult, JsValue> {
+pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, JsValue> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
     Ok(decode_dicom_impl(data, frame_index)?.into())
+}
+
+/// Decode a Zeiss CZI plane. `options_json` is the JSON-serialized
+/// `CziDecodeOptions` (`{ indices?: Record<string, number> }`) selecting the
+/// Z/C/T/... coordinate to assemble; unspecified axes default to their first
+/// coordinate. Compressed subblocks (JPEG/LZW/JPEG XR/Zstd) are rejected —
+/// only uncompressed subblocks decode.
+#[wasm_bindgen]
+pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    Ok(decode_czi_impl(data, options_json)?.into())
 }

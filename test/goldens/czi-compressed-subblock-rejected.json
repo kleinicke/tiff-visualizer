@@ -1,0 +1,5 @@
+{
+  "id": "czi-compressed-subblock-rejected",
+  "format": "czi",
+  "error": "Compressed CZI is not supported yet (JPEG); only uncompressed subblocks decode"
+}

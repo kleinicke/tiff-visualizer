@@ -7,6 +7,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
 I want to move to more rust, so anything that touches pixels or parses bytes goes in Rust; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. Change it whenever possible.
 
+**Decoder inventory:** every byte-parsing decoder is Rust — TIFF, EXR, PNG16, HDR, JPEG, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM and CZI — with no TypeScript counterpart. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
+
+**Decoder result contract:** the six array formats share one `DecodedArray` struct
+([wasm/tiff-decoder/src/lib.rs](wasm/tiff-decoder/src/lib.rs)); TIFF/EXR/PNG/HDR/JPEG keep richer
+per-format structs because their callers need the extra fields. `take_data_as_f32/_u8/_u16` are
+ONE-SHOT: the samples are moved, not copied, and a second call throws. Assemble results only through
+[media/modules/wasm-decoders.ts](media/modules/wasm-decoders.ts), which is shared by the decode worker
+and the main-thread path so the two cannot drift.
+
+**Format routing** lives in [media/modules/format-registry.ts](media/modules/format-registry.ts) — one
+table mapping extension to decoder. Add a format there and in `package.json`'s `customEditors`;
+`test:format-registry` fails if the two disagree.
+
 ## Development Commands
 
 ### Build & Development
@@ -79,14 +92,14 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
 
 - **SettingsManager** ([media/modules/settings-manager.js](media/modules/settings-manager.js)): Global settings and state management
 - **Format Processors**: Separate modules for each format
-  - **TiffProcessor** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)): TIFF using geotiff.js, with optional/preferred WASM fast path via TiffWasmWrapper
-  - **TiffWasmWrapper** ([media/modules/tiff-wasm-wrapper.js](media/modules/tiff-wasm-wrapper.js)): High-performance Rust/WASM TIFF decoder, used as drop-in replacement for geotiff.js
+  - **TiffProcessor** ([media/modules/tiff-processor.ts](media/modules/tiff-processor.ts)): TIFF via Rust/WASM, with geotiff.js retained only for the cases the Rust decoder does not yet cover
+  - **TiffWasmWrapper** ([media/modules/tiff-wasm-wrapper.ts](media/modules/tiff-wasm-wrapper.ts)): Loads and caches the one Rust/WASM module instance used by the main thread. It must import the wasm-pack glue STATICALLY — a dynamic import with a non-literal specifier is left to the runtime and resolves against the bundle, which silently 404s.
   - **ExrProcessor**: OpenEXR using parse-exr library
   - **NpyProcessor**: NumPy arrays (.npy)
   - **PfmProcessor**: Portable Float Map
   - **PpmProcessor**: Portable PixMap formats (PPM/PGM/PBM)
   - **PngProcessor**: PNG with uint8/16 and float16/32 support
-  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF lifecycle; parsers live in `scientific-format-parsers.ts`
+  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
@@ -423,7 +436,7 @@ return ImageRenderer.render(
 The extension handles diverse image formats with minimal processor code. Each format processor converts to Float32Array and delegates rendering to the central pipeline:
 
 - **TIFF** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)):
-  - Uses Rust/WASM by default, with geotiff.js as a compatibility fallback (to be removed)
+  - Decoded by Rust/WASM. geotiff.js remains only for TIFF cases the Rust decoder does not yet cover; it is not a general fallback
   - Supports LZW/Deflate compression, predictors, multi-channel
   - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
   - Sets `typeMax` based on bit depth for proper gamma mode normalization

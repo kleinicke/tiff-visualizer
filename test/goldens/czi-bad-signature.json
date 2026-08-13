@@ -1,0 +1,5 @@
+{
+  "id": "czi-bad-signature",
+  "format": "czi",
+  "error": "Invalid CZI signature"
+}

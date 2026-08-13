@@ -1,0 +1,5 @@
+{
+  "id": "czi-truncated-subblock",
+  "format": "czi",
+  "error": "CZI subblock data is truncated"
+}

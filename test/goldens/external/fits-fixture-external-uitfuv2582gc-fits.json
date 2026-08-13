@@ -25,6 +25,7 @@
     "typeMax": 6.74581077303e-12,
     "sourceNumericType": "int16"
   },
+  "formatLabel": "",
   "dataLength": 262144,
   "dataDigest": "sha256:7a3591dc5ea60c57a3d34fb28ba1c32aeaa1aca4a5b354866e6240a644f485e7",
   "samples": [

@@ -25,6 +25,7 @@
     "typeMax": 255,
     "sourceNumericType": "uint8"
   },
+  "formatLabel": "",
   "dataLength": 6,
   "dataDigest": "sha256:aa9c8a1b10e8caf4064b9735f1fc8065610052a22465b6b0a2e1bcb868b597de",
   "data": [

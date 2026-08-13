@@ -1,8 +1,8 @@
 "use strict";
 /**
- * Shared Rust/WASM decode entry points for the six formats whose byte-parsing
- * lives entirely in Rust: PFM, NetPBM (PBM/PGM/PPM), NPY/NPZ, FITS, classic
- * NetCDF and DICOM.
+ * Shared Rust/WASM decode entry points for the seven formats whose
+ * byte-parsing lives entirely in Rust: PFM, NetPBM (PBM/PGM/PPM), NPY/NPZ,
+ * FITS, classic NetCDF, DICOM and CZI.
  *
  * There is exactly ONE implementation of each of these decoders (the Rust
  * crate in `wasm/tiff-decoder`), and exactly one copy of the JS-side result
@@ -19,11 +19,16 @@
  * `tiffWasmInitPromise`; the main thread reuses the cached module from
  * `tiff-wasm-wrapper.ts`'s `initWasm()`. Neither creates a second instance.
  *
+ * All seven Rust decoders now return the same unified `DecodedArray` struct
+ * (see `wasm/tiff-decoder/src/lib.rs`), so there is exactly one assembly
+ * function — `assembleDecoded` — instead of one per format. `sample_kind`
+ * tells it which of the three `take_data_as_*` getters actually holds data.
+ *
  * IMPORTANT: the wasm results' `take_data_as_f32()` / `take_data_as_u8()` /
  * `take_data_as_u16()` are DESTRUCTIVE — a second call returns an EMPTY
- * vector. Every function here takes the array exactly once. Two real bugs in
- * this project have come from calling them twice; do not "helpfully" re-read
- * the data anywhere downstream.
+ * vector. `assembleDecoded` calls exactly one of them, exactly once. Two real
+ * bugs in this project have come from calling them twice; do not "helpfully"
+ * re-read the data anywhere downstream.
  */
 
 export type DecodeTiming = { name: string, durationMs: number };
@@ -42,6 +47,62 @@ function timing(format: string, startedAt: number): DecodeTiming[] {
 }
 
 /**
+ * Reads the raster out of a `DecodedArray` result via whichever
+ * `take_data_as_*` getter `sample_kind` says actually holds data
+ * (0 = f32, 1 = u8, 2 = u16). Called exactly once per result.
+ */
+function takeDecodedData(result: any): Float32Array | Uint8Array | Uint16Array {
+	switch (result.sample_kind) {
+		case 1: return result.take_data_as_u8();
+		case 2: return result.take_data_as_u16();
+		default: return result.take_data_as_f32();
+	}
+}
+
+/**
+ * Rebuilds the shared decoded-image shape from a `DecodedArray` result. All
+ * six Rust decoders (PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM) funnel
+ * through here — the struct is the same shape regardless of format, so this
+ * is the ONE place that reads it.
+ *
+ * `T` narrows `data`'s type per caller: every format except NetPBM always
+ * decodes to `Float32Array` (`sample_kind` is always 0 for them), so their
+ * wrappers below pass `T = Float32Array` to keep `data` concretely typed for
+ * consumers instead of the full `Float32Array | Uint8Array | Uint16Array`
+ * union `takeDecodedData` can return in general. `N` narrows
+ * `sourceNumericType` similarly: only NPY can produce `'float16'` (a half
+ * numpy dtype has no other honest representation in this union), so its
+ * caller widens `N` to include it while FITS/NetCDF/DICOM/PFM/NetPBM keep the
+ * narrower 8-value union `ScientificDecodedImage` expects.
+ */
+function assembleDecoded<
+	T extends Float32Array | Uint8Array | Uint16Array,
+	N extends string = 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float32' | 'float64',
+>(
+	result: any, format: string, context: DecodeContext, startedAt: number,
+) {
+	const data = takeDecodedData(result) as T;
+	const metadata = JSON.parse(result.metadata_json);
+	return {
+		width: result.width as number,
+		height: result.height as number,
+		channels: result.channels as number,
+		data,
+		metadata,
+		numericDomain: {
+			bitsPerSample: result.bits_per_sample as number,
+			sampleFormat: result.sample_format as 1 | 2 | 3,
+			typeMin: result.type_min as number,
+			typeMax: result.type_max as number,
+			sourceNumericType: result.source_numeric_type as N,
+		},
+		formatLabel: result.format_label as string,
+		decodedWith: tag(format, context),
+		decodeTimings: timing(format, startedAt),
+	};
+}
+
+/**
  * PFM. `topDown` is always true in practice — row 0 must end up topmost for
  * the canvas — but it stays an explicit argument because the Rust decoder
  * supports both and the conformance suite exercises both.
@@ -54,15 +115,7 @@ export function decodePfmWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodePfmFast(new Uint8Array(buffer), topDown);
-	const data = result.take_data_as_f32();
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		data,
-		decodedWith: tag('pfm', context),
-		decodeTimings: timing('pfm', startedAt),
-	};
+	return assembleDecoded<Float32Array>(result, 'pfm', context, startedAt);
 }
 
 /** NetPBM. The carrier is u16 only when the header's maxval exceeds 255. */
@@ -73,17 +126,7 @@ export function decodePpmWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodePpmFast(new Uint8Array(buffer));
-	const data = result.is_16bit ? result.take_data_as_u16() : result.take_data_as_u8();
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		data,
-		maxval: result.maxval,
-		format: result.format,
-		decodedWith: tag('ppm', context),
-		decodeTimings: timing('ppm', startedAt),
-	};
+	return assembleDecoded<Uint8Array | Uint16Array>(result, 'ppm', context, startedAt);
 }
 
 /**
@@ -98,41 +141,8 @@ export function decodeNpyWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodeNpyFast(new Uint8Array(buffer));
-	const data = result.take_data_as_f32();
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		dtype: result.dtype,
-		showNorm: result.show_norm,
-		data,
-		decodedWith: tag('npy', context),
-		decodeTimings: timing('npy', startedAt),
-	};
-}
-
-/**
- * Rebuilds the shared `ScientificDecodedImage` shape from the flat
- * `ScientificResult` getters. FITS, NetCDF and DICOM all return this one
- * struct, so they all funnel through here.
- */
-export function scientificResultToDecoded(result: any) {
-	const data = result.take_data_as_f32();
-	const metadata = JSON.parse(result.metadata_json);
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		data,
-		metadata,
-		numericDomain: {
-			bitsPerSample: result.bits_per_sample,
-			sampleFormat: result.sample_format,
-			typeMin: result.type_min,
-			typeMax: result.type_max,
-			sourceNumericType: result.source_numeric_type,
-		},
-	};
+	return assembleDecoded<Float32Array, 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float16' | 'float32' | 'float64'>(
+		result, 'npy', context, startedAt);
 }
 
 export function decodeFitsWithWasm(
@@ -141,10 +151,8 @@ export function decodeFitsWithWasm(
 	context: DecodeContext,
 ) {
 	const startedAt = performance.now();
-	const decoded: any = scientificResultToDecoded(decodeFitsFast(new Uint8Array(buffer)));
-	decoded.decodedWith = tag('fits', context);
-	decoded.decodeTimings = timing('fits', startedAt);
-	return decoded;
+	const result = decodeFitsFast(new Uint8Array(buffer));
+	return assembleDecoded<Float32Array>(result, 'fits', context, startedAt);
 }
 
 export function decodeNetcdfWithWasm(
@@ -154,11 +162,8 @@ export function decodeNetcdfWithWasm(
 	context: DecodeContext,
 ) {
 	const startedAt = performance.now();
-	const decoded: any = scientificResultToDecoded(
-		decodeNetcdfFast(new Uint8Array(buffer), JSON.stringify(options || {})));
-	decoded.decodedWith = tag('netcdf', context);
-	decoded.decodeTimings = timing('netcdf', startedAt);
-	return decoded;
+	const result = decodeNetcdfFast(new Uint8Array(buffer), JSON.stringify(options || {}));
+	return assembleDecoded<Float32Array>(result, 'netcdf', context, startedAt);
 }
 
 /**
@@ -174,9 +179,23 @@ export function decodeDicomWithWasm(
 	context: DecodeContext,
 ) {
 	const startedAt = performance.now();
-	const decoded: any = scientificResultToDecoded(
-		decodeDicomFast(new Uint8Array(buffer), frameIndex >>> 0));
-	decoded.decodedWith = tag('dicom', context);
-	decoded.decodeTimings = timing('dicom', startedAt);
-	return decoded;
+	const result = decodeDicomFast(new Uint8Array(buffer), frameIndex >>> 0);
+	return assembleDecoded<Float32Array>(result, 'dicom', context, startedAt);
+}
+
+/**
+ * Zeiss CZI. `decode_czi_fast` walks the subblock directory (falling back to
+ * a full segment scan) and assembles the plane matching `options.indices`
+ * (per-axis Z/C/T/... coordinates); unspecified axes default to their first
+ * coordinate. Compressed subblocks are rejected with a descriptive error.
+ */
+export function decodeCziWithWasm(
+	decodeCziFast: (bytes: Uint8Array, optionsJson: string) => any,
+	buffer: ArrayBuffer,
+	options: Record<string, any>,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeCziFast(new Uint8Array(buffer), JSON.stringify(options || {}));
+	return assembleDecoded<Float32Array>(result, 'czi', context, startedAt);
 }

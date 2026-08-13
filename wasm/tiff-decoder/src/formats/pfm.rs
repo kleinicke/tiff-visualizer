@@ -6,7 +6,7 @@
 //! dimensions/scale lines, trailing space/tab trimming) and the same
 //! top-down vertical-flip semantics.
 
-use crate::PfmResult;
+use crate::DecodedArray;
 use wasm_bindgen::JsValue;
 
 /// Read one line the same way the TS `readLine` closure does: skip leading
@@ -93,7 +93,7 @@ fn read_f32(bytes: &[u8], byte_offset: usize, little_endian: bool) -> Result<f32
     Ok(if little_endian { f32::from_le_bytes(arr) } else { f32::from_be_bytes(arr) })
 }
 
-pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<PfmResult, JsValue> {
+pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArray, JsValue> {
     let mut offset = 0usize;
 
     let mut magic = read_line(data, &mut offset);
@@ -159,10 +159,21 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<PfmResult, 
         }
     }
 
-    Ok(PfmResult {
+    Ok(DecodedArray {
+            taken: false,
         width: width as u32,
         height: height as u32,
         channels: channels as u32,
+        bits_per_sample: 32,
+        sample_format: 3,
+        type_min: 0.0,
+        type_max: 1.0,
+        source_numeric_type: "float32".to_string(),
+        sample_kind: 0,
+        format_label: String::new(),
+        metadata_json: "{}".to_string(),
         data_f32: out,
+        data_u8: Vec::new(),
+        data_u16: Vec::new(),
     })
 }

@@ -9,7 +9,7 @@
 //! single whitespace before binary raster data from being swallowed into the
 //! header fields. Do not merge them.
 
-use crate::PpmResult;
+use crate::DecodedArray;
 use wasm_bindgen::JsValue;
 
 fn is_ws(b: u8) -> bool {
@@ -80,7 +80,7 @@ enum PixelData {
     U16(Vec<u16>),
 }
 
-pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<PpmResult, JsValue> {
+pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
     let mut offset = 0usize;
 
     let magic = read_token(data, &mut offset);
@@ -210,13 +210,20 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<PpmResult, JsValue> {
         PixelData::U16(v) => (Vec::new(), v),
     };
 
-    Ok(PpmResult {
+    Ok(DecodedArray {
+            taken: false,
         width: width as u32,
         height: height as u32,
         channels: channels as u32,
-        maxval,
-        is_16bit: use16bit,
-        format: format.to_string(),
+        bits_per_sample: if use16bit { 16 } else { 8 },
+        sample_format: 1,
+        type_min: 0.0,
+        type_max: maxval as f64,
+        source_numeric_type: if use16bit { "uint16".to_string() } else { "uint8".to_string() },
+        sample_kind: if use16bit { 2 } else { 1 },
+        format_label: format.to_string(),
+        metadata_json: "{}".to_string(),
+        data_f32: Vec::new(),
         data_u8,
         data_u16,
     })

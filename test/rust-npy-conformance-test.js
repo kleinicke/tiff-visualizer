@@ -108,13 +108,24 @@ async function main() {
 
 		// Golden check: proves only that Rust's decoded output hasn't changed
 		// since capture — the absolute-value check above is what proves it is
-		// correct.
+		// correct. The numpy dtype string travels through `metadata.dtype`
+		// (see wasm/tiff-decoder/src/formats/npy.rs); numericDomain carries
+		// the honest bits/sample-format/type-range Rust derived from it.
+		const metadata = JSON.parse(rust.metadata_json);
 		assertMatchesGolden(kase, {
 			width: rust.width, height: rust.height, channels: rust.channels,
-			dtype: rust.dtype, showNorm: rust.show_norm, data: rustData,
+			metadata,
+			numericDomain: {
+				bitsPerSample: rust.bits_per_sample,
+				sampleFormat: rust.sample_format,
+				typeMin: rust.type_min,
+				typeMax: rust.type_max,
+				sourceNumericType: rust.source_numeric_type,
+			},
+			formatLabel: rust.format_label, data: rustData,
 		});
 
-		console.log(`✅ ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} dtype=${rust.dtype}`);
+		console.log(`✅ ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} dtype=${metadata.dtype}`);
 		count++;
 	}
 

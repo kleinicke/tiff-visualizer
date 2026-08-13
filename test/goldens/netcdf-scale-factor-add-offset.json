@@ -47,6 +47,7 @@
     "typeMax": 332.66999267600477,
     "sourceNumericType": "int16"
   },
+  "formatLabel": "",
   "dataLength": 4,
   "dataDigest": "sha256:b4f4a0c49cd3b35da4b1054367e4c5f0f8d41b9d652b4a1f0641dab48532c9e8",
   "data": [

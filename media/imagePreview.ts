@@ -63,8 +63,7 @@ import { ScientificArrayProcessor } from './modules/scientific-array-processor.j
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
 import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-registry.js';
-import { parseCzi } from './modules/scientific-format-parsers.js';
-import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/main-thread-decode.js';
+import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/main-thread-decode.js';
 
 /**
  * Main Image Preview Application
@@ -144,7 +143,7 @@ import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/
 	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decodeFitsLocal });
 	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => decodeNetcdfLocal(buffer, options || {}) });
-	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => parseCzi(buffer, options) });
+	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => decodeCziLocal(buffer, options || {}) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.

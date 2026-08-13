@@ -1,0 +1,147 @@
+{
+  "id": "czi-fixture-external-2-capzbhi1858-homo-mf20-phalloidin-72hpf-d-czi",
+  "format": "czi",
+  "width": 1024,
+  "height": 1024,
+  "channels": 1,
+  "metadata": {
+    "documentName": "2-capzbHi1858_Homo_MF20_Phalloidin_72hpf-d",
+    "scalingXUm": 0.13178822554981573,
+    "scalingYUm": 0.13178822554981573,
+    "scalingZUm": 1,
+    "channelNames": [
+      "Alexa Fluor 594",
+      "Alexa Fluor 488",
+      "DAPI"
+    ],
+    "format": "CZI",
+    "pixelTypeName": "Gray8",
+    "subBlockCount": 126,
+    "tileCount": 1,
+    "selectors": [
+      {
+        "name": "C",
+        "size": 3,
+        "value": 0
+      },
+      {
+        "name": "Z",
+        "size": 42,
+        "value": 0
+      }
+    ],
+    "selectedIndices": {
+      "C": 0,
+      "Z": 0
+    },
+    "channelName": "Alexa Fluor 594"
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
+  "formatLabel": "",
+  "dataLength": 1048576,
+  "dataDigest": "sha256:2182cc4f1c0eb8ffaea0423139571ffeb36a9b62a08daf19c76b58ed0363b89c",
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 45590,
+      "v": 0
+    },
+    {
+      "i": 91180,
+      "v": 0
+    },
+    {
+      "i": 136770,
+      "v": 0
+    },
+    {
+      "i": 182360,
+      "v": 0
+    },
+    {
+      "i": 227951,
+      "v": 0
+    },
+    {
+      "i": 273541,
+      "v": 0
+    },
+    {
+      "i": 319131,
+      "v": 0
+    },
+    {
+      "i": 364721,
+      "v": 14
+    },
+    {
+      "i": 410311,
+      "v": 1
+    },
+    {
+      "i": 455902,
+      "v": 97
+    },
+    {
+      "i": 501492,
+      "v": 18
+    },
+    {
+      "i": 547082,
+      "v": 64
+    },
+    {
+      "i": 592672,
+      "v": 26
+    },
+    {
+      "i": 638263,
+      "v": 53
+    },
+    {
+      "i": 683853,
+      "v": 1
+    },
+    {
+      "i": 729443,
+      "v": 127
+    },
+    {
+      "i": 775033,
+      "v": 0
+    },
+    {
+      "i": 820623,
+      "v": 9
+    },
+    {
+      "i": 866214,
+      "v": 0
+    },
+    {
+      "i": 911804,
+      "v": 0
+    },
+    {
+      "i": 957394,
+      "v": 0
+    },
+    {
+      "i": 1002984,
+      "v": 0
+    },
+    {
+      "i": 1048575,
+      "v": 0
+    }
+  ]
+}

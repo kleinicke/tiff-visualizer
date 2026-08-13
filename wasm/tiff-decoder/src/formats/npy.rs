@@ -11,18 +11,71 @@
 //! decoded it through a native-endian `Float64Array` view that ignores the
 //! dtype's byte-order prefix.
 
+use crate::DecodedArray;
+use super::json_value::{to_json_string, JsonValue};
 use wasm_bindgen::JsValue;
 
 /// Intermediate result shared by the single-array (`.npy`) and archive
 /// (`.npz`) entry points, before being wrapped into the `#[wasm_bindgen]`
-/// `NpyResult` in `lib.rs`.
+/// `DecodedArray` by `decode_npy_impl` below.
 pub(crate) struct NpyParsed {
     pub width: u32,
     pub height: u32,
     pub channels: u32,
     pub dtype: String,
-    pub show_norm: bool,
+    pub bits_per_sample: u32,
+    pub sample_format: u32,
+    pub source_numeric_type: String,
+    pub type_min: f64,
+    pub type_max: f64,
     pub data: Vec<f32>,
+}
+
+/// Derives the numeric-domain fields (bits/sample_format/source_numeric_type/
+/// type_min/type_max) from a numpy `dtype` string. Dispatch order mirrors
+/// `read_npy_samples` exactly — it is not exact dtype matching but the same
+/// `endsWith`/`includes` checks the original TS source used, in the same
+/// order, so the derived numeric domain agrees with which bytes were
+/// actually read.
+fn numeric_info_from_dtype(dtype: &str) -> (u32, u32, String, f64, f64) {
+    if dtype == "<f4" || dtype == "=f4" || dtype == ">f4" {
+        return (3, 32, "float32".to_string(), 0.0, 1.0);
+    }
+    if dtype.ends_with("f8") {
+        return (3, 64, "float64".to_string(), 0.0, 1.0);
+    }
+    if dtype.contains("f2") {
+        return (3, 16, "float16".to_string(), 0.0, 1.0);
+    }
+
+    // Integer fallback: byte width is the LAST CHARACTER of the dtype,
+    // exactly as in `read_npy_samples`.
+    let width = dtype.chars().last().and_then(|c| c.to_digit(10)).unwrap_or(0) as usize;
+    let unsigned = dtype.contains('u');
+    match width {
+        1 => if unsigned {
+            (1, 8, "uint8".to_string(), 0.0, 255.0)
+        } else {
+            (2, 8, "int8".to_string(), -128.0, 127.0)
+        },
+        2 => if unsigned {
+            (1, 16, "uint16".to_string(), 0.0, 65535.0)
+        } else {
+            (2, 16, "int16".to_string(), -32768.0, 32767.0)
+        },
+        4 => if unsigned {
+            (1, 32, "uint32".to_string(), 0.0, 4294967295.0)
+        } else {
+            (2, 32, "int32".to_string(), -2147483648.0, 2147483647.0)
+        },
+        _ => if unsigned {
+            // In practice only width 8 (numpy u8/i8, i.e. 64-bit): no
+            // narrower bucket applies, so report the true 64-bit range.
+            (1, 64, "uint64".to_string(), 0.0, 18446744073709551615.0)
+        } else {
+            (2, 64, "int64".to_string(), -9223372036854775808.0, 9223372036854775807.0)
+        },
+    }
 }
 
 const NPY_MAGIC: [u8; 6] = [0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59];
@@ -31,14 +84,39 @@ const ZIP_LOCAL_HEADER_SIG: u32 = 0x04034b50;
 /// Decode either a plain `.npy` buffer or a `.npz` (ZIP) archive, dispatching
 /// on the ZIP local-file-header signature in the first 4 bytes — mirroring
 /// `decodeFormat`'s `case 'npy':` arm in `media/decode-worker.ts`.
-pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<NpyParsed, JsValue> {
-    if data.len() >= 4 {
+pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
+    let parsed = if data.len() >= 4 {
         let sig = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         if sig == ZIP_LOCAL_HEADER_SIG {
-            return decode_npz(data);
+            decode_npz(data)?
+        } else {
+            decode_npy_single(data)?
         }
-    }
-    decode_npy_single(data)
+    } else {
+        decode_npy_single(data)?
+    };
+
+    let metadata_json = to_json_string(&JsonValue::Obj(vec![
+        ("dtype".to_string(), JsonValue::Str(parsed.dtype.clone())),
+    ]));
+
+    Ok(DecodedArray {
+            taken: false,
+        width: parsed.width,
+        height: parsed.height,
+        channels: parsed.channels,
+        bits_per_sample: parsed.bits_per_sample,
+        sample_format: parsed.sample_format,
+        type_min: parsed.type_min,
+        type_max: parsed.type_max,
+        source_numeric_type: parsed.source_numeric_type,
+        sample_kind: 0,
+        format_label: String::new(),
+        metadata_json,
+        data_f32: parsed.data,
+        data_u8: Vec::new(),
+        data_u16: Vec::new(),
+    })
 }
 
 /// Loose `parseInt(str, 10)` equivalent: optional sign, then a run of ASCII
@@ -249,7 +327,8 @@ pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, JsValue> {
         .map(|s| parse_int_js(s).unwrap_or(0))
         .collect();
 
-    let show_norm = dtype.contains('f');
+    let (sample_format, bits_per_sample, source_numeric_type, type_min, type_max) =
+        numeric_info_from_dtype(&dtype);
 
     let (height, width, channels): (i64, i64, i64) = match dims.len() {
         2 => (dims[0], dims[1], 1),
@@ -284,7 +363,11 @@ pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, JsValue> {
         height: height as u32,
         channels: channels as u32,
         dtype,
-        show_norm,
+        bits_per_sample,
+        sample_format,
+        source_numeric_type,
+        type_min,
+        type_max,
         data: out,
     })
 }

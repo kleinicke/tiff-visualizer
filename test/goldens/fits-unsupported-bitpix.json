@@ -1,5 +1,5 @@
 {
   "id": "fits-unsupported-bitpix",
   "format": "fits",
-  "error": "FITS file contains no supported 2D image HDU"
+  "error": "FITS file contains no 2D image HDU (found HDU 0: primary, unsupported BITPIX 24). Its image data uses a sample depth this decoder does not support."
 }

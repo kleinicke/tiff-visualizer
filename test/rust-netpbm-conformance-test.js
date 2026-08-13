@@ -93,7 +93,18 @@ async function main() {
 		}
 		assert.ok(!expectsRejection(kase), `${kase.id}: expected a rejection but decoded successfully`);
 
-		assertMatchesGolden(kase, { width: rust.width, height: rust.height, channels: rust.channels, data: rustData });
+		assertMatchesGolden(kase, {
+			width: rust.width, height: rust.height, channels: rust.channels,
+			metadata: JSON.parse(rust.metadata_json),
+			numericDomain: {
+				bitsPerSample: rust.bits_per_sample,
+				sampleFormat: rust.sample_format,
+				typeMin: rust.type_min,
+				typeMax: rust.type_max,
+				sourceNumericType: rust.source_numeric_type,
+			},
+			formatLabel: rust.format_label, data: rustData,
+		});
 		assertExpectedData(kase, rustData);
 
 		console.log(`✅ PFM ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels}`);
@@ -107,7 +118,8 @@ async function main() {
 		const rustError = getErrorMessage(() => {
 			rust = mod.decode_ppm_fast(new Uint8Array(kase.bytes));
 			// Same destructive-call hazard as above: capture once, reuse.
-			rustData = rust.is_16bit ? rust.take_data_as_u16() : rust.take_data_as_u8();
+			// sample_kind: 0 = f32, 1 = u8, 2 = u16 (see DecodedArray in lib.rs).
+			rustData = rust.sample_kind === 2 ? rust.take_data_as_u16() : rust.take_data_as_u8();
 		});
 
 		if (rustError !== null) {
@@ -121,11 +133,19 @@ async function main() {
 
 		assertMatchesGolden(kase, {
 			width: rust.width, height: rust.height, channels: rust.channels,
-			maxval: rust.maxval, formatLabel: rust.format, data: rustData,
+			metadata: JSON.parse(rust.metadata_json),
+			numericDomain: {
+				bitsPerSample: rust.bits_per_sample,
+				sampleFormat: rust.sample_format,
+				typeMin: rust.type_min,
+				typeMax: rust.type_max,
+				sourceNumericType: rust.source_numeric_type,
+			},
+			formatLabel: rust.format_label, data: rustData,
 		});
 		assertExpectedData(kase, rustData);
 
-		console.log(`✅ ${rust.format} ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} maxval=${rust.maxval}`);
+		console.log(`✅ ${rust.format_label} ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} maxval=${rust.type_max}`);
 		count++;
 	}
 

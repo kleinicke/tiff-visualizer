@@ -4,7 +4,14 @@
   "width": 4,
   "height": 2,
   "channels": 1,
-  "maxval": 255,
+  "metadata": {},
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
   "formatLabel": "PGM (ASCII)",
   "dataLength": 8,
   "dataDigest": "sha256:18168364aa4369ef9d4d67c897c363270510db520dd2d85ce43ba581235f8cd1",

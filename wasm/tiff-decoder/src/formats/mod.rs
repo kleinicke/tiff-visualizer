@@ -10,3 +10,4 @@ pub(crate) mod scientific_common;
 pub(crate) mod fits;
 pub(crate) mod netcdf;
 pub(crate) mod dicom;
+pub(crate) mod czi;

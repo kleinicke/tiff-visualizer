@@ -4,7 +4,7 @@ import { PfmProcessor } from './pfm-processor.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import type { SettingsManager } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
-import type { ScientificDecodedImage } from './scientific-format-parsers.js';
+import type { ScientificDecodedImage } from './types.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 

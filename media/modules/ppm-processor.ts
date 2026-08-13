@@ -67,8 +67,9 @@ export class PpmProcessor {
         const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
-        const { width, height, channels, data, maxval, format } = await DecodeWorkerClient.decodeWithFallback(
+        const { width, height, channels, data, numericDomain, formatLabel: format } = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'ppm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePpmLocal(b));
+        const maxval = numericDomain.typeMax;
 
         // Keep RGB data for color display
         const displayData = data;

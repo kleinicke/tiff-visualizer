@@ -4,8 +4,17 @@
   "width": 4,
   "height": 1,
   "channels": 1,
-  "dtype": ">u2",
-  "showNorm": false,
+  "metadata": {
+    "dtype": ">u2"
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 65535,
+    "sourceNumericType": "uint16"
+  },
+  "formatLabel": "",
   "dataLength": 4,
   "dataDigest": "sha256:5dd62d1f71c6d015f9f423332bed320e73c2e632d89edb1e2ffbf3343561873b",
   "data": [

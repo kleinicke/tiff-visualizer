@@ -1,5 +1,5 @@
 {
   "id": "fits-fixture-external-iuelwp25637mxlo-fits",
   "format": "fits",
-  "error": "FITS file contains no supported 2D image HDU"
+  "error": "FITS file contains no 2D image HDU (found HDU 0: primary, header only, HDU 1: BINTABLE). This file holds tabular or header-only data rather than an image."
 }

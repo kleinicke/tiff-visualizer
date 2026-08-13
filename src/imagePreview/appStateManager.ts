@@ -327,7 +327,7 @@ export class AppStateManager {
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
-		if (format === 'npy-uint' || format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
+		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;
@@ -341,16 +341,24 @@ export class AppStateManager {
 			defaults.normalization.min = 0;
 			defaults.normalization.max = 1;
 		}
-		// Rule 3: Float data (NPY), signed-integer TIFFs, and wide (>16-bit)
-		// unsigned-integer TIFFs (e.g. uint32) → Auto-normalize to actual data
-		// range. (Scientific data can have any range — signed data especially
-		// never fits gamma mode's unsigned [0, typeMax] assumption, e.g. an
-		// int16 elevation map with values 0..2 would render black. Wide
-		// unsigned data hits the same problem from the other direction:
-		// gamma mode's full range there is [0, 2^32-1], and typical data,
-		// which rarely spans anywhere near that, would render essentially
-		// black too.)
-		else if (format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi') {
+		// Rule 3: NumPy arrays (float AND integer), signed-integer TIFFs, and
+		// wide (>16-bit) unsigned-integer TIFFs (e.g. uint32) → Auto-normalize
+		// to the actual data range. (Scientific data can have any range —
+		// signed data especially never fits gamma mode's unsigned [0, typeMax]
+		// assumption, e.g. an int16 elevation map with values 0..2 would render
+		// black. Wide unsigned data hits the same problem from the other
+		// direction: gamma mode's full range there is [0, 2^32-1], and typical
+		// data, which rarely spans anywhere near that, would render
+		// essentially black too.
+		//
+		// `npy-uint` belongs here rather than with the display-image integer
+		// formats: an .npy is an array someone computed, not a picture someone
+		// authored, so its values carry no expectation of filling the type's
+		// range. A uint8 PNG spans 0..255 by construction; a uint8 NumPy array
+		// might be a label map holding 0..3. The uint64 case makes it starkest
+		// — gamma mode would normalize against 2^64-1 and render everything
+		// black.)
+		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

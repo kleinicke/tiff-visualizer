@@ -6,7 +6,7 @@
   "channels": 1,
   "metadata": {
     "format": "NetCDF CDF-2",
-    "variable": "areaCell",
+    "variable": "h",
     "viewMode": "mpas-mesh",
     "projection": "Equirectangular",
     "meshLocation": "nCells",
@@ -154,9 +154,22 @@
         ]
       }
     ],
-    "selectors": [],
+    "selectors": [
+      {
+        "name": "Time",
+        "size": 1,
+        "value": 0
+      },
+      {
+        "name": "nVertLevels",
+        "size": 3,
+        "value": 0
+      }
+    ],
     "selectedIndices": {
-      "nCells": 0
+      "Time": 0,
+      "nCells": 0,
+      "nVertLevels": 0
     }
   },
   "numericDomain": {
@@ -166,8 +179,9 @@
     "typeMax": 1,
     "sourceNumericType": "float64"
   },
+  "formatLabel": "",
   "dataLength": 259200,
-  "dataDigest": "sha256:b05f643b754288b69c50e43961ff691a10524e61aa9677c4eff4038d93880b82",
+  "dataDigest": "sha256:2e9cd9da1e6a81ab7a1f9d39c00174670af82018235e3aa19446bf1be3aa3ebf",
   "samples": [
     {
       "i": 0,
@@ -231,27 +245,27 @@
     },
     {
       "i": 169042,
-      "v": 50164310016
+      "v": 500.6028137207031
     },
     {
       "i": 180312,
-      "v": 50529951744
+      "v": 499.9452819824219
     },
     {
       "i": 191581,
-      "v": 49920946176
+      "v": 500.8437194824219
     },
     {
       "i": 202851,
-      "v": 50562871296
+      "v": 500.68621826171875
     },
     {
       "i": 214120,
-      "v": 51211509760
+      "v": 500.7289123535156
     },
     {
       "i": 225390,
-      "v": 50652340224
+      "v": 499.9700012207031
     },
     {
       "i": 236659,

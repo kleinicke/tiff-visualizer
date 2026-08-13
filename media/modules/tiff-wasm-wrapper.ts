@@ -51,7 +51,15 @@ async function initWasm(): Promise<any> {
             };
             return wasmModule;
         } catch (error) {
-            console.warn('Failed to load WASM module, will use geotiff.js fallback:', error);
+            // In the webview this is a real problem worth surfacing. Under
+            // Node (the tsc `out/` layout used by tests) it is expected: the
+            // wasm-pack "web" glue fetches its payload, which Node cannot
+            // serve from a file URL. Tests that need the decoder pass explicit
+            // bytes to `init()` instead.
+            const isNode = typeof process !== 'undefined' && !!(process as any).versions?.node;
+            console.warn(isNode
+                ? `[tiff-wasm-wrapper] WASM self-initialization is unavailable under Node (expected); pass explicit bytes to init(). ${error}`
+                : `Failed to load WASM module, will use geotiff.js fallback: ${error}`);
             return null;
         }
     })();

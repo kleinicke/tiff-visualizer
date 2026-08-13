@@ -15,11 +15,11 @@
  * Case shape:
  *   {
  *     id:       string,   // stable, filesystem-safe, unique — names golden files
- *     format:   'pfm' | 'ppm' | 'npy' | 'fits' | 'netcdf' | 'dicom',
+ *     format:   'pfm' | 'ppm' | 'npy' | 'fits' | 'netcdf' | 'dicom' | 'czi',
  *     bytes:    Buffer,   // exact input bytes
  *     options:  object,   // decoder options: {topDown} for pfm, {} for ppm,
  *                         // NetCDF option object for netcdf, {frameIndex} for
- *                         // dicom, {} for npy
+ *                         // dicom, {} for npy, {indices?} for czi
  *     external: boolean,  // true if sourced from the private corpus at
  *                         // /Users/florian/Projects/cursor/test_data/testfiles
  *     expectError: boolean, // true for cases hand-authored as negative cases
@@ -1083,10 +1083,11 @@ function listScientificFixtureCases(dir, external) {
 		const full = path.join(dir, file);
 		const isFits = lower.endsWith('.fits');
 		const isNetCdf = lower.endsWith('.nc');
+		const isCzi = lower.endsWith('.czi');
 		const isDicom = lower.endsWith('.dcm') || lower.endsWith('.dicom')
 			|| (!file.includes('.') && looksLikeDicom(full));
-		if (!isFits && !isNetCdf && !isDicom) { continue; }
-		const format = isFits ? 'fits' : isNetCdf ? 'netcdf' : 'dicom';
+		if (!isFits && !isNetCdf && !isCzi && !isDicom) { continue; }
+		const format = isFits ? 'fits' : isNetCdf ? 'netcdf' : isCzi ? 'czi' : 'dicom';
 		const idPrefix = external ? `${format}-fixture-external` : `${format}-fixture`;
 		cases.push({
 			id: `${idPrefix}-${slugify(file)}`,
@@ -1102,6 +1103,53 @@ function listScientificFixtureCases(dir, external) {
 		});
 	}
 	return cases;
+}
+
+/** Reads the real `synthetic-stack.czi` fixture and hands a mutable copy to
+ * `patchEntry(buf, entryOffset)` for every directory entry (walking the
+ * ZISRAWDIRECTORY segment the same way the decoder does), so negative CZI
+ * cases can surgically corrupt one field (e.g. compression, a dimension
+ * size) while leaving the rest of the file — including the file length and
+ * every other subblock — untouched. */
+function cziPatchedFixture(patchEntry) {
+	const original = fs.readFileSync(path.join(scientificSamplesDir, 'synthetic-stack.czi'));
+	const buf = Buffer.from(original);
+	const header = 32; // FileHeaderSegment's data starts right after the 32-byte segment header.
+	const dirPos = Number(buf.readBigInt64LE(header + 0x34));
+	const dataStart = dirPos + 32;
+	const count = buf.readInt32LE(dataStart);
+	let entryOffset = dataStart + 128; // EntryCount (4 bytes) + 124 reserved bytes.
+	for (let i = 0; i < count; i++) {
+		const dimensionCount = buf.readInt32LE(entryOffset + 28);
+		patchEntry(buf, entryOffset);
+		entryOffset += 32 + dimensionCount * 20;
+	}
+	return buf;
+}
+
+/** Declares every directory entry compressed (PixelType-agnostic JPEG id),
+ * which must be rejected before any pixel data is read. */
+function cziPatchCompression(buf, entryOffset) {
+	buf.writeInt32LE(1, entryOffset + 18);
+}
+
+/** Inflates the Y dimension's Size AND StoredSize (kept equal so the
+ * full-resolution/pyramid filter still accepts the entry) well beyond what
+ * the subblock's actual pixel data can satisfy, so the tile byte-range
+ * computed from it overruns the file — the same "truncated" failure a
+ * corrupted/short DataSize field would produce, without having to also
+ * truncate the file itself (which would just as easily corrupt the
+ * ZISRAWDIRECTORY segment that lives after every subblock in this fixture). */
+function cziPatchTruncateYDimension(buf, entryOffset) {
+	const dimensionCount = buf.readInt32LE(entryOffset + 28);
+	for (let i = 0; i < dimensionCount; i++) {
+		const dimEntry = entryOffset + 32 + i * 20;
+		const name = buf.toString('latin1', dimEntry, dimEntry + 4).replace(/\0/g, '').trim();
+		if (name === 'Y') {
+			buf.writeInt32LE(9999, dimEntry + 8);
+			buf.writeInt32LE(9999, dimEntry + 16);
+		}
+	}
 }
 
 function listScientificCases() {
@@ -1751,6 +1799,84 @@ function listScientificCases() {
 			expectedData: stored.map(v => Math.fround(v)),
 		});
 	}
+
+	// --- CZI: default plane + explicit Z/C selection, ABSOLUTE hand-computed values --
+	// `synthetic-stack.czi` is a 32x24 Gray8 mosaic of two 16px-wide tiles,
+	// SizeZ=3, SizeC=2 (12 subblocks total). Every row of a given Z/C plane
+	// is identical, and per-pixel value = x + z*40 + c*100 (documented and
+	// exercised in test/scientific-formats-test.js's testCzi()).
+	{
+		const bytes = fs.readFileSync(path.join(scientificSamplesDir, 'synthetic-stack.czi'));
+		const planeValues = (z, c) => Array.from({ length: 32 * 24 }, (_, i) => Math.fround((i % 32) + z * 40 + c * 100));
+
+		cases.push({
+			id: 'czi-default-plane-z0-c0-absolute',
+			format: 'czi',
+			bytes,
+			options: {},
+			external: false,
+			expectError: false,
+			label: 'CZI default plane (Z=0, C=0) absolute',
+			expectedData: planeValues(0, 0),
+		});
+		cases.push({
+			id: 'czi-plane-z2-c1-absolute',
+			format: 'czi',
+			bytes,
+			options: { indices: { Z: 2, C: 1 } },
+			external: false,
+			expectError: false,
+			label: 'CZI plane (Z=2, C=1) absolute',
+			expectedData: planeValues(2, 1),
+		});
+		cases.push({
+			id: 'czi-plane-z-out-of-range-clamps',
+			format: 'czi',
+			bytes,
+			options: { indices: { Z: 99 } },
+			external: false,
+			expectError: false,
+			label: 'CZI out-of-range Z index clamps instead of throwing',
+			// Z clamps to the max coordinate (2), C stays at its default (0).
+			expectedData: planeValues(2, 0),
+		});
+	}
+
+	// --- CZI negative cases -----------------------------------------------------
+	cases.push({
+		id: 'czi-bad-signature',
+		format: 'czi',
+		bytes: Buffer.from('NOTACZIFILE0123456789012345', 'latin1'),
+		options: {},
+		external: false,
+		expectError: true,
+		label: 'CZI bad signature',
+	});
+
+	cases.push({
+		id: 'czi-truncated-subblock',
+		format: 'czi',
+		bytes: cziPatchedFixture(cziPatchTruncateYDimension),
+		options: {},
+		external: false,
+		expectError: true,
+		label: 'CZI truncated subblock',
+	});
+
+	cases.push({
+		id: 'czi-compressed-subblock-rejected',
+		format: 'czi',
+		bytes: cziPatchedFixture(cziPatchCompression),
+		options: {},
+		external: false,
+		expectError: true,
+		label: 'CZI compressed subblock rejected',
+	});
+
+	// External-corpus CZI fixtures (real microscope files) are already picked
+	// up by the generic `listScientificFixtureCases` calls at the top of this
+	// function (which now recognize `.czi`), so there is no separate block
+	// here — see `czi-fixture-external-*` cases.
 
 	return cases;
 }

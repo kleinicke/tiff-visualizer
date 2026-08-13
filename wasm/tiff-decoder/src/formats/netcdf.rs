@@ -191,6 +191,24 @@ enum AttrRaw {
     Nums(Vec<f64>),
 }
 
+/// Whether a variable describes the MESH rather than a field defined on it.
+///
+/// MPAS stores grid geometry and connectivity alongside the simulation output,
+/// in the same `nCells` dimension, so both look equally displayable. These are
+/// coordinates, areas, indices and adjacency lists — real data, but not what a
+/// viewer should open by default.
+fn is_mesh_geometry(name: &str) -> bool {
+    const GEOMETRY: [&str; 10] = [
+        "areaCell", "areaTriangle", "latCell", "lonCell", "xCell", "yCell", "zCell",
+        "meshDensity", "maxLevelCell", "nEdgesOnCell",
+    ];
+    GEOMETRY.contains(&name)
+        || name.starts_with("indexTo")
+        || name.ends_with("OnCell")
+        || name.ends_with("OnEdge")
+        || name.ends_with("OnVertex")
+}
+
 fn variable_dimensions<'a>(variable: &Variable, dimensions: &'a [Dimension]) -> Result<Vec<&'a Dimension>, JsValue> {
     variable.dim_ids.iter()
         .map(|&id| dimensions.get(id).ok_or_else(|| JsValue::from_str("NetCDF variable references an invalid dimension")))
@@ -462,14 +480,28 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         return Err(JsValue::from_str("NetCDF file contains no supported raster or MPAS cell variable"));
     }
 
-    let preferred_mesh_names = ["areaCell", "h_s", "h", "ke", "tracers"];
     let selected_idx: usize = candidates.iter()
         .find(|&&i| Some(&variables[i].name) == options.variable_name.as_ref())
         .copied()
+        // Default to a simulated field rather than the grid it was computed on.
+        // An MPAS file carries both under the same `nCells` dimension, and the
+        // geometry sorts first by file order, so a naive "first candidate" (or
+        // the old hard-coded list, which put `areaCell` at the front) opens an
+        // ocean model showing cell areas in m^2 — a nearly flat picture of the
+        // mesh rather than the data the file was opened for.
+        //
+        // Among the remaining candidates, prefer one that varies over the
+        // record (time) dimension. Those are the prognostic fields; a
+        // cell-only variable is typically static (`h_s`, the channel floor in
+        // the MPAS test case, is a constant -5000 everywhere and renders as a
+        // single flat colour).
         .or_else(|| {
-            if mesh_indices.is_empty() { return None; }
-            preferred_mesh_names.iter()
-                .find_map(|n| variable_by_name.get(*n).copied().filter(|i| mesh_indices.contains(i)))
+            let is_field = |i: &&usize| !is_mesh_geometry(&variables[**i].name);
+            let time_varying = |i: &&usize| variable_dimensions(&variables[**i], &dimensions)
+                .map(|dims| dims.first().map(|d| d.unlimited).unwrap_or(false))
+                .unwrap_or(false);
+            candidates.iter().filter(is_field).find(time_varying).copied()
+                .or_else(|| candidates.iter().find(is_field).copied())
         })
         .unwrap_or(candidates[0]);
 

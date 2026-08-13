@@ -40,3 +40,28 @@ export interface Stats {
   min: number;
   max: number;
 }
+
+/**
+ * Result shape shared by every decoder that produces a numeric raster with a
+ * numeric domain and free-form metadata: FITS, NetCDF, DICOM, CZI, and (via
+ * the same Rust `DecodedArray` struct) PFM, NetPBM and NPY.
+ *
+ * This used to live in `scientific-format-parsers.ts` alongside the TypeScript
+ * parsers. Those parsers are all gone — decoding happens in Rust — so the
+ * interface outlived its file and moved here.
+ */
+export interface ScientificDecodedImage {
+	width: number;
+	height: number;
+	channels: number;
+	data: Float32Array;
+	metadata: Record<string, any>;
+	numericDomain: {
+		bitsPerSample: number;
+		sampleFormat: 1 | 2 | 3;
+		typeMin: number;
+		typeMax: number;
+		sourceNumericType: 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float32' | 'float64';
+	};
+	decodeTimings?: { name: string, durationMs: number }[];
+}

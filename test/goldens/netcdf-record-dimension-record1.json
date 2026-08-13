@@ -62,6 +62,7 @@
     "typeMax": 1,
     "sourceNumericType": "float32"
   },
+  "formatLabel": "",
   "dataLength": 6,
   "dataDigest": "sha256:c2600e1170a6c8870bfa1db230512017ce5569d52a67906d2bd8c70edf57d4ed",
   "data": [

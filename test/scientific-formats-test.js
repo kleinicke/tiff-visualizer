@@ -4,17 +4,11 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const parserPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'scientific-format-parsers.js');
-if (!fs.existsSync(parserPath)) {
-	throw new Error('Compile first with npm run compile');
-}
-const { parseCzi } = require(parserPath);
-
-// FITS, DICOM and NetCDF are decoded by Rust/WASM only — their TypeScript
-// parsers have been deleted. These tests assert format semantics (row order,
-// numeric domain, mesh projection) rather than parity, so they now drive the
-// wasm decoders directly. Broader coverage lives in
-// test/rust-scientific-conformance-test.js.
+// FITS, DICOM, NetCDF and CZI are decoded by Rust/WASM only — their
+// TypeScript parsers have all been deleted. These tests assert format
+// semantics (row order, numeric domain, mesh projection, mosaic assembly)
+// rather than parity, so they now drive the wasm decoders directly. Broader
+// coverage lives in test/rust-scientific-conformance-test.js.
 let wasm = null;
 async function initWasm() {
 	if (wasm) { return wasm; }
@@ -46,6 +40,7 @@ function toDecoded(result) {
 const parseFits = (buf) => toDecoded(wasm.decode_fits_fast(new Uint8Array(buf)));
 const parseDicom = (buf, frameIndex = 0) => toDecoded(wasm.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0));
 const parseNetCdf = (buf, options = {}) => toDecoded(wasm.decode_netcdf_fast(new Uint8Array(buf), JSON.stringify(options)));
+const parseCzi = (buf, options = {}) => toDecoded(wasm.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options)));
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');
 
 function arrayBuffer(file) {
@@ -130,12 +125,21 @@ function testMpasNetCdf() {
 	const mesh = parseNetCdf(buffer);
 	assert.deepStrictEqual([mesh.width, mesh.height, mesh.channels], [720, 360, 1]);
 	assert.strictEqual(mesh.metadata.viewMode, 'mpas-mesh');
-	assert.strictEqual(mesh.metadata.variable, 'areaCell');
-	assert.deepStrictEqual(mesh.metadata.variables.map(variable => variable.name), ['areaCell', 'h_s', 'h', 'ke', 'tracers']);
+	// The default must be a simulated field, not the mesh it lives on. MPAS
+	// stores geometry (areaCell, latCell, indexToCellID, ...) beside the model
+	// output under the same nCells dimension, and the geometry comes first in
+	// file order — so an unguarded "first variable" default opens an ocean
+	// model showing cell areas in m^2.
+	assert.strictEqual(mesh.metadata.variable, 'h',
+		'should default to a time-varying field rather than mesh geometry');
+	assert.ok(!mesh.metadata.variable.endsWith('Cell'),
+		'mesh geometry must never be the default variable');
+	assert.deepStrictEqual(mesh.metadata.variables.map(variable => variable.name), ['areaCell', 'h_s', 'h', 'ke', 'tracers'],
+		'every nCells variable stays selectable, including the geometry');
 	const finite = Array.from(mesh.data).filter(Number.isFinite);
 	assert.ok(finite.length > 200000, 'MPAS polygons should cover most projection pixels');
 	const range = finite.reduce((current, value) => ({ min: Math.min(current.min, value), max: Math.max(current.max, value) }), { min: Infinity, max: -Infinity });
-	assert.ok(range.min > 0 && range.max > range.min);
+	assert.ok(range.min > 0 && range.max >= range.min);
 
 	const field = parseNetCdf(buffer, { variableName: 'h', indices: { Time: 0, nVertLevels: 0 } });
 	assert.strictEqual(field.metadata.variable, 'h');

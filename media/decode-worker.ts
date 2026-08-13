@@ -27,10 +27,9 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { parseCzi } from './modules/scientific-format-parsers.js';
-import { decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeCziWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
@@ -501,12 +500,12 @@ async function decodePng16(buffer: ArrayBuffer) {
 }
 
 /**
- * These six formats (PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM) are decoded
- * ONLY by Rust/WASM — the TypeScript parsers they were ported from have been
- * deleted, so there is no second implementation to fall back to. A wasm
- * failure is therefore a hard error with an actionable message rather than a
- * silent degradation, which is the point: a silent fallback used to mask Rust
- * bugs behind a console warning.
+ * These seven formats (PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI) are
+ * decoded ONLY by Rust/WASM — the TypeScript parsers they were ported from
+ * have been deleted, so there is no second implementation to fall back to. A
+ * wasm failure is therefore a hard error with an actionable message rather
+ * than a silent degradation, which is the point: a silent fallback used to
+ * mask Rust bugs behind a console warning.
  *
  * The result assembly lives in `modules/wasm-decoders.ts` and is shared with
  * the main-thread path in the format processors, so neither side can drift.
@@ -557,6 +556,11 @@ async function decodeDicom(buffer: ArrayBuffer, frameIndex: number) {
 	return decodeDicomWithWasm(decode_dicom_fast, buffer, frameIndex, 'worker');
 }
 
+async function decodeCzi(buffer: ArrayBuffer, options: Record<string, any>) {
+	await requireWasm('CZI');
+	return decodeCziWithWasm(decode_czi_fast, buffer, options, 'worker');
+}
+
 
 async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	switch (format) {
@@ -581,7 +585,7 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		case 'netcdf':
 			return decodeNetcdf(buffer, options);
 		case 'czi':
-			return parseCzi(buffer, options);
+			return decodeCzi(buffer, options);
 		case 'ora':
 		case 'kra':
 		case 'psd':

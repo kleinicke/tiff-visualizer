@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Massive rust rewrite
 - Add full in-editor documentation, opened with **TIFF Visualizer: Show Documentation** from the Command Palette or the right-click menu. Nothing opens on install.
 - Add a measurement panel (`Ctrl`/`Cmd` + `Shift` + `M`): ROI tools with full undo, calibrated area/perimeter/shape/intensity statistics, intensity profiles along a line, and a results table linked both ways to the image.
 - Read spatial calibration automatically from OME-TIFF physical pixel sizes or TIFF resolution tags, or set it from a drawn line of known length; add a scale bar and physical-unit readouts.

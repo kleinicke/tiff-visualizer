@@ -8,12 +8,23 @@ import type { DeferredRenderOptions } from './types.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 
+/** Mirrors the `numericDomain` shape `wasm-decoders.ts`'s `assembleDecoded`
+ * reads off the Rust `DecodedArray` struct: `sampleFormat` 1=uint, 2=int,
+ * 3=float (the TIFF convention). */
+interface NumericDomain {
+    bitsPerSample: number;
+    sampleFormat: number;
+    typeMin: number;
+    typeMax: number;
+    sourceNumericType: string;
+}
+
 interface RawImageData {
     width: number;
     height: number;
     data: Float32Array;
     dtype: string;
-    showNorm: boolean;
+    numericDomain: NumericDomain;
     channels: number;
 }
 
@@ -30,7 +41,7 @@ interface PendingRenderData {
 export class NpyProcessor {
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
-    _lastRaw: RawImageData | null; // { width, height, data: Float32Array, dtype: string, showNorm: boolean }
+    _lastRaw: RawImageData | null; // { width, height, data: Float32Array, dtype: string, numericDomain, channels }
     _pendingRenderData: PendingRenderData | null; // Store data waiting for format-specific settings
     _isInitialLoad: boolean; // Track if this is the first render
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
@@ -73,8 +84,12 @@ export class NpyProcessor {
         const parsed = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'npy', buffer, src, loadSignal,
             (b: ArrayBuffer) => decodeNpyLocal(b));
-        const { data, width, height, dtype, showNorm, channels } = parsed;
-        this._lastRaw = { width, height, data, dtype, showNorm, channels };
+        const { data, width, height, metadata, numericDomain, channels } = parsed;
+        // The numpy dtype string (e.g. "<f4") is user-visible display info,
+        // not part of the DecodedArray schema — it travels through
+        // `metadata.dtype` (see wasm/tiff-decoder/src/formats/npy.rs).
+        const dtype: string = (metadata && metadata.dtype) || '';
+        this._lastRaw = { width, height, data, dtype, numericDomain, channels };
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -101,8 +116,8 @@ export class NpyProcessor {
         const channels = this._lastRaw?.channels || 1;
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
-        const dtype = this._lastRaw?.dtype || 'f4';
-        const isFloat = dtype.includes('f');
+        const numericDomain = this._lastRaw?.numericDomain;
+        const isFloat = (numericDomain?.sampleFormat ?? 3) === 3;
         const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Calculate stats if needed (for auto-normalize or just to have them)
@@ -127,13 +142,11 @@ export class NpyProcessor {
 
         const nanColor = this._getNanColor(settings);
 
-        // Determine typeMax for integer types
-        let typeMax;
-        if (!isFloat) {
-            if (dtype.includes('1')) typeMax = 255;
-            else if (dtype.includes('2')) typeMax = 65535;
-            else if (dtype.includes('4')) typeMax = 4294967295; // 32-bit
-        }
+        // Determine typeMax for integer types. The Rust decoder already
+        // parsed the dtype (see wasm/tiff-decoder/src/formats/npy.rs's
+        // `numeric_info_from_dtype`), so this reads its result instead of
+        // re-deriving it from the dtype string here.
+        const typeMax = isFloat ? undefined : numericDomain?.typeMax;
         const effectiveTypeMax = typeMax ?? 1.0;
 
         if (renderOptions.targetCanvas && this._webglRenderer.canRender({
@@ -267,33 +280,12 @@ export class NpyProcessor {
     _postFormatInfo(width: number, height: number, formatLabel: string): void {
         if (!this.vscode) return;
 
-        // Determine actual bit depth and sample format from dtype
-        let bitsPerSample = 32;
-        let sampleFormat = 3; // Float
-
-        if (this._lastRaw && this._lastRaw.dtype) {
-            const dtype = this._lastRaw.dtype;
-
-            // Determine sample format: 1=uint, 2=int, 3=float
-            if (dtype.includes('f')) {
-                sampleFormat = 3; // Float
-                if (dtype.includes('f2')) bitsPerSample = 16;
-                else if (dtype.includes('f4')) bitsPerSample = 32;
-                else if (dtype.includes('f8')) bitsPerSample = 64;
-            } else if (dtype.includes('u')) {
-                sampleFormat = 1; // Unsigned int
-                if (dtype.includes('u1')) bitsPerSample = 8;
-                else if (dtype.includes('u2')) bitsPerSample = 16;
-                else if (dtype.includes('u4')) bitsPerSample = 32;
-                else if (dtype.includes('u8')) bitsPerSample = 64;
-            } else if (dtype.includes('i')) {
-                sampleFormat = 2; // Signed int
-                if (dtype.includes('i1')) bitsPerSample = 8;
-                else if (dtype.includes('i2')) bitsPerSample = 16;
-                else if (dtype.includes('i4')) bitsPerSample = 32;
-                else if (dtype.includes('i8')) bitsPerSample = 64;
-            }
-        }
+        // Bit depth and sample format come straight from the Rust decoder's
+        // parsed dtype (see wasm/tiff-decoder/src/formats/npy.rs's
+        // `numeric_info_from_dtype`) instead of re-deriving them here.
+        const numericDomain = this._lastRaw?.numericDomain;
+        const bitsPerSample = numericDomain?.bitsPerSample ?? 32;
+        const sampleFormat = numericDomain?.sampleFormat ?? 3; // 1=uint, 2=int, 3=float
 
         const channels = this._lastRaw?.channels || 1;
 

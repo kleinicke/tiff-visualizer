@@ -103,9 +103,7 @@ function serializeGolden(record) {
 	const KEY_ORDER = [
 		'id', 'format', 'error',
 		'width', 'height', 'channels',
-		'metadata', 'numericDomain',
-		'maxval', 'formatLabel',
-		'dtype', 'showNorm',
+		'metadata', 'numericDomain', 'formatLabel',
 		'dataLength', 'dataDigest', 'data', 'samples',
 	];
 	const ordered = {};
@@ -135,9 +133,9 @@ function readGolden(id, external) {
 /**
  * Compares a LIVE decode result (from the Rust/WASM module, decoded by the
  * caller — same shape as scripts/capture-goldens.js's `decoded` object:
- * {width, height, channels, data, metadata?, numericDomain?, maxval?,
- * formatLabel?, dtype?, showNorm?} for a successful decode, or
- * {error: string} for a rejected one) against the stored golden for
+ * {width, height, channels, data, metadata?, numericDomain?, formatLabel?}
+ * for a successful decode, or {error: string} for a rejected one) against
+ * the stored golden for
  * `kase.id`/`kase.external`.
  *
  * Returns { kind: 'ok' }, or throws an Error whose message is prefixed with
@@ -196,17 +194,8 @@ function assertMatchesGolden(kase, live) {
 	if (golden.width !== live.width) { mismatch(`width (golden=${golden.width}, live=${live.width})`); }
 	if (golden.height !== live.height) { mismatch(`height (golden=${golden.height}, live=${live.height})`); }
 	if (golden.channels !== live.channels) { mismatch(`channels (golden=${golden.channels}, live=${live.channels})`); }
-	if (golden.maxval !== undefined && golden.maxval !== live.maxval) {
-		mismatch(`maxval (golden=${golden.maxval}, live=${live.maxval})`);
-	}
 	if (golden.formatLabel !== undefined && golden.formatLabel !== live.formatLabel) {
 		mismatch(`formatLabel (golden=${golden.formatLabel}, live=${live.formatLabel})`);
-	}
-	if (golden.dtype !== undefined && golden.dtype !== live.dtype) {
-		mismatch(`dtype (golden=${golden.dtype}, live=${live.dtype})`);
-	}
-	if (golden.showNorm !== undefined && golden.showNorm !== live.showNorm) {
-		mismatch(`showNorm (golden=${golden.showNorm}, live=${live.showNorm})`);
 	}
 	if (golden.metadata !== undefined) {
 		// Deep-equal, NOT a JSON.stringify string comparison: the Rust side's

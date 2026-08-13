@@ -40,51 +40,29 @@ const DATA_INLINE_LIMIT = 4096;
  * fields needed to build a golden record, PLUS the typed array reference
  * captured exactly once (take_data_as_* is destructive: a second call on the
  * same result object returns an empty vector, not the same data again).
+ *
+ * All seven formats now return the same `DecodedArray` struct (see
+ * `wasm/tiff-decoder/src/lib.rs`), so there is one field-reading path here
+ * instead of one per format; only which bytes to feed the decoder differs.
  */
 function decodeWithRust(mod, kase) {
-	switch (kase.format) {
-		case 'pfm': {
-			const r = mod.decode_pfm_fast(new Uint8Array(kase.bytes), !!kase.options.topDown);
-			const data = r.take_data_as_f32();
-			return { width: r.width, height: r.height, channels: r.channels, data };
-		}
-		case 'ppm': {
-			const r = mod.decode_ppm_fast(new Uint8Array(kase.bytes));
-			const data = r.is_16bit ? r.take_data_as_u16() : r.take_data_as_u8();
-			return {
-				width: r.width, height: r.height, channels: r.channels, data,
-				maxval: r.maxval, formatLabel: r.format,
-			};
-		}
-		case 'npy': {
-			const r = mod.decode_npy_fast(new Uint8Array(kase.bytes));
-			const data = r.take_data_as_f32();
-			return {
-				width: r.width, height: r.height, channels: r.channels, data,
-				dtype: r.dtype, showNorm: r.show_norm,
-			};
-		}
-		case 'fits': {
-			const r = mod.decode_fits_fast(new Uint8Array(kase.bytes));
-			const data = r.take_data_as_f32();
-			return scientificFields(r, data);
-		}
-		case 'netcdf': {
-			const r = mod.decode_netcdf_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options));
-			const data = r.take_data_as_f32();
-			return scientificFields(r, data);
-		}
-		case 'dicom': {
-			const r = mod.decode_dicom_fast(new Uint8Array(kase.bytes), (kase.options.frameIndex || 0) >>> 0);
-			const data = r.take_data_as_f32();
-			return scientificFields(r, data);
-		}
-		default:
-			throw new Error(`capture-goldens: unknown format ${kase.format}`);
-	}
-}
+	const decodeFns = {
+		pfm: () => mod.decode_pfm_fast(new Uint8Array(kase.bytes), !!kase.options.topDown),
+		ppm: () => mod.decode_ppm_fast(new Uint8Array(kase.bytes)),
+		npy: () => mod.decode_npy_fast(new Uint8Array(kase.bytes)),
+		fits: () => mod.decode_fits_fast(new Uint8Array(kase.bytes)),
+		netcdf: () => mod.decode_netcdf_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options)),
+		dicom: () => mod.decode_dicom_fast(new Uint8Array(kase.bytes), (kase.options.frameIndex || 0) >>> 0),
+		czi: () => mod.decode_czi_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options)),
+	};
+	const decodeFn = decodeFns[kase.format];
+	if (!decodeFn) { throw new Error(`capture-goldens: unknown format ${kase.format}`); }
 
-function scientificFields(r, data) {
+	const r = decodeFn();
+	// sample_kind: 0 = f32, 1 = u8, 2 = u16 — see DecodedArray in lib.rs.
+	const data = r.sample_kind === 1 ? r.take_data_as_u8()
+		: r.sample_kind === 2 ? r.take_data_as_u16()
+			: r.take_data_as_f32();
 	return {
 		width: r.width, height: r.height, channels: r.channels, data,
 		metadata: JSON.parse(r.metadata_json),
@@ -95,6 +73,7 @@ function scientificFields(r, data) {
 			typeMax: r.type_max,
 			sourceNumericType: r.source_numeric_type,
 		},
+		formatLabel: r.format_label,
 	};
 }
 
@@ -114,10 +93,7 @@ function buildGoldenRecord(kase, decoded) {
 	};
 	if (decoded.metadata !== undefined) { record.metadata = decoded.metadata; }
 	if (decoded.numericDomain !== undefined) { record.numericDomain = decoded.numericDomain; }
-	if (decoded.maxval !== undefined) { record.maxval = decoded.maxval; }
 	if (decoded.formatLabel !== undefined) { record.formatLabel = decoded.formatLabel; }
-	if (decoded.dtype !== undefined) { record.dtype = decoded.dtype; }
-	if (decoded.showNorm !== undefined) { record.showNorm = decoded.showNorm; }
 	if (dataLength <= DATA_INLINE_LIMIT) {
 		record.data = buildSamples(data, Array.from({ length: dataLength }, (_, i) => i)).map(s => s.v);
 	}

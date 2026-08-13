@@ -183,6 +183,12 @@ fn read_stored(data: &[u8], offset: usize, bitpix: i64) -> Result<f64, JsValue> 
 pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue> {
     let mut hdu_offset: usize = 0;
     let mut hdu_index: u32 = 0;
+    // Collected only to explain a rejection. "No image HDU" leaves the user
+    // guessing whether the file is corrupt, unsupported, or simply not an
+    // image; naming what the file actually holds answers that. A FITS file
+    // full of BINTABLEs (an IUE spectrum, say) is perfectly valid and will
+    // never contain a picture.
+    let mut hdu_kinds: Vec<String> = Vec::new();
 
     loop {
         if hdu_offset.checked_add(80).map(|e| e > data.len()).unwrap_or(true) {
@@ -224,6 +230,28 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
 
         const SUPPORTED_BITPIX: [f64; 6] = [8.0, 16.0, 32.0, 64.0, -32.0, -64.0];
         let bitpix_supported = SUPPORTED_BITPIX.contains(&bitpix);
+
+        // Describe this HDU in case nothing displayable turns up, so the
+        // rejection can say what the file holds instead of only what it lacks.
+        hdu_kinds.push({
+            let extension = xtension_upper(&header);
+            let kind = if !extension.is_empty() {
+                extension
+            } else if hdu_index == 0 {
+                "primary".to_string()
+            } else {
+                "unknown".to_string()
+            };
+            if naxis < 1.0 {
+                format!("HDU {hdu_index}: {kind}, header only")
+            } else if is_image && !bitpix_supported {
+                format!("HDU {hdu_index}: {kind}, unsupported BITPIX {}", bitpix as i64)
+            } else if naxis < 2.0 {
+                format!("HDU {hdu_index}: {kind}, {naxis:.0}D")
+            } else {
+                format!("HDU {hdu_index}: {kind}")
+            }
+        });
 
         if is_image
             && naxis >= 2.0
@@ -331,5 +359,22 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
         hdu_offset = next_offset_f as usize;
         hdu_index = hdu_index.saturating_add(1);
     }
-    Err(JsValue::from_str("FITS file contains no supported 2D image HDU"))
+    if hdu_kinds.is_empty() {
+        return Err(JsValue::from_str("FITS file contains no supported 2D image HDU"));
+    }
+    // The two reasons need different explanations. An image with a BITPIX we
+    // cannot read is a gap in this decoder; a file of tables is simply not a
+    // picture and never will be. Saying "holds tabular data" about the former
+    // would send the reader looking for the wrong problem.
+    let unsupported_depth = hdu_kinds.iter().any(|k| k.contains("unsupported BITPIX"));
+    let explanation = if unsupported_depth {
+        "Its image data uses a sample depth this decoder does not support."
+    } else {
+        "This file holds tabular or header-only data rather than an image."
+    };
+    Err(JsValue::from_str(&format!(
+        "FITS file contains no 2D image HDU (found {}). {}",
+        hdu_kinds.join(", "),
+        explanation
+    )))
 }

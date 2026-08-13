@@ -4,6 +4,15 @@
   "width": 9,
   "height": 6,
   "channels": 3,
+  "metadata": {},
+  "numericDomain": {
+    "bitsPerSample": 32,
+    "sampleFormat": 3,
+    "typeMin": 0,
+    "typeMax": 1,
+    "sourceNumericType": "float32"
+  },
+  "formatLabel": "",
   "dataLength": 162,
   "dataDigest": "sha256:eb992a6e68bf920ed60a3176fae607c99fd856a77ffa17484a7d81247cd2f101",
   "data": [
