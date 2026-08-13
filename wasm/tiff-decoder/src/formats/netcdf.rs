@@ -15,7 +15,7 @@
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{ascii, ceil4, get_slice, js_number, scaled_domain, ScientificParsed};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use wasm_bindgen::JsValue;
 
 const NC_DIMENSION: u32 = 10;
@@ -485,7 +485,11 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
     } else if selected_bits <= 8 { "int8" } else if selected_bits <= 16 { "int16" } else { "int32" };
 
     let selected_dimensions = variable_dimensions(&variables[selected_idx], &dimensions)?;
-    let selected_indices: HashMap<String, usize> = selected_dimensions.iter()
+    // BTreeMap, not HashMap: this map is serialized into `metadata.selectedIndices`,
+    // and HashMap iteration order varies between builds — which made the emitted
+    // JSON key order (and therefore the golden files and the metadata panel's
+    // display order) non-deterministic.
+    let selected_indices: BTreeMap<String, usize> = selected_dimensions.iter()
         .map(|d| {
             let raw = options.indices.get(&d.name).copied().unwrap_or(0.0);
             let raw = if raw == 0.0 || !raw.is_finite() { 0.0 } else { raw };

@@ -1,5 +1,178 @@
 {
   "id": "dicom-jpeg-baseline-codec-fallback-error",
   "format": "dicom",
-  "error": "Compressed DICOM frame requires codec: jpeg-baseline"
+  "width": 4,
+  "height": 4,
+  "channels": 3,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.4.50",
+    "photometric": "RGB",
+    "bitsAllocated": 8,
+    "bitsStored": 8,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
+  "dataLength": 48,
+  "dataDigest": "sha256:f7dca2395b55262ad322b908b268d5d81be8b60b907c40c752299e924499d69d",
+  "data": [
+    48,
+    106,
+    47,
+    126,
+    156,
+    92,
+    56,
+    34,
+    0,
+    255,
+    223,
+    143,
+    132,
+    162,
+    102,
+    29,
+    45,
+    0,
+    239,
+    231,
+    159,
+    99,
+    77,
+    4,
+    53,
+    28,
+    0,
+    245,
+    234,
+    170,
+    71,
+    87,
+    25,
+    139,
+    169,
+    109,
+    255,
+    219,
+    153,
+    99,
+    74,
+    10,
+    138,
+    167,
+    109,
+    0,
+    47,
+    0
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 48
+    },
+    {
+      "i": 2,
+      "v": 47
+    },
+    {
+      "i": 4,
+      "v": 156
+    },
+    {
+      "i": 6,
+      "v": 56
+    },
+    {
+      "i": 8,
+      "v": 0
+    },
+    {
+      "i": 10,
+      "v": 223
+    },
+    {
+      "i": 12,
+      "v": 132
+    },
+    {
+      "i": 14,
+      "v": 102
+    },
+    {
+      "i": 16,
+      "v": 45
+    },
+    {
+      "i": 18,
+      "v": 239
+    },
+    {
+      "i": 20,
+      "v": 159
+    },
+    {
+      "i": 22,
+      "v": 77
+    },
+    {
+      "i": 24,
+      "v": 53
+    },
+    {
+      "i": 26,
+      "v": 0
+    },
+    {
+      "i": 28,
+      "v": 234
+    },
+    {
+      "i": 30,
+      "v": 71
+    },
+    {
+      "i": 32,
+      "v": 25
+    },
+    {
+      "i": 34,
+      "v": 169
+    },
+    {
+      "i": 36,
+      "v": 255
+    },
+    {
+      "i": 38,
+      "v": 153
+    },
+    {
+      "i": 40,
+      "v": 74
+    },
+    {
+      "i": 42,
+      "v": 138
+    },
+    {
+      "i": 44,
+      "v": 109
+    },
+    {
+      "i": 47,
+      "v": 0
+    }
+  ]
 }

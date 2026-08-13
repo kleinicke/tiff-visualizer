@@ -992,6 +992,73 @@ function buildDicom({
 	return Buffer.concat(parts);
 }
 
+/** A real, valid 4x4 RGB baseline-JPEG codestream (quality 90, generated with
+ * Pillow), used to prove `decode_dicom_fast` now decodes JPEG Baseline
+ * Pixel Data natively instead of rejecting it — see the
+ * `dicom-jpeg-baseline-codec-fallback-error` case below. */
+const TINY_JPEG_BASELINE_4X4_RGB_HEX = 'ffd8ffe000104a46494600010100000100010000ffdb0043000302020302020303030304030304050805050404050a070706080c0a0c0c0b0a0b0b0d0e12100d0e110e0b0b1016101113141515150c0f171816141812141514ffdb00430103040405040509050509140d0b0d1414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414ffc00011080004000403012200021101031101ffc4001f0000010501010101010100000000000000000102030405060708090a0bffc400b5100002010303020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f02433627282090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffc4001f0100030101010101010101010000000000000102030405060708090a0bffc400b51100020102040403040705040400010277000102031104052131061241510761711322328108144291a1b1c109233352f0156272d10a162434e125f11718191a262728292a35363738393a434445464748494a535455565758595a636465666768696a737475767778797a82838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9cad2d3d4d5d6d7d8d9dae2e3e4e5e6e7e8e9eaf2f3f4f5f6f7f8f9faffda000c03010002110311003f00f2df8d5f1abc49f017c6d71e16f0b5c496fa742f701996f2ead9e678aea7b6f324fb3cd12b3b2dba124afcbc220489228e328a2b2c9723cab1997d2af89c2d39ce4b594a116debd5b5767e4bc45c499de5f9be270983c755a74a126a318d49c6315d924d24bc923fffd9';
+
+/**
+ * Builds the DICOM File Meta group WITH the (0002,0000) group-length element
+ * dicom-object's `FileMetaTable::read_from` requires as the very first
+ * element (the hand-rolled Rust/native path in `dicom.rs` never reads this
+ * group at all beyond a linear scan for Transfer Syntax UID, so `dcmPreamble`
+ * above — used by every native-path case — deliberately omits it; this
+ * stricter variant is only needed for the compressed cases below, which are
+ * parsed by `dicom-object` end-to-end). */
+function dcmPreambleWithGroupLength(transferSyntaxUID) {
+	const ts = dcmEl(0x0002, 0x0010, 'UI', dcmUid(transferSyntaxUID), { explicit: true, little: true });
+	const groupLength = dcmEl(0x0002, 0x0000, 'UL', dcmU32(ts.length, true), { explicit: true, little: true });
+	return Buffer.concat([Buffer.alloc(128, 0), Buffer.from('DICM', 'latin1'), groupLength, ts]);
+}
+
+/** Encodes encapsulated (compressed) DICOM Pixel Data: tag + VR OB +
+ * undefined length (0xFFFFFFFF), an empty Basic Offset Table item, one Item
+ * per fragment, and a Sequence Delimitation Item — the standard structure
+ * `dicom-pixeldata`'s codec adapters (and any conformant DICOM reader)
+ * expect, as opposed to the fixed-length non-encapsulated encoding `dcmEl`
+ * produces for native Pixel Data. */
+function dcmEncapsulatedPixelData(fragments, { little }) {
+	const parts = [dcmU16(0x7fe0, little), dcmU16(0x0010, little), Buffer.from('OB', 'latin1'), Buffer.alloc(2), dcmU32(0xffffffff, little)];
+	parts.push(dcmU16(0xfffe, little), dcmU16(0xe000, little), dcmU32(0, little)); // empty Basic Offset Table
+	for (const frag of fragments) {
+		parts.push(dcmU16(0xfffe, little), dcmU16(0xe000, little), dcmU32(frag.length, little));
+		parts.push(frag);
+	}
+	parts.push(dcmU16(0xfffe, little), dcmU16(0xe0dd, little), dcmU32(0, little)); // Sequence Delimitation Item
+	return Buffer.concat(parts);
+}
+
+/**
+ * Builds a compressed (encapsulated Pixel Data) DICOM object: preamble +
+ * `DICM` + a spec-complete File Meta group (with group length, since
+ * `dicom-object` parses this end-to-end for the compressed decode path,
+ * unlike the hand-rolled native-path element walk) + the tags
+ * `dicom-pixeldata`'s `ImagingProperties::from_obj` requires (Rows, Columns,
+ * Samples Per Pixel, Bits Allocated/Stored, High Bit, Pixel Representation,
+ * Photometric Interpretation) + the encapsulated Pixel Data fragments.
+ */
+function buildEncapsulatedDicom({
+	transferSyntaxUID, rows, columns, samples = 1, bitsAllocated, bitsStored, signed = 0,
+	photometric, fragments, extraElements = [],
+}) {
+	const little = true;
+	const enc = { explicit: true, little };
+	const parts = [dcmPreambleWithGroupLength(transferSyntaxUID)];
+	const push = (group, element, vr, value) => parts.push(dcmEl(group, element, vr, value, enc));
+	push(0x0028, 0x0010, 'US', dcmU16(rows, little));
+	push(0x0028, 0x0011, 'US', dcmU16(columns, little));
+	push(0x0028, 0x0002, 'US', dcmU16(samples, little));
+	push(0x0028, 0x0100, 'US', dcmU16(bitsAllocated, little));
+	push(0x0028, 0x0101, 'US', dcmU16(bitsStored, little));
+	push(0x0028, 0x0102, 'US', dcmU16(bitsStored - 1, little));
+	push(0x0028, 0x0103, 'US', dcmU16(signed, little));
+	push(0x0028, 0x0004, 'CS', dcmText(photometric));
+	for (const [group, element, vr, value] of extraElements) { push(group, element, vr, value); }
+	parts.push(dcmEncapsulatedPixelData(fragments, { little }));
+	return Buffer.concat(parts);
+}
+
 /** DICOM files may legitimately have no extension at all (the extension
  * viewer detects them by sniffing), so a fixture with no '.' in its name is
  * sniffed for the 'DICM' magic at byte 128 rather than skipped. */
@@ -1618,27 +1685,72 @@ function listScientificCases() {
 		label: 'DICOM unsupported compressed transfer syntax',
 	});
 
-	cases.push({
-		id: 'dicom-jpeg-baseline-codec-fallback-error',
-		format: 'dicom',
-		// decode-worker.ts's fallback path keys on this exact error text
-		// ("requires codec: jpeg-baseline") to hand the frame to the
-		// TS-extraction + shared zune-jpeg path — must match byte-for-byte.
-		// The compressed-codec check fires only once a Pixel Data element is
-		// actually found during context parsing, so a (dummy, unparsed)
-		// encapsulated Pixel Data element must be present — its content is
-		// never read before the error is thrown.
-		bytes: buildDicom({
-			transferSyntaxUID: '1.2.840.10008.1.2.4.50', explicit: true, little: true,
-			rows: 2, columns: 2, bitsAllocated: 8, bitsStored: 8, signed: 0,
-			photometric: 'MONOCHROME2', pixelDataVR: 'OB',
-			pixelBytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-		}),
-		options: { frameIndex: 0 },
-		external: false,
-		expectError: true,
-		label: 'DICOM JPEG Baseline reports the codec-fallback contract error',
-	});
+	// --- DICOM: JPEG Baseline now decodes natively (dicom-object/dicom-pixeldata) --
+	// This case used to be named "...-codec-fallback-error" and assert the
+	// `requires codec: jpeg-baseline` rejection that routed decode-worker.ts's
+	// TS-extraction + shared zune-jpeg fallback (both deleted). `decode_dicom_fast`
+	// now decodes JPEG Baseline directly via dicom-object (parsing) +
+	// dicom-pixeldata (codec), so this is repurposed into a real success case —
+	// a valid 4x4 RGB baseline JPEG codestream, properly encapsulated (Basic
+	// Offset Table + one fragment + Sequence Delimitation Item), replaces the old
+	// unparseable 4-byte SOI/EOI-only stand-in. The case id (and therefore its
+	// golden's path) is kept unchanged since it is one of the two goldens this
+	// port is explicitly allowed to change.
+	{
+		const jpegBytes = Buffer.from(TINY_JPEG_BASELINE_4X4_RGB_HEX, 'hex');
+		const buf = buildEncapsulatedDicom({
+			transferSyntaxUID: '1.2.840.10008.1.2.4.50',
+			rows: 4, columns: 4, samples: 3, bitsAllocated: 8, bitsStored: 8, signed: 0,
+			photometric: 'YBR_FULL_422', fragments: [jpegBytes],
+		});
+		cases.push({
+			id: 'dicom-jpeg-baseline-codec-fallback-error',
+			format: 'dicom',
+			bytes: buf,
+			options: { frameIndex: 0 },
+			external: false,
+			expectError: false,
+			label: 'DICOM JPEG Baseline decodes natively via dicom-object/dicom-pixeldata',
+		});
+	}
+
+	// --- DICOM: RLE Lossless (synthesized) + ABSOLUTE hand-computed values ------
+	// 2x2 MONOCHROME2, 16-bit unsigned, one frame. RLE Lossless splits each
+	// 16-bit sample into an MSB segment and an LSB segment (see
+	// dicom-transfer-syntax-registry's `rle_lossless.rs` adapter); each segment
+	// here is encoded as a trivial PackBits literal run (control byte 0 => copy
+	// 1 literal byte), which is valid PackBits even though real encoders favor
+	// replicate runs for the common case of repeated bytes.
+	{
+		const stored = [0x0102, 0x0304, 0xfffe, 0x0000]; // row-major, MSB.LSB per sample
+		const msbSegment = stored.map(v => (v >> 8) & 0xff);
+		const lsbSegment = stored.map(v => v & 0xff);
+		const packBitsLiteral = (bytes) => Buffer.concat(bytes.flatMap(b => [Buffer.from([0x00]), Buffer.from([b])]));
+		const segments = [packBitsLiteral(msbSegment), packBitsLiteral(lsbSegment)];
+		const header = Buffer.alloc(64);
+		header.writeUInt32LE(segments.length, 0);
+		let segOffset = 64;
+		segments.forEach((seg, i) => { header.writeUInt32LE(segOffset, 4 + i * 4); segOffset += seg.length; });
+		const fragment = Buffer.concat([header, ...segments]);
+		const buf = buildEncapsulatedDicom({
+			transferSyntaxUID: '1.2.840.10008.1.2.5',
+			rows: 2, columns: 2, samples: 1, bitsAllocated: 16, bitsStored: 16, signed: 0,
+			photometric: 'MONOCHROME2', fragments: [fragment],
+		});
+		cases.push({
+			id: 'dicom-rle-lossless',
+			format: 'dicom',
+			bytes: buf,
+			options: { frameIndex: 0 },
+			external: false,
+			expectError: false,
+			label: 'DICOM RLE Lossless (synthesized)',
+			// Hand-computed independently of the decoder: each stored 16-bit
+			// value reassembled from its MSB/LSB RLE segments, little-endian,
+			// no Rescale Slope/Intercept (defaults to identity).
+			expectedData: stored.map(v => Math.fround(v)),
+		});
+	}
 
 	return cases;
 }

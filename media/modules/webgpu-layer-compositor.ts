@@ -501,7 +501,37 @@ export class WebGPULayerCompositor {
 		});
 	}
 
+	/** Bytes per pixel for the texture formats this compositor creates. */
+	private static readonly BYTES_PER_PIXEL: Record<string, number> = {
+		'rgba8unorm': 4,
+		'rgba16float': 8,
+		'rgba32float': 16,
+	};
+
 	private createTexture(width: number, height: number, format: string, usage: number): any {
+		// A texture too large for the device does NOT throw here: WebGPU reports
+		// allocation failures asynchronously through error scopes, so
+		// createTexture returns an object that silently produces nothing. The
+		// caller would then report a successful render and copy a blank canvas
+		// to the screen — an image that looks loaded (pixel readouts work,
+		// because those come from the CPU-side samples) but displays empty.
+		// Reject up front instead, so the caller's catch falls back to
+		// WebGL2/CPU and the user actually sees the image.
+		//
+		// `maxBufferSize` is used as the single-resource budget. It is not
+		// literally the texture limit, but it is the closest device-reported
+		// proxy and matches observed behaviour: a 3600×3000 rgba32float
+		// surface (173 MB) renders, while 5120×5120 (419 MB) does not, with
+		// the 256 MB default sitting between them.
+		const bytesPerPixel = WebGPULayerCompositor.BYTES_PER_PIXEL[format] ?? 16;
+		const required = width * height * bytesPerPixel;
+		const budget = Number(this.device.limits?.maxBufferSize || 0);
+		if (budget > 0 && required > budget) {
+			throw new Error(
+				`texture ${width}×${height} ${format} needs ${(required / 1048576).toFixed(0)} MB, ` +
+				`over this device's ${(budget / 1048576).toFixed(0)} MB budget ` +
+				`(tiled upload for large images is not implemented yet)`);
+		}
 		const texture = this.device.createTexture({ size: { width, height }, format, usage });
 		this.ownedTextures.add(texture);
 		return texture;

@@ -27,9 +27,9 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_jpeg_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { extractDicomJpegFrame, parseCzi } from './modules/scientific-format-parsers.js';
+import { parseCzi } from './modules/scientific-format-parsers.js';
 import { decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 
@@ -548,58 +548,13 @@ async function decodeNetcdf(buffer: ArrayBuffer, options: Record<string, any>) {
 	return decodeNetcdfWithWasm(decode_netcdf_fast, buffer, options, 'worker');
 }
 
-/** Decodes a compressed (JPEG Baseline) DICOM frame: extracts the codestream
- * in TS and decodes it with the shared Rust/WASM zune-jpeg path. Used by
- * both the WASM-first and TS-fallback attempts below, whichever throws the
- * `requires codec: jpeg-baseline` error first — both `decode_dicom_fast` and
- * `parseDicom` recognize the same compressed transfer syntax and throw the
- * same message for it. */
-function decodeDicomJpegBaseline(buffer: ArrayBuffer, frameIndex: number) {
-	if (!tiffWasmReady) { throw new Error('JPEG Baseline DICOM requires the Rust/WASM decoder'); }
-	const started = performance.now();
-	const frame = extractDicomJpegFrame(buffer, frameIndex);
-	const decoded = decode_jpeg_fast(frame.encoded);
-	const width = decoded.width;
-	const height = decoded.height;
-	const jpegChannels = decoded.channels;
-	const channels = frame.channels === 1 ? 1 : jpegChannels;
-	if (width !== frame.width || height !== frame.height) {
-		throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${width}x${height}`);
-	}
-	const bytes = decoded.take_data_as_u8();
-	const slope = Number(frame.metadata.rescaleSlope ?? 1);
-	const intercept = Number(frame.metadata.rescaleIntercept ?? 0);
-	const data = new Float32Array(width * height * channels);
-	for (let pixel = 0; pixel < width * height; pixel++) {
-		for (let channel = 0; channel < channels; channel++) {
-			data[pixel * channels + channel] = bytes[pixel * jpegChannels + channel] * slope + intercept;
-		}
-	}
-	if (frame.metadata.photometric === 'MONOCHROME1') {
-		let min = Infinity, max = -Infinity;
-		for (const value of data) { if (value < min) { min = value; } if (value > max) { max = value; } }
-		for (let i = 0; i < data.length; i++) { data[i] = max + min - data[i]; }
-	}
-	return {
-		width, height, channels, data,
-		metadata: { ...frame.metadata, decoder: 'Rust/WASM zune-jpeg' },
-		numericDomain: frame.numericDomain,
-		decodeTimings: [{ name: 'decode-dicom-rust', durationMs: performance.now() - started }],
-	};
-}
-
 async function decodeDicom(buffer: ArrayBuffer, frameIndex: number) {
 	await requireWasm('DICOM');
-	try {
-		return decodeDicomWithWasm(decode_dicom_fast, buffer, frameIndex, 'worker');
-	} catch (error) {
-		// Encapsulated Pixel Data: the Rust decoder reports the codec it needs
-		// and the codestream is decoded by the shared zune-jpeg path instead.
-		if (error instanceof Error && error.message.includes('requires codec: jpeg-baseline')) {
-			return decodeDicomJpegBaseline(buffer, frameIndex);
-		}
-		throw error;
-	}
+	// `decode_dicom_fast` now decodes JPEG Baseline and RLE Lossless Pixel
+	// Data natively (via dicom-object/dicom-pixeldata), so the TS-side
+	// codestream extraction + shared zune-jpeg fallback that used to catch
+	// the `requires codec: jpeg-baseline` error here is gone.
+	return decodeDicomWithWasm(decode_dicom_fast, buffer, frameIndex, 'worker');
 }
 
 

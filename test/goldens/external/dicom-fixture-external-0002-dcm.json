@@ -1,5 +1,129 @@
 {
   "id": "dicom-fixture-external-0002-dcm",
   "format": "dicom",
-  "error": "Compressed DICOM frame requires codec: jpeg-baseline"
+  "width": 512,
+  "height": 512,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.4.50",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 8,
+    "bitsStored": 8,
+    "signed": false,
+    "frames": 96,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "modality": "XA",
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
+  "dataLength": 262144,
+  "dataDigest": "sha256:93f85a31ffab00deb57f94574dcaebbd23ca73ea8ee3f86d9f911f18a23e4ab6",
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 11397,
+      "v": 107
+    },
+    {
+      "i": 22795,
+      "v": 97
+    },
+    {
+      "i": 34192,
+      "v": 63
+    },
+    {
+      "i": 45590,
+      "v": 0
+    },
+    {
+      "i": 56987,
+      "v": 148
+    },
+    {
+      "i": 68385,
+      "v": 64
+    },
+    {
+      "i": 79782,
+      "v": 41
+    },
+    {
+      "i": 91180,
+      "v": 127
+    },
+    {
+      "i": 102577,
+      "v": 142
+    },
+    {
+      "i": 113975,
+      "v": 41
+    },
+    {
+      "i": 125372,
+      "v": 59
+    },
+    {
+      "i": 136770,
+      "v": 243
+    },
+    {
+      "i": 148167,
+      "v": 156
+    },
+    {
+      "i": 159565,
+      "v": 36
+    },
+    {
+      "i": 170962,
+      "v": 75
+    },
+    {
+      "i": 182360,
+      "v": 227
+    },
+    {
+      "i": 193757,
+      "v": 149
+    },
+    {
+      "i": 205155,
+      "v": 41
+    },
+    {
+      "i": 216552,
+      "v": 0
+    },
+    {
+      "i": 227950,
+      "v": 141
+    },
+    {
+      "i": 239347,
+      "v": 40
+    },
+    {
+      "i": 250745,
+      "v": 0
+    },
+    {
+      "i": 262143,
+      "v": 0
+    }
+  ]
 }

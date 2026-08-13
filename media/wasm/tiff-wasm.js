@@ -180,19 +180,17 @@ function passArray32ToWasm0(arg, malloc) {
     return ptr;
 }
 /**
- * Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
- * in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
  * @param {Uint8Array} data
- * @returns {JpegResult}
+ * @returns {ExrResult}
  */
-export function decode_jpeg_fast(data) {
+export function decode_exr_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpeg_fast(ptr0, len0);
+    const ret = wasm.decode_exr_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return JpegResult.__wrap(ret[0]);
+    return ExrResult.__wrap(ret[0]);
 }
 
 /**
@@ -214,36 +212,87 @@ export function decode_npy_fast(data) {
 
 /**
  * @param {Uint8Array} data
- * @returns {ExrResult}
+ * @returns {PngResult}
  */
-export function decode_exr_fast(data) {
+export function decode_png16_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_fast(ptr0, len0);
+    const ret = wasm.decode_png16_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return ExrResult.__wrap(ret[0]);
+    return PngResult.__wrap(ret[0]);
 }
 
 /**
- * Decode a classic NetCDF (CDF-1/CDF-2) file as either a regular raster or
- * an MPAS `nCells` polygon mesh. `options_json` is the JSON-serialized
- * `NetCdfDecodeOptions` (`{ variableName?, indices? }`).
+ * Decode a TIFF file without eagerly computing min/max statistics.
+ *
+ * The webview render path computes stats lazily when a non-gamma mode needs
+ * them. Skipping eager stats saves a full pass over large float TIFFs during
+ * the common gamma-mode initial load.
  * @param {Uint8Array} data
- * @param {string} options_json
- * @returns {ScientificResult}
+ * @returns {TiffResult}
  */
-export function decode_netcdf_fast(data, options_json) {
+export function decode_tiff_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode an arbitrary zero-based TIFF page without eagerly computing stats.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page_fast(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode one native (uncompressed) DICOM frame. `frame_index` selects a
+ * frame from a multi-frame `NumberOfFrames` dataset (clamped to range).
+ * Compressed (encapsulated) Pixel Data is rejected with the same error text
+ * the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
+ * fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
+ * working unchanged against this decoder.
+ * @param {Uint8Array} data
+ * @param {number} frame_index
+ * @returns {ScientificResult}
+ */
+export function decode_dicom_fast(data, frame_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return ScientificResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
+ * @param {Uint8Array} data
+ * @returns {PpmResult}
+ */
+export function decode_ppm_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ppm_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PpmResult.__wrap(ret[0]);
 }
 
 /**
@@ -260,6 +309,65 @@ export function decode_tiff_page(data, page_index) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {HdrResult}
+ */
+export function decode_hdr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_hdr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
+ * prefix already stripped, or a PNG eXIf chunk's raw bytes) and return
+ * every tag as JSON, in the same shape as `TiffResult.all_tags_json`.
+ *
+ * These blobs are TIFF-*structured* (byte order + magic 42 + IFD entries)
+ * but are not full TIFF files — they carry no ImageWidth/PhotometricInterpretation/
+ * etc., so the `tiff` crate's `Decoder::new()` (which always validates a
+ * full image directory) rejects them. `extract_bare_ifd_tags_json` reads
+ * the IFD structure directly instead, bypassing `Decoder` entirely; real
+ * `.tif`/`.tiff` files keep using the `Decoder`-based `extract_all_tags_json`
+ * via `decode_tiff`/`decode_tiff_fast` above.
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function extract_exif_tags(data) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.extract_exif_tags(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Return the number of top-level image file directories (pages) in a TIFF.
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+export function tiff_page_count(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_page_count(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
 }
 
 /**
@@ -298,87 +406,19 @@ export function decode_tiff(data) {
 }
 
 /**
- * Decode one native (uncompressed) DICOM frame. `frame_index` selects a
- * frame from a multi-frame `NumberOfFrames` dataset (clamped to range).
- * Compressed (encapsulated) Pixel Data is rejected with the same error text
- * the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
- * fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
- * working unchanged against this decoder.
+ * Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
+ * in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
  * @param {Uint8Array} data
- * @param {number} frame_index
- * @returns {ScientificResult}
+ * @returns {JpegResult}
  */
-export function decode_dicom_fast(data, frame_index) {
+export function decode_jpeg_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    const ret = wasm.decode_jpeg_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return ScientificResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a TIFF file without eagerly computing min/max statistics.
- *
- * The webview render path computes stats lazily when a non-gamma mode needs
- * them. Skipping eager stats saves a full pass over large float TIFFs during
- * the common gamma-mode initial load.
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {PngResult}
- */
-export function decode_png16_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_png16_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return PngResult.__wrap(ret[0]);
-}
-
-/**
- * Walk a raw Exif-only IFD blob (a JPEG APP1 payload with its "Exif\0\0"
- * prefix already stripped, or a PNG eXIf chunk's raw bytes) and return
- * every tag as JSON, in the same shape as `TiffResult.all_tags_json`.
- *
- * These blobs are TIFF-*structured* (byte order + magic 42 + IFD entries)
- * but are not full TIFF files — they carry no ImageWidth/PhotometricInterpretation/
- * etc., so the `tiff` crate's `Decoder::new()` (which always validates a
- * full image directory) rejects them. `extract_bare_ifd_tags_json` reads
- * the IFD structure directly instead, bypassing `Decoder` entirely; real
- * `.tif`/`.tiff` files keep using the `Decoder`-based `extract_all_tags_json`
- * via `decode_tiff`/`decode_tiff_fast` above.
- * @param {Uint8Array} data
- * @returns {string}
- */
-export function extract_exif_tags(data) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.extract_exif_tags(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
+    return JpegResult.__wrap(ret[0]);
 }
 
 /**
@@ -397,63 +437,23 @@ export function decode_fits_fast(data) {
 }
 
 /**
- * Return the number of top-level image file directories (pages) in a TIFF.
+ * Decode a classic NetCDF (CDF-1/CDF-2) file as either a regular raster or
+ * an MPAS `nCells` polygon mesh. `options_json` is the JSON-serialized
+ * `NetCdfDecodeOptions` (`{ variableName?, indices? }`).
  * @param {Uint8Array} data
- * @returns {number}
+ * @param {string} options_json
+ * @returns {ScientificResult}
  */
-export function tiff_page_count(data) {
+export function decode_netcdf_fast(data, options_json) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_page_count(ptr0, len0);
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return ret[0] >>> 0;
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {HdrResult}
- */
-export function decode_hdr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_hdr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return HdrResult.__wrap(ret[0]);
-}
-
-/**
- * Decode an arbitrary zero-based TIFF page without eagerly computing stats.
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page_fast(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
- * @param {Uint8Array} data
- * @returns {PpmResult}
- */
-export function decode_ppm_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return PpmResult.__wrap(ret[0]);
+    return ScientificResult.__wrap(ret[0]);
 }
 
 /**

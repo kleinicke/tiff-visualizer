@@ -62,9 +62,8 @@ import { analyzeLayerExports, LayerExportFormat, writeLayerDocument } from './mo
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
-import { extractDicomJpegFrame, parseCzi } from './modules/scientific-format-parsers.js';
+import { parseCzi } from './modules/scientific-format-parsers.js';
 import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/main-thread-decode.js';
-import type { ScientificDecodedImage } from './modules/scientific-format-parsers.js';
 
 /**
  * Main Image Preview Application
@@ -79,55 +78,6 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	type DatasetAxis = { key: string, label: string, size: number, valueLabels?: string[] };
 	type DatasetSeries = { id: string, label: string, axes: DatasetAxis[], planes: DatasetPlane[] };
 	type DatasetManifest = { id: string, kind: 'dicom' | 'ome-tiff', label: string, series: DatasetSeries[] };
-
-	// The worker normally decodes encapsulated DICOM JPEG frames with Rust/WASM.
-	// Keep a browser-native fallback so a failed/blocked worker never makes the
-	// file unusable; ordinary browser JPEG decoding is sufficient for Baseline.
-	async function parseDicomForBrowser(buffer: ArrayBuffer, frameIndex = 0): Promise<ScientificDecodedImage> {
-		try { return await decodeDicomLocal(buffer, { frameIndex }); }
-		catch (error) {
-			if (!(error instanceof Error) || !error.message.includes('requires codec: jpeg-baseline')) { throw error; }
-		}
-		const started = performance.now();
-		const frame = extractDicomJpegFrame(buffer, frameIndex);
-		const jpegBytes = new Uint8Array(frame.encoded.byteLength);
-		jpegBytes.set(frame.encoded);
-		const bitmap = await createImageBitmap(new Blob([jpegBytes.buffer], { type: 'image/jpeg' }));
-		try {
-			if (bitmap.width !== frame.width || bitmap.height !== frame.height) {
-				throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${bitmap.width}x${bitmap.height}`);
-			}
-			const canvas = document.createElement('canvas');
-			canvas.width = bitmap.width;
-			canvas.height = bitmap.height;
-			const context = canvas.getContext('2d', { willReadFrequently: true });
-			if (!context) { throw new Error('Could not create a JPEG decode canvas'); }
-			context.drawImage(bitmap, 0, 0);
-			const rgba = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
-			const channels = frame.channels === 1 ? 1 : 3;
-			const data = new Float32Array(bitmap.width * bitmap.height * channels);
-			const slope = Number(frame.metadata.rescaleSlope ?? 1);
-			const intercept = Number(frame.metadata.rescaleIntercept ?? 0);
-			for (let pixel = 0; pixel < bitmap.width * bitmap.height; pixel++) {
-				for (let channel = 0; channel < channels; channel++) {
-					data[pixel * channels + channel] = rgba[pixel * 4 + channel] * slope + intercept;
-				}
-			}
-			if (frame.metadata.photometric === 'MONOCHROME1') {
-				let min = Infinity, max = -Infinity;
-				for (const value of data) { if (value < min) { min = value; } if (value > max) { max = value; } }
-				for (let i = 0; i < data.length; i++) { data[i] = max + min - data[i]; }
-			}
-			return {
-				width: bitmap.width, height: bitmap.height, channels, data,
-				metadata: { ...frame.metadata, decoder: 'Browser JPEG fallback' },
-				numericDomain: frame.numericDomain,
-				decodeTimings: [{ name: 'decode-dicom-browser-jpeg', durationMs: performance.now() - started }],
-			};
-		} finally {
-			bitmap.close();
-		}
-	}
 
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
 	const originalVscode = acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
@@ -191,7 +141,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decodeFitsLocal });
-	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => parseDicomForBrowser(buffer, Number(options?.frameIndex || 0)) });
+	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => decodeNetcdfLocal(buffer, options || {}) });
 	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => parseCzi(buffer, options) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor];

@@ -1,51 +1,40 @@
-//! DICOM decoder (native/uncompressed Pixel Data).
+//! DICOM decoder.
 //!
-//! Bit-exact port of `parseDicom` and its helpers (`dicomElement`,
-//! `findSequenceEnd`, `parseDicomContext`, `dicomImageInfo`) in
-//! `media/modules/scientific-format-parsers.ts`. Handles the DICM preamble
-//! (and its absence, with the same `^[A-Z]{2}$` heuristic the TS uses to
-//! guess implicit vs explicit VR when there is none), explicit/implicit VR,
-//! little/big-endian transfer syntaxes, undefined-length sequence skipping,
-//! Pixel Representation (signed/unsigned) including the sub-byte/sub-word
-//! masking quirks, Rescale Slope/Intercept, multi-frame selection, the
-//! MONOCHROME1 inversion, and the calibration tags `test/measurement-test.js`
-//! depends on (Pixel Spacing, Imager Pixel Spacing, Slice Thickness, Spacing
-//! Between Slices).
+//! The dataset/element walk (DICM preamble detection and its absence, with
+//! the same `^[A-Z]{2}$` heuristic used to guess implicit vs explicit VR
+//! when there is none, explicit/implicit VR, little/big-endian transfer
+//! syntaxes, undefined-length sequence skipping, Pixel Representation
+//! (signed/unsigned) including the sub-byte/sub-word masking quirks,
+//! Rescale Slope/Intercept, multi-frame selection, the MONOCHROME1
+//! inversion, and the calibration tags `test/measurement-test.js` depends on
+//! — Pixel Spacing, Imager Pixel Spacing, Slice Thickness, Spacing Between
+//! Slices) remains a hand-rolled walk. It used to be bit-exact against a now
+//! -deleted TS oracle; today the oracle is `test/goldens/*.json` (regression)
+//! plus `expectedData` in `test/lib/decoder-cases.js` (correctness), and this
+//! walk already satisfies both, so it is kept as-is rather than risking a
+//! rewrite against those same frozen goldens for no behavioral gain.
 //!
-//! Compressed (encapsulated) Pixel Data is deliberately NOT decoded here —
-//! `decode_dicom_fast` returns the exact same error text the TS parser does
-//! (`"Compressed DICOM frame requires codec: jpeg-baseline"` for JPEG
-//! Baseline, `"Compressed or unsupported DICOM Transfer Syntax: <uid>"`
-//! otherwise) so `media/decode-worker.ts`'s existing JPEG-Baseline fallback
-//! (which extracts the codestream in TS and decodes it with the shared
-//! `decode_jpeg_fast`/zune-jpeg path) keeps working unchanged against either
-//! decoder.
+//! What DID change: compressed (encapsulated) Pixel Data — JPEG Baseline and
+//! RLE Lossless — used to be rejected outright. It is now decoded via
+//! `dicom-object` (parses the encapsulated file into an `InMemDicomObject`)
+//! and `dicom-pixeldata` (the `PixelDecoder` trait decodes the JPEG/RLE
+//! fragments into raw native-form samples), see
+//! `decode_compressed_frame` below. The decoded bytes are then run back
+//! through the same [`read_sample`]/Rescale Slope-Intercept/MONOCHROME1
+//! pipeline the native path uses, so behavior stays uniform between the two.
+//! `dicom-pixeldata`'s "native" feature covers JPEG (via `jpeg-decoder`,
+//! pure Rust) and RLE (via a pure-Rust PackBits-style decoder) — both build
+//! for wasm32-unknown-unknown with no C dependencies. Any other compressed
+//! transfer syntax (JPEG-LS, JPEG 2000, ...) still hits the same
+//! "Compressed or unsupported DICOM Transfer Syntax" rejection as before.
 //!
-//! NOTE: this is a hand-rolled port, NOT built on `dicom-rs`. That was a
-//! deliberate trade-off made for the transitional period only, and it is
-//! expected to be revisited:
-//!
-//! The current acceptance criterion is bit-exactness against the TS parser,
-//! which is still the conformance oracle. `dicom-object`'s own object model
-//! does not expose the low-level element walk, exact error-message contract,
-//! or bit-masking quirks that criterion requires, so routing through it would
-//! have produced a *better* parser that nonetheless failed the differential
-//! test. Both `dicom-object` and `dicom-pixeldata` 0.10 DO build cleanly for
-//! wasm32-unknown-unknown with `default-features = false` (no native/C
-//! dependencies), so nothing technical blocks adopting them.
-//!
-//! Once the TS parsers are deleted and the suites move to absolute goldens,
-//! rebuilding this on `dicom-rs` is the better long-term answer — it is what
-//! brings the additional transfer syntaxes (RLE, JPEG-LS, JPEG 2000) the
-//! backlog wants, instead of hand-writing each codec here. Compressed Pixel
-//! Data currently stays on the existing TS-extraction + `decode_jpeg_fast`
-//! (zune-jpeg) path, unchanged.
-//!
-//! Held equal to the TS implementation by `test/rust-scientific-conformance-test.js`.
+//! Held equal to the frozen goldens by `test/rust-scientific-conformance-test.js`.
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{ascii, get_slice, js_number, scaled_domain, ScientificParsed};
+use dicom_pixeldata::PixelDecoder;
 use std::collections::HashMap;
+use std::io::Cursor;
 use wasm_bindgen::JsValue;
 
 /// VRs whose value length is a 4-byte field (after 2 reserved bytes) instead
@@ -63,8 +52,10 @@ struct TagEntry {
 struct Encoding {
     explicit: bool,
     little: bool,
-    /// `Some("jpeg-baseline")` for the one compressed transfer syntax the TS
-    /// parser recognizes by name (used verbatim in the error message).
+    /// `Some(_)` for a compressed transfer syntax we can actually decode via
+    /// `dicom-object`/`dicom-pixeldata` (JPEG Baseline or RLE Lossless); the
+    /// payload is an informational label only (no error text depends on it
+    /// anymore, now that both decode successfully).
     compressed: Option<&'static str>,
 }
 
@@ -169,6 +160,7 @@ fn parse_dicom_context(data: &[u8]) -> Result<DicomContext<'_>, JsValue> {
             "1.2.840.10008.1.2.1" => Encoding { explicit: true, little: true, compressed: None },
             "1.2.840.10008.1.2.2" => Encoding { explicit: true, little: false, compressed: None },
             "1.2.840.10008.1.2.4.50" => Encoding { explicit: true, little: true, compressed: Some("jpeg-baseline") },
+            "1.2.840.10008.1.2.5" => Encoding { explicit: true, little: true, compressed: Some("rle-lossless") },
             _ => {
                 return Err(JsValue::from_str(&format!(
                     "Compressed or unsupported DICOM Transfer Syntax: {}",
@@ -420,23 +412,18 @@ fn read_sample(
     })
 }
 
-/// Decode one native (uncompressed) DICOM frame. Patient-identifying tags
-/// are not retained (mirrors the TS doc comment on `parseDicom`).
-pub(crate) fn decode_dicom_impl(data: &[u8], frame_index: u32) -> Result<ScientificParsed, JsValue> {
-    let context = parse_dicom_context(data)?;
-    if let Some(codec) = context.encoding.compressed {
-        return Err(JsValue::from_str(&format!("Compressed DICOM frame requires codec: {}", codec)));
-    }
-    let little = context.encoding.little;
+/// Decode one native (uncompressed) frame's raw (pre Rescale Slope/
+/// Intercept) samples, in row-major pixel*channel order. Mirrors the
+/// relevant part of the TS `parseDicom` loop exactly (sub-byte/sub-word
+/// signed masking quirks included via [`read_sample`]).
+fn decode_native_frame(context: &DicomContext, info: &DicomImageInfo, safe_frame: u32) -> Result<Vec<f64>, JsValue> {
+    let DicomContext { data, encoding, .. } = context;
+    let little = encoding.little;
     let pixel_tag = context.pixel_tag;
     let pixel_offset = context.pixel_offset;
     let pixel_length = context.pixel_length;
-    let info = dicom_image_info(&context)?;
-    let DicomImageInfo {
-        rows, columns, samples, planar, bits_allocated, bits_stored, signed, frames, photometric, slope, intercept, ..
-    } = info;
+    let DicomImageInfo { rows, columns, samples, planar, bits_allocated, bits_stored, signed, .. } = *info;
 
-    let safe_frame = frame_index.min(frames.saturating_sub(1));
     let bytes_per_sample = bits_allocated / 8;
     let sample_count = (rows as usize).checked_mul(columns as usize)
         .and_then(|v| v.checked_mul(samples as usize))
@@ -449,7 +436,6 @@ pub(crate) fn decode_dicom_impl(data: &[u8], frame_index: u32) -> Result<Scienti
     let frame_sample_offset = (safe_frame as usize).checked_mul(sample_count)
         .ok_or_else(|| JsValue::from_str("DICOM: frame offset overflow"))?;
 
-    let mut output = vec![0f32; sample_count];
     let read_at = |sample_index: usize| -> Result<f64, JsValue> {
         let idx = frame_sample_offset.checked_add(sample_index)
             .ok_or_else(|| JsValue::from_str("DICOM: sample index overflow"))?;
@@ -460,6 +446,7 @@ pub(crate) fn decode_dicom_impl(data: &[u8], frame_index: u32) -> Result<Scienti
     };
 
     let pixel_count = (rows as usize) * (columns as usize);
+    let mut raw = vec![0f64; sample_count];
     for pixel_index in 0..pixel_count {
         for channel in 0..(samples as usize) {
             let source_index = if planar == 1 && samples > 1 {
@@ -467,10 +454,69 @@ pub(crate) fn decode_dicom_impl(data: &[u8], frame_index: u32) -> Result<Scienti
             } else {
                 pixel_index * (samples as usize) + channel
             };
-            let raw = read_at(source_index)?;
-            output[pixel_index * (samples as usize) + channel] = (raw * slope + intercept) as f32;
+            raw[pixel_index * (samples as usize) + channel] = read_at(source_index)?;
         }
     }
+    Ok(raw)
+}
+
+/// Decode one frame of compressed (encapsulated) Pixel Data — JPEG Baseline
+/// or RLE Lossless — via `dicom-object` (parsing) and `dicom-pixeldata`
+/// (codec decode). Returns the raw (pre Rescale Slope/Intercept) samples in
+/// row-major pixel*channel order, together with the photometric
+/// interpretation `dicom-pixeldata` reports for the DECODED data (e.g.
+/// YBR_FULL_422 source samples decode to plain RGB, since both JPEG and RLE
+/// adapters always normalize their output to standard/interleaved planar
+/// configuration).
+fn decode_compressed_frame(data: &[u8], safe_frame: u32) -> Result<(Vec<f64>, String), JsValue> {
+    let file_obj = dicom_object::from_reader(Cursor::new(data))
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse compressed DICOM dataset: {}", e)))?;
+    let decoded = file_obj
+        .decode_pixel_data_frame(safe_frame)
+        .map_err(|e| JsValue::from_str(&format!("Failed to decode compressed DICOM Pixel Data: {}", e)))?;
+
+    let rows = decoded.rows();
+    let columns = decoded.columns();
+    let samples = decoded.samples_per_pixel() as u32;
+    let bits_allocated = decoded.bits_allocated() as u32;
+    let bits_stored = decoded.bits_stored() as u32;
+    let signed = matches!(decoded.pixel_representation(), dicom_pixeldata::PixelRepresentation::Signed);
+    let photometric = decoded.photometric_interpretation().as_str().to_string();
+    let bytes = decoded.data();
+
+    let bytes_per_sample = (bits_allocated / 8).max(1) as usize;
+    let sample_count = (rows as usize).checked_mul(columns as usize)
+        .and_then(|v| v.checked_mul(samples as usize))
+        .ok_or_else(|| JsValue::from_str("DICOM: dimensions overflow"))?;
+
+    let mut raw = Vec::with_capacity(sample_count);
+    for i in 0..sample_count {
+        let p = i.checked_mul(bytes_per_sample).ok_or_else(|| JsValue::from_str("DICOM: offset overflow"))?;
+        // Decoded pixel data is always in standard (interleaved) planar
+        // configuration, little-endian (matches the wasm32 target's native
+        // byte order, which `dicom-pixeldata` uses internally), and never
+        // Float/Double Pixel Data (7FE0,0008/0009 cannot be encapsulated per
+        // the DICOM standard) — pixel_tag 0x7FE0,0010 always applies here.
+        raw.push(read_sample(bytes, 0x7fe0_0010, true, p, bits_allocated, bits_stored, signed)?);
+    }
+    Ok((raw, photometric))
+}
+
+/// Decode one DICOM frame — native (uncompressed) or compressed (JPEG
+/// Baseline / RLE Lossless) Pixel Data alike. Patient-identifying tags are
+/// not retained.
+pub(crate) fn decode_dicom_impl(data: &[u8], frame_index: u32) -> Result<ScientificParsed, JsValue> {
+    let context = parse_dicom_context(data)?;
+    let info = dicom_image_info(&context)?;
+    let safe_frame = frame_index.min(info.frames.saturating_sub(1));
+
+    let (raw, photometric) = if context.encoding.compressed.is_some() {
+        decode_compressed_frame(data, safe_frame)?
+    } else {
+        (decode_native_frame(&context, &info, safe_frame)?, info.photometric.clone())
+    };
+
+    let mut output: Vec<f32> = raw.iter().map(|&r| (r * info.slope + info.intercept) as f32).collect();
 
     if photometric == "MONOCHROME1" {
         let mut min = f32::INFINITY;
@@ -483,15 +529,17 @@ pub(crate) fn decode_dicom_impl(data: &[u8], frame_index: u32) -> Result<Scienti
             *v = max + min - *v;
         }
     }
-
     let mut fields = info.metadata_fields;
+    if let Some(entry) = fields.iter_mut().find(|(k, _)| k == "photometric") {
+        entry.1 = JsonValue::Str(photometric.clone());
+    }
     fields.push(("frameIndex".to_string(), JsonValue::Num(safe_frame as f64)));
     let metadata_json = to_json_string(&JsonValue::Obj(fields));
 
     Ok(ScientificParsed {
-        width: columns,
-        height: rows,
-        channels: samples,
+        width: info.columns,
+        height: info.rows,
+        channels: info.samples,
         bits_per_sample: info.bits_per_sample,
         sample_format: info.sample_format,
         type_min: info.type_min,

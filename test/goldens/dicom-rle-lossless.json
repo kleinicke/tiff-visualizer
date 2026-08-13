@@ -1,0 +1,54 @@
+{
+  "id": "dicom-rle-lossless",
+  "format": "dicom",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.5",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 16,
+    "bitsStored": 16,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 65535,
+    "sourceNumericType": "uint16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:51165f69439700216490595d5d524a47ac03de464459e448d8eeb9fbf730d7eb",
+  "data": [
+    258,
+    772,
+    65534,
+    0
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 258
+    },
+    {
+      "i": 1,
+      "v": 772
+    },
+    {
+      "i": 2,
+      "v": 65534
+    },
+    {
+      "i": 3,
+      "v": 0
+    }
+  ]
+}

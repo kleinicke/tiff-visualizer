@@ -162,13 +162,10 @@ export function decodeNetcdfWithWasm(
 }
 
 /**
- * DICOM with native (uncompressed) Pixel Data.
- *
- * Encapsulated/compressed Pixel Data is NOT decoded here: the Rust decoder
- * throws an error containing `requires codec: jpeg-baseline`, which the caller
- * catches and routes through `extractDicomJpegFrame` + `decode_jpeg_fast`.
- * That contract is asserted by the conformance suite — do not change the
- * message without updating both the caller and the golden.
+ * DICOM decoding, native and compressed alike. `decode_dicom_fast` decodes
+ * JPEG Baseline and RLE Lossless Pixel Data natively (via
+ * dicom-object/dicom-pixeldata in Rust); any other compressed transfer
+ * syntax is rejected with a descriptive error.
  */
 export function decodeDicomWithWasm(
 	decodeDicomFast: (bytes: Uint8Array, frameIndex: number) => any,

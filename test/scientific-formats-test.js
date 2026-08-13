@@ -8,7 +8,7 @@ const parserPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'scient
 if (!fs.existsSync(parserPath)) {
 	throw new Error('Compile first with npm run compile');
 }
-const { extractDicomJpegFrame, parseCzi } = require(parserPath);
+const { parseCzi } = require(parserPath);
 
 // FITS, DICOM and NetCDF are decoded by Rust/WASM only — their TypeScript
 // parsers have been deleted. These tests assert format semantics (row order,
@@ -78,28 +78,39 @@ function testDicom() {
 	}, 'the Float32 decode carrier must retain the DICOM source domain');
 }
 
+/** `decode_dicom_fast` decodes JPEG Baseline Pixel Data natively now (via
+ * dicom-object/dicom-pixeldata in Rust) instead of throwing the
+ * `requires codec: jpeg-baseline` error that used to route through the
+ * TS `extractDicomJpegFrame` + shared zune-jpeg fallback (both deleted).
+ * This asserts the same real 96-frame fixture decodes directly. */
 async function testJpegBaselineDicom() {
 	const fixture = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/0002.DCM';
 	if (!fs.existsSync(fixture)) { return; }
 	const bytes = fs.readFileSync(fixture);
-	const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-	const first = extractDicomJpegFrame(buffer, 0);
-	const last = extractDicomJpegFrame(buffer, 95);
-	assert.deepStrictEqual([first.width, first.height, first.channels], [512, 512, 1]);
-	assert.strictEqual(first.metadata.frames, 96);
-	assert.strictEqual(first.metadata.rescaleSlope, 1, 'missing RescaleSlope must default to identity');
-	assert.strictEqual(first.metadata.rescaleIntercept, 0);
-	assert.strictEqual(first.numericDomain.typeMax, (2 ** first.metadata.bitsStored) - 1);
-	assert.ok(Number.isNaN(first.metadata.windowCenter), 'missing WindowCenter must remain unspecified');
-	assert.ok(Number.isNaN(first.metadata.windowWidth), 'missing WindowWidth must remain unspecified');
-	assert.deepStrictEqual(Array.from(first.encoded.subarray(0, 2)), [0xff, 0xd8]);
-	assert.deepStrictEqual(Array.from(last.encoded.subarray(0, 2)), [0xff, 0xd8]);
-	assert.notStrictEqual(Buffer.compare(Buffer.from(first.encoded), Buffer.from(last.encoded)), 0);
+	const wasmMod = await initWasm();
 
-	const decoded = (await initWasm()).decode_jpeg_fast(first.encoded);
-	assert.deepStrictEqual([decoded.width, decoded.height, decoded.channels], [512, 512, 3]);
-	assert.strictEqual(decoded.take_data_as_u8().length, 512 * 512 * 3);
-	console.log('✅ Real 96-frame JPEG Baseline DICOM extracts and decodes first/last frames');
+	const first = wasmMod.decode_dicom_fast(new Uint8Array(bytes), 0);
+	const firstData = first.take_data_as_f32();
+	const firstMeta = JSON.parse(first.metadata_json);
+	assert.deepStrictEqual([first.width, first.height, first.channels], [512, 512, 1]);
+	assert.strictEqual(firstMeta.frames, 96);
+	assert.strictEqual(firstMeta.frameIndex, 0);
+	assert.strictEqual(firstMeta.rescaleSlope, 1, 'missing RescaleSlope must default to identity');
+	assert.strictEqual(firstMeta.rescaleIntercept, 0);
+	assert.strictEqual(first.type_max, (2 ** first.bits_per_sample) - 1);
+	assert.strictEqual(firstMeta.windowCenter, null, 'missing WindowCenter must remain unspecified');
+	assert.strictEqual(firstMeta.windowWidth, null, 'missing WindowWidth must remain unspecified');
+	assert.strictEqual(firstData.length, 512 * 512);
+
+	const last = wasmMod.decode_dicom_fast(new Uint8Array(bytes), 95);
+	const lastData = last.take_data_as_f32();
+	const lastMeta = JSON.parse(last.metadata_json);
+	assert.deepStrictEqual([last.width, last.height, last.channels], [512, 512, 1]);
+	assert.strictEqual(lastMeta.frameIndex, 95);
+	assert.notStrictEqual(Buffer.compare(Buffer.from(firstData.buffer), Buffer.from(lastData.buffer)), 0,
+		'frame 0 and frame 95 must decode to different pixel data');
+
+	console.log('✅ Real 96-frame JPEG Baseline DICOM decodes first/last frames natively via decode_dicom_fast');
 }
 
 function testNetCdf() {
