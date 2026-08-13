@@ -1,0 +1,5 @@
+{
+  "id": "fits-unsupported-bitpix",
+  "format": "fits",
+  "error": "FITS file contains no supported 2D image HDU"
+}

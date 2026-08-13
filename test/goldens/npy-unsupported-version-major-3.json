@@ -1,0 +1,5 @@
+{
+  "id": "npy-unsupported-version-major-3",
+  "format": "npy",
+  "error": "Unsupported NPY version 3.0"
+}

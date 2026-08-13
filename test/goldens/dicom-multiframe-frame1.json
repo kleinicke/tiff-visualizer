@@ -1,0 +1,54 @@
+{
+  "id": "dicom-multiframe-frame1",
+  "format": "dicom",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.1",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 16,
+    "bitsStored": 16,
+    "signed": false,
+    "frames": 2,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 1
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 65535,
+    "sourceNumericType": "uint16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:beca39ea48a7a8e3e46775d302848fb64a367509e7465020ca4890f3384a5923",
+  "data": [
+    10,
+    20,
+    30,
+    40
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 10
+    },
+    {
+      "i": 1,
+      "v": 20
+    },
+    {
+      "i": 2,
+      "v": 30
+    },
+    {
+      "i": 3,
+      "v": 40
+    }
+  ]
+}

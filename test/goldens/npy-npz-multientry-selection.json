@@ -1,0 +1,35 @@
+{
+  "id": "npy-npz-multientry-selection",
+  "format": "npy",
+  "width": 4,
+  "height": 1,
+  "channels": 1,
+  "dtype": "<f4",
+  "showNorm": true,
+  "dataLength": 4,
+  "dataDigest": "sha256:beca39ea48a7a8e3e46775d302848fb64a367509e7465020ca4890f3384a5923",
+  "data": [
+    10,
+    20,
+    30,
+    40
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 10
+    },
+    {
+      "i": 1,
+      "v": 20
+    },
+    {
+      "i": 2,
+      "v": 30
+    },
+    {
+      "i": 3,
+      "v": 40
+    }
+  ]
+}

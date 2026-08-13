@@ -1,0 +1,5 @@
+{
+  "id": "npy-npz-no-entry-qualifies",
+  "format": "npy",
+  "error": "NPZ contains no uncompressed .npy arrays"
+}

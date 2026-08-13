@@ -12,9 +12,12 @@ declare module '*.min.js' {
 declare module '*/wasm/tiff-wasm.js' {
     const initTiffWasm: any;
     export default initTiffWasm;
+    export const decode_dicom_fast: any;
     export const decode_exr_fast: any;
+    export const decode_fits_fast: any;
     export const decode_hdr_fast: any;
     export const decode_jpeg_fast: any;
+    export const decode_netcdf_fast: any;
     export const decode_npy_fast: any;
     export const decode_pfm_fast: any;
     export const decode_png16_fast: any;

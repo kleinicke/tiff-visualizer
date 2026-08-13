@@ -1,0 +1,64 @@
+{
+  "id": "dicom-implicit-vr-little-endian",
+  "format": "dicom",
+  "width": 3,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 16,
+    "bitsStored": 16,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 65535,
+    "sourceNumericType": "uint16"
+  },
+  "dataLength": 6,
+  "dataDigest": "sha256:e2c0a71510b5394df7773b63fb5f54372b84c3564e67811bde7d665be227976d",
+  "data": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": 1
+    },
+    {
+      "i": 2,
+      "v": 2
+    },
+    {
+      "i": 3,
+      "v": 3
+    },
+    {
+      "i": 4,
+      "v": 4
+    },
+    {
+      "i": 5,
+      "v": 5
+    }
+  ]
+}

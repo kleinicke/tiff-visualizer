@@ -1,0 +1,45 @@
+{
+  "id": "npy-3d-channels-2-quirk",
+  "format": "npy",
+  "width": 3,
+  "height": 2,
+  "channels": 2,
+  "dtype": "<f4",
+  "showNorm": true,
+  "dataLength": 6,
+  "dataDigest": "sha256:28e1a9a45a8f4dd9ef9af065495898dd7b932d2d184c38b348d2631f83469d57",
+  "data": [
+    0.25,
+    2.25,
+    4.25,
+    6.25,
+    8.25,
+    10.25
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0.25
+    },
+    {
+      "i": 1,
+      "v": 2.25
+    },
+    {
+      "i": 2,
+      "v": 4.25
+    },
+    {
+      "i": 3,
+      "v": 6.25
+    },
+    {
+      "i": 4,
+      "v": 8.25
+    },
+    {
+      "i": 5,
+      "v": 10.25
+    }
+  ]
+}

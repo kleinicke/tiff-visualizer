@@ -1,12 +1,12 @@
 /**
- * Decode smoke-tests for the non-TIFF format processors:
- *   - NumPy   .npy / .npz   (NpyProcessor._parseNpy / _parseNpz)
- *   - PFM     Portable Float Map (PfmProcessor._parsePfm)
- *   - PNG     16-bit + 8-bit via UPNG.decode (the worker's png path)
+ * Decode smoke-test for PNG (16-bit + 8-bit via UPNG.decode — the worker's
+ * png path), exercising the real decoder the extension uses.
  *
- * These exercise the real parsers the extension uses (the decode worker calls
- * the exact same entry points), guarding against regressions like the binary
- * PBM bug in processors that previously had no coverage.
+ * NumPy and PFM used to be covered here against their TypeScript parsers.
+ * Those parsers have been deleted — both formats are decoded by Rust/WASM
+ * only — and their coverage now lives in test/rust-npy-conformance-test.js
+ * and test/rust-netpbm-conformance-test.js, which check the same fixtures
+ * plus a much wider synthesized matrix against golden snapshots.
  *
  * Not covered here: EXR and HDR (cannot be generated without OpenEXR/imageio in
  * this environment) and RAW.
@@ -27,56 +27,7 @@ function ab(file) {
 }
 
 async function main() {
-	const { NpyProcessor } = await import(
-		path.join('..', 'out', 'media', 'modules', 'npy-processor.js').replace(/\\/g, '/')
-	);
-	const { PfmProcessor } = await import(
-		path.join('..', 'out', 'media', 'modules', 'pfm-processor.js').replace(/\\/g, '/')
-	);
-	const npy = new NpyProcessor(/** @type {any} */ (null), null);
-	const pfm = new PfmProcessor(/** @type {any} */ (null), null);
-
-	console.log('🧪 Running format decoder smoke-tests (NPY/NPZ/PFM/PNG)...\n');
-
-	// --- NumPy .npy: float32, uint16, uint8 RGB ---
-	const npyCases = [
-		['npy_f32_gray.npy', 12, 8, 1, '<f4'],
-		['npy_u16_gray.npy', 12, 8, 1, '<u2'],
-		['npy_u8_rgb.npy', 12, 8, 3, '|u1'],
-	];
-	for (const [file, w, h, ch, dtype] of npyCases) {
-		const r = npy._parseNpy(ab(file));
-		assert.strictEqual(r.width, w, `${file} width`);
-		assert.strictEqual(r.height, h, `${file} height`);
-		assert.strictEqual(r.channels, ch, `${file} channels`);
-		assert.strictEqual(r.dtype, dtype, `${file} dtype`);
-		assert.strictEqual(r.data.length, w * h * ch, `${file} data length`);
-		console.log(`✅ NPY ${file} -> ${w}x${h} ch=${ch} ${dtype}`);
-	}
-
-	// --- NumPy .npz (zip-wrapped single array) ---
-	{
-		const r = npy._parseNpz(ab('npz_f32.npz'));
-		assert.strictEqual(r.width, 6);
-		assert.strictEqual(r.height, 6);
-		assert.strictEqual(r.channels, 1);
-		assert.strictEqual(r.data.length, 36);
-		console.log('✅ NPZ npz_f32.npz -> 6x6 ch=1');
-	}
-
-	// --- PFM: grayscale (Pf) and color (PF) ---
-	const pfmCases = [
-		['pfm_gray.pfm', 10, 7, 1],
-		['pfm_color.pfm', 9, 6, 3],
-	];
-	for (const [file, w, h, ch] of pfmCases) {
-		const r = pfm._parsePfm(ab(file));
-		assert.strictEqual(r.width, w, `${file} width`);
-		assert.strictEqual(r.height, h, `${file} height`);
-		assert.strictEqual(r.channels, ch, `${file} channels`);
-		assert.strictEqual(r.data.length, w * h * ch, `${file} data length`);
-		console.log(`✅ PFM ${file} -> ${w}x${h} ch=${ch}`);
-	}
+	console.log('🧪 Running format decoder smoke-tests (PNG)...\n');
 
 	// --- PNG via UPNG (the path the extension uses for 16-bit PNGs) ---
 	const pngCases = [

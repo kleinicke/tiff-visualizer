@@ -1,0 +1,5 @@
+{
+  "id": "dicom-jpeg-baseline-codec-fallback-error",
+  "format": "dicom",
+  "error": "Compressed DICOM frame requires codec: jpeg-baseline"
+}

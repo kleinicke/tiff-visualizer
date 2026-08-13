@@ -1356,6 +1356,7 @@ export function registerImagePreviewCommands(
 						const series = manifest.series[selected[position]];
 						const volume = await buildVolumeFromSeries(
 							series,
+							context.extensionUri,
 							(done, total) => progress.report({
 								message: `Series ${position + 1} / ${selected.length} · slice ${done} / ${total}`,
 							}),

@@ -1,0 +1,30 @@
+{
+  "id": "npy-npz-data-descriptor-placeholder-0xffffffff",
+  "format": "npy",
+  "width": 3,
+  "height": 1,
+  "channels": 1,
+  "dtype": "<f4",
+  "showNorm": true,
+  "dataLength": 3,
+  "dataDigest": "sha256:b7605cfded9f92469402db20760841ee860433ba9ddd206ea3a44ca091def859",
+  "data": [
+    7,
+    8,
+    9
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 7
+    },
+    {
+      "i": 1,
+      "v": 8
+    },
+    {
+      "i": 2,
+      "v": 9
+    }
+  ]
+}

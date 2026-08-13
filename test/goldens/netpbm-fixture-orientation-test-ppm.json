@@ -1,0 +1,75 @@
+{
+  "id": "netpbm-fixture-orientation-test-ppm",
+  "format": "ppm",
+  "width": 2,
+  "height": 2,
+  "channels": 3,
+  "maxval": 255,
+  "formatLabel": "PPM (ASCII)",
+  "dataLength": 12,
+  "dataDigest": "sha256:6733cdd08e5c7ef0453e2759ef0d28fbd43ea2aa7883b55422a13dac38e23ecc",
+  "data": [
+    255,
+    0,
+    0,
+    0,
+    255,
+    0,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 255
+    },
+    {
+      "i": 1,
+      "v": 0
+    },
+    {
+      "i": 2,
+      "v": 0
+    },
+    {
+      "i": 3,
+      "v": 0
+    },
+    {
+      "i": 4,
+      "v": 255
+    },
+    {
+      "i": 5,
+      "v": 0
+    },
+    {
+      "i": 6,
+      "v": 0
+    },
+    {
+      "i": 7,
+      "v": 0
+    },
+    {
+      "i": 8,
+      "v": 255
+    },
+    {
+      "i": 9,
+      "v": 255
+    },
+    {
+      "i": 10,
+      "v": 255
+    },
+    {
+      "i": 11,
+      "v": 255
+    }
+  ]
+}

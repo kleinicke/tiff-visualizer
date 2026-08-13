@@ -1,0 +1,5 @@
+{
+  "id": "netcdf-unsupported-version",
+  "format": "netcdf",
+  "error": "Unsupported NetCDF format version: CDF-9"
+}

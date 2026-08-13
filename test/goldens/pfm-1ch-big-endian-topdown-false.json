@@ -1,0 +1,73 @@
+{
+  "id": "pfm-1ch-big-endian-topdown-false",
+  "format": "pfm",
+  "width": 4,
+  "height": 3,
+  "channels": 1,
+  "dataLength": 12,
+  "dataDigest": "sha256:b25dbfe43440c623883ac373b9de32c615743e55af8df0577a6f5a942bf3eec4",
+  "data": [
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "-0",
+    0,
+    1.5,
+    -2.25,
+    3.3999999521443642e+38,
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "-0"
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": "NaN"
+    },
+    {
+      "i": 1,
+      "v": "Infinity"
+    },
+    {
+      "i": 2,
+      "v": "-Infinity"
+    },
+    {
+      "i": 3,
+      "v": "-0"
+    },
+    {
+      "i": 4,
+      "v": 0
+    },
+    {
+      "i": 5,
+      "v": 1.5
+    },
+    {
+      "i": 6,
+      "v": -2.25
+    },
+    {
+      "i": 7,
+      "v": 3.3999999521443642e+38
+    },
+    {
+      "i": 8,
+      "v": "NaN"
+    },
+    {
+      "i": 9,
+      "v": "Infinity"
+    },
+    {
+      "i": 10,
+      "v": "-Infinity"
+    },
+    {
+      "i": 11,
+      "v": "-0"
+    }
+  ]
+}

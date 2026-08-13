@@ -1,0 +1,52 @@
+{
+  "id": "fits-blank-sentinel",
+  "format": "fits",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "FITS",
+    "hduIndex": 0,
+    "bitpix": 16,
+    "axes": [
+      2,
+      2
+    ],
+    "bscale": 1,
+    "bzero": 0,
+    "firstPlaneOnly": false
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 2,
+    "typeMin": -32768,
+    "typeMax": 32767,
+    "sourceNumericType": "int16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:36eaf80d30573e48d20d12f580e4aaa8d2ad40534b74fc56a716aa66491a59d1",
+  "data": [
+    "NaN",
+    10,
+    "NaN",
+    5
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": "NaN"
+    },
+    {
+      "i": 1,
+      "v": 10
+    },
+    {
+      "i": 2,
+      "v": "NaN"
+    },
+    {
+      "i": 3,
+      "v": 5
+    }
+  ]
+}

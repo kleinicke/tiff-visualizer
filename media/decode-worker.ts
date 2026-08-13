@@ -27,12 +27,10 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_exr_fast, decode_hdr_fast, decode_jpeg_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
-import { NpyProcessor } from './modules/npy-processor.js';
-import { PfmProcessor } from './modules/pfm-processor.js';
-import { PpmProcessor } from './modules/ppm-processor.js';
+import initTiffWasm, { decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_jpeg_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { extractDicomJpegFrame, parseCzi, parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
+import { extractDicomJpegFrame, parseCzi } from './modules/scientific-format-parsers.js';
+import { decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
@@ -45,9 +43,6 @@ declare const self: any;
 
 // Parser-only instances: the constructors just assign fields, and the
 // _parse* methods used here touch no DOM or vscode APIs.
-const npyParser = new NpyProcessor(null as any, null);
-const pfmParser = new PfmProcessor(null as any, null);
-const ppmParser = new PpmProcessor(null as any, null);
 
 let tiffWasmReady = false;
 let tiffWasmInitPromise: Promise<void> | null = null;
@@ -505,159 +500,108 @@ async function decodePng16(buffer: ArrayBuffer) {
 	}
 }
 
-function decodePfmWasm(buffer: ArrayBuffer) {
-	if (!tiffWasmReady || typeof decode_pfm_fast !== 'function') {
-		throw new Error('PFM WASM decoder not initialized');
+/**
+ * These six formats (PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM) are decoded
+ * ONLY by Rust/WASM — the TypeScript parsers they were ported from have been
+ * deleted, so there is no second implementation to fall back to. A wasm
+ * failure is therefore a hard error with an actionable message rather than a
+ * silent degradation, which is the point: a silent fallback used to mask Rust
+ * bugs behind a console warning.
+ *
+ * The result assembly lives in `modules/wasm-decoders.ts` and is shared with
+ * the main-thread path in the format processors, so neither side can drift.
+ */
+async function requireWasm(format: string): Promise<void> {
+	if (tiffWasmInitPromise) {
+		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
+			.catch(error => console.warn('[DecodeWorker]', error));
 	}
-	const timings = [];
-	const phaseStart = performance.now();
-	// The worker always wants the vertical flip applied (row 0 = topmost),
-	// matching the TS parser's `{ topDown: true }` call in decodeFormat below.
-	const result = decode_pfm_fast(new Uint8Array(buffer), true);
-	const now = performance.now();
-	timings.push({ name: 'decode-pfm-rust', durationMs: now - phaseStart });
-
-	const data = result.take_data_as_f32();
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		data,
-		decodedWith: 'rust-pfm-wasm (worker)',
-		decodeTimings: timings
-	};
-}
-
-function decodePfmFallback(buffer: ArrayBuffer, wasmError = '') {
-	const start = performance.now();
-	const result: any = pfmParser._parsePfm(buffer, { topDown: true });
-	result.decodedWith = 'ts-pfm-parser (worker)';
-	if (wasmError) {
-		result.wasmFallbackReason = wasmError;
+	if (!tiffWasmReady) {
+		throw new Error(
+			`Cannot decode ${format}: the Rust/WASM decoder failed to initialize. ` +
+			`${format} is decoded exclusively by WebAssembly in this extension.`);
 	}
-	result.decodeTimings = [{ name: 'decode-pfm-parse', durationMs: performance.now() - start }];
-	return result;
 }
 
 async function decodePfm(buffer: ArrayBuffer) {
-	if (tiffWasmInitPromise) {
-		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
-			.catch(error => console.warn('[DecodeWorker]', error));
-	}
-	try {
-		return decodePfmWasm(buffer);
-	} catch (error) {
-		const message = String((error instanceof Error ? error.message : error) || 'WASM PFM decode failed');
-		console.warn('[DecodeWorker] PFM WASM decode failed, using TS parser in worker:', message);
-		return decodePfmFallback(buffer, message);
-	}
-}
-
-function decodePpmWasm(buffer: ArrayBuffer) {
-	if (!tiffWasmReady || typeof decode_ppm_fast !== 'function') {
-		throw new Error('PPM WASM decoder not initialized');
-	}
-	const timings = [];
-	const phaseStart = performance.now();
-	const result = decode_ppm_fast(new Uint8Array(buffer));
-	const now = performance.now();
-	timings.push({ name: 'decode-ppm-rust', durationMs: now - phaseStart });
-
-	const data = result.is_16bit ? result.take_data_as_u16() : result.take_data_as_u8();
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		data,
-		maxval: result.maxval,
-		format: result.format,
-		decodedWith: 'rust-ppm-wasm (worker)',
-		decodeTimings: timings
-	};
-}
-
-function decodePpmFallback(buffer: ArrayBuffer, wasmError = '') {
-	const start = performance.now();
-	const result: any = ppmParser._parsePpm(buffer);
-	const parseTimings = Array.isArray(result.decodeTimings) ? result.decodeTimings : [];
-	result.decodedWith = 'ts-ppm-parser (worker)';
-	if (wasmError) {
-		result.wasmFallbackReason = wasmError;
-	}
-	result.decodeTimings = [
-		{ name: 'decode-ppm-parse', durationMs: performance.now() - start },
-		...parseTimings
-	];
-	return result;
+	await requireWasm('PFM');
+	return decodePfmWithWasm(decode_pfm_fast, buffer, 'worker');
 }
 
 async function decodePpm(buffer: ArrayBuffer) {
-	if (tiffWasmInitPromise) {
-		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
-			.catch(error => console.warn('[DecodeWorker]', error));
-	}
-	try {
-		return decodePpmWasm(buffer);
-	} catch (error) {
-		const message = String((error instanceof Error ? error.message : error) || 'WASM PPM decode failed');
-		console.warn('[DecodeWorker] PPM WASM decode failed, using TS parser in worker:', message);
-		return decodePpmFallback(buffer, message);
-	}
-}
-
-function decodeNpyWasm(buffer: ArrayBuffer) {
-	if (!tiffWasmReady || typeof decode_npy_fast !== 'function') {
-		throw new Error('NPY WASM decoder not initialized');
-	}
-	const timings = [];
-	const phaseStart = performance.now();
-	// decode_npy_fast dispatches internally between plain .npy and .npz
-	// (ZIP) archives on the local-file-header signature.
-	const result = decode_npy_fast(new Uint8Array(buffer));
-	const now = performance.now();
-	timings.push({ name: 'decode-npy-rust', durationMs: now - phaseStart });
-
-	const data = result.take_data_as_f32();
-	return {
-		width: result.width,
-		height: result.height,
-		channels: result.channels,
-		dtype: result.dtype,
-		showNorm: result.show_norm,
-		data,
-		decodedWith: 'rust-npy-wasm (worker)',
-		decodeTimings: timings
-	};
-}
-
-function decodeNpyFallback(buffer: ArrayBuffer, wasmError = '') {
-	const start = performance.now();
-	const view = new DataView(buffer);
-	// NPZ (ZIP) signature 0x04034b50
-	const result: any = (buffer.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50)
-		? npyParser._parseNpz(buffer)
-		: npyParser._parseNpy(buffer);
-	result.decodedWith = 'ts-npy-parser (worker)';
-	if (wasmError) {
-		result.wasmFallbackReason = wasmError;
-	}
-	result.decodeTimings = [{ name: 'decode-npy-parse', durationMs: performance.now() - start }];
-	return result;
+	await requireWasm('NetPBM');
+	return decodePpmWithWasm(decode_ppm_fast, buffer, 'worker');
 }
 
 async function decodeNpy(buffer: ArrayBuffer) {
-	if (tiffWasmInitPromise) {
-		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
-			.catch(error => console.warn('[DecodeWorker]', error));
+	await requireWasm('NPY');
+	return decodeNpyWithWasm(decode_npy_fast, buffer, 'worker');
+}
+
+async function decodeFits(buffer: ArrayBuffer) {
+	await requireWasm('FITS');
+	return decodeFitsWithWasm(decode_fits_fast, buffer, 'worker');
+}
+
+async function decodeNetcdf(buffer: ArrayBuffer, options: Record<string, any>) {
+	await requireWasm('NetCDF');
+	return decodeNetcdfWithWasm(decode_netcdf_fast, buffer, options, 'worker');
+}
+
+/** Decodes a compressed (JPEG Baseline) DICOM frame: extracts the codestream
+ * in TS and decodes it with the shared Rust/WASM zune-jpeg path. Used by
+ * both the WASM-first and TS-fallback attempts below, whichever throws the
+ * `requires codec: jpeg-baseline` error first — both `decode_dicom_fast` and
+ * `parseDicom` recognize the same compressed transfer syntax and throw the
+ * same message for it. */
+function decodeDicomJpegBaseline(buffer: ArrayBuffer, frameIndex: number) {
+	if (!tiffWasmReady) { throw new Error('JPEG Baseline DICOM requires the Rust/WASM decoder'); }
+	const started = performance.now();
+	const frame = extractDicomJpegFrame(buffer, frameIndex);
+	const decoded = decode_jpeg_fast(frame.encoded);
+	const width = decoded.width;
+	const height = decoded.height;
+	const jpegChannels = decoded.channels;
+	const channels = frame.channels === 1 ? 1 : jpegChannels;
+	if (width !== frame.width || height !== frame.height) {
+		throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${width}x${height}`);
 	}
+	const bytes = decoded.take_data_as_u8();
+	const slope = Number(frame.metadata.rescaleSlope ?? 1);
+	const intercept = Number(frame.metadata.rescaleIntercept ?? 0);
+	const data = new Float32Array(width * height * channels);
+	for (let pixel = 0; pixel < width * height; pixel++) {
+		for (let channel = 0; channel < channels; channel++) {
+			data[pixel * channels + channel] = bytes[pixel * jpegChannels + channel] * slope + intercept;
+		}
+	}
+	if (frame.metadata.photometric === 'MONOCHROME1') {
+		let min = Infinity, max = -Infinity;
+		for (const value of data) { if (value < min) { min = value; } if (value > max) { max = value; } }
+		for (let i = 0; i < data.length; i++) { data[i] = max + min - data[i]; }
+	}
+	return {
+		width, height, channels, data,
+		metadata: { ...frame.metadata, decoder: 'Rust/WASM zune-jpeg' },
+		numericDomain: frame.numericDomain,
+		decodeTimings: [{ name: 'decode-dicom-rust', durationMs: performance.now() - started }],
+	};
+}
+
+async function decodeDicom(buffer: ArrayBuffer, frameIndex: number) {
+	await requireWasm('DICOM');
 	try {
-		return decodeNpyWasm(buffer);
+		return decodeDicomWithWasm(decode_dicom_fast, buffer, frameIndex, 'worker');
 	} catch (error) {
-		const message = String((error instanceof Error ? error.message : error) || 'WASM NPY decode failed');
-		console.warn('[DecodeWorker] NPY WASM decode failed, using TS parser in worker:', message);
-		return decodeNpyFallback(buffer, message);
+		// Encapsulated Pixel Data: the Rust decoder reports the codec it needs
+		// and the codestream is decoded by the shared zune-jpeg path instead.
+		if (error instanceof Error && error.message.includes('requires codec: jpeg-baseline')) {
+			return decodeDicomJpegBaseline(buffer, frameIndex);
+		}
+		throw error;
 	}
 }
+
 
 async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	switch (format) {
@@ -676,48 +620,11 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		case 'hdr':
 			return decodeHdr(buffer);
 		case 'fits':
-			return parseFits(buffer);
-		case 'dicom': {
-			const frameIndex = Number(options.frameIndex || 0);
-			try {
-				return parseDicom(buffer, frameIndex);
-			} catch (error) {
-				if (!(error instanceof Error) || !error.message.includes('requires codec: jpeg-baseline')) { throw error; }
-				if (!tiffWasmReady) { throw new Error('JPEG Baseline DICOM requires the Rust/WASM decoder'); }
-				const started = performance.now();
-				const frame = extractDicomJpegFrame(buffer, frameIndex);
-				const decoded = decode_jpeg_fast(frame.encoded);
-				const width = decoded.width;
-				const height = decoded.height;
-				const jpegChannels = decoded.channels;
-				const channels = frame.channels === 1 ? 1 : jpegChannels;
-				if (width !== frame.width || height !== frame.height) {
-					throw new Error(`DICOM/JPEG dimensions disagree: ${frame.width}x${frame.height} vs ${width}x${height}`);
-				}
-				const bytes = decoded.take_data_as_u8();
-				const slope = Number(frame.metadata.rescaleSlope ?? 1);
-				const intercept = Number(frame.metadata.rescaleIntercept ?? 0);
-				const data = new Float32Array(width * height * channels);
-				for (let pixel = 0; pixel < width * height; pixel++) {
-					for (let channel = 0; channel < channels; channel++) {
-						data[pixel * channels + channel] = bytes[pixel * jpegChannels + channel] * slope + intercept;
-					}
-				}
-				if (frame.metadata.photometric === 'MONOCHROME1') {
-					let min = Infinity, max = -Infinity;
-					for (const value of data) { if (value < min) { min = value; } if (value > max) { max = value; } }
-					for (let i = 0; i < data.length; i++) { data[i] = max + min - data[i]; }
-				}
-				return {
-					width, height, channels, data,
-					metadata: { ...frame.metadata, decoder: 'Rust/WASM zune-jpeg' },
-					numericDomain: frame.numericDomain,
-					decodeTimings: [{ name: 'decode-dicom-rust', durationMs: performance.now() - started }],
-				};
-			}
-		}
+			return decodeFits(buffer);
+		case 'dicom':
+			return decodeDicom(buffer, Number(options.frameIndex || 0));
 		case 'netcdf':
-			return parseNetCdf(buffer, options);
+			return decodeNetcdf(buffer, options);
 		case 'czi':
 			return parseCzi(buffer, options);
 		case 'ora':

@@ -1,0 +1,5 @@
+{
+  "id": "netpbm-bad-magic",
+  "format": "ppm",
+  "error": "Invalid PPM/PGM/PBM magic number: P9"
+}

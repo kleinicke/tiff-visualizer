@@ -1,0 +1,101 @@
+{
+  "id": "netcdf-record-dimension-record0",
+  "format": "netcdf",
+  "width": 3,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "NetCDF CDF-1",
+    "variable": "temp",
+    "dimensions": [
+      {
+        "name": "time",
+        "size": 2
+      },
+      {
+        "name": "y",
+        "size": 2
+      },
+      {
+        "name": "x",
+        "size": 3
+      }
+    ],
+    "viewMode": "raster",
+    "variables": [
+      {
+        "name": "temp",
+        "label": "temp",
+        "dimensions": [
+          {
+            "name": "time",
+            "size": 2
+          },
+          {
+            "name": "y",
+            "size": 2
+          },
+          {
+            "name": "x",
+            "size": 3
+          }
+        ]
+      }
+    ],
+    "selectors": [
+      {
+        "name": "time",
+        "size": 2,
+        "value": 0
+      }
+    ],
+    "selectedIndices": {
+      "x": 0,
+      "time": 0,
+      "y": 0
+    }
+  },
+  "numericDomain": {
+    "bitsPerSample": 32,
+    "sampleFormat": 3,
+    "typeMin": 0,
+    "typeMax": 1,
+    "sourceNumericType": "float32"
+  },
+  "dataLength": 6,
+  "dataDigest": "sha256:e2c0a71510b5394df7773b63fb5f54372b84c3564e67811bde7d665be227976d",
+  "data": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": 1
+    },
+    {
+      "i": 2,
+      "v": 2
+    },
+    {
+      "i": 3,
+      "v": 3
+    },
+    {
+      "i": 4,
+      "v": 4
+    },
+    {
+      "i": 5,
+      "v": 5
+    }
+  ]
+}

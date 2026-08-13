@@ -1,0 +1,76 @@
+{
+  "id": "netcdf-scale-factor-add-offset",
+  "format": "netcdf",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "NetCDF CDF-1",
+    "variable": "temp",
+    "dimensions": [
+      {
+        "name": "y",
+        "size": 2
+      },
+      {
+        "name": "x",
+        "size": 2
+      }
+    ],
+    "viewMode": "raster",
+    "variables": [
+      {
+        "name": "temp",
+        "label": "temp",
+        "dimensions": [
+          {
+            "name": "y",
+            "size": 2
+          },
+          {
+            "name": "x",
+            "size": 2
+          }
+        ]
+      }
+    ],
+    "selectors": [],
+    "selectedIndices": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 2,
+    "typeMin": -322.67999267578125,
+    "typeMax": 332.66999267600477,
+    "sourceNumericType": "int16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:b4f4a0c49cd3b35da4b1054367e4c5f0f8d41b9d652b4a1f0641dab48532c9e8",
+  "data": [
+    5,
+    6,
+    4.5,
+    325
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 5
+    },
+    {
+      "i": 1,
+      "v": 6
+    },
+    {
+      "i": 2,
+      "v": 4.5
+    },
+    {
+      "i": 3,
+      "v": 325
+    }
+  ]
+}

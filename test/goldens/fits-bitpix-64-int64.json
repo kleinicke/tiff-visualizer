@@ -1,0 +1,62 @@
+{
+  "id": "fits-bitpix-64-int64",
+  "format": "fits",
+  "width": 3,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "FITS",
+    "hduIndex": 0,
+    "bitpix": 64,
+    "axes": [
+      3,
+      2
+    ],
+    "bscale": 1,
+    "bzero": 0,
+    "firstPlaneOnly": false
+  },
+  "numericDomain": {
+    "bitsPerSample": 64,
+    "sampleFormat": 2,
+    "typeMin": -9223372036854776000,
+    "typeMax": 9223372036854776000,
+    "sourceNumericType": "int32"
+  },
+  "dataLength": 6,
+  "dataDigest": "sha256:8ed8ab6188a9299324f48122851b16f5dbd8ee3c11bf5c29b4811f35d3a85378",
+  "data": [
+    -9007199254740992,
+    0,
+    42,
+    -1,
+    1,
+    9007199254740992
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": -9007199254740992
+    },
+    {
+      "i": 1,
+      "v": 0
+    },
+    {
+      "i": 2,
+      "v": 42
+    },
+    {
+      "i": 3,
+      "v": -1
+    },
+    {
+      "i": 4,
+      "v": 1
+    },
+    {
+      "i": 5,
+      "v": 9007199254740992
+    }
+  ]
+}

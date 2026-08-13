@@ -1,0 +1,64 @@
+{
+  "id": "dicom-rgb-planar-config-1-planar",
+  "format": "dicom",
+  "width": 2,
+  "height": 1,
+  "channels": 3,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.1",
+    "photometric": "RGB",
+    "bitsAllocated": 8,
+    "bitsStored": 8,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
+  "dataLength": 6,
+  "dataDigest": "sha256:aa9c8a1b10e8caf4064b9735f1fc8065610052a22465b6b0a2e1bcb868b597de",
+  "data": [
+    10,
+    20,
+    30,
+    40,
+    50,
+    60
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 10
+    },
+    {
+      "i": 1,
+      "v": 20
+    },
+    {
+      "i": 2,
+      "v": 30
+    },
+    {
+      "i": 3,
+      "v": 40
+    },
+    {
+      "i": 4,
+      "v": 50
+    },
+    {
+      "i": 5,
+      "v": 60
+    }
+  ]
+}

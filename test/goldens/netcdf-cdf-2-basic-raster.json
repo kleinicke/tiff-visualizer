@@ -1,0 +1,118 @@
+{
+  "id": "netcdf-cdf-2-basic-raster",
+  "format": "netcdf",
+  "width": 4,
+  "height": 3,
+  "channels": 1,
+  "metadata": {
+    "format": "NetCDF CDF-2",
+    "variable": "temp",
+    "dimensions": [
+      {
+        "name": "lat",
+        "size": 3
+      },
+      {
+        "name": "lon",
+        "size": 4
+      }
+    ],
+    "unit": "K",
+    "viewMode": "raster",
+    "variables": [
+      {
+        "name": "temp",
+        "label": "temp",
+        "dimensions": [
+          {
+            "name": "lat",
+            "size": 3
+          },
+          {
+            "name": "lon",
+            "size": 4
+          }
+        ],
+        "unit": "K"
+      }
+    ],
+    "selectors": [],
+    "selectedIndices": {
+      "lat": 0,
+      "lon": 0
+    }
+  },
+  "numericDomain": {
+    "bitsPerSample": 32,
+    "sampleFormat": 3,
+    "typeMin": 0,
+    "typeMax": 1,
+    "sourceNumericType": "float32"
+  },
+  "dataLength": 12,
+  "dataDigest": "sha256:eab845cc4434df5090cdf4c2c7b854224ebc99ec94cec8f2674c729215f3c638",
+  "data": [
+    0,
+    1.5,
+    3,
+    4.5,
+    6,
+    7.5,
+    9,
+    10.5,
+    12,
+    13.5,
+    15,
+    16.5
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": 1.5
+    },
+    {
+      "i": 2,
+      "v": 3
+    },
+    {
+      "i": 3,
+      "v": 4.5
+    },
+    {
+      "i": 4,
+      "v": 6
+    },
+    {
+      "i": 5,
+      "v": 7.5
+    },
+    {
+      "i": 6,
+      "v": 9
+    },
+    {
+      "i": 7,
+      "v": 10.5
+    },
+    {
+      "i": 8,
+      "v": 12
+    },
+    {
+      "i": 9,
+      "v": 13.5
+    },
+    {
+      "i": 10,
+      "v": 15
+    },
+    {
+      "i": 11,
+      "v": 16.5
+    }
+  ]
+}

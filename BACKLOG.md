@@ -1592,26 +1592,48 @@ collapses a WASM-plus-JS-fallback pair into one code path.
       The worker prefers WASM and falls back to the TS parser
       (`decodePfm`/`decodePpm`/`decodeNpy`, mirroring `decodePng16`), so the
       fallback pair is not collapsed yet — see below.
+- [x] FITS and classic NetCDF from
+      [`scientific-format-parsers.ts`](media/modules/scientific-format-parsers.ts)
+      → [`formats/fits.rs`](wasm/tiff-decoder/src/formats/fits.rs) and
+      [`formats/netcdf.rs`](wasm/tiff-decoder/src/formats/netcdf.rs), sharing
+      `scientific_common.rs` and `json_value.rs`. `test:rust-scientific` covers
+      47 cases: 14 real corpus fixtures, the whole BITPIX matrix, BSCALE/BZERO,
+      BLANK, NaN/±Inf, multi-block headers, 3-axis cubes, CDF-1/CDF-2, record
+      dimensions, scale/offset, `_FillValue`, every NetCDF element type, and
+      matching rejection text.
 - [ ] [`ome-tiff.ts`](media/modules/ome-tiff.ts) (384) XML/metadata parsing, and CZI.
-- [ ] **Collapse the fallbacks.** The three ports above are conformance-tested
-      (`test:rust-netpbm` 25 checks, `test:rust-npy` 32 checks — TS vs Rust,
-      element-wise, on fixtures plus synthesized inputs covering the dtype
-      matrix, big-endian rasters, NaN/±Inf/−0, and matching error text). The TS
-      parsers are retained only as a WASM-init-failure fallback. Deleting them
-      is a separate decision, since it makes `wasm-pack` output a hard runtime
-      requirement rather than an optimization.
+- [ ] **Delete the TypeScript parsers for ported formats.** A fallback is only
+      worth its cost when the two paths cover *different* things — true for
+      WebGPU (hardware varies) and still true for geotiff.js (it covers TIFF
+      cases Rust does not yet). It is NOT true for PFM/NetPBM/NPY/FITS/NetCDF:
+      the Rust is conformance-proven identical, so the TS parser only guards
+      "the wasm failed to load", a scenario already fatal for TIFF. Meanwhile it
+      costs two parsers to keep in sync forever and silently masks Rust bugs
+      behind a `console.warn`.
+      **Sequencing:** those TS parsers are currently the conformance *oracle*.
+      Convert each suite to absolute golden assertions first (the direction the
+      `>f8` fix already pushed them), then delete the TS and make the wasm path
+      the only one.
 - Retires the standing **"remove geotiff fallback"** item below, plus the
   `parse-exr`, `upng` and `pako` fallbacks, once each Rust path is conformance-
   tested against the golden corpus.
 
 **Difficulty: 3.** Mostly volume; DICOM alone is a 3.
 
-**Bug-for-bug porting.** The ports reproduce TS quirks rather than fixing them,
-so conformance is provable. Two are latent TS bugs now mirrored in Rust and
-worth fixing in both at once, deliberately, rather than silently diverging:
-`>f8` NPY (big-endian float64) is read little-endian because the TS uses a
-native-endian `Float64Array` view; and NPZ entries whose ZIP `compSize` is the
-`0xFFFFFFFF` data-descriptor placeholder rely on `ArrayBuffer.slice` clamping.
+**Porting rule: reproduce quirks, fix defects in both sides at once.** A port
+matches the TS exactly so conformance is provable — but where the TS was
+genuinely wrong, fix TypeScript and Rust together in the same change, never
+just one. Two were found and fixed this way during the NPY port: `>f8`
+(big-endian float64) was read little-endian because the TS decoded it through a
+native-endian `Float64Array` view that ignores the dtype prefix; and NPZ entries
+using a data descriptor (general-purpose flag bit 3, `compSize` left as 0 or
+`0xFFFFFFFF`) relied on `ArrayBuffer.slice` clamping, which found only the first
+array in a multi-entry archive.
+
+**Conformance suites need absolute assertions, not just agreement.** The `>f8`
+bug survived the first conformance pass because the suite only asserted
+TS == Rust, and both were wrong. Every port's suite must also assert decoded
+values against known-correct expectations.
 
 ### Phase 2 — the pixel pipeline (~3,000 lines)
 

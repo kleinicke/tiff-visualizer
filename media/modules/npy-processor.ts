@@ -1,6 +1,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { decodeNpyLocal } from './main-thread-decode.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
@@ -20,32 +21,6 @@ interface PendingRenderData {
     data: Float32Array;
     width: number;
     height: number;
-}
-
-/**
- * Convert IEEE 754 half-precision (float16) to single-precision (float32)
- * @param uint16 - The 16-bit representation
- * @returns The float32 value
- */
-function float16ToFloat32(uint16: number): number {
-    const sign = (uint16 & 0x8000) >> 15;
-    const exponent = (uint16 & 0x7C00) >> 10;
-    const fraction = uint16 & 0x03FF;
-
-    if (exponent === 0) {
-        // Subnormal or zero
-        if (fraction === 0) {
-            return sign ? -0.0 : 0.0;
-        }
-        // Subnormal numbers
-        return (sign ? -1 : 1) * Math.pow(2, -14) * (fraction / 1024);
-    } else if (exponent === 0x1F) {
-        // Infinity or NaN
-        return fraction ? NaN : (sign ? -Infinity : Infinity);
-    }
-
-    // Normalized number
-    return (sign ? -1 : 1) * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
 }
 
 /**
@@ -92,16 +67,12 @@ export class NpyProcessor {
         const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
-        // Parse in the decode worker when available, locally otherwise.
-        // NPY and NPZ (ZIP signature 0x04034b50) share the same result shape.
+        // Decode in the worker when available, on this thread otherwise. The
+        // Rust decoder dispatches between plain .npy and .npz internally, so
+        // both paths take the same call.
         const parsed = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'npy', buffer, src, loadSignal,
-            (b: ArrayBuffer) => {
-                const view = new DataView(b);
-                return (b.byteLength >= 4 && view.getUint32(0, true) === 0x04034b50)
-                    ? this._parseNpz(b)
-                    : this._parseNpy(b);
-            });
+            (b: ArrayBuffer) => decodeNpyLocal(b));
         const { data, width, height, dtype, showNorm, channels } = parsed;
         this._lastRaw = { width, height, data, dtype, showNorm, channels };
 
@@ -122,138 +93,6 @@ export class NpyProcessor {
         const imageData = this._toImageDataFloat(data, width, height);
         this.vscode.postMessage({ type: 'refresh-status' });
         return { canvas, imageData };
-    }
-
-    _parseNpy(arrayBuffer: ArrayBuffer) {
-        const view = new DataView(arrayBuffer);
-        // Magic '\x93NUMPY'
-        const magic = new Uint8Array(arrayBuffer, 0, 6);
-        const expected = [0x93, 0x4E, 0x55, 0x4D, 0x50, 0x59];
-        for (let i = 0; i < 6; i++) {
-            if (magic[i] !== expected[i]) {
-                throw new Error('Invalid NPY file');
-            }
-        }
-        const major = view.getUint8(6);
-        const minor = view.getUint8(7);
-        if (major !== 1 && major !== 2) {
-            throw new Error(`Unsupported NPY version ${major}.${minor}`);
-        }
-        const headerLen = major === 1 ? view.getUint16(8, true) : view.getUint32(8, true);
-        const headerStart = major === 1 ? 10 : 12;
-        const headerBytes = new Uint8Array(arrayBuffer, headerStart, headerLen);
-        const header = new TextDecoder('latin1').decode(headerBytes);
-        const shapeMatch = header.match(/'shape':\s*\(([^)]+)\)/);
-        if (!shapeMatch) throw new Error('NPY missing shape');
-        const dims = shapeMatch[1].split(',').map(s => s.trim()).filter(Boolean).map(s => parseInt(s, 10));
-        const dtypeMatch = header.match(/'descr':\s*'([^']+)'/);
-        if (!dtypeMatch) throw new Error('NPY missing dtype');
-        const dtype = dtypeMatch[1];
-
-        // Determine if this is a float type
-        const showNorm = dtype.includes('f');
-
-        let height, width, channels = 1;
-        if (dims.length === 2) {
-            height = dims[0];
-            width = dims[1];
-        } else if (dims.length === 3) {
-            height = dims[0];
-            width = dims[1];
-            channels = dims[2];
-        } else {
-            throw new Error(`Unsupported NPY dims ${dims.length}`);
-        }
-        const elems = width * height * channels;
-        const off = headerStart + headerLen;
-        let raw;
-        if (dtype === '<f4' || dtype === '=f4') {
-            raw = new Float32Array(arrayBuffer, off, elems);
-        } else if (dtype === '>f4') {
-            const bytes = new Uint8Array(arrayBuffer, off, elems * 4);
-            raw = new Float32Array(elems);
-            for (let i = 0; i < elems; i++) {
-                const j = i * 4;
-                const b0 = bytes[j + 3];
-                const b1 = bytes[j + 2];
-                const b2 = bytes[j + 1];
-                const b3 = bytes[j + 0];
-                raw[i] = new Float32Array(new Uint8Array([b0, b1, b2, b3]).buffer)[0];
-            }
-        } else if (dtype.endsWith('f8')) {
-            const src = new Float64Array(arrayBuffer, off, elems);
-            raw = new Float32Array(elems);
-            for (let i = 0; i < elems; i++) raw[i] = src[i];
-        } else if (dtype.includes('f2')) {
-            // Float16 (half precision) - JavaScript doesn't have native Float16Array
-            // We need to decode manually
-            const bytes = new Uint8Array(arrayBuffer, off, elems * 2);
-            const little = dtype.startsWith('<') || dtype.startsWith('=');
-            raw = new Float32Array(elems);
-            for (let i = 0; i < elems; i++) {
-                const p = i * 2;
-                const uint16 = little ?
-                    bytes[p] | (bytes[p + 1] << 8) :
-                    (bytes[p] << 8) | bytes[p + 1];
-                raw[i] = float16ToFloat32(uint16);
-            }
-        } else {
-            // Fallback for integers
-            const bytes = parseInt(dtype.slice(-1), 10);
-            const little = dtype.startsWith('<') || dtype.startsWith('=');
-            const dv = new DataView(arrayBuffer, off);
-            raw = new Float32Array(elems);
-            for (let i = 0; i < elems; i++) {
-                const p = i * bytes;
-                let v = 0;
-                if (bytes === 1) v = dtype.includes('u') ? dv.getUint8(p) : dv.getInt8(p);
-                else if (bytes === 2) v = dtype.includes('u') ? dv.getUint16(p, little) : dv.getInt16(p, little);
-                else if (bytes === 4) v = dtype.includes('u') ? dv.getUint32(p, little) : dv.getInt32(p, little);
-                else v = Number(dtype.includes('u') ? dv.getBigUint64(p, little) : dv.getBigInt64(p, little));
-                raw[i] = v;
-            }
-        }
-        let data;
-        if (channels === 1) {
-            data = raw;
-        } else if (channels === 3 || channels === 4) {
-            // Keep RGB/RGBA data intact
-            data = raw;
-        } else {
-            // For other channel counts, take first channel only
-            data = new Float32Array(width * height);
-            for (let i = 0; i < width * height; i++) data[i] = raw[i * channels + 0];
-        }
-        return { data, width, height, dtype, showNorm, channels };
-    }
-
-    _parseNpz(arrayBuffer: ArrayBuffer) {
-        const view = new DataView(arrayBuffer);
-        let offset = 0;
-        const arrays: { [key: string]: any } = {};
-        while (offset < arrayBuffer.byteLength - 4) {
-            const sig = view.getUint32(offset, true);
-            if (sig !== 0x04034b50) { offset++; continue; }
-            const comp = view.getUint16(offset + 8, true);
-            const nameLen = view.getUint16(offset + 26, true);
-            const extraLen = view.getUint16(offset + 28, true);
-            const compSize = view.getUint32(offset + 18, true);
-            const fileName = new TextDecoder().decode(new Uint8Array(arrayBuffer, offset + 30, nameLen));
-            const dataOffset = offset + 30 + nameLen + extraLen;
-            if (fileName.endsWith('.npy') && comp === 0) {
-                const slice = arrayBuffer.slice(dataOffset, dataOffset + compSize);
-                const { data, width, height, dtype, showNorm, channels } = this._parseNpy(slice);
-                arrays[fileName.replace('.npy', '')] = { data, width, height, dtype, showNorm, channels };
-            }
-            offset = dataOffset + compSize;
-        }
-        // Choose best candidate
-        const keys = Object.keys(arrays);
-        if (keys.length === 0) throw new Error('NPZ contains no uncompressed .npy arrays');
-        let pick = keys.find(k => /depth|dispar|inv|z|range/i.test(k));
-        if (!pick) pick = keys[0];
-        const a = arrays[pick];
-        return { data: a.data, width: a.width, height: a.height, dtype: a.dtype, showNorm: a.showNorm, channels: a.channels };
     }
 
     _toImageDataFloat(data: Float32Array, width: number, height: number, renderOptions: DeferredRenderOptions = {}): ImageData {

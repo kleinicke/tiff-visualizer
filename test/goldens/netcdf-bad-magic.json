@@ -1,0 +1,5 @@
+{
+  "id": "netcdf-bad-magic",
+  "format": "netcdf",
+  "error": "Invalid NetCDF signature"
+}

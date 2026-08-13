@@ -1,12 +1,15 @@
 //! NumPy `.npy` / `.npz` decoder.
 //!
 //! Bit-exact port of `NpyProcessor._parseNpy` / `_parseNpz` in
-//! `media/modules/npy-processor.ts`, including one deliberate bug-for-bug
-//! quirk: the TS `f8` (float64) path always reads through a native-endian
-//! (little-endian, on every real target) `Float64Array` view regardless of
-//! the `<`/`>` dtype prefix, so big-endian float64 (`>f8`) decodes wrong on
-//! every little-endian machine. That is reproduced here rather than fixed —
-//! see `read_npy_samples` below.
+//! `media/modules/npy-processor.ts`.
+//!
+//! The two implementations are held equal by `test/rust-npy-conformance-test.js`,
+//! which decodes the same bytes with both and compares element-wise. Where the
+//! TS had a genuine defect the fix was applied to BOTH sides together, so the
+//! conformance test keeps passing and neither implementation silently drifts:
+//! `>f8` (big-endian float64) used to be read little-endian, because the TS
+//! decoded it through a native-endian `Float64Array` view that ignores the
+//! dtype's byte-order prefix.
 
 use wasm_bindgen::JsValue;
 
@@ -126,14 +129,12 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
         return Ok(out);
     }
     if dtype.ends_with("f8") {
-        // *** Deliberate bug-for-bug port. *** The TS source decodes this
-        // through a native-endian `Float64Array` view regardless of the `<`/
-        // `>` prefix, so `>f8` (big-endian float64) is wrong on every
-        // little-endian machine. Do NOT honour the `>` here.
+        let little = !dtype.starts_with('>');
         let mut out = vec![0f32; elems];
         for (i, slot) in out.iter_mut().enumerate() {
             let b = get_slice(data, off + i * 8, 8)?;
-            let v = f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
+            let bytes = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
+            let v = if little { f64::from_le_bytes(bytes) } else { f64::from_be_bytes(bytes) };
             *slot = v as f32;
         }
         return Ok(out);
@@ -330,6 +331,7 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, JsValue> {
                 continue;
             }
 
+            let flags = read_u16_le(data, offset + 6)?;
             let comp = read_u16_le(data, offset + 8)?;
             let comp_size = read_u32_le(data, offset + 18)? as usize;
             let name_len = read_u16_le(data, offset + 26)? as usize;
@@ -338,18 +340,21 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, JsValue> {
             let file_name = String::from_utf8_lossy(name_bytes).into_owned();
             let data_offset = offset + 30 + name_len + extra_len;
 
+            // When general-purpose flag bit 3 is set, the local header's sizes
+            // are placeholders and the real ones follow the entry in a data
+            // descriptor. numpy writes such archives, with `compSize` left as 0
+            // or 0xFFFFFFFF. Treating that placeholder as a real length would
+            // read past the entry (and, on wasm32's 32-bit `usize`, overflow),
+            // so the extent is unknown and we fall back to "rest of buffer".
+            let has_data_descriptor = (flags & 0x08) != 0;
+            let available = data.len().saturating_sub(data_offset);
+            let size_unknown = has_data_descriptor || comp_size == 0 || comp_size == 0xFFFF_FFFF;
+            let entry_size = if size_unknown { available } else { comp_size.min(available) };
+
             if file_name.ends_with(".npy") && comp == 0 {
-                // Mirrors `arrayBuffer.slice(dataOffset, dataOffset + compSize)`:
-                // JS `ArrayBuffer.prototype.slice` silently clamps an
-                // out-of-range end to the buffer length instead of throwing
-                // (real-world npz files from numpy commonly write a
-                // placeholder 0xFFFFFFFF compressed-size field here when a
-                // data descriptor is used instead). Clamp the same way rather
-                // than erroring; the per-entry NPY header still validates its
-                // own declared element count against the clamped slice.
-                let available = data.len().saturating_sub(data_offset);
-                let clamped_size = comp_size.min(available);
-                let entry_bytes = get_slice(data, data_offset, clamped_size)?;
+                // The NPY header inside self-describes its own length, so an
+                // over-long slice is harmless — trailing bytes are ignored.
+                let entry_bytes = get_slice(data, data_offset, entry_size)?;
                 let parsed = decode_npy_single(entry_bytes)?;
                 let key = replace_first(&file_name, ".npy");
                 match arrays.iter_mut().find(|(k, _)| k == &key) {
@@ -358,14 +363,13 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, JsValue> {
                 }
             }
 
-            // `saturating_add` (not `checked_add`): on wasm32, `usize` is only
-            // 32 bits, and a placeholder `compSize` of 0xFFFFFFFF (see the
-            // clamping comment above) overflows `data_offset + comp_size`
-            // there even though it never would on a 64-bit host. TS has no
-            // such limit (its numbers are float64), and simply produces a
-            // huge `offset` that ends the scan loop — saturating to
-            // `usize::MAX` does the same here without erroring.
-            offset = data_offset.saturating_add(comp_size);
+            // With a known size, jump straight past the entry. With an unknown
+            // one, resume the byte-wise signature scan at the start of this
+            // entry's data so any FOLLOWING entries are still discovered —
+            // skipping to the end of the buffer would silently find only the
+            // first array in a multi-entry archive. `data_offset > offset`
+            // always, so the loop still makes progress.
+            offset = if size_unknown { data_offset } else { data_offset + entry_size };
         }
     }
 

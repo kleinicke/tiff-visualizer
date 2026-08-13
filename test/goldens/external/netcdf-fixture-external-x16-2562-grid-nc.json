@@ -1,0 +1,205 @@
+{
+  "id": "netcdf-fixture-external-x16-2562-grid-nc",
+  "format": "netcdf",
+  "width": 720,
+  "height": 360,
+  "channels": 1,
+  "metadata": {
+    "format": "NetCDF CDF-2",
+    "variable": "areaCell",
+    "viewMode": "mpas-mesh",
+    "projection": "Equirectangular",
+    "meshLocation": "nCells",
+    "variables": [
+      {
+        "name": "areaCell",
+        "label": "areaCell",
+        "dimensions": [
+          {
+            "name": "nCells",
+            "size": 2562
+          }
+        ]
+      },
+      {
+        "name": "h_s",
+        "label": "h_s",
+        "dimensions": [
+          {
+            "name": "nCells",
+            "size": 2562
+          }
+        ]
+      },
+      {
+        "name": "h",
+        "label": "h",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2562
+          },
+          {
+            "name": "nVertLevels",
+            "size": 1
+          }
+        ]
+      },
+      {
+        "name": "ke",
+        "label": "ke",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2562
+          },
+          {
+            "name": "nVertLevels",
+            "size": 1
+          }
+        ]
+      },
+      {
+        "name": "tracers",
+        "label": "tracers",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2562
+          },
+          {
+            "name": "nVertLevels",
+            "size": 1
+          },
+          {
+            "name": "nTracers",
+            "size": 1
+          }
+        ]
+      }
+    ],
+    "selectors": [],
+    "selectedIndices": {
+      "nCells": 0
+    }
+  },
+  "numericDomain": {
+    "bitsPerSample": 64,
+    "sampleFormat": 3,
+    "typeMin": 0,
+    "typeMax": 1,
+    "sourceNumericType": "float64"
+  },
+  "dataLength": 259200,
+  "dataDigest": "sha256:03cbf44b11177b96ab370a35505617313da63e01ab6d0cfeae1ec38fbf392ee8",
+  "samples": [
+    {
+      "i": 0,
+      "v": "NaN"
+    },
+    {
+      "i": 11269,
+      "v": 0.06783322244882584
+    },
+    {
+      "i": 22539,
+      "v": 0.0028058516327291727
+    },
+    {
+      "i": 33808,
+      "v": 0.0501663014292717
+    },
+    {
+      "i": 45078,
+      "v": 0.1039327085018158
+    },
+    {
+      "i": 56347,
+      "v": 0.0005252661067061126
+    },
+    {
+      "i": 67617,
+      "v": 0.12059002369642258
+    },
+    {
+      "i": 78886,
+      "v": 0.11726667732000351
+    },
+    {
+      "i": 90156,
+      "v": 0.0005062466370873153
+    },
+    {
+      "i": 101425,
+      "v": 0.1270732879638672
+    },
+    {
+      "i": 112695,
+      "v": 0.1159813180565834
+    },
+    {
+      "i": 123964,
+      "v": 0.0012622951762750745
+    },
+    {
+      "i": 135234,
+      "v": 0.11496233195066452
+    },
+    {
+      "i": 146503,
+      "v": 0.10710959881544113
+    },
+    {
+      "i": 157773,
+      "v": 0.017485307529568672
+    },
+    {
+      "i": 169042,
+      "v": 0.12921032309532166
+    },
+    {
+      "i": 180312,
+      "v": 0.11935151368379593
+    },
+    {
+      "i": 191581,
+      "v": 0.12091239541769028
+    },
+    {
+      "i": 202851,
+      "v": 0.13020579516887665
+    },
+    {
+      "i": 214120,
+      "v": 0.12866449356079102
+    },
+    {
+      "i": 225390,
+      "v": 0.1249299868941307
+    },
+    {
+      "i": 236659,
+      "v": 0.12772661447525024
+    },
+    {
+      "i": 247929,
+      "v": "NaN"
+    },
+    {
+      "i": 259199,
+      "v": "NaN"
+    }
+  ]
+}

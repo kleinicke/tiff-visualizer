@@ -1,0 +1,35 @@
+{
+  "id": "npy-dtype-le-i4",
+  "format": "npy",
+  "width": 4,
+  "height": 1,
+  "channels": 1,
+  "dtype": "<i4",
+  "showNorm": false,
+  "dataLength": 4,
+  "dataDigest": "sha256:34b56d9ca6c313f51c115bdc0f6c75bdea3764edb36f7089be675589f720f4a6",
+  "data": [
+    0,
+    -2147483648,
+    2147483648,
+    -1
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": -2147483648
+    },
+    {
+      "i": 2,
+      "v": 2147483648
+    },
+    {
+      "i": 3,
+      "v": -1
+    }
+  ]
+}

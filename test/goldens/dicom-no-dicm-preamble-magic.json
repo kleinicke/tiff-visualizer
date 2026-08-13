@@ -1,0 +1,5 @@
+{
+  "id": "dicom-no-dicm-preamble-magic",
+  "format": "dicom",
+  "error": "DICOM file has no Pixel Data"
+}

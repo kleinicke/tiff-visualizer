@@ -1,0 +1,55 @@
+{
+  "id": "netpbm-fixture-orientation-test-pgm",
+  "format": "ppm",
+  "width": 4,
+  "height": 2,
+  "channels": 1,
+  "maxval": 255,
+  "formatLabel": "PGM (ASCII)",
+  "dataLength": 8,
+  "dataDigest": "sha256:18168364aa4369ef9d4d67c897c363270510db520dd2d85ce43ba581235f8cd1",
+  "data": [
+    0,
+    85,
+    170,
+    255,
+    50,
+    100,
+    150,
+    200
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": 85
+    },
+    {
+      "i": 2,
+      "v": 170
+    },
+    {
+      "i": 3,
+      "v": 255
+    },
+    {
+      "i": 4,
+      "v": 50
+    },
+    {
+      "i": 5,
+      "v": 100
+    },
+    {
+      "i": 6,
+      "v": 150
+    },
+    {
+      "i": 7,
+      "v": 200
+    }
+  ]
+}

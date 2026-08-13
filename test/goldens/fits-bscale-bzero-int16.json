@@ -1,0 +1,52 @@
+{
+  "id": "fits-bscale-bzero-int16",
+  "format": "fits",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "FITS",
+    "hduIndex": 0,
+    "bitpix": 16,
+    "axes": [
+      2,
+      2
+    ],
+    "bscale": 2.5,
+    "bzero": 100,
+    "firstPlaneOnly": false
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 2,
+    "typeMin": -81820,
+    "typeMax": 82017.5,
+    "sourceNumericType": "int16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:f377f9571ff2afca307c049b6ba90b5b34db32fd514b0f4e775e9a000493aff2",
+  "data": [
+    850,
+    -900,
+    -150,
+    600
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 850
+    },
+    {
+      "i": 1,
+      "v": -900
+    },
+    {
+      "i": 2,
+      "v": -150
+    },
+    {
+      "i": 3,
+      "v": 600
+    }
+  ]
+}

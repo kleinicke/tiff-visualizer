@@ -1,6 +1,7 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { decodePfmLocal } from './main-thread-decode.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
@@ -60,7 +61,7 @@ export class PfmProcessor {
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'pfm', buffer, src, loadSignal, (b: ArrayBuffer) => this._parsePfm(b, { topDown: true }));
+            this.decodeWorker, 'pfm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePfmLocal(b, { topDown: true }));
         const displayData = data;
 
         // Invalidate stats cache for new image
@@ -86,71 +87,6 @@ export class PfmProcessor {
         const imageData = this._toImageDataFloat(displayData, width, height, channels);
         this.vscode.postMessage({ type: 'refresh-status' });
         return { canvas, imageData };
-    }
-
-    _parsePfm(arrayBuffer: ArrayBuffer, options: DeferredRenderOptions = {}) {
-        const bytes = new Uint8Array(arrayBuffer);
-        let offset = 0;
-        const readLine = () => {
-            while (offset < bytes.length && (bytes[offset] === 10 || bytes[offset] === 13)) { offset++; }
-            const start = offset;
-            while (offset < bytes.length && bytes[offset] !== 10 && bytes[offset] !== 13) { offset++; }
-            let end = offset;
-            while (end > start && (bytes[end - 1] === 32 || bytes[end - 1] === 9)) { end--; }
-            const line = String.fromCharCode(...bytes.subarray(start, end)).trim();
-            while (offset < bytes.length && (bytes[offset] === 10 || bytes[offset] === 13)) { offset++; }
-            return line;
-        };
-        let type = readLine();
-        while (type === '') { type = readLine(); }
-        if (type !== 'PF' && type !== 'Pf') throw new Error('Invalid PFM magic');
-        let dimsLine = readLine();
-        while (dimsLine.startsWith('#') || dimsLine === '') { dimsLine = readLine(); }
-        const dims = dimsLine.split(/\s+/).map(n => parseInt(n, 10));
-        const width = dims[0];
-        const height = dims[1];
-        let scaleLine = readLine();
-        while (scaleLine.startsWith('#') || scaleLine === '') { scaleLine = readLine(); }
-        const scale = parseFloat(scaleLine);
-        const littleEndian = scale < 0;
-        const channels = type === 'PF' ? 3 : 1;
-        const valuesPerRow = width * channels;
-        const pixels = width * height;
-        const out = new Float32Array(pixels * channels);
-        const topDown = options.topDown === true;
-        const nativeLittleEndian = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
-        const canViewDirectly = littleEndian === nativeLittleEndian && (offset % 4) === 0 && offset + out.byteLength <= arrayBuffer.byteLength;
-
-        if (canViewDirectly) {
-            const source = new Float32Array(arrayBuffer, offset, out.length);
-            if (topDown) {
-                for (let y = 0; y < height; y++) {
-                    const srcStart = (height - 1 - y) * valuesPerRow;
-                    out.set(source.subarray(srcStart, srcStart + valuesPerRow), y * valuesPerRow);
-                }
-            } else {
-                out.set(source);
-            }
-            return { width, height, channels, data: out };
-        }
-
-        const dv = new DataView(arrayBuffer, offset);
-        if (topDown) {
-            for (let y = 0; y < height; y++) {
-                const srcRow = height - 1 - y;
-                let srcByte = srcRow * valuesPerRow * 4;
-                let dst = y * valuesPerRow;
-                for (let x = 0; x < valuesPerRow; x++) {
-                    out[dst++] = dv.getFloat32(srcByte, littleEndian);
-                    srcByte += 4;
-                }
-            }
-        } else {
-            for (let i = 0; i < out.length; i++) {
-                out[i] = dv.getFloat32(i * 4, littleEndian);
-            }
-        }
-        return { width, height, channels, data: out };
     }
 
     _toImageDataFloat(data: Float32Array, width: number, height: number, channels: number = 1, renderOptions: DeferredRenderOptions = {}): ImageData {

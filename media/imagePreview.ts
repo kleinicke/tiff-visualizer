@@ -62,7 +62,8 @@ import { analyzeLayerExports, LayerExportFormat, writeLayerDocument } from './mo
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
-import { extractDicomJpegFrame, parseCzi, parseDicom, parseFits, parseNetCdf } from './modules/scientific-format-parsers.js';
+import { extractDicomJpegFrame, parseCzi } from './modules/scientific-format-parsers.js';
+import { decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/main-thread-decode.js';
 import type { ScientificDecodedImage } from './modules/scientific-format-parsers.js';
 
 /**
@@ -83,7 +84,7 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	// Keep a browser-native fallback so a failed/blocked worker never makes the
 	// file unusable; ordinary browser JPEG decoding is sufficient for Baseline.
 	async function parseDicomForBrowser(buffer: ArrayBuffer, frameIndex = 0): Promise<ScientificDecodedImage> {
-		try { return parseDicom(buffer, frameIndex); }
+		try { return await decodeDicomLocal(buffer, { frameIndex }); }
 		catch (error) {
 			if (!(error instanceof Error) || !error.message.includes('requires codec: jpeg-baseline')) { throw error; }
 		}
@@ -189,9 +190,9 @@ import type { ScientificDecodedImage } from './modules/scientific-format-parsers
 	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
-	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: parseFits });
+	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decodeFitsLocal });
 	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => parseDicomForBrowser(buffer, Number(options?.frameIndex || 0)) });
-	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => parseNetCdf(buffer, options) });
+	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => decodeNetcdfLocal(buffer, options || {}) });
 	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => parseCzi(buffer, options) });
 	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);

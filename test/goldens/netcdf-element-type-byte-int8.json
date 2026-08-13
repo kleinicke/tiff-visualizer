@@ -1,0 +1,76 @@
+{
+  "id": "netcdf-element-type-byte-int8",
+  "format": "netcdf",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "NetCDF CDF-1",
+    "variable": "v",
+    "dimensions": [
+      {
+        "name": "y",
+        "size": 2
+      },
+      {
+        "name": "x",
+        "size": 2
+      }
+    ],
+    "viewMode": "raster",
+    "variables": [
+      {
+        "name": "v",
+        "label": "v",
+        "dimensions": [
+          {
+            "name": "y",
+            "size": 2
+          },
+          {
+            "name": "x",
+            "size": 2
+          }
+        ]
+      }
+    ],
+    "selectors": [],
+    "selectedIndices": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 2,
+    "typeMin": -128,
+    "typeMax": 127,
+    "sourceNumericType": "int8"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:60026492058a5012dfc28b5d3688c491a89ed714ac01aa497c30ea77ef4bd878",
+  "data": [
+    -128,
+    0,
+    127,
+    -1
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": -128
+    },
+    {
+      "i": 1,
+      "v": 0
+    },
+    {
+      "i": 2,
+      "v": 127
+    },
+    {
+      "i": 3,
+      "v": -1
+    }
+  ]
+}

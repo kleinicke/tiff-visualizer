@@ -1,0 +1,5 @@
+{
+  "id": "netcdf-truncated-raster",
+  "format": "netcdf",
+  "error": "Truncated NetCDF variable data: v"
+}

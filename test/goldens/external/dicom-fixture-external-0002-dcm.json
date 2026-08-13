@@ -1,0 +1,5 @@
+{
+  "id": "dicom-fixture-external-0002-dcm",
+  "format": "dicom",
+  "error": "Compressed DICOM frame requires codec: jpeg-baseline"
+}

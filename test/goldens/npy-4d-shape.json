@@ -1,0 +1,5 @@
+{
+  "id": "npy-4d-shape",
+  "format": "npy",
+  "error": "Unsupported NPY dims 4"
+}

@@ -1,0 +1,54 @@
+{
+  "id": "dicom-signed-8-bit",
+  "format": "dicom",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.1",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 8,
+    "bitsStored": 8,
+    "signed": true,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 2,
+    "typeMin": -128,
+    "typeMax": 127,
+    "sourceNumericType": "int8"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:a65599f4de0e60f2d26fd82c2ae0168f13482a6ad4f12944f3a65e7765b46c9a",
+  "data": [
+    -128,
+    -1,
+    0,
+    127
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": -128
+    },
+    {
+      "i": 1,
+      "v": -1
+    },
+    {
+      "i": 2,
+      "v": 0
+    },
+    {
+      "i": 3,
+      "v": 127
+    }
+  ]
+}

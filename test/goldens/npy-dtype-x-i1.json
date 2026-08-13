@@ -1,0 +1,35 @@
+{
+  "id": "npy-dtype-x-i1",
+  "format": "npy",
+  "width": 4,
+  "height": 1,
+  "channels": 1,
+  "dtype": "|i1",
+  "showNorm": false,
+  "dataLength": 4,
+  "dataDigest": "sha256:72473cdb3b024b9c9819d900523ae448cbde02c7f70c6b835655d62e751ef841",
+  "data": [
+    0,
+    -128,
+    127,
+    -1
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": -128
+    },
+    {
+      "i": 2,
+      "v": 127
+    },
+    {
+      "i": 3,
+      "v": -1
+    }
+  ]
+}

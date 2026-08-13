@@ -1,0 +1,60 @@
+{
+  "id": "netpbm-fixture-binary-test-pgm",
+  "format": "ppm",
+  "width": 3,
+  "height": 3,
+  "channels": 1,
+  "maxval": 255,
+  "formatLabel": "PGM (Binary)",
+  "dataLength": 9,
+  "dataDigest": "sha256:fd59ee254e47e2a9871e1fd903ad1807c15c15041ccbcb282aff4640e343e8c1",
+  "data": [
+    0,
+    255,
+    0,
+    255,
+    128,
+    255,
+    0,
+    255,
+    0
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": 255
+    },
+    {
+      "i": 2,
+      "v": 0
+    },
+    {
+      "i": 3,
+      "v": 255
+    },
+    {
+      "i": 4,
+      "v": 128
+    },
+    {
+      "i": 5,
+      "v": 255
+    },
+    {
+      "i": 6,
+      "v": 0
+    },
+    {
+      "i": 7,
+      "v": 255
+    },
+    {
+      "i": 8,
+      "v": 0
+    }
+  ]
+}

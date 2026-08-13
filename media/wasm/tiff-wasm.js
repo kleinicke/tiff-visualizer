@@ -180,6 +180,164 @@ function passArray32ToWasm0(arg, malloc) {
     return ptr;
 }
 /**
+ * Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
+ * in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
+ * @param {Uint8Array} data
+ * @returns {JpegResult}
+ */
+export function decode_jpeg_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_jpeg_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return JpegResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a NumPy `.npy` file or a `.npz` archive. Dispatches internally on
+ * the ZIP local-file-header signature in the first 4 bytes, mirroring the
+ * worker's existing `case 'npy':` dispatch.
+ * @param {Uint8Array} data
+ * @returns {NpyResult}
+ */
+export function decode_npy_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_npy_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return NpyResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a classic NetCDF (CDF-1/CDF-2) file as either a regular raster or
+ * an MPAS `nCells` polygon mesh. `options_json` is the JSON-serialized
+ * `NetCdfDecodeOptions` (`{ variableName?, indices? }`).
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {ScientificResult}
+ */
+export function decode_netcdf_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ScientificResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode an arbitrary zero-based TIFF page and compute min/max statistics.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a Portable Float Map (PFM). `top_down` requests a vertical flip so
+ * row 0 of the output is the PFM file's last (topmost, in image space) row —
+ * the worker always passes `true` to match the existing TS parser's
+ * `{ topDown: true }` call.
+ * @param {Uint8Array} data
+ * @param {boolean} top_down
+ * @returns {PfmResult}
+ */
+export function decode_pfm_fast(data, top_down) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PfmResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a TIFF file from an ArrayBuffer
+ * Returns TiffResult with image data and metadata
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode one native (uncompressed) DICOM frame. `frame_index` selects a
+ * frame from a multi-frame `NumberOfFrames` dataset (clamped to range).
+ * Compressed (encapsulated) Pixel Data is rejected with the same error text
+ * the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
+ * fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
+ * working unchanged against this decoder.
+ * @param {Uint8Array} data
+ * @param {number} frame_index
+ * @returns {ScientificResult}
+ */
+export function decode_dicom_fast(data, frame_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ScientificResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode a TIFF file without eagerly computing min/max statistics.
+ *
+ * The webview render path computes stats lazily when a non-gamma mode needs
+ * them. Skipping eager stats saves a full pass over large float TIFFs during
+ * the common gamma-mode initial load.
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
  * @param {Uint8Array} data
  * @returns {PngResult}
  */
@@ -224,18 +382,18 @@ export function extract_exif_tags(data) {
 }
 
 /**
- * Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
+ * Decode a FITS file's first primary/IMAGE HDU with at least two axes.
  * @param {Uint8Array} data
- * @returns {PpmResult}
+ * @returns {ScientificResult}
  */
-export function decode_ppm_fast(data) {
+export function decode_fits_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_fast(ptr0, len0);
+    const ret = wasm.decode_fits_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return PpmResult.__wrap(ret[0]);
+    return ScientificResult.__wrap(ret[0]);
 }
 
 /**
@@ -254,19 +412,17 @@ export function tiff_page_count(data) {
 }
 
 /**
- * Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
- * in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
  * @param {Uint8Array} data
- * @returns {JpegResult}
+ * @returns {HdrResult}
  */
-export function decode_jpeg_fast(data) {
+export function decode_hdr_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpeg_fast(ptr0, len0);
+    const ret = wasm.decode_hdr_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return JpegResult.__wrap(ret[0]);
+    return HdrResult.__wrap(ret[0]);
 }
 
 /**
@@ -286,118 +442,18 @@ export function decode_tiff_page_fast(data, page_index) {
 }
 
 /**
+ * Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
  * @param {Uint8Array} data
- * @returns {HdrResult}
+ * @returns {PpmResult}
  */
-export function decode_hdr_fast(data) {
+export function decode_ppm_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_hdr_fast(ptr0, len0);
+    const ret = wasm.decode_ppm_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return HdrResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a TIFF file from an ArrayBuffer
- * Returns TiffResult with image data and metadata
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a TIFF file without eagerly computing min/max statistics.
- *
- * The webview render path computes stats lazily when a non-gamma mode needs
- * them. Skipping eager stats saves a full pass over large float TIFFs during
- * the common gamma-mode initial load.
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Decode an arbitrary zero-based TIFF page and compute min/max statistics.
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a Portable Float Map (PFM). `top_down` requests a vertical flip so
- * row 0 of the output is the PFM file's last (topmost, in image space) row —
- * the worker always passes `true` to match the existing TS parser's
- * `{ topDown: true }` call.
- * @param {Uint8Array} data
- * @param {boolean} top_down
- * @returns {PfmResult}
- */
-export function decode_pfm_fast(data, top_down) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return PfmResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrResult}
- */
-export function decode_exr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ExrResult.__wrap(ret[0]);
-}
-
-/**
- * Decode a NumPy `.npy` file or a `.npz` archive. Dispatches internally on
- * the ZIP local-file-header signature in the first 4 bytes, mirroring the
- * worker's existing `case 'npy':` dispatch.
- * @param {Uint8Array} data
- * @returns {NpyResult}
- */
-export function decode_npy_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_npy_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return NpyResult.__wrap(ret[0]);
+    return PpmResult.__wrap(ret[0]);
 }
 
 /**
@@ -1717,6 +1773,129 @@ export class RgbaLayerCompositor {
     }
 }
 if (Symbol.dispose) RgbaLayerCompositor.prototype[Symbol.dispose] = RgbaLayerCompositor.prototype.free;
+
+const ScientificResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_scientificresult_free(ptr >>> 0, 1));
+/**
+ * Shared result type for the FITS and NetCDF decoders (and, later, DICOM),
+ * mirroring the TS `ScientificDecodedImage` interface in
+ * `media/modules/scientific-format-parsers.ts`. `metadata_json` carries the
+ * TS `metadata: Record<string, any>` object serialized as JSON — see
+ * `formats/json_value.rs` — so the surface stays a handful of getters
+ * instead of one per possible metadata key.
+ */
+export class ScientificResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ScientificResult.prototype);
+        obj.__wbg_ptr = ptr;
+        ScientificResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ScientificResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_scientificresult_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    get metadata_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.scientificresult_metadata_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get sample_format() {
+        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get bits_per_sample() {
+        const ret = wasm.exrresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Float32Array}
+     */
+    take_data_as_f32() {
+        const ret = wasm.scientificresult_take_data_as_f32(this.__wbg_ptr);
+        var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {string}
+     */
+    get source_numeric_type() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.scientificresult_source_numeric_type(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.scientificresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.npyresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.exrresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get type_max() {
+        const ret = wasm.exrresult_timing_pack_ms(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get type_min() {
+        const ret = wasm.exrresult_timing_read_ms(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) ScientificResult.prototype[Symbol.dispose] = ScientificResult.prototype.free;
 
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }

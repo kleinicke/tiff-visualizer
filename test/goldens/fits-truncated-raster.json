@@ -1,0 +1,5 @@
+{
+  "id": "fits-truncated-raster",
+  "format": "fits",
+  "error": "Truncated FITS image data"
+}

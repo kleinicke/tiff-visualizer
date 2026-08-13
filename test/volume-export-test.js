@@ -17,7 +17,7 @@ const path = require('path');
 const zlib = require('zlib');
 const Module = require('module');
 const ts = require('typescript');
-const { URI } = require('vscode-uri');
+const { URI, Utils } = require('vscode-uri');
 
 const REAL_DICOM_FOLDER = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/MRT OSG Februar 2023';
 const PLY_VISUALIZER = path.join(__dirname, '..', '..', 'ply-visualizer');
@@ -34,7 +34,11 @@ function transpile(sourcePath) {
 function loadWithVscodeStub(relativePath) {
 	const sourcePath = path.join(__dirname, '..', relativePath);
 	const vscodeStub = {
-		Uri: URI,
+		// vscode's Uri exposes a static joinPath; vscode-uri's URI puts the
+		// equivalent on Utils, so bridge it for code under test that uses it.
+		Uri: Object.assign(Object.create(URI), URI, {
+			joinPath: (base, ...parts) => Utils.joinPath(base, ...parts),
+		}),
 		FileType: { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 },
 		workspace: {
 			fs: {
@@ -204,6 +208,9 @@ async function testAgainstRealReader(bytes, expected) {
 
 async function main() {
 	const { deriveGeometry, writeNrrd, buildVolumeFromSeries } = loadWithVscodeStub('src/imagePreview/volumeExport.ts');
+	// DICOM slices are decoded by the Rust/WASM module loaded from the
+	// extension root, so the host decoder needs to know where that root is.
+	const extensionUri = URI.file(path.join(__dirname, '..'));
 
 	testDeriveGeometry(deriveGeometry);
 	await testWriteNrrd(writeNrrd);
@@ -234,7 +241,7 @@ async function main() {
 	const manifest = await scanDicomFolder(URI.file(REAL_DICOM_FOLDER));
 	const series = manifest.series[0];
 
-	const result = await buildVolumeFromSeries(series);
+	const result = await buildVolumeFromSeries(series, extensionUri);
 	assert.strictEqual(result.sizes[2], series.planes.length, 'every slice should reach the volume');
 	assert.ok(result.sizes[0] > 0 && result.sizes[1] > 0);
 	// This is an MR series, so it must NOT be labelled Hounsfield.
@@ -244,7 +251,7 @@ async function main() {
 
 	const remainingSizes = [];
 	for (const candidate of manifest.series.slice(1)) {
-		const candidateResult = await buildVolumeFromSeries(candidate);
+		const candidateResult = await buildVolumeFromSeries(candidate, extensionUri);
 		assert.strictEqual(
 			candidateResult.sizes[2],
 			candidate.planes.length,

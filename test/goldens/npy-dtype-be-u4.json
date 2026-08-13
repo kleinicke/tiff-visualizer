@@ -1,0 +1,35 @@
+{
+  "id": "npy-dtype-be-u4",
+  "format": "npy",
+  "width": 4,
+  "height": 1,
+  "channels": 1,
+  "dtype": ">u4",
+  "showNorm": false,
+  "dataLength": 4,
+  "dataDigest": "sha256:f4c010b757afc4c8f560d82aefee673dd48bccedd1f6ef63c009751dba18475b",
+  "data": [
+    0,
+    4294967296,
+    1,
+    2147483648
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": 4294967296
+    },
+    {
+      "i": 2,
+      "v": 1
+    },
+    {
+      "i": 3,
+      "v": 2147483648
+    }
+  ]
+}

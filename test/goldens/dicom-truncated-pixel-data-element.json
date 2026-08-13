@@ -1,0 +1,5 @@
+{
+  "id": "dicom-truncated-pixel-data-element",
+  "format": "dicom",
+  "error": "Truncated DICOM Pixel Data"
+}

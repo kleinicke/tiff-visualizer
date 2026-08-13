@@ -1,0 +1,5 @@
+{
+  "id": "netpbm-truncated-binary-raster",
+  "format": "ppm",
+  "error": "Insufficient data for binary PPM/PGM"
+}

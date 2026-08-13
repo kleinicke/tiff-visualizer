@@ -1,0 +1,5 @@
+{
+  "id": "dicom-unsupported-compressed-transfer-syntax",
+  "format": "dicom",
+  "error": "Compressed or unsupported DICOM Transfer Syntax: 1.2.840.10008.1.2.4.90"
+}

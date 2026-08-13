@@ -8,7 +8,44 @@ const parserPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'scient
 if (!fs.existsSync(parserPath)) {
 	throw new Error('Compile first with npm run compile');
 }
-const { extractDicomJpegFrame, parseFits, parseDicom, parseNetCdf, parseCzi } = require(parserPath);
+const { extractDicomJpegFrame, parseCzi } = require(parserPath);
+
+// FITS, DICOM and NetCDF are decoded by Rust/WASM only — their TypeScript
+// parsers have been deleted. These tests assert format semantics (row order,
+// numeric domain, mesh projection) rather than parity, so they now drive the
+// wasm decoders directly. Broader coverage lives in
+// test/rust-scientific-conformance-test.js.
+let wasm = null;
+async function initWasm() {
+	if (wasm) { return wasm; }
+	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
+	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+	wasm = await import(wasmJs.replace(/\\/g, '/'));
+	await wasm.default({ module_or_path: fs.readFileSync(wasmBin) });
+	return wasm;
+}
+
+/** Mirrors the worker's `scientificResultToDecoded`. `take_data_as_f32()` is
+ * destructive, so it is called exactly once here. */
+function toDecoded(result) {
+	return {
+		width: result.width,
+		height: result.height,
+		channels: result.channels,
+		data: result.take_data_as_f32(),
+		metadata: JSON.parse(result.metadata_json),
+		numericDomain: {
+			bitsPerSample: result.bits_per_sample,
+			sampleFormat: result.sample_format,
+			typeMin: result.type_min,
+			typeMax: result.type_max,
+			sourceNumericType: result.source_numeric_type,
+		},
+	};
+}
+const parseFits = (buf) => toDecoded(wasm.decode_fits_fast(new Uint8Array(buf)));
+const parseDicom = (buf, frameIndex = 0) => toDecoded(wasm.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0));
+const parseNetCdf = (buf, options = {}) => toDecoded(wasm.decode_netcdf_fast(new Uint8Array(buf), JSON.stringify(options)));
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');
 
 function arrayBuffer(file) {
@@ -59,11 +96,7 @@ async function testJpegBaselineDicom() {
 	assert.deepStrictEqual(Array.from(last.encoded.subarray(0, 2)), [0xff, 0xd8]);
 	assert.notStrictEqual(Buffer.compare(Buffer.from(first.encoded), Buffer.from(last.encoded)), 0);
 
-	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
-	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
-	const wasm = await import(wasmJs.replace(/\\/g, '/'));
-	await wasm.default({ module_or_path: fs.readFileSync(wasmBin) });
-	const decoded = wasm.decode_jpeg_fast(first.encoded);
+	const decoded = (await initWasm()).decode_jpeg_fast(first.encoded);
 	assert.deepStrictEqual([decoded.width, decoded.height, decoded.channels], [512, 512, 3]);
 	assert.strictEqual(decoded.take_data_as_u8().length, 512 * 512 * 3);
 	console.log('✅ Real 96-frame JPEG Baseline DICOM extracts and decodes first/last frames');
@@ -145,6 +178,7 @@ function testCzi() {
 
 async function main() {
 	console.log('Running FITS/DICOM/NetCDF/CZI parser tests...');
+	await initWasm();
 	testFits();
 	testDicom();
 	await testJpegBaselineDicom();

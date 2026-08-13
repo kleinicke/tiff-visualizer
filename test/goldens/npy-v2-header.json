@@ -1,0 +1,35 @@
+{
+  "id": "npy-v2-header",
+  "format": "npy",
+  "width": 4,
+  "height": 1,
+  "channels": 1,
+  "dtype": "<f4",
+  "showNorm": true,
+  "dataLength": 4,
+  "dataDigest": "sha256:301b3ea0e79641e7c8b0f6bde5019244044c88872fd33f3c8fa99f9deb0da175",
+  "data": [
+    0,
+    -1,
+    42.5,
+    "NaN"
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": -1
+    },
+    {
+      "i": 2,
+      "v": 42.5
+    },
+    {
+      "i": 3,
+      "v": "NaN"
+    }
+  ]
+}

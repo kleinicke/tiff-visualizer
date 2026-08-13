@@ -1,0 +1,5 @@
+{
+  "id": "fits-missing-end-card",
+  "format": "fits",
+  "error": "Invalid FITS header: missing END card"
+}

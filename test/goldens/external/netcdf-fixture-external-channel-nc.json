@@ -1,0 +1,269 @@
+{
+  "id": "netcdf-fixture-external-channel-nc",
+  "format": "netcdf",
+  "width": 720,
+  "height": 360,
+  "channels": 1,
+  "metadata": {
+    "format": "NetCDF CDF-2",
+    "variable": "areaCell",
+    "viewMode": "mpas-mesh",
+    "projection": "Equirectangular",
+    "meshLocation": "nCells",
+    "variables": [
+      {
+        "name": "maxLevelCell",
+        "label": "maxLevelCell",
+        "dimensions": [
+          {
+            "name": "nCells",
+            "size": 2660
+          }
+        ]
+      },
+      {
+        "name": "areaCell",
+        "label": "areaCell",
+        "dimensions": [
+          {
+            "name": "nCells",
+            "size": 2660
+          }
+        ]
+      },
+      {
+        "name": "h_s",
+        "label": "h_s",
+        "dimensions": [
+          {
+            "name": "nCells",
+            "size": 2660
+          }
+        ]
+      },
+      {
+        "name": "h",
+        "label": "h",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2660
+          },
+          {
+            "name": "nVertLevels",
+            "size": 3
+          }
+        ]
+      },
+      {
+        "name": "ke",
+        "label": "ke",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2660
+          },
+          {
+            "name": "nVertLevels",
+            "size": 3
+          }
+        ]
+      },
+      {
+        "name": "rho",
+        "label": "rho",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2660
+          },
+          {
+            "name": "nVertLevels",
+            "size": 3
+          }
+        ]
+      },
+      {
+        "name": "tracers",
+        "label": "tracers",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2660
+          },
+          {
+            "name": "nVertLevels",
+            "size": 3
+          },
+          {
+            "name": "nTracers",
+            "size": 2
+          }
+        ]
+      },
+      {
+        "name": "temperature",
+        "label": "temperature",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2660
+          },
+          {
+            "name": "nVertLevels",
+            "size": 3
+          }
+        ]
+      },
+      {
+        "name": "salinity",
+        "label": "salinity",
+        "dimensions": [
+          {
+            "name": "Time",
+            "size": 1
+          },
+          {
+            "name": "nCells",
+            "size": 2660
+          },
+          {
+            "name": "nVertLevels",
+            "size": 3
+          }
+        ]
+      }
+    ],
+    "selectors": [],
+    "selectedIndices": {
+      "nCells": 0
+    }
+  },
+  "numericDomain": {
+    "bitsPerSample": 64,
+    "sampleFormat": 3,
+    "typeMin": 0,
+    "typeMax": 1,
+    "sourceNumericType": "float64"
+  },
+  "dataLength": 259200,
+  "dataDigest": "sha256:b05f643b754288b69c50e43961ff691a10524e61aa9677c4eff4038d93880b82",
+  "samples": [
+    {
+      "i": 0,
+      "v": "NaN"
+    },
+    {
+      "i": 11269,
+      "v": "NaN"
+    },
+    {
+      "i": 22539,
+      "v": "NaN"
+    },
+    {
+      "i": 33808,
+      "v": "NaN"
+    },
+    {
+      "i": 45078,
+      "v": "NaN"
+    },
+    {
+      "i": 56347,
+      "v": "NaN"
+    },
+    {
+      "i": 67617,
+      "v": "NaN"
+    },
+    {
+      "i": 78886,
+      "v": "NaN"
+    },
+    {
+      "i": 90156,
+      "v": "NaN"
+    },
+    {
+      "i": 101425,
+      "v": "NaN"
+    },
+    {
+      "i": 112695,
+      "v": "NaN"
+    },
+    {
+      "i": 123964,
+      "v": "NaN"
+    },
+    {
+      "i": 135234,
+      "v": "NaN"
+    },
+    {
+      "i": 146503,
+      "v": "NaN"
+    },
+    {
+      "i": 157773,
+      "v": "NaN"
+    },
+    {
+      "i": 169042,
+      "v": 50164310016
+    },
+    {
+      "i": 180312,
+      "v": 50529951744
+    },
+    {
+      "i": 191581,
+      "v": 49920946176
+    },
+    {
+      "i": 202851,
+      "v": 50562871296
+    },
+    {
+      "i": 214120,
+      "v": 51211509760
+    },
+    {
+      "i": 225390,
+      "v": 50652340224
+    },
+    {
+      "i": 236659,
+      "v": "NaN"
+    },
+    {
+      "i": 247929,
+      "v": "NaN"
+    },
+    {
+      "i": 259199,
+      "v": "NaN"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "id": "npy-missing-dtype",
+  "format": "npy",
+  "error": "NPY missing dtype"
+}

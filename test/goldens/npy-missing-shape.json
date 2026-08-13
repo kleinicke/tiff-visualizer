@@ -1,0 +1,5 @@
+{
+  "id": "npy-missing-shape",
+  "format": "npy",
+  "error": "NPY missing shape"
+}

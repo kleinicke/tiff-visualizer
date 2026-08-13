@@ -1,0 +1,52 @@
+{
+  "id": "fits-multi-block-header",
+  "format": "fits",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "FITS",
+    "hduIndex": 0,
+    "bitpix": 8,
+    "axes": [
+      2,
+      2
+    ],
+    "bscale": 1,
+    "bzero": 0,
+    "firstPlaneOnly": false
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:fb5ae94f7e6aec39682d0a21c34df1d7914a3975e43d088ac8fec83df5b0fb8b",
+  "data": [
+    3,
+    4,
+    1,
+    2
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 3
+    },
+    {
+      "i": 1,
+      "v": 4
+    },
+    {
+      "i": 2,
+      "v": 1
+    },
+    {
+      "i": 3,
+      "v": 2
+    }
+  ]
+}

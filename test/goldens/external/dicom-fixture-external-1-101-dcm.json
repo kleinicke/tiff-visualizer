@@ -1,0 +1,131 @@
+{
+  "id": "dicom-fixture-external-1-101-dcm",
+  "format": "dicom",
+  "width": 512,
+  "height": 512,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.1",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 16,
+    "bitsStored": 16,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": -1024,
+    "windowCenter": 40,
+    "windowWidth": 400,
+    "modality": "CT",
+    "pixelSpacing": "0.9765625\\0.9765625",
+    "sliceThickness": "3",
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 1,
+    "typeMin": -1024,
+    "typeMax": 64511,
+    "sourceNumericType": "uint16"
+  },
+  "dataLength": 262144,
+  "dataDigest": "sha256:88f6293ebdeb3a89a8da3d44f8510a78a73488b40a0cb4f7f3f1f67003aeafa0",
+  "samples": [
+    {
+      "i": 0,
+      "v": -1024
+    },
+    {
+      "i": 11397,
+      "v": -1024
+    },
+    {
+      "i": 22795,
+      "v": -1009
+    },
+    {
+      "i": 34192,
+      "v": -986
+    },
+    {
+      "i": 45590,
+      "v": -1024
+    },
+    {
+      "i": 56987,
+      "v": -1018
+    },
+    {
+      "i": 68385,
+      "v": -28
+    },
+    {
+      "i": 79782,
+      "v": -1021
+    },
+    {
+      "i": 91180,
+      "v": -1016
+    },
+    {
+      "i": 102577,
+      "v": 45
+    },
+    {
+      "i": 113975,
+      "v": 3
+    },
+    {
+      "i": 125372,
+      "v": -985
+    },
+    {
+      "i": 136770,
+      "v": -1012
+    },
+    {
+      "i": 148167,
+      "v": 45
+    },
+    {
+      "i": 159565,
+      "v": 84
+    },
+    {
+      "i": 170962,
+      "v": -996
+    },
+    {
+      "i": 182360,
+      "v": -865
+    },
+    {
+      "i": 193757,
+      "v": 52
+    },
+    {
+      "i": 205155,
+      "v": -1001
+    },
+    {
+      "i": 216552,
+      "v": -1024
+    },
+    {
+      "i": 227950,
+      "v": -994
+    },
+    {
+      "i": 239347,
+      "v": -1000
+    },
+    {
+      "i": 250745,
+      "v": -1024
+    },
+    {
+      "i": 262143,
+      "v": -1024
+    }
+  ]
+}

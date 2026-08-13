@@ -1,0 +1,55 @@
+{
+  "id": "npy-dtype-be-f2",
+  "format": "npy",
+  "width": 8,
+  "height": 1,
+  "channels": 1,
+  "dtype": ">f2",
+  "showNorm": true,
+  "dataLength": 8,
+  "dataDigest": "sha256:86233cc9a8353b7e879f3a3a5235b5de779abf18fe374859156ede4d7dc36fa7",
+  "data": [
+    0,
+    "-0",
+    65504,
+    -65504,
+    5.960464477539063e-8,
+    "Infinity",
+    "-Infinity",
+    "NaN"
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": "-0"
+    },
+    {
+      "i": 2,
+      "v": 65504
+    },
+    {
+      "i": 3,
+      "v": -65504
+    },
+    {
+      "i": 4,
+      "v": 5.960464477539063e-8
+    },
+    {
+      "i": 5,
+      "v": "Infinity"
+    },
+    {
+      "i": 6,
+      "v": "-Infinity"
+    },
+    {
+      "i": 7,
+      "v": "NaN"
+    }
+  ]
+}

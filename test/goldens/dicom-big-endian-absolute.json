@@ -1,0 +1,54 @@
+{
+  "id": "dicom-big-endian-absolute",
+  "format": "dicom",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.2",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 16,
+    "bitsStored": 16,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 16,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 65535,
+    "sourceNumericType": "uint16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:df48d54d12a76514ad4069a78bd26ffadc182ce1d3be201677e71c638c1fa122",
+  "data": [
+    258,
+    772,
+    43981,
+    0
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 258
+    },
+    {
+      "i": 1,
+      "v": 772
+    },
+    {
+      "i": 2,
+      "v": 43981
+    },
+    {
+      "i": 3,
+      "v": 0
+    }
+  ]
+}

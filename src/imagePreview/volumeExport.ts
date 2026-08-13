@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
 import { parseDicomImageHeader, type DicomImageHeader } from './dicomDataset';
-import { parseDicom } from '../../media/modules/scientific-format-parsers';
+import { decodeDicomInHost } from './wasmDicom';
 import type { DatasetSeries } from './datasetTypes';
 
 /**
@@ -177,13 +177,14 @@ export async function writeNrrd(
 /**
  * Reads every slice of a series and stacks it into one volume.
  *
- * Samples come out of `parseDicom` with RescaleSlope/RescaleIntercept already
+ * Samples come out of the decoder with RescaleSlope/RescaleIntercept already
  * applied, which is what makes a CT volume carry true Hounsfield units — and
  * therefore what lets the 3D side default its isosurface to a physically
  * meaningful threshold instead of an arbitrary one.
  */
 export async function buildVolumeFromSeries(
 	series: DatasetSeries,
+	extensionUri: vscode.Uri,
 	progress?: (done: number, total: number) => void,
 	isCancelled?: () => boolean,
 ): Promise<VolumeExportResult> {
@@ -239,7 +240,8 @@ export async function buildVolumeFromSeries(
 
 		let decoded;
 		try {
-			decoded = parseDicom(
+			decoded = await decodeDicomInHost(
+				extensionUri,
 				bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
 			);
 		} catch (error) {
@@ -303,7 +305,7 @@ export async function buildVolumeFromSeries(
 		extras['window width'] = String(windowWidth);
 	}
 	if (photometricInterpretation) {
-		// parseDicom normalises MONOCHROME1 samples to black-low/white-high for
+		// The decoder normalises MONOCHROME1 samples to black-low/white-high for
 		// presentation. Describe the exported samples honestly while retaining
 		// the source tag for inspection.
 		extras['photometric interpretation'] = 'MONOCHROME2';

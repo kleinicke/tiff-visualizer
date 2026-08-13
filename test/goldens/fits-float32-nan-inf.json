@@ -1,0 +1,47 @@
+{
+  "id": "fits-float32-nan-inf",
+  "format": "fits",
+  "width": 3,
+  "height": 1,
+  "channels": 1,
+  "metadata": {
+    "format": "FITS",
+    "hduIndex": 0,
+    "bitpix": -32,
+    "axes": [
+      3,
+      1
+    ],
+    "bscale": 1,
+    "bzero": 0,
+    "firstPlaneOnly": false
+  },
+  "numericDomain": {
+    "bitsPerSample": 32,
+    "sampleFormat": 3,
+    "typeMin": 0,
+    "typeMax": 1,
+    "sourceNumericType": "float32"
+  },
+  "dataLength": 3,
+  "dataDigest": "sha256:b0d56130205dc808c80cc85e1b0795beaa1a34f05701dfc799dd492113951288",
+  "data": [
+    "NaN",
+    "Infinity",
+    "-Infinity"
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": "NaN"
+    },
+    {
+      "i": 1,
+      "v": "Infinity"
+    },
+    {
+      "i": 2,
+      "v": "-Infinity"
+    }
+  ]
+}

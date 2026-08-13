@@ -1,0 +1,54 @@
+{
+  "id": "dicom-rescale-slope-intercept",
+  "format": "dicom",
+  "width": 2,
+  "height": 2,
+  "channels": 1,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.1",
+    "photometric": "MONOCHROME2",
+    "bitsAllocated": 16,
+    "bitsStored": 12,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 2.5,
+    "rescaleIntercept": -1024,
+    "windowCenter": null,
+    "windowWidth": null,
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 12,
+    "sampleFormat": 1,
+    "typeMin": -1024,
+    "typeMax": 9213.5,
+    "sourceNumericType": "uint16"
+  },
+  "dataLength": 4,
+  "dataDigest": "sha256:c11a61a338ebc7ae81e8d07fc4be7db886e63d600f99796d25cb8c957e86a526",
+  "data": [
+    -1024,
+    -774,
+    4096,
+    9213.5
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": -1024
+    },
+    {
+      "i": 1,
+      "v": -774
+    },
+    {
+      "i": 2,
+      "v": 4096
+    },
+    {
+      "i": 3,
+      "v": 9213.5
+    }
+  ]
+}

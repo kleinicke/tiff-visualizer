@@ -5,3 +5,8 @@ pub(crate) mod png;
 pub(crate) mod pfm;
 pub(crate) mod netpbm;
 pub(crate) mod npy;
+pub(crate) mod json_value;
+pub(crate) mod scientific_common;
+pub(crate) mod fits;
+pub(crate) mod netcdf;
+pub(crate) mod dicom;

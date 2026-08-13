@@ -1,0 +1,35 @@
+{
+  "id": "npy-dtype-le-i2",
+  "format": "npy",
+  "width": 4,
+  "height": 1,
+  "channels": 1,
+  "dtype": "<i2",
+  "showNorm": false,
+  "dataLength": 4,
+  "dataDigest": "sha256:323274056c254de06697f79de11a91b138256b07731153327e0f68907b06ad83",
+  "data": [
+    0,
+    -32768,
+    32767,
+    -1
+  ],
+  "samples": [
+    {
+      "i": 0,
+      "v": 0
+    },
+    {
+      "i": 1,
+      "v": -32768
+    },
+    {
+      "i": 2,
+      "v": 32767
+    },
+    {
+      "i": 3,
+      "v": -1
+    }
+  ]
+}

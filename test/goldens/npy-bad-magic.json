@@ -1,0 +1,5 @@
+{
+  "id": "npy-bad-magic",
+  "format": "npy",
+  "error": "Invalid NPY file"
+}

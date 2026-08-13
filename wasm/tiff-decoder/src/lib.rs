@@ -21,6 +21,9 @@ use formats::hdr::decode_hdr_impl;
 use formats::pfm::decode_pfm_impl;
 use formats::netpbm::decode_ppm_impl;
 use formats::npy::decode_npy_impl;
+use formats::fits::decode_fits_impl;
+use formats::netcdf::decode_netcdf_impl;
+use formats::dicom::decode_dicom_impl;
 
 use wasm_bindgen::prelude::*;
 use std::io::Cursor;
@@ -141,6 +144,78 @@ pub struct NpyResult {
     dtype: String,
     show_norm: bool,
     data_f32: Vec<f32>,
+}
+
+/// Shared result type for the FITS and NetCDF decoders (and, later, DICOM),
+/// mirroring the TS `ScientificDecodedImage` interface in
+/// `media/modules/scientific-format-parsers.ts`. `metadata_json` carries the
+/// TS `metadata: Record<string, any>` object serialized as JSON — see
+/// `formats/json_value.rs` — so the surface stays a handful of getters
+/// instead of one per possible metadata key.
+#[wasm_bindgen]
+pub struct ScientificResult {
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    sample_format: u32,
+    type_min: f64,
+    type_max: f64,
+    source_numeric_type: String,
+    metadata_json: String,
+    data_f32: Vec<f32>,
+}
+
+#[wasm_bindgen]
+impl ScientificResult {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.width }
+
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.height }
+
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 { self.channels }
+
+    #[wasm_bindgen(getter)]
+    pub fn bits_per_sample(&self) -> u32 { self.bits_per_sample }
+
+    #[wasm_bindgen(getter)]
+    pub fn sample_format(&self) -> u32 { self.sample_format }
+
+    #[wasm_bindgen(getter)]
+    pub fn type_min(&self) -> f64 { self.type_min }
+
+    #[wasm_bindgen(getter)]
+    pub fn type_max(&self) -> f64 { self.type_max }
+
+    #[wasm_bindgen(getter)]
+    pub fn source_numeric_type(&self) -> String { self.source_numeric_type.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn metadata_json(&self) -> String { self.metadata_json.clone() }
+
+    #[wasm_bindgen]
+    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
+        mem::take(&mut self.data_f32)
+    }
+}
+
+impl From<formats::scientific_common::ScientificParsed> for ScientificResult {
+    fn from(p: formats::scientific_common::ScientificParsed) -> Self {
+        ScientificResult {
+            width: p.width,
+            height: p.height,
+            channels: p.channels,
+            bits_per_sample: p.bits_per_sample,
+            sample_format: p.sample_format,
+            type_min: p.type_min,
+            type_max: p.type_max,
+            source_numeric_type: p.source_numeric_type,
+            metadata_json: p.metadata_json,
+            data_f32: p.data,
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -717,4 +792,38 @@ pub fn decode_npy_fast(data: &[u8]) -> Result<NpyResult, JsValue> {
         show_norm: parsed.show_norm,
         data_f32: parsed.data,
     })
+}
+
+/// Decode a FITS file's first primary/IMAGE HDU with at least two axes.
+#[wasm_bindgen]
+pub fn decode_fits_fast(data: &[u8]) -> Result<ScientificResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    Ok(decode_fits_impl(data)?.into())
+}
+
+/// Decode a classic NetCDF (CDF-1/CDF-2) file as either a regular raster or
+/// an MPAS `nCells` polygon mesh. `options_json` is the JSON-serialized
+/// `NetCdfDecodeOptions` (`{ variableName?, indices? }`).
+#[wasm_bindgen]
+pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<ScientificResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    Ok(decode_netcdf_impl(data, options_json)?.into())
+}
+
+/// Decode one native (uncompressed) DICOM frame. `frame_index` selects a
+/// frame from a multi-frame `NumberOfFrames` dataset (clamped to range).
+/// Compressed (encapsulated) Pixel Data is rejected with the same error text
+/// the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
+/// fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
+/// working unchanged against this decoder.
+#[wasm_bindgen]
+pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<ScientificResult, JsValue> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    Ok(decode_dicom_impl(data, frame_index)?.into())
 }

@@ -1,0 +1,5 @@
+{
+  "id": "netcdf-hdf5-signature-unsupported",
+  "format": "netcdf",
+  "error": "NetCDF-4/HDF5 is not supported yet; use classic NetCDF (CDF-1 or CDF-2)"
+}
