@@ -14,6 +14,7 @@ import initTiffWasm, {
     decode_dicom_fast, decode_fits_fast, decode_netcdf_fast, decode_npy_fast,
     decode_pfm_fast, decode_ppm_fast, decode_tiff, decode_tiff_page,
     demosaic, extract_exif_tags, tiff_page_count,
+    compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
 } from '../wasm/tiff-wasm.js';
 
 /**
@@ -48,6 +49,7 @@ async function initWasm(): Promise<any> {
                 decode_tiff, decode_tiff_page, tiff_page_count, extract_exif_tags, demosaic,
                 decode_pfm_fast, decode_ppm_fast, decode_npy_fast, decode_fits_fast,
                 decode_netcdf_fast, decode_dicom_fast,
+                compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
             };
             return wasmModule;
         } catch (error) {

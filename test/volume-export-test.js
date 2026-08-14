@@ -267,7 +267,12 @@ async function main() {
 		const isosurfacePath = path.join(PLY_VISUALIZER, 'out', 'engine', 'src', 'visualization', 'isosurface.js');
 		if (fs.existsSync(isosurfacePath)) {
 			const { buildVolumeMesh } = require(isosurfacePath);
-			const { data, threshold } = buildVolumeMesh(volume);
+			// This reaches into the neighbouring ply-visualizer's build output,
+			// so its signature can change under us — it became async at one
+			// point, and destructuring the returned Promise silently yielded
+			// `undefined` rather than failing where the cause was visible.
+			// Await regardless: `await` on a non-Promise is a no-op.
+			const { data, threshold } = await buildVolumeMesh(volume);
 			assert.ok(data.faceCount > 0, 'a real MR volume should yield a non-empty isosurface');
 			console.log(`✅ Isosurface from the handed-over volume: ${data.faceCount.toLocaleString()} triangles at ${threshold.toFixed(0)}`);
 		}

@@ -226,5 +226,9 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         data_f32: Vec::new(),
         data_u8,
         data_u16,
-    })
+        data_min: 0.0,
+        data_max: 0.0,
+        non_finite_count: 0.0,
+        valid_count: 0.0,
+    }.finalize_stats())
 }

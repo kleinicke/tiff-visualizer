@@ -43,8 +43,33 @@ function assertExpectedData(kase, data) {
 	}
 }
 
+/**
+ * Checks `DecodedArray::finalize_stats` (wasm/tiff-decoder/src/lib.rs) — the
+ * stats now carried on every decode result — against `ImageStatsCalculator`
+ * run independently on the same taken samples. Not part of the golden
+ * comparison (goldens must stay byte-for-byte unchanged by this port), so
+ * this is a separate assertion. `ImageStatsCalculator` has no non-finite
+ * concept for integer carriers (u8/u16 can't be NaN), so valid_count is
+ * every scanned sample and non_finite_count is always 0 for NetPBM/PFM.
+ */
+function assertDecoderStats(rust, data, width, height, channels, label, ImageStatsCalculator) {
+	const isFloat = data instanceof Float32Array;
+	const js = isFloat
+		? ImageStatsCalculator.calculateFloatStats(data, width, height, channels)
+		: ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, false);
+	assert.ok(Object.is(rust.data_min, js.min), `${label}: data_min — rust=${rust.data_min} js=${js.min}`);
+	assert.ok(Object.is(rust.data_max, js.max), `${label}: data_max — rust=${rust.data_max} js=${js.max}`);
+	if (!isFloat) {
+		const scanChannels = channels <= 2 ? 1 : Math.min(channels, 3);
+		assert.strictEqual(rust.non_finite_count, 0, `${label}: non_finite_count`);
+		assert.strictEqual(rust.valid_count, width * height * scanChannels, `${label}: valid_count`);
+	}
+}
+
 const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+const OUT = path.join(__dirname, '..', 'out', 'media', 'modules');
+const moduleUrl = name => require('url').pathToFileURL(path.join(OUT, name)).href;
 
 function getErrorMessage(fn) {
 	try {
@@ -63,6 +88,13 @@ async function main() {
 
 	const mod = await import(wasmJs.replace(/\\/g, '/'));
 	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
+
+	let ImageStatsCalculator = null;
+	if (fs.existsSync(path.join(OUT, 'normalization-helper.js'))) {
+		({ ImageStatsCalculator } = await import(moduleUrl('normalization-helper.js')));
+	} else {
+		console.log('⚠️  out/media/modules/normalization-helper.js not found — run `npm run compile` first. Skipping decoder-stats checks.\n');
+	}
 
 	console.log('🧪 Running Rust/WASM PFM + NetPBM conformance tests...\n');
 
@@ -106,6 +138,9 @@ async function main() {
 			formatLabel: rust.format_label, data: rustData,
 		});
 		assertExpectedData(kase, rustData);
+		if (ImageStatsCalculator) {
+			assertDecoderStats(rust, rustData, rust.width, rust.height, rust.channels, kase.id, ImageStatsCalculator);
+		}
 
 		console.log(`✅ PFM ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels}`);
 		count++;
@@ -144,6 +179,9 @@ async function main() {
 			formatLabel: rust.format_label, data: rustData,
 		});
 		assertExpectedData(kase, rustData);
+		if (ImageStatsCalculator) {
+			assertDecoderStats(rust, rustData, rust.width, rust.height, rust.channels, kase.id, ImageStatsCalculator);
+		}
 
 		console.log(`✅ ${rust.format_label} ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} maxval=${rust.type_max}`);
 		count++;

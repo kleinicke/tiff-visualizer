@@ -152,6 +152,14 @@ pub struct DecodedArray {
     data_u16: Vec<u16>,
     /// Guards the one-shot `take_data_as_*` contract below.
     taken: bool,
+    /// Sample statistics, ported from `ImageStatsCalculator.calculateFloatStats`
+    /// / `.calculateIntegerStats` (`media/modules/normalization-helper.ts`) and
+    /// filled in by `finalize_stats()` below. See that method for why this is
+    /// computed unconditionally rather than behind a "needs stats" flag.
+    data_min: f64,
+    data_max: f64,
+    non_finite_count: f64,
+    valid_count: f64,
 }
 
 #[wasm_bindgen]
@@ -188,6 +196,18 @@ impl DecodedArray {
 
     #[wasm_bindgen(getter)]
     pub fn metadata_json(&self) -> String { self.metadata_json.clone() }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_min(&self) -> f64 { self.data_min }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_max(&self) -> f64 { self.data_max }
+
+    #[wasm_bindgen(getter)]
+    pub fn non_finite_count(&self) -> f64 { self.non_finite_count }
+
+    #[wasm_bindgen(getter)]
+    pub fn valid_count(&self) -> f64 { self.valid_count }
 
     /// Moves the raster out as `Vec<f32>` (valid when `sample_kind == 0`).
     ///
@@ -236,6 +256,40 @@ impl DecodedArray {
         self.taken = true;
         Ok(())
     }
+
+    /// Scans the samples once and fills `data_min`/`data_max`/`non_finite_count`/
+    /// `valid_count`, ported from `ImageStatsCalculator.calculateFloatStats` /
+    /// `.calculateIntegerStats` (`media/modules/normalization-helper.ts`) via
+    /// the shared `pipeline::stats` helpers — same channel-scanning convention
+    /// (`scan_channels`), same non-finite exclusion rules, same "no valid
+    /// samples" min/max fallback (`extended = false` keeps +/-Infinity, which
+    /// is what the render-time normalization range this feeds expects).
+    ///
+    /// Called unconditionally for every `DecodedArray`-producing decoder,
+    /// NOT behind a "does the caller actually need stats" flag. The old JS
+    /// path (`NormalizationHelper.needsStats`) skipped the scan in gamma
+    /// mode, which mattered when most formats defaulted to gamma mode — they
+    /// no longer do (auto-normalize is the default for TIFF-float,
+    /// TIFF-int-signed/wide, NPY, FITS, DICOM, NetCDF and CZI), so the scan
+    /// runs on nearly every load anyway. Measured at ~4% of total decode time
+    /// for a 5120x5120 f32 raster (36ms stats vs 757ms decode), with the
+    /// samples already resident in wasm memory here — cheaper than the
+    /// ~100MB copy back to JS a lazy JS-side rescan would need. Do not
+    /// reintroduce a conditional here; if a genuinely stats-free fast path is
+    /// ever needed, it should be a deliberate new decision, not a reflex
+    /// port of the old flag.
+    fn finalize_stats(mut self) -> Self {
+        let stats = match self.sample_kind {
+            1 => pipeline::stats::compute_image_stats_uint_impl(&self.data_u8, self.width, self.height, self.channels, false),
+            2 => pipeline::stats::compute_image_stats_uint_impl(&self.data_u16, self.width, self.height, self.channels, false),
+            _ => pipeline::stats::compute_image_stats_f32_impl(&self.data_f32, self.width, self.height, self.channels, false),
+        };
+        self.data_min = stats.min;
+        self.data_max = stats.max;
+        self.non_finite_count = stats.non_finite_count;
+        self.valid_count = stats.valid_count;
+        self
+    }
 }
 
 impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
@@ -256,7 +310,11 @@ impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
             data_f32: p.data,
             data_u8: Vec::new(),
             data_u16: Vec::new(),
-        }
+            data_min: 0.0,
+            data_max: 0.0,
+            non_finite_count: 0.0,
+            valid_count: 0.0,
+        }.finalize_stats()
     }
 }
 
@@ -798,4 +856,80 @@ pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
     console_error_panic_hook::set_once();
 
     Ok(decode_czi_impl(data, options_json)?.into())
+}
+
+/// Result of `compute_image_stats_f32/u8/u16`, ported from
+/// `ImageStatsCalculator` in `media/modules/normalization-helper.ts`. Unlike
+/// `DecodedArray`, this is small (7 numbers) so it uses plain getters —
+/// no one-shot `take_*` contract needed.
+#[wasm_bindgen]
+pub struct ImageStats {
+    min: f64,
+    max: f64,
+    mean: f64,
+    std: f64,
+    valid_count: f64,
+    non_finite_count: f64,
+    total_count: f64,
+}
+
+#[wasm_bindgen]
+impl ImageStats {
+    #[wasm_bindgen(getter)]
+    pub fn min(&self) -> f64 { self.min }
+    #[wasm_bindgen(getter)]
+    pub fn max(&self) -> f64 { self.max }
+    #[wasm_bindgen(getter)]
+    pub fn mean(&self) -> f64 { self.mean }
+    #[wasm_bindgen(getter)]
+    pub fn std(&self) -> f64 { self.std }
+    #[wasm_bindgen(getter)]
+    pub fn valid_count(&self) -> f64 { self.valid_count }
+    #[wasm_bindgen(getter)]
+    pub fn non_finite_count(&self) -> f64 { self.non_finite_count }
+    #[wasm_bindgen(getter)]
+    pub fn total_count(&self) -> f64 { self.total_count }
+}
+
+impl From<pipeline::stats::RawImageStats> for ImageStats {
+    fn from(r: pipeline::stats::RawImageStats) -> Self {
+        ImageStats {
+            min: r.min,
+            max: r.max,
+            mean: r.mean,
+            std: r.std,
+            valid_count: r.valid_count,
+            non_finite_count: r.non_finite_count,
+            total_count: r.total_count,
+        }
+    }
+}
+
+/// Min/max/mean/std/valid & non-finite counts over a float32 raster, ported
+/// from `ImageStatsCalculator.calculateFloatStats` (`extended = false`) and
+/// `.calculateExtendedStats` (`extended = true`) in
+/// `media/modules/normalization-helper.ts`. `extended` only changes the
+/// "no valid samples" min/max fallback (+/-Infinity vs NaN) — every other
+/// field is always computed. See `pipeline::stats::compute_image_stats_f32_impl`
+/// for the exact non-finite-handling semantics this must stay bit-identical
+/// to (CLAUDE.md's `!Number.isFinite()` rule).
+#[wasm_bindgen]
+pub fn compute_image_stats_f32(data: &[f32], width: u32, height: u32, channels: u32, extended: bool) -> ImageStats {
+    pipeline::stats::compute_image_stats_f32_impl(data, width, height, channels, extended).into()
+}
+
+/// Min/max/mean/std over a uint8 raster, ported from
+/// `ImageStatsCalculator.calculateIntegerStats`. `rgb_as_24bit` packs the
+/// first three channels into one 24-bit value (see
+/// `pipeline::stats::compute_image_stats_uint_impl`); it only takes effect
+/// when `channels >= 3`, matching the TS guard.
+#[wasm_bindgen]
+pub fn compute_image_stats_u8(data: &[u8], width: u32, height: u32, channels: u32, rgb_as_24bit: bool) -> ImageStats {
+    pipeline::stats::compute_image_stats_uint_impl(data, width, height, channels, rgb_as_24bit).into()
+}
+
+/// Min/max/mean/std over a uint16 raster. See `compute_image_stats_u8`.
+#[wasm_bindgen]
+pub fn compute_image_stats_u16(data: &[u16], width: u32, height: u32, channels: u32, rgb_as_24bit: bool) -> ImageStats {
+    pipeline::stats::compute_image_stats_uint_impl(data, width, height, channels, rgb_as_24bit).into()
 }

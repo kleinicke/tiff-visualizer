@@ -46,6 +46,10 @@ export class NpyProcessor {
     _isInitialLoad: boolean; // Track if this is the first render
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
     _cachedStatsRgb24Mode: boolean; // Track whether cached stats were computed in rgb24 mode
+    /** Stats computed by the Rust decoder for the current `_lastRaw` (see
+     * `DecodedArray::finalize_stats` in wasm/tiff-decoder/src/lib.rs). Only
+     * valid for the plain (non-rgbAs24BitGrayscale) render. */
+    _decodedStats: { min: number, max: number } | undefined;
     _lastRenderHistogram: any;
     _lastRenderUsedWebGL: boolean;
     _webglRenderer: WebGL2FloatRenderer;
@@ -62,6 +66,7 @@ export class NpyProcessor {
         this._isInitialLoad = true;
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
+        this._decodedStats = undefined;
         this._lastRenderHistogram = null;
         this._lastRenderUsedWebGL = false;
         this._webglRenderer = new WebGL2FloatRenderer();
@@ -84,12 +89,16 @@ export class NpyProcessor {
         const parsed = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'npy', buffer, src, loadSignal,
             (b: ArrayBuffer) => decodeNpyLocal(b));
-        const { data, width, height, metadata, numericDomain, channels } = parsed;
+        const { data, width, height, metadata, numericDomain, channels, stats } = parsed;
         // The numpy dtype string (e.g. "<f4") is user-visible display info,
         // not part of the DecodedArray schema — it travels through
         // `metadata.dtype` (see wasm/tiff-decoder/src/formats/npy.rs).
         const dtype: string = (metadata && metadata.dtype) || '';
         this._lastRaw = { width, height, data, dtype, numericDomain, channels };
+        // Stats computed once inside the Rust decoder (DecodedArray::finalize_stats).
+        // Only valid for the plain (non-rgbAs24BitGrayscale) render — see
+        // _toImageDataFloat, which recomputes in JS when that mode is on.
+        this._decodedStats = stats;
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -127,15 +136,21 @@ export class NpyProcessor {
         let stats: { min: number, max: number } | undefined = this._cachedStats;
 
         if (!stats && NormalizationHelper.needsStats(settings)) {
-            if (isFloat) {
-                stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
+            if (rgbAs24BitMode) {
+                // rgbAs24BitGrayscale packs channels into a different value space
+                // than the decoder scanned (see DecodedArray::finalize_stats), so
+                // its stats don't apply here. Recompute in JS rather than trying
+                // to make this wasm-synchronous — see CLAUDE.md/task notes on
+                // this being an intentionally JS-only path.
+                stats = ImageStatsCalculator.calculateIntegerStats(data as any, width, height, channels, true);
             } else {
-                stats = ImageStatsCalculator.calculateIntegerStats(data as any, width, height, channels, rgbAs24BitMode);
+                // Already computed once inside the Rust decoder.
+                stats = this._decodedStats;
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
 
-            if (this.vscode) {
+            if (this.vscode && stats) {
                 this.vscode.postMessage({ type: 'stats', value: stats });
             }
         }

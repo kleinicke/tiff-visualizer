@@ -133,3 +133,189 @@ pub(crate) fn compute_stats_f64(data: &[f64]) -> (f64, f64) {
     }
     (min, max)
 }
+
+// ---------------------------------------------------------------------------
+// ImageStatsCalculator port (media/modules/normalization-helper.ts).
+//
+// These back the render-hot-path stats used by every format processor
+// (min/max normalization) plus the on-demand "extended" stats (mean/std/
+// valid & non-finite counts) shown in the Metadata panel. See
+// `compute_image_stats_f32/u8/u16` in lib.rs for the `#[wasm_bindgen]`
+// entry points; the plain-Rust logic lives here so it stays testable
+// without a wasm runtime.
+// ---------------------------------------------------------------------------
+
+/// Full statistics accumulated over the scanned samples of an image. Getters
+/// for this live on the `ImageStats` wasm-bindgen struct in lib.rs; this
+/// plain struct is the internal computation result.
+pub(crate) struct RawImageStats {
+    pub min: f64,
+    pub max: f64,
+    pub mean: f64,
+    pub std: f64,
+    pub valid_count: f64,
+    pub non_finite_count: f64,
+    pub total_count: f64,
+}
+
+/// How many leading channels of a pixel participate in stats scanning.
+/// Mirrors the `scanChannels` convention shared by `calculateFloatStats`,
+/// `calculateIntegerStats`, and `calculateExtendedStats` in the TS source:
+/// channels <= 2 (mono, or gray+alpha where alpha must NOT skew the range)
+/// scan just the first sample; channels >= 3 (RGB[A]) scan the first three,
+/// ignoring any alpha/extra samples beyond that.
+#[inline]
+fn scan_channels(channels: u32) -> u32 {
+    if channels <= 2 { 1 } else { channels.min(3) }
+}
+
+/// Shared f32 accumulation pass, ported from `calculateFloatStats` /
+/// `calculateExtendedStats`. Non-finite samples (NaN, +Inf, -Inf) are
+/// excluded from min/max/mean/std and counted separately — this is the
+/// documented correctness invariant for this project (see CLAUDE.md's
+/// `!Number.isFinite()` rule). Out-of-bounds reads (a `data` shorter than
+/// `width * height * channels` implies) are treated the same as the TS
+/// version's `undefined` reads: counted as non-finite, never touching
+/// min/max/sum.
+///
+/// `extended` selects the "no valid samples" min/max fallback to match the
+/// two different TS call sites: `calculateFloatStats` leaves the seeded
+/// +/-Infinity in place (matches `compute_stats_f32` above), while
+/// `calculateExtendedStats` reports NaN instead, consistent with its
+/// NaN mean/std. Every other field (mean/std/counts) is computed the same
+/// way regardless of `extended`; the two TS non-extended methods simply
+/// never read them.
+pub(crate) fn compute_image_stats_f32_impl(data: &[f32], width: u32, height: u32, channels: u32, extended: bool) -> RawImageStats {
+    let len = (width as u64) * (height as u64);
+    let scan_ch = scan_channels(channels);
+
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut valid_count: f64 = 0.0;
+    let mut non_finite_count: f64 = 0.0;
+
+    for i in 0..len {
+        let base = i * (channels as u64);
+        for c in 0..scan_ch {
+            let idx = (base + c as u64) as usize;
+            let sample = data.get(idx).copied();
+            match sample {
+                Some(v) if v.is_finite() => {
+                    let v64 = v as f64;
+                    if v64 < min { min = v64; }
+                    if v64 > max { max = v64; }
+                    sum += v64;
+                    sum_sq += v64 * v64;
+                    valid_count += 1.0;
+                }
+                _ => {
+                    non_finite_count += 1.0;
+                }
+            }
+        }
+    }
+
+    let total_count = (len * (scan_ch as u64)) as f64;
+    let mean = if valid_count > 0.0 { sum / valid_count } else { f64::NAN };
+    let variance = if valid_count > 0.0 {
+        (sum_sq / valid_count - mean * mean).max(0.0)
+    } else {
+        f64::NAN
+    };
+    let std = variance.sqrt();
+
+    let (out_min, out_max) = if extended {
+        if valid_count > 0.0 { (min, max) } else { (f64::NAN, f64::NAN) }
+    } else {
+        (min, max)
+    };
+
+    RawImageStats {
+        min: out_min,
+        max: out_max,
+        mean,
+        std,
+        valid_count,
+        non_finite_count,
+        total_count,
+    }
+}
+
+/// Shared unsigned-integer accumulation pass, ported from
+/// `calculateIntegerStats`. Integers have no non-finite concept, so
+/// `non_finite_count` is always 0 and `valid_count == total_count`.
+///
+/// `rgb_as_24bit` (only takes effect when `channels >= 3`, matching the TS
+/// `rgbAs24Bit && channels >= 3` guard) packs the first three channels of
+/// each pixel into one value as `(r << 16) | (g << 8) | b`, ignoring any
+/// 4th (alpha) channel — the same packing `calculateIntegerStats` uses for
+/// the depth-as-RGB24 render mode. Otherwise the plain `scan_channels`
+/// convention applies, same as the float path.
+pub(crate) fn compute_image_stats_uint_impl<T>(data: &[T], width: u32, height: u32, channels: u32, rgb_as_24bit: bool) -> RawImageStats
+where
+    T: Copy + Into<u32>,
+{
+    let len = (width as u64) * (height as u64);
+
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut valid_count: f64 = 0.0;
+
+    if rgb_as_24bit && channels >= 3 {
+        for i in 0..len {
+            let idx = (i * (channels as u64)) as usize;
+            let (r, g, b) = match (data.get(idx), data.get(idx + 1), data.get(idx + 2)) {
+                (Some(&r), Some(&g), Some(&b)) => (r, g, b),
+                _ => continue,
+            };
+            let val24 = ((r.into()) << 16) | ((g.into()) << 8) | (b.into());
+            let v64 = val24 as f64;
+            if v64 < min { min = v64; }
+            if v64 > max { max = v64; }
+            sum += v64;
+            sum_sq += v64 * v64;
+            valid_count += 1.0;
+        }
+
+        return RawImageStats {
+            min, max,
+            mean: if valid_count > 0.0 { sum / valid_count } else { f64::NAN },
+            std: if valid_count > 0.0 { (sum_sq / valid_count - (sum / valid_count) * (sum / valid_count)).max(0.0).sqrt() } else { f64::NAN },
+            valid_count,
+            non_finite_count: 0.0,
+            total_count: valid_count,
+        };
+    }
+
+    let scan_ch = scan_channels(channels);
+    for i in 0..len {
+        let base = i * (channels as u64);
+        for c in 0..scan_ch {
+            let idx = (base + c as u64) as usize;
+            let Some(&v) = data.get(idx) else { continue };
+            let v64: u32 = v.into();
+            let v64 = v64 as f64;
+            if v64 < min { min = v64; }
+            if v64 > max { max = v64; }
+            sum += v64;
+            sum_sq += v64 * v64;
+            valid_count += 1.0;
+        }
+    }
+
+    let mean = if valid_count > 0.0 { sum / valid_count } else { f64::NAN };
+    let variance = if valid_count > 0.0 { (sum_sq / valid_count - mean * mean).max(0.0) } else { f64::NAN };
+
+    RawImageStats {
+        min, max,
+        mean,
+        std: variance.sqrt(),
+        valid_count,
+        non_finite_count: 0.0,
+        total_count: valid_count,
+    }
+}

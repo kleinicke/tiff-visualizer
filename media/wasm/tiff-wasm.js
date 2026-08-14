@@ -225,6 +225,26 @@ export function decode_dicom_fast(data, frame_index) {
 }
 
 /**
+ * Min/max/mean/std over a uint8 raster, ported from
+ * `ImageStatsCalculator.calculateIntegerStats`. `rgb_as_24bit` packs the
+ * first three channels into one 24-bit value (see
+ * `pipeline::stats::compute_image_stats_uint_impl`); it only takes effect
+ * when `channels >= 3`, matching the TS guard.
+ * @param {Uint8Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {boolean} rgb_as_24bit
+ * @returns {ImageStats}
+ */
+export function compute_image_stats_u8(data, width, height, channels, rgb_as_24bit) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_image_stats_u8(ptr0, len0, width, height, channels, rgb_as_24bit);
+    return ImageStats.__wrap(ret);
+}
+
+/**
  * Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
  * @param {Uint8Array} data
  * @returns {DecodedArray}
@@ -237,6 +257,22 @@ export function decode_ppm_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * Min/max/mean/std over a uint16 raster. See `compute_image_stats_u8`.
+ * @param {Uint16Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {boolean} rgb_as_24bit
+ * @returns {ImageStats}
+ */
+export function compute_image_stats_u16(data, width, height, channels, rgb_as_24bit) {
+    const ptr0 = passArray16ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_image_stats_u16(ptr0, len0, width, height, channels, rgb_as_24bit);
+    return ImageStats.__wrap(ret);
 }
 
 /**
@@ -281,6 +317,29 @@ export function decode_hdr_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * Min/max/mean/std/valid & non-finite counts over a float32 raster, ported
+ * from `ImageStatsCalculator.calculateFloatStats` (`extended = false`) and
+ * `.calculateExtendedStats` (`extended = true`) in
+ * `media/modules/normalization-helper.ts`. `extended` only changes the
+ * "no valid samples" min/max fallback (+/-Infinity vs NaN) — every other
+ * field is always computed. See `pipeline::stats::compute_image_stats_f32_impl`
+ * for the exact non-finite-handling semantics this must stay bit-identical
+ * to (CLAUDE.md's `!Number.isFinite()` rule).
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {boolean} extended
+ * @returns {ImageStats}
+ */
+export function compute_image_stats_f32(data, width, height, channels, extended) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_image_stats_f32(ptr0, len0, width, height, channels, extended);
+    return ImageStats.__wrap(ret);
 }
 
 /**
@@ -575,6 +634,13 @@ export class DecodedArray {
         return ret >>> 0;
     }
     /**
+     * @returns {number}
+     */
+    get valid_count() {
+        const ret = wasm.decodedarray_valid_count(this.__wbg_ptr);
+        return ret;
+    }
+    /**
      * @returns {string}
      */
     get format_label() {
@@ -631,6 +697,13 @@ export class DecodedArray {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get non_finite_count() {
+        const ret = wasm.decodedarray_non_finite_count(this.__wbg_ptr);
+        return ret;
     }
     /**
      * Moves the raster out as `Vec<f32>` (valid when `sample_kind == 0`).
@@ -701,6 +774,20 @@ export class DecodedArray {
     get channels() {
         const ret = wasm.decodedarray_channels(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_max() {
+        const ret = wasm.decodedarray_data_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_min() {
+        const ret = wasm.decodedarray_data_min(this.__wbg_ptr);
+        return ret;
     }
     /**
      * @returns {number}
@@ -860,7 +947,7 @@ export class ExrResult {
      * @returns {number}
      */
     get timing_total_ms() {
-        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_data_min(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1001,6 +1088,88 @@ export class HdrResult {
 }
 if (Symbol.dispose) HdrResult.prototype[Symbol.dispose] = HdrResult.prototype.free;
 
+const ImageStatsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_imagestats_free(ptr >>> 0, 1));
+/**
+ * Result of `compute_image_stats_f32/u8/u16`, ported from
+ * `ImageStatsCalculator` in `media/modules/normalization-helper.ts`. Unlike
+ * `DecodedArray`, this is small (7 numbers) so it uses plain getters —
+ * no one-shot `take_*` contract needed.
+ */
+export class ImageStats {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(ImageStats.prototype);
+        obj.__wbg_ptr = ptr;
+        ImageStatsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ImageStatsFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_imagestats_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get total_count() {
+        const ret = wasm.imagestats_total_count(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get valid_count() {
+        const ret = wasm.decodedarray_non_finite_count(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get non_finite_count() {
+        const ret = wasm.decodedarray_valid_count(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get max() {
+        const ret = wasm.decodedarray_type_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get min() {
+        const ret = wasm.decodedarray_type_min(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get std() {
+        const ret = wasm.decodedarray_data_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get mean() {
+        const ret = wasm.decodedarray_data_min(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) ImageStats.prototype[Symbol.dispose] = ImageStats.prototype.free;
+
 const JpegResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_jpegresult_free(ptr >>> 0, 1));
@@ -1091,14 +1260,14 @@ export class PngResult {
      * @returns {number}
      */
     get color_type() {
-        const ret = wasm.pngresult_color_type(this.__wbg_ptr);
+        const ret = wasm.decodedarray_width(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
     get timing_total_ms() {
-        const ret = wasm.pngresult_timing_total_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_data_max(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1121,7 +1290,7 @@ export class PngResult {
      * @returns {number}
      */
     get timing_convert_ms() {
-        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_data_min(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1798,7 +1967,7 @@ export class TiffResult {
      * @returns {number}
      */
     get compression() {
-        const ret = wasm.decodedarray_height(this.__wbg_ptr);
+        const ret = wasm.tiffresult_compression(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1841,7 +2010,7 @@ export class TiffResult {
      * @returns {number}
      */
     get sample_format() {
-        const ret = wasm.decodedarray_width(this.__wbg_ptr);
+        const ret = wasm.tiffresult_sample_format(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1858,7 +2027,7 @@ export class TiffResult {
      * @returns {number}
      */
     get rows_per_strip() {
-        const ret = wasm.decodedarray_sample_kind(this.__wbg_ptr);
+        const ret = wasm.tiffresult_rows_per_strip(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1907,28 +2076,28 @@ export class TiffResult {
      * @returns {number}
      */
     get timing_decode_ms() {
-        const ret = wasm.tiffresult_timing_decode_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_valid_count(this.__wbg_ptr);
         return ret;
     }
     /**
      * @returns {number}
      */
     get timing_convert_ms() {
-        const ret = wasm.tiffresult_timing_convert_ms(this.__wbg_ptr);
+        const ret = wasm.imagestats_total_count(this.__wbg_ptr);
         return ret;
     }
     /**
      * @returns {number}
      */
     get timing_metadata_ms() {
-        const ret = wasm.tiffresult_timing_metadata_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_non_finite_count(this.__wbg_ptr);
         return ret;
     }
     /**
      * @returns {number}
      */
     get planar_configuration() {
-        const ret = wasm.decodedarray_sample_format(this.__wbg_ptr);
+        const ret = wasm.tiffresult_planar_configuration(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1949,7 +2118,7 @@ export class TiffResult {
      * @returns {number}
      */
     get photometric_interpretation() {
-        const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
+        const ret = wasm.tiffresult_photometric_interpretation(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1992,21 +2161,21 @@ export class TiffResult {
      * @returns {number}
      */
     get max_value() {
-        const ret = wasm.pngresult_timing_total_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_data_max(this.__wbg_ptr);
         return ret;
     }
     /**
      * @returns {number}
      */
     get min_value() {
-        const ret = wasm.exrresult_timing_total_ms(this.__wbg_ptr);
+        const ret = wasm.decodedarray_data_min(this.__wbg_ptr);
         return ret;
     }
     /**
      * @returns {number}
      */
     get predictor() {
-        const ret = wasm.decodedarray_channels(this.__wbg_ptr);
+        const ret = wasm.tiffresult_predictor(this.__wbg_ptr);
         return ret >>> 0;
     }
 }

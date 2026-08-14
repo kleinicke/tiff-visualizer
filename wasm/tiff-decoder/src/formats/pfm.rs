@@ -175,5 +175,9 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
         data_f32: out,
         data_u8: Vec::new(),
         data_u16: Vec::new(),
-    })
+        data_min: 0.0,
+        data_max: 0.0,
+        non_finite_count: 0.0,
+        valid_count: 0.0,
+    }.finalize_stats())
 }

@@ -63,5 +63,15 @@ export interface ScientificDecodedImage {
 		typeMax: number;
 		sourceNumericType: 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float32' | 'float64';
 	};
+	/**
+	 * Sample statistics computed once inside the Rust decoder (see
+	 * `DecodedArray::finalize_stats` in `wasm/tiff-decoder/src/lib.rs`), ported
+	 * from `ImageStatsCalculator.calculateFloatStats` / `.calculateIntegerStats`.
+	 * Always present for the seven Rust-decoded formats — consume this instead
+	 * of rescanning with `ImageStatsCalculator` on the load path.
+	 */
+	stats: Stats;
+	nonFiniteCount: number;
+	validCount: number;
 	decodeTimings?: { name: string, durationMs: number }[];
 }

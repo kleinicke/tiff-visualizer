@@ -38,8 +38,25 @@ const path = require('path');
 const { listCases, bufferToArrayBuffer } = require('./lib/decoder-cases');
 const { assertMatchesGolden, expectsRejection } = require('./lib/golden-io');
 
+/**
+ * Checks `DecodedArray::finalize_stats` (wasm/tiff-decoder/src/lib.rs) —
+ * populated here via the shared `impl From<ScientificParsed> for
+ * DecodedArray` in lib.rs, so this one check covers FITS, NetCDF, DICOM and
+ * CZI — against `ImageStatsCalculator.calculateFloatStats` run independently
+ * on the same taken samples. This is exactly the comparison
+ * scientific-array-processor.ts's/pfm-processor.ts's load path relies on
+ * implicitly by trusting the decoder's stats instead of rescanning.
+ */
+function assertDecoderStats(rust, data, width, height, channels, label, ImageStatsCalculator) {
+	const js = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
+	assert.ok(Object.is(rust.data_min, js.min), `${label}: data_min — rust=${rust.data_min} js=${js.min}`);
+	assert.ok(Object.is(rust.data_max, js.max), `${label}: data_max — rust=${rust.data_max} js=${js.max}`);
+}
+
 const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+const OUT = path.join(__dirname, '..', 'out', 'media', 'modules');
+const moduleUrl = name => require('url').pathToFileURL(path.join(OUT, name)).href;
 
 function getErrorMessage(fn) {
 	try {
@@ -58,6 +75,13 @@ async function main() {
 
 	const mod = await import(wasmJs.replace(/\\/g, '/'));
 	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
+
+	let ImageStatsCalculator = null;
+	if (fs.existsSync(path.join(OUT, 'normalization-helper.js'))) {
+		({ ImageStatsCalculator } = await import(moduleUrl('normalization-helper.js')));
+	} else {
+		console.log('⚠️  out/media/modules/normalization-helper.js not found — run `npm run compile` first. Skipping decoder-stats checks.\n');
+	}
 
 	console.log('🧪 Running Rust/WASM FITS/NetCDF/DICOM/CZI conformance tests...\n');
 	let count = 0;
@@ -139,6 +163,9 @@ async function main() {
 			},
 			formatLabel: rust.format_label,
 		});
+		if (ImageStatsCalculator) {
+			assertDecoderStats(rust, rustData, rust.width, rust.height, rust.channels, kase.id, ImageStatsCalculator);
+		}
 
 		console.log(`✅ ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} type=${rust.source_numeric_type}`);
 		count++;

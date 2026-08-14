@@ -215,6 +215,7 @@ export class ImageStatsCalculator {
      */
     static calculateFloatStats(data: Float32Array, width: number, height: number, channels: number): { min: number, max: number } {
         const perfStart = performance.now();
+
         let minVal = Infinity;
         let maxVal = -Infinity;
 

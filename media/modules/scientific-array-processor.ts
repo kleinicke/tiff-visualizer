@@ -72,6 +72,7 @@ export class ScientificArrayProcessor extends PfmProcessor {
 		}
 		this._workerCachedSource = cacheKey;
 		this._cachedStats = undefined;
+		this._decodedStats = decoded.stats;
 		this.metadata = decoded.metadata || {};
 		this.numericDomain = decoded.numericDomain;
 		this._lastRaw = {

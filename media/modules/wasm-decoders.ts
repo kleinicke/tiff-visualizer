@@ -96,6 +96,12 @@ function assembleDecoded<
 			typeMax: result.type_max as number,
 			sourceNumericType: result.source_numeric_type as N,
 		},
+		// Computed once inside the decoder by `DecodedArray::finalize_stats`
+		// (wasm/tiff-decoder/src/lib.rs) — see that method for why this always
+		// runs rather than being gated behind `NormalizationHelper.needsStats`.
+		stats: { min: result.data_min as number, max: result.data_max as number },
+		nonFiniteCount: result.non_finite_count as number,
+		validCount: result.valid_count as number,
 		formatLabel: result.format_label as string,
 		decodedWith: tag(format, context),
 		decodeTimings: timing(format, startedAt),

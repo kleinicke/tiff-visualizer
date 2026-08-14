@@ -1,5 +1,5 @@
 "use strict";
-import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { decodePfmLocal } from './main-thread-decode.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
@@ -33,6 +33,10 @@ export class PfmProcessor {
     _pendingRenderData: PendingRenderData | null; // Store data waiting for format-specific settings
     _isInitialLoad: boolean; // Track if this is the first render
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
+    /** Stats computed by the Rust decoder for the current `_lastRaw` (see
+     * `DecodedArray::finalize_stats` in wasm/tiff-decoder/src/lib.rs). Consumed
+     * by `_toImageDataFloat` instead of rescanning with `ImageStatsCalculator`. */
+    _decodedStats: { min: number, max: number } | undefined;
     _lastRenderHistogram: any;
     _lastRenderUsedWebGL: boolean;
     _webglRenderer: WebGL2FloatRenderer;
@@ -48,6 +52,7 @@ export class PfmProcessor {
         this._pendingRenderData = null;
         this._isInitialLoad = true;
         this._cachedStats = undefined;
+        this._decodedStats = undefined;
         this._lastRenderHistogram = null;
         this._lastRenderUsedWebGL = false;
         this._webglRenderer = new WebGL2FloatRenderer();
@@ -59,13 +64,16 @@ export class PfmProcessor {
         const loadSignal = this.loadSignal;
         const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'pfm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-        // Parse in the decode worker when available, locally otherwise.
-        const { width, height, channels, data } = await DecodeWorkerClient.decodeWithFallback(
+        // Parse in the decode worker when available, locally otherwise. Both
+        // paths are Rust/WASM (see main-thread-decode.ts), so `stats` — computed
+        // once inside the decoder — is always present.
+        const { width, height, channels, data, stats } = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'pfm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePfmLocal(b, { topDown: true }));
         const displayData = data;
 
-        // Invalidate stats cache for new image
+        // Invalidate stats cache for new image; adopt the decoder's stats.
         this._cachedStats = undefined;
+        this._decodedStats = stats;
 
         this._lastRaw = { width, height, data: displayData, channels };
 
@@ -97,13 +105,16 @@ export class PfmProcessor {
         const typeMin = renderOptions.typeMin ?? 0;
         const typeMax = renderOptions.typeMax ?? 1;
 
-        // Calculate stats if needed (for auto-normalize or just to have them)
+        // Surface stats if needed (for auto-normalize or just to have them).
+        // The scan itself already happened once inside the Rust decoder (see
+        // `DecodedArray::finalize_stats`); this only decides whether the UI
+        // needs to know about it yet, matching the old lazy-post behavior.
         let stats: { min: number, max: number } | undefined = this._cachedStats;
         if (!stats && NormalizationHelper.needsStats(settings)) {
-            stats = ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
+            stats = this._decodedStats;
             this._cachedStats = stats;
 
-            if (this.vscode) {
+            if (this.vscode && stats) {
                 this.vscode.postMessage({ type: 'stats', value: stats });
             }
         }

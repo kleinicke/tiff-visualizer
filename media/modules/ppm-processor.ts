@@ -1,5 +1,5 @@
 "use strict";
-import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { decodePpmLocal } from './main-thread-decode.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
@@ -41,6 +41,10 @@ export class PpmProcessor {
     _isInitialLoad: boolean; // Track if this is the first render
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
     _cachedStatsRgb24Mode: boolean; // Track whether cached stats were computed in rgb24 mode
+    /** Stats computed by the Rust decoder for the current `_lastRaw` (see
+     * `DecodedArray::finalize_stats` in wasm/tiff-decoder/src/lib.rs). Only
+     * valid for the plain (non-rgbAs24BitGrayscale) render. */
+    _decodedStats: { min: number, max: number } | undefined;
     _lastRenderUsedWebGL: boolean;
     _webglRenderer: WebGL2FloatRenderer;
     /** Set before each load; aborts the fetch when a newer image switch supersedes it */
@@ -56,6 +60,7 @@ export class PpmProcessor {
         this._isInitialLoad = true;
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
+        this._decodedStats = undefined;
         this._lastRenderUsedWebGL = false;
         this._webglRenderer = new WebGL2FloatRenderer();
         this.loadSignal = undefined;
@@ -67,7 +72,7 @@ export class PpmProcessor {
         const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
-        const { width, height, channels, data, numericDomain, formatLabel: format } = await DecodeWorkerClient.decodeWithFallback(
+        const { width, height, channels, data, numericDomain, formatLabel: format, stats } = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'ppm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePpmLocal(b));
         const maxval = numericDomain.typeMax;
 
@@ -77,9 +82,12 @@ export class PpmProcessor {
         // PPM stores pixels from top-to-bottom, which is the correct orientation for canvas
         // No flipping needed unless specifically required by the format
 
-        // Invalidate stats cache for new image
+        // Invalidate stats cache for new image; adopt the decoder's stats
+        // (DecodedArray::finalize_stats — only valid for the plain,
+        // non-rgbAs24BitGrayscale render; see _toImageDataWithNormalization).
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
+        this._decodedStats = stats;
 
         this._lastRaw = { width, height, data: displayData, maxval, channels, format };
 
@@ -146,11 +154,12 @@ export class PpmProcessor {
                 }
                 stats = { min, max };
             } else {
-                stats = ImageStatsCalculator.calculateIntegerStats(data, width, height, channels);
+                // Already computed once inside the Rust decoder.
+                stats = this._decodedStats;
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
-            if (this.vscode) {
+            if (this.vscode && stats) {
                 this.vscode.postMessage({ type: 'stats', value: stats });
             }
         }

@@ -31,4 +31,7 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const decode_tiff_page: any;
 	export const decode_tiff_page_fast: any;
 	export const tiff_page_count: any;
+	export const compute_image_stats_f32: any;
+	export const compute_image_stats_u8: any;
+	export const compute_image_stats_u16: any;
 }
