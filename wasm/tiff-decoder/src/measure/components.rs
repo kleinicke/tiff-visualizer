@@ -87,7 +87,7 @@ pub(crate) fn label_components(
             // Only already-visited neighbours are consulted, so a single
             // forward pass sees every adjacency exactly once.
             let mut best: i32 = 0;
-            let mut consider = |nx: isize, ny: isize, labels: &[i32], uf: &mut UnionFind, best: &mut i32| {
+            let consider = |nx: isize, ny: isize, labels: &[i32], uf: &mut UnionFind, best: &mut i32| {
                 if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
                     return;
                 }

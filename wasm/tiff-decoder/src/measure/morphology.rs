@@ -35,7 +35,7 @@ pub(crate) fn fill_mask_holes(mask: &[u8], width: usize, height: usize) -> Vec<u
         let index = index as usize;
         let px = (index % padded_width) as isize;
         let py = (index / padded_width) as isize;
-        let mut push = |nx: isize, ny: isize, outside: &mut Vec<u8>, stack: &mut Vec<i32>| {
+        let push = |nx: isize, ny: isize, outside: &mut Vec<u8>, stack: &mut Vec<i32>| {
             if nx < 0 || ny < 0 || nx >= padded_width as isize || ny >= padded_height as isize {
                 return;
             }

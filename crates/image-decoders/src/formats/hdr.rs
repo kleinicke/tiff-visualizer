@@ -1,6 +1,6 @@
+use crate::formats::metadata::push_generic_attr_row;
+use crate::DecodeError;
 use crate::HdrResult;
-use crate::formats::exr::push_generic_attr_row;
-use wasm_bindgen::JsValue;
 
 /// Turn Radiance HDR header lines into generic {name, value} tags: `KEY=VALUE`
 /// lines split on the first `=`, `#`-prefixed lines become "Comment" rows,
@@ -20,8 +20,8 @@ fn hdr_header_lines_to_json(lines: &[String]) -> String {
     format!("[{}]", out.join(","))
 }
 
-pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
-    let start_time = js_sys::Date::now();
+pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, DecodeError> {
+    let start_time = crate::time::now_ms();
     let mut offset = 0usize;
     let mut width = 0usize;
     let mut height = 0usize;
@@ -38,12 +38,12 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
             offset += 1;
         }
         if offset >= data.len() {
-            return Err(JsValue::from_str("HDR header ended before resolution line"));
+            return Err(DecodeError::new("HDR header ended before resolution line"));
         }
         let line_bytes = &data[line_start..offset];
         offset += 1;
         let line = std::str::from_utf8(line_bytes)
-            .map_err(|_| JsValue::from_str("HDR header is not UTF-8"))?
+            .map_err(|_| DecodeError::new("HDR header is not UTF-8"))?
             .trim();
         if !line.is_empty() {
             header_lines.push(line.to_string());
@@ -57,35 +57,40 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
         } else if line.starts_with("-Y ") && line.contains(" +X ") {
             let mut parts = line.split_whitespace();
             if parts.next() == Some("-Y") {
-                height = parts.next()
-                    .ok_or_else(|| JsValue::from_str("Missing HDR height"))?
+                height = parts
+                    .next()
+                    .ok_or_else(|| DecodeError::new("Missing HDR height"))?
                     .parse::<usize>()
-                    .map_err(|_| JsValue::from_str("Invalid HDR height"))?;
+                    .map_err(|_| DecodeError::new("Invalid HDR height"))?;
                 if parts.next() != Some("+X") {
-                    return Err(JsValue::from_str("Unsupported HDR orientation"));
+                    return Err(DecodeError::new("Unsupported HDR orientation"));
                 }
-                width = parts.next()
-                    .ok_or_else(|| JsValue::from_str("Missing HDR width"))?
+                width = parts
+                    .next()
+                    .ok_or_else(|| DecodeError::new("Missing HDR width"))?
                     .parse::<usize>()
-                    .map_err(|_| JsValue::from_str("Invalid HDR width"))?;
+                    .map_err(|_| DecodeError::new("Invalid HDR width"))?;
                 break;
             }
         }
     }
 
-    let header_time = js_sys::Date::now() - start_time;
+    let header_time = crate::time::now_ms() - start_time;
     if width == 0 || height == 0 {
-        return Err(JsValue::from_str("HDR resolution line not found"));
+        return Err(DecodeError::new("HDR resolution line not found"));
     }
     if !rle {
-        return Err(JsValue::from_str("Only FORMAT=32-bit_rle_rgbe HDR files are supported"));
+        return Err(DecodeError::new(
+            "Only FORMAT=32-bit_rle_rgbe HDR files are supported",
+        ));
     }
     if width > 0x7fff {
-        return Err(JsValue::from_str("HDR scanline is too wide for RLE"));
+        return Err(DecodeError::new("HDR scanline is too wide for RLE"));
     }
 
-    let pixel_count = width.checked_mul(height)
-        .ok_or_else(|| JsValue::from_str("HDR dimensions overflow"))?;
+    let pixel_count = width
+        .checked_mul(height)
+        .ok_or_else(|| DecodeError::new("HDR dimensions overflow"))?;
     let mut scanline = vec![0u8; width * 4];
     let mut output = vec![0f32; pixel_count * 4];
     let mut scales = [0f32; 256];
@@ -96,9 +101,9 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
     let mut convert_time = 0.0;
 
     for y in 0..height {
-        let rle_start = js_sys::Date::now();
+        let rle_start = crate::time::now_ms();
         if offset + 4 > data.len() {
-            return Err(JsValue::from_str("Unexpected EOF in HDR scanline header"));
+            return Err(DecodeError::new("Unexpected EOF in HDR scanline header"));
         }
         let b0 = data[offset];
         let b1 = data[offset + 1];
@@ -106,18 +111,18 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
         let b3 = data[offset + 3];
         offset += 4;
         if b0 != 2 || b1 != 2 || (b2 & 0x80) != 0 {
-            return Err(JsValue::from_str("HDR file is not new-style RLE encoded"));
+            return Err(DecodeError::new("HDR file is not new-style RLE encoded"));
         }
         let scanline_width = ((b2 as usize) << 8) | b3 as usize;
         if scanline_width != width {
-            return Err(JsValue::from_str("HDR scanline width mismatch"));
+            return Err(DecodeError::new("HDR scanline width mismatch"));
         }
         for channel in 0..4 {
             let mut ptr = channel * width;
             let end = ptr + width;
             while ptr < end {
                 if offset + 2 > data.len() {
-                    return Err(JsValue::from_str("Unexpected EOF in HDR RLE data"));
+                    return Err(DecodeError::new("Unexpected EOF in HDR RLE data"));
                 }
                 let count_byte = data[offset];
                 let value = data[offset + 1];
@@ -125,32 +130,33 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
                 if count_byte > 128 {
                     let count = (count_byte - 128) as usize;
                     if count == 0 || ptr + count > end {
-                        return Err(JsValue::from_str("Bad HDR RLE run"));
+                        return Err(DecodeError::new("Bad HDR RLE run"));
                     }
                     scanline[ptr..ptr + count].fill(value);
                     ptr += count;
                 } else {
                     let count = count_byte as usize;
                     if count == 0 || ptr + count > end {
-                        return Err(JsValue::from_str("Bad HDR RLE literal"));
+                        return Err(DecodeError::new("Bad HDR RLE literal"));
                     }
                     scanline[ptr] = value;
                     ptr += 1;
                     if count > 1 {
                         let remaining = count - 1;
                         if offset + remaining > data.len() {
-                            return Err(JsValue::from_str("Unexpected EOF in HDR literal"));
+                            return Err(DecodeError::new("Unexpected EOF in HDR literal"));
                         }
-                        scanline[ptr..ptr + remaining].copy_from_slice(&data[offset..offset + remaining]);
+                        scanline[ptr..ptr + remaining]
+                            .copy_from_slice(&data[offset..offset + remaining]);
                         ptr += remaining;
                         offset += remaining;
                     }
                 }
             }
         }
-        rle_time += js_sys::Date::now() - rle_start;
+        rle_time += crate::time::now_ms() - rle_start;
 
-        let convert_start = js_sys::Date::now();
+        let convert_start = crate::time::now_ms();
         let row_offset = y * width * 4;
         for x in 0..width {
             let e = scanline[x + width * 3] as usize;
@@ -167,7 +173,7 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
             }
             output[out + 3] = 1.0;
         }
-        convert_time += js_sys::Date::now() - convert_start;
+        convert_time += crate::time::now_ms() - convert_start;
     }
 
     Ok(HdrResult {
@@ -180,7 +186,7 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, JsValue> {
             header_time,
             rle_time,
             convert_time,
-            js_sys::Date::now() - start_time,
+            crate::time::now_ms() - start_time,
         ],
         all_tags_json: hdr_header_lines_to_json(&header_lines),
     })

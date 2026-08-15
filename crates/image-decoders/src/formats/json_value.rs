@@ -1,4 +1,6 @@
-//! Minimal hand-rolled JSON value type used by the FITS and NetCDF decoders
+#![allow(dead_code)]
+
+//! Minimal hand-rolled JSON value type used by the format decoders
 //! to build `ScientificResult.metadata_json` (see `lib.rs`) and to parse the
 //! small `NetCdfDecodeOptions` JSON blob the worker passes to
 //! `decode_netcdf_fast`. No `serde_json` dependency, by project convention
@@ -10,7 +12,7 @@
 //! plain recursive-descent reader for standard JSON (used only for the tiny,
 //! fully-controlled `options_json` argument, not untrusted file bytes).
 
-use super::tiff::tags::json_escape;
+use super::metadata::json_escape;
 
 #[derive(Debug, Clone)]
 pub(crate) enum JsonValue {
@@ -49,7 +51,10 @@ impl JsonValue {
     }
 
     pub(crate) fn get<'a>(&'a self, key: &str) -> Option<&'a JsonValue> {
-        self.as_obj()?.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.as_obj()?
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
     }
 }
 
@@ -65,7 +70,13 @@ pub(crate) fn push_opt(fields: &mut Vec<(String, JsonValue)>, key: &str, value: 
 pub(crate) fn to_json_string(value: &JsonValue) -> String {
     match value {
         JsonValue::Null => "null".to_string(),
-        JsonValue::Bool(b) => if *b { "true".to_string() } else { "false".to_string() },
+        JsonValue::Bool(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
         JsonValue::Num(n) => format_number(*n),
         JsonValue::Str(s) => format!("\"{}\"", json_escape(s)),
         JsonValue::Arr(items) => {
@@ -177,8 +188,13 @@ fn parse_object(chars: &[char], pos: &mut usize) -> Result<JsonValue, String> {
             return Err("unterminated JSON object".to_string());
         }
         match chars[*pos] {
-            ',' => { *pos += 1; }
-            '}' => { *pos += 1; break; }
+            ',' => {
+                *pos += 1;
+            }
+            '}' => {
+                *pos += 1;
+                break;
+            }
             _ => return Err("expected ',' or '}' in JSON object".to_string()),
         }
     }
@@ -201,8 +217,13 @@ fn parse_array(chars: &[char], pos: &mut usize) -> Result<JsonValue, String> {
             return Err("unterminated JSON array".to_string());
         }
         match chars[*pos] {
-            ',' => { *pos += 1; }
-            ']' => { *pos += 1; break; }
+            ',' => {
+                *pos += 1;
+            }
+            ']' => {
+                *pos += 1;
+                break;
+            }
             _ => return Err("expected ',' or ']' in JSON array".to_string()),
         }
     }
@@ -237,7 +258,8 @@ fn parse_string(chars: &[char], pos: &mut usize) -> Result<String, String> {
                         return Err("invalid \\u escape in JSON string".to_string());
                     }
                     let hex: String = chars[*pos + 1..*pos + 5].iter().collect();
-                    let code = u32::from_str_radix(&hex, 16).map_err(|_| "invalid \\u escape in JSON string".to_string())?;
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| "invalid \\u escape in JSON string".to_string())?;
                     if let Some(ch) = char::from_u32(code) {
                         out.push(ch);
                     }
@@ -259,9 +281,18 @@ fn parse_number(chars: &[char], pos: &mut usize) -> Result<JsonValue, String> {
     if *pos < chars.len() && (chars[*pos] == '-' || chars[*pos] == '+') {
         *pos += 1;
     }
-    while *pos < chars.len() && (chars[*pos].is_ascii_digit() || chars[*pos] == '.' || chars[*pos] == 'e' || chars[*pos] == 'E' || chars[*pos] == '+' || chars[*pos] == '-') {
+    while *pos < chars.len()
+        && (chars[*pos].is_ascii_digit()
+            || chars[*pos] == '.'
+            || chars[*pos] == 'e'
+            || chars[*pos] == 'E'
+            || chars[*pos] == '+'
+            || chars[*pos] == '-')
+    {
         *pos += 1;
     }
     let s: String = chars[start..*pos].iter().collect();
-    s.parse::<f64>().map(JsonValue::Num).map_err(|_| format!("invalid JSON number '{}'", s))
+    s.parse::<f64>()
+        .map(JsonValue::Num)
+        .map_err(|_| format!("invalid JSON number '{}'", s))
 }

@@ -1,5 +1,5 @@
 /**
- * End-to-end tests for the Rust/WASM demosaic path (wasm/tiff-decoder/src/demosaic.rs).
+ * End-to-end tests for the Rust/WASM demosaic path (crates/image-decoders/src/demosaic.rs).
  *
  * Decodes the generated Bayer test files with the real WASM TIFF decoder,
  * demosaics them with the real WASM demosaic entry point, and measures PSNR

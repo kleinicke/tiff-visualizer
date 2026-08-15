@@ -2,10 +2,10 @@ use super::orientation::TiffOrientation;
 use super::tags::{extract_all_tags_json, extract_ome_xml, extract_page_tags_json};
 use super::{finalize_decode_bytes, patch_photometric_to_grayscale};
 use crate::pipeline::stats::compute_stats_u8;
+use crate::DecodeError;
 use crate::TiffResult;
 use std::io::Cursor;
 use tiff::decoder::{Decoder, DecodingResult};
-use wasm_bindgen::JsValue;
 
 /// Build a minimal single-strip, uncompressed classic TIFF wrapping `raster`,
 /// preserving the tags the decoder needs (incl. the predictor, which the tiff
@@ -26,7 +26,10 @@ pub(crate) fn build_uncompressed_tiff(
     let u32b = |v: u32| if le { v.to_le_bytes() } else { v.to_be_bytes() };
     // SHORT (type 3) and LONG (type 4) tag values. Single SHORT values are
     // left-justified in the 4-byte value field; arrays are stored externally.
-    let short_val = |v: u32| { let b = u16b(v as u16); [b[0], b[1], 0, 0] };
+    let short_val = |v: u32| {
+        let b = u16b(v as u16);
+        [b[0], b[1], 0, 0]
+    };
     let long_val = |v: u32| u32b(v);
 
     const N_TAGS: u16 = 12;
@@ -51,14 +54,18 @@ pub(crate) fn build_uncompressed_tiff(
         pack_inline(bits)
     } else {
         let off = after_ifd + ext.len() as u32;
-        for &b in bits { ext.extend_from_slice(&u16b(b as u16)); }
+        for &b in bits {
+            ext.extend_from_slice(&u16b(b as u16));
+        }
         u32b(off)
     };
     let sf_field = if spp <= 2 {
         pack_inline(sample_format)
     } else {
         let off = after_ifd + ext.len() as u32;
-        for &s in sample_format { ext.extend_from_slice(&u16b(s as u16)); }
+        for &s in sample_format {
+            ext.extend_from_slice(&u16b(s as u16));
+        }
         u32b(off)
     };
     let data_off = after_ifd + ext.len() as u32;
@@ -77,18 +84,18 @@ pub(crate) fn build_uncompressed_tiff(
     };
 
     // Tags must be in ascending order.
-    put(&mut buf, 256, 4, 1, long_val(width));               // ImageWidth
-    put(&mut buf, 257, 4, 1, long_val(height));              // ImageLength
-    put(&mut buf, 258, 3, spp, bits_field);                  // BitsPerSample
-    put(&mut buf, 259, 3, 1, short_val(1));                  // Compression = none
-    put(&mut buf, 262, 3, 1, short_val(photometric));        // PhotometricInterpretation
-    put(&mut buf, 273, 4, 1, long_val(data_off));            // StripOffsets
-    put(&mut buf, 277, 3, 1, short_val(spp));                // SamplesPerPixel
-    put(&mut buf, 278, 4, 1, long_val(height));              // RowsPerStrip
+    put(&mut buf, 256, 4, 1, long_val(width)); // ImageWidth
+    put(&mut buf, 257, 4, 1, long_val(height)); // ImageLength
+    put(&mut buf, 258, 3, spp, bits_field); // BitsPerSample
+    put(&mut buf, 259, 3, 1, short_val(1)); // Compression = none
+    put(&mut buf, 262, 3, 1, short_val(photometric)); // PhotometricInterpretation
+    put(&mut buf, 273, 4, 1, long_val(data_off)); // StripOffsets
+    put(&mut buf, 277, 3, 1, short_val(spp)); // SamplesPerPixel
+    put(&mut buf, 278, 4, 1, long_val(height)); // RowsPerStrip
     put(&mut buf, 279, 4, 1, long_val(raster.len() as u32)); // StripByteCounts
-    put(&mut buf, 284, 3, 1, short_val(1));                  // PlanarConfiguration = chunky
-    put(&mut buf, 317, 3, 1, short_val(predictor));          // Predictor
-    put(&mut buf, 339, 3, spp, sf_field);                    // SampleFormat
+    put(&mut buf, 284, 3, 1, short_val(1)); // PlanarConfiguration = chunky
+    put(&mut buf, 317, 3, 1, short_val(predictor)); // Predictor
+    put(&mut buf, 339, 3, spp, sf_field); // SampleFormat
 
     buf.extend_from_slice(&u32b(0)); // next IFD offset
     buf.extend_from_slice(&ext);
@@ -102,8 +109,16 @@ pub(crate) fn build_uncompressed_tiff(
 fn build_jpeg(tables: Option<&[u8]>, strip: &[u8]) -> Vec<u8> {
     match tables {
         Some(t) => {
-            let t = if t.ends_with(&[0xFF, 0xD9]) { &t[..t.len() - 2] } else { t };
-            let s = if strip.starts_with(&[0xFF, 0xD8]) { &strip[2..] } else { strip };
+            let t = if t.ends_with(&[0xFF, 0xD9]) {
+                &t[..t.len() - 2]
+            } else {
+                t
+            };
+            let s = if strip.starts_with(&[0xFF, 0xD8]) {
+                &strip[2..]
+            } else {
+                strip
+            };
             let mut out = Vec::with_capacity(t.len() + s.len());
             out.extend_from_slice(t);
             out.extend_from_slice(s);
@@ -124,17 +139,21 @@ pub(crate) fn decode_jpeg_ycbcr(
     width: u32,
     height: u32,
     orientation: TiffOrientation,
-) -> Result<TiffResult, JsValue> {
+) -> Result<TiffResult, DecodeError> {
     use tiff::tags::Tag;
     use zune_jpeg::JpegDecoder;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Err(JsValue::from_str("JPEG: tiled YCbCr JPEG is not supported by the direct path"));
+        return Err(DecodeError::new(
+            "JPEG: tiled YCbCr JPEG is not supported by the direct path",
+        ));
     }
-    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
-        .map_err(|e| JsValue::from_str(&format!("JPEG: StripOffsets: {}", e)))?;
-    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
-        .map_err(|e| JsValue::from_str(&format!("JPEG: StripByteCounts: {}", e)))?;
+    let offsets = decoder
+        .get_tag_u64_vec(Tag::StripOffsets)
+        .map_err(|e| DecodeError::new(&format!("JPEG: StripOffsets: {}", e)))?;
+    let counts = decoder
+        .get_tag_u64_vec(Tag::StripByteCounts)
+        .map_err(|e| DecodeError::new(&format!("JPEG: StripByteCounts: {}", e)))?;
     // JPEGTables (tag 347): optional abbreviated table stream shared by strips.
     let tables: Option<Vec<u8>> = decoder.get_tag_u8_vec(Tag::Unknown(347)).ok();
 
@@ -144,31 +163,39 @@ pub(crate) fn decode_jpeg_ycbcr(
         let start = *off as usize;
         let end = start.saturating_add(*cnt as usize);
         if end > data.len() {
-            return Err(JsValue::from_str("JPEG: strip byte range out of bounds"));
+            return Err(DecodeError::new("JPEG: strip byte range out of bounds"));
         }
         let jpeg = build_jpeg(tables.as_deref(), &data[start..end]);
         let mut jd = JpegDecoder::new(Cursor::new(jpeg));
-        let px = jd.decode()
-            .map_err(|e| JsValue::from_str(&format!("JPEG decode failed: {:?}", e)))?;
-        let info = jd.info()
-            .ok_or_else(|| JsValue::from_str("JPEG: missing image info"))?;
+        let px = jd
+            .decode()
+            .map_err(|e| DecodeError::new(&format!("JPEG decode failed: {:?}", e)))?;
+        let info = jd
+            .info()
+            .ok_or_else(|| DecodeError::new("JPEG: missing image info"))?;
         let pixels = (info.width as usize).saturating_mul(info.height as usize);
         if pixels == 0 {
-            return Err(JsValue::from_str("JPEG: empty strip"));
+            return Err(DecodeError::new("JPEG: empty strip"));
         }
         channels = (px.len() / pixels) as u32;
         rgb.extend_from_slice(&px);
     }
     if channels != 1 && channels != 3 {
-        return Err(JsValue::from_str("JPEG: unexpected channel count"));
+        return Err(DecodeError::new("JPEG: unexpected channel count"));
     }
 
     // Data is now decoded RGB (or grayscale), never CMYK, so
     // `finalize_decode_bytes`'s CMYK step is a no-op here and only the
     // Orientation transform actually does anything.
     let photometric_interpretation = if channels == 3 { 2 } else { 1 };
-    let (rgb, width, height, channels) =
-        finalize_decode_bytes(rgb, width, height, channels, photometric_interpretation, orientation);
+    let (rgb, width, height, channels) = finalize_decode_bytes(
+        rgb,
+        width,
+        height,
+        channels,
+        photometric_interpretation,
+        orientation,
+    );
 
     let (min, max) = compute_stats_u8(&rgb);
     Ok(TiffResult {
@@ -227,22 +254,28 @@ pub(crate) fn unpack_bilevel(data: &[u8], width: u32, height: u32, photometric: 
 
 /// Decode a palette (RGBPalette) TIFF by reading the raw indices and expanding
 /// them through the ColorMap tag into interleaved 8-bit RGB.
-pub(crate) fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u32) -> Result<TiffResult, JsValue> {
+pub(crate) fn decode_palette(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    page_index: u32,
+) -> Result<TiffResult, DecodeError> {
     use tiff::tags::Tag;
 
     // ColorMap (tag 320): 3 * 2^bits 16-bit entries, laid out as all reds, then
     // all greens, then all blues.
     let cmap = {
         let mut d = Decoder::new(Cursor::new(data))
-            .map_err(|e| JsValue::from_str(&format!("Palette: decoder init: {}", e)))?;
+            .map_err(|e| DecodeError::new(&format!("Palette: decoder init: {}", e)))?;
         for _ in 0..page_index {
-            d.next_image().map_err(|e| JsValue::from_str(&format!("Palette: page select: {}", e)))?;
+            d.next_image()
+                .map_err(|e| DecodeError::new(&format!("Palette: page select: {}", e)))?;
         }
         d.get_tag_u16_vec(Tag::Unknown(320))
-            .map_err(|e| JsValue::from_str(&format!("Palette: missing ColorMap: {}", e)))?
+            .map_err(|e| DecodeError::new(&format!("Palette: missing ColorMap: {}", e)))?
     };
     if cmap.is_empty() || cmap.len() % 3 != 0 {
-        return Err(JsValue::from_str("Palette: invalid ColorMap length"));
+        return Err(DecodeError::new("Palette: invalid ColorMap length"));
     }
     let n_colors = cmap.len() / 3;
 
@@ -250,13 +283,14 @@ pub(crate) fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u
     // reusing all of its compression / predictor / strip handling.
     let mut patched = data.to_vec();
     if !patch_photometric_to_grayscale(&mut patched, page_index) {
-        return Err(JsValue::from_str("Palette: could not patch photometric tag"));
+        return Err(DecodeError::new("Palette: could not patch photometric tag"));
     }
 
     let mut d = Decoder::new(Cursor::new(patched.as_slice()))
-        .map_err(|e| JsValue::from_str(&format!("Palette: patched decoder init: {}", e)))?;
+        .map_err(|e| DecodeError::new(&format!("Palette: patched decoder init: {}", e)))?;
     for _ in 0..page_index {
-        d.next_image().map_err(|e| JsValue::from_str(&format!("Palette: patched page select: {}", e)))?;
+        d.next_image()
+            .map_err(|e| DecodeError::new(&format!("Palette: patched page select: {}", e)))?;
     }
     let compression = d.get_tag_u32(Tag::Compression).unwrap_or(1);
     let predictor = d.get_tag_u32(Tag::Predictor).unwrap_or(1);
@@ -265,7 +299,8 @@ pub(crate) fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u
     let strip_byte_counts = d.get_tag_u64_vec(Tag::StripByteCounts).unwrap_or_default();
     let tile_width = d.get_tag_u32(Tag::TileWidth).unwrap_or(0);
     let tile_length = d.get_tag_u32(Tag::TileLength).unwrap_or(0);
-    let tile_count = d.get_tag_u64_vec(Tag::TileByteCounts)
+    let tile_count = d
+        .get_tag_u64_vec(Tag::TileByteCounts)
         .map(|counts| counts.len() as u32)
         .unwrap_or(0);
     // Orientation tag (274): the early-return palette path bypasses
@@ -274,12 +309,13 @@ pub(crate) fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u
     // through `finalize_decode_bytes` below like every other path.
     let orientation = TiffOrientation::from_tag(d.get_tag_u32(Tag::Orientation).unwrap_or(1));
 
-    let indices: Vec<usize> = match d.read_image()
-        .map_err(|e| JsValue::from_str(&format!("Palette: index decode failed: {}", e)))?
+    let indices: Vec<usize> = match d
+        .read_image()
+        .map_err(|e| DecodeError::new(&format!("Palette: index decode failed: {}", e)))?
     {
         DecodingResult::U8(v) => v.iter().map(|&x| x as usize).collect(),
         DecodingResult::U16(v) => v.iter().map(|&x| x as usize).collect(),
-        _ => return Err(JsValue::from_str("Palette: unexpected index sample type")),
+        _ => return Err(DecodeError::new("Palette: unexpected index sample type")),
     };
 
     // ColorMap entries are 16-bit; scale down to 8-bit per channel.
@@ -297,7 +333,8 @@ pub(crate) fn decode_palette(data: &[u8], width: u32, height: u32, page_index: u
     // Palette output is already expanded RGB (photometric_interpretation 2,
     // never 5/CMYK), so `finalize_decode_bytes`'s CMYK step is a no-op here
     // and only the Orientation transform actually does anything.
-    let (rgb, width, height, channels) = finalize_decode_bytes(rgb, width, height, 3, 2, orientation);
+    let (rgb, width, height, channels) =
+        finalize_decode_bytes(rgb, width, height, 3, 2, orientation);
 
     let (min, max) = compute_stats_u8(&rgb);
     Ok(TiffResult {
@@ -352,13 +389,15 @@ pub(crate) fn decode_ccitt(
     t4_options: u32,
     rows_per_strip: u32,
     orientation: TiffOrientation,
-) -> Result<TiffResult, JsValue> {
-    use hayro_ccitt::{decode, DecodeSettings, DecoderContext, EncodingMode, Decoder as CcittDecoder};
+) -> Result<TiffResult, DecodeError> {
+    use hayro_ccitt::{
+        decode, DecodeSettings, Decoder as CcittDecoder, DecoderContext, EncodingMode,
+    };
 
     // Map the TIFF compression + T4Options to a hayro encoding mode.
     let two_dimensional = (t4_options & 0b1) != 0; // bit 0: 2D coding
-    // Compression 2 (Modified Huffman) byte-aligns every row; for Group 3 this
-    // is controlled by T4Options bit 2 (EncodedByteAlign).
+                                                   // Compression 2 (Modified Huffman) byte-aligns every row; for Group 3 this
+                                                   // is controlled by T4Options bit 2 (EncodedByteAlign).
     let byte_aligned = compression == 2 || (t4_options & 0b100) != 0;
     let encoding = match compression {
         4 => EncodingMode::Group4,
@@ -372,7 +411,11 @@ pub(crate) fn decode_ccitt(
     // convention). Map that to a display value through PhotometricInterpretation
     // exactly like unpack_bilevel does, so a CCITT image renders identically to
     // the same image stored uncompressed. (0 = WhiteIsZero, 1 = BlackIsZero.)
-    let white_pel_value: u8 = if photometric_interpretation == 0 { 255 } else { 0 };
+    let white_pel_value: u8 = if photometric_interpretation == 0 {
+        255
+    } else {
+        0
+    };
     let black_pel_value: u8 = 255 - white_pel_value;
 
     // hayro-ccitt streams decoded pixels through this collector.
@@ -386,7 +429,11 @@ pub(crate) fn decode_ccitt(
     impl CcittDecoder for Collector {
         fn push_pixel(&mut self, white: bool) {
             if self.cur_x < self.width {
-                self.pixels.push(if white { self.white_value } else { self.black_value });
+                self.pixels.push(if white {
+                    self.white_value
+                } else {
+                    self.black_value
+                });
                 self.cur_x += 1;
             }
         }
@@ -418,12 +465,16 @@ pub(crate) fn decode_ccitt(
     // Each strip is an independent CCITT stream covering up to rows_per_strip
     // rows. Decode them one at a time (resetting the decoder per strip) and
     // accumulate the pixel rows, rather than concatenating the bitstreams.
-    let rps = if rows_per_strip == 0 { height } else { rows_per_strip };
+    let rps = if rows_per_strip == 0 {
+        height
+    } else {
+        rows_per_strip
+    };
     for (i, (off, cnt)) in offsets.iter().zip(counts.iter()).enumerate() {
         let start = *off as usize;
         let end = start.saturating_add(*cnt as usize);
         if end > data.len() {
-            return Err(JsValue::from_str("CCITT: strip byte range out of bounds"));
+            return Err(DecodeError::new("CCITT: strip byte range out of bounds"));
         }
         let rows_in_strip = height.saturating_sub(i as u32 * rps).min(rps);
         if rows_in_strip == 0 {
@@ -448,7 +499,7 @@ pub(crate) fn decode_ccitt(
         let mut ctx = DecoderContext::new(settings);
         collector.cur_x = 0;
         decode(&strip, &mut collector, &mut ctx)
-            .map_err(|e| JsValue::from_str(&format!("CCITT strip {} decode failed: {:?}", i, e)))?;
+            .map_err(|e| DecodeError::new(&format!("CCITT strip {} decode failed: {:?}", i, e)))?;
     }
 
     let mut pixels = collector.pixels;
@@ -457,8 +508,14 @@ pub(crate) fn decode_ccitt(
     // CCITT data is always bilevel grayscale (photometric_interpretation is 0
     // or 1 here, never 5), so `finalize_decode_bytes`'s CMYK step is a no-op
     // and only the Orientation transform actually does anything.
-    let (pixels, width, height, channels) =
-        finalize_decode_bytes(pixels, width, height, 1, photometric_interpretation, orientation);
+    let (pixels, width, height, channels) = finalize_decode_bytes(
+        pixels,
+        width,
+        height,
+        1,
+        photometric_interpretation,
+        orientation,
+    );
 
     let (min, max) = compute_stats_u8(&pixels);
 

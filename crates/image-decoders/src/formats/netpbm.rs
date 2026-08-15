@@ -9,8 +9,8 @@
 //! single whitespace before binary raster data from being swallowed into the
 //! header fields. Do not merge them.
 
+use crate::DecodeError;
 use crate::DecodedArray;
-use wasm_bindgen::JsValue;
 
 fn is_ws(b: u8) -> bool {
     b == 32 || b == 9 || b == 10 || b == 13
@@ -24,7 +24,9 @@ fn skip_ws_and_comments(bytes: &[u8], offset: &mut usize) {
             while *offset < bytes.len() && bytes[*offset] != 10 {
                 *offset += 1;
             }
-            if *offset < bytes.len() { *offset += 1; }
+            if *offset < bytes.len() {
+                *offset += 1;
+            }
         } else if is_ws(c) {
             *offset += 1;
         } else {
@@ -40,7 +42,9 @@ fn read_token(bytes: &[u8], offset: &mut usize) -> String {
     let start = *offset;
     while *offset < bytes.len() {
         let c = bytes[*offset];
-        if is_ws(c) || c == 35 { break; }
+        if is_ws(c) || c == 35 {
+            break;
+        }
         *offset += 1;
     }
     bytes[start..*offset].iter().map(|&b| b as char).collect()
@@ -53,8 +57,13 @@ fn read_number(bytes: &[u8], offset: &mut usize) -> Option<i64> {
     while *offset < bytes.len() && bytes[*offset].is_ascii_digit() {
         *offset += 1;
     }
-    if *offset == start { return None; }
-    std::str::from_utf8(&bytes[start..*offset]).ok()?.parse::<i64>().ok()
+    if *offset == start {
+        return None;
+    }
+    std::str::from_utf8(&bytes[start..*offset])
+        .ok()?
+        .parse::<i64>()
+        .ok()
 }
 
 /// Loose `parseInt(str, 10)`, matching JS semantics: leading sign then a run
@@ -66,12 +75,18 @@ fn parse_int_js(s: &str) -> Option<i64> {
     let n = bytes.len();
     let mut sign: i64 = 1;
     if i < n && (bytes[i] == b'+' || bytes[i] == b'-') {
-        if bytes[i] == b'-' { sign = -1; }
+        if bytes[i] == b'-' {
+            sign = -1;
+        }
         i += 1;
     }
     let digits_start = i;
-    while i < n && bytes[i].is_ascii_digit() { i += 1; }
-    if i == digits_start { return None; }
+    while i < n && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digits_start {
+        return None;
+    }
     s[digits_start..i].parse::<i64>().ok().map(|v| v * sign)
 }
 
@@ -80,16 +95,23 @@ enum PixelData {
     U16(Vec<u16>),
 }
 
-pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
+pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     let mut offset = 0usize;
 
     let magic = read_token(data, &mut offset);
     if !matches!(magic.as_str(), "P1" | "P2" | "P3" | "P4" | "P5" | "P6") {
-        return Err(JsValue::from_str(&format!("Invalid PPM/PGM/PBM magic number: {}", magic)));
+        return Err(DecodeError::new(&format!(
+            "Invalid PPM/PGM/PBM magic number: {}",
+            magic
+        )));
     }
 
     let is_ascii = matches!(magic.as_str(), "P1" | "P2" | "P3");
-    let channels: usize = if matches!(magic.as_str(), "P1" | "P4" | "P2" | "P5") { 1 } else { 3 };
+    let channels: usize = if matches!(magic.as_str(), "P1" | "P4" | "P2" | "P5") {
+        1
+    } else {
+        3
+    };
     let format = match magic.as_str() {
         "P1" => "PBM (ASCII)",
         "P2" => "PGM (ASCII)",
@@ -102,10 +124,14 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
 
     let width = read_number(data, &mut offset).unwrap_or(0);
     let height = read_number(data, &mut offset).unwrap_or(0);
-    let maxval = if is_pbm { 1 } else { read_number(data, &mut offset).unwrap_or(0) };
+    let maxval = if is_pbm {
+        1
+    } else {
+        read_number(data, &mut offset).unwrap_or(0)
+    };
 
     if width <= 0 || height <= 0 || (!is_pbm && maxval <= 0) {
-        return Err(JsValue::from_str("Invalid PPM/PGM/PBM dimensions or maxval"));
+        return Err(DecodeError::new("Invalid PPM/PGM/PBM dimensions or maxval"));
     }
     let width = width as usize;
     let height = height as usize;
@@ -127,7 +153,12 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
             match value {
                 Some(0) => *slot = 255,
                 Some(1) => *slot = 0,
-                _ => return Err(JsValue::from_str(&format!("Invalid PBM pixel value: {} (must be 0 or 1)", token))),
+                _ => {
+                    return Err(DecodeError::new(&format!(
+                        "Invalid PBM pixel value: {} (must be 0 or 1)",
+                        token
+                    )))
+                }
             }
         }
         pixel_data = PixelData::U8(out);
@@ -140,7 +171,7 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         let bytes_per_row = (width + 7) / 8;
         let expected_bytes = bytes_per_row * height;
         if offset + expected_bytes > data.len() {
-            return Err(JsValue::from_str("Insufficient data for binary PBM"));
+            return Err(DecodeError::new("Insufficient data for binary PBM"));
         }
 
         let mut out = vec![0u8; total_values];
@@ -163,8 +194,10 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
                 let token = read_token(data, &mut offset);
                 let value = parse_int_js(&token);
                 match value {
-                    Some(v) if v >= 0 && (v as u32) <= maxval => { *slot = v as u16; }
-                    _ => return Err(JsValue::from_str(&format!("Invalid pixel value: {}", token))),
+                    Some(v) if v >= 0 && (v as u32) <= maxval => {
+                        *slot = v as u16;
+                    }
+                    _ => return Err(DecodeError::new(&format!("Invalid pixel value: {}", token))),
                 }
             }
             pixel_data = PixelData::U16(out);
@@ -174,8 +207,10 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
                 let token = read_token(data, &mut offset);
                 let value = parse_int_js(&token);
                 match value {
-                    Some(v) if v >= 0 && (v as u32) <= maxval => { *slot = v as u8; }
-                    _ => return Err(JsValue::from_str(&format!("Invalid pixel value: {}", token))),
+                    Some(v) if v >= 0 && (v as u32) <= maxval => {
+                        *slot = v as u8;
+                    }
+                    _ => return Err(DecodeError::new(&format!("Invalid pixel value: {}", token))),
                 }
             }
             pixel_data = PixelData::U8(out);
@@ -190,7 +225,7 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         let bytes_per_value = if use16bit { 2 } else { 1 };
         let expected_bytes = total_values * bytes_per_value;
         if offset + expected_bytes > data.len() {
-            return Err(JsValue::from_str("Insufficient data for binary PPM/PGM"));
+            return Err(DecodeError::new("Insufficient data for binary PPM/PGM"));
         }
 
         if use16bit {
@@ -211,7 +246,7 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
     };
 
     Ok(DecodedArray {
-            taken: false,
+        taken: false,
         width: width as u32,
         height: height as u32,
         channels: channels as u32,
@@ -219,7 +254,11 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         sample_format: 1,
         type_min: 0.0,
         type_max: maxval as f64,
-        source_numeric_type: if use16bit { "uint16".to_string() } else { "uint8".to_string() },
+        source_numeric_type: if use16bit {
+            "uint16".to_string()
+        } else {
+            "uint8".to_string()
+        },
         sample_kind: if use16bit { 2 } else { 1 },
         format_label: format.to_string(),
         metadata_json: "{}".to_string(),
@@ -230,5 +269,6 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         data_max: 0.0,
         non_finite_count: 0.0,
         valid_count: 0.0,
-    }.finalize_stats())
+    }
+    .finalize_stats())
 }

@@ -1,6 +1,6 @@
 /// Convert u16 slice to little-endian bytes using SIMD
 #[inline]
-pub(crate) fn convert_u16_to_bytes_simd(data: &[u16]) -> Vec<u8> {
+pub fn convert_u16_to_bytes_simd(data: &[u16]) -> Vec<u8> {
     use wide::*;
 
     let mut bytes = Vec::with_capacity(data.len() * 2);
@@ -11,8 +11,7 @@ pub(crate) fn convert_u16_to_bytes_simd(data: &[u16]) -> Vec<u8> {
 
     for chunk in chunks {
         let simd = u16x8::new([
-            chunk[0], chunk[1], chunk[2], chunk[3],
-            chunk[4], chunk[5], chunk[6], chunk[7]
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
         ]);
 
         let arr = simd.to_array();
@@ -29,7 +28,7 @@ pub(crate) fn convert_u16_to_bytes_simd(data: &[u16]) -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn compute_stats_u8(data: &[u8]) -> (u8, u8) {
+pub fn compute_stats_u8(data: &[u8]) -> (u8, u8) {
     let mut min = u8::MAX;
     let mut max = u8::MIN;
     for &v in data {
@@ -39,7 +38,7 @@ pub(crate) fn compute_stats_u8(data: &[u8]) -> (u8, u8) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_u16(data: &[u16]) -> (u16, u16) {
+pub fn compute_stats_u16(data: &[u16]) -> (u16, u16) {
     let mut min = u16::MAX;
     let mut max = u16::MIN;
     for &v in data {
@@ -49,7 +48,7 @@ pub(crate) fn compute_stats_u16(data: &[u16]) -> (u16, u16) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_u32(data: &[u32]) -> (u32, u32) {
+pub fn compute_stats_u32(data: &[u32]) -> (u32, u32) {
     let mut min = u32::MAX;
     let mut max = u32::MIN;
     for &v in data {
@@ -59,7 +58,7 @@ pub(crate) fn compute_stats_u32(data: &[u32]) -> (u32, u32) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_u64(data: &[u64]) -> (u64, u64) {
+pub fn compute_stats_u64(data: &[u64]) -> (u64, u64) {
     let mut min = u64::MAX;
     let mut max = u64::MIN;
     for &v in data {
@@ -69,7 +68,7 @@ pub(crate) fn compute_stats_u64(data: &[u64]) -> (u64, u64) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_i8(data: &[i8]) -> (i8, i8) {
+pub fn compute_stats_i8(data: &[i8]) -> (i8, i8) {
     let mut min = i8::MAX;
     let mut max = i8::MIN;
     for &v in data {
@@ -79,7 +78,7 @@ pub(crate) fn compute_stats_i8(data: &[i8]) -> (i8, i8) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_i16(data: &[i16]) -> (i16, i16) {
+pub fn compute_stats_i16(data: &[i16]) -> (i16, i16) {
     let mut min = i16::MAX;
     let mut max = i16::MIN;
     for &v in data {
@@ -89,7 +88,7 @@ pub(crate) fn compute_stats_i16(data: &[i16]) -> (i16, i16) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_i32(data: &[i32]) -> (i32, i32) {
+pub fn compute_stats_i32(data: &[i32]) -> (i32, i32) {
     let mut min = i32::MAX;
     let mut max = i32::MIN;
     for &v in data {
@@ -99,7 +98,7 @@ pub(crate) fn compute_stats_i32(data: &[i32]) -> (i32, i32) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_i64(data: &[i64]) -> (i64, i64) {
+pub fn compute_stats_i64(data: &[i64]) -> (i64, i64) {
     let mut min = i64::MAX;
     let mut max = i64::MIN;
     for &v in data {
@@ -109,7 +108,7 @@ pub(crate) fn compute_stats_i64(data: &[i64]) -> (i64, i64) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_f32(data: &[f32]) -> (f64, f64) {
+pub fn compute_stats_f32(data: &[f32]) -> (f64, f64) {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     for &v in data {
@@ -122,7 +121,7 @@ pub(crate) fn compute_stats_f32(data: &[f32]) -> (f64, f64) {
     (min, max)
 }
 
-pub(crate) fn compute_stats_f64(data: &[f64]) -> (f64, f64) {
+pub fn compute_stats_f64(data: &[f64]) -> (f64, f64) {
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
     for &v in data {
@@ -140,15 +139,14 @@ pub(crate) fn compute_stats_f64(data: &[f64]) -> (f64, f64) {
 // These back the render-hot-path stats used by every format processor
 // (min/max normalization) plus the on-demand "extended" stats (mean/std/
 // valid & non-finite counts) shown in the Metadata panel. See
-// `compute_image_stats_f32/u8/u16` in lib.rs for the `#[wasm_bindgen]`
-// entry points; the plain-Rust logic lives here so it stays testable
-// without a wasm runtime.
+// The WASM adapter exposes these through `compute_image_stats_f32/u8/u16`;
+// the plain-Rust logic lives here so it stays testable without a wasm runtime.
 // ---------------------------------------------------------------------------
 
-/// Full statistics accumulated over the scanned samples of an image. Getters
-/// for this live on the `ImageStats` wasm-bindgen struct in lib.rs; this
-/// plain struct is the internal computation result.
-pub(crate) struct RawImageStats {
+/// Full statistics accumulated over the scanned samples of an image. The WASM
+/// adapter mirrors this as its small `ImageStats` result; native Rust callers
+/// can use this struct directly.
+pub struct RawImageStats {
     pub min: f64,
     pub max: f64,
     pub mean: f64,
@@ -166,7 +164,11 @@ pub(crate) struct RawImageStats {
 /// ignoring any alpha/extra samples beyond that.
 #[inline]
 fn scan_channels(channels: u32) -> u32 {
-    if channels <= 2 { 1 } else { channels.min(3) }
+    if channels <= 2 {
+        1
+    } else {
+        channels.min(3)
+    }
 }
 
 /// Shared f32 accumulation pass, ported from `calculateFloatStats` /
@@ -185,7 +187,13 @@ fn scan_channels(channels: u32) -> u32 {
 /// NaN mean/std. Every other field (mean/std/counts) is computed the same
 /// way regardless of `extended`; the two TS non-extended methods simply
 /// never read them.
-pub(crate) fn compute_image_stats_f32_impl(data: &[f32], width: u32, height: u32, channels: u32, extended: bool) -> RawImageStats {
+pub fn compute_image_stats_f32_impl(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    channels: u32,
+    extended: bool,
+) -> RawImageStats {
     let len = (width as u64) * (height as u64);
     let scan_ch = scan_channels(channels);
 
@@ -204,8 +212,12 @@ pub(crate) fn compute_image_stats_f32_impl(data: &[f32], width: u32, height: u32
             match sample {
                 Some(v) if v.is_finite() => {
                     let v64 = v as f64;
-                    if v64 < min { min = v64; }
-                    if v64 > max { max = v64; }
+                    if v64 < min {
+                        min = v64;
+                    }
+                    if v64 > max {
+                        max = v64;
+                    }
                     sum += v64;
                     sum_sq += v64 * v64;
                     valid_count += 1.0;
@@ -218,7 +230,11 @@ pub(crate) fn compute_image_stats_f32_impl(data: &[f32], width: u32, height: u32
     }
 
     let total_count = (len * (scan_ch as u64)) as f64;
-    let mean = if valid_count > 0.0 { sum / valid_count } else { f64::NAN };
+    let mean = if valid_count > 0.0 {
+        sum / valid_count
+    } else {
+        f64::NAN
+    };
     let variance = if valid_count > 0.0 {
         (sum_sq / valid_count - mean * mean).max(0.0)
     } else {
@@ -227,7 +243,11 @@ pub(crate) fn compute_image_stats_f32_impl(data: &[f32], width: u32, height: u32
     let std = variance.sqrt();
 
     let (out_min, out_max) = if extended {
-        if valid_count > 0.0 { (min, max) } else { (f64::NAN, f64::NAN) }
+        if valid_count > 0.0 {
+            (min, max)
+        } else {
+            (f64::NAN, f64::NAN)
+        }
     } else {
         (min, max)
     };
@@ -253,7 +273,13 @@ pub(crate) fn compute_image_stats_f32_impl(data: &[f32], width: u32, height: u32
 /// 4th (alpha) channel — the same packing `calculateIntegerStats` uses for
 /// the depth-as-RGB24 render mode. Otherwise the plain `scan_channels`
 /// convention applies, same as the float path.
-pub(crate) fn compute_image_stats_uint_impl<T>(data: &[T], width: u32, height: u32, channels: u32, rgb_as_24bit: bool) -> RawImageStats
+pub fn compute_image_stats_uint_impl<T>(
+    data: &[T],
+    width: u32,
+    height: u32,
+    channels: u32,
+    rgb_as_24bit: bool,
+) -> RawImageStats
 where
     T: Copy + Into<u32>,
 {
@@ -274,17 +300,32 @@ where
             };
             let val24 = ((r.into()) << 16) | ((g.into()) << 8) | (b.into());
             let v64 = val24 as f64;
-            if v64 < min { min = v64; }
-            if v64 > max { max = v64; }
+            if v64 < min {
+                min = v64;
+            }
+            if v64 > max {
+                max = v64;
+            }
             sum += v64;
             sum_sq += v64 * v64;
             valid_count += 1.0;
         }
 
         return RawImageStats {
-            min, max,
-            mean: if valid_count > 0.0 { sum / valid_count } else { f64::NAN },
-            std: if valid_count > 0.0 { (sum_sq / valid_count - (sum / valid_count) * (sum / valid_count)).max(0.0).sqrt() } else { f64::NAN },
+            min,
+            max,
+            mean: if valid_count > 0.0 {
+                sum / valid_count
+            } else {
+                f64::NAN
+            },
+            std: if valid_count > 0.0 {
+                (sum_sq / valid_count - (sum / valid_count) * (sum / valid_count))
+                    .max(0.0)
+                    .sqrt()
+            } else {
+                f64::NAN
+            },
             valid_count,
             non_finite_count: 0.0,
             total_count: valid_count,
@@ -299,19 +340,32 @@ where
             let Some(&v) = data.get(idx) else { continue };
             let v64: u32 = v.into();
             let v64 = v64 as f64;
-            if v64 < min { min = v64; }
-            if v64 > max { max = v64; }
+            if v64 < min {
+                min = v64;
+            }
+            if v64 > max {
+                max = v64;
+            }
             sum += v64;
             sum_sq += v64 * v64;
             valid_count += 1.0;
         }
     }
 
-    let mean = if valid_count > 0.0 { sum / valid_count } else { f64::NAN };
-    let variance = if valid_count > 0.0 { (sum_sq / valid_count - mean * mean).max(0.0) } else { f64::NAN };
+    let mean = if valid_count > 0.0 {
+        sum / valid_count
+    } else {
+        f64::NAN
+    };
+    let variance = if valid_count > 0.0 {
+        (sum_sq / valid_count - mean * mean).max(0.0)
+    } else {
+        f64::NAN
+    };
 
     RawImageStats {
-        min, max,
+        min,
+        max,
         mean,
         std: variance.sqrt(),
         valid_count,

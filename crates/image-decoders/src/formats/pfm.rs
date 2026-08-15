@@ -6,8 +6,8 @@
 //! dimensions/scale lines, trailing space/tab trimming) and the same
 //! top-down vertical-flip semantics.
 
+use crate::DecodeError;
 use crate::DecodedArray;
-use wasm_bindgen::JsValue;
 
 /// Read one line the same way the TS `readLine` closure does: skip leading
 /// CR/LF, read up to the next CR/LF, trim trailing space/tab, `.trim()` the
@@ -39,17 +39,24 @@ fn parse_int_js(s: &str) -> Option<i64> {
     let bytes = s.as_bytes();
     let mut i = 0;
     let n = bytes.len();
-    while i < n && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r') {
+    while i < n && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\n' || bytes[i] == b'\r')
+    {
         i += 1;
     }
     let mut sign: i64 = 1;
     if i < n && (bytes[i] == b'+' || bytes[i] == b'-') {
-        if bytes[i] == b'-' { sign = -1; }
+        if bytes[i] == b'-' {
+            sign = -1;
+        }
         i += 1;
     }
     let digits_start = i;
-    while i < n && bytes[i].is_ascii_digit() { i += 1; }
-    if i == digits_start { return None; }
+    while i < n && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digits_start {
+        return None;
+    }
     s[digits_start..i].parse::<i64>().ok().map(|v| v * sign)
 }
 
@@ -61,39 +68,60 @@ fn parse_float_js(s: &str) -> f64 {
     let bytes = s.as_bytes();
     let n = bytes.len();
     let mut i = 0;
-    if i < n && (bytes[i] == b'+' || bytes[i] == b'-') { i += 1; }
+    if i < n && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
     let int_start = i;
-    while i < n && bytes[i].is_ascii_digit() { i += 1; }
+    while i < n && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
     let mut has_digits = i > int_start;
     let mut mant_end = i;
     if i < n && bytes[i] == b'.' {
         let frac_start = i + 1;
         let mut j = frac_start;
-        while j < n && bytes[j].is_ascii_digit() { j += 1; }
-        if j > frac_start { has_digits = true; }
+        while j < n && bytes[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j > frac_start {
+            has_digits = true;
+        }
         mant_end = j;
         i = j;
     }
-    if !has_digits { return f64::NAN; }
+    if !has_digits {
+        return f64::NAN;
+    }
     let mut end = mant_end;
     if i < n && (bytes[i] == b'e' || bytes[i] == b'E') {
         let mut j = i + 1;
-        if j < n && (bytes[j] == b'+' || bytes[j] == b'-') { j += 1; }
+        if j < n && (bytes[j] == b'+' || bytes[j] == b'-') {
+            j += 1;
+        }
         let exp_digits_start = j;
-        while j < n && bytes[j].is_ascii_digit() { j += 1; }
-        if j > exp_digits_start { end = j; }
+        while j < n && bytes[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j > exp_digits_start {
+            end = j;
+        }
     }
     s[..end].parse::<f64>().unwrap_or(f64::NAN)
 }
 
-fn read_f32(bytes: &[u8], byte_offset: usize, little_endian: bool) -> Result<f32, JsValue> {
-    let slice = bytes.get(byte_offset..byte_offset + 4)
-        .ok_or_else(|| JsValue::from_str("PFM: unexpected end of data while reading samples"))?;
+fn read_f32(bytes: &[u8], byte_offset: usize, little_endian: bool) -> Result<f32, DecodeError> {
+    let slice = bytes
+        .get(byte_offset..byte_offset + 4)
+        .ok_or_else(|| DecodeError::new("PFM: unexpected end of data while reading samples"))?;
     let arr: [u8; 4] = slice.try_into().unwrap();
-    Ok(if little_endian { f32::from_le_bytes(arr) } else { f32::from_be_bytes(arr) })
+    Ok(if little_endian {
+        f32::from_le_bytes(arr)
+    } else {
+        f32::from_be_bytes(arr)
+    })
 }
 
-pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArray, JsValue> {
+pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArray, DecodeError> {
     let mut offset = 0usize;
 
     let mut magic = read_line(data, &mut offset);
@@ -105,26 +133,32 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
         let before = offset;
         magic = read_line(data, &mut offset);
         if magic.is_empty() && offset == before {
-            return Err(JsValue::from_str("Invalid PFM magic"));
+            return Err(DecodeError::new("Invalid PFM magic"));
         }
     }
     if magic != "PF" && magic != "Pf" {
-        return Err(JsValue::from_str("Invalid PFM magic"));
+        return Err(DecodeError::new("Invalid PFM magic"));
     }
 
     let mut dims_line = read_line(data, &mut offset);
     while dims_line.starts_with('#') || dims_line.is_empty() {
         let before = offset;
         dims_line = read_line(data, &mut offset);
-        if dims_line.is_empty() && offset == before { break; }
+        if dims_line.is_empty() && offset == before {
+            break;
+        }
     }
     let dims: Vec<&str> = dims_line.split_whitespace().collect();
-    let width = dims.get(0).and_then(|s| parse_int_js(s))
-        .ok_or_else(|| JsValue::from_str("Invalid PFM dimensions"))?;
-    let height = dims.get(1).and_then(|s| parse_int_js(s))
-        .ok_or_else(|| JsValue::from_str("Invalid PFM dimensions"))?;
+    let width = dims
+        .get(0)
+        .and_then(|s| parse_int_js(s))
+        .ok_or_else(|| DecodeError::new("Invalid PFM dimensions"))?;
+    let height = dims
+        .get(1)
+        .and_then(|s| parse_int_js(s))
+        .ok_or_else(|| DecodeError::new("Invalid PFM dimensions"))?;
     if width <= 0 || height <= 0 {
-        return Err(JsValue::from_str("Invalid PFM dimensions"));
+        return Err(DecodeError::new("Invalid PFM dimensions"));
     }
     let width = width as usize;
     let height = height as usize;
@@ -133,7 +167,9 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
     while scale_line.starts_with('#') || scale_line.is_empty() {
         let before = offset;
         scale_line = read_line(data, &mut offset);
-        if scale_line.is_empty() && offset == before { break; }
+        if scale_line.is_empty() && offset == before {
+            break;
+        }
     }
     let scale = parse_float_js(&scale_line);
     let little_endian = scale < 0.0;
@@ -160,7 +196,7 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
     }
 
     Ok(DecodedArray {
-            taken: false,
+        taken: false,
         width: width as u32,
         height: height as u32,
         channels: channels as u32,
@@ -179,5 +215,6 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
         data_max: 0.0,
         non_finite_count: 0.0,
         valid_count: 0.0,
-    }.finalize_stats())
+    }
+    .finalize_stats())
 }

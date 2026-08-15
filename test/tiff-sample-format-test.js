@@ -478,7 +478,7 @@ async function main() {
 	// --- 5. Wide unsigned integer (uint32) via the WASM decoder path ------
 	// Mirrors section 3 (signed int16 via WASM): the Rust decoder returns the
 	// wide unsigned samples as interleaved Float32 data directly (see
-	// wasm/tiff-decoder/src/lib.rs's get_data_as_f32 32-bit branch), and the
+	// crates/image-decoders/src/lib.rs's get_data_as_f32 32-bit branch), and the
 	// processor must reuse that Float32Array as-is rather than re-interleaving
 	// it into a Uint16Array (which would wrap every value above 65535).
 	{

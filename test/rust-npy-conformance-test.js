@@ -1,6 +1,6 @@
 /**
  * Conformance tests for the Rust/WASM NPY/NPZ decoder
- * (wasm/tiff-decoder/src/formats/npy.rs).
+ * (crates/image-decoders/src/formats/npy.rs).
  *
  * Every case (file fixture or in-memory synthesized buffer — see
  * test/lib/decoder-cases.js for the full list and synthesis helpers) is
@@ -35,7 +35,7 @@ const { listCases, bufferToArrayBuffer } = require('./lib/decoder-cases');
 const { assertMatchesGolden, expectsRejection } = require('./lib/golden-io');
 
 /**
- * Checks `DecodedArray::finalize_stats` (wasm/tiff-decoder/src/lib.rs)
+ * Checks `DecodedArray::finalize_stats` (crates/image-decoders/src/lib.rs)
  * against `ImageStatsCalculator.calculateFloatStats` run independently on the
  * same taken samples. NPY always carries samples as Float32Array regardless
  * of source dtype (see npy-processor.ts), so the decoder always scans via the
@@ -132,7 +132,7 @@ async function main() {
 		// Golden check: proves only that Rust's decoded output hasn't changed
 		// since capture — the absolute-value check above is what proves it is
 		// correct. The numpy dtype string travels through `metadata.dtype`
-		// (see wasm/tiff-decoder/src/formats/npy.rs); numericDomain carries
+		// (see crates/image-decoders/src/formats/npy.rs); numericDomain carries
 		// the honest bits/sample-format/type-range Rust derived from it.
 		const metadata = JSON.parse(rust.metadata_json);
 		assertMatchesGolden(kase, {

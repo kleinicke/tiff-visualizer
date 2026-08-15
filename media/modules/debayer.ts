@@ -10,7 +10,7 @@ import { getWasmModuleSync, getWasmModule } from './tiff-wasm-wrapper.js';
  * parameter changes. Because it takes a plain plane it is format agnostic —
  * TIFF, PNG, NPY, PGM all reach it identically.
  *
- * The heavy lifting is Rust/WASM (`wasm/tiff-decoder/src/demosaic.rs`); the JS
+ * The heavy lifting is Rust/WASM (`crates/image-decoders/src/demosaic.rs`); the JS
  * fallback below is a straight port of the generic path so the feature still
  * works if WASM fails to load.
  */

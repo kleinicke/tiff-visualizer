@@ -1,6 +1,6 @@
 /**
  * Conformance tests for the Rust/WASM FITS, NetCDF, DICOM, and CZI decoders
- * (wasm/tiff-decoder/src/formats/fits.rs, netcdf.rs, dicom.rs, czi.rs).
+ * (crates/image-decoders/src/formats/fits.rs, netcdf.rs, dicom.rs, czi.rs).
  *
  * Every case (real fixture, external-corpus fixture, or in-memory
  * synthesized buffer — see test/lib/decoder-cases.js for the full list and
@@ -39,7 +39,7 @@ const { listCases, bufferToArrayBuffer } = require('./lib/decoder-cases');
 const { assertMatchesGolden, expectsRejection } = require('./lib/golden-io');
 
 /**
- * Checks `DecodedArray::finalize_stats` (wasm/tiff-decoder/src/lib.rs) —
+ * Checks `DecodedArray::finalize_stats` (crates/image-decoders/src/lib.rs) —
  * populated here via the shared `impl From<ScientificParsed> for
  * DecodedArray` in lib.rs, so this one check covers FITS, NetCDF, DICOM and
  * CZI — against `ImageStatsCalculator.calculateFloatStats` run independently

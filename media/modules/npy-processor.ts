@@ -47,7 +47,7 @@ export class NpyProcessor {
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
     _cachedStatsRgb24Mode: boolean; // Track whether cached stats were computed in rgb24 mode
     /** Stats computed by the Rust decoder for the current `_lastRaw` (see
-     * `DecodedArray::finalize_stats` in wasm/tiff-decoder/src/lib.rs). Only
+     * `DecodedArray::finalize_stats` in crates/image-decoders/src/lib.rs). Only
      * valid for the plain (non-rgbAs24BitGrayscale) render. */
     _decodedStats: { min: number, max: number } | undefined;
     _lastRenderHistogram: any;
@@ -92,7 +92,7 @@ export class NpyProcessor {
         const { data, width, height, metadata, numericDomain, channels, stats } = parsed;
         // The numpy dtype string (e.g. "<f4") is user-visible display info,
         // not part of the DecodedArray schema — it travels through
-        // `metadata.dtype` (see wasm/tiff-decoder/src/formats/npy.rs).
+        // `metadata.dtype` (see crates/image-decoders/src/formats/npy.rs).
         const dtype: string = (metadata && metadata.dtype) || '';
         this._lastRaw = { width, height, data, dtype, numericDomain, channels };
         // Stats computed once inside the Rust decoder (DecodedArray::finalize_stats).
@@ -158,7 +158,7 @@ export class NpyProcessor {
         const nanColor = this._getNanColor(settings);
 
         // Determine typeMax for integer types. The Rust decoder already
-        // parsed the dtype (see wasm/tiff-decoder/src/formats/npy.rs's
+        // parsed the dtype (see crates/image-decoders/src/formats/npy.rs's
         // `numeric_info_from_dtype`), so this reads its result instead of
         // re-deriving it from the dtype string here.
         const typeMax = isFloat ? undefined : numericDomain?.typeMax;
@@ -296,7 +296,7 @@ export class NpyProcessor {
         if (!this.vscode) return;
 
         // Bit depth and sample format come straight from the Rust decoder's
-        // parsed dtype (see wasm/tiff-decoder/src/formats/npy.rs's
+        // parsed dtype (see crates/image-decoders/src/formats/npy.rs's
         // `numeric_info_from_dtype`) instead of re-deriving them here.
         const numericDomain = this._lastRaw?.numericDomain;
         const bitsPerSample = numericDomain?.bitsPerSample ?? 32;

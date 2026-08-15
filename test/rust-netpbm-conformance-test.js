@@ -1,6 +1,6 @@
 /**
  * Conformance tests for the Rust/WASM PFM and NetPBM (PBM/PGM/PPM) decoders
- * (wasm/tiff-decoder/src/formats/pfm.rs, netpbm.rs).
+ * (crates/image-decoders/src/formats/pfm.rs, netpbm.rs).
  *
  * Every case (file fixture or in-memory synthesized buffer — see
  * test/lib/decoder-cases.js for the full list and the synthesis helpers) is
@@ -44,7 +44,7 @@ function assertExpectedData(kase, data) {
 }
 
 /**
- * Checks `DecodedArray::finalize_stats` (wasm/tiff-decoder/src/lib.rs) — the
+ * Checks `DecodedArray::finalize_stats` (crates/image-decoders/src/lib.rs) — the
  * stats now carried on every decode result — against `ImageStatsCalculator`
  * run independently on the same taken samples. Not part of the golden
  * comparison (goldens must stay byte-for-byte unchanged by this port), so

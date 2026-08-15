@@ -1,24 +1,7 @@
 use crate::cfa_safe_bytes;
-use crate::formats::exr::push_generic_attr_row;
+use crate::formats::metadata::{json_escape, push_generic_attr_row};
 use std::io::Cursor;
 use tiff::decoder::Decoder;
-
-/// Escape a string for embedding as a JSON string literal.
-pub(crate) fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
-}
 
 /// Render any TIFF tag value as a human-readable string, regardless of its
 /// underlying type. Falls back to `Debug` for the rarer/deprecated variants
@@ -74,7 +57,11 @@ fn append_ifd_tags(
                         .tag_iter()
                         .filter_map(|r| r.ok())
                         .collect();
-                    let sub_group = if matches!(tag, Tag::ExifDirectory) { "Exif" } else { "GPS" };
+                    let sub_group = if matches!(tag, Tag::ExifDirectory) {
+                        "Exif"
+                    } else {
+                        "GPS"
+                    };
                     append_ifd_tags(decoder, sub_entries, sub_group, out);
                     continue;
                 }
@@ -109,8 +96,8 @@ pub(crate) fn extract_ome_xml(data: &[u8]) -> String {
         .get_tag_ascii_string(tiff::tags::Tag::ImageDescription)
         .unwrap_or_default();
     let trimmed = description.trim_start_matches('\u{feff}').trim_start();
-	// The recommended OME-TIFF header includes a warning XML comment before
-	// the OME root, so detection must not require OME to be the first token.
+    // The recommended OME-TIFF header includes a warning XML comment before
+    // the OME root, so detection must not require OME to be the first token.
     if trimmed.contains("<OME") || trimmed.contains(":OME") {
         description
     } else {
@@ -143,10 +130,10 @@ pub(crate) fn extract_page_tags_json(data: &[u8], page_index: u32) -> String {
 /// TIFF/Exif field type sizes in bytes, per the TIFF6/Exif spec (type IDs 1-12).
 fn ifd_type_size(type_id: u16) -> usize {
     match type_id {
-        1 | 2 | 6 | 7 => 1,  // BYTE, ASCII, SBYTE, UNDEFINED
-        3 | 8 => 2,          // SHORT, SSHORT
-        4 | 9 | 11 => 4,     // LONG, SLONG, FLOAT
-        5 | 10 | 12 => 8,    // RATIONAL, SRATIONAL, DOUBLE
+        1 | 2 | 6 | 7 => 1, // BYTE, ASCII, SBYTE, UNDEFINED
+        3 | 8 => 2,         // SHORT, SSHORT
+        4 | 9 | 11 => 4,    // LONG, SLONG, FLOAT
+        5 | 10 | 12 => 8,   // RATIONAL, SRATIONAL, DOUBLE
         _ => 0,
     }
 }
@@ -154,7 +141,13 @@ fn ifd_type_size(type_id: u16) -> usize {
 /// Render one IFD entry's value bytes as a human-readable string, generically
 /// across all twelve standard TIFF/Exif field types. Caps very long arrays at
 /// 16 shown elements, mirroring `value_to_display_string`'s `List` handling.
-fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[u8], big_endian: bool) -> String {
+fn format_bare_ifd_value(
+    data: &[u8],
+    type_id: u16,
+    count: u32,
+    inline_bytes: &[u8],
+    big_endian: bool,
+) -> String {
     let elem_size = ifd_type_size(type_id);
     if elem_size == 0 {
         return format!("<unsupported field type {}>", type_id);
@@ -164,9 +157,19 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         &inline_bytes[..total_size.min(inline_bytes.len())]
     } else {
         let offset = if big_endian {
-            u32::from_be_bytes([inline_bytes[0], inline_bytes[1], inline_bytes[2], inline_bytes[3]])
+            u32::from_be_bytes([
+                inline_bytes[0],
+                inline_bytes[1],
+                inline_bytes[2],
+                inline_bytes[3],
+            ])
         } else {
-            u32::from_le_bytes([inline_bytes[0], inline_bytes[1], inline_bytes[2], inline_bytes[3]])
+            u32::from_le_bytes([
+                inline_bytes[0],
+                inline_bytes[1],
+                inline_bytes[2],
+                inline_bytes[3],
+            ])
         } as usize;
         match data.get(offset..offset.saturating_add(total_size)) {
             Some(b) => b,
@@ -174,12 +177,55 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         }
     };
 
-    let u16_at = |i: usize| -> u16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) } };
-    let i16_at = |i: usize| -> i16 { let b = &bytes[i * 2..i * 2 + 2]; if big_endian { i16::from_be_bytes([b[0], b[1]]) } else { i16::from_le_bytes([b[0], b[1]]) } };
-    let u32_at = |i: usize| -> u32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
-    let i32_at = |i: usize| -> i32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { i32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { i32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
-    let f32_at = |i: usize| -> f32 { let b = &bytes[i * 4..i * 4 + 4]; if big_endian { f32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { f32::from_le_bytes([b[0], b[1], b[2], b[3]]) } };
-    let f64_at = |i: usize| -> f64 { let b = &bytes[i * 8..i * 8 + 8]; let a = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]; if big_endian { f64::from_be_bytes(a) } else { f64::from_le_bytes(a) } };
+    let u16_at = |i: usize| -> u16 {
+        let b = &bytes[i * 2..i * 2 + 2];
+        if big_endian {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        }
+    };
+    let i16_at = |i: usize| -> i16 {
+        let b = &bytes[i * 2..i * 2 + 2];
+        if big_endian {
+            i16::from_be_bytes([b[0], b[1]])
+        } else {
+            i16::from_le_bytes([b[0], b[1]])
+        }
+    };
+    let u32_at = |i: usize| -> u32 {
+        let b = &bytes[i * 4..i * 4 + 4];
+        if big_endian {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let i32_at = |i: usize| -> i32 {
+        let b = &bytes[i * 4..i * 4 + 4];
+        if big_endian {
+            i32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            i32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let f32_at = |i: usize| -> f32 {
+        let b = &bytes[i * 4..i * 4 + 4];
+        if big_endian {
+            f32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let f64_at = |i: usize| -> f64 {
+        let b = &bytes[i * 8..i * 8 + 8];
+        let a = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
+        if big_endian {
+            f64::from_be_bytes(a)
+        } else {
+            f64::from_le_bytes(a)
+        }
+    };
 
     let join_all = |n: usize, render: &dyn Fn(usize) -> String| -> String {
         (0..n).map(render).collect::<Vec<_>>().join(", ")
@@ -187,7 +233,8 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
 
     let n = count as usize;
     match type_id {
-        2 => { // ASCII: NUL-terminated string
+        2 => {
+            // ASCII: NUL-terminated string
             let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
             String::from_utf8_lossy(&bytes[..end]).to_string()
         }
@@ -199,13 +246,23 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
         9 => join_all(n, &|i| i32_at(i).to_string()),
         11 => join_all(n, &|i| f32_at(i).to_string()),
         12 => join_all(n, &|i| f64_at(i).to_string()),
-        5 => join_all(n, &|i| { // RATIONAL: pairs of u32
+        5 => join_all(n, &|i| {
+            // RATIONAL: pairs of u32
             let (num, den) = (u32_at(i * 2), u32_at(i * 2 + 1));
-            if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
+            if den != 0 {
+                format!("{}/{} ({:.6})", num, den, num as f64 / den as f64)
+            } else {
+                format!("{}/{}", num, den)
+            }
         }),
-        10 => join_all(n, &|i| { // SRATIONAL: pairs of i32
+        10 => join_all(n, &|i| {
+            // SRATIONAL: pairs of i32
             let (num, den) = (i32_at(i * 2), i32_at(i * 2 + 1));
-            if den != 0 { format!("{}/{} ({:.6})", num, den, num as f64 / den as f64) } else { format!("{}/{}", num, den) }
+            if den != 0 {
+                format!("{}/{} ({:.6})", num, den, num as f64 / den as f64)
+            } else {
+                format!("{}/{}", num, den)
+            }
         }),
         _ => "<unsupported field type>".to_string(),
     }
@@ -214,25 +271,47 @@ fn format_bare_ifd_value(data: &[u8], type_id: u16, count: u32, inline_bytes: &[
 /// Recursively walk a raw IFD's entries (byte-level, no `tiff` crate
 /// `Decoder`) starting at `ifd_offset`, pushing each as a JSON tag row and
 /// following the Exif (0x8769) / GPS (0x8825) sub-IFD pointer tags.
-fn walk_bare_ifd(data: &[u8], ifd_offset: usize, big_endian: bool, group: &str, out: &mut Vec<String>, depth: u32) {
-    if depth > 4 { return; } // guard against absurd/cyclic offsets in malformed input
+fn walk_bare_ifd(
+    data: &[u8],
+    ifd_offset: usize,
+    big_endian: bool,
+    group: &str,
+    out: &mut Vec<String>,
+    depth: u32,
+) {
+    if depth > 4 {
+        return;
+    } // guard against absurd/cyclic offsets in malformed input
     let read_u16 = |offset: usize| -> Option<u16> {
         let b = data.get(offset..offset + 2)?;
-        Some(if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) })
+        Some(if big_endian {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        })
     };
     let read_u32 = |offset: usize| -> Option<u32> {
         let b = data.get(offset..offset + 4)?;
-        Some(if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) })
+        Some(if big_endian {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        })
     };
 
-    let entry_count = match read_u16(ifd_offset) { Some(c) => c as usize, None => return };
+    let entry_count = match read_u16(ifd_offset) {
+        Some(c) => c as usize,
+        None => return,
+    };
     for i in 0..entry_count {
         let entry_offset = ifd_offset + 2 + i * 12;
         let (Some(tag_id), Some(type_id), Some(count)) = (
             read_u16(entry_offset),
             read_u16(entry_offset + 2),
             read_u32(entry_offset + 4),
-        ) else { continue };
+        ) else {
+            continue;
+        };
         let value_bytes = match data.get(entry_offset + 8..entry_offset + 12) {
             Some(b) => b,
             None => continue,
@@ -242,7 +321,14 @@ fn walk_bare_ifd(data: &[u8], ifd_offset: usize, big_endian: bool, group: &str, 
         if (tag_id == 0x8769 || tag_id == 0x8825) && type_id == 4 && count == 1 {
             if let Some(sub_offset) = read_u32(entry_offset + 8) {
                 let sub_group = if tag_id == 0x8769 { "Exif" } else { "GPS" };
-                walk_bare_ifd(data, sub_offset as usize, big_endian, sub_group, out, depth + 1);
+                walk_bare_ifd(
+                    data,
+                    sub_offset as usize,
+                    big_endian,
+                    sub_group,
+                    out,
+                    depth + 1,
+                );
                 continue;
             }
         }
@@ -266,11 +352,19 @@ pub(crate) fn extract_bare_ifd_tags_json(data: &[u8]) -> String {
     };
     let read_u16 = |offset: usize| -> u16 {
         let b = &data[offset..offset + 2];
-        if big_endian { u16::from_be_bytes([b[0], b[1]]) } else { u16::from_le_bytes([b[0], b[1]]) }
+        if big_endian {
+            u16::from_be_bytes([b[0], b[1]])
+        } else {
+            u16::from_le_bytes([b[0], b[1]])
+        }
     };
     let read_u32 = |offset: usize| -> u32 {
         let b = &data[offset..offset + 4];
-        if big_endian { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) }
+        if big_endian {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        }
     };
     if read_u16(2) != 42 {
         return "[]".to_string();

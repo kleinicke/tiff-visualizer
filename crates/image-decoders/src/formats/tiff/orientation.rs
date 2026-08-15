@@ -31,7 +31,10 @@ impl TiffOrientation {
     fn transposes(self) -> bool {
         matches!(
             self,
-            TiffOrientation::LeftTop | TiffOrientation::RightTop | TiffOrientation::RightBottom | TiffOrientation::LeftBottom
+            TiffOrientation::LeftTop
+                | TiffOrientation::RightTop
+                | TiffOrientation::RightBottom
+                | TiffOrientation::LeftBottom
         )
     }
 }
@@ -50,7 +53,11 @@ pub(crate) fn apply_orientation<T: Copy>(
     orientation: TiffOrientation,
 ) -> (Vec<T>, u32, u32) {
     let (w, h, c) = (width as usize, height as usize, channels as usize);
-    let (out_w, out_h) = if orientation.transposes() { (h, w) } else { (w, h) };
+    let (out_w, out_h) = if orientation.transposes() {
+        (h, w)
+    } else {
+        (w, h)
+    };
     let mut out = Vec::with_capacity(w * h * c);
     // SAFETY-free: just push in the destination's row-major order, reading
     // whichever source pixel maps to that destination position.

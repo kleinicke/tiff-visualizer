@@ -1,24 +1,27 @@
-pub(crate) mod tags;
 mod cmyk;
+mod codecs;
 mod orientation;
 mod strips;
-mod codecs;
+pub(crate) mod tags;
 
-use crate::{demosaic, TiffResult};
-use cmyk::convert_cmyk_to_rgb;
-use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, unpack_bilevel};
-use orientation::{apply_orientation, TiffOrientation};
-use strips::{decode_zstd, try_decode_general_strips_tiles, try_decode_subbit_strips, try_decode_uncompressed_strips};
-use tags::{extract_ome_xml, extract_page_tags_json};
 use crate::pipeline::stats::{
     compute_stats_f32, compute_stats_f64, compute_stats_i16, compute_stats_i32, compute_stats_i64,
     compute_stats_i8, compute_stats_u16, compute_stats_u32, compute_stats_u64, compute_stats_u8,
     convert_u16_to_bytes_simd,
 };
+use crate::{demosaic, TiffResult};
+use cmyk::convert_cmyk_to_rgb;
+use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, unpack_bilevel};
+use orientation::{apply_orientation, TiffOrientation};
+use strips::{
+    decode_zstd, try_decode_general_strips_tiles, try_decode_subbit_strips,
+    try_decode_uncompressed_strips,
+};
+use tags::{extract_ome_xml, extract_page_tags_json};
 
+use crate::DecodeError;
 use std::io::Cursor;
 use tiff::decoder::{Decoder, DecodingResult};
-use wasm_bindgen::JsValue;
 
 /// Total sample element count (width * height * channels) actually held by a
 /// decoded raster, regardless of which typed variant it came back as.
@@ -76,19 +79,25 @@ pub(crate) fn finalize_decode_bytes(
         return (data, width, height, channels);
     }
     let pixel_count = (width as usize) * (height as usize);
-    let bytes_per_pixel = if pixel_count > 0 { data.len() / pixel_count } else { 0 };
+    let bytes_per_pixel = if pixel_count > 0 {
+        data.len() / pixel_count
+    } else {
+        0
+    };
     if bytes_per_pixel == 0 {
         return (data, width, height, channels);
     }
-    let (oriented, w, h) = apply_orientation(&data, width, height, bytes_per_pixel as u32, orientation);
+    let (oriented, w, h) =
+        apply_orientation(&data, width, height, bytes_per_pixel as u32, orientation);
     (oriented, w, h, channels)
 }
 
-pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32) -> Result<TiffResult, JsValue> {
-    #[cfg(feature = "console_error_panic_hook")]
-    console_error_panic_hook::set_once();
-
-    let start_time = js_sys::Date::now();
+pub(crate) fn decode_tiff_impl(
+    data: &[u8],
+    compute_stats: bool,
+    page_index: u32,
+) -> Result<TiffResult, DecodeError> {
+    let start_time = crate::time::now_ms();
 
     // CFA (Bayer) files declare PhotometricInterpretation 32803, which the tiff
     // crate refuses in Decoder::new. Their pixels are an ordinary single-channel
@@ -107,35 +116,40 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
     // here is wasm32's own address space, and an over-large allocation fails
     // as a normal allocation error rather than a security problem.
     let mut decoder = Decoder::new(cursor)
-        .map_err(|e| JsValue::from_str(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
 
     for current in 0..page_index {
         if !decoder.more_images() {
-            return Err(JsValue::from_str(&format!(
+            return Err(DecodeError::new(&format!(
                 "TIFF page index {} is out of range (only {} page(s))",
                 page_index,
                 current + 1
             )));
         }
-        decoder.next_image()
-            .map_err(|e| JsValue::from_str(&format!("Failed to select TIFF page {}: {}", page_index, e)))?;
+        decoder.next_image().map_err(|e| {
+            DecodeError::new(&format!("Failed to select TIFF page {}: {}", page_index, e))
+        })?;
     }
 
-    let (width, height) = decoder.dimensions()
-        .map_err(|e| JsValue::from_str(&format!("Failed to get dimensions: {}", e)))?;
+    let (width, height) = decoder
+        .dimensions()
+        .map_err(|e| DecodeError::new(&format!("Failed to get dimensions: {}", e)))?;
 
     // Palette (RGBPalette, PhotometricInterpretation 3) images are rejected by
     // the tiff crate's colortype()/read_image(), so handle them via a dedicated
     // index + ColorMap path before those calls error out.
-    let photometric_early = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation).unwrap_or(1);
+    let photometric_early = decoder
+        .get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
+        .unwrap_or(1);
     if photometric_early == 3 {
         return decode_palette(data, width, height, page_index);
     }
 
     // Get color type and bits per sample
-    let color_type = decoder.colortype()
-        .map_err(|e| JsValue::from_str(&format!("Failed to get color type: {}", e)))?;
+    let color_type = decoder
+        .colortype()
+        .map_err(|e| DecodeError::new(&format!("Failed to get color type: {}", e)))?;
 
     // `channels` MUST equal the actual per-pixel stride of the buffer we hand
     // back below, so SamplesPerPixel (tag 277) - not `color_type` - is the
@@ -146,7 +160,9 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
     // unspecified bands - SamplesPerPixel=7 but ColorType::RGB(_).num_samples()
     // is 3). Falling back to color_type.num_samples() only covers the rare
     // case where the tag itself is missing (default is 1 per the TIFF spec).
-    let samples_per_pixel_tag = decoder.get_tag_u32(tiff::tags::Tag::SamplesPerPixel).unwrap_or(0);
+    let samples_per_pixel_tag = decoder
+        .get_tag_u32(tiff::tags::Tag::SamplesPerPixel)
+        .unwrap_or(0);
     let mut channels = if samples_per_pixel_tag > 0 {
         samples_per_pixel_tag
     } else {
@@ -166,22 +182,24 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
 
     // Extract metadata from decoder
     // Get compression method (default to 1 = None if not found)
-    let compression = decoder.get_tag_u32(tiff::tags::Tag::Compression)
+    let compression = decoder
+        .get_tag_u32(tiff::tags::Tag::Compression)
         .unwrap_or(1);
 
     // Get predictor (default to 1 = None if not found)
-    let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor)
-        .unwrap_or(1);
+    let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor).unwrap_or(1);
 
     // Get photometric interpretation (default to 1 = BlackIsZero if not found).
     // For a neutralized CFA file this reads the substituted BlackIsZero, which
     // is what the decode paths below should branch on; the real 32803 is put
     // back only when the result is assembled.
-    let photometric_interpretation = decoder.get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
+    let photometric_interpretation = decoder
+        .get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
         .unwrap_or(1);
 
     // Get planar configuration (default to 1 = Chunky if not found)
-    let planar_configuration = decoder.get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
+    let planar_configuration = decoder
+        .get_tag_u32(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1);
 
     // Orientation tag (274, default 1 = top-left / no transform). Applied as a
@@ -192,17 +210,26 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
     // value is preserved here for `extract_all_tags_json` to report in the
     // Metadata panel.
     let orientation = TiffOrientation::from_tag(
-        decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1)
+        decoder
+            .get_tag_u32(tiff::tags::Tag::Orientation)
+            .unwrap_or(1),
     );
 
-    let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
-    let strip_byte_counts = decoder.get_tag_u64_vec(tiff::tags::Tag::StripByteCounts).unwrap_or_default();
+    let rows_per_strip = decoder
+        .get_tag_u32(tiff::tags::Tag::RowsPerStrip)
+        .unwrap_or(height);
+    let strip_byte_counts = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
+        .unwrap_or_default();
     let strip_count = strip_byte_counts.len() as u32;
     let strip_byte_count_total = strip_byte_counts.iter().copied().sum::<u64>();
     let strip_byte_count_max = strip_byte_counts.iter().copied().max().unwrap_or(0);
     let tile_width = decoder.get_tag_u32(tiff::tags::Tag::TileWidth).unwrap_or(0);
-    let tile_length = decoder.get_tag_u32(tiff::tags::Tag::TileLength).unwrap_or(0);
-    let tile_count = decoder.get_tag_u64_vec(tiff::tags::Tag::TileByteCounts)
+    let tile_length = decoder
+        .get_tag_u32(tiff::tags::Tag::TileLength)
+        .unwrap_or(0);
+    let tile_count = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::TileByteCounts)
         .map(|counts| counts.len() as u32)
         .unwrap_or(0);
 
@@ -210,19 +237,35 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
     // 4 (Group 4 / T.6). The tiff crate only decodes Group 4, so route all of
     // them through hayro-ccitt, which understands the TIFF encoding options.
     if compression == 2 || compression == 3 || compression == 4 {
-        let offsets = decoder.get_tag_u64_vec(tiff::tags::Tag::StripOffsets)
-            .map_err(|e| JsValue::from_str(&format!("CCITT: missing StripOffsets: {}", e)))?;
-        let counts = decoder.get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
-            .map_err(|e| JsValue::from_str(&format!("CCITT: missing StripByteCounts: {}", e)))?;
+        let offsets = decoder
+            .get_tag_u64_vec(tiff::tags::Tag::StripOffsets)
+            .map_err(|e| DecodeError::new(&format!("CCITT: missing StripOffsets: {}", e)))?;
+        let counts = decoder
+            .get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
+            .map_err(|e| DecodeError::new(&format!("CCITT: missing StripByteCounts: {}", e)))?;
         // FillOrder defaults to 1 (MSB first); T4Options (tag 292) defaults to 0.
         let fill_order = decoder.get_tag_u32(tiff::tags::Tag::FillOrder).unwrap_or(1);
-        let t4_options = decoder.get_tag_u32(tiff::tags::Tag::Unknown(292)).unwrap_or(0);
+        let t4_options = decoder
+            .get_tag_u32(tiff::tags::Tag::Unknown(292))
+            .unwrap_or(0);
         // Each strip is an independent CCITT stream; default to a single strip.
-        let rows_per_strip = decoder.get_tag_u32(tiff::tags::Tag::RowsPerStrip).unwrap_or(height);
+        let rows_per_strip = decoder
+            .get_tag_u32(tiff::tags::Tag::RowsPerStrip)
+            .unwrap_or(height);
         let mut result = decode_ccitt(
-            data, width, height, compression, predictor,
-            photometric_interpretation, planar_configuration,
-            &offsets, &counts, fill_order, t4_options, rows_per_strip, orientation,
+            data,
+            width,
+            height,
+            compression,
+            predictor,
+            photometric_interpretation,
+            planar_configuration,
+            &offsets,
+            &counts,
+            fill_order,
+            t4_options,
+            rows_per_strip,
+            orientation,
         )?;
         result.all_tags_json = extract_page_tags_json(data, page_index);
         return Ok(result);
@@ -238,7 +281,7 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         return Ok(result);
     }
 
-    let decode_start = js_sys::Date::now();
+    let decode_start = crate::time::now_ms();
 
     // Read image data (decompression happens here). ZSTD (50000) is decoded
     // with the pure-Rust ruzstd crate rather than the tiff crate's C zstd, so
@@ -290,8 +333,9 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         direct_decode = true;
         result
     } else {
-        decoder.read_image()
-            .map_err(|e| JsValue::from_str(&format!("Failed to decode image: {}", e)))?
+        decoder
+            .read_image()
+            .map_err(|e| DecodeError::new(&format!("Failed to decode image: {}", e)))?
     };
 
     // The direct-decode paths above (`try_decode_general_strips_tiles`,
@@ -331,8 +375,8 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         channels = converted_channels;
     }
 
-    let decompress_time = js_sys::Date::now() - decode_start;
-    let convert_start = js_sys::Date::now();
+    let decompress_time = crate::time::now_ms() - decode_start;
+    let convert_start = crate::time::now_ms();
     let mut stats_time = 0.0;
     let mut pack_time = 0.0;
 
@@ -344,14 +388,14 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
                 // returned as MSB-first packed bits with each row padded to a
                 // byte boundary. Expand to one byte per pixel so they render
                 // like any other 8-bit grayscale image.
-                let pack_start = js_sys::Date::now();
+                let pack_start = crate::time::now_ms();
                 let expanded = unpack_bilevel(&data, width, height, photometric_interpretation);
                 bits_per_sample = 8;
-                pack_time += js_sys::Date::now() - pack_start;
+                pack_time += crate::time::now_ms() - pack_start;
                 let (min, max) = if compute_stats {
-                    let stats_start = js_sys::Date::now();
+                    let stats_start = crate::time::now_ms();
                     let stats = compute_stats_u8(&expanded);
-                    stats_time += js_sys::Date::now() - stats_start;
+                    stats_time += crate::time::now_ms() - stats_start;
                     (stats.0 as f64, stats.1 as f64)
                 } else {
                     (f64::NAN, f64::NAN)
@@ -359,9 +403,9 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
                 (expanded, Vec::new(), 1u32, min, max)
             } else {
                 let (min, max) = if compute_stats {
-                    let stats_start = js_sys::Date::now();
+                    let stats_start = crate::time::now_ms();
                     let stats = compute_stats_u8(&data);
-                    stats_time += js_sys::Date::now() - stats_start;
+                    stats_time += crate::time::now_ms() - stats_start;
                     (stats.0 as f64, stats.1 as f64)
                 } else {
                     (f64::NAN, f64::NAN)
@@ -371,118 +415,108 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         }
         DecodingResult::U16(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_u16(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
             // SIMD-optimized byte conversion
-            let pack_start = js_sys::Date::now();
+            let pack_start = crate::time::now_ms();
             let bytes = convert_u16_to_bytes_simd(&data);
-            pack_time += js_sys::Date::now() - pack_start;
+            pack_time += crate::time::now_ms() - pack_start;
             (bytes, Vec::new(), 1u32, min, max)
         }
         DecodingResult::U32(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_u32(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
-            pack_time += js_sys::Date::now() - pack_start;
+            let pack_start = crate::time::now_ms();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            pack_time += crate::time::now_ms() - pack_start;
             (bytes, Vec::new(), 1u32, min, max)
         }
         DecodingResult::U64(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_u64(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
-            pack_time += js_sys::Date::now() - pack_start;
+            let pack_start = crate::time::now_ms();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            pack_time += crate::time::now_ms() - pack_start;
             (bytes, Vec::new(), 1u32, min, max)
         }
         DecodingResult::I8(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_i8(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
+            let pack_start = crate::time::now_ms();
             let ubytes: Vec<u8> = data.iter().map(|&v| v as u8).collect();
-            pack_time += js_sys::Date::now() - pack_start;
+            pack_time += crate::time::now_ms() - pack_start;
             (ubytes, Vec::new(), 2u32, min, max)
         }
         DecodingResult::I16(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_i16(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
-            pack_time += js_sys::Date::now() - pack_start;
+            let pack_start = crate::time::now_ms();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            pack_time += crate::time::now_ms() - pack_start;
             (bytes, Vec::new(), 2u32, min, max)
         }
         DecodingResult::I32(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_i32(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
-            pack_time += js_sys::Date::now() - pack_start;
+            let pack_start = crate::time::now_ms();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            pack_time += crate::time::now_ms() - pack_start;
             (bytes, Vec::new(), 2u32, min, max)
         }
         DecodingResult::I64(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_i64(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 (stats.0 as f64, stats.1 as f64)
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
-            let bytes: Vec<u8> = data.iter()
-                .flat_map(|&v| v.to_le_bytes())
-                .collect();
-            pack_time += js_sys::Date::now() - pack_start;
+            let pack_start = crate::time::now_ms();
+            let bytes: Vec<u8> = data.iter().flat_map(|&v| v.to_le_bytes()).collect();
+            pack_time += crate::time::now_ms() - pack_start;
             (bytes, Vec::new(), 2u32, min, max)
         }
         DecodingResult::F32(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_f32(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 stats
             } else {
                 (f64::NAN, f64::NAN)
@@ -491,24 +525,24 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         }
         DecodingResult::F64(data) => {
             let (min, max) = if compute_stats {
-                let stats_start = js_sys::Date::now();
+                let stats_start = crate::time::now_ms();
                 let stats = compute_stats_f64(&data);
-                stats_time += js_sys::Date::now() - stats_start;
+                stats_time += crate::time::now_ms() - stats_start;
                 stats
             } else {
                 (f64::NAN, f64::NAN)
             };
-            let pack_start = js_sys::Date::now();
+            let pack_start = crate::time::now_ms();
             let mut values = Vec::with_capacity(data.len());
             for &val in &data {
                 values.push(val as f32);
             }
-            pack_time += js_sys::Date::now() - pack_start;
+            pack_time += crate::time::now_ms() - pack_start;
             (Vec::new(), values, 3u32, min, max)
         }
         DecodingResult::F16(data) => {
             // Convert f16 to f32 for processing and pre-allocate
-            let pack_start = js_sys::Date::now();
+            let pack_start = crate::time::now_ms();
             let mut values = Vec::with_capacity(data.len());
             let mut min_val = f32::INFINITY;
             let mut max_val = f32::NEG_INFINITY;
@@ -516,8 +550,12 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
             if compute_stats {
                 for &val in &data {
                     let f32_val = val.to_f32();
-                    if f32_val < min_val { min_val = f32_val; }
-                    if f32_val > max_val { max_val = f32_val; }
+                    if f32_val < min_val {
+                        min_val = f32_val;
+                    }
+                    if f32_val > max_val {
+                        max_val = f32_val;
+                    }
                     values.push(f32_val);
                 }
             } else {
@@ -525,9 +563,17 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
                     values.push(val.to_f32());
                 }
             }
-            pack_time += js_sys::Date::now() - pack_start;
-            let min = if compute_stats { min_val as f64 } else { f64::NAN };
-            let max = if compute_stats { max_val as f64 } else { f64::NAN };
+            pack_time += crate::time::now_ms() - pack_start;
+            let min = if compute_stats {
+                min_val as f64
+            } else {
+                f64::NAN
+            };
+            let max = if compute_stats {
+                max_val as f64
+            } else {
+                f64::NAN
+            };
             (Vec::new(), values, 3u32, min, max)
         }
     };
@@ -544,9 +590,19 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         (width, height)
     } else if !data_bytes.is_empty() {
         let pixel_count = (width as usize) * (height as usize);
-        let bytes_per_pixel = if pixel_count > 0 { data_bytes.len() / pixel_count } else { 0 };
+        let bytes_per_pixel = if pixel_count > 0 {
+            data_bytes.len() / pixel_count
+        } else {
+            0
+        };
         if bytes_per_pixel > 0 {
-            let (oriented, w, h) = apply_orientation(&data_bytes, width, height, bytes_per_pixel as u32, orientation);
+            let (oriented, w, h) = apply_orientation(
+                &data_bytes,
+                width,
+                height,
+                bytes_per_pixel as u32,
+                orientation,
+            );
             data_bytes = oriented;
             (w, h)
         } else {
@@ -560,8 +616,8 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         (width, height)
     };
 
-    let convert_time = js_sys::Date::now() - convert_start;
-    let total_time = js_sys::Date::now() - start_time;
+    let convert_time = crate::time::now_ms() - convert_start;
+    let total_time = crate::time::now_ms() - start_time;
     let metadata_time = total_time - decompress_time - convert_time;
 
     let result = Ok(TiffResult {
@@ -596,11 +652,6 @@ pub(crate) fn decode_tiff_impl(data: &[u8], compute_stats: bool, page_index: u32
         ome_xml: extract_ome_xml(data),
     });
 
-    web_sys::console::log_1(&format!(
-        "[Rust] Total: {:.2}ms (metadata: {:.2}ms, decompress: {:.2}ms, convert: {:.2}ms)",
-        total_time, metadata_time, decompress_time, convert_time
-    ).into());
-
     result
 }
 
@@ -618,11 +669,19 @@ pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) ->
         b"MM" => false,
         _ => return false,
     };
-    let rd16 = |b: &[u8]| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
-    let rd32 = |b: &[u8]| if le {
-        u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-    } else {
-        u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+    let rd16 = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
+    let rd32 = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
     };
     // Only classic TIFF (magic 42) is handled; BigTIFF (43) is left to fall back.
     if rd16(&buf[2..4]) != 42 {

@@ -20,7 +20,7 @@
  * `tiff-wasm-wrapper.ts`'s `initWasm()`. Neither creates a second instance.
  *
  * All seven Rust decoders now return the same unified `DecodedArray` struct
- * (see `wasm/tiff-decoder/src/lib.rs`), so there is exactly one assembly
+ * (see `crates/image-decoders/src/lib.rs`), so there is exactly one assembly
  * function — `assembleDecoded` — instead of one per format. `sample_kind`
  * tells it which of the three `take_data_as_*` getters actually holds data.
  *
@@ -97,7 +97,7 @@ function assembleDecoded<
 			sourceNumericType: result.source_numeric_type as N,
 		},
 		// Computed once inside the decoder by `DecodedArray::finalize_stats`
-		// (wasm/tiff-decoder/src/lib.rs) — see that method for why this always
+		// (crates/image-decoders/src/lib.rs) — see that method for why this always
 		// runs rather than being gated behind `NormalizationHelper.needsStats`.
 		stats: { min: result.data_min as number, max: result.data_max as number },
 		nonFiniteCount: result.non_finite_count as number,

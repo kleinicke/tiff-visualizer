@@ -8,6 +8,12 @@ are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity 
 
 The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export rendered or layered results. Decoding runs in Rust compiled to WebAssembly and compositing runs on the GPU, so large scientific images open and respond at native speed.
 
+The reusable byte decoders live in the plain-Rust
+[`scientific-image-decoders`](crates/image-decoders) crate. The extension keeps
+only a thin WebAssembly adapter around it, so decoder improvements are native-
+testable here and can later be consumed by other applications without copying
+the implementation.
+
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
 ## Supported Sample Types

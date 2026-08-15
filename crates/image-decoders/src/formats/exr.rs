@@ -1,17 +1,9 @@
+use crate::formats::metadata::push_generic_attr_row;
+use crate::DecodeError;
 use crate::ExrResult;
-use crate::formats::tiff::tags::json_escape;
+use exr::prelude::FlatSamples;
 use std::io::Cursor;
 use std::mem;
-use exr::prelude::FlatSamples;
-use wasm_bindgen::JsValue;
-
-/// Push one `{"tag":null,"name":...,"group":...,"value":...}` JSON fragment.
-pub(crate) fn push_generic_attr_row(out: &mut Vec<String>, group: &str, name: &str, value_debug: String) {
-    out.push(format!(
-        "{{\"tag\":null,\"name\":\"{}\",\"group\":\"{}\",\"value\":\"{}\"}}",
-        json_escape(name), json_escape(group), json_escape(&value_debug)
-    ));
-}
 
 /// Dump every EXR header attribute (image + layer) as JSON, generically:
 /// each named `Option<T>` field on `ImageAttributes`/`LayerAttributes` plus
@@ -32,8 +24,18 @@ fn extract_exr_tags_json(
         };
     }
 
-    push_generic_attr_row(&mut out, GROUP, "displayWindow", format!("{:?}", image_attrs.display_window));
-    push_generic_attr_row(&mut out, GROUP, "pixelAspect", format!("{}", image_attrs.pixel_aspect));
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "displayWindow",
+        format!("{:?}", image_attrs.display_window),
+    );
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "pixelAspect",
+        format!("{}", image_attrs.pixel_aspect),
+    );
     opt_field!(image_attrs.chromaticities, "chromaticities");
     opt_field!(image_attrs.time_code, "timeCode");
     for (key, value) in image_attrs.other.iter() {
@@ -41,13 +43,34 @@ fn extract_exr_tags_json(
     }
 
     opt_field!(layer_attrs.layer_name, "layerName");
-    push_generic_attr_row(&mut out, GROUP, "layerPosition", format!("{:?}", layer_attrs.layer_position));
-    push_generic_attr_row(&mut out, GROUP, "screenWindowCenter", format!("{:?}", layer_attrs.screen_window_center));
-    push_generic_attr_row(&mut out, GROUP, "screenWindowWidth", format!("{}", layer_attrs.screen_window_width));
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "layerPosition",
+        format!("{:?}", layer_attrs.layer_position),
+    );
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "screenWindowCenter",
+        format!("{:?}", layer_attrs.screen_window_center),
+    );
+    push_generic_attr_row(
+        &mut out,
+        GROUP,
+        "screenWindowWidth",
+        format!("{}", layer_attrs.screen_window_width),
+    );
     opt_field!(layer_attrs.white_luminance, "whiteLuminance");
     opt_field!(layer_attrs.adopted_neutral, "adoptedNeutral");
-    opt_field!(layer_attrs.rendering_transform_name, "renderingTransformName");
-    opt_field!(layer_attrs.look_modification_transform_name, "lookModificationTransformName");
+    opt_field!(
+        layer_attrs.rendering_transform_name,
+        "renderingTransformName"
+    );
+    opt_field!(
+        layer_attrs.look_modification_transform_name,
+        "lookModificationTransformName"
+    );
     opt_field!(layer_attrs.horizontal_density, "horizontalDensity");
     opt_field!(layer_attrs.owner, "owner");
     opt_field!(layer_attrs.comments, "comments");
@@ -66,14 +89,20 @@ fn extract_exr_tags_json(
     opt_field!(layer_attrs.frames_per_second, "framesPerSecond");
     opt_field!(layer_attrs.multi_view_names, "multiViewNames");
     opt_field!(layer_attrs.world_to_camera, "worldToCamera");
-    opt_field!(layer_attrs.world_to_normalized_device, "worldToNormalizedDevice");
+    opt_field!(
+        layer_attrs.world_to_normalized_device,
+        "worldToNormalizedDevice"
+    );
     opt_field!(layer_attrs.deep_image_state, "deepImageState");
     opt_field!(layer_attrs.original_data_window, "originalDataWindow");
     opt_field!(layer_attrs.view_name, "viewName");
     opt_field!(layer_attrs.software_name, "softwareName");
     opt_field!(layer_attrs.near_clip_plane, "nearClipPlane");
     opt_field!(layer_attrs.far_clip_plane, "farClipPlane");
-    opt_field!(layer_attrs.horizontal_field_of_view, "horizontalFieldOfView");
+    opt_field!(
+        layer_attrs.horizontal_field_of_view,
+        "horizontalFieldOfView"
+    );
     opt_field!(layer_attrs.vertical_field_of_view, "verticalFieldOfView");
     for (key, value) in layer_attrs.other.iter() {
         push_generic_attr_row(&mut out, GROUP, &key.to_string(), format!("{:?}", value));
@@ -82,10 +111,10 @@ fn extract_exr_tags_json(
     format!("[{}]", out.join(","))
 }
 
-pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
+pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, DecodeError> {
     use exr::prelude::*;
 
-    let start_time = js_sys::Date::now();
+    let start_time = crate::time::now_ms();
     let cursor = Cursor::new(data);
     let image = read()
         .no_deep_data()
@@ -94,46 +123,57 @@ pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
         .first_valid_layer()
         .all_attributes()
         .from_buffered(cursor)
-        .map_err(|e| JsValue::from_str(&format!("Failed to decode EXR: {}", e)))?;
-    let read_time = js_sys::Date::now() - start_time;
-    let pack_start = js_sys::Date::now();
+        .map_err(|e| DecodeError::new(&format!("Failed to decode EXR: {}", e)))?;
+    let read_time = crate::time::now_ms() - start_time;
+    let pack_start = crate::time::now_ms();
 
     let layer = image.layer_data;
     let width = layer.size.0;
     let height = layer.size.1;
     if width == 0 || height == 0 {
-        return Err(JsValue::from_str("EXR has empty dimensions"));
+        return Err(DecodeError::new("EXR has empty dimensions"));
     }
 
     let mut channels = layer.channel_data.list;
     if channels.is_empty() {
-        return Err(JsValue::from_str("EXR has no flat channels"));
+        return Err(DecodeError::new("EXR has no flat channels"));
     }
 
     let pixel_count = width
         .checked_mul(height)
-        .ok_or_else(|| JsValue::from_str("EXR dimensions overflow"))?;
-    let channel_names: Vec<String> = channels.iter().map(|channel| channel.name.to_string()).collect();
+        .ok_or_else(|| DecodeError::new("EXR dimensions overflow"))?;
+    let channel_names: Vec<String> = channels
+        .iter()
+        .map(|channel| channel.name.to_string())
+        .collect();
     let selection = select_exr_display_channels(&channel_names);
     if selection.source_indices.is_empty() {
-        return Err(JsValue::from_str("EXR has no displayable channels"));
+        return Err(DecodeError::new("EXR has no displayable channels"));
     }
 
     for &index in selection.source_indices.iter().flatten() {
         let channel = &channels[index];
         if channel.sampling.0 != 1 || channel.sampling.1 != 1 {
-            return Err(JsValue::from_str("Subsampled EXR channels are not supported by the Rust fast path"));
+            return Err(DecodeError::new(
+                "Subsampled EXR channels are not supported by the Rust fast path",
+            ));
         }
         if channel.sample_data.len() < pixel_count {
-            return Err(JsValue::from_str("EXR channel sample count is smaller than the image dimensions"));
+            return Err(DecodeError::new(
+                "EXR channel sample count is smaller than the image dimensions",
+            ));
         }
     }
 
     let output_channels = selection.source_indices.len();
     let interleaved = if output_channels == 1 {
-        let source_index = selection.source_indices[0]
-            .ok_or_else(|| JsValue::from_str("EXR grayscale selection unexpectedly has no source channel"))?;
-        let samples = mem::replace(&mut channels[source_index].sample_data, FlatSamples::F32(Vec::new()));
+        let source_index = selection.source_indices[0].ok_or_else(|| {
+            DecodeError::new("EXR grayscale selection unexpectedly has no source channel")
+        })?;
+        let samples = mem::replace(
+            &mut channels[source_index].sample_data,
+            FlatSamples::F32(Vec::new()),
+        );
         exr_samples_into_f32_vec(samples, pixel_count)
     } else {
         let mut interleaved = vec![0.0f32; pixel_count * output_channels];
@@ -147,15 +187,21 @@ pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, JsValue> {
                     pixel_count,
                 );
             } else {
-                fill_exr_interleaved_channel(&mut interleaved, out_channel, output_channels, pixel_count, 1.0);
+                fill_exr_interleaved_channel(
+                    &mut interleaved,
+                    out_channel,
+                    output_channels,
+                    pixel_count,
+                    1.0,
+                );
             }
         }
         interleaved
     };
 
     let format = if output_channels == 1 { 1028 } else { 1023 };
-    let pack_time = js_sys::Date::now() - pack_start;
-    let total_time = js_sys::Date::now() - start_time;
+    let pack_time = crate::time::now_ms() - pack_start;
+    let total_time = crate::time::now_ms() - start_time;
     let all_tags_json = extract_exr_tags_json(&image.attributes, &layer.attributes);
 
     Ok(ExrResult {
@@ -213,7 +259,10 @@ fn select_exr_display_channels(channel_names: &[String]) -> ExrChannelSelection 
         } else {
             source_indices.push(None);
         }
-        return ExrChannelSelection { source_indices, displayed_names };
+        return ExrChannelSelection {
+            source_indices,
+            displayed_names,
+        };
     }
 
     if let Some(index) = y {
@@ -233,7 +282,10 @@ fn select_exr_display_channels(channel_names: &[String]) -> ExrChannelSelection 
         }
     }
 
-    ExrChannelSelection { source_indices: Vec::new(), displayed_names: Vec::new() }
+    ExrChannelSelection {
+        source_indices: Vec::new(),
+        displayed_names: Vec::new(),
+    }
 }
 
 fn exr_base_channel_name(name: &str) -> &str {

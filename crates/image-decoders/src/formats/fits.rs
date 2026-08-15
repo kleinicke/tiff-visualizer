@@ -14,8 +14,8 @@
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{ascii, get_slice, js_number, scaled_domain, ScientificParsed};
+use crate::DecodeError;
 use std::collections::HashMap;
-use wasm_bindgen::JsValue;
 
 /// A FITS header card value: `fitsValue()` in the TS returns
 /// `string | number | boolean | null`; this is that same union.
@@ -37,12 +37,28 @@ type Header = HashMap<String, HeaderValue>;
 fn finite_number(v: Option<&HeaderValue>, fallback: f64) -> f64 {
     match v {
         None => fallback,
-        Some(HeaderValue::Num(n)) => if n.is_finite() { *n } else { fallback },
-        Some(HeaderValue::Bool(b)) => if *b { 1.0 } else { 0.0 },
+        Some(HeaderValue::Num(n)) => {
+            if n.is_finite() {
+                *n
+            } else {
+                fallback
+            }
+        }
+        Some(HeaderValue::Bool(b)) => {
+            if *b {
+                1.0
+            } else {
+                0.0
+            }
+        }
         Some(HeaderValue::Null) => 0.0,
         Some(HeaderValue::Str(s)) => {
             let n = js_number(s);
-            if n.is_finite() { n } else { fallback }
+            if n.is_finite() {
+                n
+            } else {
+                fallback
+            }
         }
     }
 }
@@ -71,7 +87,13 @@ fn header_value_to_json(v: &HeaderValue) -> JsonValue {
 /// JS `String(value)` for a header card value (used by the XTENSION check).
 fn js_to_string(v: &HeaderValue) -> String {
     match v {
-        HeaderValue::Bool(b) => if *b { "true".to_string() } else { "false".to_string() },
+        HeaderValue::Bool(b) => {
+            if *b {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
         HeaderValue::Num(n) => super::json_value::format_number(*n),
         HeaderValue::Str(s) => s.clone(),
         HeaderValue::Null => "null".to_string(),
@@ -81,7 +103,11 @@ fn js_to_string(v: &HeaderValue) -> String {
 /// `String(header.XTENSION || '').trim().toUpperCase()`.
 fn xtension_upper(header: &Header) -> String {
     let v = header.get("XTENSION");
-    let s = if truthy(v) { js_to_string(v.unwrap()) } else { String::new() };
+    let s = if truthy(v) {
+        js_to_string(v.unwrap())
+    } else {
+        String::new()
+    };
     s.trim().to_uppercase()
 }
 
@@ -133,8 +159,12 @@ fn fits_value(card: &[u8]) -> HeaderValue {
         i += 1;
     }
     let value = value.trim().to_string();
-    if value == "T" { return HeaderValue::Bool(true); }
-    if value == "F" { return HeaderValue::Bool(false); }
+    if value == "T" {
+        return HeaderValue::Bool(true);
+    }
+    if value == "F" {
+        return HeaderValue::Bool(false);
+    }
     let replaced = replace_first_dd(&value);
     let numeric = js_number(&replaced);
     if !value.is_empty() && numeric.is_finite() {
@@ -152,7 +182,7 @@ fn ceil_2880_f64(n: f64) -> f64 {
     (n / 2880.0).ceil() * 2880.0
 }
 
-fn read_stored(data: &[u8], offset: usize, bitpix: i64) -> Result<f64, JsValue> {
+fn read_stored(data: &[u8], offset: usize, bitpix: i64) -> Result<f64, DecodeError> {
     match bitpix {
         8 => Ok(*get_slice(data, offset, 1, "FITS")?.first().unwrap() as f64),
         16 => {
@@ -173,14 +203,16 @@ fn read_stored(data: &[u8], offset: usize, bitpix: i64) -> Result<f64, JsValue> 
         }
         -64 => {
             let b = get_slice(data, offset, 8, "FITS")?;
-            Ok(f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+            Ok(f64::from_be_bytes([
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+            ]))
         }
         _ => Ok(f64::NAN),
     }
 }
 
 /// Decode the first primary/IMAGE FITS HDU with at least two axes.
-pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue> {
+pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeError> {
     let mut hdu_offset: usize = 0;
     let mut hdu_index: u32 = 0;
     // Collected only to explain a rejection. "No image HDU" leaves the user
@@ -191,24 +223,35 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
     let mut hdu_kinds: Vec<String> = Vec::new();
 
     loop {
-        if hdu_offset.checked_add(80).map(|e| e > data.len()).unwrap_or(true) {
+        if hdu_offset
+            .checked_add(80)
+            .map(|e| e > data.len())
+            .unwrap_or(true)
+        {
             break;
         }
         let mut header: Header = HashMap::new();
         let mut card_offset = hdu_offset;
         let mut found_end = false;
-        while card_offset.checked_add(80).map(|e| e <= data.len()).unwrap_or(false) {
+        while card_offset
+            .checked_add(80)
+            .map(|e| e <= data.len())
+            .unwrap_or(false)
+        {
             let card = &data[card_offset..card_offset + 80];
             card_offset += 80;
             let key = ascii(card, 0, 8);
             let key = key.trim();
-            if key == "END" { found_end = true; break; }
+            if key == "END" {
+                found_end = true;
+                break;
+            }
             if !key.is_empty() {
                 header.insert(key.to_string(), fits_value(card));
             }
         }
         if !found_end {
-            return Err(JsValue::from_str("Invalid FITS header: missing END card"));
+            return Err(DecodeError::new("Invalid FITS header: missing END card"));
         }
         let data_offset_f = ceil_2880_f64(card_offset as f64);
         let bitpix = finite_number(header.get("BITPIX"), 0.0);
@@ -245,7 +288,10 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
             if naxis < 1.0 {
                 format!("HDU {hdu_index}: {kind}, header only")
             } else if is_image && !bitpix_supported {
-                format!("HDU {hdu_index}: {kind}, unsupported BITPIX {}", bitpix as i64)
+                format!(
+                    "HDU {hdu_index}: {kind}, unsupported BITPIX {}",
+                    bitpix as i64
+                )
             } else if naxis < 2.0 {
                 format!("HDU {hdu_index}: {kind}, {naxis:.0}D")
             } else {
@@ -263,10 +309,13 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
             let height_f = axes[1];
             let plane_values = width_f * height_f;
             if data_offset_f + plane_values * bytes_per_value_f > data.len() as f64 {
-                return Err(JsValue::from_str("Truncated FITS image data"));
+                return Err(DecodeError::new("Truncated FITS image data"));
             }
-            if !(data_offset_f.is_finite() && data_offset_f >= 0.0 && data_offset_f <= data.len() as f64) {
-                return Err(JsValue::from_str("Truncated FITS image data"));
+            if !(data_offset_f.is_finite()
+                && data_offset_f >= 0.0
+                && data_offset_f <= data.len() as f64)
+            {
+                return Err(DecodeError::new("Truncated FITS image data"));
             }
             let data_offset = data_offset_f as usize;
             let width = width_f as usize;
@@ -279,8 +328,18 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
                 _ => None,
             };
             let bits_per_sample = bitpix.abs() as u32;
-            let sample_format: u32 = if bitpix < 0.0 { 3 } else if bitpix == 8.0 { 1 } else { 2 };
-            let stored_min = if sample_format == 3 || sample_format == 1 { 0.0 } else { -(2f64.powi(bits_per_sample as i32 - 1)) };
+            let sample_format: u32 = if bitpix < 0.0 {
+                3
+            } else if bitpix == 8.0 {
+                1
+            } else {
+                2
+            };
+            let stored_min = if sample_format == 3 || sample_format == 1 {
+                0.0
+            } else {
+                -(2f64.powi(bits_per_sample as i32 - 1))
+            };
             let stored_max = if sample_format == 3 {
                 1.0
             } else if sample_format == 1 {
@@ -290,7 +349,11 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
             };
             let (type_min, type_max) = scaled_domain(stored_min, stored_max, scale, zero);
             let source_numeric_type: &str = if sample_format == 3 {
-                if bits_per_sample <= 32 { "float32" } else { "float64" }
+                if bits_per_sample <= 32 {
+                    "float32"
+                } else {
+                    "float64"
+                }
             } else if sample_format == 1 {
                 "uint8"
             } else if bits_per_sample <= 16 {
@@ -299,19 +362,25 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
                 "int32"
             };
 
-            let plane_pixels = width.checked_mul(height)
-                .ok_or_else(|| JsValue::from_str("FITS image dimensions overflow"))?;
+            let plane_pixels = width
+                .checked_mul(height)
+                .ok_or_else(|| DecodeError::new("FITS image dimensions overflow"))?;
             let mut out = vec![0f32; plane_pixels];
             let bpv = bytes_per_value_f as usize;
             let bitpix_i = bitpix as i64;
             for y in 0..height {
                 let src_y = height - 1 - y;
                 for x in 0..width {
-                    let idx = src_y.checked_mul(width).and_then(|v| v.checked_add(x))
-                        .ok_or_else(|| JsValue::from_str("FITS: index overflow"))?;
-                    let byte_off = data_offset.checked_add(idx.checked_mul(bpv)
-                        .ok_or_else(|| JsValue::from_str("FITS: offset overflow"))?)
-                        .ok_or_else(|| JsValue::from_str("FITS: offset overflow"))?;
+                    let idx = src_y
+                        .checked_mul(width)
+                        .and_then(|v| v.checked_add(x))
+                        .ok_or_else(|| DecodeError::new("FITS: index overflow"))?;
+                    let byte_off = data_offset
+                        .checked_add(
+                            idx.checked_mul(bpv)
+                                .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?,
+                        )
+                        .ok_or_else(|| DecodeError::new("FITS: offset overflow"))?;
                     let stored = read_stored(data, byte_off, bitpix_i)?;
                     let value = match blank {
                         Some(b) if stored == b => f32::NAN,
@@ -327,14 +396,26 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
             fields.push(("format".to_string(), JsonValue::Str("FITS".to_string())));
             fields.push(("hduIndex".to_string(), JsonValue::Num(hdu_index as f64)));
             fields.push(("bitpix".to_string(), JsonValue::Num(bitpix)));
-            fields.push(("axes".to_string(), JsonValue::Arr(axes.iter().map(|&a| JsonValue::Num(a)).collect())));
+            fields.push((
+                "axes".to_string(),
+                JsonValue::Arr(axes.iter().map(|&a| JsonValue::Num(a)).collect()),
+            ));
             fields.push(("bscale".to_string(), JsonValue::Num(scale)));
             fields.push(("bzero".to_string(), JsonValue::Num(zero)));
-            let object_val = header.get("OBJECT").filter(|v| truthy(Some(v))).map(|v| header_value_to_json(v));
+            let object_val = header
+                .get("OBJECT")
+                .filter(|v| truthy(Some(v)))
+                .map(|v| header_value_to_json(v));
             push_opt(&mut fields, "object", object_val);
-            let unit_val = header.get("BUNIT").filter(|v| truthy(Some(v))).map(|v| header_value_to_json(v));
+            let unit_val = header
+                .get("BUNIT")
+                .filter(|v| truthy(Some(v)))
+                .map(|v| header_value_to_json(v));
             push_opt(&mut fields, "unit", unit_val);
-            fields.push(("firstPlaneOnly".to_string(), JsonValue::Bool(first_plane_only)));
+            fields.push((
+                "firstPlaneOnly".to_string(),
+                JsonValue::Bool(first_plane_only),
+            ));
             let metadata_json = to_json_string(&JsonValue::Obj(fields));
 
             return Ok(ScientificParsed {
@@ -353,14 +434,19 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
 
         let padded_data_bytes = ceil_2880_f64(data_bytes);
         let next_offset_f = data_offset_f + padded_data_bytes;
-        if !next_offset_f.is_finite() || next_offset_f < 0.0 || next_offset_f > data.len() as f64 + 2880.0 {
+        if !next_offset_f.is_finite()
+            || next_offset_f < 0.0
+            || next_offset_f > data.len() as f64 + 2880.0
+        {
             break;
         }
         hdu_offset = next_offset_f as usize;
         hdu_index = hdu_index.saturating_add(1);
     }
     if hdu_kinds.is_empty() {
-        return Err(JsValue::from_str("FITS file contains no supported 2D image HDU"));
+        return Err(DecodeError::new(
+            "FITS file contains no supported 2D image HDU",
+        ));
     }
     // The two reasons need different explanations. An image with a BITPIX we
     // cannot read is a gap in this decoder; a file of tables is simply not a
@@ -372,7 +458,7 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, JsValue>
     } else {
         "This file holds tabular or header-only data rather than an image."
     };
-    Err(JsValue::from_str(&format!(
+    Err(DecodeError::new(&format!(
         "FITS file contains no 2D image HDU (found {}). {}",
         hdu_kinds.join(", "),
         explanation

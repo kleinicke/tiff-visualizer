@@ -1,7 +1,7 @@
 use super::codecs::build_uncompressed_tiff;
+use crate::DecodeError;
 use std::io::Cursor;
 use tiff::decoder::{Decoder, DecodingResult};
-use wasm_bindgen::JsValue;
 
 fn tiff_is_little_endian(data: &[u8]) -> Option<bool> {
     match data.get(0..4)? {
@@ -21,7 +21,7 @@ pub(crate) fn try_decode_uncompressed_strips(
     compression: u32,
     predictor: u32,
     planar_configuration: u32,
-) -> Result<Option<DecodingResult>, JsValue> {
+) -> Result<Option<DecodingResult>, DecodeError> {
     use tiff::tags::Tag;
 
     if compression != 1 || predictor != 1 || planar_configuration != 1 {
@@ -47,22 +47,24 @@ pub(crate) fn try_decode_uncompressed_strips(
         _ => return Ok(None),
     };
 
-    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     let sample_count = (width as usize)
         .checked_mul(height as usize)
         .and_then(|v| v.checked_mul(channels as usize))
-        .ok_or_else(|| JsValue::from_str("Direct TIFF decode: image dimensions overflow"))?;
+        .ok_or_else(|| DecodeError::new("Direct TIFF decode: image dimensions overflow"))?;
     let bytes_per_sample = (bits_per_sample / 8) as usize;
     let expected_bytes = sample_count
         .checked_mul(bytes_per_sample)
-        .ok_or_else(|| JsValue::from_str("Direct TIFF decode: raster byte count overflow"))?;
+        .ok_or_else(|| DecodeError::new("Direct TIFF decode: raster byte count overflow"))?;
 
-    let total_available = counts.iter().try_fold(0usize, |acc, &count| {
-        acc.checked_add(count as usize)
-    }).ok_or_else(|| JsValue::from_str("Direct TIFF decode: strip byte count overflow"))?;
+    let total_available = counts
+        .iter()
+        .try_fold(0usize, |acc, &count| acc.checked_add(count as usize))
+        .ok_or_else(|| DecodeError::new("Direct TIFF decode: strip byte count overflow"))?;
     if total_available < expected_bytes {
         return Ok(None);
     }
@@ -92,7 +94,8 @@ pub(crate) fn try_decode_uncompressed_strips(
     let result = match (sample_format, bits_per_sample) {
         (1, 8) => DecodingResult::U8(raster),
         (1, 16) => {
-            let values = raster.chunks_exact(2)
+            let values = raster
+                .chunks_exact(2)
                 .map(|b| {
                     if little_endian {
                         u16::from_le_bytes([b[0], b[1]])
@@ -104,7 +107,8 @@ pub(crate) fn try_decode_uncompressed_strips(
             DecodingResult::U16(values)
         }
         (1, 32) => {
-            let values = raster.chunks_exact(4)
+            let values = raster
+                .chunks_exact(4)
                 .map(|b| {
                     if little_endian {
                         u32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -117,7 +121,8 @@ pub(crate) fn try_decode_uncompressed_strips(
         }
         (2, 8) => DecodingResult::I8(raster.into_iter().map(|v| v as i8).collect()),
         (2, 16) => {
-            let values = raster.chunks_exact(2)
+            let values = raster
+                .chunks_exact(2)
                 .map(|b| {
                     if little_endian {
                         i16::from_le_bytes([b[0], b[1]])
@@ -129,7 +134,8 @@ pub(crate) fn try_decode_uncompressed_strips(
             DecodingResult::I16(values)
         }
         (2, 32) => {
-            let values = raster.chunks_exact(4)
+            let values = raster
+                .chunks_exact(4)
                 .map(|b| {
                     if little_endian {
                         i32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -141,7 +147,8 @@ pub(crate) fn try_decode_uncompressed_strips(
             DecodingResult::I32(values)
         }
         (3, 32) => {
-            let values = raster.chunks_exact(4)
+            let values = raster
+                .chunks_exact(4)
                 .map(|b| {
                     if little_endian {
                         f32::from_le_bytes([b[0], b[1], b[2], b[3]])
@@ -153,7 +160,8 @@ pub(crate) fn try_decode_uncompressed_strips(
             DecodingResult::F32(values)
         }
         (3, 64) => {
-            let values = raster.chunks_exact(8)
+            let values = raster
+                .chunks_exact(8)
                 .map(|b| {
                     if little_endian {
                         f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
@@ -183,7 +191,12 @@ pub(crate) fn try_decode_uncompressed_strips(
 /// this, and so does this path, since we already know the exact decompressed
 /// size from the image/tile geometry and don't need the stream to tell us
 /// when to stop.
-fn decompress_strip_or_tile(block: &[u8], compression: u32, expected_len: usize, context: &str) -> Result<Vec<u8>, JsValue> {
+fn decompress_strip_or_tile(
+    block: &[u8],
+    compression: u32,
+    expected_len: usize,
+    context: &str,
+) -> Result<Vec<u8>, DecodeError> {
     use std::io::Read;
 
     match compression {
@@ -208,14 +221,23 @@ fn decompress_strip_or_tile(block: &[u8], compression: u32, expected_len: usize,
                             // the expected length below.
                             break;
                         }
-                        return Err(JsValue::from_str(&format!("{}: LZW decode stalled before end of input", context)));
+                        return Err(DecodeError::new(&format!(
+                            "{}: LZW decode stalled before end of input",
+                            context
+                        )));
                     }
-                    Err(e) => return Err(JsValue::from_str(&format!("{}: LZW decode failed: {}", context, e))),
+                    Err(e) => {
+                        return Err(DecodeError::new(&format!(
+                            "{}: LZW decode failed: {}",
+                            context, e
+                        )))
+                    }
                 }
             }
             if out_pos < expected_len {
-                return Err(JsValue::from_str(&format!(
-                    "{}: LZW stream produced {} bytes, expected {}", context, out_pos, expected_len
+                return Err(DecodeError::new(&format!(
+                    "{}: LZW stream produced {} bytes, expected {}",
+                    context, out_pos, expected_len
                 )));
             }
             Ok(out)
@@ -223,11 +245,15 @@ fn decompress_strip_or_tile(block: &[u8], compression: u32, expected_len: usize,
         8 | 32946 => {
             let mut zd = flate2::read::ZlibDecoder::new(block);
             let mut buf = Vec::new();
-            zd.read_to_end(&mut buf)
-                .map_err(|e| JsValue::from_str(&format!("{}: Deflate decode failed: {}", context, e)))?;
+            zd.read_to_end(&mut buf).map_err(|e| {
+                DecodeError::new(&format!("{}: Deflate decode failed: {}", context, e))
+            })?;
             Ok(buf)
         }
-        _ => Err(JsValue::from_str(&format!("{}: compression {} is not supported", context, compression))),
+        _ => Err(DecodeError::new(&format!(
+            "{}: compression {} is not supported",
+            context, compression
+        ))),
     }
 }
 
@@ -261,7 +287,12 @@ fn unpack_msb_packed_row(row: &[u8], samples_per_row: usize, bits_per_sample: u3
 /// decoded row of `row_width` pixels x `channels` samples, wrapping modulo
 /// 2^bits_per_sample (via `max_value`). Shared by `try_decode_subbit_strips`
 /// and `try_decode_general_strips_tiles`.
-fn apply_horizontal_predictor2(row_values: &mut [u16], row_width: usize, channels: usize, max_value: u32) {
+fn apply_horizontal_predictor2(
+    row_values: &mut [u16],
+    row_width: usize,
+    channels: usize,
+    max_value: u32,
+) {
     for x in 1..row_width {
         for c in 0..channels {
             let idx = x * channels + c;
@@ -300,7 +331,7 @@ pub(crate) fn try_decode_subbit_strips(
     compression: u32,
     predictor: u32,
     planar_configuration: u32,
-) -> Result<Option<DecodingResult>, JsValue> {
+) -> Result<Option<DecodingResult>, DecodeError> {
     use tiff::tags::Tag;
 
     if !(9..=15).contains(&bits_per_sample) {
@@ -315,28 +346,31 @@ pub(crate) fn try_decode_subbit_strips(
         return Ok(None);
     }
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Err(JsValue::from_str(
+        return Err(DecodeError::new(
             "Sub-16-bit TIFF: tiled layout is not supported by the direct decode path",
         ));
     }
     if predictor != 1 && predictor != 2 {
-        return Err(JsValue::from_str(&format!(
-            "Sub-16-bit TIFF: predictor {} is not supported", predictor
+        return Err(DecodeError::new(&format!(
+            "Sub-16-bit TIFF: predictor {} is not supported",
+            predictor
         )));
     }
     let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
     if fill_order != 1 {
-        return Err(JsValue::from_str(
+        return Err(DecodeError::new(
             "Sub-16-bit TIFF: FillOrder 2 (LSB-first) is not supported",
         ));
     }
-    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     if sample_format != 1 {
-        return Err(JsValue::from_str(&format!(
-            "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)", sample_format
+        return Err(DecodeError::new(&format!(
+            "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)",
+            sample_format
         )));
     }
 
@@ -348,7 +382,10 @@ pub(crate) fn try_decode_subbit_strips(
         Ok(value) if value.len() == offsets.len() => value,
         _ => return Ok(None),
     };
-    let rows_per_strip = decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height).max(1);
+    let rows_per_strip = decoder
+        .get_tag_u32(Tag::RowsPerStrip)
+        .unwrap_or(height)
+        .max(1);
 
     let samples_per_row = (width as usize).saturating_mul(channels as usize);
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
@@ -364,17 +401,21 @@ pub(crate) fn try_decode_subbit_strips(
         let start = offset as usize;
         let end = start.saturating_add(count as usize);
         if end > data.len() {
-            return Err(JsValue::from_str("Sub-16-bit TIFF: strip byte range out of bounds"));
+            return Err(DecodeError::new(
+                "Sub-16-bit TIFF: strip byte range out of bounds",
+            ));
         }
         let strip = &data[start..end];
 
         let rows_in_strip = rows_per_strip.min(height - rows_decoded) as usize;
         let expected_bytes = row_bytes.saturating_mul(rows_in_strip);
-        let decompressed = decompress_strip_or_tile(strip, compression, expected_bytes, "Sub-16-bit TIFF")?;
+        let decompressed =
+            decompress_strip_or_tile(strip, compression, expected_bytes, "Sub-16-bit TIFF")?;
         if decompressed.len() < expected_bytes {
-            return Err(JsValue::from_str(&format!(
+            return Err(DecodeError::new(&format!(
                 "Sub-16-bit TIFF: strip decompressed to {} bytes, expected at least {}",
-                decompressed.len(), expected_bytes
+                decompressed.len(),
+                expected_bytes
             )));
         }
 
@@ -383,7 +424,12 @@ pub(crate) fn try_decode_subbit_strips(
             let mut row_values = unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
 
             if predictor == 2 {
-                apply_horizontal_predictor2(&mut row_values, width as usize, channels as usize, max_value);
+                apply_horizontal_predictor2(
+                    &mut row_values,
+                    width as usize,
+                    channels as usize,
+                    max_value,
+                );
             }
 
             out.extend_from_slice(&row_values);
@@ -392,8 +438,9 @@ pub(crate) fn try_decode_subbit_strips(
     }
 
     if rows_decoded != height {
-        return Err(JsValue::from_str(&format!(
-            "Sub-16-bit TIFF: decoded {} of {} rows", rows_decoded, height
+        return Err(DecodeError::new(&format!(
+            "Sub-16-bit TIFF: decoded {} of {} rows",
+            rows_decoded, height
         )));
     }
 
@@ -448,7 +495,7 @@ pub(crate) fn try_decode_general_strips_tiles(
     planar_configuration: u32,
     tile_width: u32,
     tile_length: u32,
-) -> Result<Option<DecodingResult>, JsValue> {
+) -> Result<Option<DecodingResult>, DecodeError> {
     use tiff::tags::Tag;
 
     let is_tiled = tile_width > 0 && tile_length > 0;
@@ -459,32 +506,52 @@ pub(crate) fn try_decode_general_strips_tiles(
     const CTX: &str = "Planar/tiled TIFF";
 
     if bits_per_sample != 8 && !(9..=16).contains(&bits_per_sample) {
-        return Err(JsValue::from_str(&format!(
-            "{}: {}-bit samples are not supported", CTX, bits_per_sample
+        return Err(DecodeError::new(&format!(
+            "{}: {}-bit samples are not supported",
+            CTX, bits_per_sample
         )));
     }
     if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
-        return Err(JsValue::from_str(&format!("{}: compression {} is not supported", CTX, compression)));
+        return Err(DecodeError::new(&format!(
+            "{}: compression {} is not supported",
+            CTX, compression
+        )));
     }
     if predictor != 1 && predictor != 2 {
-        return Err(JsValue::from_str(&format!("{}: predictor {} is not supported", CTX, predictor)));
+        return Err(DecodeError::new(&format!(
+            "{}: predictor {} is not supported",
+            CTX, predictor
+        )));
     }
     let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
     if fill_order != 1 {
-        return Err(JsValue::from_str(&format!("{}: FillOrder 2 (LSB-first) is not supported", CTX)));
+        return Err(DecodeError::new(&format!(
+            "{}: FillOrder 2 (LSB-first) is not supported",
+            CTX
+        )));
     }
-    let sample_format = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     if sample_format != 1 {
-        return Err(JsValue::from_str(&format!(
-            "{}: sample format {} is not supported (only unsigned integer)", CTX, sample_format
+        return Err(DecodeError::new(&format!(
+            "{}: sample format {} is not supported (only unsigned integer)",
+            CTX, sample_format
         )));
     }
 
-    let planes = if planar_configuration == 2 { channels } else { 1 };
-    let channels_per_block = if planar_configuration == 2 { 1 } else { channels };
+    let planes = if planar_configuration == 2 {
+        channels
+    } else {
+        1
+    };
+    let channels_per_block = if planar_configuration == 2 {
+        1
+    } else {
+        channels
+    };
 
     // Block geometry. Strips span the full image width and are never padded
     // (the last strip may simply have fewer rows than `rows_per_strip`).
@@ -497,7 +564,10 @@ pub(crate) fn try_decode_general_strips_tiles(
         let down = ((height as u64) + tile_length as u64 - 1) / tile_length as u64;
         (tile_width, tile_length, across as u32, down as u32, 0u32)
     } else {
-        let rps = decoder.get_tag_u32(Tag::RowsPerStrip).unwrap_or(height).max(1);
+        let rps = decoder
+            .get_tag_u32(Tag::RowsPerStrip)
+            .unwrap_or(height)
+            .max(1);
         let down = ((height as u64) + rps as u64 - 1) / rps as u64;
         (width, rps, 1u32, down as u32, rps)
     };
@@ -507,18 +577,24 @@ pub(crate) fn try_decode_general_strips_tiles(
         decoder.get_tag_u64_vec(Tag::TileOffsets)
     } else {
         decoder.get_tag_u64_vec(Tag::StripOffsets)
-    }).map_err(|e| JsValue::from_str(&format!("{}: missing offsets: {}", CTX, e)))?;
+    })
+    .map_err(|e| DecodeError::new(&format!("{}: missing offsets: {}", CTX, e)))?;
     let counts = (if is_tiled {
         decoder.get_tag_u64_vec(Tag::TileByteCounts)
     } else {
         decoder.get_tag_u64_vec(Tag::StripByteCounts)
-    }).map_err(|e| JsValue::from_str(&format!("{}: missing byte counts: {}", CTX, e)))?;
+    })
+    .map_err(|e| DecodeError::new(&format!("{}: missing byte counts: {}", CTX, e)))?;
 
-    let expected_blocks = blocks_per_plane.checked_mul(planes as u64)
-        .ok_or_else(|| JsValue::from_str(&format!("{}: block count overflow", CTX)))?;
+    let expected_blocks = blocks_per_plane
+        .checked_mul(planes as u64)
+        .ok_or_else(|| DecodeError::new(&format!("{}: block count overflow", CTX)))?;
     if offsets.len() as u64 != expected_blocks || counts.len() as u64 != expected_blocks {
-        return Err(JsValue::from_str(&format!(
-            "{}: expected {} strip/tile offsets, found {}", CTX, expected_blocks, offsets.len()
+        return Err(DecodeError::new(&format!(
+            "{}: expected {} strip/tile offsets, found {}",
+            CTX,
+            expected_blocks,
+            offsets.len()
         )));
     }
 
@@ -538,21 +614,31 @@ pub(crate) fn try_decode_general_strips_tiles(
                 let start = offset as usize;
                 let end = start.saturating_add(count as usize);
                 if end > data.len() {
-                    return Err(JsValue::from_str(&format!("{}: strip/tile byte range out of bounds", CTX)));
+                    return Err(DecodeError::new(&format!(
+                        "{}: strip/tile byte range out of bounds",
+                        CTX
+                    )));
                 }
                 let block_bytes = &data[start..end];
 
-                let image_row_start = if is_tiled { tile_row * tile_length } else { tile_row * rows_per_strip };
+                let image_row_start = if is_tiled {
+                    tile_row * tile_length
+                } else {
+                    tile_row * rows_per_strip
+                };
                 let image_col_start = tile_col * block_width;
                 let valid_rows = block_height.min(height.saturating_sub(image_row_start));
                 let valid_cols = block_width.min(width.saturating_sub(image_col_start));
 
                 let expected_bytes = row_bytes.saturating_mul(block_height as usize);
-                let decompressed = decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
+                let decompressed =
+                    decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
                 if decompressed.len() < expected_bytes {
-                    return Err(JsValue::from_str(&format!(
+                    return Err(DecodeError::new(&format!(
                         "{}: block decompressed to {} bytes, expected at least {}",
-                        CTX, decompressed.len(), expected_bytes
+                        CTX,
+                        decompressed.len(),
+                        expected_bytes
                     )));
                 }
 
@@ -561,10 +647,16 @@ pub(crate) fn try_decode_general_strips_tiles(
                         continue;
                     }
                     let row = &decompressed[row_idx * row_bytes..(row_idx + 1) * row_bytes];
-                    let mut row_values = unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
+                    let mut row_values =
+                        unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
 
                     if predictor == 2 {
-                        apply_horizontal_predictor2(&mut row_values, block_width as usize, channels_per_block as usize, max_value);
+                        apply_horizontal_predictor2(
+                            &mut row_values,
+                            block_width as usize,
+                            channels_per_block as usize,
+                            max_value,
+                        );
                     }
 
                     let out_row = (image_row_start as usize) + row_idx;
@@ -573,7 +665,11 @@ pub(crate) fn try_decode_general_strips_tiles(
                     for col in 0..(valid_cols as usize) {
                         let out_col = (image_col_start as usize) + col;
                         for c in 0..(channels_per_block as usize) {
-                            let dest_channel = if planar_configuration == 2 { plane as usize } else { c };
+                            let dest_channel = if planar_configuration == 2 {
+                                plane as usize
+                            } else {
+                                c
+                            };
                             out[out_row_base + out_col * (channels as usize) + dest_channel] =
                                 row_values[col * (channels_per_block as usize) + c];
                         }
@@ -584,7 +680,9 @@ pub(crate) fn try_decode_general_strips_tiles(
     }
 
     if bits_per_sample == 8 {
-        Ok(Some(DecodingResult::U8(out.into_iter().map(|v| v as u8).collect())))
+        Ok(Some(DecodingResult::U8(
+            out.into_iter().map(|v| v as u8).collect(),
+        )))
     } else {
         Ok(Some(DecodingResult::U16(out)))
     }
@@ -600,31 +698,42 @@ pub(crate) fn try_decode_general_strips_tiles(
 pub(crate) fn decode_zstd(
     original: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
-) -> Result<DecodingResult, JsValue> {
+) -> Result<DecodingResult, DecodeError> {
     use std::io::Read;
     use tiff::tags::Tag;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Err(JsValue::from_str("ZSTD: tiled TIFFs are not supported by the pure-Rust path"));
+        return Err(DecodeError::new(
+            "ZSTD: tiled TIFFs are not supported by the pure-Rust path",
+        ));
     }
     let planar = decoder.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
     if planar != 1 {
-        return Err(JsValue::from_str("ZSTD: planar configuration 2 is not supported"));
+        return Err(DecodeError::new(
+            "ZSTD: planar configuration 2 is not supported",
+        ));
     }
 
-    let (width, height) = decoder.dimensions()
-        .map_err(|e| JsValue::from_str(&format!("ZSTD: dimensions: {}", e)))?;
-    let offsets = decoder.get_tag_u64_vec(Tag::StripOffsets)
-        .map_err(|e| JsValue::from_str(&format!("ZSTD: StripOffsets: {}", e)))?;
-    let counts = decoder.get_tag_u64_vec(Tag::StripByteCounts)
-        .map_err(|e| JsValue::from_str(&format!("ZSTD: StripByteCounts: {}", e)))?;
+    let (width, height) = decoder
+        .dimensions()
+        .map_err(|e| DecodeError::new(&format!("ZSTD: dimensions: {}", e)))?;
+    let offsets = decoder
+        .get_tag_u64_vec(Tag::StripOffsets)
+        .map_err(|e| DecodeError::new(&format!("ZSTD: StripOffsets: {}", e)))?;
+    let counts = decoder
+        .get_tag_u64_vec(Tag::StripByteCounts)
+        .map_err(|e| DecodeError::new(&format!("ZSTD: StripByteCounts: {}", e)))?;
     let spp = decoder.get_tag_u32(Tag::SamplesPerPixel).unwrap_or(1);
     let predictor = decoder.get_tag_u32(Tag::Predictor).unwrap_or(1);
-    let photometric = decoder.get_tag_u32(Tag::PhotometricInterpretation).unwrap_or(1);
-    let bits: Vec<u32> = decoder.get_tag_u64_vec(Tag::BitsPerSample)
+    let photometric = decoder
+        .get_tag_u32(Tag::PhotometricInterpretation)
+        .unwrap_or(1);
+    let bits: Vec<u32> = decoder
+        .get_tag_u64_vec(Tag::BitsPerSample)
         .map(|v| v.into_iter().map(|b| b as u32).collect())
         .unwrap_or_else(|_| vec![8; spp as usize]);
-    let sample_format: Vec<u32> = decoder.get_tag_u64_vec(Tag::SampleFormat)
+    let sample_format: Vec<u32> = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
         .map(|v| v.into_iter().map(|s| s as u32).collect())
         .unwrap_or_else(|_| vec![1; spp as usize]);
 
@@ -634,22 +743,30 @@ pub(crate) fn decode_zstd(
         let start = *off as usize;
         let end = start.saturating_add(*cnt as usize);
         if end > original.len() {
-            return Err(JsValue::from_str("ZSTD: strip byte range out of bounds"));
+            return Err(DecodeError::new("ZSTD: strip byte range out of bounds"));
         }
         let mut dec = ruzstd::decoding::StreamingDecoder::new(Cursor::new(&original[start..end]))
-            .map_err(|e| JsValue::from_str(&format!("ZSTD: decoder init: {:?}", e)))?;
+            .map_err(|e| DecodeError::new(&format!("ZSTD: decoder init: {:?}", e)))?;
         dec.read_to_end(&mut raster)
-            .map_err(|e| JsValue::from_str(&format!("ZSTD: decompress: {:?}", e)))?;
+            .map_err(|e| DecodeError::new(&format!("ZSTD: decompress: {:?}", e)))?;
     }
 
     // Match the rebuilt TIFF's byte order to the original so multi-byte samples
     // are interpreted correctly.
     let little_endian = original.get(0..2) != Some(b"MM");
     let rebuilt = build_uncompressed_tiff(
-        little_endian, width, height, spp, &bits, &sample_format, photometric, predictor, &raster,
+        little_endian,
+        width,
+        height,
+        spp,
+        &bits,
+        &sample_format,
+        photometric,
+        predictor,
+        &raster,
     );
     let mut d = Decoder::new(Cursor::new(rebuilt.as_slice()))
-        .map_err(|e| JsValue::from_str(&format!("ZSTD: rebuilt decoder: {}", e)))?;
+        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt decoder: {}", e)))?;
     d.read_image()
-        .map_err(|e| JsValue::from_str(&format!("ZSTD: rebuilt read_image: {}", e)))
+        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt read_image: {}", e)))
 }

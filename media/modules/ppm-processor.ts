@@ -42,7 +42,7 @@ export class PpmProcessor {
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
     _cachedStatsRgb24Mode: boolean; // Track whether cached stats were computed in rgb24 mode
     /** Stats computed by the Rust decoder for the current `_lastRaw` (see
-     * `DecodedArray::finalize_stats` in wasm/tiff-decoder/src/lib.rs). Only
+     * `DecodedArray::finalize_stats` in crates/image-decoders/src/lib.rs). Only
      * valid for the plain (non-rgbAs24BitGrayscale) render. */
     _decodedStats: { min: number, max: number } | undefined;
     _lastRenderUsedWebGL: boolean;

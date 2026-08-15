@@ -1,6 +1,6 @@
 /**
  * Conformance tests for the Rust image-statistics port
- * (wasm/tiff-decoder/src/pipeline/stats.rs's `compute_image_stats_f32/u8/u16`
+ * (crates/image-decoders/src/pipeline/stats.rs's `compute_image_stats_f32/u8/u16`
  * wasm-bindgen entry points, ported from `ImageStatsCalculator` in
  * media/modules/normalization-helper.ts).
  *

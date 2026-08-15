@@ -1,12 +1,12 @@
 //! Shared types/helpers for the FITS (`fits.rs`) and NetCDF (`netcdf.rs`)
 //! decoders, mirroring `ScientificDecodedImage`, `finiteNumber` and
 //! `scaledDomain` in `media/modules/scientific-format-parsers.ts`. Wrapped
-//! into the `#[wasm_bindgen]` `ScientificResult` by `lib.rs`.
+//! into the public `DecodedArray` by `lib.rs`.
 
-use wasm_bindgen::JsValue;
+use crate::DecodeError;
 
 /// Intermediate result shared by the FITS and NetCDF entry points, before
-/// being wrapped into the `#[wasm_bindgen]` `ScientificResult` in `lib.rs`.
+/// being assembled into the public `DecodedArray` in `lib.rs`.
 pub(crate) struct ScientificParsed {
     pub width: u32,
     pub height: u32,
@@ -22,7 +22,12 @@ pub(crate) struct ScientificParsed {
 
 /// `Math.min(first, last)` / `max` of `offset + scale * storedMin/Max` —
 /// mirrors the TS `scaledDomain` helper exactly.
-pub(crate) fn scaled_domain(stored_min: f64, stored_max: f64, scale: f64, offset: f64) -> (f64, f64) {
+pub(crate) fn scaled_domain(
+    stored_min: f64,
+    stored_max: f64,
+    scale: f64,
+    offset: f64,
+) -> (f64, f64) {
     let first = offset + scale * stored_min;
     let last = offset + scale * stored_max;
     (first.min(last), first.max(last))
@@ -57,15 +62,25 @@ pub(crate) fn ascii(bytes: &[u8], start: usize, length: usize) -> String {
     bytes[start..end].iter().map(|&b| b as char).collect()
 }
 
-fn oob_generic(context: &str) -> JsValue {
-    JsValue::from_str(&format!("{}: unexpected end of data while reading samples", context))
+fn oob_generic(context: &str) -> DecodeError {
+    DecodeError::new(&format!(
+        "{}: unexpected end of data while reading samples",
+        context
+    ))
 }
 
 /// Bounds-checked slice read, matching the "throw on out-of-range access"
 /// behavior of a JS `DataView` getter (which is where the TS parsers get
 /// their own implicit bounds checking).
-pub(crate) fn get_slice<'a>(data: &'a [u8], offset: usize, len: usize, context: &str) -> Result<&'a [u8], JsValue> {
-    let end = offset.checked_add(len).ok_or_else(|| oob_generic(context))?;
+pub(crate) fn get_slice<'a>(
+    data: &'a [u8],
+    offset: usize,
+    len: usize,
+    context: &str,
+) -> Result<&'a [u8], DecodeError> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| oob_generic(context))?;
     data.get(offset..end).ok_or_else(|| oob_generic(context))
 }
 

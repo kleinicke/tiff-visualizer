@@ -34,7 +34,7 @@ export class PfmProcessor {
     _isInitialLoad: boolean; // Track if this is the first render
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
     /** Stats computed by the Rust decoder for the current `_lastRaw` (see
-     * `DecodedArray::finalize_stats` in wasm/tiff-decoder/src/lib.rs). Consumed
+     * `DecodedArray::finalize_stats` in crates/image-decoders/src/lib.rs). Consumed
      * by `_toImageDataFloat` instead of rescanning with `ImageStatsCalculator`. */
     _decodedStats: { min: number, max: number } | undefined;
     _lastRenderHistogram: any;

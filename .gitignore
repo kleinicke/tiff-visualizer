@@ -26,6 +26,7 @@ test-resources/
 *.tgz
 
 # Rust/WASM build artifacts
+/target/
 wasm/tiff-decoder/target/
 
 # Generated bundles

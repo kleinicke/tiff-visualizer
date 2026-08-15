@@ -42,7 +42,7 @@ const DATA_INLINE_LIMIT = 4096;
  * same result object returns an empty vector, not the same data again).
  *
  * All seven formats now return the same `DecodedArray` struct (see
- * `wasm/tiff-decoder/src/lib.rs`), so there is one field-reading path here
+ * `crates/image-decoders/src/lib.rs`), so there is one field-reading path here
  * instead of one per format; only which bytes to feed the decoder differs.
  */
 function decodeWithRust(mod, kase) {

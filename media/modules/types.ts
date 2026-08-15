@@ -65,7 +65,7 @@ export interface ScientificDecodedImage {
 	};
 	/**
 	 * Sample statistics computed once inside the Rust decoder (see
-	 * `DecodedArray::finalize_stats` in `wasm/tiff-decoder/src/lib.rs`), ported
+	 * `DecodedArray::finalize_stats` in `crates/image-decoders/src/lib.rs`), ported
 	 * from `ImageStatsCalculator.calculateFloatStats` / `.calculateIntegerStats`.
 	 * Always present for the seven Rust-decoded formats — consume this instead
 	 * of rescanning with `ImageStatsCalculator` on the load path.

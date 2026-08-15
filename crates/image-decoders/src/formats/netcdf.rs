@@ -14,9 +14,11 @@
 //! Held equal to the TS implementation by `test/rust-scientific-conformance-test.js`.
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
-use super::scientific_common::{ascii, ceil4, get_slice, js_number, scaled_domain, ScientificParsed};
+use super::scientific_common::{
+    ascii, ceil4, get_slice, js_number, scaled_domain, ScientificParsed,
+};
+use crate::DecodeError;
 use std::collections::{BTreeMap, HashMap};
-use wasm_bindgen::JsValue;
 
 const NC_DIMENSION: u32 = 10;
 const NC_VARIABLE: u32 = 11;
@@ -58,15 +60,31 @@ fn find_attr<'a>(attrs: &'a [(String, AttrValue)], key: &str) -> Option<&'a Attr
 fn finite_number_attr(v: Option<&AttrValue>, fallback: f64) -> f64 {
     match v {
         None => fallback,
-        Some(AttrValue::Num(n)) => if n.is_finite() { *n } else { fallback },
+        Some(AttrValue::Num(n)) => {
+            if n.is_finite() {
+                *n
+            } else {
+                fallback
+            }
+        }
         Some(AttrValue::NumArr(arr)) => match arr.len() {
             0 => 0.0, // Number([]) === 0
-            1 => if arr[0].is_finite() { arr[0] } else { fallback }, // Number([x]) === x
+            1 => {
+                if arr[0].is_finite() {
+                    arr[0]
+                } else {
+                    fallback
+                }
+            } // Number([x]) === x
             _ => fallback, // Number([x, y, ...]) is NaN (comma-joined string)
         },
         Some(AttrValue::Str(s)) => {
             let n = js_number(s);
-            if n.is_finite() { n } else { fallback }
+            if n.is_finite() {
+                n
+            } else {
+                fallback
+            }
         }
     }
 }
@@ -100,7 +118,7 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    fn u32(&mut self) -> Result<u32, JsValue> {
+    fn u32(&mut self) -> Result<u32, DecodeError> {
         let b = get_slice(self.data, self.offset, 4, "NetCDF")?;
         self.offset += 4;
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
@@ -108,18 +126,20 @@ impl<'a> Reader<'a> {
 
     /// Reads a big-endian u64 offset and converts it to f64, matching the TS
     /// `Number(view.getBigUint64(...))` + safe-integer guard.
-    fn u64_as_f64(&mut self) -> Result<f64, JsValue> {
+    fn u64_as_f64(&mut self) -> Result<f64, DecodeError> {
         let b = get_slice(self.data, self.offset, 8, "NetCDF")?;
         self.offset += 8;
         let raw = u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]);
         let v = raw as f64;
         if v > 9_007_199_254_740_991.0 {
-            return Err(JsValue::from_str("NetCDF offset exceeds JavaScript safe integer range"));
+            return Err(DecodeError::new(
+                "NetCDF offset exceeds JavaScript safe integer range",
+            ));
         }
         Ok(v)
     }
 
-    fn name(&mut self) -> Result<String, JsValue> {
+    fn name(&mut self) -> Result<String, DecodeError> {
         let length = self.u32()? as usize;
         let s = ascii(self.data, self.offset, length);
         self.offset = self.offset.saturating_add(ceil4(length));
@@ -128,10 +148,13 @@ impl<'a> Reader<'a> {
 
     /// Mirrors TS `values(type, count)`: reads `count` samples of `type`,
     /// returning either the joined char string (type 2) or the numeric list.
-    fn values(&mut self, var_type: u32, count: usize) -> Result<AttrRaw, JsValue> {
-        let size = type_size(var_type).ok_or_else(|| JsValue::from_str(&format!("Unsupported NetCDF type: {}", var_type)))?;
+    fn values(&mut self, var_type: u32, count: usize) -> Result<AttrRaw, DecodeError> {
+        let size = type_size(var_type)
+            .ok_or_else(|| DecodeError::new(&format!("Unsupported NetCDF type: {}", var_type)))?;
         if var_type == 2 {
-            let total = count.checked_mul(size).ok_or_else(|| JsValue::from_str("NetCDF: size overflow"))?;
+            let total = count
+                .checked_mul(size)
+                .ok_or_else(|| DecodeError::new("NetCDF: size overflow"))?;
             let bytes = get_slice(self.data, self.offset, total, "NetCDF")?;
             let s: String = bytes.iter().map(|&b| b as char).collect();
             self.offset = self.offset.saturating_add(ceil4(total));
@@ -139,9 +162,10 @@ impl<'a> Reader<'a> {
         }
         let mut nums = Vec::with_capacity(count);
         for i in 0..count {
-            let byte_off = i.checked_mul(size)
+            let byte_off = i
+                .checked_mul(size)
                 .and_then(|v| self.offset.checked_add(v))
-                .ok_or_else(|| JsValue::from_str("NetCDF: offset overflow"))?;
+                .ok_or_else(|| DecodeError::new("NetCDF: offset overflow"))?;
             let b = get_slice(self.data, byte_off, size, "NetCDF")?;
             let v = match var_type {
                 1 => (b[0] as i8) as f64,
@@ -153,19 +177,21 @@ impl<'a> Reader<'a> {
             };
             nums.push(v);
         }
-        let total = count.checked_mul(size).ok_or_else(|| JsValue::from_str("NetCDF: size overflow"))?;
+        let total = count
+            .checked_mul(size)
+            .ok_or_else(|| DecodeError::new("NetCDF: size overflow"))?;
         self.offset = self.offset.saturating_add(ceil4(total));
         Ok(AttrRaw::Nums(nums))
     }
 
-    fn attributes(&mut self) -> Result<Vec<(String, AttrValue)>, JsValue> {
+    fn attributes(&mut self) -> Result<Vec<(String, AttrValue)>, DecodeError> {
         let tag = self.u32()?;
         if tag == 0 {
             self.u32()?;
             return Ok(Vec::new());
         }
         if tag != NC_ATTRIBUTE {
-            return Err(JsValue::from_str("Invalid NetCDF attribute list"));
+            return Err(DecodeError::new("Invalid NetCDF attribute list"));
         }
         let count = self.u32()? as usize;
         let mut attrs = Vec::with_capacity(count);
@@ -177,7 +203,11 @@ impl<'a> Reader<'a> {
             let value = match raw {
                 AttrRaw::Chars(s) => AttrValue::Str(s.trim_end_matches('\0').to_string()),
                 AttrRaw::Nums(nums) => {
-                    if nums.len() == 1 { AttrValue::Num(nums[0]) } else { AttrValue::NumArr(nums) }
+                    if nums.len() == 1 {
+                        AttrValue::Num(nums[0])
+                    } else {
+                        AttrValue::NumArr(nums)
+                    }
                 }
             };
             attrs.push((name, value));
@@ -199,8 +229,16 @@ enum AttrRaw {
 /// viewer should open by default.
 fn is_mesh_geometry(name: &str) -> bool {
     const GEOMETRY: [&str; 10] = [
-        "areaCell", "areaTriangle", "latCell", "lonCell", "xCell", "yCell", "zCell",
-        "meshDensity", "maxLevelCell", "nEdgesOnCell",
+        "areaCell",
+        "areaTriangle",
+        "latCell",
+        "lonCell",
+        "xCell",
+        "yCell",
+        "zCell",
+        "meshDensity",
+        "maxLevelCell",
+        "nEdgesOnCell",
     ];
     GEOMETRY.contains(&name)
         || name.starts_with("indexTo")
@@ -209,14 +247,25 @@ fn is_mesh_geometry(name: &str) -> bool {
         || name.ends_with("OnVertex")
 }
 
-fn variable_dimensions<'a>(variable: &Variable, dimensions: &'a [Dimension]) -> Result<Vec<&'a Dimension>, JsValue> {
-    variable.dim_ids.iter()
-        .map(|&id| dimensions.get(id).ok_or_else(|| JsValue::from_str("NetCDF variable references an invalid dimension")))
+fn variable_dimensions<'a>(
+    variable: &Variable,
+    dimensions: &'a [Dimension],
+) -> Result<Vec<&'a Dimension>, DecodeError> {
+    variable
+        .dim_ids
+        .iter()
+        .map(|&id| {
+            dimensions
+                .get(id)
+                .ok_or_else(|| DecodeError::new("NetCDF variable references an invalid dimension"))
+        })
         .collect()
 }
 
 fn clamp_trunc(value: f64, size: usize) -> usize {
-    if size == 0 { return 0; }
+    if size == 0 {
+        return 0;
+    }
     let t = value.trunc();
     let t = if t.is_finite() { t } else { 0.0 };
     let clamped = t.max(0.0).min((size - 1) as f64);
@@ -230,9 +279,14 @@ fn stored_value(
     dimensions: &[Dimension],
     record_size: f64,
     indices: &[f64],
-) -> Result<f64, JsValue> {
+) -> Result<f64, DecodeError> {
     let dims = variable_dimensions(variable, dimensions)?;
-    let type_sz = type_size(variable.var_type).ok_or_else(|| JsValue::from_str(&format!("Unsupported NetCDF variable type: {}", variable.var_type)))?;
+    let type_sz = type_size(variable.var_type).ok_or_else(|| {
+        DecodeError::new(&format!(
+            "Unsupported NetCDF variable type: {}",
+            variable.var_type
+        ))
+    })?;
     let is_record = dims.first().map(|d| d.unlimited).unwrap_or(false);
 
     let mut linear: f64 = 0.0;
@@ -252,7 +306,10 @@ fn stored_value(
 
     let p = variable.begin + record_index * record_size + linear * type_sz as f64;
     if !(p >= 0.0) || p + (type_sz as f64) > data.len() as f64 {
-        return Err(JsValue::from_str(&format!("Truncated NetCDF variable data: {}", variable.name)));
+        return Err(DecodeError::new(&format!(
+            "Truncated NetCDF variable data: {}",
+            variable.name
+        )));
     }
     let offset = p as usize;
     let b = get_slice(data, offset, type_sz, "NetCDF")?;
@@ -262,14 +319,21 @@ fn stored_value(
         4 => i32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64,
         5 => f32::from_be_bytes([b[0], b[1], b[2], b[3]]) as f64,
         6 => f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
-        _ => return Err(JsValue::from_str(&format!("Unsupported NetCDF variable type: {}", variable.var_type))),
+        _ => {
+            return Err(DecodeError::new(&format!(
+                "Unsupported NetCDF variable type: {}",
+                variable.var_type
+            )))
+        }
     };
 
     if fill_values(&variable.attrs).iter().any(|&fv| stored == fv) {
         return Ok(f64::NAN);
     }
-    Ok(stored * finite_number_attr(find_attr(&variable.attrs, "scale_factor"), 1.0)
-        + finite_number_attr(find_attr(&variable.attrs, "add_offset"), 0.0))
+    Ok(
+        stored * finite_number_attr(find_attr(&variable.attrs, "scale_factor"), 1.0)
+            + finite_number_attr(find_attr(&variable.attrs, "add_offset"), 0.0),
+    )
 }
 
 fn is_numeric(variable: &Variable) -> bool {
@@ -280,9 +344,15 @@ fn is_numeric(variable: &Variable) -> bool {
 fn is_topology_name(name: &str) -> bool {
     matches!(
         name.to_lowercase().as_str(),
-        "latcell" | "loncell" | "xcell" | "ycell" | "zcell"
+        "latcell"
+            | "loncell"
+            | "xcell"
+            | "ycell"
+            | "zcell"
             | "indextocellid"
-            | "cellsoncell" | "edgesoncell" | "verticesoncell"
+            | "cellsoncell"
+            | "edgesoncell"
+            | "verticesoncell"
             | "nedgesoncell"
     )
 }
@@ -300,9 +370,25 @@ fn fill_polygon(data: &mut [f32], width: usize, height: usize, points: &[Point],
         return;
     }
     for &shift in &[-(width as f64), 0.0, width as f64] {
-        let shifted: Vec<Point> = points.iter().map(|p| Point { x: p.x + shift, y: p.y }).collect();
-        let min_y = shifted.iter().map(|p| p.y).fold(f64::INFINITY, f64::min).floor().max(0.0);
-        let max_y = shifted.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max).ceil().min((height - 1) as f64);
+        let shifted: Vec<Point> = points
+            .iter()
+            .map(|p| Point {
+                x: p.x + shift,
+                y: p.y,
+            })
+            .collect();
+        let min_y = shifted
+            .iter()
+            .map(|p| p.y)
+            .fold(f64::INFINITY, f64::min)
+            .floor()
+            .max(0.0);
+        let max_y = shifted
+            .iter()
+            .map(|p| p.y)
+            .fold(f64::NEG_INFINITY, f64::max)
+            .ceil()
+            .min((height - 1) as f64);
         if !(min_y.is_finite() && max_y.is_finite()) {
             continue;
         }
@@ -343,12 +429,16 @@ fn fill_polygon(data: &mut [f32], width: usize, height: usize, points: &[Point],
 }
 
 fn dims_json(dims: &[&Dimension]) -> JsonValue {
-    JsonValue::Arr(dims.iter().map(|d| {
-        JsonValue::Obj(vec![
-            ("name".to_string(), JsonValue::Str(d.name.clone())),
-            ("size".to_string(), JsonValue::Num(d.size as f64)),
-        ])
-    }).collect())
+    JsonValue::Arr(
+        dims.iter()
+            .map(|d| {
+                JsonValue::Obj(vec![
+                    ("name".to_string(), JsonValue::Str(d.name.clone())),
+                    ("size".to_string(), JsonValue::Num(d.size as f64)),
+                ])
+            })
+            .collect(),
+    )
 }
 
 fn attr_to_json(v: &AttrValue) -> JsonValue {
@@ -367,11 +457,16 @@ struct DecodeOptions {
 }
 
 fn parse_options(options_json: &str) -> DecodeOptions {
-    let mut out = DecodeOptions { variable_name: None, indices: HashMap::new() };
+    let mut out = DecodeOptions {
+        variable_name: None,
+        indices: HashMap::new(),
+    };
     if options_json.trim().is_empty() {
         return out;
     }
-    let Ok(root) = super::json_value::parse(options_json) else { return out; };
+    let Ok(root) = super::json_value::parse(options_json) else {
+        return out;
+    };
     if let Some(name) = root.get("variableName").and_then(|v| v.as_str()) {
         out.variable_name = Some(name.to_string());
     }
@@ -387,16 +482,24 @@ fn parse_options(options_json: &str) -> DecodeOptions {
 
 /// Decode classic NetCDF CDF-1/CDF-2 as either a regular raster or an MPAS
 /// cell mesh.
-pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<ScientificParsed, JsValue> {
+pub(crate) fn decode_netcdf_impl(
+    data: &[u8],
+    options_json: &str,
+) -> Result<ScientificParsed, DecodeError> {
     if data.len() < 8 || ascii(data, 0, 3) != "CDF" {
         if data.len() >= 8 && data[0] == 0x89 && ascii(data, 1, 3) == "HDF" {
-            return Err(JsValue::from_str("NetCDF-4/HDF5 is not supported yet; use classic NetCDF (CDF-1 or CDF-2)"));
+            return Err(DecodeError::new(
+                "NetCDF-4/HDF5 is not supported yet; use classic NetCDF (CDF-1 or CDF-2)",
+            ));
         }
-        return Err(JsValue::from_str("Invalid NetCDF signature"));
+        return Err(DecodeError::new("Invalid NetCDF signature"));
     }
     let version = data[3];
     if version != 1 && version != 2 {
-        return Err(JsValue::from_str(&format!("Unsupported NetCDF format version: CDF-{}", version)));
+        return Err(DecodeError::new(&format!(
+            "Unsupported NetCDF format version: CDF-{}",
+            version
+        )));
     }
     let options = parse_options(options_json);
 
@@ -408,24 +511,32 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         reader.u32()?;
     } else {
         if dim_tag != NC_DIMENSION {
-            return Err(JsValue::from_str("Invalid NetCDF dimension list"));
+            return Err(DecodeError::new("Invalid NetCDF dimension list"));
         }
         let count = reader.u32()? as usize;
         for _ in 0..count {
             let name = reader.name()?;
             let declared_size = reader.u32()? as f64;
-            let size = if declared_size == 0.0 { num_records } else { declared_size };
-            dimensions.push(Dimension { name, size: size.max(0.0) as usize, unlimited: declared_size == 0.0 });
+            let size = if declared_size == 0.0 {
+                num_records
+            } else {
+                declared_size
+            };
+            dimensions.push(Dimension {
+                name,
+                size: size.max(0.0) as usize,
+                unlimited: declared_size == 0.0,
+            });
         }
     }
     reader.attributes()?;
     let var_tag = reader.u32()?;
     if var_tag == 0 {
         reader.u32()?;
-        return Err(JsValue::from_str("NetCDF file contains no variables"));
+        return Err(DecodeError::new("NetCDF file contains no variables"));
     }
     if var_tag != NC_VARIABLE {
-        return Err(JsValue::from_str("Invalid NetCDF variable list"));
+        return Err(DecodeError::new("Invalid NetCDF variable list"));
     }
     let variable_count = reader.u32()? as usize;
     let mut variables: Vec<Variable> = Vec::with_capacity(variable_count);
@@ -439,12 +550,30 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         let attrs = reader.attributes()?;
         let var_type = reader.u32()?;
         let vsize = reader.u32()?;
-        let begin = if version == 1 { reader.u32()? as f64 } else { reader.u64_as_f64()? };
-        variables.push(Variable { name, dim_ids, attrs, var_type, vsize, begin });
+        let begin = if version == 1 {
+            reader.u32()? as f64
+        } else {
+            reader.u64_as_f64()?
+        };
+        variables.push(Variable {
+            name,
+            dim_ids,
+            attrs,
+            var_type,
+            vsize,
+            begin,
+        });
     }
 
-    let record_size: f64 = variables.iter()
-        .filter(|v| v.dim_ids.first().and_then(|&id| dimensions.get(id)).map(|d| d.unlimited).unwrap_or(false))
+    let record_size: f64 = variables
+        .iter()
+        .filter(|v| {
+            v.dim_ids
+                .first()
+                .and_then(|&id| dimensions.get(id))
+                .map(|d| d.unlimited)
+                .unwrap_or(false)
+        })
         .map(|v| (v.vsize as f64 / 4.0).ceil() * 4.0)
         .sum();
 
@@ -455,32 +584,51 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
 
     let cell_dimension = dimensions.iter().position(|d| d.name == "nCells");
     let has_mpas_geometry = cell_dimension.is_some()
-        && ["latVertex", "lonVertex", "verticesOnCell", "nEdgesOnCell"].iter().all(|n| variable_by_name.contains_key(*n));
+        && ["latVertex", "lonVertex", "verticesOnCell", "nEdgesOnCell"]
+            .iter()
+            .all(|n| variable_by_name.contains_key(*n));
 
     let mesh_indices: Vec<usize> = if has_mpas_geometry {
         let cd = cell_dimension.unwrap();
-        variables.iter().enumerate()
+        variables
+            .iter()
+            .enumerate()
             .filter(|(_, v)| is_numeric(v) && v.dim_ids.contains(&cd) && !is_topology_name(&v.name))
             .map(|(i, _)| i)
             .collect()
     } else {
         Vec::new()
     };
-    let raster_indices: Vec<usize> = variables.iter().enumerate()
+    let raster_indices: Vec<usize> = variables
+        .iter()
+        .enumerate()
         .filter_map(|(i, v)| {
-            if !is_numeric(v) || v.dim_ids.len() < 2 || is_topology_name(&v.name) { return None; }
+            if !is_numeric(v) || v.dim_ids.len() < 2 || is_topology_name(&v.name) {
+                return None;
+            }
             let dims = variable_dimensions(v, &dimensions).ok()?;
             let n = dims.len();
-            if dims[n - 1].size > 1 && dims[n - 2].size > 1 { Some(i) } else { None }
+            if dims[n - 1].size > 1 && dims[n - 2].size > 1 {
+                Some(i)
+            } else {
+                None
+            }
         })
         .collect();
 
-    let candidates: &[usize] = if !mesh_indices.is_empty() { &mesh_indices } else { &raster_indices };
+    let candidates: &[usize] = if !mesh_indices.is_empty() {
+        &mesh_indices
+    } else {
+        &raster_indices
+    };
     if candidates.is_empty() {
-        return Err(JsValue::from_str("NetCDF file contains no supported raster or MPAS cell variable"));
+        return Err(DecodeError::new(
+            "NetCDF file contains no supported raster or MPAS cell variable",
+        ));
     }
 
-    let selected_idx: usize = candidates.iter()
+    let selected_idx: usize = candidates
+        .iter()
         .find(|&&i| Some(&variables[i].name) == options.variable_name.as_ref())
         .copied()
         // Default to a simulated field rather than the grid it was computed on.
@@ -497,54 +645,103 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         // single flat colour).
         .or_else(|| {
             let is_field = |i: &&usize| !is_mesh_geometry(&variables[**i].name);
-            let time_varying = |i: &&usize| variable_dimensions(&variables[**i], &dimensions)
-                .map(|dims| dims.first().map(|d| d.unlimited).unwrap_or(false))
-                .unwrap_or(false);
-            candidates.iter().filter(is_field).find(time_varying).copied()
+            let time_varying = |i: &&usize| {
+                variable_dimensions(&variables[**i], &dimensions)
+                    .map(|dims| dims.first().map(|d| d.unlimited).unwrap_or(false))
+                    .unwrap_or(false)
+            };
+            candidates
+                .iter()
+                .filter(is_field)
+                .find(time_varying)
+                .copied()
                 .or_else(|| candidates.iter().find(is_field).copied())
         })
         .unwrap_or(candidates[0]);
 
     let selected_bits = (type_size(variables[selected_idx].var_type).unwrap_or(0) * 8) as u32;
-    let selected_sample_format: u32 = if variables[selected_idx].var_type >= 5 { 3 } else { 2 };
-    let selected_scale = finite_number_attr(find_attr(&variables[selected_idx].attrs, "scale_factor"), 1.0);
-    let selected_offset = finite_number_attr(find_attr(&variables[selected_idx].attrs, "add_offset"), 0.0);
-    let selected_stored_min = if selected_sample_format == 3 { 0.0 } else { -(2f64.powi(selected_bits as i32 - 1)) };
-    let selected_stored_max = if selected_sample_format == 3 { 1.0 } else { 2f64.powi(selected_bits as i32 - 1) - 1.0 };
-    let (type_min, type_max) = scaled_domain(selected_stored_min, selected_stored_max, selected_scale, selected_offset);
+    let selected_sample_format: u32 = if variables[selected_idx].var_type >= 5 {
+        3
+    } else {
+        2
+    };
+    let selected_scale = finite_number_attr(
+        find_attr(&variables[selected_idx].attrs, "scale_factor"),
+        1.0,
+    );
+    let selected_offset =
+        finite_number_attr(find_attr(&variables[selected_idx].attrs, "add_offset"), 0.0);
+    let selected_stored_min = if selected_sample_format == 3 {
+        0.0
+    } else {
+        -(2f64.powi(selected_bits as i32 - 1))
+    };
+    let selected_stored_max = if selected_sample_format == 3 {
+        1.0
+    } else {
+        2f64.powi(selected_bits as i32 - 1) - 1.0
+    };
+    let (type_min, type_max) = scaled_domain(
+        selected_stored_min,
+        selected_stored_max,
+        selected_scale,
+        selected_offset,
+    );
     let selected_source_numeric_type: &str = if selected_sample_format == 3 {
-        if selected_bits <= 32 { "float32" } else { "float64" }
-    } else if selected_bits <= 8 { "int8" } else if selected_bits <= 16 { "int16" } else { "int32" };
+        if selected_bits <= 32 {
+            "float32"
+        } else {
+            "float64"
+        }
+    } else if selected_bits <= 8 {
+        "int8"
+    } else if selected_bits <= 16 {
+        "int16"
+    } else {
+        "int32"
+    };
 
     let selected_dimensions = variable_dimensions(&variables[selected_idx], &dimensions)?;
     // BTreeMap, not HashMap: this map is serialized into `metadata.selectedIndices`,
     // and HashMap iteration order varies between builds — which made the emitted
     // JSON key order (and therefore the golden files and the metadata panel's
     // display order) non-deterministic.
-    let selected_indices: BTreeMap<String, usize> = selected_dimensions.iter()
+    let selected_indices: BTreeMap<String, usize> = selected_dimensions
+        .iter()
         .map(|d| {
             let raw = options.indices.get(&d.name).copied().unwrap_or(0.0);
-            let raw = if raw == 0.0 || !raw.is_finite() { 0.0 } else { raw };
+            let raw = if raw == 0.0 || !raw.is_finite() {
+                0.0
+            } else {
+                raw
+            };
             (d.name.clone(), clamp_trunc(raw, d.size))
         })
         .collect();
 
-    let variable_choices: Vec<JsonValue> = candidates.iter().map(|&i| {
-        let v = &variables[i];
-        let dims = variable_dimensions(v, &dimensions).unwrap_or_default();
-        let label = match find_attr(&v.attrs, "long_name") {
-            Some(AttrValue::Str(s)) if !s.is_empty() => s.clone(),
-            Some(AttrValue::Num(n)) => super::json_value::format_number(*n),
-            _ => v.name.clone(),
-        };
-        let mut fields = vec![
-            ("name".to_string(), JsonValue::Str(v.name.clone())),
-            ("label".to_string(), JsonValue::Str(label)),
-            ("dimensions".to_string(), dims_json(&dims)),
-        ];
-        push_opt(&mut fields, "unit", find_attr(&v.attrs, "units").map(attr_to_json));
-        JsonValue::Obj(fields)
-    }).collect();
+    let variable_choices: Vec<JsonValue> = candidates
+        .iter()
+        .map(|&i| {
+            let v = &variables[i];
+            let dims = variable_dimensions(v, &dimensions).unwrap_or_default();
+            let label = match find_attr(&v.attrs, "long_name") {
+                Some(AttrValue::Str(s)) if !s.is_empty() => s.clone(),
+                Some(AttrValue::Num(n)) => super::json_value::format_number(*n),
+                _ => v.name.clone(),
+            };
+            let mut fields = vec![
+                ("name".to_string(), JsonValue::Str(v.name.clone())),
+                ("label".to_string(), JsonValue::Str(label)),
+                ("dimensions".to_string(), dims_json(&dims)),
+            ];
+            push_opt(
+                &mut fields,
+                "unit",
+                find_attr(&v.attrs, "units").map(attr_to_json),
+            );
+            JsonValue::Obj(fields)
+        })
+        .collect();
 
     let format_str = format!("NetCDF CDF-{}", version);
 
@@ -553,22 +750,38 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         let selected = &variables[selected_idx];
         let cell_axis = selected.dim_ids.iter().position(|&id| id == cd);
 
-        let selectors: Vec<JsonValue> = selected_dimensions.iter().enumerate()
+        let selectors: Vec<JsonValue> = selected_dimensions
+            .iter()
+            .enumerate()
             .filter(|(i, _)| Some(*i) != cell_axis)
-            .map(|(_, d)| JsonValue::Obj(vec![
-                ("name".to_string(), JsonValue::Str(d.name.clone())),
-                ("size".to_string(), JsonValue::Num(d.size as f64)),
-                ("value".to_string(), JsonValue::Num(*selected_indices.get(&d.name).unwrap_or(&0) as f64)),
-            ]))
+            .map(|(_, d)| {
+                JsonValue::Obj(vec![
+                    ("name".to_string(), JsonValue::Str(d.name.clone())),
+                    ("size".to_string(), JsonValue::Num(d.size as f64)),
+                    (
+                        "value".to_string(),
+                        JsonValue::Num(*selected_indices.get(&d.name).unwrap_or(&0) as f64),
+                    ),
+                ])
+            })
             .collect();
 
         let cell_count = dimensions[cd].size;
         let mut cell_values = vec![0f32; cell_count];
         for cell in 0..cell_count {
-            let indices: Vec<f64> = selected_dimensions.iter().enumerate()
-                .map(|(i, d)| if Some(i) == cell_axis { cell as f64 } else { *selected_indices.get(&d.name).unwrap_or(&0) as f64 })
+            let indices: Vec<f64> = selected_dimensions
+                .iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    if Some(i) == cell_axis {
+                        cell as f64
+                    } else {
+                        *selected_indices.get(&d.name).unwrap_or(&0) as f64
+                    }
+                })
                 .collect();
-            cell_values[cell] = stored_value(data, selected, &dimensions, record_size, &indices)? as f32;
+            cell_values[cell] =
+                stored_value(data, selected, &dimensions, record_size, &indices)? as f32;
         }
 
         let lat_vertex_idx = *variable_by_name.get("latVertex").unwrap();
@@ -584,33 +797,78 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         let mut latitudes = vec![0f64; vertex_count];
         let mut longitudes = vec![0f64; vertex_count];
         for vertex in 0..vertex_count {
-            latitudes[vertex] = stored_value(data, &variables[lat_vertex_idx], &dimensions, record_size, &[vertex as f64])?;
-            longitudes[vertex] = stored_value(data, &variables[lon_vertex_idx], &dimensions, record_size, &[vertex as f64])?;
+            latitudes[vertex] = stored_value(
+                data,
+                &variables[lat_vertex_idx],
+                &dimensions,
+                record_size,
+                &[vertex as f64],
+            )?;
+            longitudes[vertex] = stored_value(
+                data,
+                &variables[lon_vertex_idx],
+                &dimensions,
+                record_size,
+                &[vertex as f64],
+            )?;
         }
-        let max_abs_lat = latitudes.iter().fold(0.0f64, |acc, &v| if v.is_finite() { acc.max(v.abs()) } else { acc });
-        let angular_scale = if max_abs_lat > std::f64::consts::PI { std::f64::consts::PI / 180.0 } else { 1.0 };
+        let max_abs_lat =
+            latitudes.iter().fold(
+                0.0f64,
+                |acc, &v| if v.is_finite() { acc.max(v.abs()) } else { acc },
+            );
+        let angular_scale = if max_abs_lat > std::f64::consts::PI {
+            std::f64::consts::PI / 180.0
+        } else {
+            1.0
+        };
 
         let width: usize = 720;
         let height: usize = 360;
         let mut out = vec![f32::NAN; width * height];
 
         for cell in 0..cell_count {
-            let raw_edge_count = stored_value(data, &variables[n_edges_on_cell_idx], &dimensions, record_size, &[cell as f64])?;
-            let edge_count = if raw_edge_count.is_finite() { raw_edge_count.trunc().max(0.0).min(max_edges as f64) as usize } else { 0 };
+            let raw_edge_count = stored_value(
+                data,
+                &variables[n_edges_on_cell_idx],
+                &dimensions,
+                record_size,
+                &[cell as f64],
+            )?;
+            let edge_count = if raw_edge_count.is_finite() {
+                raw_edge_count.trunc().max(0.0).min(max_edges as f64) as usize
+            } else {
+                0
+            };
             let mut points: Vec<Point> = Vec::with_capacity(edge_count);
             for edge in 0..edge_count {
-                let raw_vertex = stored_value(data, &variables[vertices_on_cell_idx], &dimensions, record_size, &[cell as f64, edge as f64])?;
-                if !raw_vertex.is_finite() { continue; }
+                let raw_vertex = stored_value(
+                    data,
+                    &variables[vertices_on_cell_idx],
+                    &dimensions,
+                    record_size,
+                    &[cell as f64, edge as f64],
+                )?;
+                if !raw_vertex.is_finite() {
+                    continue;
+                }
                 let vertex = raw_vertex.trunc() as i64 - 1;
-                if vertex < 0 || vertex as usize >= vertex_count { continue; }
+                if vertex < 0 || vertex as usize >= vertex_count {
+                    continue;
+                }
                 let vertex = vertex as usize;
                 let lon = longitudes[vertex] * angular_scale;
                 let lat = latitudes[vertex] * angular_scale;
-                let mut x = ((lon + std::f64::consts::PI) / (2.0 * std::f64::consts::PI)) * width as f64;
+                let mut x =
+                    ((lon + std::f64::consts::PI) / (2.0 * std::f64::consts::PI)) * width as f64;
                 let y = ((std::f64::consts::PI / 2.0 - lat) / std::f64::consts::PI) * height as f64;
                 if let Some(first) = points.first() {
-                    while x - first.x > width as f64 / 2.0 { x -= width as f64; }
-                    while x - first.x < -(width as f64) / 2.0 { x += width as f64; }
+                    while x - first.x > width as f64 / 2.0 {
+                        x -= width as f64;
+                    }
+                    while x - first.x < -(width as f64) / 2.0 {
+                        x += width as f64;
+                    }
                 }
                 points.push(Point { x, y });
             }
@@ -620,18 +878,44 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
         let selected = &variables[selected_idx];
         let mut fields = vec![
             ("format".to_string(), JsonValue::Str(format_str)),
-            ("variable".to_string(), JsonValue::Str(selected.name.clone())),
+            (
+                "variable".to_string(),
+                JsonValue::Str(selected.name.clone()),
+            ),
         ];
-        push_opt(&mut fields, "unit", find_attr(&selected.attrs, "units").map(attr_to_json));
-        push_opt(&mut fields, "longName", find_attr(&selected.attrs, "long_name").map(attr_to_json));
-        fields.push(("viewMode".to_string(), JsonValue::Str("mpas-mesh".to_string())));
-        fields.push(("projection".to_string(), JsonValue::Str("Equirectangular".to_string())));
-        fields.push(("meshLocation".to_string(), JsonValue::Str("nCells".to_string())));
+        push_opt(
+            &mut fields,
+            "unit",
+            find_attr(&selected.attrs, "units").map(attr_to_json),
+        );
+        push_opt(
+            &mut fields,
+            "longName",
+            find_attr(&selected.attrs, "long_name").map(attr_to_json),
+        );
+        fields.push((
+            "viewMode".to_string(),
+            JsonValue::Str("mpas-mesh".to_string()),
+        ));
+        fields.push((
+            "projection".to_string(),
+            JsonValue::Str("Equirectangular".to_string()),
+        ));
+        fields.push((
+            "meshLocation".to_string(),
+            JsonValue::Str("nCells".to_string()),
+        ));
         fields.push(("variables".to_string(), JsonValue::Arr(variable_choices)));
         fields.push(("selectors".to_string(), JsonValue::Arr(selectors)));
-        fields.push(("selectedIndices".to_string(), JsonValue::Obj(
-            selected_indices.iter().map(|(k, &v)| (k.clone(), JsonValue::Num(v as f64))).collect()
-        )));
+        fields.push((
+            "selectedIndices".to_string(),
+            JsonValue::Obj(
+                selected_indices
+                    .iter()
+                    .map(|(k, &v)| (k.clone(), JsonValue::Num(v as f64)))
+                    .collect(),
+            ),
+        ));
         let metadata_json = to_json_string(&JsonValue::Obj(fields));
 
         return Ok(ScientificParsed {
@@ -651,48 +935,82 @@ pub(crate) fn decode_netcdf_impl(data: &[u8], options_json: &str) -> Result<Scie
     // --- Regular raster path -------------------------------------------------
     let n = selected_dimensions.len();
     if n < 2 {
-        return Err(JsValue::from_str("NetCDF file contains no supported raster or MPAS cell variable"));
+        return Err(DecodeError::new(
+            "NetCDF file contains no supported raster or MPAS cell variable",
+        ));
     }
     let width = selected_dimensions[n - 1].size;
     let height = selected_dimensions[n - 2].size;
 
-    let selectors: Vec<JsonValue> = selected_dimensions[..n - 2].iter()
-        .map(|d| JsonValue::Obj(vec![
-            ("name".to_string(), JsonValue::Str(d.name.clone())),
-            ("size".to_string(), JsonValue::Num(d.size as f64)),
-            ("value".to_string(), JsonValue::Num(*selected_indices.get(&d.name).unwrap_or(&0) as f64)),
-        ]))
+    let selectors: Vec<JsonValue> = selected_dimensions[..n - 2]
+        .iter()
+        .map(|d| {
+            JsonValue::Obj(vec![
+                ("name".to_string(), JsonValue::Str(d.name.clone())),
+                ("size".to_string(), JsonValue::Num(d.size as f64)),
+                (
+                    "value".to_string(),
+                    JsonValue::Num(*selected_indices.get(&d.name).unwrap_or(&0) as f64),
+                ),
+            ])
+        })
         .collect();
 
-    let pixel_count = width.checked_mul(height).ok_or_else(|| JsValue::from_str("NetCDF raster dimensions overflow"))?;
+    let pixel_count = width
+        .checked_mul(height)
+        .ok_or_else(|| DecodeError::new("NetCDF raster dimensions overflow"))?;
     let mut out = vec![0f32; pixel_count];
     let selected = &variables[selected_idx];
     for y in 0..height {
         for x in 0..width {
-            let indices: Vec<f64> = selected_dimensions.iter().enumerate()
+            let indices: Vec<f64> = selected_dimensions
+                .iter()
+                .enumerate()
                 .map(|(i, d)| {
-                    if i == n - 2 { y as f64 }
-                    else if i == n - 1 { x as f64 }
-                    else { *selected_indices.get(&d.name).unwrap_or(&0) as f64 }
+                    if i == n - 2 {
+                        y as f64
+                    } else if i == n - 1 {
+                        x as f64
+                    } else {
+                        *selected_indices.get(&d.name).unwrap_or(&0) as f64
+                    }
                 })
                 .collect();
-            out[y * width + x] = stored_value(data, selected, &dimensions, record_size, &indices)? as f32;
+            out[y * width + x] =
+                stored_value(data, selected, &dimensions, record_size, &indices)? as f32;
         }
     }
 
     let mut fields = vec![
         ("format".to_string(), JsonValue::Str(format_str)),
-        ("variable".to_string(), JsonValue::Str(selected.name.clone())),
+        (
+            "variable".to_string(),
+            JsonValue::Str(selected.name.clone()),
+        ),
         ("dimensions".to_string(), dims_json(&selected_dimensions)),
     ];
-    push_opt(&mut fields, "unit", find_attr(&selected.attrs, "units").map(attr_to_json));
-    push_opt(&mut fields, "longName", find_attr(&selected.attrs, "long_name").map(attr_to_json));
+    push_opt(
+        &mut fields,
+        "unit",
+        find_attr(&selected.attrs, "units").map(attr_to_json),
+    );
+    push_opt(
+        &mut fields,
+        "longName",
+        find_attr(&selected.attrs, "long_name").map(attr_to_json),
+    );
     fields.push(("viewMode".to_string(), JsonValue::Str("raster".to_string())));
     fields.push(("variables".to_string(), JsonValue::Arr(variable_choices)));
     fields.push(("selectors".to_string(), JsonValue::Arr(selectors)));
-    fields.push(("selectedIndices".to_string(), JsonValue::Obj(
-        selected_indices.iter().map(|(k, &v)| (k.clone(), JsonValue::Num(v as f64))).collect()
-    )));
+    fields.push((
+        "selectedIndices".to_string(),
+        JsonValue::Obj(
+            selected_indices
+                .iter()
+                .map(|(k, &v)| (k.clone(), JsonValue::Num(v as f64)))
+                .collect(),
+        ),
+    ));
     let metadata_json = to_json_string(&JsonValue::Obj(fields));
 
     Ok(ScientificParsed {

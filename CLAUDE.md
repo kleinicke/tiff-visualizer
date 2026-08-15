@@ -9,8 +9,15 @@ I want to move to more rust, so anything that touches pixels or parses bytes goe
 
 **Decoder inventory:** every byte-parsing decoder is Rust — TIFF, EXR, PNG16, HDR, JPEG, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM and CZI — with no TypeScript counterpart. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
 
+**Shared decoder crate:** all byte parsing, decoded-pixel assembly, demosaicing, and format-neutral
+statistics live in the plain-Rust [`scientific-image-decoders`](crates/image-decoders) crate. It has
+no `wasm-bindgen` types. [`wasm/tiff-decoder`](wasm/tiff-decoder) is the thin JavaScript adapter plus
+TIFF Visualizer-specific measurement and compositing kernels. Decoder changes happen in the shared
+crate and are picked up immediately through its local path dependency; do not recreate decoder
+modules in the adapter.
+
 **Decoder result contract:** the six array formats share one `DecodedArray` struct
-([wasm/tiff-decoder/src/lib.rs](wasm/tiff-decoder/src/lib.rs)); TIFF/EXR/PNG/HDR/JPEG keep richer
+([crates/image-decoders/src/lib.rs](crates/image-decoders/src/lib.rs)); TIFF/EXR/PNG/HDR/JPEG keep richer
 per-format structs because their callers need the extra fields. `take_data_as_f32/_u8/_u16` are
 ONE-SHOT: the samples are moved, not copied, and a second call throws. Assemble results only through
 [media/modules/wasm-decoders.ts](media/modules/wasm-decoders.ts), which is shared by the decode worker

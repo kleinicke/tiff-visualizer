@@ -37,7 +37,8 @@ pub(crate) fn convert_cmyk_to_rgb(result: DecodingResult, channels: u32) -> (Dec
             let pixel_count = $data.len() / stride;
             let mut out = Vec::with_capacity(pixel_count * out_channels as usize);
             for px in $data.chunks_exact(stride) {
-                let (r, g, b) = cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, max);
+                let (r, g, b) =
+                    cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, max);
                 out.push(r.round().clamp(0.0, max) as _);
                 out.push(g.round().clamp(0.0, max) as _);
                 out.push(b.round().clamp(0.0, max) as _);
@@ -50,14 +51,24 @@ pub(crate) fn convert_cmyk_to_rgb(result: DecodingResult, channels: u32) -> (Dec
     }
 
     match result {
-        DecodingResult::U8(data) => (DecodingResult::U8(convert_int!(data, u8::MAX)), out_channels),
-        DecodingResult::U16(data) => (DecodingResult::U16(convert_int!(data, u16::MAX)), out_channels),
-        DecodingResult::U32(data) => (DecodingResult::U32(convert_int!(data, u32::MAX)), out_channels),
+        DecodingResult::U8(data) => (
+            DecodingResult::U8(convert_int!(data, u8::MAX)),
+            out_channels,
+        ),
+        DecodingResult::U16(data) => (
+            DecodingResult::U16(convert_int!(data, u16::MAX)),
+            out_channels,
+        ),
+        DecodingResult::U32(data) => (
+            DecodingResult::U32(convert_int!(data, u32::MAX)),
+            out_channels,
+        ),
         DecodingResult::F32(data) => {
             let pixel_count = data.len() / stride;
             let mut out = Vec::with_capacity(pixel_count * out_channels as usize);
             for px in data.chunks_exact(stride) {
-                let (r, g, b) = cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, 1.0);
+                let (r, g, b) =
+                    cmyk_to_rgb_f64(px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64, 1.0);
                 out.push(r as f32);
                 out.push(g as f32);
                 out.push(b as f32);

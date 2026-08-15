@@ -1528,6 +1528,13 @@ Merge the **building blocks**, not the products. That is step 1.
 
 ### Step 1 — extract a shared core
 
+**Status (August 2026): decoder extraction complete in this repository.**
+[`crates/image-decoders`](crates/image-decoders) is now the plain-Rust,
+feature-gated decoder crate, while `wasm/tiff-decoder` is a thin WASM adapter
+plus application-specific measurement and compositor kernels. Moving that
+directory to its own repository and switching PLY Visualizer from its old fork
+to a pinned Git dependency are the remaining distribution/migration steps.
+
 There is genuine duplication today: ply-visualizer reads TIFF, PNG, PFM, NPY,
 NPZ and EXR as depth images — exactly six formats for which this repository
 already has mature decoders, including the Rust/WASM path. Colormap tables

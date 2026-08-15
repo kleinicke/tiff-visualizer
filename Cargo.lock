@@ -578,6 +578,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "scientific-image-decoders"
+version = "0.1.0"
+dependencies = [
+ "dicom-object",
+ "dicom-pixeldata",
+ "exr",
+ "flate2",
+ "hayro-ccitt",
+ "js-sys",
+ "png",
+ "ruzstd",
+ "tiff",
+ "weezl",
+ "wide",
+ "zune-jpeg",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -641,21 +659,9 @@ name = "tiff-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "dicom-object",
- "dicom-pixeldata",
- "exr",
- "flate2",
- "hayro-ccitt",
- "js-sys",
- "png",
- "ruzstd",
- "tiff",
+ "scientific-image-decoders",
  "wasm-bindgen",
  "wasm-bindgen-test",
- "web-sys",
- "weezl",
- "wide",
- "zune-jpeg",
 ]
 
 [[package]]

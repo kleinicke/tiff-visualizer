@@ -11,13 +11,13 @@
 //! decoded it through a native-endian `Float64Array` view that ignores the
 //! dtype's byte-order prefix.
 
-use crate::DecodedArray;
 use super::json_value::{to_json_string, JsonValue};
-use wasm_bindgen::JsValue;
+use crate::DecodeError;
+use crate::DecodedArray;
 
 /// Intermediate result shared by the single-array (`.npy`) and archive
-/// (`.npz`) entry points, before being wrapped into the `#[wasm_bindgen]`
-/// `DecodedArray` by `decode_npy_impl` below.
+/// (`.npz`) entry points, before being assembled into `DecodedArray` by
+/// `decode_npy_impl` below.
 pub(crate) struct NpyParsed {
     pub width: u32,
     pub height: u32,
@@ -50,31 +50,49 @@ fn numeric_info_from_dtype(dtype: &str) -> (u32, u32, String, f64, f64) {
 
     // Integer fallback: byte width is the LAST CHARACTER of the dtype,
     // exactly as in `read_npy_samples`.
-    let width = dtype.chars().last().and_then(|c| c.to_digit(10)).unwrap_or(0) as usize;
+    let width = dtype
+        .chars()
+        .last()
+        .and_then(|c| c.to_digit(10))
+        .unwrap_or(0) as usize;
     let unsigned = dtype.contains('u');
     match width {
-        1 => if unsigned {
-            (1, 8, "uint8".to_string(), 0.0, 255.0)
-        } else {
-            (2, 8, "int8".to_string(), -128.0, 127.0)
-        },
-        2 => if unsigned {
-            (1, 16, "uint16".to_string(), 0.0, 65535.0)
-        } else {
-            (2, 16, "int16".to_string(), -32768.0, 32767.0)
-        },
-        4 => if unsigned {
-            (1, 32, "uint32".to_string(), 0.0, 4294967295.0)
-        } else {
-            (2, 32, "int32".to_string(), -2147483648.0, 2147483647.0)
-        },
-        _ => if unsigned {
-            // In practice only width 8 (numpy u8/i8, i.e. 64-bit): no
-            // narrower bucket applies, so report the true 64-bit range.
-            (1, 64, "uint64".to_string(), 0.0, 18446744073709551615.0)
-        } else {
-            (2, 64, "int64".to_string(), -9223372036854775808.0, 9223372036854775807.0)
-        },
+        1 => {
+            if unsigned {
+                (1, 8, "uint8".to_string(), 0.0, 255.0)
+            } else {
+                (2, 8, "int8".to_string(), -128.0, 127.0)
+            }
+        }
+        2 => {
+            if unsigned {
+                (1, 16, "uint16".to_string(), 0.0, 65535.0)
+            } else {
+                (2, 16, "int16".to_string(), -32768.0, 32767.0)
+            }
+        }
+        4 => {
+            if unsigned {
+                (1, 32, "uint32".to_string(), 0.0, 4294967295.0)
+            } else {
+                (2, 32, "int32".to_string(), -2147483648.0, 2147483647.0)
+            }
+        }
+        _ => {
+            if unsigned {
+                // In practice only width 8 (numpy u8/i8, i.e. 64-bit): no
+                // narrower bucket applies, so report the true 64-bit range.
+                (1, 64, "uint64".to_string(), 0.0, 18446744073709551615.0)
+            } else {
+                (
+                    2,
+                    64,
+                    "int64".to_string(),
+                    -9223372036854775808.0,
+                    9223372036854775807.0,
+                )
+            }
+        }
     }
 }
 
@@ -84,7 +102,7 @@ const ZIP_LOCAL_HEADER_SIG: u32 = 0x04034b50;
 /// Decode either a plain `.npy` buffer or a `.npz` (ZIP) archive, dispatching
 /// on the ZIP local-file-header signature in the first 4 bytes — mirroring
 /// `decodeFormat`'s `case 'npy':` arm in `media/decode-worker.ts`.
-pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
+pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     let parsed = if data.len() >= 4 {
         let sig = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         if sig == ZIP_LOCAL_HEADER_SIG {
@@ -96,12 +114,13 @@ pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         decode_npy_single(data)?
     };
 
-    let metadata_json = to_json_string(&JsonValue::Obj(vec![
-        ("dtype".to_string(), JsonValue::Str(parsed.dtype.clone())),
-    ]));
+    let metadata_json = to_json_string(&JsonValue::Obj(vec![(
+        "dtype".to_string(),
+        JsonValue::Str(parsed.dtype.clone()),
+    )]));
 
     Ok(DecodedArray {
-            taken: false,
+        taken: false,
         width: parsed.width,
         height: parsed.height,
         channels: parsed.channels,
@@ -120,7 +139,8 @@ pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, JsValue> {
         data_max: 0.0,
         non_finite_count: 0.0,
         valid_count: 0.0,
-    }.finalize_stats())
+    }
+    .finalize_stats())
 }
 
 /// Loose `parseInt(str, 10)` equivalent: optional sign, then a run of ASCII
@@ -132,12 +152,18 @@ fn parse_int_js(s: &str) -> Option<i64> {
     let mut i = 0;
     let mut sign: i64 = 1;
     if i < n && (bytes[i] == b'+' || bytes[i] == b'-') {
-        if bytes[i] == b'-' { sign = -1; }
+        if bytes[i] == b'-' {
+            sign = -1;
+        }
         i += 1;
     }
     let digits_start = i;
-    while i < n && bytes[i].is_ascii_digit() { i += 1; }
-    if i == digits_start { return None; }
+    while i < n && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == digits_start {
+        return None;
+    }
     s[digits_start..i].parse::<i64>().ok().map(|v| v * sign)
 }
 
@@ -153,11 +179,11 @@ fn extract_group(header: &str, key: &str, open: char, close: char) -> Option<Str
     Some(after[..end].to_string())
 }
 
-fn oob() -> JsValue {
-    JsValue::from_str("NPY: unexpected end of data while reading samples")
+fn oob() -> DecodeError {
+    DecodeError::new("NPY: unexpected end of data while reading samples")
 }
 
-fn get_slice<'a>(data: &'a [u8], offset: usize, len: usize) -> Result<&'a [u8], JsValue> {
+fn get_slice<'a>(data: &'a [u8], offset: usize, len: usize) -> Result<&'a [u8], DecodeError> {
     let end = offset.checked_add(len).ok_or_else(oob)?;
     data.get(offset..end).ok_or_else(oob)
 }
@@ -193,7 +219,12 @@ fn float16_to_f32(bits: u16) -> f32 {
 /// Dispatch order matters (see module docs / task spec) — it is not exact
 /// dtype matching but the same `endsWith`/`includes` checks the TS source
 /// uses, in the same order.
-fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Result<Vec<f32>, JsValue> {
+fn read_npy_samples(
+    data: &[u8],
+    off: usize,
+    elems: usize,
+    dtype: &str,
+) -> Result<Vec<f32>, DecodeError> {
     if dtype == "<f4" || dtype == "=f4" {
         let mut out = vec![0f32; elems];
         for (i, slot) in out.iter_mut().enumerate() {
@@ -216,7 +247,11 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
         for (i, slot) in out.iter_mut().enumerate() {
             let b = get_slice(data, off + i * 8, 8)?;
             let bytes = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
-            let v = if little { f64::from_le_bytes(bytes) } else { f64::from_be_bytes(bytes) };
+            let v = if little {
+                f64::from_le_bytes(bytes)
+            } else {
+                f64::from_be_bytes(bytes)
+            };
             *slot = v as f32;
         }
         return Ok(out);
@@ -226,16 +261,27 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
         let mut out = vec![0f32; elems];
         for (i, slot) in out.iter_mut().enumerate() {
             let b = get_slice(data, off + i * 2, 2)?;
-            let bits = if little { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
+            let bits = if little {
+                u16::from_le_bytes([b[0], b[1]])
+            } else {
+                u16::from_be_bytes([b[0], b[1]])
+            };
             *slot = float16_to_f32(bits);
         }
         return Ok(out);
     }
 
     // Integer fallback: byte width is the LAST CHARACTER of the dtype.
-    let width = dtype.chars().last().and_then(|c| c.to_digit(10)).unwrap_or(0) as usize;
+    let width = dtype
+        .chars()
+        .last()
+        .and_then(|c| c.to_digit(10))
+        .unwrap_or(0) as usize;
     if width == 0 {
-        return Err(JsValue::from_str(&format!("Unsupported NPY dtype {}", dtype)));
+        return Err(DecodeError::new(&format!(
+            "Unsupported NPY dtype {}",
+            dtype
+        )));
     }
     let little = dtype.starts_with('<') || dtype.starts_with('=');
     let unsigned = dtype.contains('u');
@@ -245,7 +291,11 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
         1 => {
             for (i, slot) in out.iter_mut().enumerate() {
                 let b = get_slice(data, off + i, 1)?;
-                let v: f64 = if unsigned { b[0] as f64 } else { (b[0] as i8) as f64 };
+                let v: f64 = if unsigned {
+                    b[0] as f64
+                } else {
+                    (b[0] as i8) as f64
+                };
                 *slot = v as f32;
             }
         }
@@ -254,9 +304,17 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
                 let b = get_slice(data, off + i * 2, 2)?;
                 let bb = [b[0], b[1]];
                 let v: f64 = if unsigned {
-                    (if little { u16::from_le_bytes(bb) } else { u16::from_be_bytes(bb) }) as f64
+                    (if little {
+                        u16::from_le_bytes(bb)
+                    } else {
+                        u16::from_be_bytes(bb)
+                    }) as f64
                 } else {
-                    (if little { i16::from_le_bytes(bb) } else { i16::from_be_bytes(bb) }) as f64
+                    (if little {
+                        i16::from_le_bytes(bb)
+                    } else {
+                        i16::from_be_bytes(bb)
+                    }) as f64
                 };
                 *slot = v as f32;
             }
@@ -266,9 +324,17 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
                 let b = get_slice(data, off + i * 4, 4)?;
                 let bb = [b[0], b[1], b[2], b[3]];
                 let v: f64 = if unsigned {
-                    (if little { u32::from_le_bytes(bb) } else { u32::from_be_bytes(bb) }) as f64
+                    (if little {
+                        u32::from_le_bytes(bb)
+                    } else {
+                        u32::from_be_bytes(bb)
+                    }) as f64
                 } else {
-                    (if little { i32::from_le_bytes(bb) } else { i32::from_be_bytes(bb) }) as f64
+                    (if little {
+                        i32::from_le_bytes(bb)
+                    } else {
+                        i32::from_be_bytes(bb)
+                    }) as f64
                 };
                 *slot = v as f32;
             }
@@ -282,9 +348,17 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
                 let b = get_slice(data, off + i * width, 8)?;
                 let bb = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
                 let v: f64 = if unsigned {
-                    (if little { u64::from_le_bytes(bb) } else { u64::from_be_bytes(bb) }) as f64
+                    (if little {
+                        u64::from_le_bytes(bb)
+                    } else {
+                        u64::from_be_bytes(bb)
+                    }) as f64
                 } else {
-                    (if little { i64::from_le_bytes(bb) } else { i64::from_be_bytes(bb) }) as f64
+                    (if little {
+                        i64::from_le_bytes(bb)
+                    } else {
+                        i64::from_be_bytes(bb)
+                    }) as f64
                 };
                 *slot = v as f32;
             }
@@ -294,35 +368,49 @@ fn read_npy_samples(data: &[u8], off: usize, elems: usize, dtype: &str) -> Resul
 }
 
 /// Decode a single `.npy` buffer (also used per-entry from `.npz`).
-pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, JsValue> {
-    let magic = data.get(0..6).ok_or_else(|| JsValue::from_str("Invalid NPY file"))?;
+pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, DecodeError> {
+    let magic = data
+        .get(0..6)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
     if magic != NPY_MAGIC {
-        return Err(JsValue::from_str("Invalid NPY file"));
+        return Err(DecodeError::new("Invalid NPY file"));
     }
-    let major = *data.get(6).ok_or_else(|| JsValue::from_str("Invalid NPY file"))?;
-    let minor = *data.get(7).ok_or_else(|| JsValue::from_str("Invalid NPY file"))?;
+    let major = *data
+        .get(6)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
+    let minor = *data
+        .get(7)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
     if major != 1 && major != 2 {
-        return Err(JsValue::from_str(&format!("Unsupported NPY version {}.{}", major, minor)));
+        return Err(DecodeError::new(&format!(
+            "Unsupported NPY version {}.{}",
+            major, minor
+        )));
     }
 
     let (header_len, header_start): (usize, usize) = if major == 1 {
-        let b = data.get(8..10).ok_or_else(|| JsValue::from_str("Invalid NPY file"))?;
+        let b = data
+            .get(8..10)
+            .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
         (u16::from_le_bytes([b[0], b[1]]) as usize, 10)
     } else {
-        let b = data.get(8..12).ok_or_else(|| JsValue::from_str("Invalid NPY file"))?;
+        let b = data
+            .get(8..12)
+            .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
         (u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize, 12)
     };
 
-    let header_bytes = data.get(header_start..header_start + header_len)
-        .ok_or_else(|| JsValue::from_str("Invalid NPY file"))?;
+    let header_bytes = data
+        .get(header_start..header_start + header_len)
+        .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
     // latin1: each byte maps 1:1 to the Unicode code point of the same value,
     // exactly like `TextDecoder('latin1').decode(...)`.
     let header: String = header_bytes.iter().map(|&b| b as char).collect();
 
     let shape_str = extract_group(&header, "'shape':", '(', ')')
-        .ok_or_else(|| JsValue::from_str("NPY missing shape"))?;
+        .ok_or_else(|| DecodeError::new("NPY missing shape"))?;
     let dtype = extract_group(&header, "'descr':", '\'', '\'')
-        .ok_or_else(|| JsValue::from_str("NPY missing dtype"))?;
+        .ok_or_else(|| DecodeError::new("NPY missing dtype"))?;
 
     let dims: Vec<i64> = shape_str
         .split(',')
@@ -337,10 +425,10 @@ pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, JsValue> {
     let (height, width, channels): (i64, i64, i64) = match dims.len() {
         2 => (dims[0], dims[1], 1),
         3 => (dims[0], dims[1], dims[2]),
-        n => return Err(JsValue::from_str(&format!("Unsupported NPY dims {}", n))),
+        n => return Err(DecodeError::new(&format!("Unsupported NPY dims {}", n))),
     };
     if height < 0 || width < 0 || channels < 0 {
-        return Err(JsValue::from_str("Invalid NPY dimensions"));
+        return Err(DecodeError::new("Invalid NPY dimensions"));
     }
     let height = height as usize;
     let width = width as usize;
@@ -376,12 +464,12 @@ pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, JsValue> {
     })
 }
 
-fn read_u16_le(data: &[u8], offset: usize) -> Result<u16, JsValue> {
+fn read_u16_le(data: &[u8], offset: usize) -> Result<u16, DecodeError> {
     let b = get_slice(data, offset, 2)?;
     Ok(u16::from_le_bytes([b[0], b[1]]))
 }
 
-fn read_u32_le(data: &[u8], offset: usize) -> Result<u32, JsValue> {
+fn read_u32_le(data: &[u8], offset: usize) -> Result<u32, DecodeError> {
     let b = get_slice(data, offset, 4)?;
     Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
@@ -401,7 +489,7 @@ fn replace_first(s: &str, from: &str) -> String {
     }
 }
 
-fn decode_npz(data: &[u8]) -> Result<NpyParsed, JsValue> {
+fn decode_npz(data: &[u8]) -> Result<NpyParsed, DecodeError> {
     let mut offset = 0usize;
     // Ordered like a JS object: first-insertion position is kept even when a
     // later entry overwrites an existing key.
@@ -436,7 +524,11 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, JsValue> {
             let has_data_descriptor = (flags & 0x08) != 0;
             let available = data.len().saturating_sub(data_offset);
             let size_unknown = has_data_descriptor || comp_size == 0 || comp_size == 0xFFFF_FFFF;
-            let entry_size = if size_unknown { available } else { comp_size.min(available) };
+            let entry_size = if size_unknown {
+                available
+            } else {
+                comp_size.min(available)
+            };
 
             if file_name.ends_with(".npy") && comp == 0 {
                 // The NPY header inside self-describes its own length, so an
@@ -456,12 +548,16 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, JsValue> {
             // skipping to the end of the buffer would silently find only the
             // first array in a multi-entry archive. `data_offset > offset`
             // always, so the loop still makes progress.
-            offset = if size_unknown { data_offset } else { data_offset + entry_size };
+            offset = if size_unknown {
+                data_offset
+            } else {
+                data_offset + entry_size
+            };
         }
     }
 
     if arrays.is_empty() {
-        return Err(JsValue::from_str("NPZ contains no uncompressed .npy arrays"));
+        return Err(DecodeError::new("NPZ contains no uncompressed .npy arrays"));
     }
 
     let pick_idx = arrays

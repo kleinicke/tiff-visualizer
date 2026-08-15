@@ -29,8 +29,8 @@
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{ascii, get_slice, js_number, ScientificParsed};
+use crate::DecodeError;
 use std::collections::HashMap;
-use wasm_bindgen::JsValue;
 
 /// Axis order used for the plane selector UI; unknown axes are appended.
 const CZI_AXIS_ORDER: [&str; 10] = ["S", "I", "V", "H", "R", "T", "C", "Z", "B", "M"];
@@ -64,19 +64,109 @@ struct PixelTypeInfo {
 
 fn pixel_type_info(id: i32) -> Option<PixelTypeInfo> {
     match id {
-        0 => Some(PixelTypeInfo { name: "Gray8", channels: 1, bgr: false, bytes_per_channel: 1, bits_per_sample: 8, sample_format: 1, type_min: 0.0, type_max: 255.0, source_numeric_type: "uint8" }),
-        1 => Some(PixelTypeInfo { name: "Gray16", channels: 1, bgr: false, bytes_per_channel: 2, bits_per_sample: 16, sample_format: 1, type_min: 0.0, type_max: 65535.0, source_numeric_type: "uint16" }),
-        2 => Some(PixelTypeInfo { name: "Gray32Float", channels: 1, bgr: false, bytes_per_channel: 4, bits_per_sample: 32, sample_format: 3, type_min: 0.0, type_max: 1.0, source_numeric_type: "float32" }),
-        3 => Some(PixelTypeInfo { name: "Bgr24", channels: 3, bgr: true, bytes_per_channel: 1, bits_per_sample: 8, sample_format: 1, type_min: 0.0, type_max: 255.0, source_numeric_type: "uint8" }),
-        4 => Some(PixelTypeInfo { name: "Bgr48", channels: 3, bgr: true, bytes_per_channel: 2, bits_per_sample: 16, sample_format: 1, type_min: 0.0, type_max: 65535.0, source_numeric_type: "uint16" }),
-        8 => Some(PixelTypeInfo { name: "Bgr96Float", channels: 3, bgr: true, bytes_per_channel: 4, bits_per_sample: 32, sample_format: 3, type_min: 0.0, type_max: 1.0, source_numeric_type: "float32" }),
-        9 => Some(PixelTypeInfo { name: "Bgra32", channels: 4, bgr: true, bytes_per_channel: 1, bits_per_sample: 8, sample_format: 1, type_min: 0.0, type_max: 255.0, source_numeric_type: "uint8" }),
-        12 => Some(PixelTypeInfo { name: "Gray32", channels: 1, bgr: false, bytes_per_channel: 4, bits_per_sample: 32, sample_format: 2, type_min: -2147483648.0, type_max: 2147483647.0, source_numeric_type: "int32" }),
+        0 => Some(PixelTypeInfo {
+            name: "Gray8",
+            channels: 1,
+            bgr: false,
+            bytes_per_channel: 1,
+            bits_per_sample: 8,
+            sample_format: 1,
+            type_min: 0.0,
+            type_max: 255.0,
+            source_numeric_type: "uint8",
+        }),
+        1 => Some(PixelTypeInfo {
+            name: "Gray16",
+            channels: 1,
+            bgr: false,
+            bytes_per_channel: 2,
+            bits_per_sample: 16,
+            sample_format: 1,
+            type_min: 0.0,
+            type_max: 65535.0,
+            source_numeric_type: "uint16",
+        }),
+        2 => Some(PixelTypeInfo {
+            name: "Gray32Float",
+            channels: 1,
+            bgr: false,
+            bytes_per_channel: 4,
+            bits_per_sample: 32,
+            sample_format: 3,
+            type_min: 0.0,
+            type_max: 1.0,
+            source_numeric_type: "float32",
+        }),
+        3 => Some(PixelTypeInfo {
+            name: "Bgr24",
+            channels: 3,
+            bgr: true,
+            bytes_per_channel: 1,
+            bits_per_sample: 8,
+            sample_format: 1,
+            type_min: 0.0,
+            type_max: 255.0,
+            source_numeric_type: "uint8",
+        }),
+        4 => Some(PixelTypeInfo {
+            name: "Bgr48",
+            channels: 3,
+            bgr: true,
+            bytes_per_channel: 2,
+            bits_per_sample: 16,
+            sample_format: 1,
+            type_min: 0.0,
+            type_max: 65535.0,
+            source_numeric_type: "uint16",
+        }),
+        8 => Some(PixelTypeInfo {
+            name: "Bgr96Float",
+            channels: 3,
+            bgr: true,
+            bytes_per_channel: 4,
+            bits_per_sample: 32,
+            sample_format: 3,
+            type_min: 0.0,
+            type_max: 1.0,
+            source_numeric_type: "float32",
+        }),
+        9 => Some(PixelTypeInfo {
+            name: "Bgra32",
+            channels: 4,
+            bgr: true,
+            bytes_per_channel: 1,
+            bits_per_sample: 8,
+            sample_format: 1,
+            type_min: 0.0,
+            type_max: 255.0,
+            source_numeric_type: "uint8",
+        }),
+        12 => Some(PixelTypeInfo {
+            name: "Gray32",
+            channels: 1,
+            bgr: false,
+            bytes_per_channel: 4,
+            bits_per_sample: 32,
+            sample_format: 2,
+            type_min: -2147483648.0,
+            type_max: 2147483647.0,
+            source_numeric_type: "int32",
+        }),
         // BUG FIX vs the deleted TS table: Gray64 is a true 64-bit float
         // sample (`getFloat64`), but the TS domain entry claimed
         // `bitsPerSample: 32` (copied from the float32 entries above it).
         // Reported as 64 here, matching what the format actually stores.
-        13 => Some(PixelTypeInfo { name: "Gray64", channels: 1, bgr: false, bytes_per_channel: 8, bits_per_sample: 64, sample_format: 3, type_min: 0.0, type_max: 1.0, source_numeric_type: "float64" }),
+        13 => Some(PixelTypeInfo {
+            name: "Gray64",
+            channels: 1,
+            bgr: false,
+            bytes_per_channel: 8,
+            bits_per_sample: 64,
+            sample_format: 3,
+            type_min: 0.0,
+            type_max: 1.0,
+            source_numeric_type: "float64",
+        }),
         _ => None,
     }
 }
@@ -84,7 +174,7 @@ fn pixel_type_info(id: i32) -> Option<PixelTypeInfo> {
 /// Mirrors TS `pixelType.read(view, offset)`: reads one raw sample as f64,
 /// little-endian, at `offset`. `pixel_type_id` must be one already validated
 /// by [`pixel_type_info`].
-fn read_sample(data: &[u8], pixel_type_id: i32, offset: usize) -> Result<f64, JsValue> {
+fn read_sample(data: &[u8], pixel_type_id: i32, offset: usize) -> Result<f64, DecodeError> {
     match pixel_type_id {
         0 | 3 | 9 => {
             let b = get_slice(data, offset, 1, "CZI")?;
@@ -104,9 +194,14 @@ fn read_sample(data: &[u8], pixel_type_id: i32, offset: usize) -> Result<f64, Js
         }
         13 => {
             let b = get_slice(data, offset, 8, "CZI")?;
-            Ok(f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+            Ok(f64::from_le_bytes([
+                b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+            ]))
         }
-        other => Err(JsValue::from_str(&format!("Unsupported CZI pixel type: {}", other))),
+        other => Err(DecodeError::new(&format!(
+            "Unsupported CZI pixel type: {}",
+            other
+        ))),
     }
 }
 
@@ -114,28 +209,32 @@ fn read_sample(data: &[u8], pixel_type_id: i32, offset: usize) -> Result<f64, Js
 // Low-level binary readers
 // ---------------------------------------------------------------------------
 
-fn add(a: usize, b: usize) -> Result<usize, JsValue> {
-    a.checked_add(b).ok_or_else(|| JsValue::from_str("CZI: offset overflow"))
+fn add(a: usize, b: usize) -> Result<usize, DecodeError> {
+    a.checked_add(b)
+        .ok_or_else(|| DecodeError::new("CZI: offset overflow"))
 }
 
-fn mul(a: usize, b: usize) -> Result<usize, JsValue> {
-    a.checked_mul(b).ok_or_else(|| JsValue::from_str("CZI: size overflow"))
+fn mul(a: usize, b: usize) -> Result<usize, DecodeError> {
+    a.checked_mul(b)
+        .ok_or_else(|| DecodeError::new("CZI: size overflow"))
 }
 
-fn i32_le(data: &[u8], offset: usize) -> Result<i32, JsValue> {
+fn i32_le(data: &[u8], offset: usize) -> Result<i32, DecodeError> {
     let b = get_slice(data, offset, 4, "CZI")?;
     Ok(i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
 }
 
-fn i64_le(data: &[u8], offset: usize) -> Result<i64, JsValue> {
+fn i64_le(data: &[u8], offset: usize) -> Result<i64, DecodeError> {
     let b = get_slice(data, offset, 8, "CZI")?;
-    Ok(i64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+    Ok(i64::from_le_bytes([
+        b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
+    ]))
 }
 
 /// `i64` file position/byte-count -> `usize`, rejecting negative or
 /// unrepresentable (32-bit wasm `usize`) values instead of silently wrapping.
-fn i64_to_usize(v: i64, context: &str) -> Result<usize, JsValue> {
-    usize::try_from(v).map_err(|_| JsValue::from_str(&format!("CZI: {} out of range", context)))
+fn i64_to_usize(v: i64, context: &str) -> Result<usize, DecodeError> {
+    usize::try_from(v).map_err(|_| DecodeError::new(&format!("CZI: {} out of range", context)))
 }
 
 struct Segment {
@@ -146,18 +245,30 @@ struct Segment {
 }
 
 /// Mirrors TS `cziSegment()`.
-fn czi_segment(data: &[u8], position: i64) -> Result<Segment, JsValue> {
+fn czi_segment(data: &[u8], position: i64) -> Result<Segment, DecodeError> {
     if position < 0 {
-        return Err(JsValue::from_str(&format!("CZI segment out of range at {}", position)));
+        return Err(DecodeError::new(&format!(
+            "CZI segment out of range at {}",
+            position
+        )));
     }
     let pos = i64_to_usize(position, "segment position")?;
-    let end = pos.checked_add(32).ok_or_else(|| JsValue::from_str("CZI: offset overflow"))?;
+    let end = pos
+        .checked_add(32)
+        .ok_or_else(|| DecodeError::new("CZI: offset overflow"))?;
     if end > data.len() {
-        return Err(JsValue::from_str(&format!("CZI segment out of range at {}", position)));
+        return Err(DecodeError::new(&format!(
+            "CZI segment out of range at {}",
+            position
+        )));
     }
     let id = ascii(data, pos, 16).trim_end_matches('\0').to_string();
     let used_size = i64_le(data, pos + 24)?;
-    Ok(Segment { id, data_start: pos + 32, used_size })
+    Ok(Segment {
+        id,
+        data_start: pos + 32,
+        used_size,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -184,10 +295,13 @@ fn find_dim<'a>(dims: &'a [(String, CziDimension)], name: &str) -> Option<&'a Cz
 
 /// Mirrors TS `cziDirectoryEntry()`: 32 fixed bytes plus 20 bytes per
 /// dimension entry.
-fn czi_directory_entry(data: &[u8], offset: usize) -> Result<CziDirectoryEntry, JsValue> {
+fn czi_directory_entry(data: &[u8], offset: usize) -> Result<CziDirectoryEntry, DecodeError> {
     let dimension_count = i32_le(data, add(offset, 28)?)?;
     if !(0..=64).contains(&dimension_count) {
-        return Err(JsValue::from_str(&format!("Invalid CZI dimension count: {}", dimension_count)));
+        return Err(DecodeError::new(&format!(
+            "Invalid CZI dimension count: {}",
+            dimension_count
+        )));
     }
     let dimension_count = dimension_count as usize;
     let mut dimensions: Vec<(String, CziDimension)> = Vec::new();
@@ -202,7 +316,11 @@ fn czi_directory_entry(data: &[u8], offset: usize) -> Result<CziDirectoryEntry, 
         let size = i32_le(data, add(entry, 8)?)?;
         let stored_raw = i32_le(data, add(entry, 16)?)?;
         let stored_size = if stored_raw != 0 { stored_raw } else { size };
-        let dim = CziDimension { start, size, stored_size };
+        let dim = CziDimension {
+            start,
+            size,
+            stored_size,
+        };
         if let Some(existing) = dimensions.iter_mut().find(|(n, _)| n == name) {
             existing.1 = dim;
         } else {
@@ -220,7 +338,10 @@ fn czi_directory_entry(data: &[u8], offset: usize) -> Result<CziDirectoryEntry, 
 
 /// Read the subblock directory, falling back to a sequential segment scan.
 /// Mirrors TS `cziSubBlockEntries()`.
-fn czi_subblock_entries(data: &[u8], directory_position: i64) -> Result<Vec<CziDirectoryEntry>, JsValue> {
+fn czi_subblock_entries(
+    data: &[u8],
+    directory_position: i64,
+) -> Result<Vec<CziDirectoryEntry>, DecodeError> {
     let mut entries: Vec<CziDirectoryEntry> = Vec::new();
     if directory_position > 0 && directory_position + 32 < data.len() as i64 {
         let segment = czi_segment(data, directory_position)?;
@@ -299,11 +420,25 @@ fn tag_text(xml: &str, tag: &str) -> Option<String> {
     loop {
         let open_pos = find_ci(bytes, open.as_bytes(), search_from)?;
         let gt_from = open_pos + open.len();
-        let gt_pos = bytes.get(gt_from..)?.iter().position(|&b| b == b'>').map(|p| p + gt_from)?;
+        let gt_pos = bytes
+            .get(gt_from..)?
+            .iter()
+            .position(|&b| b == b'>')
+            .map(|p| p + gt_from)?;
         let text_start = gt_pos + 1;
-        let lt_pos = bytes[text_start..].iter().position(|&b| b == b'<').map(|p| p + text_start).unwrap_or(bytes.len());
-        if lt_pos + close.len() <= bytes.len() && bytes[lt_pos..lt_pos + close.len()].eq_ignore_ascii_case(close.as_bytes()) {
-            return Some(String::from_utf8_lossy(&bytes[text_start..lt_pos]).trim().to_string());
+        let lt_pos = bytes[text_start..]
+            .iter()
+            .position(|&b| b == b'<')
+            .map(|p| p + text_start)
+            .unwrap_or(bytes.len());
+        if lt_pos + close.len() <= bytes.len()
+            && bytes[lt_pos..lt_pos + close.len()].eq_ignore_ascii_case(close.as_bytes())
+        {
+            return Some(
+                String::from_utf8_lossy(&bytes[text_start..lt_pos])
+                    .trim()
+                    .to_string(),
+            );
         }
         search_from = open_pos + 1;
     }
@@ -325,10 +460,22 @@ fn dye_name(block: &str) -> Option<String> {
         }
     }
     let start = best?;
-    let gt_pos = bytes.get(start..)?.iter().position(|&b| b == b'>').map(|p| p + start)?;
+    let gt_pos = bytes
+        .get(start..)?
+        .iter()
+        .position(|&b| b == b'>')
+        .map(|p| p + start)?;
     let text_start = gt_pos + 1;
-    let lt_pos = bytes[text_start..].iter().position(|&b| b == b'<').map(|p| p + text_start).unwrap_or(bytes.len());
-    Some(String::from_utf8_lossy(&bytes[text_start..lt_pos]).trim().to_string())
+    let lt_pos = bytes[text_start..]
+        .iter()
+        .position(|&b| b == b'<')
+        .map(|p| p + text_start)
+        .unwrap_or(bytes.len());
+    Some(
+        String::from_utf8_lossy(&bytes[text_start..lt_pos])
+            .trim()
+            .to_string(),
+    )
 }
 
 /// Mirrors TS `xml.split(/<Channel[\s>]/i).slice(1)`: the blocks of XML
@@ -353,7 +500,11 @@ fn channel_blocks(xml: &str) -> Vec<&str> {
     let mut blocks = Vec::with_capacity(matches.len());
     for i in 0..matches.len() {
         let start = matches[i].1;
-        let end = if i + 1 < matches.len() { matches[i + 1].0 } else { bytes.len() };
+        let end = if i + 1 < matches.len() {
+            matches[i + 1].0
+        } else {
+            bytes.len()
+        };
         blocks.push(&xml[start..end]);
     }
     blocks
@@ -373,7 +524,9 @@ fn czi_xml_metadata(xml: &str) -> Vec<(String, JsonValue)> {
     // Scaling is metres per pixel; report micrometres, which is the working unit here.
     for axis in ["X", "Y", "Z"] {
         let tag = format!("Scaling{}", axis);
-        let value = tag_text(xml, &tag).map(|s| js_number(&s)).unwrap_or(f64::NAN);
+        let value = tag_text(xml, &tag)
+            .map(|s| js_number(&s))
+            .unwrap_or(f64::NAN);
         if value.is_finite() && value > 0.0 {
             fields.push((format!("scaling{}Um", axis), JsonValue::Num(value * 1e6)));
         }
@@ -390,14 +543,24 @@ fn czi_xml_metadata(xml: &str) -> Vec<(String, JsonValue)> {
     // Channels are listed once per XML section (acquisition and display
     // setting), so keep only the first SizeC entries rather than every
     // repetition.
-    let size_c = tag_text(xml, "SizeC").map(|s| js_number(&s)).unwrap_or(f64::NAN);
+    let size_c = tag_text(xml, "SizeC")
+        .map(|s| js_number(&s))
+        .unwrap_or(f64::NAN);
     if !channel_names.is_empty() {
         let take = if size_c.is_finite() && size_c > 0.0 {
             (size_c as usize).min(channel_names.len())
         } else {
             channel_names.len()
         };
-        fields.push(("channelNames".to_string(), JsonValue::Arr(channel_names[..take].iter().map(|s| JsonValue::Str(s.clone())).collect())));
+        fields.push((
+            "channelNames".to_string(),
+            JsonValue::Arr(
+                channel_names[..take]
+                    .iter()
+                    .map(|s| JsonValue::Str(s.clone()))
+                    .collect(),
+            ),
+        ));
     }
     fields
 }
@@ -412,11 +575,15 @@ struct DecodeOptions {
 }
 
 fn parse_options(options_json: &str) -> DecodeOptions {
-    let mut out = DecodeOptions { indices: HashMap::new() };
+    let mut out = DecodeOptions {
+        indices: HashMap::new(),
+    };
     if options_json.trim().is_empty() {
         return out;
     }
-    let Ok(root) = super::json_value::parse(options_json) else { return out; };
+    let Ok(root) = super::json_value::parse(options_json) else {
+        return out;
+    };
     if let Some(indices) = root.get("indices").and_then(|v| v.as_obj()) {
         for (k, v) in indices {
             if let Some(n) = v.as_num() {
@@ -438,16 +605,21 @@ fn js_round(x: f64) -> f64 {
 // ---------------------------------------------------------------------------
 
 /// Decode a Zeiss CZI plane. Mirrors TS `parseCzi()`.
-pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<ScientificParsed, JsValue> {
+pub(crate) fn decode_czi_impl(
+    data: &[u8],
+    options_json: &str,
+) -> Result<ScientificParsed, DecodeError> {
     if data.len() < 32 || ascii(data, 0, 10) != "ZISRAWFILE" {
-        return Err(JsValue::from_str("Invalid CZI signature"));
+        return Err(DecodeError::new("Invalid CZI signature"));
     }
     let options = parse_options(options_json);
 
     let header = czi_segment(data, 0)?.data_start;
     let file_part = i32_le(data, add(header, 0x30)?)?;
     if file_part != 0 {
-        return Err(JsValue::from_str("Multi-file CZI sets are not supported; open the master file (part 0)"));
+        return Err(DecodeError::new(
+            "Multi-file CZI sets are not supported; open the master file (part 0)",
+        ));
     }
     let directory_position = i64_le(data, add(header, 0x34)?)?;
     let metadata_position = i64_le(data, add(header, 0x3c)?)?;
@@ -461,7 +633,10 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
                 // Fixed part of the metadata segment is 256 bytes; the XML follows.
                 let start = add(segment.data_start, 256)?;
                 if start < data.len() {
-                    let end = start.checked_add(xml_size as usize).unwrap_or(data.len()).min(data.len());
+                    let end = start
+                        .checked_add(xml_size as usize)
+                        .unwrap_or(data.len())
+                        .min(data.len());
                     let xml = String::from_utf8_lossy(&data[start..end]);
                     xml_metadata = czi_xml_metadata(&xml);
                 }
@@ -471,7 +646,7 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
 
     let all_entries = czi_subblock_entries(data, directory_position)?;
     if all_entries.is_empty() {
-        return Err(JsValue::from_str("CZI file contains no image subblocks"));
+        return Err(DecodeError::new("CZI file contains no image subblocks"));
     }
     // Pyramid levels store a downscaled copy of the same coordinate; keep full res.
     let entries: Vec<CziDirectoryEntry> = all_entries
@@ -486,12 +661,18 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
         })
         .collect();
     if entries.is_empty() {
-        return Err(JsValue::from_str("CZI file contains no full-resolution subblocks"));
+        return Err(DecodeError::new(
+            "CZI file contains no full-resolution subblocks",
+        ));
     }
 
     let base_pixel_type_id = entries[0].pixel_type;
-    let pixel_type = pixel_type_info(base_pixel_type_id)
-        .ok_or_else(|| JsValue::from_str(&format!("Unsupported CZI pixel type: {}", base_pixel_type_id)))?;
+    let pixel_type = pixel_type_info(base_pixel_type_id).ok_or_else(|| {
+        DecodeError::new(&format!(
+            "Unsupported CZI pixel type: {}",
+            base_pixel_type_id
+        ))
+    })?;
 
     // Axis extents across every subblock, spatial axes excluded. Order
     // matches TS object insertion order (first-seen axis name wins position).
@@ -524,7 +705,11 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
     for name in &axis_order {
         let (min, max) = axes[name];
         let wanted = options.indices.get(name).copied().unwrap_or(f64::NAN);
-        let offset = if wanted.is_finite() { js_round(wanted) as i64 } else { 0 };
+        let offset = if wanted.is_finite() {
+            js_round(wanted) as i64
+        } else {
+            0
+        };
         let value = (min + offset).max(min).min(max);
         requested.insert(name.clone(), value);
     }
@@ -546,7 +731,9 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
         })
         .collect();
     if selected.is_empty() {
-        return Err(JsValue::from_str("No CZI subblock matches the requested plane"));
+        return Err(DecodeError::new(
+            "No CZI subblock matches the requested plane",
+        ));
     }
 
     let mut min_x = i64::MAX;
@@ -555,8 +742,10 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
     let mut max_y = i64::MIN;
     for entry in &selected {
         // Guaranteed present: `entries` was filtered to require X and Y above.
-        let x = find_dim(&entry.dimensions, "X").ok_or_else(|| JsValue::from_str("CZI subblock is missing the X dimension"))?;
-        let y = find_dim(&entry.dimensions, "Y").ok_or_else(|| JsValue::from_str("CZI subblock is missing the Y dimension"))?;
+        let x = find_dim(&entry.dimensions, "X")
+            .ok_or_else(|| DecodeError::new("CZI subblock is missing the X dimension"))?;
+        let y = find_dim(&entry.dimensions, "Y")
+            .ok_or_else(|| DecodeError::new("CZI subblock is missing the Y dimension"))?;
         min_x = min_x.min(x.start as i64);
         min_y = min_y.min(y.start as i64);
         max_x = max_x.max(x.start as i64 + x.size as i64);
@@ -565,7 +754,7 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
     let width_i64 = max_x - min_x;
     let height_i64 = max_y - min_y;
     if !(width_i64 > 0 && height_i64 > 0) {
-        return Err(JsValue::from_str("CZI plane has an empty extent"));
+        return Err(DecodeError::new("CZI plane has an empty extent"));
     }
     let width = i64_to_usize(width_i64, "plane width")?;
     let height = i64_to_usize(height_i64, "plane height")?;
@@ -578,17 +767,17 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
     for entry in &selected {
         if entry.compression != 0 {
             let codec = compression_name(entry.compression);
-            return Err(JsValue::from_str(&format!(
+            return Err(DecodeError::new(&format!(
                 "Compressed CZI is not supported yet ({}); only uncompressed subblocks decode",
                 codec
             )));
         }
         if entry.pixel_type != base_pixel_type_id {
-            return Err(JsValue::from_str("Mixed pixel types in one CZI plane"));
+            return Err(DecodeError::new("Mixed pixel types in one CZI plane"));
         }
         let segment = czi_segment(data, entry.file_position)?;
         if segment.id != "ZISRAWSUBBLOCK" {
-            return Err(JsValue::from_str(&format!(
+            return Err(DecodeError::new(&format!(
                 "Expected ZISRAWSUBBLOCK at {}, found \"{}\"",
                 entry.file_position, segment.id
             )));
@@ -597,17 +786,27 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
         let inline_entry = czi_directory_entry(data, add(segment.data_start, 16)?)?;
         // The fixed part of a subblock header is padded to at least 256 bytes.
         let fixed_size = add(16, inline_entry.byte_length)?.max(256);
-        let meta_extra = if metadata_size > 0 { metadata_size as usize } else { 0 };
+        let meta_extra = if metadata_size > 0 {
+            metadata_size as usize
+        } else {
+            0
+        };
         let pixels_start = add(add(segment.data_start, fixed_size)?, meta_extra)?;
 
-        let dim_x = find_dim(&entry.dimensions, "X").ok_or_else(|| JsValue::from_str("CZI subblock is missing the X dimension"))?;
-        let dim_y = find_dim(&entry.dimensions, "Y").ok_or_else(|| JsValue::from_str("CZI subblock is missing the Y dimension"))?;
+        let dim_x = find_dim(&entry.dimensions, "X")
+            .ok_or_else(|| DecodeError::new("CZI subblock is missing the X dimension"))?;
+        let dim_y = find_dim(&entry.dimensions, "Y")
+            .ok_or_else(|| DecodeError::new("CZI subblock is missing the Y dimension"))?;
         let tile_width = (dim_x.size.max(0)) as usize;
         let tile_height = (dim_y.size.max(0)) as usize;
         let stride = mul(mul(tile_width, channels)?, bytes_per_channel)?;
         let total_needed = mul(stride, tile_height)?;
-        if pixels_start.checked_add(total_needed).map(|end| end > data.len()).unwrap_or(true) {
-            return Err(JsValue::from_str("CZI subblock data is truncated"));
+        if pixels_start
+            .checked_add(total_needed)
+            .map(|end| end > data.len())
+            .unwrap_or(true)
+        {
+            return Err(DecodeError::new("CZI subblock data is truncated"));
         }
 
         let origin_x = i64_to_usize(dim_x.start as i64 - min_x, "tile origin")?;
@@ -625,7 +824,11 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
                     let sample_offset = add(source, mul(channel, bytes_per_channel)?)?;
                     let value = read_sample(data, entry.pixel_type, sample_offset)?;
                     // BGR(A) types are stored channel-reversed for the colour triple.
-                    let index = if pixel_type.bgr && channel < 3 { 2 - channel } else { channel };
+                    let index = if pixel_type.bgr && channel < 3 {
+                        2 - channel
+                    } else {
+                        channel
+                    };
                     if let Some(slot) = out.get_mut(target + index) {
                         *slot = value as f32;
                     }
@@ -640,7 +843,12 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
     let selectors: Vec<(String, i64, i64)> = CZI_AXIS_ORDER
         .iter()
         .map(|s| s.to_string())
-        .chain(axis_order.iter().filter(|n| !CZI_AXIS_ORDER.contains(&n.as_str())).cloned())
+        .chain(
+            axis_order
+                .iter()
+                .filter(|n| !CZI_AXIS_ORDER.contains(&n.as_str()))
+                .cloned(),
+        )
         .filter(|name| axes.contains_key(name))
         .filter_map(|name| {
             let (min, max) = axes[&name];
@@ -653,20 +861,44 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
         })
         .collect();
 
-    let channel_index = axes.get("C").map(|(min, _)| requested.get("C").copied().unwrap_or(0) - min).unwrap_or(0);
-    let channel_names: Option<Vec<String>> = xml_metadata.iter().find(|(k, _)| k == "channelNames").and_then(|(_, v)| match v {
-        JsonValue::Arr(items) => Some(items.iter().filter_map(|i| i.as_str().map(|s| s.to_string())).collect()),
-        _ => None,
-    });
+    let channel_index = axes
+        .get("C")
+        .map(|(min, _)| requested.get("C").copied().unwrap_or(0) - min)
+        .unwrap_or(0);
+    let channel_names: Option<Vec<String>> = xml_metadata
+        .iter()
+        .find(|(k, _)| k == "channelNames")
+        .and_then(|(_, v)| match v {
+            JsonValue::Arr(items) => Some(
+                items
+                    .iter()
+                    .filter_map(|i| i.as_str().map(|s| s.to_string()))
+                    .collect(),
+            ),
+            _ => None,
+        });
     let channel_name = channel_names.as_ref().and_then(|names| {
-        if channel_index >= 0 { names.get(channel_index as usize).cloned() } else { None }
+        if channel_index >= 0 {
+            names.get(channel_index as usize).cloned()
+        } else {
+            None
+        }
     });
 
     let mut fields: Vec<(String, JsonValue)> = xml_metadata;
     fields.push(("format".to_string(), JsonValue::Str("CZI".to_string())));
-    fields.push(("pixelTypeName".to_string(), JsonValue::Str(pixel_type.name.to_string())));
-    fields.push(("subBlockCount".to_string(), JsonValue::Num(entries.len() as f64)));
-    fields.push(("tileCount".to_string(), JsonValue::Num(selected.len() as f64)));
+    fields.push((
+        "pixelTypeName".to_string(),
+        JsonValue::Str(pixel_type.name.to_string()),
+    ));
+    fields.push((
+        "subBlockCount".to_string(),
+        JsonValue::Num(entries.len() as f64),
+    ));
+    fields.push((
+        "tileCount".to_string(),
+        JsonValue::Num(selected.len() as f64),
+    ));
     fields.push((
         "selectors".to_string(),
         JsonValue::Arr(
@@ -684,7 +916,12 @@ pub(crate) fn decode_czi_impl(data: &[u8], options_json: &str) -> Result<Scienti
     ));
     fields.push((
         "selectedIndices".to_string(),
-        JsonValue::Obj(selectors.iter().map(|(name, _, value)| (name.clone(), JsonValue::Num(*value as f64))).collect()),
+        JsonValue::Obj(
+            selectors
+                .iter()
+                .map(|(name, _, value)| (name.clone(), JsonValue::Num(*value as f64)))
+                .collect(),
+        ),
     ));
     push_opt(&mut fields, "channelName", channel_name.map(JsonValue::Str));
     let metadata_json = to_json_string(&JsonValue::Obj(fields));
