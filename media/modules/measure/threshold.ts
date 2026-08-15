@@ -1,6 +1,7 @@
 "use strict";
 
 import { toScalarPlane, type MeasurementSource } from './types.js';
+import { initWasm } from '../tiff-wasm-wrapper.js';
 
 /**
  * Thresholding.
@@ -15,6 +16,20 @@ import { toScalarPlane, type MeasurementSource } from './types.js';
  * in ImageJ's Auto Threshold plugin; the implementations below follow those
  * published formulations so numbers are comparable with what users already
  * have.
+ *
+ * The compute cores (`buildHistogram`, `autoThresholdBin`, `globalThresholdMask`,
+ * `localThresholdMask`, `localAutoThresholdMask`, `computeStabilityCurve`) live
+ * in Rust (`wasm/tiff-decoder/src/measure/threshold.rs`): the local/window
+ * methods run over the full image on every keystroke in the range fields, so
+ * they are the hottest thing in the Measure panel. This file is now a thin
+ * `async` delegation to that module, with NO TypeScript implementation left
+ * behind for the ported functions.
+ *
+ * `binToValue`, `thresholdValueFromBin` and `valueToBin` stay in TypeScript:
+ * they are O(1) scalar arithmetic called synchronously from canvas-drawing
+ * code (the histogram widget, the stability-curve marker) on every render, and
+ * making them `async` would only add a microtask hop with no compute to hide
+ * it behind.
  */
 
 export type ThresholdMethod =
@@ -86,6 +101,10 @@ export function valueToBin(histogram: ScalarHistogram, value: number): number {
 	return Math.min(HISTOGRAM_BINS - 1, Math.max(0, bin));
 }
 
+function requireWasm(fn: string, name: string): never {
+	throw new Error(`${name} requires the Rust/WASM module (${fn}), which failed to load.`);
+}
+
 /**
  * Build the 256-bin histogram of a scalar plane.
  *
@@ -93,421 +112,24 @@ export function valueToBin(histogram: ScalarHistogram, value: number): number {
  * in the counts, so a subsampled histogram picks the same threshold as the full
  * one to within a bin on any realistic image.
  */
-export function buildHistogram(plane: Float32Array, step = 1): ScalarHistogram {
-	let min = Infinity;
-	let max = -Infinity;
-	let nonFinite = 0;
-	for (let i = 0; i < plane.length; i += step) {
-		const v = plane[i];
-		if (!Number.isFinite(v)) { nonFinite++; continue; }
-		if (v < min) { min = v; }
-		if (v > max) { max = v; }
-	}
-	const counts = new Int32Array(HISTOGRAM_BINS);
-	if (!Number.isFinite(min) || !Number.isFinite(max)) {
-		return { counts, min: 0, max: 0, total: 0, nonFiniteCount: nonFinite };
-	}
-	let total = 0;
-	if (max === min) {
-		for (let i = 0; i < plane.length; i += step) {
-			if (Number.isFinite(plane[i])) { counts[0]++; total++; }
-		}
-		return { counts, min, max, total, nonFiniteCount: nonFinite };
-	}
-	const scale = HISTOGRAM_BINS / (max - min);
-	for (let i = 0; i < plane.length; i += step) {
-		const v = plane[i];
-		if (!Number.isFinite(v)) { continue; }
-		let bin = Math.floor((v - min) * scale);
-		if (bin >= HISTOGRAM_BINS) { bin = HISTOGRAM_BINS - 1; }
-		counts[bin]++;
-		total++;
-	}
-	return { counts, min, max, total, nonFiniteCount: nonFinite };
+export async function buildHistogram(plane: Float32Array, step = 1): Promise<ScalarHistogram> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.build_histogram_fast !== 'function') { requireWasm('build_histogram_fast', 'buildHistogram'); }
+	const result = wasm.build_histogram_fast(plane, step);
+	return {
+		counts: result.counts,
+		min: result.min,
+		max: result.max,
+		total: result.total,
+		nonFiniteCount: result.non_finite_count,
+	};
 }
 
 /** Apply one auto-threshold method. Returns a bin index, or -1 on failure. */
-export function autoThresholdBin(counts: Int32Array, method: ThresholdMethod): number {
-	switch (method) {
-		case 'otsu': return otsu(counts);
-		case 'isodata': return isoData(counts);
-		case 'li': return li(counts);
-		case 'triangle': return triangle(counts);
-		case 'yen': return yen(counts);
-		case 'huang': return huang(counts);
-		case 'maxEntropy': return maxEntropy(counts);
-		case 'mean': return meanThreshold(counts);
-		case 'moments': return moments(counts);
-		case 'percentile': return percentile(counts);
-		case 'shanbhag': return shanbhag(counts);
-		case 'minimum': return minimum(counts);
-		case 'intermodes': return intermodes(counts);
-		default: return otsu(counts);
-	}
-}
-
-function total(counts: Int32Array): number {
-	let sum = 0;
-	for (let i = 0; i < counts.length; i++) { sum += counts[i]; }
-	return sum;
-}
-
-/** Otsu 1979: maximise between-class variance. */
-function otsu(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	let sum = 0;
-	for (let i = 0; i < counts.length; i++) { sum += i * counts[i]; }
-	let sumBackground = 0;
-	let weightBackground = 0;
-	let best = -1;
-	let bestVariance = -1;
-	for (let t = 0; t < counts.length; t++) {
-		weightBackground += counts[t];
-		if (weightBackground === 0) { continue; }
-		const weightForeground = n - weightBackground;
-		if (weightForeground === 0) { break; }
-		sumBackground += t * counts[t];
-		const meanBackground = sumBackground / weightBackground;
-		const meanForeground = (sum - sumBackground) / weightForeground;
-		const delta = meanBackground - meanForeground;
-		const variance = weightBackground * weightForeground * delta * delta;
-		if (variance > bestVariance) { bestVariance = variance; best = t; }
-	}
-	return best;
-}
-
-/** Ridler-Calvard iterative isodata, as used by ImageJ's "Default". */
-function isoData(counts: Int32Array): number {
-	let t = 0;
-	for (let i = 0; i < counts.length; i++) { if (counts[i] > 0) { t = i; break; } }
-	let previous = -1;
-	let guard = 0;
-	let threshold = Math.floor(counts.length / 2);
-	while (threshold !== previous && guard++ < 1000) {
-		previous = threshold;
-		let sumBelow = 0, countBelow = 0, sumAbove = 0, countAbove = 0;
-		for (let i = 0; i <= threshold; i++) { sumBelow += i * counts[i]; countBelow += counts[i]; }
-		for (let i = threshold + 1; i < counts.length; i++) { sumAbove += i * counts[i]; countAbove += counts[i]; }
-		if (countBelow === 0 || countAbove === 0) { break; }
-		threshold = Math.round((sumBelow / countBelow + sumAbove / countAbove) / 2);
-	}
-	return threshold < t ? t : threshold;
-}
-
-/** Li & Tam: iterative minimum cross-entropy. */
-function li(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	let mean = 0;
-	for (let i = 0; i < counts.length; i++) { mean += i * counts[i]; }
-	mean /= n;
-
-	let newThreshold = mean;
-	let oldThreshold: number;
-	let guard = 0;
-	do {
-		oldThreshold = newThreshold;
-		const t = Math.floor(oldThreshold + 0.5);
-		let sumBack = 0, countBack = 0;
-		for (let i = 0; i <= t; i++) { sumBack += i * counts[i]; countBack += counts[i]; }
-		let sumFore = 0, countFore = 0;
-		for (let i = t + 1; i < counts.length; i++) { sumFore += i * counts[i]; countFore += counts[i]; }
-		// Zero is not a valid argument to log; the +1 offset is the usual guard
-		// and shifts both means identically, so the crossing point is unaffected.
-		const meanBack = countBack > 0 ? sumBack / countBack : 0;
-		const meanFore = countFore > 0 ? sumFore / countFore : 0;
-		const a = meanBack > 0 ? meanBack : 1e-9;
-		const b = meanFore > 0 ? meanFore : 1e-9;
-		newThreshold = (b - a) / (Math.log(b) - Math.log(a));
-		if (!Number.isFinite(newThreshold)) { break; }
-	} while (Math.abs(newThreshold - oldThreshold) > 0.5 && guard++ < 1000);
-	return Math.floor(newThreshold);
-}
-
-/** Zack's triangle method: farthest point from the peak-to-tail chord. */
-function triangle(counts: Int32Array): number {
-	let peak = 0;
-	for (let i = 1; i < counts.length; i++) { if (counts[i] > counts[peak]) { peak = i; } }
-
-	let first = 0;
-	while (first < counts.length && counts[first] === 0) { first++; }
-	let last = counts.length - 1;
-	while (last > 0 && counts[last] === 0) { last--; }
-	if (first >= last) { return -1; }
-
-	// Work on whichever side of the peak is longer; that is where the tail is.
-	let flip = false;
-	let lo = first, hi = last;
-	if (peak - first < last - peak) {
-		flip = true;
-		const reversed = new Int32Array(counts.length);
-		for (let i = 0; i < counts.length; i++) { reversed[i] = counts[counts.length - 1 - i]; }
-		const result = triangleOneSided(reversed);
-		return result < 0 ? result : counts.length - 1 - result;
-	}
-	void lo; void hi; void flip;
-	return triangleOneSided(counts);
-}
-
-function triangleOneSided(counts: Int32Array): number {
-	let peak = 0;
-	for (let i = 1; i < counts.length; i++) { if (counts[i] > counts[peak]) { peak = i; } }
-	let last = counts.length - 1;
-	while (last > peak && counts[last] === 0) { last--; }
-	if (last <= peak) { return peak; }
-
-	const dx = last - peak;
-	const dy = counts[last] - counts[peak];
-	const norm = Math.hypot(dx, dy) || 1;
-	let best = peak;
-	let bestDistance = -1;
-	for (let i = peak; i <= last; i++) {
-		const distance = Math.abs(dy * (i - peak) - dx * (counts[i] - counts[peak])) / norm;
-		if (distance > bestDistance) { bestDistance = distance; best = i; }
-	}
-	return best;
-}
-
-/** Yen, Chang & Chang maximum-correlation criterion. */
-function yen(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	const p = new Float64Array(counts.length);
-	for (let i = 0; i < counts.length; i++) { p[i] = counts[i] / n; }
-
-	const p1 = new Float64Array(counts.length);
-	const p1Squared = new Float64Array(counts.length);
-	p1[0] = p[0];
-	p1Squared[0] = p[0] * p[0];
-	for (let i = 1; i < counts.length; i++) {
-		p1[i] = p1[i - 1] + p[i];
-		p1Squared[i] = p1Squared[i - 1] + p[i] * p[i];
-	}
-	const p2Squared = new Float64Array(counts.length);
-	p2Squared[counts.length - 1] = 0;
-	for (let i = counts.length - 2; i >= 0; i--) { p2Squared[i] = p2Squared[i + 1] + p[i + 1] * p[i + 1]; }
-
-	let best = -1;
-	let bestCriterion = -Infinity;
-	for (let t = 0; t < counts.length; t++) {
-		const a = p1Squared[t] * p2Squared[t];
-		const b = p1[t] * (1 - p1[t]);
-		const criterion =
-			(a > 0 ? -1 * Math.log(a) : 0) +
-			(b > 0 ? 2 * Math.log(b) : 0);
-		if (criterion > bestCriterion) { bestCriterion = criterion; best = t; }
-	}
-	return best;
-}
-
-/** Huang & Wang fuzzy-membership minimisation. */
-function huang(counts: Int32Array): number {
-	let first = 0;
-	while (first < counts.length && counts[first] === 0) { first++; }
-	let last = counts.length - 1;
-	while (last > first && counts[last] === 0) { last--; }
-	if (first === last) { return first; }
-
-	const cumulative = new Float64Array(counts.length);
-	const weighted = new Float64Array(counts.length);
-	cumulative[first] = counts[first];
-	weighted[first] = first * counts[first];
-	for (let i = Math.max(first, 1); i <= last; i++) {
-		cumulative[i] = cumulative[i - 1] + counts[i];
-		weighted[i] = weighted[i - 1] + i * counts[i];
-	}
-
-	const c = last - first;
-	const membershipCost = new Float64Array(counts.length);
-	for (let i = 0; i < counts.length; i++) {
-		const membership = 1 / (1 + Math.abs(i) / c);
-		membershipCost[i] = -membership * Math.log(membership) - (1 - membership) * Math.log(1 - membership);
-	}
-
-	let best = first;
-	let bestEntropy = Infinity;
-	for (let t = first; t <= last; t++) {
-		let entropy = 0;
-		const meanLow = cumulative[t] > 0 ? Math.round(weighted[t] / cumulative[t]) : 0;
-		for (let i = first; i <= t; i++) { entropy += membershipCost[Math.abs(i - meanLow)] * counts[i]; }
-		const highCount = cumulative[last] - cumulative[t];
-		const meanHigh = highCount > 0 ? Math.round((weighted[last] - weighted[t]) / highCount) : 0;
-		for (let i = t + 1; i <= last; i++) { entropy += membershipCost[Math.abs(i - meanHigh)] * counts[i]; }
-		if (entropy < bestEntropy) { bestEntropy = entropy; best = t; }
-	}
-	return best;
-}
-
-/** Kapur, Sahoo & Wong maximum entropy. */
-function maxEntropy(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	const p = new Float64Array(counts.length);
-	for (let i = 0; i < counts.length; i++) { p[i] = counts[i] / n; }
-
-	const cumulative = new Float64Array(counts.length);
-	cumulative[0] = p[0];
-	for (let i = 1; i < counts.length; i++) { cumulative[i] = cumulative[i - 1] + p[i]; }
-
-	let best = -1;
-	let bestEntropy = -Infinity;
-	for (let t = 0; t < counts.length; t++) {
-		const pBackground = cumulative[t];
-		const pForeground = 1 - pBackground;
-		if (pBackground <= 0 || pForeground <= 0) { continue; }
-		let backgroundEntropy = 0;
-		for (let i = 0; i <= t; i++) {
-			if (p[i] > 0) { backgroundEntropy -= (p[i] / pBackground) * Math.log(p[i] / pBackground); }
-		}
-		let foregroundEntropy = 0;
-		for (let i = t + 1; i < counts.length; i++) {
-			if (p[i] > 0) { foregroundEntropy -= (p[i] / pForeground) * Math.log(p[i] / pForeground); }
-		}
-		const entropy = backgroundEntropy + foregroundEntropy;
-		if (entropy > bestEntropy) { bestEntropy = entropy; best = t; }
-	}
-	return best;
-}
-
-function meanThreshold(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	let sum = 0;
-	for (let i = 0; i < counts.length; i++) { sum += i * counts[i]; }
-	return Math.floor(sum / n);
-}
-
-/** Tsai's moment-preserving threshold. */
-function moments(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	let m1 = 0, m2 = 0, m3 = 0;
-	for (let i = 0; i < counts.length; i++) {
-		const p = counts[i] / n;
-		m1 += i * p;
-		m2 += i * i * p;
-		m3 += i * i * i * p;
-	}
-	const cd = m2 - m1 * m1;
-	if (cd === 0) { return -1; }
-	const c0 = (-m2 * m2 + m1 * m3) / cd;
-	const c1 = (-m3 + m2 * m1) / cd;
-	const discriminant = c1 * c1 - 4 * c0;
-	if (discriminant < 0) { return -1; }
-	const root = Math.sqrt(discriminant);
-	const z0 = 0.5 * (-c1 - root);
-	const z1 = 0.5 * (-c1 + root);
-	const pd = z1 - z0;
-	if (pd === 0) { return -1; }
-	const p0 = (z1 - m1) / pd;
-
-	let cumulative = 0;
-	for (let i = 0; i < counts.length; i++) {
-		cumulative += counts[i] / n;
-		if (cumulative > p0) { return i; }
-	}
-	return -1;
-}
-
-/** Doyle's percentile method, assuming half the image is foreground. */
-function percentile(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	const target = 0.5;
-	let best = -1;
-	let bestDistance = Infinity;
-	let cumulative = 0;
-	for (let i = 0; i < counts.length; i++) {
-		cumulative += counts[i];
-		const distance = Math.abs(cumulative / n - target);
-		if (distance < bestDistance) { bestDistance = distance; best = i; }
-	}
-	return best;
-}
-
-/** Shanbhag's information-measure threshold. */
-function shanbhag(counts: Int32Array): number {
-	const n = total(counts);
-	if (n === 0) { return -1; }
-	const p = new Float64Array(counts.length);
-	for (let i = 0; i < counts.length; i++) { p[i] = counts[i] / n; }
-	const cumulative = new Float64Array(counts.length);
-	cumulative[0] = p[0];
-	for (let i = 1; i < counts.length; i++) { cumulative[i] = cumulative[i - 1] + p[i]; }
-
-	let best = -1;
-	let bestDistance = Infinity;
-	for (let t = 0; t < counts.length; t++) {
-		const pBackground = cumulative[t];
-		const pForeground = 1 - pBackground;
-		if (pBackground <= 0 || pForeground <= 0) { continue; }
-
-		let backgroundTerm = 0;
-		let running = 1;
-		for (let i = 1; i <= t; i++) {
-			running *= (pBackground - p[t - i + 1]) / pBackground;
-			if (!(running > 0)) { break; }
-			backgroundTerm -= p[i] * Math.log(running);
-		}
-		backgroundTerm /= pBackground;
-
-		let foregroundTerm = 0;
-		running = 1;
-		for (let i = 1; t + i < counts.length; i++) {
-			running *= (pForeground - p[t + i]) / pForeground;
-			if (!(running > 0)) { break; }
-			foregroundTerm -= p[t + i] * Math.log(running);
-		}
-		foregroundTerm /= pForeground;
-
-		const distance = Math.abs(backgroundTerm - foregroundTerm);
-		if (distance < bestDistance) { bestDistance = distance; best = t; }
-	}
-	return best;
-}
-
-/** Smooth the histogram until it has exactly two local maxima. */
-function smoothToBimodal(counts: Int32Array): Float64Array | null {
-	let smoothed = Float64Array.from(counts);
-	for (let iteration = 0; iteration < 10000; iteration++) {
-		let peaks = 0;
-		for (let i = 1; i + 1 < smoothed.length; i++) {
-			if (smoothed[i - 1] < smoothed[i] && smoothed[i + 1] < smoothed[i]) { peaks++; }
-		}
-		if (peaks <= 2) { return peaks === 2 ? smoothed : null; }
-		const next = new Float64Array(smoothed.length);
-		for (let i = 0; i < smoothed.length; i++) {
-			const a = smoothed[Math.max(0, i - 1)];
-			const b = smoothed[i];
-			const c = smoothed[Math.min(smoothed.length - 1, i + 1)];
-			next[i] = (a + b + c) / 3;
-		}
-		smoothed = next;
-	}
-	return null;
-}
-
-/** Prewitt & Mendelsohn minimum: the valley between the two smoothed peaks. */
-function minimum(counts: Int32Array): number {
-	const smoothed = smoothToBimodal(counts);
-	if (!smoothed) { return -1; }
-	for (let i = 1; i + 1 < smoothed.length; i++) {
-		if (smoothed[i - 1] > smoothed[i] && smoothed[i + 1] >= smoothed[i]) { return i; }
-	}
-	return -1;
-}
-
-/** Prewitt & Mendelsohn intermodes: the midpoint between the two peaks. */
-function intermodes(counts: Int32Array): number {
-	const smoothed = smoothToBimodal(counts);
-	if (!smoothed) { return -1; }
-	const peaks: number[] = [];
-	for (let i = 1; i + 1 < smoothed.length; i++) {
-		if (smoothed[i - 1] < smoothed[i] && smoothed[i + 1] < smoothed[i]) { peaks.push(i); }
-	}
-	if (peaks.length !== 2) { return -1; }
-	return Math.floor((peaks[0] + peaks[1]) / 2);
+export async function autoThresholdBin(counts: Int32Array, method: ThresholdMethod): Promise<number> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.auto_threshold_bin_fast !== 'function') { requireWasm('auto_threshold_bin_fast', 'autoThresholdBin'); }
+	return wasm.auto_threshold_bin_fast(counts, method);
 }
 
 // ---------------------------------------------------------------------------
@@ -545,125 +167,28 @@ export interface StabilityCurve {
  * is a property of the intensity distribution, not of resolution, so a preview
  * grid resolves it perfectly well.
  */
-export function computeStabilityCurve(
+export async function computeStabilityCurve(
 	plane: Float32Array,
 	width: number,
 	height: number,
 	histogram: ScalarHistogram,
 	options: { samples?: number; maxPixels?: number; darkBackground?: boolean } = {},
-): StabilityCurve {
-	const samples = Math.max(8, Math.min(128, options.samples ?? 64));
-	const maxPixels = options.maxPixels ?? 250_000;
-	const darkBackground = options.darkBackground !== false;
-
-	const { plane: small, width: smallWidth, height: smallHeight } =
-		downsample(plane, width, height, maxPixels);
-
+): Promise<StabilityCurve> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.compute_stability_curve_fast !== 'function') { requireWasm('compute_stability_curve_fast', 'computeStabilityCurve'); }
+	const result = wasm.compute_stability_curve_fast(
+		plane, width, height, histogram.min, histogram.max,
+		options.samples ?? 64, options.maxPixels ?? 250_000, options.darkBackground !== false,
+	);
+	const bins: Int32Array = result.bins;
+	const values: Float64Array = result.values;
+	const objectCounts: Uint32Array = result.object_counts;
+	const areaFractions: Float64Array = result.area_fractions;
 	const points: StabilityPoint[] = [];
-	const mask = new Uint8Array(smallWidth * smallHeight);
-	for (let s = 0; s < samples; s++) {
-		const bin = Math.round((s / (samples - 1)) * (HISTOGRAM_BINS - 1));
-		const value = thresholdValueFromBin(histogram, bin);
-		let inside = 0;
-		for (let i = 0; i < small.length; i++) {
-			const v = small[i];
-			const on = Number.isFinite(v) && (darkBackground ? v >= value : v <= value);
-			mask[i] = on ? 1 : 0;
-			if (on) { inside++; }
-		}
-		points.push({
-			bin,
-			value,
-			objectCount: countComponents(mask, smallWidth, smallHeight),
-			areaFraction: inside / mask.length,
-		});
+	for (let i = 0; i < bins.length; i++) {
+		points.push({ bin: bins[i], value: values[i], objectCount: objectCounts[i], areaFraction: areaFractions[i] });
 	}
-
-	// The useful plateau is a run where the object count barely moves *and*
-	// something is actually selected — the empty and the fully-saturated ends
-	// are perfectly stable and completely useless.
-	let bestStart = 0;
-	let bestLength = 0;
-	let runStart = 0;
-	for (let i = 1; i <= points.length; i++) {
-		const ended = i === points.length ||
-			Math.abs(points[i].objectCount - points[runStart].objectCount) >
-			Math.max(1, points[runStart].objectCount * 0.1);
-		if (!ended) { continue; }
-		const length = i - runStart;
-		const midpoint = points[Math.floor(runStart + length / 2)];
-		const usable = midpoint.objectCount > 0 &&
-			midpoint.areaFraction > 0.0005 && midpoint.areaFraction < 0.95;
-		if (usable && length > bestLength) { bestLength = length; bestStart = runStart; }
-		runStart = i;
-	}
-
-	const suggestedIndex = bestLength > 0
-		? Math.floor(bestStart + bestLength / 2)
-		: Math.floor(points.length / 2);
-
-	return {
-		points,
-		suggestedBin: points[suggestedIndex]?.bin ?? 128,
-		plateauWidth: bestLength,
-	};
-}
-
-/** Box-average downsample to at most `maxPixels`, preserving aspect ratio. */
-export function downsample(
-	plane: Float32Array,
-	width: number,
-	height: number,
-	maxPixels: number,
-): { plane: Float32Array; width: number; height: number } {
-	const pixels = width * height;
-	if (pixels <= maxPixels) { return { plane, width, height }; }
-	const factor = Math.ceil(Math.sqrt(pixels / maxPixels));
-	const outWidth = Math.max(1, Math.floor(width / factor));
-	const outHeight = Math.max(1, Math.floor(height / factor));
-	const out = new Float32Array(outWidth * outHeight);
-	for (let y = 0; y < outHeight; y++) {
-		for (let x = 0; x < outWidth; x++) {
-			let sum = 0;
-			let n = 0;
-			for (let dy = 0; dy < factor; dy++) {
-				const sy = y * factor + dy;
-				if (sy >= height) { break; }
-				for (let dx = 0; dx < factor; dx++) {
-					const sx = x * factor + dx;
-					if (sx >= width) { break; }
-					const v = plane[sy * width + sx];
-					if (Number.isFinite(v)) { sum += v; n++; }
-				}
-			}
-			out[y * outWidth + x] = n > 0 ? sum / n : NaN;
-		}
-	}
-	return { plane: out, width: outWidth, height: outHeight };
-}
-
-/** Four-connected component count of a binary mask. */
-function countComponents(mask: Uint8Array, width: number, height: number): number {
-	const visited = new Uint8Array(mask.length);
-	const stack = new Int32Array(mask.length);
-	let components = 0;
-	for (let start = 0; start < mask.length; start++) {
-		if (!mask[start] || visited[start]) { continue; }
-		components++;
-		let top = 0;
-		stack[top++] = start;
-		visited[start] = 1;
-		while (top > 0) {
-			const index = stack[--top];
-			const x = index % width;
-			const y = (index / width) | 0;
-			if (x > 0 && mask[index - 1] && !visited[index - 1]) { visited[index - 1] = 1; stack[top++] = index - 1; }
-			if (x + 1 < width && mask[index + 1] && !visited[index + 1]) { visited[index + 1] = 1; stack[top++] = index + 1; }
-			if (y > 0 && mask[index - width] && !visited[index - width]) { visited[index - width] = 1; stack[top++] = index - width; }
-			if (y + 1 < height && mask[index + width] && !visited[index + width]) { visited[index + width] = 1; stack[top++] = index + width; }
-		}
-	}
-	return components;
+	return { points, suggestedBin: result.suggested_bin, plateauWidth: result.plateau_width };
 }
 
 // ---------------------------------------------------------------------------
@@ -716,177 +241,18 @@ export interface LocalThresholdOptions {
  * Mean and variance come from summed-area tables, so cost is independent of the
  * window radius and a slider over it stays interactive.
  */
-export function localThresholdMask(
+export async function localThresholdMask(
 	inputPlane: Float32Array,
 	width: number,
 	height: number,
 	options: LocalThresholdOptions,
-): Uint8Array {
-	const radius = Math.max(1, Math.round(options.radius));
-	const k = options.k;
-	const brightObjects = options.darkBackground !== false;
-	const out = new Uint8Array(width * height);
-
-	let sourceMin = Infinity;
-	let sourceMax = -Infinity;
-	for (let i = 0; i < inputPlane.length; i++) {
-		const v = inputPlane[i];
-		if (!Number.isFinite(v)) { continue; }
-		if (v < sourceMin) { sourceMin = v; }
-		if (v > sourceMax) { sourceMax = v; }
-	}
-	if (!Number.isFinite(sourceMin) || !Number.isFinite(sourceMax)) { return out; }
-
-	// Reflect about the data range so bright objects become dark ones. The
-	// reflection preserves distances, so every local mean and σ below is the
-	// same as it would have been, only mirrored.
-	let plane = inputPlane;
-	if (brightObjects) {
-		plane = new Float32Array(inputPlane.length);
-		const pivot = sourceMin + sourceMax;
-		for (let i = 0; i < inputPlane.length; i++) {
-			plane[i] = Number.isFinite(inputPlane[i]) ? pivot - inputPlane[i] : NaN;
-		}
-	}
-
-	if (options.method === 'median') {
-		return localMedianMask(plane, width, height, radius, options.offset || 0);
-	}
-
-	// Summed-area tables over finite samples only; the count table lets windows
-	// that overlap NaN regions normalise correctly instead of biasing to zero.
-	const sum = new Float64Array((width + 1) * (height + 1));
-	const sumSquares = new Float64Array((width + 1) * (height + 1));
-	const counts = new Float64Array((width + 1) * (height + 1));
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			const v = plane[y * width + x];
-			const finite = Number.isFinite(v);
-			const value = finite ? v : 0;
-			const i = (y + 1) * (width + 1) + (x + 1);
-			const up = y * (width + 1) + (x + 1);
-			const left = (y + 1) * (width + 1) + x;
-			const upLeft = y * (width + 1) + x;
-			sum[i] = value + sum[up] + sum[left] - sum[upLeft];
-			sumSquares[i] = value * value + sumSquares[up] + sumSquares[left] - sumSquares[upLeft];
-			counts[i] = (finite ? 1 : 0) + counts[up] + counts[left] - counts[upLeft];
-		}
-	}
-
-	const rectSum = (table: Float64Array, x0: number, y0: number, x1: number, y1: number) =>
-		table[(y1 + 1) * (width + 1) + (x1 + 1)]
-		- table[y0 * (width + 1) + (x1 + 1)]
-		- table[(y1 + 1) * (width + 1) + x0]
-		+ table[y0 * (width + 1) + x0];
-
-	// Dynamic range for Sauvola's r term. The reflection above preserves it, so
-	// the source range is still the right normaliser.
-	const globalMin = brightObjects ? sourceMin : sourceMin;
-	const range = sourceMax > sourceMin ? sourceMax - sourceMin : 1;
-	const r = options.r ?? range / 2;
-	const offset = options.offset || 0;
-
-	for (let y = 0; y < height; y++) {
-		const y0 = Math.max(0, y - radius);
-		const y1 = Math.min(height - 1, y + radius);
-		for (let x = 0; x < width; x++) {
-			const value = plane[y * width + x];
-			if (!Number.isFinite(value)) { continue; }
-			const x0 = Math.max(0, x - radius);
-			const x1 = Math.min(width - 1, x + radius);
-			const n = rectSum(counts, x0, y0, x1, y1);
-			if (n <= 0) { continue; }
-			const mean = rectSum(sum, x0, y0, x1, y1) / n;
-			const meanSquares = rectSum(sumSquares, x0, y0, x1, y1) / n;
-			const variance = Math.max(0, meanSquares - mean * mean);
-			const sigma = Math.sqrt(variance);
-
-			let threshold: number;
-			switch (options.method) {
-				case 'sauvola':
-					threshold = mean * (1 + k * (sigma / r - 1));
-					break;
-				case 'niblack':
-					// Published as mean + k*sigma with a negative k; the sign is
-					// flipped here so a positive k means "stricter" for every
-					// method the panel offers.
-					threshold = mean - k * sigma;
-					break;
-				case 'phansalkar': {
-					// Phansalkar's p = 2 and q = 10, as published.
-					const normalized = range > 0 ? (mean - globalMin) / range : 0;
-					threshold = mean * (1 + 2 * Math.exp(-10 * normalized) + k * (sigma / r - 1));
-					break;
-				}
-				case 'mean':
-				default:
-					threshold = mean - offset;
-					break;
-			}
-
-			// Foreground is darker in the normalised polarity, always.
-			if (value <= threshold) { out[y * width + x] = 1; }
-		}
-	}
-
-	return out;
-}
-
-/**
- * Local median threshold. Operates on the polarity-normalised plane, so
- * foreground is whatever falls at or below the local median minus the offset.
- */
-function localMedianMask(
-	plane: Float32Array,
-	width: number,
-	height: number,
-	radius: number,
-	offset: number,
-): Uint8Array {
-	const out = new Uint8Array(width * height);
-	let min = Infinity, max = -Infinity;
-	for (let i = 0; i < plane.length; i++) {
-		const v = plane[i];
-		if (!Number.isFinite(v)) { continue; }
-		if (v < min) { min = v; }
-		if (v > max) { max = v; }
-	}
-	if (!Number.isFinite(min) || max <= min) { return out; }
-	const bins = 64;
-	const scale = bins / (max - min);
-
-	for (let y = 0; y < height; y++) {
-		const y0 = Math.max(0, y - radius);
-		const y1 = Math.min(height - 1, y + radius);
-		for (let x = 0; x < width; x++) {
-			const value = plane[y * width + x];
-			if (!Number.isFinite(value)) { continue; }
-			const x0 = Math.max(0, x - radius);
-			const x1 = Math.min(width - 1, x + radius);
-			const counts = new Int32Array(bins);
-			let n = 0;
-			for (let wy = y0; wy <= y1; wy++) {
-				for (let wx = x0; wx <= x1; wx++) {
-					const v = plane[wy * width + wx];
-					if (!Number.isFinite(v)) { continue; }
-					let bin = Math.floor((v - min) * scale);
-					if (bin >= bins) { bin = bins - 1; }
-					counts[bin]++;
-					n++;
-				}
-			}
-			if (n === 0) { continue; }
-			let cumulative = 0;
-			let medianBin = 0;
-			for (let b = 0; b < bins; b++) {
-				cumulative += counts[b];
-				if (cumulative * 2 >= n) { medianBin = b; break; }
-			}
-			const median = min + (medianBin + 0.5) / scale;
-			if (value <= median - offset) { out[y * width + x] = 1; }
-		}
-	}
-	return out;
+): Promise<Uint8Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.local_threshold_mask_fast !== 'function') { requireWasm('local_threshold_mask_fast', 'localThresholdMask'); }
+	return wasm.local_threshold_mask_fast(
+		inputPlane, width, height, options.method, options.radius, options.k,
+		options.r ?? NaN, options.offset ?? NaN, options.darkBackground !== false,
+	);
 }
 
 /**
@@ -906,7 +272,7 @@ function localMedianMask(
  * surface of a real image varies on the scale of the illumination, not per
  * pixel, so interpolating it loses nothing while making the cost linear.
  */
-export function localAutoThresholdMask(
+export async function localAutoThresholdMask(
 	plane: Float32Array,
 	width: number,
 	height: number,
@@ -926,139 +292,24 @@ export function localAutoThresholdMask(
 		 */
 		minContrast?: number;
 	},
-): Uint8Array {
-	const radius = Math.max(4, Math.round(options.radius));
-	const darkBackground = options.darkBackground !== false;
-	const minContrastFraction = options.minContrast ?? 0.25;
-	const out = new Uint8Array(width * height);
-
-	let min = Infinity;
-	let max = -Infinity;
-	for (let i = 0; i < plane.length; i++) {
-		const v = plane[i];
-		if (!Number.isFinite(v)) { continue; }
-		if (v < min) { min = v; }
-		if (v > max) { max = v; }
-	}
-	if (!Number.isFinite(min) || max <= min) { return out; }
-	const binScale = HISTOGRAM_BINS / (max - min);
-
-	// One tile per radius, so a window spans three tiles and neighbouring tiles
-	// see overlapping data — without that the interpolated surface shows the
-	// tile grid.
-	const tile = radius;
-	const tilesX = Math.max(2, Math.ceil(width / tile) + 1);
-	const tilesY = Math.max(2, Math.ceil(height / tile) + 1);
-	const grid = new Float64Array(tilesX * tilesY);
-	// Whether a tile contained enough contrast to be split at all. Kept separate
-	// from the threshold grid because it must *not* be interpolated: blending a
-	// real threshold into an empty neighbour drags a usable cut out over blank
-	// background and carves objects out of it.
-	const valid = new Uint8Array(tilesX * tilesY);
-	const counts = new Int32Array(HISTOGRAM_BINS);
-
-	for (let ty = 0; ty < tilesY; ty++) {
-		const centreY = ty * tile;
-		const y0 = Math.max(0, centreY - radius);
-		const y1 = Math.min(height - 1, centreY + radius);
-		for (let tx = 0; tx < tilesX; tx++) {
-			const centreX = tx * tile;
-			const x0 = Math.max(0, centreX - radius);
-			const x1 = Math.min(width - 1, centreX + radius);
-
-			counts.fill(0);
-			let total = 0;
-			let windowMin = Infinity;
-			let windowMax = -Infinity;
-			for (let y = y0; y <= y1; y++) {
-				const row = y * width;
-				for (let x = x0; x <= x1; x++) {
-					const v = plane[row + x];
-					if (!Number.isFinite(v)) { continue; }
-					if (v < windowMin) { windowMin = v; }
-					if (v > windowMax) { windowMax = v; }
-					let bin = Math.floor((v - min) * binScale);
-					if (bin >= HISTOGRAM_BINS) { bin = HISTOGRAM_BINS - 1; }
-					if (bin < 0) { bin = 0; }
-					counts[bin]++;
-					total++;
-				}
-			}
-
-			// A cut above the window's maximum leaves it empty, which is the
-			// correct answer for a window that holds no object.
-			const empty = max + Math.abs(max - min) + 1;
-			let value = empty;
-			let isValid = false;
-			if (total > 0 && (windowMax - windowMin) >= minContrastFraction * (max - min)) {
-				const bin = autoThresholdBin(counts, options.method);
-				if (bin >= 0) {
-					value = min + ((bin + 1) / HISTOGRAM_BINS) * (max - min);
-					isValid = true;
-				}
-			}
-			grid[ty * tilesX + tx] = value;
-			valid[ty * tilesX + tx] = isValid ? 1 : 0;
-		}
-	}
-
-	for (let y = 0; y < height; y++) {
-		const gy = y / tile;
-		const ty0 = Math.min(tilesY - 1, Math.floor(gy));
-		const ty1 = Math.min(tilesY - 1, ty0 + 1);
-		const fy = gy - ty0;
-		const nearestY = Math.min(tilesY - 1, Math.round(gy));
-		for (let x = 0; x < width; x++) {
-			const value = plane[y * width + x];
-			if (!Number.isFinite(value)) { continue; }
-			const gx = x / tile;
-			const nearestX = Math.min(tilesX - 1, Math.round(gx));
-			// Validity is taken from the nearest tile alone, so blank regions stay
-			// blank right up to the tile that actually contains an object.
-			if (!valid[nearestY * tilesX + nearestX]) { continue; }
-
-			const tx0 = Math.min(tilesX - 1, Math.floor(gx));
-			const tx1 = Math.min(tilesX - 1, tx0 + 1);
-			const fx = gx - tx0;
-
-			// Interpolate only over tiles that produced a real threshold; an empty
-			// neighbour would otherwise pull the surface towards its sentinel.
-			let weighted = 0;
-			let weight = 0;
-			const corners: [number, number, number][] = [
-				[ty0, tx0, (1 - fx) * (1 - fy)],
-				[ty0, tx1, fx * (1 - fy)],
-				[ty1, tx0, (1 - fx) * fy],
-				[ty1, tx1, fx * fy],
-			];
-			for (const [cy, cx, w] of corners) {
-				const index = cy * tilesX + cx;
-				if (!valid[index] || w <= 0) { continue; }
-				weighted += grid[index] * w;
-				weight += w;
-			}
-			if (weight <= 0) { continue; }
-			const threshold = weighted / weight;
-
-			if (darkBackground ? value >= threshold : value <= threshold) { out[y * width + x] = 1; }
-		}
-	}
-
-	return out;
+): Promise<Uint8Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.local_auto_threshold_mask_fast !== 'function') { requireWasm('local_auto_threshold_mask_fast', 'localAutoThresholdMask'); }
+	return wasm.local_auto_threshold_mask_fast(
+		plane, width, height, options.method, options.radius,
+		options.darkBackground !== false, options.minContrast ?? NaN,
+	);
 }
 
 /** Binary mask from a global value window. */
-export function globalThresholdMask(
+export async function globalThresholdMask(
 	plane: Float32Array,
 	low: number,
 	high: number,
-): Uint8Array {
-	const out = new Uint8Array(plane.length);
-	for (let i = 0; i < plane.length; i++) {
-		const v = plane[i];
-		if (Number.isFinite(v) && v >= low && v <= high) { out[i] = 1; }
-	}
-	return out;
+): Promise<Uint8Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.global_threshold_mask_fast !== 'function') { requireWasm('global_threshold_mask_fast', 'globalThresholdMask'); }
+	return wasm.global_threshold_mask_fast(plane, low, high);
 }
 
 /** Convenience wrapper that materialises the scalar plane for a source. */

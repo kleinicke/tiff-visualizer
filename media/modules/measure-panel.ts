@@ -186,11 +186,32 @@ export class MeasurePanel {
 	private stability: StabilityCurve | null = null;
 	private thresholdMask: Uint8Array | null = null;
 	private previewPlane: Float32Array | null = null;
+	/**
+	 * Rises on every threshold-affecting change (preprocessing, method, range).
+	 * `buildHistogram`/`autoThresholdBin`/the mask builders now reach the
+	 * Rust/WASM module, so their callers are lazy-async: a stale in-flight
+	 * result is dropped by comparing against this token when it resolves,
+	 * exactly like `particleToken` below. Eager precomputation on every
+	 * keystroke would stall the range-field inputs, which is why these stay
+	 * lazy rather than being awaited inline.
+	 */
+	private thresholdToken = 0;
+	private thresholdPrepareBusy = false;
+	private thresholdApplyBusy = false;
+	private stabilityBusy = false;
+	/** Auto-threshold bin per method, cached per histogram for the gallery. */
+	private methodBins: Map<ThresholdMethod, number> | null = null;
+	private methodBinsBusy = false;
+	/** Discards a stale hover-preview mask that resolves after the pointer left. */
+	private hoverToken = 0;
 	private pendingCalibrationDistance = 0;
 	private measureHandle = 0;
 	/** Cached particle pass, so the stats line and the preview agree and the
 	 *  analysis is not run twice per render. */
-	private particleResult: ReturnType<typeof analyzeParticles> | null = null;
+	private particleResult: Awaited<ReturnType<typeof analyzeParticles>> | null = null;
+	/** Rises on every invalidation so a late analysis can be discarded. */
+	private particleToken = 0;
+	private particleAnalysisRunning = false;
 	private showMaskOverlay = true;
 
 	private isDragging = false;
@@ -337,6 +358,7 @@ export class MeasurePanel {
 		this.thresholdMask = null;
 		this.previewPlane = null;
 		this.particleResult = null;
+		this.particleToken++;
 		this.showMaskOverlay = true;
 		this.host.overlay.invalidateImage();
 		this.scheduleMeasure();
@@ -1199,6 +1221,7 @@ export class MeasurePanel {
 		// filter is visible on the image rather than only as a changed count.
 		const refilter = () => {
 			this.particleResult = null;
+		this.particleToken++;
 			this.refreshMaskOverlay();
 			this.render();
 		};
@@ -1514,22 +1537,33 @@ export class MeasurePanel {
 		const source = this.host.getSource();
 		if (!histogram || !source) { return grid; }
 
+		// Cached per histogram: `autoThresholdBin` now reaches Rust/WASM, and
+		// evaluating all thirteen methods synchronously on every render would
+		// mean thirteen blocking round trips per keystroke. `ensureMethodBins`
+		// returns the cached map immediately once computed, and triggers a
+		// background recompute (with a re-render on completion) otherwise —
+		// the same lazy-async pattern `ensureParticles` uses.
+		const methodBins = this.ensureMethodBins();
+
 		for (const method of THRESHOLD_METHODS) {
-			const bin = autoThresholdBin(histogram.counts, method.id);
+			const bin = methodBins?.get(method.id) ?? -1;
+			const pending = !methodBins;
 			const localized = this.threshold.localizeGlobal;
 			const active = !this.threshold.manual
 				&& this.threshold.localMethod === 'none'
 				&& this.threshold.method === method.id;
 			const button = this.methodButton({
 				label: localized ? `${method.label} · per window` : method.label,
-				hint: bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint,
+				hint: pending
+					? `${method.hint}\n\nComputing…`
+					: (bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint),
 				value: localized
 					? `r=${this.threshold.localRadius}`
-					: (bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4)),
+					: (pending ? '…' : (bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4))),
 				active,
-				disabled: bin < 0 && !localized,
-				spark: localized ? undefined : this.buildHistogramSpark(histogram, bin),
-				computeMask: () => {
+				disabled: pending || (bin < 0 && !localized),
+				spark: localized || pending ? undefined : this.buildHistogramSpark(histogram, bin),
+				computeMask: async () => {
 					if (!this.previewPlane) { return null; }
 					if (localized) {
 						return localAutoThresholdMask(this.previewPlane, source.width, source.height, {
@@ -1566,7 +1600,7 @@ export class MeasurePanel {
 				value: `r=${this.threshold.localRadius}, k=${formatNumber(this.threshold.localK, 2)}`,
 				active,
 				disabled: false,
-				computeMask: () => this.previewPlane
+				computeMask: async () => this.previewPlane
 					? localThresholdMask(this.previewPlane, source.width, source.height, {
 						method: method.id,
 						radius: this.threshold.localRadius,
@@ -1586,6 +1620,32 @@ export class MeasurePanel {
 		return grid;
 	}
 
+	/** Cached auto-threshold bin per method; see `buildMethodGallery` above. */
+	private ensureMethodBins(): Map<ThresholdMethod, number> | null {
+		if (this.methodBins) { return this.methodBins; }
+		void this.computeMethodBins(this.thresholdToken);
+		return null;
+	}
+
+	private async computeMethodBins(token: number): Promise<void> {
+		if (this.methodBinsBusy) { return; }
+		const histogram = this.histogram;
+		if (!histogram) { return; }
+		this.methodBinsBusy = true;
+		try {
+			const bins = new Map<ThresholdMethod, number>();
+			for (const method of THRESHOLD_METHODS) {
+				const bin = await autoThresholdBin(histogram.counts, method.id);
+				if (token !== this.thresholdToken) { return; }
+				bins.set(method.id, bin);
+			}
+			this.methodBins = bins;
+			this.render();
+		} finally {
+			this.methodBinsBusy = false;
+		}
+	}
+
 	/**
 	 * One entry of the method gallery.
 	 *
@@ -1601,7 +1661,7 @@ export class MeasurePanel {
 		active: boolean;
 		disabled: boolean;
 		spark?: HTMLCanvasElement;
-		computeMask: () => Uint8Array | null;
+		computeMask: () => Promise<Uint8Array | null>;
 		apply: () => void;
 	}): HTMLButtonElement {
 		const button = document.createElement('button');
@@ -1619,14 +1679,23 @@ export class MeasurePanel {
 		button.append(label, value);
 		if (spec.spark) { button.appendChild(spec.spark); }
 
+		// `computeMask` now reaches Rust/WASM, so the preview is a single async
+		// call rather than an inline one. `hoverToken` discards a mask that
+		// resolves after the pointer has already left the button.
 		button.onmouseenter = () => {
 			if (spec.disabled) { return; }
-			const mask = spec.computeMask();
-			if (!mask) { return; }
-			this.showTemporaryMask(mask);
-			this.setHint(`${spec.label}: preview in red — click to keep it, then the filters mark kept objects green.`);
+			const token = ++this.hoverToken;
+			void (async () => {
+				const mask = await spec.computeMask();
+				if (token !== this.hoverToken || !mask) { return; }
+				this.showTemporaryMask(mask);
+				this.setHint(`${spec.label}: preview in red — click to keep it, then the filters mark kept objects green.`);
+			})();
 		};
-		button.onmouseleave = () => this.showTemporaryMask(null);
+		button.onmouseleave = () => {
+			this.hoverToken++;
+			this.showTemporaryMask(null);
+		};
 		button.onclick = () => {
 			spec.apply();
 			this.applyThreshold();
@@ -1813,16 +1882,16 @@ export class MeasurePanel {
 
 	// --- threshold plumbing -------------------------------------------------
 
-	private preprocessedPlane(): Float32Array | null {
+	private async preprocessedPlane(): Promise<Float32Array | null> {
 		const plane = this.host.getScalarPlane();
 		const source = this.host.getSource();
 		if (!plane || !source) { return null; }
 		let working = plane;
 		if (this.threshold.blurSigma > 0) {
-			working = gaussianBlur(working, source.width, source.height, this.threshold.blurSigma);
+			working = await gaussianBlur(working, source.width, source.height, this.threshold.blurSigma);
 		}
 		if (this.threshold.backgroundRadius > 0) {
-			working = subtractBackground(
+			working = await subtractBackground(
 				working, source.width, source.height,
 				this.threshold.backgroundRadius, !this.threshold.darkBackground,
 			);
@@ -1830,65 +1899,110 @@ export class MeasurePanel {
 		return working;
 	}
 
+	/**
+	 * Lazy trigger: rebuilds the histogram (and, unless manual, the threshold
+	 * mask) in the background and re-renders when it lands. Synchronous
+	 * callers keep calling this exactly as before `buildHistogram` moved to
+	 * Rust/WASM — the async work now happens off to the side rather than
+	 * inline, per the lazy-async + staleness-token pattern `ensureParticles`
+	 * already uses below.
+	 */
 	private prepareThreshold(): void {
-		const source = this.host.getSource();
-		const plane = this.preprocessedPlane();
-		if (!source || !plane) { return; }
-		this.previewPlane = plane;
-		// Subsample the histogram on large images; every method below is
-		// scale-invariant in the counts, so the chosen bin does not move.
-		const step = Math.max(1, Math.floor(plane.length / 1_000_000));
-		this.histogram = buildHistogram(plane, step);
+		this.thresholdToken++;
+		this.histogram = null;
 		this.stability = null;
-		if (!this.threshold.manual) { this.applyThreshold(); }
+		this.methodBins = null;
+		void this.runPrepareThreshold(this.thresholdToken);
 	}
 
+	private async runPrepareThreshold(token: number): Promise<void> {
+		if (this.thresholdPrepareBusy) { return; }
+		this.thresholdPrepareBusy = true;
+		try {
+			const source = this.host.getSource();
+			const plane = await this.preprocessedPlane();
+			if (!source || !plane) { return; }
+			// Subsample the histogram on large images; every method below is
+			// scale-invariant in the counts, so the chosen bin does not move.
+			const step = Math.max(1, Math.floor(plane.length / 1_000_000));
+			const histogram = await buildHistogram(plane, step);
+			if (token !== this.thresholdToken) { return; }
+			this.previewPlane = plane;
+			this.histogram = histogram;
+			if (!this.threshold.manual) {
+				await this.runApplyThreshold(token);
+				if (token !== this.thresholdToken) { return; }
+			}
+			this.render();
+		} finally {
+			this.thresholdPrepareBusy = false;
+		}
+	}
+
+	/** Lazy trigger for `runApplyThreshold`; see `prepareThreshold` above. */
 	private applyThreshold(): void {
-		const source = this.host.getSource();
-		const plane = this.previewPlane;
-		const histogram = this.histogram;
-		if (!source || !plane || !histogram) { return; }
+		this.thresholdToken++;
+		void this.runApplyThreshold(this.thresholdToken);
+	}
 
-		const usingGlobalAuto = !this.threshold.manual
-			&& this.threshold.localMethod === 'none'
-			&& !this.threshold.localizeGlobal;
+	private async runApplyThreshold(token: number): Promise<void> {
+		if (this.thresholdApplyBusy) { return; }
+		this.thresholdApplyBusy = true;
+		try {
+			const source = this.host.getSource();
+			const plane = this.previewPlane;
+			const histogram = this.histogram;
+			if (!source || !plane || !histogram) { return; }
 
-		if (usingGlobalAuto) {
-			const bin = autoThresholdBin(histogram.counts, this.threshold.method);
-			if (bin >= 0) {
-				const value = thresholdValueFromBin(histogram, bin);
-				if (this.threshold.darkBackground) {
-					this.threshold.low = value;
-					this.threshold.high = histogram.max;
-				} else {
-					this.threshold.low = histogram.min;
-					this.threshold.high = value;
+			const usingGlobalAuto = !this.threshold.manual
+				&& this.threshold.localMethod === 'none'
+				&& !this.threshold.localizeGlobal;
+
+			if (usingGlobalAuto) {
+				const bin = await autoThresholdBin(histogram.counts, this.threshold.method);
+				if (token !== this.thresholdToken) { return; }
+				if (bin >= 0) {
+					const value = thresholdValueFromBin(histogram, bin);
+					if (this.threshold.darkBackground) {
+						this.threshold.low = value;
+						this.threshold.high = histogram.max;
+					} else {
+						this.threshold.low = histogram.min;
+						this.threshold.high = value;
+					}
 				}
 			}
-		}
 
-		if (this.threshold.localMethod !== 'none') {
-			this.thresholdMask = localThresholdMask(plane, source.width, source.height, {
-				method: this.threshold.localMethod,
-				radius: this.threshold.localRadius,
-				k: this.threshold.localK,
-				darkBackground: this.threshold.darkBackground,
-			});
-		} else if (this.threshold.localizeGlobal && !this.threshold.manual) {
-			this.thresholdMask = localAutoThresholdMask(plane, source.width, source.height, {
-				method: this.threshold.method,
-				radius: this.threshold.localRadius,
-				darkBackground: this.threshold.darkBackground,
-			});
-		} else {
-			this.thresholdMask = globalThresholdMask(plane, this.threshold.low, this.threshold.high);
+			let mask: Uint8Array;
+			if (this.threshold.localMethod !== 'none') {
+				mask = await localThresholdMask(plane, source.width, source.height, {
+					method: this.threshold.localMethod,
+					radius: this.threshold.localRadius,
+					k: this.threshold.localK,
+					darkBackground: this.threshold.darkBackground,
+				});
+			} else if (this.threshold.localizeGlobal && !this.threshold.manual) {
+				mask = await localAutoThresholdMask(plane, source.width, source.height, {
+					method: this.threshold.method,
+					radius: this.threshold.localRadius,
+					darkBackground: this.threshold.darkBackground,
+				});
+			} else {
+				mask = await globalThresholdMask(plane, this.threshold.low, this.threshold.high);
+			}
+			if (token !== this.thresholdToken) { return; }
+			this.thresholdMask = mask;
+			this.particleResult = null;
+			this.particleToken++;
+			// Raw mask only: this runs on every keystroke in the range fields, and a
+			// full labelling pass per keystroke would stall a large image. The green
+			// accepted layer is added once per render, where the particle analysis
+			// has to happen anyway for the object count.
+			this.refreshMaskOverlay({ withParticles: false });
+			this.render();
+		} finally {
+			this.thresholdApplyBusy = false;
 		}
-		this.particleResult = null;
-		// Raw mask only: this runs on every keystroke in the range fields, and a
-		// full labelling pass per keystroke would stall a large image. The green
-		// accepted layer is added once per render, where the particle analysis
-		// has to happen anyway for the object count.
-		this.refreshMaskOverlay({ withParticles: false });
 	}
 
 	/**
@@ -1962,13 +2076,28 @@ export class MeasurePanel {
 		this.applyThreshold();
 	}
 
+	/** Lazy trigger, invoked from the "Compute" button; see `prepareThreshold`. */
 	private computeStability(): void {
-		const source = this.host.getSource();
-		const plane = this.previewPlane;
-		if (!source || !plane || !this.histogram) { return; }
-		this.stability = computeStabilityCurve(plane, source.width, source.height, this.histogram, {
-			darkBackground: this.threshold.darkBackground,
-		});
+		void this.runComputeStability(this.thresholdToken);
+	}
+
+	private async runComputeStability(token: number): Promise<void> {
+		if (this.stabilityBusy) { return; }
+		this.stabilityBusy = true;
+		try {
+			const source = this.host.getSource();
+			const plane = this.previewPlane;
+			const histogram = this.histogram;
+			if (!source || !plane || !histogram) { return; }
+			const curve = await computeStabilityCurve(plane, source.width, source.height, histogram, {
+				darkBackground: this.threshold.darkBackground,
+			});
+			if (token !== this.thresholdToken) { return; }
+			this.stability = curve;
+			this.render();
+		} finally {
+			this.stabilityBusy = false;
+		}
 	}
 
 	private currentMaskStats(): string {
@@ -1990,16 +2119,52 @@ export class MeasurePanel {
 		return parts.join(' · ');
 	}
 
+	/**
+	 * Particle analysis for the current threshold mask, or null while it is
+	 * still being computed.
+	 *
+	 * Deliberately LAZY, not eager. The threshold mask is rebuilt on every
+	 * keystroke in the range fields, and labelling a full-resolution mask costs
+	 * ~280 ms at 5120x5120 even in Rust (it was ~1 s in JavaScript) — so
+	 * recomputing on every mask change would stall exactly the interaction the
+	 * mask exists to serve. Instead the work starts on first USE after an
+	 * invalidation, runs off the UI thread, and the panel re-renders when it
+	 * lands. Every caller already handles a null result, which is what makes
+	 * that safe.
+	 */
 	private ensureParticles() {
 		if (this.particleResult) { return this.particleResult; }
-		this.particleResult = this.runParticles();
-		return this.particleResult;
+		void this.startParticleAnalysis();
+		return null;
 	}
 
-	private runParticles() {
+	/**
+	 * Runs one particle analysis at a time and discards stale results.
+	 *
+	 * `particleToken` rises on every invalidation, so a pass that finishes
+	 * after the user has moved the threshold on is dropped rather than
+	 * overwriting a newer answer with an older one.
+	 */
+	private async startParticleAnalysis(): Promise<void> {
+		if (this.particleAnalysisRunning) { return; }
+		const token = this.particleToken;
+		this.particleAnalysisRunning = true;
+		try {
+			const result = await this.runParticles();
+			if (token !== this.particleToken) { return; }
+			this.particleResult = result;
+			if (result) { this.refreshMaskOverlay(); }
+		} catch (error) {
+			console.warn('[MeasurePanel] Particle analysis failed:', error);
+		} finally {
+			this.particleAnalysisRunning = false;
+		}
+	}
+
+	private async runParticles() {
 		const source = this.host.getSource();
 		if (!this.thresholdMask || !source) { return null; }
-		return analyzeParticles(this.thresholdMask, source.width, source.height, {
+		return await analyzeParticles(this.thresholdMask, source.width, source.height, {
 			minArea: this.threshold.minArea,
 			maxArea: Number.isFinite(this.threshold.maxArea) ? this.threshold.maxArea : undefined,
 			minCircularity: this.threshold.minCircularity > 0 ? this.threshold.minCircularity : undefined,

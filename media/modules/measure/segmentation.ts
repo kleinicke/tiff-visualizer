@@ -1,4 +1,5 @@
 "use strict";
+import { initWasm } from '../tiff-wasm-wrapper.js';
 
 /**
  * Interactive, click-driven segmentation.
@@ -430,23 +431,18 @@ export function brushStroke(
  * structuring element, approximated by a min-then-max filter over a disc, which
  * is the standard cheap equivalent.
  */
-export function subtractBackground(
+export async function subtractBackground(
 	plane: Float32Array,
 	width: number,
 	height: number,
 	radius: number,
 	lightBackground = false,
-): Float32Array {
-	const r = Math.max(1, Math.round(radius));
-	const source = lightBackground ? negate(plane) : plane;
-	const eroded = discFilter(source, width, height, r, true);
-	const background = discFilter(eroded, width, height, r, false);
-	const out = new Float32Array(plane.length);
-	for (let i = 0; i < plane.length; i++) {
-		const v = source[i];
-		out[i] = Number.isFinite(v) ? v - background[i] : NaN;
+): Promise<Float32Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.subtract_background_fast !== 'function') {
+		throw new Error('Background subtraction requires the Rust/WASM module, which failed to load.');
 	}
-	return lightBackground ? negate(out) : out;
+	return wasm.subtract_background_fast(plane, width, height, radius, lightBackground);
 }
 
 function negate(plane: Float32Array): Float32Array {
@@ -493,50 +489,10 @@ function discFilter(plane: Float32Array, width: number, height: number, radius: 
 }
 
 /** Separable Gaussian blur, for pre-threshold noise suppression. */
-export function gaussianBlur(plane: Float32Array, width: number, height: number, sigma: number): Float32Array {
-	if (!(sigma > 0)) { return plane.slice(); }
-	const radius = Math.max(1, Math.ceil(sigma * 3));
-	const kernel = new Float64Array(radius * 2 + 1);
-	let sum = 0;
-	for (let i = -radius; i <= radius; i++) {
-		const weight = Math.exp(-(i * i) / (2 * sigma * sigma));
-		kernel[i + radius] = weight;
-		sum += weight;
+export async function gaussianBlur(plane: Float32Array, width: number, height: number, sigma: number): Promise<Float32Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.gaussian_blur_fast !== 'function') {
+		throw new Error('Gaussian blur requires the Rust/WASM module, which failed to load.');
 	}
-	for (let i = 0; i < kernel.length; i++) { kernel[i] /= sum; }
-
-	const horizontal = new Float32Array(plane.length);
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			let accumulated = 0;
-			let weightSum = 0;
-			for (let k = -radius; k <= radius; k++) {
-				const sx = Math.min(width - 1, Math.max(0, x + k));
-				const v = plane[y * width + sx];
-				// Renormalising by the weight actually used keeps NaN neighbours
-				// from darkening the result instead of being ignored.
-				if (!Number.isFinite(v)) { continue; }
-				accumulated += v * kernel[k + radius];
-				weightSum += kernel[k + radius];
-			}
-			horizontal[y * width + x] = weightSum > 0 ? accumulated / weightSum : NaN;
-		}
-	}
-
-	const out = new Float32Array(plane.length);
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			let accumulated = 0;
-			let weightSum = 0;
-			for (let k = -radius; k <= radius; k++) {
-				const sy = Math.min(height - 1, Math.max(0, y + k));
-				const v = horizontal[sy * width + x];
-				if (!Number.isFinite(v)) { continue; }
-				accumulated += v * kernel[k + radius];
-				weightSum += kernel[k + radius];
-			}
-			out[y * width + x] = weightSum > 0 ? accumulated / weightSum : NaN;
-		}
-	}
-	return out;
+	return wasm.gaussian_blur_fast(plane, width, height, sigma);
 }

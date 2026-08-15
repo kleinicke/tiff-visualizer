@@ -13,6 +13,7 @@
 
 const assert = require('assert');
 const path = require('path');
+const fs = require('fs');
 
 const OUT = path.join(__dirname, '..', 'out', 'media', 'modules', 'measure');
 const moduleUrl = name => require('url').pathToFileURL(path.join(OUT, name)).href;
@@ -20,9 +21,12 @@ const moduleUrl = name => require('url').pathToFileURL(path.join(OUT, name)).hre
 let passed = 0;
 let failed = 0;
 
-function test(name, fn) {
+async function test(name, fn) {
 	try {
-		fn();
+		// Awaited so a case may be async: measurement calls that reach
+		// WebAssembly (particle labelling) return promises. `await` on a
+		// non-promise is a no-op, so synchronous cases are unaffected.
+		await fn();
 		passed++;
 		console.log(`  ✅ ${name}`);
 	} catch (error) {
@@ -56,6 +60,21 @@ function discImage(width, height, cx, cy, radius, inside = 200, outside = 20) {
 }
 
 async function main() {
+	// The measurement modules reach WebAssembly through
+	// media/modules/tiff-wasm-wrapper.ts, which cannot self-initialize under
+	// Node: the wasm-pack "web" glue fetches its payload from a URL. Initialize
+	// the SAME module instance here with explicit bytes first — wasm-bindgen's
+	// init short-circuits when it is already initialized, so the wrapper then
+	// picks up this instance instead of trying to fetch.
+	const wasmJs = path.join(__dirname, '..', 'out', 'media', 'wasm', 'tiff-wasm.js');
+	const wasmBin = path.join(__dirname, '..', 'out', 'media', 'wasm', 'tiff-wasm.wasm');
+	if (!fs.existsSync(wasmBin)) {
+		console.log('⚠️  out/media/wasm/tiff-wasm.wasm not found — run `npm run compile` first. Skipping.');
+		return;
+	}
+	const wasmModule = await import(wasmJs.replace(/\\/g, '/'));
+	await wasmModule.default({ module_or_path: fs.readFileSync(wasmBin) });
+
 	const geometry = await import(moduleUrl('geometry.js'));
 	const statistics = await import(moduleUrl('statistics.js'));
 	const threshold = await import(moduleUrl('threshold.js'));
@@ -70,7 +89,7 @@ async function main() {
 
 	console.log('\n📐 Geometry');
 
-	test('rectangle rasterises to exactly its pixel count', () => {
+	await test('rectangle rasterises to exactly its pixel count', () => {
 		const roi = { id: 'a', name: 'a', kind: 'rect', x: 10, y: 20, width: 30, height: 40 };
 		const mask = geometry.rasterizeRoi(roi, 200, 200);
 		assert.strictEqual(mask.count, 30 * 40);
@@ -78,26 +97,26 @@ async function main() {
 		assert.strictEqual(mask.y, 20);
 	});
 
-	test('rectangle clips to the image instead of overflowing', () => {
+	await test('rectangle clips to the image instead of overflowing', () => {
 		const roi = { id: 'a', name: 'a', kind: 'rect', x: 90, y: 90, width: 50, height: 50 };
 		const mask = geometry.rasterizeRoi(roi, 100, 100);
 		assert.strictEqual(mask.count, 10 * 10);
 	});
 
-	test('ellipse area approaches pi*a*b', () => {
+	await test('ellipse area approaches pi*a*b', () => {
 		const roi = { id: 'a', name: 'a', kind: 'ellipse', x: 0, y: 0, width: 100, height: 60 };
 		const mask = geometry.rasterizeRoi(roi, 200, 200);
 		close(mask.count, Math.PI * 50 * 30, 0.01, 'ellipse area');
 	});
 
-	test('polygon area matches the shoelace formula', () => {
+	await test('polygon area matches the shoelace formula', () => {
 		// A 40x40 square expressed as a polygon.
 		const points = [10, 10, 50, 10, 50, 50, 10, 50];
 		const mask = geometry.rasterizePolygon(points, 100, 100);
 		close(mask.count, geometry.polygonArea(points), 0.05, 'polygon area');
 	});
 
-	test('adjacent polygons do not double-count their shared edge', () => {
+	await test('adjacent polygons do not double-count their shared edge', () => {
 		// The half-open scanline rule is what guarantees this; without it a
 		// shared boundary lands in both regions and every area is inflated.
 		const left = geometry.rasterizePolygon([0, 0, 20, 0, 20, 20, 0, 20], 100, 100);
@@ -115,27 +134,27 @@ async function main() {
 		assert.strictEqual(overlap, 0, 'shared edge was counted twice');
 	});
 
-	test('convex hull of a square keeps four corners', () => {
+	await test('convex hull of a square keeps four corners', () => {
 		const points = [0, 0, 5, 0, 10, 0, 10, 10, 5, 5, 0, 10, 3, 1];
 		const hull = geometry.convexHull(points);
 		assert.strictEqual(hull.length / 2, 4);
 	});
 
-	test('Feret diameter of a square is its diagonal', () => {
+	await test('Feret diameter of a square is its diagonal', () => {
 		const points = [0, 0, 10, 0, 10, 10, 0, 10];
 		const feret = geometry.feretDiameters(points);
 		close(feret.feret, Math.hypot(10, 10), 0.001, 'max Feret');
 		close(feret.minFeret, 10, 0.001, 'min Feret');
 	});
 
-	test('Feret honours anisotropic calibration', () => {
+	await test('Feret honours anisotropic calibration', () => {
 		const points = [0, 0, 10, 0, 10, 10, 0, 10];
 		// 2 units per pixel in x makes the square a 20x10 rectangle.
 		const feret = geometry.feretDiameters(points, 2, 1);
 		close(feret.feret, Math.hypot(20, 10), 0.001, 'calibrated max Feret');
 	});
 
-	test('fitted ellipse recovers the axes of a known ellipse', () => {
+	await test('fitted ellipse recovers the axes of a known ellipse', () => {
 		const roi = { id: 'a', name: 'a', kind: 'ellipse', x: 0, y: 0, width: 120, height: 40 };
 		const mask = geometry.rasterizeRoi(roi, 200, 200);
 		const fit = geometry.fitEllipse(mask);
@@ -144,7 +163,7 @@ async function main() {
 		close(fit.centroidX, 60, 0.02, 'centroid x');
 	});
 
-	test('traced perimeter of a disc is near 2*pi*r', () => {
+	await test('traced perimeter of a disc is near 2*pi*r', () => {
 		const roi = { id: 'a', name: 'a', kind: 'ellipse', x: 0, y: 0, width: 101, height: 101 };
 		const mask = geometry.rasterizeRoi(roi, 200, 200);
 		// The corrected chain-code estimator should land within a few percent;
@@ -152,7 +171,7 @@ async function main() {
 		close(geometry.maskPerimeter(mask), 2 * Math.PI * 50.5, 0.06, 'disc perimeter');
 	});
 
-	test('freehand simplification keeps the shape but drops redundant points', () => {
+	await test('freehand simplification keeps the shape but drops redundant points', () => {
 		const dense = [];
 		for (let i = 0; i <= 100; i++) { dense.push(i, 0); }
 		const simplified = geometry.simplifyPolyline(dense, 0.5);
@@ -161,7 +180,7 @@ async function main() {
 
 	console.log('\n📊 Statistics');
 
-	test('mean and stddev of a uniform region are exact', () => {
+	await test('mean and stddev of a uniform region are exact', () => {
 		const source = discImage(64, 64, 32, 32, 100, 42, 42);
 		const roi = { id: 'a', name: 'a', kind: 'rect', x: 0, y: 0, width: 64, height: 64 };
 		const row = statistics.measureRoi(roi, source, PIXELS, 0);
@@ -171,7 +190,7 @@ async function main() {
 		assert.strictEqual(row.max, 42);
 	});
 
-	test('NaN pixels are excluded from statistics, not treated as zero', () => {
+	await test('NaN pixels are excluded from statistics, not treated as zero', () => {
 		const source = discImage(10, 10, 5, 5, 100, 10, 10);
 		source.data[0] = NaN;
 		source.data[1] = Infinity;
@@ -183,7 +202,7 @@ async function main() {
 		assert.strictEqual(row.pixelCount, 100, 'area still counts every pixel in the ROI');
 	});
 
-	test('calibration scales area but never intensity', () => {
+	await test('calibration scales area but never intensity', () => {
 		const source = discImage(64, 64, 32, 32, 100, 7, 7);
 		const roi = { id: 'a', name: 'a', kind: 'rect', x: 0, y: 0, width: 10, height: 10 };
 		const micro = { pixelWidth: 0.5, pixelHeight: 0.25, unit: 'µm', origin: 'manual' };
@@ -192,7 +211,7 @@ async function main() {
 		close(row.mean, 7, 1e-9, 'mean must stay in raw units');
 	});
 
-	test('circularity of a disc is near 1 and of a thin rectangle is small', () => {
+	await test('circularity of a disc is near 1 and of a thin rectangle is small', () => {
 		const disc = geometry.rasterizeRoi(
 			{ id: 'a', name: 'a', kind: 'ellipse', x: 0, y: 0, width: 81, height: 81 }, 100, 100);
 		const source = discImage(100, 100, 50, 50, 40);
@@ -206,7 +225,7 @@ async function main() {
 		assert.ok(thin.circularity < 0.4, `thin rect circularity ${thin.circularity} should be well below 1`);
 	});
 
-	test('line profile reports the values actually crossed', () => {
+	await test('line profile reports the values actually crossed', () => {
 		const width = 20;
 		const source = { width, height: 3, channels: 1, isFloat: true, typeMax: 255, data: new Float32Array(width * 3) };
 		for (let x = 0; x < width; x++) { source.data[width + x] = x; }
@@ -216,7 +235,7 @@ async function main() {
 		close(profile.value[profile.value.length - 1], width - 1, 1e-6, 'profile end');
 	});
 
-	test('line length is calibrated', () => {
+	await test('line length is calibrated', () => {
 		const source = discImage(50, 50, 25, 25, 10);
 		const roi = { id: 'a', name: 'a', kind: 'line', points: [0, 0, 30, 40] };
 		const row = statistics.measureRoi(roi, source, { pixelWidth: 2, pixelHeight: 2, unit: 'µm', origin: 'manual' }, 0);
@@ -225,24 +244,24 @@ async function main() {
 
 	console.log('\n🎚️  Thresholding');
 
-	test('Otsu separates a clean bimodal image at the valley', () => {
+	await test('Otsu separates a clean bimodal image at the valley', async () => {
 		const source = discImage(128, 128, 64, 64, 40, 200, 20);
-		const histogram = threshold.buildHistogram(source.data);
-		const bin = threshold.autoThresholdBin(histogram.counts, 'otsu');
+		const histogram = await threshold.buildHistogram(source.data);
+		const bin = await threshold.autoThresholdBin(histogram.counts, 'otsu');
 		const value = threshold.thresholdValueFromBin(histogram, bin);
 		assert.ok(value > 20 && value <= 200, `Otsu threshold ${value} should fall between the two modes`);
 		// The cut must actually select the disc and nothing else.
-		const mask = threshold.globalThresholdMask(source.data, value, Infinity);
+		const mask = await threshold.globalThresholdMask(source.data, value, Infinity);
 		let selected = 0;
 		for (let i = 0; i < mask.length; i++) { if (mask[i]) { selected++; } }
 		close(selected, Math.PI * 1600, 0.02, 'pixels selected by the Otsu cut');
 	});
 
-	test('every auto-threshold method returns a value inside the data range', () => {
+	await test('every auto-threshold method returns a value inside the data range', async () => {
 		const source = discImage(96, 96, 48, 48, 25, 180, 30);
-		const histogram = threshold.buildHistogram(source.data);
+		const histogram = await threshold.buildHistogram(source.data);
 		for (const method of threshold.THRESHOLD_METHODS) {
-			const bin = threshold.autoThresholdBin(histogram.counts, method.id);
+			const bin = await threshold.autoThresholdBin(histogram.counts, method.id);
 			// -1 is the documented "no threshold found" answer and is acceptable
 			// for the methods that require a genuinely bimodal histogram.
 			if (bin < 0) { continue; }
@@ -255,26 +274,26 @@ async function main() {
 		}
 	});
 
-	test('subsampling the histogram does not move the chosen threshold', () => {
+	await test('subsampling the histogram does not move the chosen threshold', async () => {
 		const source = discImage(256, 256, 128, 128, 70, 210, 15);
-		const full = threshold.buildHistogram(source.data, 1);
-		const sampled = threshold.buildHistogram(source.data, 7);
-		const a = threshold.autoThresholdBin(full.counts, 'otsu');
-		const b = threshold.autoThresholdBin(sampled.counts, 'otsu');
+		const full = await threshold.buildHistogram(source.data, 1);
+		const sampled = await threshold.buildHistogram(source.data, 7);
+		const a = await threshold.autoThresholdBin(full.counts, 'otsu');
+		const b = await threshold.autoThresholdBin(sampled.counts, 'otsu');
 		assert.ok(Math.abs(a - b) <= 1, `threshold moved from bin ${a} to ${b} under subsampling`);
 	});
 
-	test('stability curve finds a plateau on a clean image', () => {
+	await test('stability curve finds a plateau on a clean image', async () => {
 		const source = discImage(128, 128, 64, 64, 30, 200, 20);
-		const histogram = threshold.buildHistogram(source.data);
-		const curve = threshold.computeStabilityCurve(source.data, 128, 128, histogram, { samples: 48 });
+		const histogram = await threshold.buildHistogram(source.data);
+		const curve = await threshold.computeStabilityCurve(source.data, 128, 128, histogram, { samples: 48 });
 		assert.ok(curve.points.length === 48);
 		assert.ok(curve.plateauWidth > 3, `expected a broad plateau, got width ${curve.plateauWidth}`);
 		const suggested = threshold.thresholdValueFromBin(histogram, curve.suggestedBin);
 		assert.ok(suggested > 20 && suggested < 200, `suggested threshold ${suggested} is outside the gap`);
 	});
 
-	test('a global method applied per window handles patchy illumination', () => {
+	await test('a global method applied per window handles patchy illumination', async () => {
 		// Two halves lit differently, with one object in each. The left object is
 		// *darker* than the right half's background, so no single global cut can
 		// catch both — this is the situation per-window thresholding exists for.
@@ -299,24 +318,24 @@ async function main() {
 		const expected = Math.PI * 81;
 		const looksLikeObject = particle => Math.abs(particle.area - expected) / expected < 0.15;
 
-		const histogram = threshold.buildHistogram(data);
-		const globalBin = threshold.autoThresholdBin(histogram.counts, 'otsu');
-		const globalMask = threshold.globalThresholdMask(
+		const histogram = await threshold.buildHistogram(data);
+		const globalBin = await threshold.autoThresholdBin(histogram.counts, 'otsu');
+		const globalMask = await threshold.globalThresholdMask(
 			data, threshold.thresholdValueFromBin(histogram, globalBin), Infinity);
-		const globalFound = particles.analyzeParticles(globalMask, width, height, { minArea: 30 }, {});
+		const globalFound = await particles.analyzeParticles(globalMask, width, height, { minArea: 30 }, {});
 		assert.ok(globalFound.particles.filter(looksLikeObject).length < 2,
 			'a global cut was expected to fail here, so the comparison is meaningful');
 
-		const localMask = threshold.localAutoThresholdMask(data, width, height, {
+		const localMask = await threshold.localAutoThresholdMask(data, width, height, {
 			method: 'otsu', radius: 16, darkBackground: true,
 		});
-		const localFound = particles.analyzeParticles(localMask, width, height, { minArea: 30 }, {});
+		const localFound = await particles.analyzeParticles(localMask, width, height, { minArea: 30 }, {});
 		const objects = localFound.particles.filter(looksLikeObject);
 		assert.strictEqual(objects.length, 2,
 			`per-window Otsu should recover both objects, found ${objects.length} of ${localFound.particles.length} components`);
 	});
 
-	test('per-window thresholding leaves uniform background alone', () => {
+	await test('per-window thresholding leaves uniform background alone', async () => {
 		// The contrast guard: a window holding nothing but flat background has no
 		// split to make, and every method above would otherwise invent one.
 		const width = 96;
@@ -329,7 +348,7 @@ async function main() {
 			for (let x = 40; x < 56; x++) { data[y * width + x] = 200; }
 		}
 
-		const mask = threshold.localAutoThresholdMask(data, width, height, {
+		const mask = await threshold.localAutoThresholdMask(data, width, height, {
 			method: 'otsu', radius: 12, darkBackground: true,
 		});
 		let selected = 0;
@@ -340,10 +359,10 @@ async function main() {
 		assert.ok(selected >= 200, `the object itself was lost: only ${selected} px selected`);
 	});
 
-	test('every global method survives being applied per window', () => {
+	await test('every global method survives being applied per window', async () => {
 		const source = discImage(96, 96, 48, 48, 20, 190, 25);
 		for (const method of threshold.THRESHOLD_METHODS) {
-			const mask = threshold.localAutoThresholdMask(source.data, 96, 96, {
+			const mask = await threshold.localAutoThresholdMask(source.data, 96, 96, {
 				method: method.id, radius: 12, darkBackground: true,
 			});
 			assert.strictEqual(mask.length, 96 * 96, `${method.id} returned a wrong-sized mask`);
@@ -355,7 +374,7 @@ async function main() {
 		}
 	});
 
-	test('local adaptive thresholding beats a global one under a gradient', () => {
+	await test('local adaptive thresholding beats a global one under a gradient', async () => {
 		// Background ramps from 0 to 150 across the frame; two objects sit 60
 		// above their local background. No single global value can catch both.
 		const width = 128;
@@ -376,15 +395,15 @@ async function main() {
 		stamp(24, 64);
 		stamp(104, 64);
 
-		const histogram = threshold.buildHistogram(data);
-		const globalBin = threshold.autoThresholdBin(histogram.counts, 'otsu');
-		const globalMask = threshold.globalThresholdMask(data, threshold.thresholdValueFromBin(histogram, globalBin), Infinity);
-		const globalObjects = particles.analyzeParticles(globalMask, width, height, { minArea: 20 }, {});
+		const histogram = await threshold.buildHistogram(data);
+		const globalBin = await threshold.autoThresholdBin(histogram.counts, 'otsu');
+		const globalMask = await threshold.globalThresholdMask(data, threshold.thresholdValueFromBin(histogram, globalBin), Infinity);
+		const globalObjects = await particles.analyzeParticles(globalMask, width, height, { minArea: 20 }, {});
 
-		const localMask = threshold.localThresholdMask(data, width, height, {
+		const localMask = await threshold.localThresholdMask(data, width, height, {
 			method: 'sauvola', radius: 12, k: 0.25, darkBackground: true,
 		});
-		const localObjects = particles.analyzeParticles(localMask, width, height, { minArea: 20 }, {});
+		const localObjects = await particles.analyzeParticles(localMask, width, height, { minArea: 20 }, {});
 
 		assert.strictEqual(localObjects.particles.length, 2,
 			`Sauvola should find both objects and nothing else, found ${localObjects.particles.length}`);
@@ -403,7 +422,7 @@ async function main() {
 
 	console.log('\n🔬 Particles');
 
-	test('connected components counts planted objects', () => {
+	await test('connected components counts planted objects', async () => {
 		const width = 100;
 		const height = 100;
 		const mask = new Uint8Array(width * height);
@@ -419,7 +438,7 @@ async function main() {
 		stamp(20, 70, 8);
 		stamp(70, 70, 12);
 
-		const result = particles.labelComponents(mask, width, height, 8);
+		const result = await particles.labelComponents(mask, width, height, 8);
 		assert.strictEqual(result.count, 4);
 		const extracted = particles.extractParticles(result);
 		assert.strictEqual(extracted.length, 4);
@@ -428,7 +447,7 @@ async function main() {
 		close(largest.area, Math.PI * 144, 0.1, 'largest particle area');
 	});
 
-	test('size and edge filters drop the right objects', () => {
+	await test('size and edge filters drop the right objects', async () => {
 		const width = 60;
 		const height = 60;
 		const mask = new Uint8Array(width * height);
@@ -437,28 +456,28 @@ async function main() {
 		mask[5 * width + 50] = 1;
 		for (let y = 0; y < 10; y++) { mask[y * width + 0] = 1; }
 
-		const all = particles.analyzeParticles(mask, width, height, {}, {});
+		const all = await particles.analyzeParticles(mask, width, height, {}, {});
 		assert.strictEqual(all.particles.length, 3);
 
-		const filtered = particles.analyzeParticles(mask, width, height, { minArea: 5, excludeEdges: true }, {});
+		const filtered = await particles.analyzeParticles(mask, width, height, { minArea: 5, excludeEdges: true }, {});
 		assert.strictEqual(filtered.particles.length, 1);
 		assert.strictEqual(filtered.rejected.tooSmall, 1);
 		assert.strictEqual(filtered.rejected.edge, 1);
 	});
 
-	test('hole filling closes an interior gap', () => {
+	await test('hole filling closes an interior gap', async () => {
 		const width = 30;
 		const height = 30;
 		const mask = new Uint8Array(width * height);
 		for (let y = 5; y < 25; y++) { for (let x = 5; x < 25; x++) { mask[y * width + x] = 1; } }
 		for (let y = 12; y < 18; y++) { for (let x = 12; x < 18; x++) { mask[y * width + x] = 0; } }
-		const filled = particles.fillMaskHoles(mask, width, height);
+		const filled = await particles.fillMaskHoles(mask, width, height);
 		let count = 0;
 		for (let i = 0; i < filled.length; i++) { if (filled[i]) { count++; } }
 		assert.strictEqual(count, 400, 'the 6x6 hole should be filled back in');
 	});
 
-	test('distance transform peaks at the centre of a disc', () => {
+	await test('distance transform peaks at the centre of a disc', async () => {
 		const width = 64;
 		const height = 64;
 		const mask = new Uint8Array(width * height);
@@ -467,12 +486,12 @@ async function main() {
 				if ((x - 32) ** 2 + (y - 32) ** 2 <= 400) { mask[y * width + x] = 1; }
 			}
 		}
-		const distance = particles.distanceTransform(mask, width, height);
+		const distance = await particles.distanceTransform(mask, width, height);
 		// Squared distance, so the centre of a radius-20 disc is near 400.
 		close(Math.sqrt(distance[32 * width + 32]), 20, 0.1, 'peak distance');
 	});
 
-	test('watershed splits two overlapping discs into two objects', () => {
+	await test('watershed splits two overlapping discs into two objects', async () => {
 		const width = 120;
 		const height = 80;
 		const mask = new Uint8Array(width * height);
@@ -486,14 +505,14 @@ async function main() {
 		stamp(45, 40, 25);
 		stamp(75, 40, 25);
 
-		const joined = particles.analyzeParticles(mask, width, height, { minArea: 50 }, {});
+		const joined = await particles.analyzeParticles(mask, width, height, { minArea: 50 }, {});
 		assert.strictEqual(joined.particles.length, 1, 'the two discs overlap, so they start as one object');
 
-		const split = particles.analyzeParticles(mask, width, height, { minArea: 50 }, { watershed: true });
+		const split = await particles.analyzeParticles(mask, width, height, { minArea: 50 }, { watershed: true });
 		assert.strictEqual(split.particles.length, 2, `watershed produced ${split.particles.length} objects`);
 	});
 
-	test('intensity maxima split cells that touch without pinching', () => {
+	await test('intensity maxima split cells that touch without pinching', async () => {
 		// Two bright nuclei sharing a flat border: the union is a single rounded
 		// rectangle, so a distance-transform watershed sees one object. Only the
 		// two intensity peaks distinguish them — this is the case ImageJ solves
@@ -512,18 +531,18 @@ async function main() {
 			}
 		}
 
-		const byShape = particles.analyzeParticles(mask, width, height, { minArea: 50 }, { split: 'shape' });
+		const byShape = await particles.analyzeParticles(mask, width, height, { minArea: 50 }, { split: 'shape' });
 		assert.strictEqual(byShape.particles.length, 1,
 			'a flat-bordered pair has no shape saddle, so this control must find one object');
 
-		const byIntensity = particles.analyzeParticles(mask, width, height, { minArea: 50 }, {
+		const byIntensity = await particles.analyzeParticles(mask, width, height, { minArea: 50 }, {
 			split: 'intensity', prominence: 30, plane,
 		});
 		assert.strictEqual(byIntensity.particles.length, 2,
 			`intensity maxima should separate the two nuclei, got ${byIntensity.particles.length}`);
 	});
 
-	test('prominence controls how many centres are accepted', () => {
+	await test('prominence controls how many centres are accepted', () => {
 		const width = 100;
 		const height = 40;
 		const plane = new Float32Array(width * height).fill(0);
@@ -555,7 +574,7 @@ async function main() {
 		}
 	});
 
-	test('the maximum-area filter drops merged clumps', () => {
+	await test('the maximum-area filter drops merged clumps', async () => {
 		const width = 80;
 		const height = 40;
 		const mask = new Uint8Array(width * height);
@@ -563,15 +582,15 @@ async function main() {
 		for (let y = 5; y < 10; y++) { for (let x = 5; x < 10; x++) { mask[y * width + x] = 1; } }
 		for (let y = 15; y < 35; y++) { for (let x = 40; x < 70; x++) { mask[y * width + x] = 1; } }
 
-		const all = particles.analyzeParticles(mask, width, height, {}, {});
+		const all = await particles.analyzeParticles(mask, width, height, {}, {});
 		assert.strictEqual(all.particles.length, 2);
 
-		const capped = particles.analyzeParticles(mask, width, height, { maxArea: 100 }, {});
+		const capped = await particles.analyzeParticles(mask, width, height, { maxArea: 100 }, {});
 		assert.strictEqual(capped.particles.length, 1);
 		assert.strictEqual(capped.rejected.tooLarge, 1);
 	});
 
-	test('the summary reports n, mean, SD and SEM per measured column', () => {
+	await test('the summary reports n, mean, SD and SEM per measured column', () => {
 		const rows = [
 			{ roiId: '1', roiName: 'A', roiKind: 'mask', channel: 0, area: 10, mean: 100 },
 			{ roiId: '2', roiName: 'B', roiKind: 'mask', channel: 0, area: 20, mean: 110 },
@@ -596,13 +615,13 @@ async function main() {
 
 	console.log('\n🪄 Interactive segmentation');
 
-	test('region growing selects the planted disc and nothing else', () => {
+	await test('region growing selects the planted disc and nothing else', () => {
 		const source = discImage(128, 128, 64, 64, 30, 200, 20);
 		const region = segmentation.growRegion(source.data, 128, 128, 64, 64, { tolerance: 10 });
 		close(region.count, Math.PI * 900, 0.02, 'grown region area');
 	});
 
-	test('automatic tolerance finds the object without being told a number', () => {
+	await test('automatic tolerance finds the object without being told a number', () => {
 		// A little noise, so the automatic path has something realistic to work
 		// against rather than a perfectly flat plateau.
 		const source = discImage(128, 128, 64, 64, 25, 200, 20);
@@ -615,7 +634,7 @@ async function main() {
 		);
 	});
 
-	test('region growing cannot run away across the whole image', () => {
+	await test('region growing cannot run away across the whole image', () => {
 		const source = discImage(64, 64, 32, 32, 100, 50, 50);
 		const region = segmentation.growRegion(source.data, 64, 64, 10, 10, {
 			tolerance: 1e6, maxAreaFraction: 0.25,
@@ -623,7 +642,7 @@ async function main() {
 		assert.ok(region.count <= 64 * 64 * 0.25 + 1, `region grew to ${region.count}, past the cap`);
 	});
 
-	test('the brush paints and erases', () => {
+	await test('the brush paints and erases', () => {
 		const start = { x: 10, y: 10, width: 1, height: 1, mask: new Uint8Array([0]) };
 		const painted = segmentation.brushStroke(start, 20, 20, 5, false, 100, 100);
 		assert.ok(painted.count > 50, `brush painted only ${painted.count} px`);
@@ -631,18 +650,18 @@ async function main() {
 		assert.strictEqual(erased.count, 0);
 	});
 
-	test('Gaussian blur ignores NaN instead of spreading it', () => {
+	await test('Gaussian blur ignores NaN instead of spreading it', async () => {
 		const width = 16;
 		const data = new Float32Array(width * width).fill(10);
 		data[8 * width + 8] = NaN;
-		const blurred = segmentation.gaussianBlur(data, width, width, 1.5);
+		const blurred = await segmentation.gaussianBlur(data, width, width, 1.5);
 		close(blurred[0], 10, 1e-6, 'far from the NaN');
 		assert.ok(Number.isFinite(blurred[8 * width + 7]), 'the NaN leaked into its neighbour');
 	});
 
 	console.log('\n💾 Interop and persistence');
 
-	test('ImageJ .roi round-trips a polygon', () => {
+	await test('ImageJ .roi round-trips a polygon', () => {
 		const roi = {
 			id: 'a', name: 'Cell 3', kind: 'polygon',
 			points: [10, 20, 60, 25, 55, 70, 12, 65],
@@ -659,7 +678,7 @@ async function main() {
 		}
 	});
 
-	test('ImageJ .roi round-trips rectangles, ellipses, lines and points', () => {
+	await test('ImageJ .roi round-trips rectangles, ellipses, lines and points', () => {
 		const cases = [
 			{ id: 'r', name: 'r', kind: 'rect', x: 5, y: 7, width: 40, height: 25 },
 			{ id: 'e', name: 'e', kind: 'ellipse', x: 3, y: 4, width: 20, height: 30 },
@@ -680,7 +699,7 @@ async function main() {
 		}
 	});
 
-	test('a RoiSet.zip written here reads back with every ROI', () => {
+	await test('a RoiSet.zip written here reads back with every ROI', () => {
 		const rois = [
 			{ id: '1', name: 'A', kind: 'rect', x: 0, y: 0, width: 10, height: 10 },
 			{ id: '2', name: 'B', kind: 'polygon', points: [0, 0, 20, 0, 20, 20] },
@@ -694,12 +713,12 @@ async function main() {
 		assert.deepStrictEqual(names, ['A', 'B', 'C']);
 	});
 
-	test('non-ImageJ bytes are rejected rather than misread', () => {
+	await test('non-ImageJ bytes are rejected rather than misread', () => {
 		assert.strictEqual(imagej.decodeImageJRoi(new Uint8Array(128)), null);
 		assert.strictEqual(imagej.importImageJRois(new Uint8Array([1, 2, 3]), 'x.roi').length, 0);
 	});
 
-	test('mask run-length encoding round-trips', () => {
+	await test('mask run-length encoding round-trips', () => {
 		const mask = new Uint8Array(100);
 		for (let i = 10; i < 40; i++) { mask[i] = 1; }
 		for (let i = 70; i < 95; i++) { mask[i] = 1; }
@@ -708,7 +727,7 @@ async function main() {
 		assert.deepStrictEqual(Array.from(decoded), Array.from(mask));
 	});
 
-	test('the ROI sidecar round-trips including a mask ROI', () => {
+	await test('the ROI sidecar round-trips including a mask ROI', () => {
 		const mask = new Uint8Array(25);
 		mask.fill(1, 6, 19);
 		const rois = [
@@ -722,7 +741,7 @@ async function main() {
 		assert.deepStrictEqual(Array.from(parsed.rois[1].mask), Array.from(mask));
 	});
 
-	test('a corrupt sidecar reports a warning instead of throwing', () => {
+	await test('a corrupt sidecar reports a warning instead of throwing', () => {
 		const parsed = roiIo.parseSidecar('{ not json');
 		assert.strictEqual(parsed.rois.length, 0);
 		assert.ok(parsed.warnings.length > 0);
@@ -730,7 +749,7 @@ async function main() {
 
 	console.log('\n📤 Export');
 
-	test('CSV export is long-form with provenance on every row', () => {
+	await test('CSV export is long-form with provenance on every row', () => {
 		const rows = [
 			{ roiId: '1', roiName: 'A', roiKind: 'rect', channel: 0, area: 100, mean: 12.5 },
 			{ roiId: '2', roiName: 'B', roiKind: 'rect', channel: 0, area: 200, mean: 25 },
@@ -746,7 +765,7 @@ async function main() {
 			'provenance must repeat on every row so exports concatenate');
 	});
 
-	test('German CSV uses a comma decimal mark and a semicolon separator', () => {
+	await test('German CSV uses a comma decimal mark and a semicolon separator', () => {
 		const rows = [{ roiId: '1', roiName: 'A', roiKind: 'rect', channel: 0, area: 412.7 }];
 		const text = roiIo.rowsToDelimitedText(rows, {
 			unit: 'px', pixelWidth: 1, pixelHeight: 1, calibrationOrigin: 'none',
@@ -755,7 +774,7 @@ async function main() {
 		assert.ok(!text.includes('412.7'), 'a dot decimal survived, which German Excel reads as a date');
 	});
 
-	test('non-finite values export as text, never as zero', () => {
+	await test('non-finite values export as text, never as zero', () => {
 		const rows = [{ roiId: '1', roiName: 'A', roiKind: 'rect', channel: 0, mean: NaN, max: Infinity }];
 		const text = roiIo.rowsToDelimitedText(rows, {
 			unit: 'px', pixelWidth: 1, pixelHeight: 1, calibrationOrigin: 'none',
@@ -764,7 +783,7 @@ async function main() {
 		assert.ok(text.includes('Inf'), 'Infinity was not preserved');
 	});
 
-	test('a multi-image export carries each row\'s own provenance', () => {
+	await test('a multi-image export carries each row\'s own provenance', () => {
 		// The trap this guards against: repeating the currently open image's
 		// scale and threshold on rows measured from a different one looks
 		// authoritative and is wrong.
@@ -803,7 +822,7 @@ async function main() {
 		assert.ok(lines[1].includes('0.5') && lines[2].includes('0.25'), 'per-image calibration was lost');
 	});
 
-	test('grouping columns are unioned across images', () => {
+	await test('grouping columns are unioned across images', () => {
 		// One filename matches the pattern, one does not; the columns must still
 		// line up so the two exports concatenate.
 		const rows = [
@@ -823,13 +842,13 @@ async function main() {
 		assert.ok(lines[0].startsWith('condition'), 'the grouping column is missing from the header');
 	});
 
-	test('filename patterns become grouping columns', () => {
+	await test('filename patterns become grouping columns', () => {
 		const matched = roiIo.matchFilenamePattern('control_rep2_005.tif', '{condition}_{replicate}_{index}.tif');
 		assert.deepStrictEqual(matched, { condition: 'control', replicate: 'rep2', index: '005' });
 		assert.strictEqual(roiIo.matchFilenamePattern('other.tif', '{a}_{b}.tif'), null);
 	});
 
-	test('group summaries report n, mean and SEM', () => {
+	await test('group summaries report n, mean and SEM', () => {
 		const rows = [
 			{ roiId: '1', roiName: 'A', roiKind: 'rect', channel: 0, area: 10, group: 'x' },
 			{ roiId: '2', roiName: 'B', roiKind: 'rect', channel: 0, area: 20, group: 'x' },
@@ -842,7 +861,7 @@ async function main() {
 		close(summary.sem, 10 / Math.sqrt(3), 1e-9, 'group SEM');
 	});
 
-	test('the pandas script reflects the actual session, not a fixed template', () => {
+	await test('the pandas script reflects the actual session, not a fixed template', () => {
 		const script = roiIo.buildPandasScript({
 			csvName: 'sample-results.csv',
 			columns: ['area', 'channel', 'mean', 'roiName'],
@@ -890,7 +909,7 @@ async function main() {
 
 	console.log('\n🧮 Expressions');
 
-	test('arithmetic, precedence and functions evaluate correctly', () => {
+	await test('arithmetic, precedence and functions evaluate correctly', () => {
 		const cases = [
 			['1 + 2 * 3', {}, 7],
 			['(1 + 2) * 3', {}, 9],
@@ -908,11 +927,11 @@ async function main() {
 		}
 	});
 
-	test('unknown identifiers become NaN rather than throwing', () => {
+	await test('unknown identifiers become NaN rather than throwing', () => {
 		assert.ok(Number.isNaN(expression.compileExpression('missingColumn * 2')({})));
 	});
 
-	test('malformed expressions raise a positioned error', () => {
+	await test('malformed expressions raise a positioned error', () => {
 		assert.throws(() => expression.compileExpression('1 +'), /Unexpected end/);
 		assert.throws(() => expression.compileExpression('nope(3)'), /Unknown function/);
 		assert.throws(() => expression.compileExpression('1 $ 2'), /Unexpected character/);
@@ -920,14 +939,14 @@ async function main() {
 
 	console.log('\n📏 Calibration');
 
-	test('TIFF resolution tags become a pixel size', () => {
+	await test('TIFF resolution tags become a pixel size', () => {
 		const result = calibration.calibrationFromTiffTags({ t282: 300, t283: 300, t296: 2 });
 		close(result.pixelWidth, 1 / 300, 1e-12, 'pixel width');
 		assert.strictEqual(result.unit, 'inch');
 		assert.strictEqual(result.origin, 'tiff-resolution');
 	});
 
-	test('meaningless resolution tags are rejected, not reported as inches', () => {
+	await test('meaningless resolution tags are rejected, not reported as inches', () => {
 		// ResolutionUnit 1 means "no absolute unit", and 1x1 is the placeholder
 		// writers emit when they have nothing to say.
 		assert.strictEqual(calibration.calibrationFromTiffTags({ t282: 300, t283: 300, t296: 1 }), null);
@@ -935,7 +954,7 @@ async function main() {
 		assert.strictEqual(calibration.calibrationFromTiffTags({}), null);
 	});
 
-	test('OME physical sizes win over resolution tags', () => {
+	await test('OME physical sizes win over resolution tags', () => {
 		const result = calibration.autoCalibration(
 			{ physicalSizeX: 0.325, physicalSizeY: 0.325, physicalSizeXUnit: 'µm' },
 			{ t282: 300, t283: 300, t296: 2 },
@@ -944,20 +963,20 @@ async function main() {
 		close(result.pixelWidth, 0.325, 1e-12, 'OME pixel width');
 	});
 
-	test('mixed OME units are refused rather than silently mismatched', () => {
+	await test('mixed OME units are refused rather than silently mismatched', () => {
 		const result = calibration.calibrationFromOme({
 			physicalSizeX: 1, physicalSizeY: 1, physicalSizeXUnit: 'µm', physicalSizeYUnit: 'nm',
 		});
 		assert.strictEqual(result, null);
 	});
 
-	test('a known distance sets the scale', () => {
+	await test('a known distance sets the scale', () => {
 		const result = calibration.calibrationFromKnownDistance(200, 50, 'µm');
 		close(result.pixelWidth, 0.25, 1e-12, 'pixel width from a known distance');
 		assert.strictEqual(result.origin, 'manual');
 	});
 
-	test('DICOM Pixel Spacing is read as row-then-column', () => {
+	await test('DICOM Pixel Spacing is read as row-then-column', () => {
 		// Anisotropic on purpose: square spacing would hide a swapped pair.
 		const result = calibration.calibrationFromDicom({
 			pixelSpacing: '0.5\\0.75',
@@ -970,14 +989,14 @@ async function main() {
 		assert.strictEqual(result.origin, 'dicom');
 	});
 
-	test('Spacing Between Slices wins over Slice Thickness for depth', () => {
+	await test('Spacing Between Slices wins over Slice Thickness for depth', () => {
 		const result = calibration.calibrationFromDicom({
 			pixelSpacing: '1\\1', sliceThickness: '5', spacingBetweenSlices: '2.5',
 		});
 		close(result.pixelDepth, 2.5, 1e-12, 'reconstructed slice spacing');
 	});
 
-	test('Imager Pixel Spacing is used only when patient spacing is absent', () => {
+	await test('Imager Pixel Spacing is used only when patient spacing is absent', () => {
 		const detector = calibration.calibrationFromDicom({ imagerPixelSpacing: '0.2\\0.2' });
 		assert.strictEqual(detector.origin, 'dicom-detector');
 		close(detector.pixelWidth, 0.2, 1e-12, 'detector-plane pixel width');
@@ -989,7 +1008,7 @@ async function main() {
 		close(patient.pixelWidth, 0.4, 1e-12, 'patient-plane pixel width');
 	});
 
-	test('missing or malformed DICOM spacing leaves the image uncalibrated', () => {
+	await test('missing or malformed DICOM spacing leaves the image uncalibrated', () => {
 		assert.strictEqual(calibration.calibrationFromDicom({}), null);
 		assert.strictEqual(calibration.calibrationFromDicom(null), null);
 		// A single value, a zero, or a non-number is not a usable pair.
@@ -998,7 +1017,7 @@ async function main() {
 		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: 'n/a\\n/a' }), null);
 	});
 
-	test('the scale bar picks a round number', () => {
+	await test('the scale bar picks a round number', () => {
 		const bar = calibration.chooseScaleBarLength(
 			1000, { pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'manual' }, 0.2);
 		assert.ok(/^(1|2|5)0*(\.\d+)? µm$/.test(bar.label), `scale bar label "${bar.label}" is not a round number`);

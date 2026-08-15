@@ -180,6 +180,20 @@ function passArray32ToWasm0(arg, malloc) {
     return ptr;
 }
 
+let cachedInt32ArrayMemory0 = null;
+
+function getInt32ArrayMemory0() {
+    if (cachedInt32ArrayMemory0 === null || cachedInt32ArrayMemory0.byteLength === 0) {
+        cachedInt32ArrayMemory0 = new Int32Array(wasm.memory.buffer);
+    }
+    return cachedInt32ArrayMemory0;
+}
+
+function getArrayI32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 function getArrayU16FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
@@ -306,6 +320,33 @@ export function decode_png16_fast(data) {
 }
 
 /**
+ * Any global auto-threshold method applied per neighbourhood, bilinearly
+ * interpolated between tiles. `min_contrast` uses NaN to mean "use the
+ * method's default (0.25)".
+ * @param {Float32Array} plane
+ * @param {number} width
+ * @param {number} height
+ * @param {string} method
+ * @param {number} radius
+ * @param {boolean} dark_background
+ * @param {number} min_contrast
+ * @returns {Uint8Array}
+ */
+export function local_auto_threshold_mask_fast(plane, width, height, method, radius, dark_background, min_contrast) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.local_auto_threshold_mask_fast(ptr0, len0, width, height, ptr1, len1, radius, dark_background, min_contrast);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
  * @param {Uint8Array} data
  * @returns {HdrResult}
  */
@@ -317,6 +358,53 @@ export function decode_hdr_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * Per-pixel local threshold surface (Sauvola/Niblack/Phansalkar/mean/median).
+ * `r` and `offset` use NaN to mean "use the method's default", matching the
+ * TypeScript's optional `r?`/`offset?` fields.
+ * @param {Float32Array} plane
+ * @param {number} width
+ * @param {number} height
+ * @param {string} method
+ * @param {number} radius
+ * @param {number} k
+ * @param {number} r
+ * @param {number} offset
+ * @param {boolean} dark_background
+ * @returns {Uint8Array}
+ */
+export function local_threshold_mask_fast(plane, width, height, method, radius, k, r, offset, dark_background) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.local_threshold_mask_fast(ptr0, len0, width, height, ptr1, len1, radius, k, r, offset, dark_background);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * Labels connected runs of non-zero mask entries. `connectivity` is 4 or 8.
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @param {number} connectivity
+ * @returns {LabelResult}
+ */
+export function label_components_fast(mask, width, height, connectivity) {
+    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.label_components_fast(ptr0, len0, width, height, connectivity);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return LabelResult.__wrap(ret[0]);
 }
 
 /**
@@ -343,6 +431,43 @@ export function compute_image_stats_f32(data, width, height, channels, extended)
 }
 
 /**
+ * Binary mask from a global value window.
+ * @param {Float32Array} plane
+ * @param {number} low
+ * @param {number} high
+ * @returns {Uint8Array}
+ */
+export function global_threshold_mask_fast(plane, low, high) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.global_threshold_mask_fast(ptr0, len0, low, high);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * @param {Float32Array} plane
+ * @param {number} width
+ * @param {number} height
+ * @param {number} histogram_min
+ * @param {number} histogram_max
+ * @param {number} samples
+ * @param {number} max_pixels
+ * @param {boolean} dark_background
+ * @returns {StabilityCurveResult}
+ */
+export function compute_stability_curve_fast(plane, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_stability_curve_fast(ptr0, len0, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return StabilityCurveResult.__wrap(ret[0]);
+}
+
+/**
  * Decode a classic NetCDF (CDF-1/CDF-2) file as either a regular raster or
  * an MPAS `nCells` polygon mesh. `options_json` is the JSON-serialized
  * `NetCdfDecodeOptions` (`{ variableName?, indices? }`).
@@ -360,6 +485,45 @@ export function decode_netcdf_fast(data, options_json) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
+}
+
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+/**
+ * SQUARED Euclidean distance from each set pixel to the nearest background
+ * pixel — the same convention the TypeScript used, so callers that compare
+ * against a squared radius keep working unchanged.
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @returns {Float64Array}
+ */
+export function distance_transform_fast(mask, width, height) {
+    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.distance_transform_fast(ptr0, len0, width, height);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v2;
+}
+
+/**
+ * Build the 256-bin histogram of a scalar plane. `step` subsamples for
+ * interactive use (pass 1 for the full plane).
+ * @param {Float32Array} plane
+ * @param {number} step
+ * @returns {HistogramResult}
+ */
+export function build_histogram_fast(plane, step) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.build_histogram_fast(ptr0, len0, step);
+    return HistogramResult.__wrap(ret);
 }
 
 /**
@@ -426,6 +590,25 @@ export function decode_tiff_page(data, page_index) {
 }
 
 /**
+ * Apply one auto-threshold method to a 256-bin histogram. Returns a bin
+ * index, or -1 on failure. Unknown method names fall back to Otsu.
+ * @param {Int32Array} counts
+ * @param {string} method
+ * @returns {number}
+ */
+export function auto_threshold_bin_fast(counts, method) {
+    const ptr0 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.auto_threshold_bin_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
  * Decode a TIFF file from an ArrayBuffer
  * Returns TiffResult with image data and metadata
  * @param {Uint8Array} data
@@ -454,6 +637,27 @@ export function tiff_page_count(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return ret[0] >>> 0;
+}
+
+/**
+ * Background subtraction by morphological opening.
+ * @param {Float32Array} plane
+ * @param {number} width
+ * @param {number} height
+ * @param {number} radius
+ * @param {boolean} light_background
+ * @returns {Float32Array}
+ */
+export function subtract_background_fast(plane, width, height, radius, light_background) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.subtract_background_fast(ptr0, len0, width, height, radius, light_background);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
 }
 
 /**
@@ -488,6 +692,25 @@ export function decode_fits_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * Fills enclosed holes in a binary mask. Returns a mask of the same size.
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @returns {Uint8Array}
+ */
+export function fill_mask_holes_fast(mask, width, height) {
+    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.fill_mask_holes_fast(ptr0, len0, width, height);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
 }
 
 /**
@@ -543,6 +766,31 @@ export function decode_czi_fast(data, options_json) {
 }
 
 /**
+ * Separable Gaussian blur. Non-finite samples are skipped and the weights
+ * renormalised, so a NaN neighbour is ignored rather than darkening the result.
+ * @param {Float32Array} plane
+ * @param {number} width
+ * @param {number} height
+ * @param {number} sigma
+ * @returns {Float32Array}
+ */
+export function gaussian_blur_fast(plane, width, height, sigma) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.gaussian_blur_fast(ptr0, len0, width, height, sigma);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+function getArrayU32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+/**
  * Demosaic a single-channel plane.
  *
  * `black`/`white` bracket the sensor's usable range and are applied first;
@@ -576,11 +824,6 @@ export function demosaic(data, width, height, pattern, algorithm, offset_x, offs
         throw takeFromExternrefTable0(ret[1]);
     }
     return DemosaicResult.__wrap(ret[0]);
-}
-
-function getArrayF64FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 
 const DecodedArrayFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -1088,6 +1331,75 @@ export class HdrResult {
 }
 if (Symbol.dispose) HdrResult.prototype[Symbol.dispose] = HdrResult.prototype.free;
 
+const HistogramResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_histogramresult_free(ptr >>> 0, 1));
+/**
+ * A 256-bin histogram of a scalar plane. Small enough that getters clone
+ * rather than following the one-shot `take_*` convention used for
+ * full-resolution rasters.
+ */
+export class HistogramResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(HistogramResult.prototype);
+        obj.__wbg_ptr = ptr;
+        HistogramResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        HistogramResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_histogramresult_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get non_finite_count() {
+        const ret = wasm.histogramresult_non_finite_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get max() {
+        const ret = wasm.decodedarray_type_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get min() {
+        const ret = wasm.decodedarray_type_min(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get total() {
+        const ret = wasm.histogramresult_total(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Int32Array}
+     */
+    get counts() {
+        const ret = wasm.histogramresult_counts(this.__wbg_ptr);
+        var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+}
+if (Symbol.dispose) HistogramResult.prototype[Symbol.dispose] = HistogramResult.prototype.free;
+
 const ImageStatsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_imagestats_free(ptr >>> 0, 1));
@@ -1230,6 +1542,75 @@ export class JpegResult {
     }
 }
 if (Symbol.dispose) JpegResult.prototype[Symbol.dispose] = JpegResult.prototype.free;
+
+const LabelResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_labelresult_free(ptr >>> 0, 1));
+/**
+ * Connected-component labelling result.
+ *
+ * `take_labels_as_i32` follows the same one-shot convention as
+ * `DecodedArray`: a full-resolution label image is large, so it is moved out
+ * rather than copied, and a second call fails loudly instead of returning an
+ * empty array.
+ */
+export class LabelResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(LabelResult.prototype);
+        obj.__wbg_ptr = ptr;
+        LabelResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        LabelResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_labelresult_free(ptr, 0);
+    }
+    /**
+     * Moves the label image out. One-shot; see `DecodedArray::take_data_as_f32`.
+     * @returns {Int32Array}
+     */
+    take_labels_as_i32() {
+        const ret = wasm.labelresult_take_labels_as_i32(this.__wbg_ptr);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get count() {
+        const ret = wasm.demosaicresult_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.demosaicresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.demosaicresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) LabelResult.prototype[Symbol.dispose] = LabelResult.prototype.free;
 
 const PngResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -1922,6 +2303,87 @@ export class RgbaLayerCompositor {
 }
 if (Symbol.dispose) RgbaLayerCompositor.prototype[Symbol.dispose] = RgbaLayerCompositor.prototype.free;
 
+const StabilityCurveResultFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_stabilitycurveresult_free(ptr >>> 0, 1));
+/**
+ * Object count / area-fraction as a function of threshold, for the stability
+ * curve UI. Small result (default 64 points), so getters clone.
+ */
+export class StabilityCurveResult {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(StabilityCurveResult.prototype);
+        obj.__wbg_ptr = ptr;
+        StabilityCurveResultFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        StabilityCurveResultFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_stabilitycurveresult_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    get object_counts() {
+        const ret = wasm.stabilitycurveresult_object_counts(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get plateau_width() {
+        const ret = wasm.stabilitycurveresult_plateau_width(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get suggested_bin() {
+        const ret = wasm.pngresult_bit_depth(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    get area_fractions() {
+        const ret = wasm.stabilitycurveresult_area_fractions(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {Int32Array}
+     */
+    get bins() {
+        const ret = wasm.stabilitycurveresult_bins(this.__wbg_ptr);
+        var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    get values() {
+        const ret = wasm.stabilitycurveresult_values(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+}
+if (Symbol.dispose) StabilityCurveResult.prototype[Symbol.dispose] = StabilityCurveResult.prototype.free;
+
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_tiffresult_free(ptr >>> 0, 1));
@@ -2276,6 +2738,7 @@ function __wbg_finalize_init(instance, module) {
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
+    cachedInt32ArrayMemory0 = null;
     cachedUint16ArrayMemory0 = null;
     cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;

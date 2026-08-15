@@ -14,6 +14,17 @@ declare module '*/wasm/tiff-wasm.js' {
     export default initTiffWasm;
     export const decode_czi_fast: any;
     export const decode_dicom_fast: any;
+    export const label_components_fast: any;
+    export const subtract_background_fast: any;
+    export const gaussian_blur_fast: any;
+    export const distance_transform_fast: any;
+    export const fill_mask_holes_fast: any;
+    export const build_histogram_fast: any;
+    export const auto_threshold_bin_fast: any;
+    export const global_threshold_mask_fast: any;
+    export const local_threshold_mask_fast: any;
+    export const local_auto_threshold_mask_fast: any;
+    export const compute_stability_curve_fast: any;
     export const demosaic: any;
     export const extract_exif_tags: any;
     export const decode_exr_fast: any;

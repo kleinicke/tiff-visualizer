@@ -142,9 +142,10 @@ stored in a different member file.
 - [x] FITS, native/uncompressed DICOM, DICOM JPEG Baseline, and classic NetCDF
       (CDF-1/CDF-2) decoding. NetCDF includes variable selection, non-spatial
       dimension controls, regular raster views, and MPAS `nCells` polygon-mesh
-      projection. NetCDF-4/HDF5 and additional DICOM transfer
-      syntaxes (JPEG Lossless, JPEG-LS, JPEG 2000, RLE, and video) remain part of
-      the heavier codec/container follow-up described below.
+      projection. DICOM RLE Lossless is also decoded. NetCDF-4/HDF5 and the
+      remaining DICOM transfer syntaxes (JPEG Lossless, JPEG-LS, JPEG 2000, and
+      video) remain part of the heavier codec/container follow-up described
+      below.
 - [x] DICOM folder datasets: an **Open Folder as DICOM Dataset** command detects
       extensionless objects by content, ignores non-image objects, deduplicates SOP
       instances, groups Series Instance UIDs, spatially orders slices from image
@@ -282,15 +283,26 @@ Prefer focused decoders that preserve source sample depth and metadata over a
 general conversion engine. From the current feature set, the next useful
 additions are:
 
-1. **DICOM RLE Lossless.** Implement directly in the decode worker; it is a
-   comparatively small codec and needs no heavyweight dependency.
-2. **JPEG-LS (`.jls`) and DICOM JPEG-LS transfer syntaxes.** Use a focused
-   CharLS/WASM decoder (BSD-3-Clause) and share the decoded-pixel path between
-   standalone images and encapsulated DICOM frames.
-3. **JPEG 2000 / HTJ2K (`.jp2`, `.j2k`, `.j2c`) and their DICOM transfer
-   syntaxes.** Prefer OpenJPEG/OpenJPH-style WASM decoders with permissive
-   licensing. Preserve signedness, component count, and 12/16-bit samples
-   instead of converting through 8-bit RGBA.
+**Hard constraint on codec dependencies: pure Rust only.** No C or C++ library
+may be pulled in, including via `cc`/`bindgen` or as a prebuilt Emscripten
+`.wasm` module. The drawbacks — toolchain fragility across the desktop and web
+build targets, cross-compilation to `wasm32-unknown-unknown`, opaque memory and
+failure behavior, and the maintenance cost of a second build system — outweigh
+what any individual codec buys us. A codec with no viable pure-Rust decoder
+stays unsupported and errors honestly rather than being worked around. This
+rules out CharLS and OpenJPEG/OpenJPH as C/C++ sources; the `openjp2` crate (a
+pure-Rust translation of OpenJPEG) is acceptable in principle but must be
+verified to build for `wasm32-unknown-unknown` before being planned around.
+
+1. ~~**DICOM RLE Lossless.**~~ Implemented — decoded through `dicom-pixeldata`'s
+   pure-Rust RLE adapter in `wasm/tiff-decoder/src/formats/dicom.rs`.
+2. **JPEG Lossless and JPEG 2000 DICOM transfer syntaxes**, in the order set out
+   under "DICOM transfer syntax coverage" below. JPEG-LS depends on a pure-Rust
+   decoder existing at all, so it is gated on that survey rather than scheduled.
+3. **JPEG 2000 / HTJ2K standalone files (`.jp2`, `.j2k`, `.j2c`)**, sharing the
+   decoded-pixel path with the encapsulated DICOM frames. Preserve signedness,
+   component count, and 12/16-bit samples instead of converting through 8-bit
+   RGBA.
 4. **NIfTI (`.nii`, `.nii.gz`, and paired `.hdr`/`.img`).** Add a focused
    parser and reuse dataset axes for 3D/4D volume and time navigation. Honor
    voxel spacing, scaling, qform/sform orientation, and integer/float data
@@ -316,8 +328,91 @@ Lower-priority, demand-driven additions:
 - **QOI:** very small and easy to decode, but currently too niche to outrank
   the scientific and medical formats above.
 
-**Format expansion sequence from the current state:** DICOM RLE → JPEG-LS →
+**Format expansion sequence from the current state:** DICOM JPEG Lossless →
 JPEG 2000/HTJ2K → NIfTI → NRRD/MetaImage → MRC/CCP4 → OME-Zarr.
+
+### DICOM transfer syntax coverage
+
+Supported today: Implicit VR LE (`1.2.840.10008.1.2`), Explicit VR LE (`.1`),
+Explicit VR BE (`.2`), JPEG Baseline (`.4.50`), and RLE Lossless (`.5`).
+Everything else is rejected in `parse_dicom_context` with "Compressed or
+unsupported DICOM Transfer Syntax". Ranked by how often each actually appears
+in files users try to open, under the pure-Rust constraint above:
+
+**1. JPEG Lossless, Non-Hierarchical, First-Order Prediction
+(`1.2.840.10008.1.2.4.70`).** Best value per unit of effort and the recommended
+next codec. This is the syntax behind a large share of legacy CT/MR/CR archive
+data, so it accounts for most real "won't open" reports. It is also a small
+codec — DPCM predictor plus Huffman, no DCT — on the order of a few hundred
+lines of Rust. `jpeg-decoder` does not cover it (baseline and progressive
+only), so this is a hand-rolled decoder or a dedicated pure-Rust crate. Its
+sibling `.4.57` (Process 14 without SV1) follows almost for free.
+**Difficulty: 3.**
+
+**2. Deflated Explicit VR Little Endian (`1.2.840.10008.1.2.1.99`).** Not a
+pixel codec at all: everything after the file meta group is raw-deflate
+compressed. Inflate it, then hand the result to the existing native element
+walk unchanged. Uncommon in practice, but close to free and worth taking
+whenever the surrounding code is already open. **Difficulty: 1.**
+
+**3. JPEG 2000 Lossless / Lossy (`1.2.840.10008.1.2.4.90` / `.91`).** The
+dominant compressed syntax in modern PACS — mammography, ultrasound, most
+vendor-neutral archives — so it has the highest coverage of anything on this
+list, and by far the largest codec. The only route compatible with the
+pure-Rust constraint is the `openjp2` crate; confirm it builds for
+`wasm32-unknown-unknown` and behaves under the worker's memory limits before
+committing to it, and do not fall back to a C/C++ OpenJPEG or OpenJPH build if
+it does not. **Difficulty: 4**, mostly dependency and validation risk rather
+than integration.
+
+**4. JPEG-LS Lossless / Near-Lossless (`1.2.840.10008.1.2.4.80` / `.81`).**
+Increasingly common on newer DX/CR equipment. Blocked on decoder availability,
+not on our own work: dicom-rs routes JPEG-LS through CharLS, which is C++ via
+`cc` and therefore excluded. Needs a survey for a mature pure-Rust JPEG-LS
+(LOCO-I) decoder; if none exists, this stays unsupported and errors honestly.
+Do not schedule before that survey. **Difficulty: 4**, or unbounded if a
+decoder has to be written from the spec.
+
+**Explicitly out of scope for now:** MPEG-2/MPEG-4/HEVC (`.4.100`–`.102`,
+`.106`) — cine ultrasound and endoscopy need a video decoder plus playback UI,
+a different feature entirely, and the pure-Rust constraint makes it harder
+still. JPEG Extended 12-bit (`.4.51`) is niche. HTJ2K (`.4.201`–`.203`) is
+worth revisiting once JPEG 2000 exists, since it shares codestream
+infrastructure.
+
+Whatever is added, keep the existing shape: decode to native-form samples, then
+run them back through the same `read_sample` / Rescale Slope-Intercept /
+MONOCHROME1 pipeline the native path uses, so behavior stays uniform across
+transfer syntaxes.
+
+### DICOM color photometric interpretations
+
+Color DICOM already works for the common cases: Samples Per Pixel 1/3/4 is
+accepted, Planar Configuration 1 is de-planarized into interleaved output, and
+the channel count flows through `ScientificParsed` into the normal render
+pipeline. Compressed frames come back from `dicom-pixeldata` already normalized
+to interleaved RGB, YBR sources included. Two gaps remain, both in
+`wasm/tiff-decoder/src/formats/dicom.rs`, where `photometric` is currently only
+consulted for the MONOCHROME1 inversion:
+
+- **Native (uncompressed) `YBR_FULL` / `YBR_FULL_422`.** No color conversion is
+  applied, so raw Y/Cb/Cr samples are handed to the renderer as if they were
+  R/G/B and the image displays with wrong colors instead of failing. Add the
+  YBR→RGB conversion (and 422 chroma upsampling) after `decode_native_frame`,
+  before Rescale Slope/Intercept.
+- **`PALETTE COLOR`.** Samples Per Pixel is 1 plus Palette Color Lookup Table
+  tags (0028,1101–1103 descriptors and 0028,1201–1203 data, 8- or 16-bit
+  entries with a first-mapped-value offset). Those tags are never read, so the
+  image renders as a grayscale index map rather than its intended color.
+  Expanding it to three channels also has to bypass the Rescale Slope/Intercept
+  and MONOCHROME1 paths, which are meaningless for indexed data.
+
+Samples Per Pixel 4 is accepted but uninterpreted (no ARGB/CMYK handling) — it
+becomes four generic channels. Left as-is until a real fixture turns up.
+
+**Difficulty: 2.** Both are self-contained additions to the existing native
+decode path; the main cost is fixtures, since neither variant is common enough
+to have one lying around.
 
 ---
 

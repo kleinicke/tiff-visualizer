@@ -1,6 +1,7 @@
 "use strict";
 
 import type { MaskRoi } from './types.js';
+import { initWasm } from '../tiff-wasm-wrapper.js';
 
 /**
  * Particle analysis: turning a binary mask into individual objects.
@@ -20,84 +21,37 @@ export interface LabelResult {
 }
 
 /**
- * Connected-component labelling by union-find over a single raster pass.
+ * Connected-component labelling.
+ *
+ * The implementation lives in Rust (`wasm/tiff-decoder/src/measure/components.rs`):
+ * it touches every pixel of a full-resolution mask twice and chases union-find
+ * pointers in between, which is the measurement step that hurt most in
+ * JavaScript — roughly 1 s for a 5120x5120 mask, versus 280 ms in Rust.
+ *
+ * Async because there is no synchronous way to reach WebAssembly that does not
+ * also require keeping a second implementation in TypeScript for the window
+ * before the module loads. The only caller (`analyzeParticles`) is invoked from
+ * the Measure panel in response to a user action, so awaiting costs nothing.
  *
  * Eight-connectivity is the default because objects that touch only at a corner
  * are almost always one object in practice; four-connectivity is offered for
  * users who need to match an existing ImageJ pipeline.
  */
-export function labelComponents(
+export async function labelComponents(
 	mask: Uint8Array,
 	width: number,
 	height: number,
 	connectivity: 4 | 8 = 8,
-): LabelResult {
-	const labels = new Int32Array(width * height);
-	// Worst case is one provisional label per two pixels (checkerboard).
-	const parent = new Int32Array(Math.floor(width * height / 2) + 2);
-	let nextLabel = 1;
-
-	const find = (a: number): number => {
-		let root = a;
-		while (parent[root] !== root) { root = parent[root]; }
-		// Path compression keeps the second pass near-linear on striped shapes.
-		let node = a;
-		while (parent[node] !== root) {
-			const next = parent[node];
-			parent[node] = root;
-			node = next;
-		}
-		return root;
-	};
-	const union = (a: number, b: number): void => {
-		const rootA = find(a);
-		const rootB = find(b);
-		if (rootA !== rootB) { parent[Math.max(rootA, rootB)] = Math.min(rootA, rootB); }
-	};
-
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			const index = y * width + x;
-			if (!mask[index]) { continue; }
-
-			let best = 0;
-			const consider = (nx: number, ny: number) => {
-				if (nx < 0 || ny < 0 || nx >= width || ny >= height) { return; }
-				const neighbour = labels[ny * width + nx];
-				if (!neighbour) { return; }
-				if (best === 0) { best = neighbour; } else { union(best, neighbour); best = Math.min(best, neighbour); }
-			};
-
-			consider(x - 1, y);
-			consider(x, y - 1);
-			if (connectivity === 8) {
-				consider(x - 1, y - 1);
-				consider(x + 1, y - 1);
-			}
-
-			if (best === 0) {
-				if (nextLabel >= parent.length) { break; }
-				parent[nextLabel] = nextLabel;
-				labels[index] = nextLabel;
-				nextLabel++;
-			} else {
-				labels[index] = best;
-			}
-		}
+): Promise<LabelResult> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.label_components_fast !== 'function') {
+		throw new Error('Connected-component labelling requires the Rust/WASM module, which failed to load.');
 	}
-
-	// Second pass: resolve to root labels and renumber them densely.
-	const remap = new Int32Array(nextLabel);
-	let count = 0;
-	for (let i = 0; i < labels.length; i++) {
-		const label = labels[i];
-		if (!label) { continue; }
-		const root = find(label);
-		if (remap[root] === 0) { remap[root] = ++count; }
-		labels[i] = remap[root];
-	}
-
-	return { labels, count, width, height };
+	const result = wasm.label_components_fast(mask, width, height, connectivity);
+	// take_labels_as_i32() is one-shot: the label image is moved out, not
+	// copied, and a second call throws. Take it once here.
+	const labels = result.take_labels_as_i32();
+	return { labels, count: result.count, width, height };
 }
 
 export interface ParticleFilter {
@@ -182,119 +136,29 @@ export function extractParticles(labelResult: LabelResult): Particle[] {
  * around the object: anything the fill cannot reach is enclosed, and therefore
  * a hole. Padding is what makes objects that touch their own bounding box work.
  */
-export function fillMaskHoles(mask: Uint8Array, width: number, height: number): Uint8Array {
-	const paddedWidth = width + 2;
-	const paddedHeight = height + 2;
-	const outside = new Uint8Array(paddedWidth * paddedHeight);
-	const stack = new Int32Array(paddedWidth * paddedHeight);
-	let top = 0;
-	stack[top++] = 0;
-	outside[0] = 1;
-
-	const isBackground = (px: number, py: number): boolean => {
-		const x = px - 1;
-		const y = py - 1;
-		if (x < 0 || y < 0 || x >= width || y >= height) { return true; }
-		return mask[y * width + x] === 0;
-	};
-
-	while (top > 0) {
-		const index = stack[--top];
-		const px = index % paddedWidth;
-		const py = (index / paddedWidth) | 0;
-		const push = (nx: number, ny: number) => {
-			if (nx < 0 || ny < 0 || nx >= paddedWidth || ny >= paddedHeight) { return; }
-			const neighbour = ny * paddedWidth + nx;
-			if (outside[neighbour] || !isBackground(nx, ny)) { return; }
-			outside[neighbour] = 1;
-			stack[top++] = neighbour;
-		};
-		push(px - 1, py); push(px + 1, py); push(px, py - 1); push(px, py + 1);
+export async function fillMaskHoles(mask: Uint8Array, width: number, height: number): Promise<Uint8Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.fill_mask_holes_fast !== 'function') {
+		throw new Error('Hole filling requires the Rust/WASM module, which failed to load.');
 	}
-
-	const filled = new Uint8Array(mask.length);
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			const index = y * width + x;
-			filled[index] = (mask[index] || !outside[(y + 1) * paddedWidth + (x + 1)]) ? 1 : 0;
-		}
-	}
-	return filled;
+	return wasm.fill_mask_holes_fast(mask, width, height);
 }
 
 /**
- * Squared Euclidean distance transform (Felzenszwalb & Huttenlocher).
+ * SQUARED Euclidean distance from each set pixel to the nearest background
+ * pixel (Felzenszwalb–Huttenlocher, two separable passes).
  *
- * Exact and linear in the pixel count, unlike the chamfer approximations that
- * make watershed seeds drift on elongated objects.
+ * Squared, not linear — callers compare against squared radii, and taking the
+ * root here would cost precision for nothing.
  */
-export function distanceTransform(mask: Uint8Array, width: number, height: number): Float64Array {
-	const INF = 1e20;
-	const result = new Float64Array(width * height);
-	for (let i = 0; i < result.length; i++) { result[i] = mask[i] ? INF : 0; }
-
-	const size = Math.max(width, height);
-	const f = new Float64Array(size);
-	const d = new Float64Array(size);
-	const v = new Int32Array(size);
-	const z = new Float64Array(size + 1);
-
-	const transform1d = (n: number) => {
-		let k = 0;
-		v[0] = 0;
-		z[0] = -INF;
-		z[1] = INF;
-		for (let q = 1; q < n; q++) {
-			let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
-			while (s <= z[k]) {
-				k--;
-				s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
-			}
-			k++;
-			v[k] = q;
-			z[k] = s;
-			z[k + 1] = INF;
-		}
-		k = 0;
-		for (let q = 0; q < n; q++) {
-			while (z[k + 1] < q) { k++; }
-			d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
-		}
-	};
-
-	for (let x = 0; x < width; x++) {
-		for (let y = 0; y < height; y++) { f[y] = result[y * width + x]; }
-		transform1d(height);
-		for (let y = 0; y < height; y++) { result[y * width + x] = d[y]; }
+export async function distanceTransform(mask: Uint8Array, width: number, height: number): Promise<Float64Array> {
+	const wasm = await initWasm();
+	if (!wasm || typeof wasm.distance_transform_fast !== 'function') {
+		throw new Error('Distance transform requires the Rust/WASM module, which failed to load.');
 	}
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) { f[x] = result[y * width + x]; }
-		transform1d(width);
-		for (let x = 0; x < width; x++) { result[y * width + x] = d[x]; }
-	}
-	return result;
+	return wasm.distance_transform_fast(mask, width, height);
 }
 
-/**
- * Watershed by basin dynamics, over an arbitrary height map.
- *
- * Pixels are flooded in order of decreasing height, so each peak creates a
- * basin before its slopes are reached. Where two basins meet, the decision to
- * split or merge is made on the depth of the saddle below the *shallower* of the
- * two peaks: a real boundary between two objects sits deep, while a ragged
- * outline or a noisy plateau produces two peaks a hair apart and is kept whole.
- *
- * `tolerance` is that depth, in the units of `height`. Comparing the two
- * adjacent pixels' heights instead — the obvious-looking alternative — always
- * merges, because neighbouring pixels of a smooth height map never differ by
- * much.
- *
- * The same routine drives two very different tools, which is the point of
- * factoring it out: run it on a distance transform and `tolerance` is a shape
- * criterion in pixels; run it on the image itself and `tolerance` is prominence,
- * the intensity a peak must rise above its surroundings to count as its own
- * object.
- */
 export function dynamicsWatershed(
 	height: Float64Array | Float32Array,
 	mask: Uint8Array,
@@ -427,15 +291,15 @@ export function dynamicsWatershed(
  * distinct distance-to-background peaks with a saddle between them, so they come
  * apart even though thresholding merged them. `tolerance` is in pixels.
  */
-export function watershedSplit(
+export async function watershedSplit(
 	mask: Uint8Array,
 	width: number,
 	height: number,
 	tolerance = 0.5,
-): Uint8Array {
+): Promise<Uint8Array> {
 	// The transform returns squared distances; take the root so `tolerance`
 	// means pixels rather than pixels squared.
-	const squared = distanceTransform(mask, width, height);
+	const squared = await distanceTransform(mask, width, height);
 	const distance = new Float64Array(squared.length);
 	for (let i = 0; i < squared.length; i++) { distance[i] = Math.sqrt(squared[i]); }
 
@@ -519,31 +383,31 @@ export interface AnalyzeParticlesOptions {
 }
 
 /** Full particle pass: optional hole filling and splitting, then filtering. */
-export function analyzeParticles(
+export async function analyzeParticles(
 	mask: Uint8Array,
 	width: number,
 	height: number,
 	filter: ParticleFilter = {},
 	options: AnalyzeParticlesOptions = {},
-): AnalyzeParticlesResult {
+): Promise<AnalyzeParticlesResult> {
 	let working = mask;
 
 	const split: SplitMode = options.split ?? (options.watershed ? 'shape' : 'none');
 	if (split === 'shape') {
-		working = watershedSplit(working, width, height, options.watershedTolerance ?? 0.5);
+		working = await watershedSplit(working, width, height, options.watershedTolerance ?? 0.5);
 	} else if (split === 'intensity' && options.plane) {
 		working = splitByIntensityMaxima(
 			options.plane, working, width, height, options.prominence ?? 0,
 		);
 	}
 
-	const labelResult = labelComponents(working, width, height, filter.connectivity ?? 8);
+	const labelResult = await labelComponents(working, width, height, filter.connectivity ?? 8);
 	let particles = extractParticles(labelResult);
 	const totalBeforeFilters = particles.length;
 
 	if (filter.fillHoles) {
 		for (const particle of particles) {
-			particle.mask = fillMaskHoles(particle.mask, particle.width, particle.height);
+					particle.mask = await fillMaskHoles(particle.mask, particle.width, particle.height);
 			let area = 0;
 			for (let i = 0; i < particle.mask.length; i++) { if (particle.mask[i]) { area++; } }
 			particle.area = area;
