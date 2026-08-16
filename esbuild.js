@@ -63,6 +63,16 @@ const decodeWorkerBuildOptions = {
   format: 'esm',
 };
 
+const fastRawWorkerBuildOptions = {
+  entryPoints: ['media/fast-raw-worker.ts'],
+  bundle: true,
+  outfile: 'media/fastRawWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'iife',
+};
+
 // Dedicated editable-layer compositor worker. Keeping this separate from the
 // decode worker prevents a long document decode from delaying layer gestures.
 const layerCompositorWorkerBuildOptions = {
@@ -116,6 +126,7 @@ const mediaModuleTsFiles = [
   ...findMediaTsFiles('media/modules'),
   'media/imagePreview.ts',
   'media/decode-worker.ts',
+  'media/fast-raw-worker.ts',
   'media/layer-compositor-worker.ts',
   'media/comparisonPanel.ts',
 ];
@@ -222,6 +233,16 @@ if (isWatch) {
     },
   };
 
+  fastRawWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('fast raw worker watch build failed:', error);
+      } else {
+        console.log('fast raw worker watch build succeeded');
+      }
+    },
+  };
+
   layerCompositorWorkerBuildOptions.watch = {
     onRebuild(error) {
       if (error) {
@@ -298,6 +319,9 @@ async function buildAll() {
     // Build decode worker
     await build(decodeWorkerBuildOptions);
     console.log('Decode worker built successfully');
+
+    await build(fastRawWorkerBuildOptions);
+    console.log('Fast raw worker built successfully');
 
     await build(layerCompositorWorkerBuildOptions);
     console.log('Layer compositor worker built successfully');

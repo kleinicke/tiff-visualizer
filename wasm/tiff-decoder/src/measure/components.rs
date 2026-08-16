@@ -28,7 +28,9 @@ struct UnionFind {
 
 impl UnionFind {
     fn new(capacity: usize) -> Self {
-        UnionFind { parent: vec![0; capacity] }
+        UnionFind {
+            parent: vec![0; capacity],
+        }
     }
 
     fn find(&mut self, a: i32) -> i32 {
@@ -68,7 +70,10 @@ pub(crate) fn label_components(
 ) -> Labelled {
     let pixels = width.saturating_mul(height);
     if pixels == 0 || mask.len() < pixels {
-        return Labelled { labels: vec![0; pixels.min(mask.len())], count: 0 };
+        return Labelled {
+            labels: vec![0; pixels.min(mask.len())],
+            count: 0,
+        };
     }
 
     let mut labels = vec![0i32; pixels];
@@ -87,21 +92,22 @@ pub(crate) fn label_components(
             // Only already-visited neighbours are consulted, so a single
             // forward pass sees every adjacency exactly once.
             let mut best: i32 = 0;
-            let consider = |nx: isize, ny: isize, labels: &[i32], uf: &mut UnionFind, best: &mut i32| {
-                if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
-                    return;
-                }
-                let neighbour = labels[ny as usize * width + nx as usize];
-                if neighbour == 0 {
-                    return;
-                }
-                if *best == 0 {
-                    *best = neighbour;
-                } else {
-                    uf.union(*best, neighbour);
-                    *best = (*best).min(neighbour);
-                }
-            };
+            let consider =
+                |nx: isize, ny: isize, labels: &[i32], uf: &mut UnionFind, best: &mut i32| {
+                    if nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize {
+                        return;
+                    }
+                    let neighbour = labels[ny as usize * width + nx as usize];
+                    if neighbour == 0 {
+                        return;
+                    }
+                    if *best == 0 {
+                        *best = neighbour;
+                    } else {
+                        uf.union(*best, neighbour);
+                        *best = (*best).min(neighbour);
+                    }
+                };
 
             let (xi, yi) = (x as isize, y as isize);
             consider(xi - 1, yi, &labels, &mut uf, &mut best);
@@ -144,7 +150,10 @@ pub(crate) fn label_components(
         labels[i] = remap[root as usize];
     }
 
-    Labelled { labels, count: count.max(0) as u32 }
+    Labelled {
+        labels,
+        count: count.max(0) as u32,
+    }
 }
 
 #[cfg(test)]
@@ -164,11 +173,7 @@ mod tests {
     fn renumbers_densely_after_merges() {
         // A U shape: the two arms get separate provisional labels that merge
         // on the bottom row, so the result must be a single object numbered 1.
-        let mask = [
-            1, 0, 1,
-            1, 0, 1,
-            1, 1, 1,
-        ];
+        let mask = [1, 0, 1, 1, 0, 1, 1, 1, 1];
         let out = label_components(&mask, 3, 3, 4);
         assert_eq!(out.count, 1);
         assert!(out.labels.iter().all(|&l| l == 0 || l == 1));

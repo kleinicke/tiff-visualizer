@@ -54,7 +54,7 @@ use formats::netcdf::decode_netcdf_impl;
 #[cfg(feature = "netpbm")]
 use formats::netpbm::decode_ppm_impl;
 #[cfg(feature = "npy")]
-use formats::npy::decode_npy_impl;
+use formats::npy::{decode_npy_display_impl, decode_npy_impl};
 #[cfg(feature = "pfm")]
 use formats::pfm::decode_pfm_impl;
 #[cfg(feature = "png")]
@@ -158,7 +158,9 @@ pub struct HdrResult {
 /// - `sample_format`: 1 = unsigned int, 2 = signed int, 3 = float (the same
 ///   TIFF convention `TiffResult.sample_format` already uses).
 /// - `sample_kind`: which `take_data_as_*` getter actually holds data —
-///   0 = `take_data_as_f32`, 1 = `take_data_as_u8`, 2 = `take_data_as_u16`.
+///   0 = `take_data_as_f32`, 1 = `take_data_as_u8`, 2 = `take_data_as_u16`,
+///   3 = native-endian u16 bytes via `take_data_as_u8` (owned NetPBM display
+///   fast path; avoids a second full-size WASM allocation).
 ///   The other two getters return an empty `Vec` for a given result.
 /// - `format_label`: a human sub-variant string (e.g. "PGM (Binary)"); `""`
 ///   when the format has no such concept.
@@ -180,6 +182,8 @@ pub struct DecodedArray {
     data_f32: Vec<f32>,
     data_u8: Vec<u8>,
     data_u16: Vec<u16>,
+    source_data_offset: usize,
+    can_reuse_source: bool,
     /// Guards the one-shot `take_data_as_*` contract below.
     taken: bool,
     /// Sample statistics, ported from `ImageStatsCalculator.calculateFloatStats`
@@ -251,6 +255,44 @@ impl DecodedArray {
 
     pub fn valid_count(&self) -> f64 {
         self.valid_count
+    }
+
+    /// Number of scalar samples in the active carrier. Used by the WASM
+    /// adapter to copy directly into a transferred JavaScript buffer without
+    /// first allocating another full-size typed array.
+    pub fn data_len(&self) -> usize {
+        if self.can_reuse_source {
+            return (self.width as usize)
+                .saturating_mul(self.height as usize)
+                .saturating_mul(self.channels as usize);
+        }
+        match self.sample_kind {
+            1 => self.data_u8.len(),
+            2 => self.data_u16.len(),
+            3 => self.data_u8.len() / 2,
+            _ => self.data_f32.len(),
+        }
+    }
+
+    pub fn source_data_offset(&self) -> usize {
+        self.source_data_offset
+    }
+
+    pub fn can_reuse_source(&self) -> bool {
+        self.can_reuse_source
+    }
+
+    /// Release a decoded carrier when JavaScript can safely use a typed view
+    /// of the original transferred source instead (plain native-endian f32
+    /// NPY). This avoids copying the full raster out of WASM.
+    pub fn discard_data(&mut self) {
+        self.data_f32.clear();
+        self.data_f32.shrink_to_fit();
+        self.data_u8.clear();
+        self.data_u8.shrink_to_fit();
+        self.data_u16.clear();
+        self.data_u16.shrink_to_fit();
+        self.taken = true;
     }
 
     /// Moves the raster out as `Vec<f32>` (valid when `sample_kind == 0`).
@@ -356,6 +398,15 @@ impl DecodedArray {
             self
         }
     }
+
+    #[cfg(feature = "npy")]
+    fn with_precomputed_range(mut self, stats: pipeline::stats::ImageRange) -> Self {
+        self.data_min = stats.min;
+        self.data_max = stats.max;
+        self.non_finite_count = stats.non_finite_count;
+        self.valid_count = stats.valid_count;
+        self
+    }
 }
 
 #[cfg(any(
@@ -382,6 +433,8 @@ impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
             data_f32: p.data,
             data_u8: Vec::new(),
             data_u16: Vec::new(),
+            source_data_offset: 0,
+            can_reuse_source: false,
             data_min: 0.0,
             data_max: 0.0,
             non_finite_count: 0.0,
@@ -845,12 +898,26 @@ pub fn decode_ppm_display_fast(data: &[u8]) -> Result<DecodedArray, DecodeError>
     decode_ppm_impl(data, false)
 }
 
+/// Owned-buffer display path used by wasm-bindgen. Binary 16-bit PGM/PPM can
+/// byte-swap the transferred WASM input allocation in place, avoiding a
+/// second 50-150 MiB Rust allocation. Other NetPBM variants use the regular
+/// implementation.
+#[cfg(feature = "netpbm")]
+pub fn decode_ppm_display_owned(data: Vec<u8>) -> Result<DecodedArray, DecodeError> {
+    formats::netpbm::decode_ppm_display_owned_impl(data)
+}
+
 /// Decode a NumPy `.npy` file or a `.npz` archive. Dispatches internally on
 /// the ZIP local-file-header signature in the first 4 bytes, mirroring the
 /// worker's existing `case 'npy':` dispatch.
 #[cfg(feature = "npy")]
 pub fn decode_npy_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     decode_npy_impl(data)
+}
+
+#[cfg(feature = "npy")]
+pub fn decode_npy_display_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    decode_npy_display_impl(data)
 }
 
 /// Decode a FITS file's first primary/IMAGE HDU with at least two axes.

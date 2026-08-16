@@ -30,6 +30,39 @@ function getStringFromWasm0(ptr, len) {
     return decodeText(ptr, len);
 }
 
+let cachedUint16ArrayMemory0 = null;
+
+function getUint16ArrayMemory0() {
+    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
+        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
+    }
+    return cachedUint16ArrayMemory0;
+}
+
+function getArrayU16FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
+}
+
+function getArrayU8FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
+let cachedFloat32ArrayMemory0 = null;
+
+function getFloat32ArrayMemory0() {
+    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
+        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
+    }
+    return cachedFloat32ArrayMemory0;
+}
+
+function getArrayF32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+
 let WASM_VECTOR_LEN = 0;
 
 const cachedTextEncoder = new TextEncoder();
@@ -106,15 +139,6 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 
-let cachedFloat32ArrayMemory0 = null;
-
-function getFloat32ArrayMemory0() {
-    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
-        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
-    }
-    return cachedFloat32ArrayMemory0;
-}
-
 function passArrayF32ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 4, 4) >>> 0;
     getFloat32ArrayMemory0().set(arg, ptr / 4);
@@ -136,15 +160,6 @@ function passArrayF64ToWasm0(arg, malloc) {
     getFloat64ArrayMemory0().set(arg, ptr / 8);
     WASM_VECTOR_LEN = arg.length;
     return ptr;
-}
-
-let cachedUint16ArrayMemory0 = null;
-
-function getUint16ArrayMemory0() {
-    if (cachedUint16ArrayMemory0 === null || cachedUint16ArrayMemory0.byteLength === 0) {
-        cachedUint16ArrayMemory0 = new Uint16Array(wasm.memory.buffer);
-    }
-    return cachedUint16ArrayMemory0;
 }
 
 function passArray16ToWasm0(arg, malloc) {
@@ -170,11 +185,6 @@ function passArray32ToWasm0(arg, malloc) {
     return ptr;
 }
 
-function getArrayF32FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
-}
-
 let cachedInt32ArrayMemory0 = null;
 
 function getInt32ArrayMemory0() {
@@ -188,44 +198,19 @@ function getArrayI32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
-
-function getArrayU8FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
-}
-
-function getArrayU16FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getUint16ArrayMemory0().subarray(ptr / 2, ptr / 2 + len);
-}
 /**
  * @param {Uint8Array} data
  * @param {boolean} top_down
  * @returns {DecodedArray}
  */
-export function decode_pfm_display_fast(data, top_down) {
+export function decode_pfm_fast(data, top_down) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
+    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page_fast(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
 }
 
 /**
@@ -244,103 +229,30 @@ export function decode_npy_fast(data) {
 
 /**
  * @param {Uint8Array} data
- * @param {number} frame_index
- * @returns {DecodedArray}
+ * @returns {PngResult}
  */
-export function decode_dicom_fast(data, frame_index) {
+export function decode_png16_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    const ret = wasm.decode_png16_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return DecodedArray.__wrap(ret[0]);
+    return PngResult.__wrap(ret[0]);
 }
 
 /**
  * @param {Uint8Array} data
- * @returns {TiffResult}
+ * @returns {JpegResult}
  */
-export function decode_tiff(data) {
+export function decode_jpeg_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
+    const ret = wasm.decode_jpeg_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_fits_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_fits_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Float32Array} data
- * @param {number} width
- * @param {number} height
- * @param {string} pattern
- * @param {string} algorithm
- * @param {number} offset_x
- * @param {number} offset_y
- * @param {number} black
- * @param {number} white
- * @param {boolean} auto_wb
- * @param {number} gain_r
- * @param {number} gain_g
- * @param {number} gain_b
- * @returns {DemosaicResult}
- */
-export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
-    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DemosaicResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_ppm_display_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
+    return JpegResult.__wrap(ret[0]);
 }
 
 /**
@@ -362,112 +274,12 @@ export function decode_czi_fast(data, options_json) {
 
 /**
  * @param {Uint8Array} data
- * @returns {number}
- */
-export function tiff_page_count(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_page_count(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] >>> 0;
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {JpegResult}
- */
-export function decode_jpeg_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpeg_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return JpegResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {boolean} top_down
  * @returns {DecodedArray}
  */
-export function decode_pfm_fast(data, top_down) {
+export function decode_ppm_display_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrResult}
- */
-export function decode_exr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ExrResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {PngResult}
- */
-export function decode_png16_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_png16_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return PngResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {HdrResult}
- */
-export function decode_hdr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_hdr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return HdrResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_ppm_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_fast(ptr0, len0);
+    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -510,29 +322,247 @@ export function decode_netcdf_fast(data, options_json) {
     return DecodedArray.__wrap(ret[0]);
 }
 
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page_fast(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {string} pattern
+ * @param {string} algorithm
+ * @param {number} offset_x
+ * @param {number} offset_y
+ * @param {number} black
+ * @param {number} white
+ * @param {boolean} auto_wb
+ * @param {number} gain_r
+ * @param {number} gain_g
+ * @param {number} gain_b
+ * @returns {DemosaicResult}
+ */
+export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DemosaicResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {boolean} top_down
+ * @returns {DecodedArray}
+ */
+export function decode_pfm_display_fast(data, top_down) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_fits_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fits_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} frame_index
+ * @returns {DecodedArray}
+ */
+export function decode_dicom_fast(data, frame_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_npy_display_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_npy_display_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {HdrResult}
+ */
+export function decode_hdr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_hdr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+export function tiff_page_count(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_page_count(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_ppm_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ppm_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
 function getArrayF64FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 /**
- * SQUARED Euclidean distance from each set pixel to the nearest background
- * pixel — the same convention the TypeScript used, so callers that compare
- * against a squared radius keep working unchanged.
- * @param {Uint8Array} mask
+ * Binary mask from a global value window.
+ * @param {Float32Array} plane
+ * @param {number} low
+ * @param {number} high
+ * @returns {Uint8Array}
+ */
+export function global_threshold_mask_fast(plane, low, high) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.global_threshold_mask_fast(ptr0, len0, low, high);
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * @param {Float32Array} plane
  * @param {number} width
  * @param {number} height
- * @returns {Float64Array}
+ * @param {number} histogram_min
+ * @param {number} histogram_max
+ * @param {number} samples
+ * @param {number} max_pixels
+ * @param {boolean} dark_background
+ * @returns {StabilityCurveResult}
  */
-export function distance_transform_fast(mask, width, height) {
-    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+export function compute_stability_curve_fast(plane, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.distance_transform_fast(ptr0, len0, width, height);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    const ret = wasm.compute_stability_curve_fast(ptr0, len0, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
     }
-    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v2;
+    return StabilityCurveResult.__wrap(ret[0]);
 }
 
 /**
@@ -575,33 +605,64 @@ export function subtract_background_fast(plane, width, height, radius, light_bac
 }
 
 /**
- * Binary mask from a global value window.
- * @param {Float32Array} plane
- * @param {number} low
- * @param {number} high
- * @returns {Uint8Array}
+ * Apply one auto-threshold method to a 256-bin histogram. Returns a bin
+ * index, or -1 on failure. Unknown method names fall back to Otsu.
+ * @param {Int32Array} counts
+ * @param {string} method
+ * @returns {number}
  */
-export function global_threshold_mask_fast(plane, low, high) {
-    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+export function auto_threshold_bin_fast(counts, method) {
+    const ptr0 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.global_threshold_mask_fast(ptr0, len0, low, high);
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.auto_threshold_bin_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
+ * SQUARED Euclidean distance from each set pixel to the nearest background
+ * pixel — the same convention the TypeScript used, so callers that compare
+ * against a squared radius keep working unchanged.
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @returns {Float64Array}
+ */
+export function distance_transform_fast(mask, width, height) {
+    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.distance_transform_fast(ptr0, len0, width, height);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
     return v2;
 }
 
 /**
- * Build the 256-bin histogram of a scalar plane. `step` subsamples for
- * interactive use (pass 1 for the full plane).
+ * Separable Gaussian blur. Non-finite samples are skipped and the weights
+ * renormalised, so a NaN neighbour is ignored rather than darkening the result.
  * @param {Float32Array} plane
- * @param {number} step
- * @returns {HistogramResult}
+ * @param {number} width
+ * @param {number} height
+ * @param {number} sigma
+ * @returns {Float32Array}
  */
-export function build_histogram_fast(plane, step) {
+export function gaussian_blur_fast(plane, width, height, sigma) {
     const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.build_histogram_fast(ptr0, len0, step);
-    return HistogramResult.__wrap(ret);
+    const ret = wasm.gaussian_blur_fast(ptr0, len0, width, height, sigma);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
 }
 
 /**
@@ -628,43 +689,30 @@ export function compute_image_stats_f32(data, width, height, channels, extended)
 }
 
 /**
- * Apply one auto-threshold method to a 256-bin histogram. Returns a bin
- * index, or -1 on failure. Unknown method names fall back to Otsu.
- * @param {Int32Array} counts
- * @param {string} method
- * @returns {number}
- */
-export function auto_threshold_bin_fast(counts, method) {
-    const ptr0 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.auto_threshold_bin_fast(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0];
-}
-
-/**
- * Separable Gaussian blur. Non-finite samples are skipped and the weights
- * renormalised, so a NaN neighbour is ignored rather than darkening the result.
+ * Any global auto-threshold method applied per neighbourhood, bilinearly
+ * interpolated between tiles. `min_contrast` uses NaN to mean "use the
+ * method's default (0.25)".
  * @param {Float32Array} plane
  * @param {number} width
  * @param {number} height
- * @param {number} sigma
- * @returns {Float32Array}
+ * @param {string} method
+ * @param {number} radius
+ * @param {boolean} dark_background
+ * @param {number} min_contrast
+ * @returns {Uint8Array}
  */
-export function gaussian_blur_fast(plane, width, height, sigma) {
+export function local_auto_threshold_mask_fast(plane, width, height, method, radius, dark_background, min_contrast) {
     const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.gaussian_blur_fast(ptr0, len0, width, height, sigma);
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.local_auto_threshold_mask_fast(ptr0, len0, width, height, ptr1, len1, radius, dark_background, min_contrast);
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }
-    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-    return v2;
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
 }
 
 /**
@@ -685,6 +733,20 @@ export function compute_image_stats_u8(data, width, height, channels, rgb_as_24b
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.compute_image_stats_u8(ptr0, len0, width, height, channels, rgb_as_24bit);
     return ImageStats.__wrap(ret);
+}
+
+/**
+ * Build the 256-bin histogram of a scalar plane. `step` subsamples for
+ * interactive use (pass 1 for the full plane).
+ * @param {Float32Array} plane
+ * @param {number} step
+ * @returns {HistogramResult}
+ */
+export function build_histogram_fast(plane, step) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.build_histogram_fast(ptr0, len0, step);
+    return HistogramResult.__wrap(ret);
 }
 
 /**
@@ -733,27 +795,6 @@ export function local_threshold_mask_fast(plane, width, height, method, radius, 
 }
 
 /**
- * @param {Float32Array} plane
- * @param {number} width
- * @param {number} height
- * @param {number} histogram_min
- * @param {number} histogram_max
- * @param {number} samples
- * @param {number} max_pixels
- * @param {boolean} dark_background
- * @returns {StabilityCurveResult}
- */
-export function compute_stability_curve_fast(plane, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background) {
-    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.compute_stability_curve_fast(ptr0, len0, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return StabilityCurveResult.__wrap(ret[0]);
-}
-
-/**
  * Fills enclosed holes in a binary mask. Returns a mask of the same size.
  * @param {Uint8Array} mask
  * @param {number} width
@@ -770,33 +811,6 @@ export function fill_mask_holes_fast(mask, width, height) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
-}
-
-/**
- * Any global auto-threshold method applied per neighbourhood, bilinearly
- * interpolated between tiles. `min_contrast` uses NaN to mean "use the
- * method's default (0.25)".
- * @param {Float32Array} plane
- * @param {number} width
- * @param {number} height
- * @param {string} method
- * @param {number} radius
- * @param {boolean} dark_background
- * @param {number} min_contrast
- * @returns {Uint8Array}
- */
-export function local_auto_threshold_mask_fast(plane, width, height, method, radius, dark_background, min_contrast) {
-    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.local_auto_threshold_mask_fast(ptr0, len0, width, height, ptr1, len1, radius, dark_background, min_contrast);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
 }
 
 function getArrayU32FromWasm0(ptr, len) {
@@ -842,6 +856,9 @@ export class DecodedArray {
     get valid_count() {
         const ret = wasm.decodedarray_valid_count(this.__wbg_ptr);
         return ret;
+    }
+    discard_data() {
+        wasm.decodedarray_discard_data(this.__wbg_ptr);
     }
     /**
      * @returns {string}
@@ -900,6 +917,13 @@ export class DecodedArray {
         return v1;
     }
     /**
+     * @returns {boolean}
+     */
+    get can_reuse_source() {
+        const ret = wasm.decodedarray_can_reuse_source(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * @returns {number}
      */
     get non_finite_count() {
@@ -931,6 +955,13 @@ export class DecodedArray {
         return v1;
     }
     /**
+     * @returns {number}
+     */
+    get source_data_offset() {
+        const ret = wasm.decodedarray_source_data_offset(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * @returns {string}
      */
     get source_numeric_type() {
@@ -943,6 +974,37 @@ export class DecodedArray {
             return getStringFromWasm0(ret[0], ret[1]);
         } finally {
             wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {Uint8Array} target
+     */
+    copy_data_as_u8_into(target) {
+        const ret = wasm.decodedarray_copy_data_as_u8_into(this.__wbg_ptr, target);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Consume the decoded carrier while copying it directly into a
+     * JavaScript-owned buffer. Unlike returning `Vec<T>`, wasm-bindgen does
+     * not allocate a second JS typed array here; callers can reuse the source
+     * ArrayBuffer that was already transferred into the decode worker.
+     * @param {Float32Array} target
+     */
+    copy_data_as_f32_into(target) {
+        const ret = wasm.decodedarray_copy_data_as_f32_into(this.__wbg_ptr, target);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * @param {Uint16Array} target
+     */
+    copy_data_as_u16_into(target) {
+        const ret = wasm.decodedarray_copy_data_as_u16_into(this.__wbg_ptr, target);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
         }
     }
     /**
@@ -964,6 +1026,13 @@ export class DecodedArray {
      */
     get channels() {
         const ret = wasm.decodedarray_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_len() {
+        const ret = wasm.decodedarray_data_len(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -2529,7 +2598,7 @@ export class TiffResult {
      * @returns {number}
      */
     get width() {
-        const ret = wasm.tiffresult_width(this.__wbg_ptr);
+        const ret = wasm.decodedarray_source_data_offset(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -2637,6 +2706,18 @@ function __wbg_get_imports() {
             wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
         }
     };
+    imports.wbg.__wbg_length_4126f257d88ef51e = function(arg0) {
+        const ret = arg0.length;
+        return ret;
+    };
+    imports.wbg.__wbg_length_58bec3c3f0487eb5 = function(arg0) {
+        const ret = arg0.length;
+        return ret;
+    };
+    imports.wbg.__wbg_length_69bca3cb64fc8748 = function(arg0) {
+        const ret = arg0.length;
+        return ret;
+    };
     imports.wbg.__wbg_new_8a6f238a6ece86ea = function() {
         const ret = new Error();
         return ret;
@@ -2645,12 +2726,33 @@ function __wbg_get_imports() {
         const ret = Date.now();
         return ret;
     };
+    imports.wbg.__wbg_set_7a75d83ea249c6e0 = function(arg0, arg1, arg2) {
+        arg0.set(getArrayU16FromWasm0(arg1, arg2));
+    };
+    imports.wbg.__wbg_set_9e6516df7b7d0f19 = function(arg0, arg1, arg2) {
+        arg0.set(getArrayU8FromWasm0(arg1, arg2));
+    };
+    imports.wbg.__wbg_set_eaa55bcb7597ecca = function(arg0, arg1, arg2) {
+        arg0.set(getArrayF32FromWasm0(arg1, arg2));
+    };
     imports.wbg.__wbg_stack_0ed75d68575b0f3c = function(arg0, arg1) {
         const ret = arg1.stack;
         const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
         getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
         getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+    };
+    imports.wbg.__wbg_subarray_480600f3d6a9f26c = function(arg0, arg1, arg2) {
+        const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+        return ret;
+    };
+    imports.wbg.__wbg_subarray_b24c6237257bcd4d = function(arg0, arg1, arg2) {
+        const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+        return ret;
+    };
+    imports.wbg.__wbg_subarray_e9ae4d887d066081 = function(arg0, arg1, arg2) {
+        const ret = arg0.subarray(arg1 >>> 0, arg2 >>> 0);
+        return ret;
     };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
         // Cast intrinsic for `Ref(String) -> Externref`.

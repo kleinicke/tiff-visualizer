@@ -1,7 +1,8 @@
 "use strict";
-import { NormalizationHelper, ImageRenderer } from './normalization-helper.js';
-import { DecodeWorkerClient } from './decode-worker-client.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
 import { decodePpmLocal } from './main-thread-decode.js';
+import { decodeBinaryNetpbmFast } from './fast-raw-decoders.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { PerfTrace } from './perf-trace.js';
 import type { SettingsManager } from './settings-manager.js';
@@ -50,7 +51,7 @@ export class PpmProcessor {
     /** Set before each load; aborts the fetch when a newer image switch supersedes it */
     loadSignal: AbortSignal | undefined;
     /** Off-thread decoder, set by imagePreview.js; null falls back to local decoding */
-    decodeWorker: DecodeWorkerClient | null;
+    decodeWorker: DecodeWorkerLike | null;
 
     constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
         this.settingsManager = settingsManager;
@@ -73,7 +74,8 @@ export class PpmProcessor {
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data, numericDomain, formatLabel: format, stats } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'ppm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePpmLocal(b));
+            this.decodeWorker, 'ppm', buffer, src, loadSignal,
+            (b: ArrayBuffer) => decodeBinaryNetpbmFast(b) || decodePpmLocal(b));
         const maxval = numericDomain.typeMax;
 
         // Keep RGB data for color display

@@ -17,6 +17,11 @@ import { PerfTrace } from './perf-trace.js';
 const DECODE_TIMEOUT_MS = 30000;
 const WASM_FETCH_TIMEOUT_MS = 3000;
 
+export interface DecodeWorkerLike {
+	start(): Promise<void>;
+	decode(format: string, buffer: ArrayBuffer, options?: Record<string, any>): Promise<any> | null;
+}
+
 /**
  * Fetch the first available resource without allowing a broken webview URI to
  * hold worker startup indefinitely.
@@ -49,6 +54,8 @@ export class DecodeWorkerClient {
 	_blobUrl: string | null;
 	_tiffWasmBytes: ArrayBuffer | null;
 	_tiffWasmFetchPromise: Promise<ArrayBuffer | null> | null;
+	_tiffWasmModule: WebAssembly.Module | null;
+	_tiffWasmCompilePromise: Promise<WebAssembly.Module | null> | null;
 
 	constructor() {
 		this._worker = null;
@@ -61,6 +68,8 @@ export class DecodeWorkerClient {
 		this._blobUrl = null;
 		this._tiffWasmBytes = null;
 		this._tiffWasmFetchPromise = null;
+		this._tiffWasmModule = null;
+		this._tiffWasmCompilePromise = null;
 	}
 
 	/** Begin booting the worker in the background. Never throws. */
@@ -124,11 +133,27 @@ export class DecodeWorkerClient {
 		// blob worker may be unable to fetch them. Fetch the WASM here and
 		// transfer a copy into the worker; retain URLs as a browser fallback.
 		const cachedWasmBytes = this._tiffWasmBytes || await this._tiffWasmFetchPromise;
-		const tiffWasmBuffer = cachedWasmBytes?.slice(0) || null;
+		// Large decoded rasters retire their worker to release its expanded WASM
+		// heap. Keep the immutable compiled module in the webview so the next
+		// worker can instantiate it without recompiling the multi-megabyte binary.
+		if (!this._tiffWasmModule && !this._tiffWasmCompilePromise && cachedWasmBytes) {
+			this._tiffWasmCompilePromise = WebAssembly.compile(cachedWasmBytes)
+				.then(module => {
+					this._tiffWasmModule = module;
+					return module;
+				})
+				.catch((error: unknown): WebAssembly.Module | null => {
+					console.warn('[DecodeWorker] WASM precompile failed; sending bytes:', error);
+					return null;
+				})
+				.finally((): void => { this._tiffWasmCompilePromise = null; });
+		}
+		const tiffWasmModule = this._tiffWasmModule || await this._tiffWasmCompilePromise;
+		const tiffWasmBuffer = tiffWasmModule ? null : (cachedWasmBytes?.slice(0) || null);
 		const caps: any = await new Promise((resolve, reject) => {
 			this._readyResolve = resolve;
 			setTimeout(() => reject(new Error('worker init timeout')), 20000);
-			const initMessage = { type: 'init', tiffWasmBuffer, tiffWasmUrls };
+			const initMessage = { type: 'init', tiffWasmModule, tiffWasmBuffer, tiffWasmUrls };
 			worker.postMessage(initMessage, tiffWasmBuffer ? [tiffWasmBuffer] : []);
 		});
 		if (this._worker !== worker) {
@@ -198,6 +223,13 @@ export class DecodeWorkerClient {
 		const resolve = this._pending.get(msg?.id);
 		if (resolve) {
 			this._pending.delete(msg.id);
+			if (msg?.retireWorker === true && this._pending.size === 0) {
+				// The result's transferable buffers have already arrived. Terminate
+				// before resolving so the old WASM heap is released before WebGL
+				// starts its full-raster upload on the continuation microtask.
+				this._teardown();
+				setTimeout(() => { void this.start(); }, 0);
+			}
 			resolve(msg);
 		}
 	}
@@ -263,7 +295,7 @@ export class DecodeWorkerClient {
 	 * refetched (rare error path only).
 	 */
 	static async decodeWithFallback(
-		client: DecodeWorkerClient | null | undefined,
+		client: DecodeWorkerLike | null | undefined,
 		format: string,
 		buffer: ArrayBuffer,
 		src: string,

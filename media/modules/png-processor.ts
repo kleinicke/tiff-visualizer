@@ -117,6 +117,10 @@ export class PngProcessor {
                 return this._processWithNativeAPI(src);
             }
 
+			// Ordinary 8-bit PNGs never pay for the multi-megabyte decode worker.
+			// Start it only after IHDR selects the 16-bit path.
+			await this.decodeWorker?.start();
+			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             // Decode with UPNG.js — in the decode worker when available,
             // locally otherwise (16-bit path only; 8-bit returned above).

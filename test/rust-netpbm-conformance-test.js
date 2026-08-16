@@ -17,9 +17,9 @@
  *       values. This is the CORRECTNESS check. It matters because goldens
  *       cannot catch a bug that was already present when they were captured.
  *
- * These decoders have no TypeScript counterpart: the `_parsePfm`/`_parsePpm`
- * parsers this port replaced have been deleted, so Rust is the single
- * implementation and the differential check that used to run here is gone.
+ * Rust remains the complete decoder. A separately tested TypeScript hot path
+ * handles only common binary P5/P6 inputs and delegates every other variant
+ * to this implementation; it is not a second general NetPBM parser.
  *
  * Negative cases assert the exact rejection message against the golden.
  *

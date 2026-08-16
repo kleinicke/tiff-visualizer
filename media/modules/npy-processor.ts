@@ -1,7 +1,8 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
-import { DecodeWorkerClient } from './decode-worker-client.js';
+import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
 import { decodeNpyLocal } from './main-thread-decode.js';
+import { decodeNativeF32NpyFast } from './fast-raw-decoders.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
@@ -56,7 +57,7 @@ export class NpyProcessor {
     /** Set before each load; aborts the fetch when a newer image switch supersedes it */
     loadSignal: AbortSignal | undefined;
     /** Off-thread decoder, set by imagePreview.js; null falls back to local decoding */
-    decodeWorker: DecodeWorkerClient | null;
+    decodeWorker: DecodeWorkerLike | null;
 
     constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
         this.settingsManager = settingsManager;
@@ -88,7 +89,8 @@ export class NpyProcessor {
         // both paths take the same call.
         const parsed = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'npy', buffer, src, loadSignal,
-            (b: ArrayBuffer) => decodeNpyLocal(b));
+            (b: ArrayBuffer, options?: Record<string, any>) => decodeNativeF32NpyFast(b, options?.computeStats !== false) || decodeNpyLocal(b),
+            { computeStats: NormalizationHelper.needsStats(this.settingsManager.settings) });
         const { data, width, height, metadata, numericDomain, channels, stats } = parsed;
         // The numpy dtype string (e.g. "<f4") is user-visible display info,
         // not part of the DecodedArray schema — it travels through
@@ -145,7 +147,7 @@ export class NpyProcessor {
                 stats = ImageStatsCalculator.calculateIntegerStats(data as any, width, height, channels, true);
             } else {
                 // Already computed once inside the Rust decoder.
-                stats = this._decodedStats;
+                stats = this._decodedStats || ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;

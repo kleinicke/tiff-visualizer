@@ -51,8 +51,11 @@ pub(crate) fn gaussian_blur(plane: &[f32], width: usize, height: usize, sigma: f
                 accumulated += v as f64 * w;
                 weight_sum += w;
             }
-            horizontal[y * width + x] =
-                if weight_sum > 0.0 { (accumulated / weight_sum) as f32 } else { f32::NAN };
+            horizontal[y * width + x] = if weight_sum > 0.0 {
+                (accumulated / weight_sum) as f32
+            } else {
+                f32::NAN
+            };
         }
     }
 
@@ -71,8 +74,11 @@ pub(crate) fn gaussian_blur(plane: &[f32], width: usize, height: usize, sigma: f
                 accumulated += v as f64 * w;
                 weight_sum += w;
             }
-            out[y * width + x] =
-                if weight_sum > 0.0 { (accumulated / weight_sum) as f32 } else { f32::NAN };
+            out[y * width + x] = if weight_sum > 0.0 {
+                (accumulated / weight_sum) as f32
+            } else {
+                f32::NAN
+            };
         }
     }
     out
@@ -94,11 +100,23 @@ pub(crate) fn gaussian_blur(plane: &[f32], width: usize, height: usize, sigma: f
 /// which makes the window shrink at the borders instead of wrapping — again
 /// matching the original's clamped bounds.
 fn sliding_extremum(input: &[f32], n: usize, radius: usize, minimum: bool) -> Vec<f32> {
-    let identity = if minimum { f32::INFINITY } else { f32::NEG_INFINITY };
+    let identity = if minimum {
+        f32::INFINITY
+    } else {
+        f32::NEG_INFINITY
+    };
     let better = |a: f32, b: f32| -> f32 {
         if minimum {
-            if b < a { b } else { a }
-        } else if b > a { b } else { a }
+            if b < a {
+                b
+            } else {
+                a
+            }
+        } else if b > a {
+            b
+        } else {
+            a
+        }
     };
     if n == 0 {
         return Vec::new();
@@ -118,7 +136,13 @@ fn sliding_extremum(input: &[f32], n: usize, radius: usize, minimum: bool) -> Ve
 
     let mut prefix = vec![identity; working];
     let mut suffix = vec![identity; working];
-    let at = |i: usize| -> f32 { if i < padded_len { padded[i] } else { identity } };
+    let at = |i: usize| -> f32 {
+        if i < padded_len {
+            padded[i]
+        } else {
+            identity
+        }
+    };
 
     for b in 0..blocks {
         let start = b * k;
@@ -148,7 +172,13 @@ fn sliding_extremum(input: &[f32], n: usize, radius: usize, minimum: bool) -> Ve
 ///
 /// Named "disc" in the original for its morphological role; the window is
 /// actually square, and the port keeps that shape so results match.
-fn disc_filter(plane: &[f32], width: usize, height: usize, radius: isize, minimum: bool) -> Vec<f32> {
+fn disc_filter(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    radius: isize,
+    minimum: bool,
+) -> Vec<f32> {
     let pixels = width.saturating_mul(height);
     let r = radius.max(0) as usize;
     let mut horizontal = vec![0.0f32; pixels];
@@ -178,13 +208,33 @@ fn disc_filter(plane: &[f32], width: usize, height: usize, radius: isize, minimu
 /// fast path above is checked against the definition it replaced rather than
 /// against itself.
 #[cfg(test)]
-fn disc_filter_naive(plane: &[f32], width: usize, height: usize, radius: isize, minimum: bool) -> Vec<f32> {
+fn disc_filter_naive(
+    plane: &[f32],
+    width: usize,
+    height: usize,
+    radius: isize,
+    minimum: bool,
+) -> Vec<f32> {
     let pixels = width.saturating_mul(height);
     let mut horizontal = vec![0.0f32; pixels];
     let better = |a: f32, b: f32| -> f32 {
-        if minimum { if b < a { b } else { a } } else if b > a { b } else { a }
+        if minimum {
+            if b < a {
+                b
+            } else {
+                a
+            }
+        } else if b > a {
+            b
+        } else {
+            a
+        }
     };
-    let seed = if minimum { f32::INFINITY } else { f32::NEG_INFINITY };
+    let seed = if minimum {
+        f32::INFINITY
+    } else {
+        f32::NEG_INFINITY
+    };
 
     for y in 0..height {
         for x in 0..width {
@@ -193,7 +243,9 @@ fn disc_filter_naive(plane: &[f32], width: usize, height: usize, radius: isize, 
             let x1 = (x as isize + radius).min(width as isize - 1) as usize;
             for k in x0..=x1 {
                 let v = plane[y * width + k];
-                if v.is_finite() { best = better(best, v); }
+                if v.is_finite() {
+                    best = better(best, v);
+                }
             }
             horizontal[y * width + x] = if best.is_finite() { best } else { f32::NAN };
         }
@@ -206,7 +258,9 @@ fn disc_filter_naive(plane: &[f32], width: usize, height: usize, radius: isize, 
             let mut best = seed;
             for k in y0..=y1 {
                 let v = horizontal[k * width + x];
-                if v.is_finite() { best = better(best, v); }
+                if v.is_finite() {
+                    best = better(best, v);
+                }
             }
             out[y * width + x] = if best.is_finite() { best } else { f32::NAN };
         }
@@ -215,7 +269,10 @@ fn disc_filter_naive(plane: &[f32], width: usize, height: usize, radius: isize, 
 }
 
 fn negate(plane: &[f32]) -> Vec<f32> {
-    plane.iter().map(|&v| if v.is_finite() { -v } else { f32::NAN }).collect()
+    plane
+        .iter()
+        .map(|&v| if v.is_finite() { -v } else { f32::NAN })
+        .collect()
 }
 
 /// Rolling-ball-style background subtraction: an opening (erode then dilate)
@@ -232,14 +289,22 @@ pub(crate) fn subtract_background(
         return plane.to_vec();
     }
     let r = (radius.round() as isize).max(1);
-    let source: Vec<f32> = if light_background { negate(plane) } else { plane[..pixels].to_vec() };
+    let source: Vec<f32> = if light_background {
+        negate(plane)
+    } else {
+        plane[..pixels].to_vec()
+    };
     let eroded = disc_filter(&source, width, height, r, true);
     let background = disc_filter(&eroded, width, height, r, false);
 
     let mut out = vec![0.0f32; pixels];
     for i in 0..pixels {
         let v = source[i];
-        out[i] = if v.is_finite() { v - background[i] } else { f32::NAN };
+        out[i] = if v.is_finite() {
+            v - background[i]
+        } else {
+            f32::NAN
+        };
     }
     if light_background {
         negate(&out)

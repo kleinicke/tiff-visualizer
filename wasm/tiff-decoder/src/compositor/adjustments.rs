@@ -94,7 +94,10 @@ pub(crate) fn configured_hue_range_weight_f32(
     weight.clamp(0.0, 1.0)
 }
 
-pub(crate) fn validate_direct_adjustment(operation: u32, parameters: &[f32]) -> Result<(), JsValue> {
+pub(crate) fn validate_direct_adjustment(
+    operation: u32,
+    parameters: &[f32],
+) -> Result<(), JsValue> {
     let valid = match operation {
         2 => parameters.len() >= 2,
         3 => parameters.len() >= 3,
@@ -115,7 +118,11 @@ pub(crate) fn validate_direct_adjustment(operation: u32, parameters: &[f32]) -> 
     }
 }
 
-pub(crate) fn apply_direct_adjustment(operation: u32, parameters: &[f32], color: [f32; 3]) -> [f32; 3] {
+pub(crate) fn apply_direct_adjustment(
+    operation: u32,
+    parameters: &[f32],
+    color: [f32; 3],
+) -> [f32; 3] {
     let [mut red, mut green, mut blue] = color;
     match operation {
         2 => {
@@ -131,9 +138,7 @@ pub(crate) fn apply_direct_adjustment(operation: u32, parameters: &[f32], color:
             let offset = parameters[1];
             let gamma = parameters[2].max(0.01);
             red = (red * multiplier + offset).max(0.0).powf(1.0 / gamma);
-            green = (green * multiplier + offset)
-                .max(0.0)
-                .powf(1.0 / gamma);
+            green = (green * multiplier + offset).max(0.0).powf(1.0 / gamma);
             blue = (blue * multiplier + offset).max(0.0).powf(1.0 / gamma);
         }
         4 => {
@@ -175,8 +180,11 @@ pub(crate) fn apply_direct_adjustment(operation: u32, parameters: &[f32], color:
                 blue += parameters[base + 2] / 100.0 * weights[range];
             }
             if parameters[9] > 0.5 {
-                let (hue, saturation, _) =
-                    rgb_to_hsl_f32(clamp_unit_f32(red), clamp_unit_f32(green), clamp_unit_f32(blue));
+                let (hue, saturation, _) = rgb_to_hsl_f32(
+                    clamp_unit_f32(red),
+                    clamp_unit_f32(green),
+                    clamp_unit_f32(blue),
+                );
                 [red, green, blue] = hsl_to_rgb_f32(hue, saturation, original_lightness);
             }
         }
@@ -233,5 +241,9 @@ pub(crate) fn apply_direct_adjustment(operation: u32, parameters: &[f32], color:
         }
         _ => {}
     }
-    [clamp_unit_f32(red), clamp_unit_f32(green), clamp_unit_f32(blue)]
+    [
+        clamp_unit_f32(red),
+        clamp_unit_f32(green),
+        clamp_unit_f32(blue),
+    ]
 }

@@ -20,9 +20,9 @@
  *       other, and would have agreed with any golden captured from either,
  *       while both were wrong.
  *
- * This decoder has no TypeScript counterpart: the `_parseNpy`/`_parseNpz`
- * parsers it replaced have been deleted, so Rust is the single
- * implementation and the differential check that used to run here is gone.
+ * Rust remains the complete NPY/NPZ decoder. A separately tested TypeScript
+ * hot path handles only native little-endian float32 NPY arrays and delegates
+ * every other dtype/layout and all NPZ files to this implementation.
  *
  * Run with: node test/rust-npy-conformance-test.js
  */

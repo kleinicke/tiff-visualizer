@@ -33,9 +33,12 @@ declare module '*/wasm/tiff-wasm.js' {
     export const decode_jpeg_fast: any;
     export const decode_netcdf_fast: any;
     export const decode_npy_fast: any;
+    export const decode_npy_display_fast: any;
     export const decode_pfm_fast: any;
+    export const decode_pfm_display_fast: any;
     export const decode_png16_fast: any;
     export const decode_ppm_fast: any;
+    export const decode_ppm_display_fast: any;
     export const RgbaLayerCompositor: any;
     export const decode_tiff: any;
     export const decode_tiff_fast: any;

@@ -268,10 +268,89 @@ pub(crate) fn decode_ppm_impl(
         data_f32: Vec::new(),
         data_u8,
         data_u16,
+        source_data_offset: 0,
+        can_reuse_source: false,
         data_min: 0.0,
         data_max: 0.0,
         non_finite_count: 0.0,
         valid_count: 0.0,
     }
     .maybe_finalize_stats(compute_stats))
+}
+
+/// Fast path for the dominant large NetPBM case. The Vec is the allocation
+/// wasm-bindgen made while copying the transferred JavaScript source into
+/// WASM. Move each big-endian u16 sample to the beginning of that same Vec in
+/// native byte order, then return the compact prefix as carrier kind 3
+/// (`native u16 bytes`). Processing forward is overlap-safe because the
+/// destination always precedes the raster source by the header length.
+pub(crate) fn decode_ppm_display_owned_impl(
+    mut data: Vec<u8>,
+) -> Result<DecodedArray, DecodeError> {
+    let mut offset = 0usize;
+    let magic = read_token(&data, &mut offset);
+    if magic != "P5" && magic != "P6" {
+        return decode_ppm_impl(&data, false);
+    }
+    let channels = if magic == "P6" { 3usize } else { 1usize };
+    let width = read_number(&data, &mut offset).unwrap_or(0);
+    let height = read_number(&data, &mut offset).unwrap_or(0);
+    let maxval = read_number(&data, &mut offset).unwrap_or(0);
+    if width <= 0 || height <= 0 || maxval <= 255 || maxval > 65535 {
+        return decode_ppm_impl(&data, false);
+    }
+    if offset < data.len() && is_ws(data[offset]) {
+        offset += 1;
+    }
+    let width = width as usize;
+    let height = height as usize;
+    let total_values = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(channels))
+        .ok_or_else(|| DecodeError::new("PPM/PGM dimensions overflow"))?;
+    let raster_bytes = total_values
+        .checked_mul(2)
+        .ok_or_else(|| DecodeError::new("PPM/PGM raster size overflow"))?;
+    if offset
+        .checked_add(raster_bytes)
+        .is_none_or(|end| end > data.len())
+    {
+        return Err(DecodeError::new("Insufficient data for binary PPM/PGM"));
+    }
+    for i in 0..total_values {
+        let source = offset + i * 2;
+        let native = u16::from_be_bytes([data[source], data[source + 1]]).to_ne_bytes();
+        data[i * 2] = native[0];
+        data[i * 2 + 1] = native[1];
+    }
+    data.truncate(raster_bytes);
+
+    Ok(DecodedArray {
+        taken: false,
+        width: width as u32,
+        height: height as u32,
+        channels: channels as u32,
+        bits_per_sample: 16,
+        sample_format: 1,
+        type_min: 0.0,
+        type_max: maxval as f64,
+        source_numeric_type: "uint16".to_string(),
+        sample_kind: 3,
+        format_label: if channels == 3 {
+            "PPM (Binary)"
+        } else {
+            "PGM (Binary)"
+        }
+        .to_string(),
+        metadata_json: "{}".to_string(),
+        data_f32: Vec::new(),
+        data_u8: data,
+        data_u16: Vec::new(),
+        source_data_offset: 0,
+        can_reuse_source: false,
+        data_min: 0.0,
+        data_max: 0.0,
+        non_finite_count: 0.0,
+        valid_count: 0.0,
+    })
 }

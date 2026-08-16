@@ -1,12 +1,13 @@
 "use strict";
 /**
- * Shared Rust/WASM decode entry points for the seven formats whose
- * byte-parsing lives entirely in Rust: PFM, NetPBM (PBM/PGM/PPM), NPY/NPZ,
+ * Shared Rust/WASM decode entry points for PFM, NetPBM (PBM/PGM/PPM), NPY/NPZ,
  * FITS, classic NetCDF, DICOM and CZI.
  *
- * There is exactly ONE implementation of each of these decoders (the Rust
- * crate in `wasm/tiff-decoder`), and exactly one copy of the JS-side result
- * assembly — this file. Both callers use it:
+ * The Rust crate in `wasm/tiff-decoder` is the complete, authoritative decoder
+ * for every variant. Common binary NetPBM and native float32 NPY files may use
+ * a conservative TypedArray hot path first; unsupported inputs are returned
+ * untouched to this Rust path. There is exactly one copy of the Rust result
+ * assembly — this file. Both Rust callers use it:
  *
  *   - `media/decode-worker.ts`, the normal off-thread path;
  *   - the format processors' main-thread path, taken when the decode worker is
@@ -49,12 +50,57 @@ function timing(format: string, startedAt: number): DecodeTiming[] {
 /**
  * Reads the raster out of a `DecodedArray` result via whichever
  * `take_data_as_*` getter `sample_kind` says actually holds data
- * (0 = f32, 1 = u8, 2 = u16). Called exactly once per result.
+ * (0 = f32, 1 = u8, 2 = u16, 3 = native-endian u16 bytes). Called exactly
+ * once per result.
  */
-function takeDecodedData(result: any): Float32Array | Uint8Array | Uint16Array {
+function takeDecodedData(result: any, reusableBuffer?: ArrayBuffer): Float32Array | Uint8Array | Uint16Array {
+	const length = Number(result.data_len || 0);
+	if (reusableBuffer && Number.isSafeInteger(length) && length >= 0) {
+		const sourceOffset = Number(result.source_data_offset || 0);
+		if (result.can_reuse_source === true && result.sample_kind === 0 &&
+			Number.isSafeInteger(sourceOffset) && sourceOffset >= 0 && sourceOffset % 4 === 0 &&
+			sourceOffset + length * 4 <= reusableBuffer.byteLength && typeof result.discard_data === 'function') {
+			const target = new Float32Array(reusableBuffer, sourceOffset, length);
+			result.discard_data();
+			return target;
+		}
+			switch (result.sample_kind) {
+			case 1:
+				if (reusableBuffer.byteLength >= length && typeof result.copy_data_as_u8_into === 'function') {
+					const target = new Uint8Array(reusableBuffer, 0, length);
+					result.copy_data_as_u8_into(target);
+					return target;
+				}
+				break;
+			case 2:
+				if (reusableBuffer.byteLength >= length * 2 && typeof result.copy_data_as_u16_into === 'function') {
+					const target = new Uint16Array(reusableBuffer, 0, length);
+					result.copy_data_as_u16_into(target);
+					return target;
+				}
+				break;
+			case 3:
+				if (reusableBuffer.byteLength >= length * 2 && typeof result.copy_data_as_u8_into === 'function') {
+					const bytes = new Uint8Array(reusableBuffer, 0, length * 2);
+					result.copy_data_as_u8_into(bytes);
+					return new Uint16Array(reusableBuffer, 0, length);
+				}
+				break;
+			default:
+				if (reusableBuffer.byteLength >= length * 4 && typeof result.copy_data_as_f32_into === 'function') {
+					const target = new Float32Array(reusableBuffer, 0, length);
+					result.copy_data_as_f32_into(target);
+					return target;
+				}
+		}
+	}
 	switch (result.sample_kind) {
 		case 1: return result.take_data_as_u8();
 		case 2: return result.take_data_as_u16();
+		case 3: {
+			const bytes = result.take_data_as_u8() as Uint8Array;
+			return new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+		}
 		default: return result.take_data_as_f32();
 	}
 }
@@ -80,8 +126,9 @@ function assembleDecoded<
 	N extends string = 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float32' | 'float64',
 >(
 	result: any, format: string, context: DecodeContext, startedAt: number, statsReady = true,
+	reusableBuffer?: ArrayBuffer,
 ) {
-	const data = takeDecodedData(result) as T;
+	const data = takeDecodedData(result, reusableBuffer) as T;
 	const metadata = JSON.parse(result.metadata_json);
 	return {
 		width: result.width as number,
@@ -121,7 +168,7 @@ export function decodePfmWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodePfmFast(new Uint8Array(buffer), topDown);
-	return assembleDecoded<Float32Array>(result, 'pfm', context, startedAt, false);
+	return assembleDecoded<Float32Array>(result, 'pfm', context, startedAt, false, buffer);
 }
 
 /** NetPBM. The carrier is u16 only when the header's maxval exceeds 255. */
@@ -132,7 +179,7 @@ export function decodePpmWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodePpmFast(new Uint8Array(buffer));
-	return assembleDecoded<Uint8Array | Uint16Array>(result, 'ppm', context, startedAt, false);
+	return assembleDecoded<Uint8Array | Uint16Array>(result, 'ppm', context, startedAt, false, buffer);
 }
 
 /**
@@ -148,7 +195,7 @@ export function decodeNpyWithWasm(
 	const startedAt = performance.now();
 	const result = decodeNpyFast(new Uint8Array(buffer));
 	return assembleDecoded<Float32Array, 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float16' | 'float32' | 'float64'>(
-		result, 'npy', context, startedAt);
+		result, 'npy', context, startedAt, true, buffer);
 }
 
 export function decodeFitsWithWasm(

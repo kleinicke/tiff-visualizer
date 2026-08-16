@@ -17,7 +17,7 @@ import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
 import { DebayerPanel } from './modules/debayer-panel.js';
-import { DEFAULT_DEBAYER, warmUpDebayer, invalidateDebayerCache, shouldDebayer, CFA_DETECTED_EVENT, getLastDebayerGains, getDebayeredPixel, type DebayerSettings } from './modules/debayer.js';
+import { DEFAULT_DEBAYER, invalidateDebayerCache, shouldDebayer, CFA_DETECTED_EVENT, getLastDebayerGains, getDebayeredPixel, type DebayerSettings } from './modules/debayer.js';
 import { MetadataPanel } from './modules/metadata-panel.js';
 import type { MetadataInfo } from './modules/metadata-panel.js';
 import { MeasurePanel } from './modules/measure-panel.js';
@@ -40,6 +40,7 @@ import type { TagEntry } from './modules/tiff-tag-utils.js';
 import { ColormapConverter } from './modules/colormap-converter.js';
 import { ImageRenderer, ImageStatsCalculator } from './modules/normalization-helper.js';
 import { DecodeWorkerClient } from './modules/decode-worker-client.js';
+import { FastRawWorkerClient } from './modules/fast-raw-worker-client.js';
 import {
 	LayerCompositorWorkerClient,
 	layerDisplayScale,
@@ -147,22 +148,29 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
 	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, layeredPreviewProcessor, ...scientificProcessors];
-	// Off-thread decode worker, pre-warmed in the background. Processors fall
-	// back to their local (main-thread) decoders until it is ready or if it
-	// is unavailable, so worker failures never break image loading.
+	// Off-thread decoder. It is started by loadImageByType only for formats that
+	// need it; eagerly compiling the full WASM module made native JPEG/PNG/WebP
+	// loads compete with a decoder they never use.
 	const decodeWorkerClient = new DecodeWorkerClient();
-	decodeWorkerClient.start();
+	const fastRawWorkerClient = new FastRawWorkerClient(decodeWorkerClient);
 	const layerCompositorWorker = new LayerCompositorWorkerClient();
 	layerCompositorWorker.start();
 	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
+	// Binary NetPBM and native float32 NPY are already TypedArray-compatible.
+	// Their tiny worker avoids the full decoder bundle and WASM memory roundtrip;
+	// unsupported variants return their input and use the complete Rust path.
+	ppmProcessor.decodeWorker = fastRawWorkerClient;
+	npyProcessor.decodeWorker = fastRawWorkerClient;
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const metadataPanel = new MetadataPanel(settingsManager, vscode);
 	const debayerPanel = new DebayerPanel(settings => { void handleDebayerSettingsChanged(settings); });
-	// The render path calls into WASM synchronously, so load it up front.
-	warmUpDebayer();
+	// Do not initialize the multi-megabyte WASM module merely because the
+	// optional debayer UI exists. The decoder worker owns normal image startup;
+	// debayer's synchronous path already has a JS fallback and initializes WASM
+	// lazily when the feature is actually used.
 	// A file that declares itself a CFA mosaic gets the panel opened for it;
 	// the mode still has to be switched on deliberately, so nothing about the
 	// image changes without the user asking.
@@ -607,10 +615,14 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		scalarPlaneCache = null;
 		refreshMeasureCalibration();
 		measurePanel.onImageChanged();
-		// Channel planes belong to the image, so a new one invalidates them. The
-		// composite is re-drawn only if it was already on, so navigating does not
-		// silently switch modes.
-		rebuildChannelPlanes();
+		// Channel planes belong to the image, but deinterleaving a 5120² RGB
+		// raster creates three additional full-size Float32Arrays (~300 MiB).
+		// Build them only for a feature that consumes them; opening the Channels
+		// panel also calls rebuildChannelPlanes through its getPlanes callback.
+		channelGeneration = -1;
+		channelPlanes = [];
+		channelSolo = null;
+		if (compositeEnabled || channelsPanel.isVisible()) { rebuildChannelPlanes(); }
 		if (compositeEnabled) { scheduleCompositeRender(); }
 		// Ask whether this image has ROIs saved beside it. Cheap, silent when
 		// there are none, and it is what makes the sidecar feel like part of the
@@ -747,6 +759,12 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			// Tell the extension so it can track layer mode (and block collection ops).
 			vscode.postMessage({ type: 'layerModeChanged', active: visible });
 			if (visible) {
+				// Backend probing can initialize WebGPU or a second copy of the
+				// multi-megabyte WASM module. Keep that work out of ordinary image
+				// startup and perform it only when Layers is actually opened.
+				if (_layerCompositorSelection === 'auto') {
+					void selectAutomaticLayerBackend(true);
+				}
 				if (!installLayeredDocumentLayers()) { syncBaseLayer(); }
 				const stateRevision = ++_layerStateRevision;
 				schedulePreviewThenNative(stateRevision, 60);
@@ -1243,13 +1261,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		// Without this, reverting a colormap decode would leave the menu/status
 		// bars showing the decoded single-channel-float format instead of the
 		// original image's format.
-		// A plane change stays inside the same file and format, so the per-format
-		// defaults have already been negotiated. Re-arming the flag would defer the
-		// render for another round trip to the extension host on every step, which
-		// is what made dragging a slider feel like reloading the file.
-		if (!options.planeChange) {
-			for (const p of allProcessors) { p._isInitialLoad = true; }
-		}
+		for (const p of allProcessors) { p._isInitialLoad = true; }
 
 		// Clear stats in UI to prevent stale values
 		vscode.postMessage({ type: 'stats', value: null });
@@ -1367,9 +1379,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		applyLayerCompositorBackend(backend, rerender, forceColdRender);
 	}
 
-	if (_layerCompositorSelection === 'auto') {
-		void selectAutomaticLayerBackend(false);
-	} else {
+	if (_layerCompositorSelection !== 'auto') {
 		applyLayerCompositorBackend(_layerCompositorSelection, false);
 	}
 
@@ -3183,6 +3193,9 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				if (!wasLayerActive) {
 					layerManager.active = true;
 					vscode.postMessage({ type: 'layerModeChanged', active: true });
+					if (_layerCompositorSelection === 'auto') {
+						void selectAutomaticLayerBackend(true);
+					}
 				}
 				PerfTrace.mark('layers-panel-show');
 				let addedLayers = 0;
@@ -5945,6 +5958,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		_pendingZoomState = zoomController.getCurrentState();
 		_loadAbortController?.abort();
 		decodeWorkerClient.cancelActiveDecodes();
+		fastRawWorkerClient.cancelActiveDecodes();
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
 		resetTiffCanvasReady();
@@ -6284,6 +6298,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		// running to completion and blocking the next image.
 		if (_loadAbortController) { _loadAbortController.abort(); }
 		decodeWorkerClient.cancelActiveDecodes();
+		fastRawWorkerClient.cancelActiveDecodes();
 		resetTiffCanvasReady();
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
@@ -6372,6 +6387,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		// One lookup instead of an ordered if/else chain, so no branch can
 		// silently shadow another and the routing is inspectable in one table.
 		const format = resolveFormat(resourceUri, formatHint);
+		if (format?.kind === 'netpbm' || format?.kind === 'npy') {
+			void fastRawWorkerClient.start();
+		} else if (format && !['png', 'tga', 'web-image', 'jxl'].includes(format.kind)) {
+			// Boot alongside the format's file fetch. PNG starts this itself only
+			// after its IHDR confirms that the 16-bit worker path is necessary.
+			void decodeWorkerClient.start();
+		}
 		if (format?.kind === 'layered' && layeredFormat) {
 			handleLayeredPreview(layeredFormat, uri, gen);
 		} else if (format?.kind === 'tiff') {

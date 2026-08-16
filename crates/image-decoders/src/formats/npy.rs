@@ -29,6 +29,8 @@ pub(crate) struct NpyParsed {
     pub type_min: f64,
     pub type_max: f64,
     pub data: Vec<f32>,
+    pub source_data_offset: Option<usize>,
+    pub source_stats: Option<crate::pipeline::stats::ImageRange>,
 }
 
 /// Derives the numeric-domain fields (bits/sample_format/source_numeric_type/
@@ -103,15 +105,26 @@ const ZIP_LOCAL_HEADER_SIG: u32 = 0x04034b50;
 /// on the ZIP local-file-header signature in the first 4 bytes — mirroring
 /// `decodeFormat`'s `case 'npy':` arm in `media/decode-worker.ts`.
 pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    decode_npy_impl_with_source_reuse(data, false)
+}
+
+pub(crate) fn decode_npy_display_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    decode_npy_impl_with_source_reuse(data, true)
+}
+
+fn decode_npy_impl_with_source_reuse(
+    data: &[u8],
+    reuse_plain_native_f32: bool,
+) -> Result<DecodedArray, DecodeError> {
     let parsed = if data.len() >= 4 {
         let sig = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         if sig == ZIP_LOCAL_HEADER_SIG {
             decode_npz(data)?
         } else {
-            decode_npy_single(data)?
+            decode_npy_single(data, reuse_plain_native_f32)?
         }
     } else {
-        decode_npy_single(data)?
+        decode_npy_single(data, reuse_plain_native_f32)?
     };
 
     let metadata_json = to_json_string(&JsonValue::Obj(vec![(
@@ -119,7 +132,8 @@ pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> 
         JsonValue::Str(parsed.dtype.clone()),
     )]));
 
-    Ok(DecodedArray {
+    let source_stats = parsed.source_stats;
+    let decoded = DecodedArray {
         taken: false,
         width: parsed.width,
         height: parsed.height,
@@ -135,12 +149,18 @@ pub(crate) fn decode_npy_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> 
         data_f32: parsed.data,
         data_u8: Vec::new(),
         data_u16: Vec::new(),
+        source_data_offset: parsed.source_data_offset.unwrap_or(0),
+        can_reuse_source: parsed.source_data_offset.is_some(),
         data_min: 0.0,
         data_max: 0.0,
         non_finite_count: 0.0,
         valid_count: 0.0,
+    };
+    if let Some(stats) = source_stats {
+        Ok(decoded.with_precomputed_range(stats))
+    } else {
+        Ok(decoded.finalize_stats())
     }
-    .finalize_stats())
 }
 
 /// Loose `parseInt(str, 10)` equivalent: optional sign, then a run of ASCII
@@ -381,7 +401,10 @@ fn read_npy_samples(
 }
 
 /// Decode a single `.npy` buffer (also used per-entry from `.npz`).
-pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, DecodeError> {
+pub(crate) fn decode_npy_single(
+    data: &[u8],
+    reuse_native_f32: bool,
+) -> Result<NpyParsed, DecodeError> {
     let magic = data
         .get(0..6)
         .ok_or_else(|| DecodeError::new("Invalid NPY file"))?;
@@ -449,18 +472,44 @@ pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, DecodeError> {
 
     let elems = width.saturating_mul(height).saturating_mul(channels);
     let off = header_start + header_len;
-    let raw = read_npy_samples(data, off, elems, &dtype)?;
+    let reusable_native_f32 = reuse_native_f32
+        && (dtype == "<f4" || dtype == "=f4")
+        && cfg!(target_endian = "little")
+        && (channels == 1 || channels == 3 || channels == 4)
+        && off % std::mem::align_of::<f32>() == 0
+        && (data.as_ptr() as usize + off) % std::mem::align_of::<f32>() == 0;
 
-    let out = if channels == 1 || channels == 3 || channels == 4 {
-        raw
+    let (out, source_data_offset, source_stats) = if reusable_native_f32 {
+        let byte_len = elems.checked_mul(4).ok_or_else(oob)?;
+        let bytes = get_slice(data, off, byte_len)?;
+        // SAFETY: both the base pointer + NPY raster offset and byte length were
+        // checked for f32 alignment above. Native little-endian f32 is the exact
+        // source representation, so the borrowed slice needs no conversion.
+        let samples = unsafe { std::slice::from_raw_parts(bytes.as_ptr() as *const f32, elems) };
+        let stats = crate::pipeline::stats::compute_image_range_f32(
+            samples,
+            width as u32,
+            height as u32,
+            channels as u32,
+        );
+        // JavaScript will create a view over its original transferred ArrayBuffer.
+        // Do not allocate and populate an identical full-size Vec merely to throw it
+        // away at the WASM boundary.
+        (Vec::new(), Some(off), Some(stats))
     } else {
-        // Any other channel count: keep only the first channel, but STILL
-        // report the original `channels` value, exactly as the TS does.
-        let mut o = vec![0f32; width * height];
-        for (i, slot) in o.iter_mut().enumerate() {
-            *slot = *raw.get(i * channels).unwrap_or(&0.0);
-        }
-        o
+        let raw = read_npy_samples(data, off, elems, &dtype)?;
+        let out = if channels == 1 || channels == 3 || channels == 4 {
+            raw
+        } else {
+            // Any other channel count: keep only the first channel, but STILL
+            // report the original `channels` value, exactly as the TS does.
+            let mut o = vec![0f32; width * height];
+            for (i, slot) in o.iter_mut().enumerate() {
+                *slot = *raw.get(i * channels).unwrap_or(&0.0);
+            }
+            o
+        };
+        (out, None, None)
     };
 
     Ok(NpyParsed {
@@ -474,6 +523,8 @@ pub(crate) fn decode_npy_single(data: &[u8]) -> Result<NpyParsed, DecodeError> {
         type_min,
         type_max,
         data: out,
+        source_data_offset,
+        source_stats,
     })
 }
 
@@ -547,7 +598,9 @@ fn decode_npz(data: &[u8]) -> Result<NpyParsed, DecodeError> {
                 // The NPY header inside self-describes its own length, so an
                 // over-long slice is harmless — trailing bytes are ignored.
                 let entry_bytes = get_slice(data, data_offset, entry_size)?;
-                let parsed = decode_npy_single(entry_bytes)?;
+                // This offset is relative to an extracted ZIP entry rather
+                // than the caller's original NPZ buffer, so it cannot be reused.
+                let parsed = decode_npy_single(entry_bytes, false)?;
                 let key = replace_first(&file_name, ".npy");
                 match arrays.iter_mut().find(|(k, _)| k == &key) {
                     Some(existing) => existing.1 = parsed,

@@ -1,8 +1,8 @@
 mod decoder_bindings;
 pub use decoder_bindings::*;
 
-mod measure;
 mod compositor;
+mod measure;
 mod pipeline {
     pub mod stats {
         pub use scientific_image_decoders::stats::*;
@@ -32,19 +32,33 @@ pub struct ImageStats {
 #[wasm_bindgen]
 impl ImageStats {
     #[wasm_bindgen(getter)]
-    pub fn min(&self) -> f64 { self.min }
+    pub fn min(&self) -> f64 {
+        self.min
+    }
     #[wasm_bindgen(getter)]
-    pub fn max(&self) -> f64 { self.max }
+    pub fn max(&self) -> f64 {
+        self.max
+    }
     #[wasm_bindgen(getter)]
-    pub fn mean(&self) -> f64 { self.mean }
+    pub fn mean(&self) -> f64 {
+        self.mean
+    }
     #[wasm_bindgen(getter)]
-    pub fn std(&self) -> f64 { self.std }
+    pub fn std(&self) -> f64 {
+        self.std
+    }
     #[wasm_bindgen(getter)]
-    pub fn valid_count(&self) -> f64 { self.valid_count }
+    pub fn valid_count(&self) -> f64 {
+        self.valid_count
+    }
     #[wasm_bindgen(getter)]
-    pub fn non_finite_count(&self) -> f64 { self.non_finite_count }
+    pub fn non_finite_count(&self) -> f64 {
+        self.non_finite_count
+    }
     #[wasm_bindgen(getter)]
-    pub fn total_count(&self) -> f64 { self.total_count }
+    pub fn total_count(&self) -> f64 {
+        self.total_count
+    }
 }
 
 impl From<pipeline::stats::RawImageStats> for ImageStats {
@@ -70,7 +84,13 @@ impl From<pipeline::stats::RawImageStats> for ImageStats {
 /// for the exact non-finite-handling semantics this must stay bit-identical
 /// to (CLAUDE.md's `!Number.isFinite()` rule).
 #[wasm_bindgen]
-pub fn compute_image_stats_f32(data: &[f32], width: u32, height: u32, channels: u32, extended: bool) -> ImageStats {
+pub fn compute_image_stats_f32(
+    data: &[f32],
+    width: u32,
+    height: u32,
+    channels: u32,
+    extended: bool,
+) -> ImageStats {
     pipeline::stats::compute_image_stats_f32_impl(data, width, height, channels, extended).into()
 }
 
@@ -80,14 +100,28 @@ pub fn compute_image_stats_f32(data: &[f32], width: u32, height: u32, channels: 
 /// `pipeline::stats::compute_image_stats_uint_impl`); it only takes effect
 /// when `channels >= 3`, matching the TS guard.
 #[wasm_bindgen]
-pub fn compute_image_stats_u8(data: &[u8], width: u32, height: u32, channels: u32, rgb_as_24bit: bool) -> ImageStats {
-    pipeline::stats::compute_image_stats_uint_impl(data, width, height, channels, rgb_as_24bit).into()
+pub fn compute_image_stats_u8(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    channels: u32,
+    rgb_as_24bit: bool,
+) -> ImageStats {
+    pipeline::stats::compute_image_stats_uint_impl(data, width, height, channels, rgb_as_24bit)
+        .into()
 }
 
 /// Min/max/mean/std over a uint16 raster. See `compute_image_stats_u8`.
 #[wasm_bindgen]
-pub fn compute_image_stats_u16(data: &[u16], width: u32, height: u32, channels: u32, rgb_as_24bit: bool) -> ImageStats {
-    pipeline::stats::compute_image_stats_uint_impl(data, width, height, channels, rgb_as_24bit).into()
+pub fn compute_image_stats_u16(
+    data: &[u16],
+    width: u32,
+    height: u32,
+    channels: u32,
+    rgb_as_24bit: bool,
+) -> ImageStats {
+    pipeline::stats::compute_image_stats_uint_impl(data, width, height, channels, rgb_as_24bit)
+        .into()
 }
 
 /// Connected-component labelling result.
@@ -108,13 +142,19 @@ pub struct LabelResult {
 #[wasm_bindgen]
 impl LabelResult {
     #[wasm_bindgen(getter)]
-    pub fn count(&self) -> u32 { self.count }
+    pub fn count(&self) -> u32 {
+        self.count
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.width }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
 
     #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.height }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 
     /// Moves the label image out. One-shot; see `DecodedArray::take_data_as_f32`.
     #[wasm_bindgen]
@@ -122,7 +162,7 @@ impl LabelResult {
         if self.taken {
             return Err(JsValue::from_str(
                 "LabelResult::take_labels_as_i32 called more than once. The labels are moved \
-                 out on the first call, not copied. Take them once and reuse that array."
+                 out on the first call, not copied. Take them once and reuse that array.",
             ));
         }
         self.taken = true;
@@ -140,15 +180,26 @@ pub fn label_components_fast(
 ) -> Result<LabelResult, JsValue> {
     let w = width as usize;
     let h = height as usize;
-    let expected = w.checked_mul(h)
+    let expected = w
+        .checked_mul(h)
         .ok_or_else(|| JsValue::from_str("Mask dimensions overflow"))?;
     if mask.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Mask has {} entries but {}x{} needs {}", mask.len(), width, height, expected
+            "Mask has {} entries but {}x{} needs {}",
+            mask.len(),
+            width,
+            height,
+            expected
         )));
     }
     let out = measure::components::label_components(mask, w, h, connectivity);
-    Ok(LabelResult { labels: out.labels, count: out.count, width, height, taken: false })
+    Ok(LabelResult {
+        labels: out.labels,
+        count: out.count,
+        width,
+        height,
+        taken: false,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -170,15 +221,25 @@ pub struct HistogramResult {
 #[wasm_bindgen]
 impl HistogramResult {
     #[wasm_bindgen(getter)]
-    pub fn counts(&self) -> Vec<i32> { self.counts.clone() }
+    pub fn counts(&self) -> Vec<i32> {
+        self.counts.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn min(&self) -> f64 { self.min }
+    pub fn min(&self) -> f64 {
+        self.min
+    }
     #[wasm_bindgen(getter)]
-    pub fn max(&self) -> f64 { self.max }
+    pub fn max(&self) -> f64 {
+        self.max
+    }
     #[wasm_bindgen(getter)]
-    pub fn total(&self) -> u32 { self.total }
+    pub fn total(&self) -> u32 {
+        self.total
+    }
     #[wasm_bindgen(getter)]
-    pub fn non_finite_count(&self) -> u32 { self.non_finite_count }
+    pub fn non_finite_count(&self) -> u32 {
+        self.non_finite_count
+    }
 }
 
 /// Build the 256-bin histogram of a scalar plane. `step` subsamples for
@@ -186,13 +247,21 @@ impl HistogramResult {
 #[wasm_bindgen]
 pub fn build_histogram_fast(plane: &[f32], step: u32) -> HistogramResult {
     let h = measure::threshold::build_histogram(plane, step.max(1) as usize);
-    HistogramResult { counts: h.counts, min: h.min, max: h.max, total: h.total, non_finite_count: h.non_finite_count }
+    HistogramResult {
+        counts: h.counts,
+        min: h.min,
+        max: h.max,
+        total: h.total,
+        non_finite_count: h.non_finite_count,
+    }
 }
 
 fn counts_from_slice(counts: &[i32]) -> Result<[i32; measure::threshold::HISTOGRAM_BINS], JsValue> {
     if counts.len() != measure::threshold::HISTOGRAM_BINS {
         return Err(JsValue::from_str(&format!(
-            "Histogram must have exactly {} bins, got {}", measure::threshold::HISTOGRAM_BINS, counts.len()
+            "Histogram must have exactly {} bins, got {}",
+            measure::threshold::HISTOGRAM_BINS,
+            counts.len()
         )));
     }
     let mut out = [0i32; measure::threshold::HISTOGRAM_BINS];
@@ -232,10 +301,16 @@ pub fn local_threshold_mask_fast(
 ) -> Result<Vec<u8>, JsValue> {
     let w = width as usize;
     let h = height as usize;
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
     if plane.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Plane has {} samples but {}x{} needs {}", plane.len(), width, height, expected
+            "Plane has {} samples but {}x{} needs {}",
+            plane.len(),
+            width,
+            height,
+            expected
         )));
     }
     let options = measure::threshold::LocalThresholdOptions {
@@ -243,10 +318,16 @@ pub fn local_threshold_mask_fast(
         radius,
         k,
         r: if r.is_finite() { Some(r) } else { None },
-        offset: if offset.is_finite() { Some(offset) } else { None },
+        offset: if offset.is_finite() {
+            Some(offset)
+        } else {
+            None
+        },
         dark_background,
     };
-    Ok(measure::threshold::local_threshold_mask(plane, w, h, &options))
+    Ok(measure::threshold::local_threshold_mask(
+        plane, w, h, &options,
+    ))
 }
 
 /// Any global auto-threshold method applied per neighbourhood, bilinearly
@@ -264,19 +345,31 @@ pub fn local_auto_threshold_mask_fast(
 ) -> Result<Vec<u8>, JsValue> {
     let w = width as usize;
     let h = height as usize;
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
     if plane.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Plane has {} samples but {}x{} needs {}", plane.len(), width, height, expected
+            "Plane has {} samples but {}x{} needs {}",
+            plane.len(),
+            width,
+            height,
+            expected
         )));
     }
     let options = measure::threshold::LocalAutoThresholdOptions {
         method: method.to_string(),
         radius,
         dark_background,
-        min_contrast: if min_contrast.is_finite() { Some(min_contrast) } else { None },
+        min_contrast: if min_contrast.is_finite() {
+            Some(min_contrast)
+        } else {
+            None
+        },
     };
-    Ok(measure::threshold::local_auto_threshold_mask(plane, w, h, &options))
+    Ok(measure::threshold::local_auto_threshold_mask(
+        plane, w, h, &options,
+    ))
 }
 
 /// Object count / area-fraction as a function of threshold, for the stability
@@ -294,17 +387,29 @@ pub struct StabilityCurveResult {
 #[wasm_bindgen]
 impl StabilityCurveResult {
     #[wasm_bindgen(getter)]
-    pub fn bins(&self) -> Vec<i32> { self.bins.clone() }
+    pub fn bins(&self) -> Vec<i32> {
+        self.bins.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn values(&self) -> Vec<f64> { self.values.clone() }
+    pub fn values(&self) -> Vec<f64> {
+        self.values.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn object_counts(&self) -> Vec<u32> { self.object_counts.clone() }
+    pub fn object_counts(&self) -> Vec<u32> {
+        self.object_counts.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn area_fractions(&self) -> Vec<f64> { self.area_fractions.clone() }
+    pub fn area_fractions(&self) -> Vec<f64> {
+        self.area_fractions.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn suggested_bin(&self) -> i32 { self.suggested_bin }
+    pub fn suggested_bin(&self) -> i32 {
+        self.suggested_bin
+    }
     #[wasm_bindgen(getter)]
-    pub fn plateau_width(&self) -> i32 { self.plateau_width }
+    pub fn plateau_width(&self) -> i32 {
+        self.plateau_width
+    }
 }
 
 #[wasm_bindgen]
@@ -321,10 +426,16 @@ pub fn compute_stability_curve_fast(
 ) -> Result<StabilityCurveResult, JsValue> {
     let w = width as usize;
     let h = height as usize;
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
     if plane.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Plane has {} samples but {}x{} needs {}", plane.len(), width, height, expected
+            "Plane has {} samples but {}x{} needs {}",
+            plane.len(),
+            width,
+            height,
+            expected
         )));
     }
     // Only min/max feed `compute_stability_curve` (via threshold_value_from_bin);
@@ -337,7 +448,10 @@ pub fn compute_stability_curve_fast(
         non_finite_count: 0,
     };
     let curve = measure::threshold::compute_stability_curve(
-        plane, w, h, &histogram,
+        plane,
+        w,
+        h,
+        &histogram,
         samples.max(1) as usize,
         max_pixels.max(1) as usize,
         dark_background,
@@ -353,7 +467,10 @@ pub fn compute_stability_curve_fast(
         area_fractions.push(p.area_fraction);
     }
     Ok(StabilityCurveResult {
-        bins, values, object_counts, area_fractions,
+        bins,
+        values,
+        object_counts,
+        area_fractions,
         suggested_bin: curve.suggested_bin,
         plateau_width: curve.plateau_width,
     })
@@ -363,10 +480,17 @@ pub fn compute_stability_curve_fast(
 #[wasm_bindgen]
 pub fn fill_mask_holes_fast(mask: &[u8], width: u32, height: u32) -> Result<Vec<u8>, JsValue> {
     let (w, h) = (width as usize, height as usize);
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Mask dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Mask dimensions overflow"))?;
     if mask.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Mask has {} entries but {}x{} needs {}", mask.len(), width, height, expected)));
+            "Mask has {} entries but {}x{} needs {}",
+            mask.len(),
+            width,
+            height,
+            expected
+        )));
     }
     Ok(measure::morphology::fill_mask_holes(mask, w, h))
 }
@@ -377,10 +501,17 @@ pub fn fill_mask_holes_fast(mask: &[u8], width: u32, height: u32) -> Result<Vec<
 #[wasm_bindgen]
 pub fn distance_transform_fast(mask: &[u8], width: u32, height: u32) -> Result<Vec<f64>, JsValue> {
     let (w, h) = (width as usize, height as usize);
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Mask dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Mask dimensions overflow"))?;
     if mask.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Mask has {} entries but {}x{} needs {}", mask.len(), width, height, expected)));
+            "Mask has {} entries but {}x{} needs {}",
+            mask.len(),
+            width,
+            height,
+            expected
+        )));
     }
     Ok(measure::morphology::distance_transform(mask, w, h))
 }
@@ -388,12 +519,24 @@ pub fn distance_transform_fast(mask: &[u8], width: u32, height: u32) -> Result<V
 /// Separable Gaussian blur. Non-finite samples are skipped and the weights
 /// renormalised, so a NaN neighbour is ignored rather than darkening the result.
 #[wasm_bindgen]
-pub fn gaussian_blur_fast(plane: &[f32], width: u32, height: u32, sigma: f64) -> Result<Vec<f32>, JsValue> {
+pub fn gaussian_blur_fast(
+    plane: &[f32],
+    width: u32,
+    height: u32,
+    sigma: f64,
+) -> Result<Vec<f32>, JsValue> {
     let (w, h) = (width as usize, height as usize);
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
     if plane.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Plane has {} samples but {}x{} needs {}", plane.len(), width, height, expected)));
+            "Plane has {} samples but {}x{} needs {}",
+            plane.len(),
+            width,
+            height,
+            expected
+        )));
     }
     Ok(measure::filters::gaussian_blur(plane, w, h, sigma))
 }
@@ -401,13 +544,30 @@ pub fn gaussian_blur_fast(plane: &[f32], width: u32, height: u32, sigma: f64) ->
 /// Background subtraction by morphological opening.
 #[wasm_bindgen]
 pub fn subtract_background_fast(
-    plane: &[f32], width: u32, height: u32, radius: f64, light_background: bool,
+    plane: &[f32],
+    width: u32,
+    height: u32,
+    radius: f64,
+    light_background: bool,
 ) -> Result<Vec<f32>, JsValue> {
     let (w, h) = (width as usize, height as usize);
-    let expected = w.checked_mul(h).ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
+    let expected = w
+        .checked_mul(h)
+        .ok_or_else(|| JsValue::from_str("Plane dimensions overflow"))?;
     if plane.len() < expected {
         return Err(JsValue::from_str(&format!(
-            "Plane has {} samples but {}x{} needs {}", plane.len(), width, height, expected)));
+            "Plane has {} samples but {}x{} needs {}",
+            plane.len(),
+            width,
+            height,
+            expected
+        )));
     }
-    Ok(measure::filters::subtract_background(plane, w, h, radius, light_background))
+    Ok(measure::filters::subtract_background(
+        plane,
+        w,
+        h,
+        radius,
+        light_background,
+    ))
 }

@@ -37,7 +37,9 @@ impl RgbaLayerCompositor {
         type_max: f32,
     ) -> Result<(), JsValue> {
         if channels == 0 {
-            return Err(JsValue::from_str("Raster mask must have at least one channel"));
+            return Err(JsValue::from_str(
+                "Raster mask must have at least one channel",
+            ));
         }
         self.validate_type_max(type_max)?;
         let expected = (width as usize)
@@ -70,22 +72,19 @@ impl RgbaLayerCompositor {
     {
         let mask_x = canvas_x as i64 - offset_x as i64;
         let mask_y = canvas_y as i64 - offset_y as i64;
-        let mut factor = if mask_x < 0
-            || mask_y < 0
-            || mask_x >= width as i64
-            || mask_y >= height as i64
-        {
-            0.0
-        } else {
-            let index =
-                (mask_y as usize * width as usize + mask_x as usize) * channels as usize;
-            let value = convert(&mask[index]);
-            if value.is_finite() {
-                (value / type_max).clamp(0.0, 1.0)
-            } else {
+        let mut factor =
+            if mask_x < 0 || mask_y < 0 || mask_x >= width as i64 || mask_y >= height as i64 {
                 0.0
-            }
-        };
+            } else {
+                let index =
+                    (mask_y as usize * width as usize + mask_x as usize) * channels as usize;
+                let value = convert(&mask[index]);
+                if value.is_finite() {
+                    (value / type_max).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            };
         if invert {
             factor = 1.0 - factor;
         }
@@ -118,8 +117,7 @@ impl RgbaLayerCompositor {
             let x = pixel_index as u32 % canvas_width;
             let y = pixel_index as u32 / canvas_width;
             let factor = Self::mask_factor(
-                mask, width, height, channels, type_max, offset_x, offset_y, invert, x, y,
-                &convert,
+                mask, width, height, channels, type_max, offset_x, offset_y, invert, x, y, &convert,
             );
             pixel[3] *= factor;
             if let Some(alpha) = clip_alpha.as_deref_mut() {
@@ -162,8 +160,7 @@ impl RgbaLayerCompositor {
             let x = pixel_index as u32 % canvas_width;
             let y = pixel_index as u32 / canvas_width;
             let factor = Self::mask_factor(
-                mask, width, height, channels, type_max, offset_x, offset_y, invert, x, y,
-                &convert,
+                mask, width, height, channels, type_max, offset_x, offset_y, invert, x, y, &convert,
             );
             for channel in 0..3 {
                 output[channel] = before[channel] + (output[channel] - before[channel]) * factor;
@@ -190,7 +187,9 @@ impl RgbaLayerCompositor {
         F: Fn(&T) -> f32,
     {
         if !(1..=4).contains(&channels) {
-            return Err(JsValue::from_str("Layer source must have one to four channels"));
+            return Err(JsValue::from_str(
+                "Layer source must have one to four channels",
+            ));
         }
         self.validate_type_max(source_type_max)?;
         let expected = (width as usize)
@@ -219,7 +218,9 @@ impl RgbaLayerCompositor {
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32, type_max: f32) -> Result<RgbaLayerCompositor, JsValue> {
         if width == 0 || height == 0 || !type_max.is_finite() || type_max <= 0.0 {
-            return Err(JsValue::from_str("Invalid RGBA compositor dimensions or type maximum"));
+            return Err(JsValue::from_str(
+                "Invalid RGBA compositor dimensions or type maximum",
+            ));
         }
         let pixel_count = (width as usize)
             .checked_mul(height as usize)
@@ -250,9 +251,16 @@ impl RgbaLayerCompositor {
         blend_mode: u32,
     ) -> Result<(), JsValue> {
         self.validate_source(source.len(), width, height)?;
-        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, 255.0, |index| {
-            source[index] as f32
-        });
+        self.add_source(
+            width,
+            height,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            255.0,
+            |index| source[index] as f32,
+        );
         Ok(())
     }
 
@@ -269,9 +277,16 @@ impl RgbaLayerCompositor {
     ) -> Result<(), JsValue> {
         self.validate_source(source.len(), width, height)?;
         self.validate_type_max(source_type_max)?;
-        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, source_type_max, |index| {
-            source[index] as f32
-        });
+        self.add_source(
+            width,
+            height,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            source_type_max,
+            |index| source[index] as f32,
+        );
         Ok(())
     }
 
@@ -288,9 +303,16 @@ impl RgbaLayerCompositor {
     ) -> Result<(), JsValue> {
         self.validate_source(source.len(), width, height)?;
         self.validate_type_max(source_type_max)?;
-        self.add_source(width, height, offset_x, offset_y, opacity, blend_mode, source_type_max, |index| {
-            source[index]
-        });
+        self.add_source(
+            width,
+            height,
+            offset_x,
+            offset_y,
+            opacity,
+            blend_mode,
+            source_type_max,
+            |index| source[index],
+        );
         Ok(())
     }
 
@@ -515,7 +537,8 @@ impl RgbaLayerCompositor {
     ) -> Result<(), JsValue> {
         let mut surface = RgbaLayerCompositor::new(self.width, self.height, self.type_max)?;
         surface.add_u8(source, width, height, offset_x, offset_y, 1.0, 0)?;
-        self.isolated_clip_alpha = Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
+        self.isolated_clip_alpha =
+            Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
         self.isolated = Some(surface.data);
         Ok(())
     }
@@ -540,7 +563,8 @@ impl RgbaLayerCompositor {
             1.0,
             0,
         )?;
-        self.isolated_clip_alpha = Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
+        self.isolated_clip_alpha =
+            Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
         self.isolated = Some(surface.data);
         Ok(())
     }
@@ -565,7 +589,8 @@ impl RgbaLayerCompositor {
             1.0,
             0,
         )?;
-        self.isolated_clip_alpha = Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
+        self.isolated_clip_alpha =
+            Some(surface.data.chunks_exact(4).map(|pixel| pixel[3]).collect());
         self.isolated = Some(surface.data);
         Ok(())
     }
@@ -582,7 +607,14 @@ impl RgbaLayerCompositor {
         invert: bool,
     ) -> Result<(), JsValue> {
         self.apply_isolated_alpha_mask(
-            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            mask,
+            width,
+            height,
+            channels,
+            type_max,
+            offset_x,
+            offset_y,
+            invert,
             |value| *value as f32,
         )
     }
@@ -599,7 +631,14 @@ impl RgbaLayerCompositor {
         invert: bool,
     ) -> Result<(), JsValue> {
         self.apply_isolated_alpha_mask(
-            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            mask,
+            width,
+            height,
+            channels,
+            type_max,
+            offset_x,
+            offset_y,
+            invert,
             |value| *value as f32,
         )
     }
@@ -616,7 +655,14 @@ impl RgbaLayerCompositor {
         invert: bool,
     ) -> Result<(), JsValue> {
         self.apply_isolated_alpha_mask(
-            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            mask,
+            width,
+            height,
+            channels,
+            type_max,
+            offset_x,
+            offset_y,
+            invert,
             |value| *value,
         )
     }
@@ -642,7 +688,14 @@ impl RgbaLayerCompositor {
         invert: bool,
     ) -> Result<(), JsValue> {
         self.finish_isolated_masked_adjustment(
-            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            mask,
+            width,
+            height,
+            channels,
+            type_max,
+            offset_x,
+            offset_y,
+            invert,
             |value| *value as f32,
         )
     }
@@ -659,7 +712,14 @@ impl RgbaLayerCompositor {
         invert: bool,
     ) -> Result<(), JsValue> {
         self.finish_isolated_masked_adjustment(
-            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            mask,
+            width,
+            height,
+            channels,
+            type_max,
+            offset_x,
+            offset_y,
+            invert,
             |value| *value as f32,
         )
     }
@@ -676,7 +736,14 @@ impl RgbaLayerCompositor {
         invert: bool,
     ) -> Result<(), JsValue> {
         self.finish_isolated_masked_adjustment(
-            mask, width, height, channels, type_max, offset_x, offset_y, invert,
+            mask,
+            width,
+            height,
+            channels,
+            type_max,
+            offset_x,
+            offset_y,
+            invert,
             |value| *value,
         )
     }
@@ -820,10 +887,8 @@ impl RgbaLayerCompositor {
                     centers[range],
                 );
                 hue = (hue + parameters[base + 4] * weight).rem_euclid(360.0);
-                saturation =
-                    (saturation + parameters[base + 5] / 100.0 * weight).clamp(0.0, 1.0);
-                lightness =
-                    (lightness + parameters[base + 6] / 100.0 * weight).clamp(0.0, 1.0);
+                saturation = (saturation + parameters[base + 5] / 100.0 * weight).clamp(0.0, 1.0);
+                lightness = (lightness + parameters[base + 6] / 100.0 * weight).clamp(0.0, 1.0);
             }
             let adjusted = hsl_to_rgb_f32(hue, saturation, lightness);
             for channel in 0..3 {
@@ -907,8 +972,7 @@ impl RgbaLayerCompositor {
                 output[3] = self.type_max;
                 continue;
             }
-            let source_alpha =
-                (alpha_value / source_type_max * opacity * clip).clamp(0.0, 1.0);
+            let source_alpha = (alpha_value / source_type_max * opacity * clip).clamp(0.0, 1.0);
             if source_alpha <= 0.0 {
                 continue;
             }
@@ -953,8 +1017,7 @@ impl RgbaLayerCompositor {
         let opacity = opacity.clamp(0.0, 1.0);
         for pixel_index in 0..(self.width as usize * self.height as usize) {
             let index = pixel_index * 4;
-            let factor = (source[index + 3] / source_type_max
-                * clip_alpha[pixel_index]
+            let factor = (source[index + 3] / source_type_max * clip_alpha[pixel_index]
                 / self.type_max
                 * opacity)
                 .clamp(0.0, 1.0);
@@ -1151,7 +1214,9 @@ impl RgbaLayerCompositor {
             .and_then(|pixels| pixels.checked_mul(4))
             .ok_or_else(|| JsValue::from_str("RGBA source dimensions overflow"))?;
         if length != expected {
-            return Err(JsValue::from_str("RGBA source length does not match its dimensions"));
+            return Err(JsValue::from_str(
+                "RGBA source length does not match its dimensions",
+            ));
         }
         Ok(())
     }
@@ -1173,8 +1238,7 @@ impl RgbaLayerCompositor {
         blend_mode: u32,
         source_type_max: f32,
         sample: F,
-    )
-    where
+    ) where
         F: Fn(usize) -> f32,
     {
         let opacity = opacity.clamp(0.0, 1.0);
@@ -1183,8 +1247,12 @@ impl RgbaLayerCompositor {
         }
         let x_start = offset_x.max(0) as u32;
         let y_start = offset_y.max(0) as u32;
-        let x_end = self.width.min((offset_x as i64 + source_width as i64).max(0) as u32);
-        let y_end = self.height.min((offset_y as i64 + source_height as i64).max(0) as u32);
+        let x_end = self
+            .width
+            .min((offset_x as i64 + source_width as i64).max(0) as u32);
+        let y_end = self
+            .height
+            .min((offset_y as i64 + source_height as i64).max(0) as u32);
         if x_start >= x_end || y_start >= y_end {
             return;
         }
@@ -1278,8 +1346,7 @@ impl RgbaLayerCompositor {
                             self.data[destination_index + channel] = source_value;
                         } else {
                             let below = self.data[destination_index + channel];
-                            let result =
-                                arithmetic_layer_channel(below, source_value, blend_mode);
+                            let result = arithmetic_layer_channel(below, source_value, blend_mode);
                             self.data[destination_index + channel] = if opacity >= 1.0 {
                                 result
                             } else if result.is_finite() && below.is_finite() {
@@ -1304,8 +1371,7 @@ impl RgbaLayerCompositor {
                     self.cover_invalid(destination_index);
                     continue;
                 }
-                let source_alpha =
-                    (source_alpha_value / source_type_max * opacity).clamp(0.0, 1.0);
+                let source_alpha = (source_alpha_value / source_type_max * opacity).clamp(0.0, 1.0);
                 if source_alpha <= 0.0 {
                     continue;
                 }

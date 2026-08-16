@@ -14,7 +14,8 @@ pub(crate) fn composite_rgba_channel(
         return f32::NAN;
     }
     if mode == 0 {
-        return (source * source_alpha + below * destination_alpha * (1.0 - source_alpha)) / output_alpha;
+        return (source * source_alpha + below * destination_alpha * (1.0 - source_alpha))
+            / output_alpha;
     }
     let blended = match mode {
         1 => below * source / type_max,

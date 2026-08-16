@@ -1,5 +1,5 @@
 "use strict";
-import { NormalizationHelper, ImageRenderer } from './normalization-helper.js';
+import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { decodePfmLocal } from './main-thread-decode.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';

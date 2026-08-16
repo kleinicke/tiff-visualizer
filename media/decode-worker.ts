@@ -27,7 +27,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeCziWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
@@ -58,11 +58,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
  * @param buffer - Bytes fetched by the webview
  * @param urls - Candidate URLs for ordinary browser workers
  */
-async function initTiffDecoder(buffer: ArrayBuffer | null | undefined, urls: string[]) {
-	if (buffer?.byteLength) {
+async function initTiffDecoder(moduleOrBuffer: WebAssembly.Module | ArrayBuffer | null | undefined, urls: string[]) {
+	if (moduleOrBuffer instanceof WebAssembly.Module || moduleOrBuffer?.byteLength) {
 		try {
 			await withTimeout(
-				initTiffWasm({ module_or_path: buffer }),
+				initTiffWasm({ module_or_path: moduleOrBuffer }),
 				TIFF_WASM_INIT_TIMEOUT_MS,
 				'TIFF WASM byte initialization timed out',
 			);
@@ -535,7 +535,7 @@ async function decodePpm(buffer: ArrayBuffer) {
 
 async function decodeNpy(buffer: ArrayBuffer) {
 	await requireWasm('NPY');
-	return decodeNpyWithWasm(decode_npy_fast, buffer, 'worker');
+	return decodeNpyWithWasm(decode_npy_display_fast, buffer, 'worker');
 }
 
 async function decodeFits(buffer: ArrayBuffer) {
@@ -643,7 +643,7 @@ self.onmessage = async (event: MessageEvent<any>) => {
 		// that immediately so early image loads do not fall back to the UI
 		// thread while WASM is still initializing.
 		self.postMessage({ type: 'ready', caps: { tiff: true, tiffWasm: false } });
-		tiffWasmInitPromise = initTiffDecoder(msg.tiffWasmBuffer, msg.tiffWasmUrls);
+		tiffWasmInitPromise = initTiffDecoder(msg.tiffWasmModule || msg.tiffWasmBuffer, msg.tiffWasmUrls);
 		await tiffWasmInitPromise;
 		self.postMessage({ type: 'caps', caps: { tiff: true, tiffWasm: tiffWasmReady } });
 		return;
@@ -667,10 +667,17 @@ self.onmessage = async (event: MessageEvent<any>) => {
 			}
 		}
 		const result = await decodeFormat(format, source, options);
+		const transferables = collectTransferables(result);
+		// WebAssembly linear memory grows but cannot shrink. Keeping a worker
+		// whose heap expanded for a 100-500 MB one-shot raster alive makes the
+		// main thread's following WebGL upload contend with that retained heap.
+		// Ask the client to retire it after the transfer. Cached multi-plane
+		// sources (currently CZI) deliberately keep their worker and source.
+		const retireWorker = !cacheKey && transferables.some(item => item.byteLength >= 64 * 1024 * 1024);
 		// `sourceCached` tells the caller it may withhold the bytes next time.
 		// Decoders that opt in must copy out of the source rather than aliasing
 		// it, since the cached buffer outlives the response.
-		self.postMessage({ id, ok: true, result, sourceCached: !!cacheKey }, collectTransferables(result));
+		self.postMessage({ id, ok: true, result, sourceCached: !!cacheKey, retireWorker }, transferables);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'decode failed');
 		// A failure involving the cache invalidates it: the caller has no bytes

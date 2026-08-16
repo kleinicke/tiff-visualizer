@@ -242,6 +242,8 @@ pub(crate) fn decode_pfm_impl(
         data_f32: out,
         data_u8: Vec::new(),
         data_u16: Vec::new(),
+        source_data_offset: 0,
+        can_reuse_source: false,
         data_min: 0.0,
         data_max: 0.0,
         non_finite_count: 0.0,

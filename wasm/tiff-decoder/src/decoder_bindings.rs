@@ -89,6 +89,58 @@ impl DecodedArray {
     pub fn valid_count(&self) -> f64 {
         self.inner.valid_count()
     }
+    #[wasm_bindgen(getter)]
+    pub fn data_len(&self) -> usize {
+        self.inner.data_len()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn source_data_offset(&self) -> usize {
+        self.inner.source_data_offset()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn can_reuse_source(&self) -> bool {
+        self.inner.can_reuse_source()
+    }
+    pub fn discard_data(&mut self) {
+        self.inner.discard_data();
+    }
+
+    /// Consume the decoded carrier while copying it directly into a
+    /// JavaScript-owned buffer. Unlike returning `Vec<T>`, wasm-bindgen does
+    /// not allocate a second JS typed array here; callers can reuse the source
+    /// ArrayBuffer that was already transferred into the decode worker.
+    pub fn copy_data_as_f32_into(&mut self, target: &js_sys::Float32Array) -> Result<(), JsValue> {
+        let data = self.inner.take_data_as_f32().map_err(js_error)?;
+        if target.length() < data.len() as u32 {
+            return Err(JsValue::from_str(
+                "Float32 target is smaller than decoded data",
+            ));
+        }
+        target.subarray(0, data.len() as u32).copy_from(&data);
+        Ok(())
+    }
+
+    pub fn copy_data_as_u8_into(&mut self, target: &js_sys::Uint8Array) -> Result<(), JsValue> {
+        let data = self.inner.take_data_as_u8().map_err(js_error)?;
+        if target.length() < data.len() as u32 {
+            return Err(JsValue::from_str(
+                "Uint8 target is smaller than decoded data",
+            ));
+        }
+        target.subarray(0, data.len() as u32).copy_from(&data);
+        Ok(())
+    }
+
+    pub fn copy_data_as_u16_into(&mut self, target: &js_sys::Uint16Array) -> Result<(), JsValue> {
+        let data = self.inner.take_data_as_u16().map_err(js_error)?;
+        if target.length() < data.len() as u32 {
+            return Err(JsValue::from_str(
+                "Uint16 target is smaller than decoded data",
+            ));
+        }
+        target.subarray(0, data.len() as u32).copy_from(&data);
+        Ok(())
+    }
 
     pub fn take_data_as_f32(&mut self) -> Result<Vec<f32>, JsValue> {
         self.inner.take_data_as_f32().map_err(js_error)
@@ -536,9 +588,9 @@ pub fn decode_ppm_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn decode_ppm_display_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
+pub fn decode_ppm_display_fast(data: Vec<u8>) -> Result<DecodedArray, JsValue> {
     prepare();
-    core::decode_ppm_display_fast(data)
+    core::decode_ppm_display_owned(data)
         .map(Into::into)
         .map_err(js_error)
 }
@@ -547,6 +599,14 @@ pub fn decode_ppm_display_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
 pub fn decode_npy_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     prepare();
     core::decode_npy_fast(data)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_npy_display_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_npy_display_fast(data)
         .map(Into::into)
         .map_err(js_error)
 }

@@ -57,7 +57,11 @@ pub(crate) fn fill_mask_holes(mask: &[u8], width: usize, height: usize) -> Vec<u
         for x in 0..width {
             let index = y * width + x;
             let unreachable = outside[(y + 1) * padded_width + (x + 1)] == 0;
-            filled[index] = if mask[index] != 0 || unreachable { 1 } else { 0 };
+            filled[index] = if mask[index] != 0 || unreachable {
+                1
+            } else {
+                0
+            };
         }
     }
     filled
@@ -154,20 +158,12 @@ mod tests {
     #[test]
     fn fills_an_enclosed_hole_but_not_a_bay() {
         // Ring with a hole in the middle -> hole fills.
-        let ring = [
-            1, 1, 1,
-            1, 0, 1,
-            1, 1, 1,
-        ];
+        let ring = [1, 1, 1, 1, 0, 1, 1, 1, 1];
         assert_eq!(fill_mask_holes(&ring, 3, 3), vec![1u8; 9]);
 
         // Same shape opened at the right edge: the gap connects to the outside,
         // so it must NOT be filled.
-        let bay = [
-            1, 1, 1,
-            1, 0, 0,
-            1, 1, 1,
-        ];
+        let bay = [1, 1, 1, 1, 0, 0, 1, 1, 1];
         let filled = fill_mask_holes(&bay, 3, 3);
         assert_eq!(filled[4], 0, "a bay open to the border is not a hole");
     }

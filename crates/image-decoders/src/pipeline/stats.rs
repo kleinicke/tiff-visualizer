@@ -186,35 +186,53 @@ pub fn compute_image_range_f32(data: &[f32], width: u32, height: u32, channels: 
     let pixels = (width as usize).saturating_mul(height as usize);
     let stride = channels as usize;
     let scanned = scan_channels(channels) as usize;
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
     let mut valid_count = 0usize;
     let mut non_finite_count = 0usize;
 
-    for pixel in data.chunks(stride.max(1)).take(pixels) {
-        for &value in pixel.iter().take(scanned) {
+    // Mono float arrays are common (depth NPY/PFM/TIFF) and large. Avoid the
+    // generic chunks/take iterator and per-sample f32->f64 conversion in this
+    // bandwidth-bound path; every representable source extreme remains exact
+    // when converted to f64 once at the end.
+    if stride == 1 {
+        let present = pixels.min(data.len());
+        for &value in &data[..present] {
             if value.is_finite() {
-                min = min.min(value as f64);
-                max = max.max(value as f64);
+                min = min.min(value);
+                max = max.max(value);
                 valid_count += 1;
             } else {
                 non_finite_count += 1;
             }
         }
-        non_finite_count += scanned.saturating_sub(pixel.len());
-    }
-    let present_pixels = if stride == 0 {
-        0
+        non_finite_count += pixels.saturating_sub(present);
     } else {
-        data.len().div_ceil(stride).min(pixels)
-    };
-    non_finite_count += pixels
-        .saturating_sub(present_pixels)
-        .saturating_mul(scanned);
+        for pixel in data.chunks(stride.max(1)).take(pixels) {
+            for &value in pixel.iter().take(scanned) {
+                if value.is_finite() {
+                    min = min.min(value);
+                    max = max.max(value);
+                    valid_count += 1;
+                } else {
+                    non_finite_count += 1;
+                }
+            }
+            non_finite_count += scanned.saturating_sub(pixel.len());
+        }
+        let present_pixels = if stride == 0 {
+            0
+        } else {
+            data.len().div_ceil(stride).min(pixels)
+        };
+        non_finite_count += pixels
+            .saturating_sub(present_pixels)
+            .saturating_mul(scanned);
+    }
 
     ImageRange {
-        min,
-        max,
+        min: min as f64,
+        max: max as f64,
         valid_count: valid_count as f64,
         non_finite_count: non_finite_count as f64,
     }
