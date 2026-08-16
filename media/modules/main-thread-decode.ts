@@ -45,12 +45,12 @@ async function requireWasm(format: string): Promise<any> {
 
 export async function decodePfmLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	const wasm = await requireWasm('PFM');
-	return decodePfmWithWasm(wasm.decode_pfm_fast, buffer, 'main', options.topDown !== false);
+	return decodePfmWithWasm(wasm.decode_pfm_display_fast, buffer, 'main', options.topDown !== false);
 }
 
 export async function decodePpmLocal(buffer: ArrayBuffer) {
 	const wasm = await requireWasm('NetPBM');
-	return decodePpmWithWasm(wasm.decode_ppm_fast, buffer, 'main');
+	return decodePpmWithWasm(wasm.decode_ppm_display_fast, buffer, 'main');
 }
 
 export async function decodeNpyLocal(buffer: ArrayBuffer) {

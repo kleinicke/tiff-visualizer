@@ -54,7 +54,6 @@ import { WebGPULayerCompositor } from './modules/webgpu-layer-compositor.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
-import type { Layer } from './modules/layer-compositor.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { installRangeDoubleClickReset, datasetAxisSignature } from './modules/range-controls.js';
@@ -157,7 +156,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	layerCompositorWorker.start();
 	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
-	const normalWebGpuCompositor = new WebGPULayerCompositor();
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
@@ -636,7 +634,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	function disposeWebglRenderers() {
 		layerGpuCompositor.dispose();
 		layerWebGpuCompositor.dispose();
-		normalWebGpuCompositor.dispose();
 		_normalRenderBackend = 'cpu';
 		for (const p of allProcessors) {
 			// Not every processor class exposes a _webglRenderer field; cast is a
@@ -863,8 +860,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	let _deferredHistogramTimer: number | null = null;
 	let _layerHistogramTimer: number | null = null;
 	let _layerHistogramCanvas: HTMLCanvasElement | null = null;
-	let _normalRenderBackend: 'webgpu' | 'webgl2' | 'cpu' = 'cpu';
-	let _normalWebGpuFailureGeneration = -1;
+	let _normalRenderBackend: 'webgl2' | 'cpu' = 'cpu';
 	let _previousDecodedImageCache: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 	let _restoreDecodedImageCandidate: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 	let _outgoingImageElement: HTMLElement | null = null;
@@ -2250,99 +2246,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		}
 	}
 
-	function hasRawNormalWebGpuSource(): boolean {
-		return currentLoadFormat === 'TIFF' || currentLoadFormat === 'EXR' ||
-			currentLoadFormat === 'PFM' || currentLoadFormat === 'PPM/PGM' ||
-			currentLoadFormat === 'PNG/JPEG' || currentLoadFormat === 'NPY/NPZ' ||
-			currentLoadFormat === 'HDR' || currentLoadFormat === 'TGA' ||
-			currentLoadFormat === 'Web Image' || currentLoadFormat === 'JXL' ||
-			currentLoadFormat === 'FITS' ||
-			currentLoadFormat === 'DICOM' || currentLoadFormat === 'NetCDF' ||
-			currentLoadFormat === 'CZI' ||
-			currentLoadFormat === 'Layered Document';
-	}
-
-	/**
-	 * Normal and collection views have no backend selector: prefer WebGPU, then
-	 * let the existing WebGL2/CPU processor path take over on unsupported
-	 * devices or sources. This uses the same retained renderer as Layers, so
-	 * settings-only changes reuse uploaded source textures.
-	 */
-	async function renderNormalWithWebGpu(): Promise<boolean> {
-		if (layerManager.active || settingsManager.settings.gpuAcceleration === false ||
-			!(navigator as any).gpu || !canvas || !hasRawNormalWebGpuSource()) {
-			return false;
-		}
-		const base = deriveBaseLayer();
-		if (!base?.data || base.channels < 1 || base.channels > 4) {
-			return false;
-		}
-		// Debayering runs on the CPU inside ImageRenderer.render(), which this
-		// path bypasses entirely. Without this the GPU would keep painting the
-		// raw mosaic and every debayer control would look like a no-op.
-		if (shouldDebayer(settingsManager.settings.debayer, base.channels)) {
-			return false;
-		}
-		const generation = _loadGeneration;
-		const layer: Layer = {
-			...base,
-			id: 'normal-image',
-			kind: 'raster',
-			visible: true,
-			opacity: 1,
-			blendMode: 'normal',
-			offsetX: 0,
-			offsetY: 0,
-		};
-		try {
-			const { canvas: surface, timing } = await normalWebGpuCompositor.renderWithMetrics(
-				[layer], base.width, base.height, 1,
-				settingsManager.settings, getNanColorObj(), false,
-			);
-			if (!surface || generation !== _loadGeneration || layerManager.active || !canvas) {
-				return false;
-			}
-			const ctx = ensure2dCanvasContext();
-			if (!ctx) { return false; }
-			if (ctx.canvas.width !== base.width || ctx.canvas.height !== base.height) {
-				ctx.canvas.width = base.width;
-				ctx.canvas.height = base.height;
-			}
-			ctx.save();
-			ctx.globalCompositeOperation = 'copy';
-			ctx.imageSmoothingEnabled = false;
-			ctx.drawImage(surface, 0, 0);
-			ctx.restore();
-			_normalRenderBackend = 'webgpu';
-			PerfTrace.detail('normal-webgpu-render', timing.renderMs);
-			logToOutput(
-				`[Renderer] ${currentLoadFormat}: WebGPU (${base.width}×${base.height}, ` +
-				`${timing.compositionCacheHit ? 'retained' : 'uploaded'}, ${timing.renderMs.toFixed(1)}ms)`
-			);
-			updateHistogramData();
-			return true;
-		} catch (error) {
-			_normalRenderBackend = 'cpu';
-			if (_normalWebGpuFailureGeneration !== generation) {
-				_normalWebGpuFailureGeneration = generation;
-				logToOutput(`[Renderer] ${currentLoadFormat}: WebGPU unavailable; falling back to WebGL2/CPU (${String(error)})`);
-			}
-			return false;
-		}
-	}
-
-	function clearPendingNormalRender(): void {
-		for (const processor of allProcessors) {
-			if ('_pendingRenderData' in processor) {
-				(processor as any)._pendingRenderData = null;
-			}
-			if ('_isInitialLoad' in processor) {
-				(processor as any)._isInitialLoad = false;
-			}
-		}
-		vscode.postMessage({ type: 'refresh-status' });
-	}
-
 	/**
 	 * Decode an image URI into a layer using a fresh processor instance (so the
 	 * primary image's processor state is never disturbed). Falls back to a plain
@@ -3359,11 +3262,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const newResourceUri = settingsManager.settings.resourceUri;
 				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
 				if (changes.changedKeys.includes('gpuAcceleration')) {
-					if (settingsManager.settings.gpuAcceleration === false) {
-						normalWebGpuCompositor.dispose();
-					} else {
-						normalWebGpuCompositor.retry();
-					}
 					if (_layerCompositorSelection === 'auto') {
 						// Select before the settings rerender below so an automatic
 						// Layers view cannot keep using a now-disabled GPU backend.
@@ -3399,15 +3297,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 					let deferredCanvasAlreadyRendered = false;
 					const pendingScientific = scientificProcessors.find(processor => !!processor._pendingRenderData);
 
-					if (await renderNormalWithWebGpu()) {
-						clearPendingNormalRender();
-						// A tiny non-null marker is sufficient here: WebGPU already
-						// populated the real canvas and all scientific values remain
-						// available from the processor's raw buffer.
-						deferredImageData = primaryImageData || new ImageData(1, 1);
-						primaryImageData = deferredImageData;
-						deferredCanvasAlreadyRendered = true;
-					} else if (tiffProcessor._pendingRenderData) {
+					if (tiffProcessor._pendingRenderData) {
 						deferredImageData = await tiffProcessor.performDeferredRender({
 							collectHistogram: histogramOverlay.getVisibility(),
 							targetCanvas: canvas,
@@ -4029,11 +3919,8 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 															currentLoadFormat === 'Layered Document' ? layeredPreviewProcessor :
 																webImageProcessor;
 			const processorUsedWebGl = (activeProcessor as any)?._lastRenderUsedWebGL === true;
-			if (_normalRenderBackend !== 'webgpu') {
-				_normalRenderBackend = processorUsedWebGl ? 'webgl2' : 'cpu';
-			}
-			fileFields['Renderer'] = _normalRenderBackend === 'webgpu' ? 'WebGPU' :
-				_normalRenderBackend === 'webgl2' ? 'WebGL2' : 'CPU';
+			_normalRenderBackend = processorUsedWebGl ? 'webgl2' : 'cpu';
+			fileFields['Renderer'] = _normalRenderBackend === 'webgl2' ? 'WebGL2' : 'CPU';
 		}
 
 		return { formatLabel, fileFields, tags, stats };
@@ -4576,13 +4463,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		// source — re-render it (so normalization / gamma / display-colormap apply).
 		if (decodedColormapSource) {
 			await renderDecodedColormapSource();
-			return;
-		}
-
-		// Normal and collection views select WebGPU automatically. If it cannot
-		// render this device/source, continue into the existing WebGL2-first
-		// processor paths and finally the CPU fallback.
-		if (await renderNormalWithWebGpu()) {
 			return;
 		}
 

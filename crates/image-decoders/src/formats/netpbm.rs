@@ -95,7 +95,10 @@ enum PixelData {
     U16(Vec<u16>),
 }
 
-pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+pub(crate) fn decode_ppm_impl(
+    data: &[u8],
+    compute_stats: bool,
+) -> Result<DecodedArray, DecodeError> {
     let mut offset = 0usize;
 
     let magic = read_token(data, &mut offset);
@@ -230,9 +233,9 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> 
 
         if use16bit {
             let mut out = vec![0u16; total_values];
-            for i in 0..total_values {
-                let idx = offset + i * 2;
-                out[i] = ((data[idx] as u16) << 8) | data[idx + 1] as u16;
+            let raster = &data[offset..offset + expected_bytes];
+            for (slot, bytes) in out.iter_mut().zip(raster.chunks_exact(2)) {
+                *slot = u16::from_be_bytes([bytes[0], bytes[1]]);
             }
             pixel_data = PixelData::U16(out);
         } else {
@@ -270,5 +273,5 @@ pub(crate) fn decode_ppm_impl(data: &[u8]) -> Result<DecodedArray, DecodeError> 
         non_finite_count: 0.0,
         valid_count: 0.0,
     }
-    .finalize_stats())
+    .maybe_finalize_stats(compute_stats))
 }

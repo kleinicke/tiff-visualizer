@@ -135,6 +135,10 @@ pub struct HdrResult {
 #[wasm_bindgen]
 impl HdrResult {
     #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 {
+        self.inner.channels()
+    }
+    #[wasm_bindgen(getter)]
     pub fn all_tags_json(&self) -> String {
         self.inner.all_tags_json()
     }
@@ -516,9 +520,25 @@ pub fn decode_pfm_fast(data: &[u8], top_down: bool) -> Result<DecodedArray, JsVa
 }
 
 #[wasm_bindgen]
+pub fn decode_pfm_display_fast(data: &[u8], top_down: bool) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_pfm_display_fast(data, top_down)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
 pub fn decode_ppm_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     prepare();
     core::decode_ppm_fast(data)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_ppm_display_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_ppm_display_fast(data)
         .map(Into::into)
         .map_err(js_error)
 }

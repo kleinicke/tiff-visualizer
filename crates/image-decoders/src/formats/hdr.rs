@@ -92,7 +92,9 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, DecodeError> {
         .checked_mul(height)
         .ok_or_else(|| DecodeError::new("HDR dimensions overflow"))?;
     let mut scanline = vec![0u8; width * 4];
-    let mut output = vec![0f32; pixel_count * 4];
+    // parse-hdr's historical fourth channel was always constant alpha=1.
+    // Omitting it saves 100 MiB for a 5120² image at every later handoff.
+    let mut output = vec![0f32; pixel_count * 3];
     let mut scales = [0f32; 256];
     for e in 1..256 {
         scales[e] = 2f32.powi(e as i32 - 128) / 255.0;
@@ -157,10 +159,10 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, DecodeError> {
         rle_time += crate::time::now_ms() - rle_start;
 
         let convert_start = crate::time::now_ms();
-        let row_offset = y * width * 4;
+        let row_offset = y * width * 3;
         for x in 0..width {
             let e = scanline[x + width * 3] as usize;
-            let out = row_offset + x * 4;
+            let out = row_offset + x * 3;
             if e == 0 {
                 output[out] = 0.0;
                 output[out + 1] = 0.0;
@@ -171,12 +173,12 @@ pub(crate) fn decode_hdr_impl(data: &[u8]) -> Result<HdrResult, DecodeError> {
                 output[out + 1] = scanline[x + width] as f32 * scale;
                 output[out + 2] = scanline[x + width * 2] as f32 * scale;
             }
-            output[out + 3] = 1.0;
         }
         convert_time += crate::time::now_ms() - convert_start;
     }
 
     Ok(HdrResult {
+        channels: 3,
         data_f32: output,
         metadata_f64: vec![
             width as f64,

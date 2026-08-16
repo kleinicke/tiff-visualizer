@@ -142,6 +142,7 @@ pub struct PngResult {
 }
 
 pub struct HdrResult {
+    channels: u32,
     data_f32: Vec<f32>,
     metadata_f64: Vec<f64>,
     all_tags_json: String,
@@ -305,19 +306,12 @@ impl DecodedArray {
     /// samples" min/max fallback (`extended = false` keeps +/-Infinity, which
     /// is what the render-time normalization range this feeds expects).
     ///
-    /// Called unconditionally for every `DecodedArray`-producing decoder,
-    /// NOT behind a "does the caller actually need stats" flag. The old JS
-    /// path (`NormalizationHelper.needsStats`) skipped the scan in gamma
-    /// mode, which mattered when most formats defaulted to gamma mode — they
-    /// no longer do (auto-normalize is the default for TIFF-float,
-    /// TIFF-int-signed/wide, NPY, FITS, DICOM, NetCDF and CZI), so the scan
-    /// runs on nearly every load anyway. Measured at ~4% of total decode time
-    /// for a 5120x5120 f32 raster (36ms stats vs 757ms decode), with the
-    /// samples already resident in wasm memory here — cheaper than the
-    /// ~100MB copy back to JS a lazy JS-side rescan would need. Do not
-    /// reintroduce a conditional here; if a genuinely stats-free fast path is
-    /// ever needed, it should be a deliberate new decision, not a reflex
-    /// port of the old flag.
+    /// Called by array/scientific decoders whose default auto-normalization
+    /// consumes the range immediately. PFM and NetPBM deliberately use their
+    /// `*_display_fast` entry points without this scan: both default to gamma
+    /// mode, and their large RGB files showed that an unconditional pass was
+    /// pure first-paint overhead. Their processors request Rust-backed stats
+    /// lazily if the visualization mode changes.
     #[cfg(any(
         feature = "pfm",
         feature = "netpbm",
@@ -329,26 +323,23 @@ impl DecodedArray {
     ))]
     fn finalize_stats(mut self) -> Self {
         let stats = match self.sample_kind {
-            1 => pipeline::stats::compute_image_stats_uint_impl(
+            1 => pipeline::stats::compute_image_range_uint(
                 &self.data_u8,
                 self.width,
                 self.height,
                 self.channels,
-                false,
             ),
-            2 => pipeline::stats::compute_image_stats_uint_impl(
+            2 => pipeline::stats::compute_image_range_uint(
                 &self.data_u16,
                 self.width,
                 self.height,
                 self.channels,
-                false,
             ),
-            _ => pipeline::stats::compute_image_stats_f32_impl(
+            _ => pipeline::stats::compute_image_range_f32(
                 &self.data_f32,
                 self.width,
                 self.height,
                 self.channels,
-                false,
             ),
         };
         self.data_min = stats.min;
@@ -356,6 +347,14 @@ impl DecodedArray {
         self.non_finite_count = stats.non_finite_count;
         self.valid_count = stats.valid_count;
         self
+    }
+
+    fn maybe_finalize_stats(self, compute_stats: bool) -> Self {
+        if compute_stats {
+            self.finalize_stats()
+        } else {
+            self
+        }
     }
 }
 
@@ -449,6 +448,10 @@ pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, DecodeError> {
 }
 
 impl HdrResult {
+    pub fn channels(&self) -> u32 {
+        self.channels
+    }
+
     pub fn all_tags_json(&self) -> String {
         self.all_tags_json.clone()
     }
@@ -818,13 +821,28 @@ pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, DecodeError> {
 /// `{ topDown: true }` call.
 #[cfg(feature = "pfm")]
 pub fn decode_pfm_fast(data: &[u8], top_down: bool) -> Result<DecodedArray, DecodeError> {
-    decode_pfm_impl(data, top_down)
+    decode_pfm_impl(data, top_down, true)
+}
+
+/// Initial-display variant for PFM's default gamma mode. Statistics remain
+/// available through the regular entry point and are calculated lazily if the
+/// user switches the visualization to auto-normalization.
+#[cfg(feature = "pfm")]
+pub fn decode_pfm_display_fast(data: &[u8], top_down: bool) -> Result<DecodedArray, DecodeError> {
+    decode_pfm_impl(data, top_down, false)
 }
 
 /// Decode a NetPBM image (PBM/PGM/PPM, ASCII or binary).
 #[cfg(feature = "netpbm")]
 pub fn decode_ppm_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
-    decode_ppm_impl(data)
+    decode_ppm_impl(data, true)
+}
+
+/// Initial-display variant for NetPBM's default gamma mode; see
+/// [`decode_pfm_display_fast`].
+#[cfg(feature = "netpbm")]
+pub fn decode_ppm_display_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    decode_ppm_impl(data, false)
 }
 
 /// Decode a NumPy `.npy` file or a `.npz` archive. Dispatches internally on

@@ -156,6 +156,17 @@ pub struct RawImageStats {
     pub total_count: f64,
 }
 
+/// The subset needed while decoding an image for its first render. Extended
+/// mean/std statistics are calculated on demand by the metadata UI; doing
+/// those f64 accumulations here made every large RGB decode pay for work whose
+/// result was immediately discarded.
+pub struct ImageRange {
+    pub min: f64,
+    pub max: f64,
+    pub valid_count: f64,
+    pub non_finite_count: f64,
+}
+
 /// How many leading channels of a pixel participate in stats scanning.
 /// Mirrors the `scanChannels` convention shared by `calculateFloatStats`,
 /// `calculateIntegerStats`, and `calculateExtendedStats` in the TS source:
@@ -168,6 +179,72 @@ fn scan_channels(channels: u32) -> u32 {
         1
     } else {
         channels.min(3)
+    }
+}
+
+pub fn compute_image_range_f32(data: &[f32], width: u32, height: u32, channels: u32) -> ImageRange {
+    let pixels = (width as usize).saturating_mul(height as usize);
+    let stride = channels as usize;
+    let scanned = scan_channels(channels) as usize;
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut valid_count = 0usize;
+    let mut non_finite_count = 0usize;
+
+    for pixel in data.chunks(stride.max(1)).take(pixels) {
+        for &value in pixel.iter().take(scanned) {
+            if value.is_finite() {
+                min = min.min(value as f64);
+                max = max.max(value as f64);
+                valid_count += 1;
+            } else {
+                non_finite_count += 1;
+            }
+        }
+        non_finite_count += scanned.saturating_sub(pixel.len());
+    }
+    let present_pixels = if stride == 0 {
+        0
+    } else {
+        data.len().div_ceil(stride).min(pixels)
+    };
+    non_finite_count += pixels
+        .saturating_sub(present_pixels)
+        .saturating_mul(scanned);
+
+    ImageRange {
+        min,
+        max,
+        valid_count: valid_count as f64,
+        non_finite_count: non_finite_count as f64,
+    }
+}
+
+pub fn compute_image_range_uint<T>(data: &[T], width: u32, height: u32, channels: u32) -> ImageRange
+where
+    T: Copy + Into<u32>,
+{
+    let pixels = (width as usize).saturating_mul(height as usize);
+    let stride = channels as usize;
+    let scanned = scan_channels(channels) as usize;
+    let mut min = f64::INFINITY;
+    let mut max = f64::NEG_INFINITY;
+    let mut valid_count = 0usize;
+
+    for pixel in data.chunks(stride.max(1)).take(pixels) {
+        for &value in pixel.iter().take(scanned) {
+            let value = value.into() as f64;
+            min = min.min(value);
+            max = max.max(value);
+            valid_count += 1;
+        }
+    }
+
+    ImageRange {
+        min,
+        max,
+        valid_count: valid_count as f64,
+        non_finite_count: 0.0,
     }
 }
 

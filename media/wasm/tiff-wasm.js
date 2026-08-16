@@ -200,12 +200,13 @@ function getArrayU16FromWasm0(ptr, len) {
 }
 /**
  * @param {Uint8Array} data
+ * @param {boolean} top_down
  * @returns {DecodedArray}
  */
-export function decode_ppm_fast(data) {
+export function decode_pfm_display_fast(data, top_down) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_fast(ptr0, len0);
+    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -229,15 +230,27 @@ export function decode_tiff_page_fast(data, page_index) {
 
 /**
  * @param {Uint8Array} data
- * @param {string} options_json
  * @returns {DecodedArray}
  */
-export function decode_netcdf_fast(data, options_json) {
+export function decode_npy_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_npy_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} frame_index
+ * @returns {DecodedArray}
+ */
+export function decode_dicom_fast(data, frame_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -274,13 +287,12 @@ export function decode_tiff_fast(data) {
 
 /**
  * @param {Uint8Array} data
- * @param {number} frame_index
  * @returns {DecodedArray}
  */
-export function decode_dicom_fast(data, frame_index) {
+export function decode_fits_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    const ret = wasm.decode_fits_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -321,10 +333,27 @@ export function demosaic(data, width, height, pattern, algorithm, offset_x, offs
  * @param {Uint8Array} data
  * @returns {DecodedArray}
  */
-export function decode_fits_fast(data) {
+export function decode_ppm_display_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_fits_fast(ptr0, len0);
+    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_czi_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_czi_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -435,10 +464,10 @@ export function decode_hdr_fast(data) {
  * @param {Uint8Array} data
  * @returns {DecodedArray}
  */
-export function decode_npy_fast(data) {
+export function decode_ppm_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_npy_fast(ptr0, len0);
+    const ret = wasm.decode_ppm_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -469,12 +498,12 @@ export function extract_exif_tags(data) {
  * @param {string} options_json
  * @returns {DecodedArray}
  */
-export function decode_czi_fast(data, options_json) {
+export function decode_netcdf_fast(data, options_json) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_czi_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -1242,6 +1271,13 @@ export class HdrResult {
         var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
         return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
     }
 }
 if (Symbol.dispose) HdrResult.prototype[Symbol.dispose] = HdrResult.prototype.free;

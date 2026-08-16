@@ -121,7 +121,11 @@ fn read_f32(bytes: &[u8], byte_offset: usize, little_endian: bool) -> Result<f32
     })
 }
 
-pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArray, DecodeError> {
+pub(crate) fn decode_pfm_impl(
+    data: &[u8],
+    top_down: bool,
+    compute_stats: bool,
+) -> Result<DecodedArray, DecodeError> {
     let mut offset = 0usize;
 
     let mut magic = read_line(data, &mut offset);
@@ -179,7 +183,34 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
     let pixels = width * height;
     let mut out = vec![0f32; pixels * channels];
 
-    if top_down {
+    let raster_bytes = out.len().saturating_mul(4);
+    let source = data
+        .get(offset..offset.saturating_add(raster_bytes))
+        .ok_or_else(|| DecodeError::new("PFM: unexpected end of data while reading samples"))?;
+    let native_endian = little_endian == cfg!(target_endian = "little");
+
+    if native_endian && top_down {
+        let row_bytes = values_per_row * 4;
+        for y in 0..height {
+            let src_start = (height - 1 - y) * row_bytes;
+            let dst_start = y * row_bytes;
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    source.as_ptr().add(src_start),
+                    out.as_mut_ptr().cast::<u8>().add(dst_start),
+                    row_bytes,
+                );
+            }
+        }
+    } else if native_endian {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                source.as_ptr(),
+                out.as_mut_ptr().cast::<u8>(),
+                raster_bytes,
+            );
+        }
+    } else if top_down {
         for y in 0..height {
             let src_row = height - 1 - y;
             let mut src_byte = offset + src_row * values_per_row * 4;
@@ -216,5 +247,5 @@ pub(crate) fn decode_pfm_impl(data: &[u8], top_down: bool) -> Result<DecodedArra
         non_finite_count: 0.0,
         valid_count: 0.0,
     }
-    .finalize_stats())
+    .maybe_finalize_stats(compute_stats))
 }

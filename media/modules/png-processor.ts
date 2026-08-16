@@ -88,11 +88,12 @@ export class PngProcessor {
 
         this._lastAllTags = [];
         if (isJpeg) {
-            // Don't block the visible decode/display on this: fetch bytes and
-            // scan for an embedded Exif APP1 segment separately, refreshing the
-            // Metadata panel (if open) once it resolves.
-            this._loadJpegExifTags(src, loadSignal);
-            return this._processWithNativeAPI(src);
+            // Give the visible native decode first access to the resource.
+            // Starting an independent full-file Exif fetch first made the two
+            // reads contend and delayed first paint for large JPEGs.
+            const result = await this._processWithNativeAPI(src);
+            if (!loadSignal?.aborted) { void this._loadJpegExifTags(src, loadSignal); }
+            return result;
         }
 
         // For PNG files, detect bit depth and choose appropriate loader

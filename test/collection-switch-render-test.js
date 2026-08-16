@@ -241,12 +241,10 @@ function testViewModeAndAcceleratorConsistency() {
 	const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'modules', 'settings-manager.ts'), 'utf8');
 	const commandsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'commands.ts'), 'utf8');
 
-	assert.match(webviewSource, /if \(await renderNormalWithWebGpu\(\)\)[\s\S]*?else if \(tiffProcessor\._pendingRenderData\)/,
-		'initial normal/HDR rendering must try WebGPU before processor WebGL2/CPU fallbacks');
-	assert.match(webviewSource, /gpuAcceleration === false[\s\S]*?!\(navigator as any\)\.gpu/,
-		'normal WebGPU selection must honor the GPU setting and device availability');
-	assert.match(webviewSource, /currentLoadFormat === 'TGA'[\s\S]*?currentLoadFormat === 'Web Image'[\s\S]*?currentLoadFormat === 'JXL'/,
-		'TGA, browser-native formats, and JXL must participate in automatic WebGPU selection');
+	assert.doesNotMatch(webviewSource, /renderNormalWithWebGpu/,
+		'normal image viewing must use the processor direct-render path without an offscreen WebGPU composition/canvas copy');
+	assert.match(webviewSource, /if \(tiffProcessor\._pendingRenderData\)[\s\S]*?targetCanvas: canvas/,
+		'initial normal rendering must target the visible canvas directly');
 	assert.match(settingsSource, /gpuAccelerationChanged[\s\S]*?\[gpuAccelerationChanged, 'gpuAcceleration'\]/,
 		'live GPU configuration changes must be tracked and cause a rerender');
 	assert.match(webviewSource, /changes\.changedKeys\.includes\('gpuAcceleration'\)[\s\S]*?coldResetLayerCompositorBackends\(\)[\s\S]*?selectAutomaticLayerBackend/,
@@ -271,7 +269,7 @@ function testViewModeAndAcceleratorConsistency() {
 	assert.match(commandsSource, /getViewMode\(\) === 'layers'[\s\S]*?Add Image as Layer/,
 		'collection commands must explain the Layers View restriction');
 
-	console.log('✅ view modes share WebGPU-first rendering, bounded live Layers histograms, and full-editor comparison');
+	console.log('✅ normal views render directly, Layers retain automatic GPU selection, and live histograms stay bounded');
 }
 
 function main() {

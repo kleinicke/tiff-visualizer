@@ -79,7 +79,7 @@ function assembleDecoded<
 	T extends Float32Array | Uint8Array | Uint16Array,
 	N extends string = 'uint8' | 'int8' | 'uint16' | 'int16' | 'uint32' | 'int32' | 'float32' | 'float64',
 >(
-	result: any, format: string, context: DecodeContext, startedAt: number,
+	result: any, format: string, context: DecodeContext, startedAt: number, statsReady = true,
 ) {
 	const data = takeDecodedData(result) as T;
 	const metadata = JSON.parse(result.metadata_json);
@@ -96,10 +96,10 @@ function assembleDecoded<
 			typeMax: result.type_max as number,
 			sourceNumericType: result.source_numeric_type as N,
 		},
-		// Computed once inside the decoder by `DecodedArray::finalize_stats`
-		// (crates/image-decoders/src/lib.rs) — see that method for why this always
-		// runs rather than being gated behind `NormalizationHelper.needsStats`.
-		stats: { min: result.data_min as number, max: result.data_max as number },
+		// Array/scientific decoders compute this eagerly. PFM/NetPBM's display
+		// entry points skip it because their initial gamma mode does not consume
+		// stats; those processors calculate it lazily if the mode changes.
+		stats: statsReady ? { min: result.data_min as number, max: result.data_max as number } : undefined,
 		nonFiniteCount: result.non_finite_count as number,
 		validCount: result.valid_count as number,
 		formatLabel: result.format_label as string,
@@ -121,7 +121,7 @@ export function decodePfmWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodePfmFast(new Uint8Array(buffer), topDown);
-	return assembleDecoded<Float32Array>(result, 'pfm', context, startedAt);
+	return assembleDecoded<Float32Array>(result, 'pfm', context, startedAt, false);
 }
 
 /** NetPBM. The carrier is u16 only when the header's maxval exceeds 255. */
@@ -132,7 +132,7 @@ export function decodePpmWithWasm(
 ) {
 	const startedAt = performance.now();
 	const result = decodePpmFast(new Uint8Array(buffer));
-	return assembleDecoded<Uint8Array | Uint16Array>(result, 'ppm', context, startedAt);
+	return assembleDecoded<Uint8Array | Uint16Array>(result, 'ppm', context, startedAt, false);
 }
 
 /**

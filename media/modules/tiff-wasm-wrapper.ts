@@ -12,7 +12,7 @@ import { parseAllTagsJson, TagEntry } from './tiff-tag-utils.js';
 // Importing the module does not instantiate wasm; `init()` below does.
 import initTiffWasm, {
     decode_dicom_fast, label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast, decode_fits_fast, decode_netcdf_fast, decode_npy_fast,
-    decode_pfm_fast, decode_ppm_fast, decode_tiff, decode_tiff_page,
+    decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
     demosaic, extract_exif_tags, tiff_page_count,
     compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
     build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
@@ -49,7 +49,7 @@ async function initWasm(): Promise<any> {
             // than initializing a second copy.
             wasmModule = {
                 decode_tiff, decode_tiff_page, tiff_page_count, extract_exif_tags, demosaic,
-                decode_pfm_fast, decode_ppm_fast, decode_npy_fast, decode_fits_fast,
+                decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_fast, decode_fits_fast,
                 decode_netcdf_fast, decode_dicom_fast,
                 compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
                 label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast,

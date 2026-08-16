@@ -27,7 +27,7 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_fast, decode_png16_fast, decode_ppm_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeCziWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
@@ -387,6 +387,7 @@ function decodeHdrWasm(buffer: ArrayBuffer) {
 	}
 	return {
 		shape: [width, height],
+		channels: result.channels,
 		exposure,
 		gamma,
 		data,
@@ -524,12 +525,12 @@ async function requireWasm(format: string): Promise<void> {
 
 async function decodePfm(buffer: ArrayBuffer) {
 	await requireWasm('PFM');
-	return decodePfmWithWasm(decode_pfm_fast, buffer, 'worker');
+	return decodePfmWithWasm(decode_pfm_display_fast, buffer, 'worker');
 }
 
 async function decodePpm(buffer: ArrayBuffer) {
 	await requireWasm('NetPBM');
-	return decodePpmWithWasm(decode_ppm_fast, buffer, 'worker');
+	return decodePpmWithWasm(decode_ppm_display_fast, buffer, 'worker');
 }
 
 async function decodeNpy(buffer: ArrayBuffer) {

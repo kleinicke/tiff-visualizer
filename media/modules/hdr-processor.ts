@@ -13,11 +13,8 @@ type VsCodeApi = { postMessage: (msg: any) => any };
 
 /**
  * HDR (Radiance RGBE) Processor for TIFF Visualizer.
- * Uses parse-hdr to decode .hdr files into RGBA Float32Arrays.
- *
- * parse-hdr always returns 4-channel (RGBA) data with alpha fixed at 1.0.
- * We pass channels=4 to ImageRenderer (correct stride) but never show α: in
- * the color picker since alpha carries no image information.
+ * Rust returns tightly packed RGB. The parse-hdr fallback returns RGBA with
+ * alpha fixed at 1.0, so its stride is retained only on that fallback path.
  */
 export class HdrProcessor {
     settingsManager: SettingsManager;
@@ -67,10 +64,9 @@ export class HdrProcessor {
 
         const data: Float32Array = parsed.data;
 
-        // parse-hdr alpha is always 1.0 — no image information.
-        // Report 3 channels to format info; pass stride=4 to ImageRenderer.
+        // Rust is RGB; parse-hdr fallback is RGBA with a constant alpha.
         const channels = 3;
-        const renderChannels = 4;
+        const renderChannels = parsed.channels === 3 ? 3 : 4;
 
         this._cachedStats = undefined;
         this._cachedWebglRgb = null;
@@ -191,11 +187,10 @@ export class HdrProcessor {
 
     getColorAtPixel(x: number, y: number, naturalWidth: number, naturalHeight: number): string {
         if (!this._lastRaw) return '';
-        const { width, height, data } = this._lastRaw;
+        const { width, height, data, channels } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
 
-        // Data from parse-hdr has stride 4 (RGBA), ignore alpha
-        const baseIdx = (y * width + x) * 4;
+        const baseIdx = (y * width + x) * channels;
         if (baseIdx < 0 || baseIdx + 2 >= data.length) return '';
 
         const r = data[baseIdx];
@@ -247,7 +242,7 @@ export class HdrProcessor {
 
     renderHdrWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
         if (!this._lastRaw) return null;
-        const { width, height, data } = this._lastRaw;
-        return this._toImageDataFloat(data, width, height, 4, renderOptions);
+        const { width, height, data, channels } = this._lastRaw;
+        return this._toImageDataFloat(data, width, height, channels, renderOptions);
     }
 }

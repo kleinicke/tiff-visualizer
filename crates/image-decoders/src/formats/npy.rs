@@ -226,10 +226,23 @@ fn read_npy_samples(
     dtype: &str,
 ) -> Result<Vec<f32>, DecodeError> {
     if dtype == "<f4" || dtype == "=f4" {
+        let source = get_slice(data, off, elems.saturating_mul(4))?;
         let mut out = vec![0f32; elems];
-        for (i, slot) in out.iter_mut().enumerate() {
-            let b = get_slice(data, off + i * 4, 4)?;
-            *slot = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+        if cfg!(target_endian = "little") {
+            // Every f32 bit pattern is valid. A bulk copy is substantially
+            // faster than millions of checked four-byte conversions and still
+            // gives the result its own Rust-owned allocation.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    source.as_ptr(),
+                    out.as_mut_ptr().cast::<u8>(),
+                    source.len(),
+                );
+            }
+        } else {
+            for (slot, b) in out.iter_mut().zip(source.chunks_exact(4)) {
+                *slot = f32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            }
         }
         return Ok(out);
     }

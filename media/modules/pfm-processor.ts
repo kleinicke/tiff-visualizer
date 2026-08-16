@@ -64,9 +64,8 @@ export class PfmProcessor {
         const loadSignal = this.loadSignal;
         const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'pfm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-        // Parse in the decode worker when available, locally otherwise. Both
-        // paths are Rust/WASM (see main-thread-decode.ts), so `stats` — computed
-        // once inside the decoder — is always present.
+        // Parse in the decode worker when available, locally otherwise. The
+        // display entry point skips stats because PFM starts in gamma mode.
         const { width, height, channels, data, stats } = await DecodeWorkerClient.decodeWithFallback(
             this.decodeWorker, 'pfm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePfmLocal(b, { topDown: true }));
         const displayData = data;
@@ -105,13 +104,11 @@ export class PfmProcessor {
         const typeMin = renderOptions.typeMin ?? 0;
         const typeMax = renderOptions.typeMax ?? 1;
 
-        // Surface stats if needed (for auto-normalize or just to have them).
-        // The scan itself already happened once inside the Rust decoder (see
-        // `DecodedArray::finalize_stats`); this only decides whether the UI
-        // needs to know about it yet, matching the old lazy-post behavior.
+        // Calculate lazily only if the user selects a stats-based mode. The
+        // calculator uses the shared Rust/WASM statistics kernel when ready.
         let stats: { min: number, max: number } | undefined = this._cachedStats;
         if (!stats && NormalizationHelper.needsStats(settings)) {
-            stats = this._decodedStats;
+            stats = this._decodedStats || ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
             this._cachedStats = stats;
 
             if (this.vscode && stats) {

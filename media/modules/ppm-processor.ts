@@ -82,9 +82,8 @@ export class PpmProcessor {
         // PPM stores pixels from top-to-bottom, which is the correct orientation for canvas
         // No flipping needed unless specifically required by the format
 
-        // Invalidate stats cache for new image; adopt the decoder's stats
-        // (DecodedArray::finalize_stats — only valid for the plain,
-        // non-rgbAs24BitGrayscale render; see _toImageDataWithNormalization).
+        // The initial gamma-mode display decoder intentionally skips stats.
+        // A non-gamma render computes them lazily below.
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
         this._decodedStats = stats;
@@ -154,8 +153,7 @@ export class PpmProcessor {
                 }
                 stats = { min, max };
             } else {
-                // Already computed once inside the Rust decoder.
-                stats = this._decodedStats;
+                stats = this._decodedStats || ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, false);
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
