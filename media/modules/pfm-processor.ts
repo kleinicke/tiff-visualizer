@@ -1,7 +1,8 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
-import { DecodeWorkerClient } from './decode-worker-client.js';
+import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
 import { decodePfmLocal } from './main-thread-decode.js';
+import { decodeNativePfmFast } from './fast-raw-decoders.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
@@ -43,7 +44,7 @@ export class PfmProcessor {
     /** Set before each load; aborts the fetch when a newer image switch supersedes it */
     loadSignal: AbortSignal | undefined;
     /** Off-thread decoder, set by imagePreview.js; null falls back to local decoding */
-    decodeWorker: DecodeWorkerClient | null;
+    decodeWorker: DecodeWorkerLike | null;
 
     constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
         this.settingsManager = settingsManager;
@@ -67,7 +68,8 @@ export class PfmProcessor {
         // Parse in the decode worker when available, locally otherwise. The
         // display entry point skips stats because PFM starts in gamma mode.
         const { width, height, channels, data, stats } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'pfm', buffer, src, loadSignal, (b: ArrayBuffer) => decodePfmLocal(b, { topDown: true }));
+            this.decodeWorker, 'pfm', buffer, src, loadSignal,
+            (b: ArrayBuffer) => decodeNativePfmFast(b) || decodePfmLocal(b, { topDown: true }));
         const displayData = data;
 
         // Invalidate stats cache for new image; adopt the decoder's stats.

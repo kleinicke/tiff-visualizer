@@ -1091,7 +1091,7 @@ export class ImagePreview extends MediaPreview {
 
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
 <body class="container image">

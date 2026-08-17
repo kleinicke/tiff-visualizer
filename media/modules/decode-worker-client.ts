@@ -19,6 +19,7 @@ const WASM_FETCH_TIMEOUT_MS = 3000;
 
 export interface DecodeWorkerLike {
 	start(): Promise<void>;
+	canDecode(format: string): boolean;
 	decode(format: string, buffer: ArrayBuffer, options?: Record<string, any>): Promise<any> | null;
 }
 

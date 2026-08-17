@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import UPNG from 'upng-js';
 
 function patternedValue(index) {
 	return ((index * 251 + (index >>> 7) * 17) & 0xffff) / 65535;
@@ -43,6 +44,19 @@ export function makePfm(width, height) {
 	return bytes;
 }
 
+export function makePng8(width, height) {
+	const rgba = new Uint8Array(width * height * 4);
+	for (let pixel = 0; pixel < width * height; pixel++) {
+		const value = Math.round(patternedValue(pixel) * 255);
+		const offset = pixel * 4;
+		rgba[offset] = value;
+		rgba[offset + 1] = (value * 3 + 17) & 0xff;
+		rgba[offset + 2] = (value * 7 + 41) & 0xff;
+		rgba[offset + 3] = 255;
+	}
+	return Buffer.from(UPNG.encode([rgba.buffer], width, height, 0));
+}
+
 export function syntheticPerformanceSamples(width, height = width) {
 	return [
 		{ id: 'ppm-rgb16', extension: 'ppm', format: 'ppm', bytes: makePpm16(width, height, 3) },
@@ -52,9 +66,25 @@ export function syntheticPerformanceSamples(width, height = width) {
 	];
 }
 
+export function syntheticVsCodePerformanceSamples(width, height = width) {
+	return [
+		...syntheticPerformanceSamples(width, height),
+		{ id: 'png-rgb8', extension: 'png', bytes: makePng8(width, height) },
+	];
+}
+
 export function writeSyntheticPerformanceSamples(directory, width, height = width) {
 	fs.mkdirSync(directory, { recursive: true });
 	return syntheticPerformanceSamples(width, height).map(sample => {
+		const file = path.join(directory, `${sample.id}-${width}x${height}.${sample.extension}`);
+		fs.writeFileSync(file, sample.bytes);
+		return { ...sample, file };
+	});
+}
+
+export function writeSyntheticVsCodePerformanceSamples(directory, width, height = width) {
+	fs.mkdirSync(directory, { recursive: true });
+	return syntheticVsCodePerformanceSamples(width, height).map(sample => {
 		const file = path.join(directory, `${sample.id}-${width}x${height}.${sample.extension}`);
 		fs.writeFileSync(file, sample.bytes);
 		return { ...sample, file };

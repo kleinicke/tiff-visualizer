@@ -164,6 +164,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	// unsupported variants return their input and use the complete Rust path.
 	ppmProcessor.decodeWorker = fastRawWorkerClient;
 	npyProcessor.decodeWorker = fastRawWorkerClient;
+	pfmProcessor.decodeWorker = fastRawWorkerClient;
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const metadataPanel = new MetadataPanel(settingsManager, vscode);
 	const debayerPanel = new DebayerPanel(settings => { void handleDebayerSettingsChanged(settings); });
@@ -6387,9 +6388,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		// One lookup instead of an ordered if/else chain, so no branch can
 		// silently shadow another and the routing is inspectable in one table.
 		const format = resolveFormat(resourceUri, formatHint);
-		if (format?.kind === 'netpbm' || format?.kind === 'npy') {
+		const localBinaryPgm = format?.kind === 'netpbm' && lower.endsWith('.pgm');
+		const fastRawFormat = format?.kind === 'pfm' ||
+			(format?.kind === 'netpbm' && lower.endsWith('.ppm')) ||
+			(format?.kind === 'npy' && lower.endsWith('.npy'));
+		if (fastRawFormat) {
 			void fastRawWorkerClient.start();
-		} else if (format && !['png', 'tga', 'web-image', 'jxl'].includes(format.kind)) {
+		} else if (format && !localBinaryPgm && !['png', 'tga', 'web-image', 'jxl'].includes(format.kind)) {
 			// Boot alongside the format's file fetch. PNG starts this itself only
 			// after its IHDR confirms that the 16-bit worker path is necessary.
 			void decodeWorkerClient.start();

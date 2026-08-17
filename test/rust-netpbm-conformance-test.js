@@ -18,8 +18,8 @@
  *       cannot catch a bug that was already present when they were captured.
  *
  * Rust remains the complete decoder. A separately tested TypeScript hot path
- * handles only common binary P5/P6 inputs and delegates every other variant
- * to this implementation; it is not a second general NetPBM parser.
+ * handles only common binary P5/P6 and native-endian PFM inputs and delegates
+ * every other variant to this implementation; it is not a second general parser.
  *
  * Negative cases assert the exact rejection message against the golden.
  *

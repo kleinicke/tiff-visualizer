@@ -8,19 +8,20 @@ const require = createRequire(import.meta.url);
 const { listCases, bufferToArrayBuffer } = require('./lib/decoder-cases');
 const { expectsRejection } = require('./lib/golden-io');
 const moduleUrl = pathToFileURL(path.resolve('out/media/modules/fast-raw-decoders.js')).href;
-const { decodeBinaryNetpbmFast, decodeNativeF32NpyFast } = await import(moduleUrl);
+const { decodeBinaryNetpbmFast, decodeNativeF32NpyFast, decodeNativePfmFast } = await import(moduleUrl);
 
 let supported = 0;
 let fallback = 0;
 
 for (const testCase of listCases()) {
-	if (testCase.format !== 'ppm' && testCase.format !== 'npy') continue;
+	if (testCase.format !== 'ppm' && testCase.format !== 'npy' && testCase.format !== 'pfm') continue;
+	if (testCase.format === 'pfm' && testCase.options?.topDown === false) { fallback++; continue; }
 	const input = bufferToArrayBuffer(testCase.bytes);
 	let decoded;
 	try {
 		decoded = testCase.format === 'ppm'
 			? decodeBinaryNetpbmFast(input)
-			: decodeNativeF32NpyFast(input);
+			: testCase.format === 'npy' ? decodeNativeF32NpyFast(input) : decodeNativePfmFast(input);
 	} catch (error) {
 		// Malformed inputs may be rejected by the fast path or returned to Rust;
 		// either outcome preserves the normal decoder's authoritative error path.
@@ -50,10 +51,14 @@ for (const testCase of listCases()) {
 			}
 		}
 		assert.deepEqual(decoded.stats, { min, max }, `${testCase.id}: stats`);
-	} else {
+	} else if (testCase.format === 'ppm') {
 		const bits = decoded.data instanceof Uint16Array ? 16 : 8;
 		assert.equal(decoded.numericDomain.bitsPerSample, bits, `${testCase.id}: bits per sample`);
 		assert.equal(decoded.numericDomain.sourceNumericType, bits === 16 ? 'uint16' : 'uint8', `${testCase.id}: numeric type`);
+	} else {
+		assert.deepEqual(decoded.numericDomain, {
+			bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: 'float32',
+		}, `${testCase.id}: numeric domain`);
 	}
 	supported++;
 }

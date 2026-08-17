@@ -1,6 +1,6 @@
 "use strict";
 
-import { decodeBinaryNetpbmFast, decodeNativeF32NpyFast } from './modules/fast-raw-decoders.js';
+import { decodeBinaryNetpbmFast, decodeNativeF32NpyFast, decodeNativePfmFast } from './modules/fast-raw-decoders.js';
 
 declare const self: any;
 
@@ -14,6 +14,7 @@ self.onmessage = (event: MessageEvent<any>) => {
 	try {
 		const result = format === 'ppm' ? decodeBinaryNetpbmFast(buffer)
 			: format === 'npy' ? decodeNativeF32NpyFast(buffer, options?.computeStats !== false)
+				: format === 'pfm' ? decodeNativePfmFast(buffer)
 				: null;
 		if (!result) {
 			self.postMessage({ id, ok: false, error: 'fast path unsupported', buffer }, [buffer]);

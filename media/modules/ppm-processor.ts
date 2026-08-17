@@ -72,9 +72,16 @@ export class PpmProcessor {
         const loadSignal = this.loadSignal;
         const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
         if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        // Binary P5 is small enough that its in-place TypedArray conversion is
+        // cheaper than a worker round trip, even at 5120². Keep RGB P6 and all
+        // compatibility variants off-thread.
+        const bytes = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength));
+        const decodeClient = bytes.length === 2 && bytes[0] === 80 && bytes[1] === 53
+            ? null
+            : this.decodeWorker;
         // Parse in the decode worker when available, locally otherwise.
         const { width, height, channels, data, numericDomain, formatLabel: format, stats } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'ppm', buffer, src, loadSignal,
+            decodeClient, 'ppm', buffer, src, loadSignal,
             (b: ArrayBuffer) => decodeBinaryNetpbmFast(b) || decodePpmLocal(b));
         const maxval = numericDomain.typeMax;
 

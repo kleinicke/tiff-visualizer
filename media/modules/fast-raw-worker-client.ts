@@ -25,6 +25,10 @@ export class FastRawWorkerClient implements DecodeWorkerLike {
 		return this.startPromise;
 	}
 
+	canDecode(format: string): boolean {
+		return this.ready && (format === 'ppm' || format === 'npy' || format === 'pfm');
+	}
+
 	private async boot(): Promise<void> {
 		const candidates = [
 			new URL('./fastRawWorker.bundle.js', import.meta.url).href,
@@ -54,7 +58,7 @@ export class FastRawWorkerClient implements DecodeWorkerLike {
 	}
 
 	decode(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}): Promise<any> | null {
-		if (format !== 'ppm' && format !== 'npy') return null;
+		if (format !== 'ppm' && format !== 'npy' && format !== 'pfm') return null;
 		if (!this.ready || !this.worker) {
 			return this.start().then(() => this.ready && this.worker
 				? this.decode(format, buffer, options)

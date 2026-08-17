@@ -140,6 +140,61 @@
       decodeTimings: [{ name: "decode-npy-js-zero-copy", durationMs: performance.now() - started }]
     };
   }
+  function readPfmLine(bytes, state) {
+    while (state.offset < bytes.length && (bytes[state.offset] === 10 || bytes[state.offset] === 13)) state.offset++;
+    const start = state.offset;
+    while (state.offset < bytes.length && bytes[state.offset] !== 10 && bytes[state.offset] !== 13) state.offset++;
+    let end = state.offset;
+    while (end > start && (bytes[end - 1] === 9 || bytes[end - 1] === 32)) end--;
+    const line = new TextDecoder("latin1").decode(bytes.subarray(start, end)).trim();
+    while (state.offset < bytes.length && (bytes[state.offset] === 10 || bytes[state.offset] === 13)) state.offset++;
+    return line;
+  }
+  function decodeNativePfmFast(buffer) {
+    if (!IS_LITTLE_ENDIAN) return null;
+    const started = performance.now();
+    const bytes = new Uint8Array(buffer);
+    const state = { offset: 0 };
+    let magic = readPfmLine(bytes, state);
+    while (!magic && state.offset < bytes.length) magic = readPfmLine(bytes, state);
+    if (magic !== "PF" && magic !== "Pf") return null;
+    let dimensions = readPfmLine(bytes, state);
+    while ((!dimensions || dimensions.startsWith("#")) && state.offset < bytes.length) dimensions = readPfmLine(bytes, state);
+    const match = /^(\d+)\s+(\d+)$/.exec(dimensions);
+    if (!match) return null;
+    const width = Number(match[1]), height = Number(match[2]);
+    let scaleLine = readPfmLine(bytes, state);
+    while ((!scaleLine || scaleLine.startsWith("#")) && state.offset < bytes.length) scaleLine = readPfmLine(bytes, state);
+    const scale = Number(scaleLine);
+    if (!Number.isFinite(scale) || scale >= 0) return null;
+    const channels = magic === "PF" ? 3 : 1;
+    const samples = width * height * channels;
+    const rasterBytes = samples * 4;
+    if (!Number.isSafeInteger(samples) || width < 1 || height < 1 || state.offset + rasterBytes > bytes.length) return null;
+    bytes.copyWithin(0, state.offset, state.offset + rasterBytes);
+    const rowBytes = width * channels * 4;
+    if (height > 1) {
+      const scratch = new Uint8Array(rowBytes);
+      for (let top = 0, bottom = height - 1; top < bottom; top++, bottom--) {
+        const topOffset = top * rowBytes;
+        const bottomOffset = bottom * rowBytes;
+        scratch.set(bytes.subarray(topOffset, topOffset + rowBytes));
+        bytes.copyWithin(topOffset, bottomOffset, bottomOffset + rowBytes);
+        bytes.set(scratch, bottomOffset);
+      }
+    }
+    return {
+      width,
+      height,
+      channels,
+      data: new Float32Array(buffer, 0, samples),
+      numericDomain: { bitsPerSample: 32, sampleFormat: 3, typeMin: 0, typeMax: 1, sourceNumericType: "float32" },
+      stats: void 0,
+      formatLabel: "",
+      decodedWith: "javascript-zero-copy (worker)",
+      decodeTimings: [{ name: "decode-pfm-js-zero-copy", durationMs: performance.now() - started }]
+    };
+  }
 
   // media/fast-raw-worker.ts
   self.onmessage = (event) => {
@@ -150,7 +205,7 @@
     }
     const { id, format, buffer, options } = message;
     try {
-      const result = format === "ppm" ? decodeBinaryNetpbmFast(buffer) : format === "npy" ? decodeNativeF32NpyFast(buffer, options?.computeStats !== false) : null;
+      const result = format === "ppm" ? decodeBinaryNetpbmFast(buffer) : format === "npy" ? decodeNativeF32NpyFast(buffer, options?.computeStats !== false) : format === "pfm" ? decodeNativePfmFast(buffer) : null;
       if (!result) {
         self.postMessage({ id, ok: false, error: "fast path unsupported", buffer }, [buffer]);
         return;

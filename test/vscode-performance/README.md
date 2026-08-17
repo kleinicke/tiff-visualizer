@@ -38,6 +38,9 @@ editor, and records both the extension's `[Perf] ... Image loaded` duration and
 driver-observed wall time. The first run may download VS Code through
 `@vscode/test-electron`.
 
+The end-to-end set also includes a generated RGB8 PNG so native browser decode
+changes such as encoded-buffer reuse are tested alongside the raw formats.
+
 Useful environment variables:
 
 - `PERF_SIZE=5120` changes synthetic image dimensions (default: `2048`).

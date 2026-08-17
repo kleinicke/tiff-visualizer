@@ -114,7 +114,10 @@ export class PngProcessor {
             const bitDepth = this._detectPngBitDepth(arrayBuffer);
             // For 8-bit images, use native browser API for better performance
             if (bitDepth === 8 || bitDepth === null) {
-                return this._processWithNativeAPI(src);
+                // The bytes are already resident for IHDR/metadata inspection.
+                // Decode this exact buffer through Chromium instead of making
+                // the Image element fetch the same resource a second time.
+                return this._processWithNativeAPI(src, arrayBuffer);
             }
 
 			// Ordinary 8-bit PNGs never pay for the multi-megabyte decode worker.
@@ -257,7 +260,7 @@ export class PngProcessor {
      * Process image using native browser Image API (for 8-bit PNGs and JPEGs)
      * @param src - Source URI
      */
-    async _processWithNativeAPI(src: string): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
+    async _processWithNativeAPI(src: string, encodedBytes?: ArrayBuffer): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
         const lowerSrc = src.toLowerCase();
         const isJpeg = lowerSrc.includes('.jpg') || lowerSrc.includes('.jpeg');
         const image = new Image();
@@ -268,6 +271,11 @@ export class PngProcessor {
         if (!ctx) {
             throw new Error('Could not get canvas context');
         }
+
+        const objectUrl = encodedBytes
+            ? URL.createObjectURL(new Blob([encodedBytes], { type: 'image/png' }))
+            : null;
+        const releaseObjectUrl = () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
 
         return new Promise((resolve, reject) => {
             image.onload = () => {
@@ -327,14 +335,17 @@ export class PngProcessor {
                     resolve({ canvas, imageData, canvasAlreadyRendered: true });
                 } catch (error) {
                     reject(error);
+                } finally {
+                    releaseObjectUrl();
                 }
             };
 
             image.onerror = () => {
+                releaseObjectUrl();
                 reject(new Error('Failed to load image'));
             };
 
-            image.src = src;
+            image.src = objectUrl || src;
         });
     }
 

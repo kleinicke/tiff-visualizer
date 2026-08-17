@@ -501,12 +501,11 @@ async function decodePng16(buffer: ArrayBuffer) {
 }
 
 /**
- * These seven formats (PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI) are
- * decoded ONLY by Rust/WASM — the TypeScript parsers they were ported from
- * have been deleted, so there is no second implementation to fall back to. A
- * wasm failure is therefore a hard error with an actionable message rather
- * than a silent degradation, which is the point: a silent fallback used to
- * mask Rust bugs behind a console warning.
+ * This is the complete Rust/WASM path for PFM, NetPBM, NPY/NPZ, FITS, NetCDF,
+ * DICOM and CZI. A small outer worker accelerates only the common raw-memory
+ * layouts of the first three and returns unsupported inputs here untouched.
+ * There is no second general TypeScript parser, so a WASM failure after that
+ * dispatch is a hard error rather than a silent compatibility downgrade.
  *
  * The result assembly lives in `modules/wasm-decoders.ts` and is shared with
  * the main-thread path in the format processors, so neither side can drift.

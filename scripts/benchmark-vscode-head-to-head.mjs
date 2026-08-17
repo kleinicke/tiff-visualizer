@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
-import { writeSyntheticPerformanceSamples } from './lib/decoder-performance-samples.mjs';
+import { writeSyntheticVsCodePerformanceSamples } from './lib/decoder-performance-samples.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const oldRef = process.env.PERF_OLD_REF || '4b1c8fdb068b9cf96d9339fd0efd87d157dde8f0';
@@ -108,7 +108,7 @@ async function main() {
 		execFileSync('git', ['worktree', 'add', '--detach', oldRoot, oldRef], { cwd: root, stdio: 'inherit' });
 		fs.symlinkSync(path.join(root, 'node_modules'), path.join(oldRoot, 'node_modules'), 'dir');
 		const allSourceInputs = [
-			...writeSyntheticPerformanceSamples(path.join(tempRoot, 'samples'), size).map(({ id, file }) => ({ id, file })),
+			...writeSyntheticVsCodePerformanceSamples(path.join(tempRoot, 'samples'), size).map(({ id, file }) => ({ id, file })),
 			...externalSamples(),
 		];
 		const sourceInputs = only.size ? allSourceInputs.filter(input => only.has(input.id)) : allSourceInputs;

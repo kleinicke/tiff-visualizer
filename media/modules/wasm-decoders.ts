@@ -4,9 +4,9 @@
  * FITS, classic NetCDF, DICOM and CZI.
  *
  * The Rust crate in `wasm/tiff-decoder` is the complete, authoritative decoder
- * for every variant. Common binary NetPBM and native float32 NPY files may use
- * a conservative TypedArray hot path first; unsupported inputs are returned
- * untouched to this Rust path. There is exactly one copy of the Rust result
+ * for every variant. Common binary NetPBM, native float32 NPY, and native-endian
+ * PFM files may use a conservative TypedArray hot path first; unsupported inputs
+ * are returned untouched to this Rust path. There is exactly one copy of the Rust result
  * assembly — this file. Both Rust callers use it:
  *
  *   - `media/decode-worker.ts`, the normal off-thread path;
