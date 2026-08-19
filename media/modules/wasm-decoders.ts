@@ -252,3 +252,36 @@ export function decodeCziWithWasm(
 	const result = decodeCziFast(new Uint8Array(buffer), JSON.stringify(options || {}));
 	return assembleDecoded<Float32Array>(result, 'czi', context, startedAt);
 }
+
+/**
+ * Nikon ND2. `decode_nd2_fast` reads the chunk map, resolves `options.indices`
+ * (T/P/Z/C) against the experiment loop structure and returns that one frame.
+ * Legacy (pre-2012) containers and Nikon's compressed modes are rejected with
+ * a descriptive error rather than decoded incorrectly.
+ */
+export function decodeNd2WithWasm(
+	decodeNd2Fast: (bytes: Uint8Array, optionsJson: string) => any,
+	buffer: ArrayBuffer,
+	options: Record<string, any>,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeNd2Fast(new Uint8Array(buffer), JSON.stringify(options || {}));
+	return assembleDecoded<Float32Array>(result, 'nd2', context, startedAt);
+}
+
+/**
+ * Leica LIF. `decode_lif_fast` reads the XML header, indexes the memory
+ * blocks and assembles one plane of one series; `options.indices.S` selects
+ * the series, the remaining axes (Z/T/M/C) the plane within it.
+ */
+export function decodeLifWithWasm(
+	decodeLifFast: (bytes: Uint8Array, optionsJson: string) => any,
+	buffer: ArrayBuffer,
+	options: Record<string, any>,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeLifFast(new Uint8Array(buffer), JSON.stringify(options || {}));
+	return assembleDecoded<Float32Array>(result, 'lif', context, startedAt);
+}

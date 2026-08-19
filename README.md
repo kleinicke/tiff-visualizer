@@ -2,7 +2,7 @@
 
 Rust-based image decoding and GPU accelerated rendering for high-bit-depth, floating-point, scientific, and standard image files inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF and Zeiss CZI.
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2 and Leica LIF.
 Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
@@ -23,7 +23,7 @@ the implementation.
 | TIFF / OME-TIFF                              |   Yes |     Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation                                                                                                                                                                  |
 | EXR                                          |    No |      No |     Yes |     Yes | HDR floating-point format                                                                                                                                                                                                           |
 | NPY / NPZ                                    |   Yes |     Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit                                                                                                                                                                     |
-| FITS / DICOM / NetCDF / Zeiss CZI            |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, and MPAS meshes                                                                                                                                                        |
+| FITS / DICOM / NetCDF / CZI / ND2 / LIF      |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes, and Zeiss/Nikon/Leica microscopy stacks                                                                                                                                                        |
 | HDR                                          |    No |      No |      No |     Yes | Radiance RGBE, decoded to float32                                                                                                                                                                                                   |
 | PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
@@ -33,7 +33,7 @@ the implementation.
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
-NetCDF-4/HDF5 and compressed CZI subblocks (JPEG, JPEG XR, Zstd) are not yet supported. DICOM decodes native, JPEG Baseline and RLE Lossless pixel data; other transfer syntaxes are not yet supported.
+NetCDF-4/HDF5, compressed CZI subblocks (JPEG, JPEG XR, Zstd), compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. DICOM decodes native, JPEG Baseline and RLE Lossless pixel data; other transfer syntaxes are not yet supported.
 
 Images above roughly 268 megapixels (for example 20480x20480) decode correctly and their pixel values, metadata and statistics remain fully available, but cannot be displayed: a browser canvas cannot exceed 2^28 pixels. Tiled rendering for images that large is planned.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
@@ -84,7 +84,7 @@ Float Image Visualization Options:
 - **OME-TIFF:** Navigate images/series, channels, Z slices, and timepoints from OME-XML. Multi-file datasets are presented as one logical image while C/Z/T changes transparently select the referenced TIFF and IFD. `BinaryOnly` members automatically follow metadata stored in a master OME-TIFF or companion `.ome`/`.ome.xml` file.
 - **DICOM:** Use **Scientific Image Visualizer: Open Folder as DICOM Dataset**, select an acquisition series, and navigate its slices and available time, echo, and frame dimensions. Physical files remain grouped by DICOM identity instead of being mixed into a filename-sorted collection. Multi-frame objects, including JPEG Baseline objects, expose a Frame control.
 - **Ordinary multi-page TIFF:** Navigate top-level pages even when no semantic dimension metadata is available.
-- **CZI:** Step through Z with the arrow keys and channels with `[` / `]`, or use one slider per axis; channel sliders show the dye name from the embedded metadata. Mosaic tiles are assembled into the full frame.
+- **CZI / ND2 / LIF:** Step through Z with the arrow keys and channels with `[` / `]`, or use one slider per axis; channel sliders show the dye name from the embedded metadata. Mosaic tiles are assembled into the full frame. ND2 exposes time and stage-position axes; LIF adds an `S` slider for choosing among the image series in the file.
 - **NetCDF:** Select a numeric variable and move through its non-spatial dimensions. Regular X/Y arrays render as rasters; MPAS `nCells` fields render on their unstructured cell polygons in an equirectangular mesh view.
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.

@@ -65,7 +65,7 @@ import { ScientificArrayProcessor } from './modules/scientific-array-processor.j
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
 import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-registry.js';
-import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } from './modules/main-thread-decode.js';
+import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, decodeNd2Local, decodeNetcdfLocal } from './modules/main-thread-decode.js';
 
 /**
  * Main Image Preview Application
@@ -146,7 +146,9 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) });
 	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => decodeNetcdfLocal(buffer, options || {}) });
 	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => decodeCziLocal(buffer, options || {}) });
-	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor];
+	const nd2Processor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer, options) => decodeNd2Local(buffer, options || {}) });
+	const lifProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer, options) => decodeLifLocal(buffer, options || {}) });
+	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
 	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, layeredPreviewProcessor, ...scientificProcessors];
@@ -1059,6 +1061,19 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	let netcdfSelection: { variableName?: string; indices: Record<string, number> } = persistedState?.netcdfSelection && typeof persistedState.netcdfSelection === 'object'
 		? { variableName: persistedState.netcdfSelection.variableName, indices: { ...(persistedState.netcdfSelection.indices || {}) } }
 		: { indices: {} };
+	/**
+	 * Processors whose formats expose a multi-dimensional plane selector.
+	 *
+	 * CZI, ND2 and LIF all emit the same `selectors` / `selectedIndices`
+	 * metadata contract from Rust, so one overlay, one keyboard binding and one
+	 * coalescing reload serve all three; only the title differs. Adding a
+	 * fourth such format means adding it to this list and nothing else here.
+	 */
+	const planeNavProcessors: ScientificArrayProcessor[] = [cziProcessor, nd2Processor, lifProcessor];
+	/** Whichever of the above produced the image on screen, if any. */
+	let planeNavProcessor: ScientificArrayProcessor | null = null;
+	const isPlaneNavProcessor = (p: unknown) => planeNavProcessors.includes(p as ScientificArrayProcessor);
+
 	let cziOverlay: HTMLElement | null = null;
 	let cziSelection: { indices: Record<string, number> } = persistedState?.cziSelection && typeof persistedState.cziSelection === 'object'
 		? { indices: { ...(persistedState.cziSelection.indices || {}) } }
@@ -1807,7 +1822,8 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			if (processor === dicomProcessor && !datasetManifest && Number(processor.metadata.frames || 1) > 1) {
 				vscode.postMessage({ type: 'registerDicomFrames', frames: Number(processor.metadata.frames) });
 			}
-			if (processor === cziProcessor) {
+			if (isPlaneNavProcessor(processor)) {
+				planeNavProcessor = processor;
 				cziSelection = { indices: { ...(processor.metadata.selectedIndices || {}) } };
 				cziSelectors = Array.isArray(processor.metadata.selectors) ? processor.metadata.selectors : [];
 				updateCziOverlay(processor.metadata, false);
@@ -1830,7 +1846,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
 			if (processor === netcdfProcessor) { netcdfOverlay?.classList.remove('dataset-overlay--loading'); }
-			if (processor === cziProcessor) {
+			if (isPlaneNavProcessor(processor)) {
 				cziOverlay?.classList.remove('dataset-overlay--loading');
 				onCziLoadSettled();
 			}
@@ -2300,6 +2316,8 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, scientificTypeInfo(dicomProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, scientificTypeInfo(netcdfProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'CZI': return lastRawToLayer(cziProcessor._lastRaw, scientificTypeInfo(cziProcessor), name, uri) || baseFromCanvas(name, uri);
+			case 'ND2': return lastRawToLayer(nd2Processor._lastRaw, scientificTypeInfo(nd2Processor), name, uri) || baseFromCanvas(name, uri);
+			case 'LIF': return lastRawToLayer(lifProcessor._lastRaw, scientificTypeInfo(lifProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'Layered Document': {
 				const raw = layeredPreviewProcessor._lastRaw;
 				const activeRaw = raw ? { ...raw, data: layeredPreviewProcessor.activeData() } : null;
@@ -2364,7 +2382,9 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
 				lower.match(/\.(dcm|dicom)$/) ? dicomProcessor.config :
 				lower.match(/\.(nc|cdf)$/) ? netcdfProcessor.config :
-				lower.match(/\.czi$/) ? cziProcessor.config : null;
+				lower.match(/\.czi$/) ? cziProcessor.config :
+				lower.match(/\.nd2$/) ? nd2Processor.config :
+				lower.match(/\.lif$/) ? lifProcessor.config : null;
 			if (scientificConfig) {
 				const p = new ScientificArrayProcessor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.process(src); return lastRawToLayer(p._lastRaw, scientificTypeInfo(p), name, resourceUri);
@@ -3982,6 +4002,8 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 													currentLoadFormat === 'DICOM' ? dicomProcessor :
 														currentLoadFormat === 'NetCDF' ? netcdfProcessor :
 							currentLoadFormat === 'CZI' ? cziProcessor :
+							currentLoadFormat === 'ND2' ? nd2Processor :
+							currentLoadFormat === 'LIF' ? lifProcessor :
 															currentLoadFormat === 'Layered Document' ? layeredPreviewProcessor :
 																webImageProcessor;
 			const processorUsedWebGl = (activeProcessor as any)?._lastRenderUsedWebGL === true;
@@ -5770,12 +5792,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		const controls = cziOverlay.querySelector('.czi-dimension-controls') as HTMLElement;
 		// The channel name lives in the title rather than beside the C slider: it
 		// varies in length, and a value label that resizes drags the slider with it.
+		const label = planeNavProcessor?.config.formatLabel || 'CZI';
 		const showChannel = (index: number) => {
 			const name = channelNames[index];
-			const next = name ? `CZI · ${name}` : 'CZI';
+			const next = name ? `${label} · ${name}` : label;
 			if (title.textContent !== next) { title.textContent = next; }
 		};
-		const axisSignature = selectors.map((selector: any) => `${selector.name}:${selector.size}`).join(',');
+		const axisSignature = `${label}|` + selectors.map((selector: any) => `${selector.name}:${selector.size}`).join(',');
 		const rebuild = axisSignature !== cziRenderedAxes;
 
 		if (rebuild) {
@@ -6337,37 +6360,66 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
 
+		// A plane change (dragging the Z/T/C/S slider of a CZI, ND2 or LIF) is
+		// NOT a new image: same file, same format, same settings, usually the
+		// same dimensions. Running the full switch teardown for one made the
+		// sliders unusable — every step disposed the WebGL renderers (paying
+		// the per-format GPU validation stall again), reset every processor's
+		// `_isInitialLoad` (forcing a settings round trip to the extension
+		// host before anything could render), cleared raw data the inspector
+		// was still reading, and played the collection-switch loading UI.
+		// The flag was already being passed here and simply never read.
+		const planeChange = !!options.planeChange;
+
 		// Trace where this switch spends its time; the summary is logged from
 		// finalizeImageSetup once the final pixels are on screen.
 		let switchName = resourceUri.split('/').pop() || 'image';
 		try { switchName = decodeURIComponent(switchName); } catch { /* keep encoded name */ }
-		PerfTrace.begin(`switch ${switchName}`, { conciseLabel: `Collection switch ${switchName} completed` });
-		_restoreDecodedImageCandidate = _previousDecodedImageCache;
-		cacheCurrentDecodedImage();
-		beginSeamlessImageTransition(true);
+		PerfTrace.begin(planeChange ? `plane ${switchName}` : `switch ${switchName}`,
+			{ conciseLabel: planeChange ? `Plane change ${switchName} completed` : `Collection switch ${switchName} completed` });
+		if (!planeChange) {
+			// Caching the outgoing image is for stepping between FILES. Doing it
+			// per plane would fill the cache with planes of the file already open.
+			_restoreDecodedImageCandidate = _previousDecodedImageCache;
+			cacheCurrentDecodedImage();
+			beginSeamlessImageTransition(true);
+		}
 
 		// Abort the previous in-flight load: cancels its network fetch and lets
 		// the processors stop before decoding, instead of the superseded load
 		// running to completion and blocking the next image.
 		if (_loadAbortController) { _loadAbortController.abort(); }
-		decodeWorkerClient.cancelActiveDecodes();
-		fastRawWorkerClient.cancelActiveDecodes();
-		resetTiffCanvasReady();
+		// `cancelActiveDecodes()` TERMINATES the decode worker, and the retained
+		// source bytes for multi-plane formats live in that worker. Doing it per
+		// plane step threw away the cache and forced the whole file to be
+		// refetched and the WASM module re-instantiated for every notch of the
+		// slider — the dominant cost of stepping through a stack, far larger
+		// than the decode itself. Plane requests are already coalesced by
+		// `requestCziPlane()` (one in flight, newest kept as trailing), and a
+		// superseded load still bails out on the generation check, so there is
+		// nothing here that needs the worker destroyed.
+		if (!planeChange) {
+			decodeWorkerClient.cancelActiveDecodes();
+			fastRawWorkerClient.cancelActiveDecodes();
+			resetTiffCanvasReady();
+		}
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
 
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
-		tiffProcessor.pageIndex = Math.max(0, Number(options.pageIndex || 0));
-		tiffProcessor.pageCount = 1;
-		updateTiffPageOverlay();
-		updateFilenameBadge(resourceUri);
+		if (!planeChange) {
+			tiffProcessor.pageIndex = Math.max(0, Number(options.pageIndex || 0));
+			tiffProcessor.pageCount = 1;
+			updateTiffPageOverlay();
+			updateFilenameBadge(resourceUri);
 
-		// Keep the live zoom untouched while the old frame remains visible. The
-		// captured state is applied to the completed replacement in finalizeImageSetup.
-		renderCollectionLoadingState();
-		if (filenameBadge) filenameBadge.classList.add('filename-badge--loading');
+			// Keep the live zoom untouched while the old frame remains visible. The
+			// captured state is applied to the completed replacement in finalizeImageSetup.
+			renderCollectionLoadingState();
+			if (filenameBadge) filenameBadge.classList.add('filename-badge--loading');
+		}
 
 		// Reset the state
 		hasLoadedImage = false;
@@ -6375,48 +6427,56 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		imageElement = null;
 		primaryImageData = null;
 		mouseHandler.setPhysicalPixelSize(null);
-		disposeWebglRenderers();
+		// Same format and (almost always) same dimensions across a plane step, so
+		// the renderers stay valid. Tearing them down here cost a full GPU
+		// re-validation per slider step.
+		if (!planeChange) { disposeWebglRenderers(); }
 
 		// Reset each processor's initial-load flag so they re-send formatInfo and
 		// trigger the extension to apply the correct per-format settings for the
 		// new image (e.g. switching from TIFF-int to EXR-float needs different
 		// normalization defaults). The AppStateManager caches settings per-format
 		// so any user adjustments are preserved when switching back.
-		for (const p of allProcessors) { p._isInitialLoad = true; }
+		// Only a real format change needs the per-format settings re-applied.
+		if (!planeChange) { for (const p of allProcessors) { p._isInitialLoad = true; } }
 
 		// Clear each processor's stale raw data so the mouse handler and histogram
 		// don't read pixels from the previous image. Without this, the TIFF-first
 		// checks in mouse-handler.js and updateHistogramData() would return values
 		// from the old image while the new one is loading/rendering.
-		tiffProcessor.rawTiffData = null;
-		tiffProcessor._lastStatistics = null;
-		tiffProcessor._convertedFloatData = null;
-		exrProcessor.rawExrData = undefined;
-		exrProcessor._cachedStats = undefined;
-		const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, ...scientificProcessors];
-		for (const p of rawDataProcessors) { p._lastRaw = null; }
-		layeredPreviewProcessor.reset();
-		_expandedLayerDocumentUri = undefined;
-		updateLayeredPreviewOverlay();
+		if (!planeChange) {
+			tiffProcessor.rawTiffData = null;
+			tiffProcessor._lastStatistics = null;
+			tiffProcessor._convertedFloatData = null;
+			exrProcessor.rawExrData = undefined;
+			exrProcessor._cachedStats = undefined;
+			const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, ...scientificProcessors];
+			for (const p of rawDataProcessors) { p._lastRaw = null; }
+			layeredPreviewProcessor.reset();
+			_expandedLayerDocumentUri = undefined;
+			updateLayeredPreviewOverlay();
+		}
 
 		// Drop any pending deferred-render data from the previous image. Otherwise a
 		// late updateSettings(isInitialRender) for the old image could draw it onto
 		// the new image's canvas, overlaying two images of different sizes.
-		for (const p of allProcessors) { p._pendingRenderData = null; }
-		pngProcessor._lazyNativeReadback = null;
+		if (!planeChange) {
+			for (const p of allProcessors) { p._pendingRenderData = null; }
+			pngProcessor._lazyNativeReadback = null;
+		}
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new
 		// image is ready to be shown.
 
 		// Load the new image based on file type
-		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex, options.netcdfOptions, options.cziOptions);
+		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex, options.netcdfOptions, options.cziOptions, planeChange);
 	}
 
 	/**
 	 * Load image by type (wrapper function)
 	 */
-	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, cziOptions?: Record<string, any>) {
+	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, cziOptions?: Record<string, any>, planeChange = false) {
 		// Wait until the browser has painted the loading UI (counter, filename
 		// badge, loading dot) before starting synchronous decode work, so every
 		// switch gives immediate visual feedback. This also lets a burst of
@@ -6433,8 +6493,18 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
 		if (!lower.endsWith('.nc') && !lower.endsWith('.cdf') && netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
-		if (!lower.endsWith('.czi')) { cziSelectors = []; cziRenderedAxes = ''; if (cziOverlay) { cziOverlay.style.display = 'none'; } }
-		if (tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
+		// Every plane-navigable format shares this overlay, so the reset has to
+		// recognise all of them; matching only `.czi` hid the ND2/LIF sliders
+		// and dropped their keyboard navigation on each load.
+		const planeNavKind = resolveFormat(resourceUri, formatHint)?.kind;
+		if (!(planeNavKind === 'czi' || planeNavKind === 'nd2' || planeNavKind === 'lif')) {
+			cziSelectors = []; cziRenderedAxes = '';
+			if (cziOverlay) { cziOverlay.style.display = 'none'; }
+		}
+		// The cache is keyed by URI/page/frame and knows nothing about plane
+		// coordinates, so on a plane step it would hand back the plane we are
+		// trying to move away from.
+		if (!planeChange && tryRestoreDecodedImageFromCache(resourceUri, formatHint, Number(pageIndex || 0), Number(frameIndex || 0))) {
 			return;
 		}
 		// One lookup instead of an ordered if/else chain, so no branch can
@@ -6487,6 +6557,10 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			handleScientificArray(netcdfProcessor, uri, gen, netcdfOptions || netcdfSelection);
 		} else if (format?.kind === 'czi') {
 			handleScientificArray(cziProcessor, uri, gen, cziOptions || cziSelection);
+		} else if (format?.kind === 'nd2') {
+			handleScientificArray(nd2Processor, uri, gen, cziOptions || cziSelection);
+		} else if (format?.kind === 'lif') {
+			handleScientificArray(lifProcessor, uri, gen, cziOptions || cziSelection);
 		} else {
 			// Fallback to regular image loading
 			const newImage = document.createElement('img');

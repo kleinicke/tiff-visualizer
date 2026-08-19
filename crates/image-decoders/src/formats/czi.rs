@@ -761,9 +761,12 @@ pub(crate) fn decode_czi_impl(
     let channels = pixel_type.channels as usize;
     let bytes_per_channel = pixel_type.bytes_per_channel as usize;
 
-    let pixel_count = mul(mul(width, height)?, channels)?;
-    let mut out = vec![0f32; pixel_count];
-
+    // Validate BEFORE allocating the raster. A large mosaic of compressed
+    // subblocks would otherwise try to reserve the whole plane first, and on
+    // wasm32 (32-bit usize) that allocation aborts the module with a capacity
+    // overflow panic instead of returning the "unsupported codec" message the
+    // native build produces from the loop below. Same inputs must give the
+    // same answer on both targets.
     for entry in &selected {
         if entry.compression != 0 {
             let codec = compression_name(entry.compression);
@@ -775,6 +778,21 @@ pub(crate) fn decode_czi_impl(
         if entry.pixel_type != base_pixel_type_id {
             return Err(DecodeError::new("Mixed pixel types in one CZI plane"));
         }
+    }
+
+    let pixel_count = mul(mul(width, height)?, channels)?;
+    // `vec![0f32; n]` panics on a request the allocator cannot express; a plane
+    // too large for the target must be a decode error, never an abort.
+    let mut out: Vec<f32> = Vec::new();
+    out.try_reserve_exact(pixel_count).map_err(|_| {
+        DecodeError::new(&format!(
+            "CZI plane is too large to decode on this target: {}x{}x{} samples",
+            width, height, channels
+        ))
+    })?;
+    out.resize(pixel_count, 0.0);
+
+    for entry in &selected {
         let segment = czi_segment(data, entry.file_position)?;
         if segment.id != "ZISRAWSUBBLOCK" {
             return Err(DecodeError::new(&format!(

@@ -49,6 +49,10 @@ use formats::exr::decode_exr_impl;
 use formats::fits::decode_fits_impl;
 #[cfg(feature = "hdr")]
 use formats::hdr::decode_hdr_impl;
+#[cfg(feature = "lif")]
+use formats::lif::decode_lif_impl;
+#[cfg(feature = "nd2")]
+use formats::nd2::decode_nd2_impl;
 #[cfg(feature = "netcdf")]
 use formats::netcdf::decode_netcdf_impl;
 #[cfg(feature = "netpbm")]
@@ -366,7 +370,9 @@ impl DecodedArray {
         feature = "fits",
         feature = "netcdf",
         feature = "dicom",
-        feature = "czi"
+        feature = "czi",
+        feature = "nd2",
+        feature = "lif"
     ))]
     fn finalize_stats(mut self) -> Self {
         let stats = match self.sample_kind {
@@ -418,7 +424,9 @@ impl DecodedArray {
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
-    feature = "czi"
+    feature = "czi",
+    feature = "nd2",
+    feature = "lif"
 ))]
 impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
     fn from(p: formats::scientific_common::ScientificParsed) -> Self {
@@ -993,10 +1001,31 @@ pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
     Ok(decode_czi_impl(data, options_json)?.into())
 }
 
+/// Decode one plane of a Nikon ND2. `options_json` is the same
+/// `{ indices?: Record<string, number> }` shape CZI uses, selecting the
+/// T/P/Z/C coordinate. Only modern (chunk-based) uncompressed ND2 decodes;
+/// legacy containers and Nikon's lossless/lossy modes are rejected by name.
+#[cfg(feature = "nd2")]
+pub fn decode_nd2_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
+    Ok(decode_nd2_impl(data, options_json)?.into())
+}
+
+/// Decode one plane of a Leica LIF. `options_json` extends the shared
+/// `{ indices?: Record<string, number> }` shape with an `S` axis selecting
+/// which image series in the file to read; `.lifext` sidecars are not needed.
+#[cfg(feature = "lif")]
+pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
+    Ok(decode_lif_impl(data, options_json)?.into())
+}
+
 // Canonical Rust names. The `*_fast` spellings above are retained because the
 // WASM adapter's public JavaScript API has used them for years.
 #[cfg(feature = "czi")]
 pub use decode_czi_fast as decode_czi;
+#[cfg(feature = "nd2")]
+pub use decode_nd2_fast as decode_nd2;
+#[cfg(feature = "lif")]
+pub use decode_lif_fast as decode_lif;
 #[cfg(feature = "dicom")]
 pub use decode_dicom_fast as decode_dicom;
 #[cfg(feature = "exr")]

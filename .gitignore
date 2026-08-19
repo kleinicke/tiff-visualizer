@@ -38,3 +38,6 @@ media/layerCompositorWorker.bundle.js
 media/layerCompositorWorker.bundle.js.map
 media/comparisonPanel.bundle.js
 media/comparisonPanel.bundle.js.map
+
+# Output of `npm run benchmark:vscode`
+benchmark-vscode-result.json

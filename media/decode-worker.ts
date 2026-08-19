@@ -27,9 +27,9 @@ import './parse-exr.js';
 import * as WorkerGeoTIFF from './geotiff.min.js';
 import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { decodeCziWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
@@ -560,6 +560,16 @@ async function decodeDicom(buffer: ArrayBuffer, frameIndex: number) {
 	return decodeDicomWithWasm(decode_dicom_fast, buffer, frameIndex, 'worker');
 }
 
+async function decodeNd2(buffer: ArrayBuffer, options: Record<string, any>) {
+	await requireWasm('ND2');
+	return decodeNd2WithWasm(decode_nd2_fast, buffer, options, 'worker');
+}
+
+async function decodeLif(buffer: ArrayBuffer, options: Record<string, any>) {
+	await requireWasm('LIF');
+	return decodeLifWithWasm(decode_lif_fast, buffer, options, 'worker');
+}
+
 async function decodeCzi(buffer: ArrayBuffer, options: Record<string, any>) {
 	await requireWasm('CZI');
 	return decodeCziWithWasm(decode_czi_fast, buffer, options, 'worker');
@@ -590,6 +600,10 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeNetcdf(buffer, options);
 		case 'czi':
 			return decodeCzi(buffer, options);
+		case 'nd2':
+			return decodeNd2(buffer, options);
+		case 'lif':
+			return decodeLif(buffer, options);
 		case 'ora':
 		case 'kra':
 		case 'psd':

@@ -653,6 +653,22 @@ pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
         .map_err(js_error)
 }
 
+#[wasm_bindgen]
+pub fn decode_nd2_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_nd2_fast(data, options_json)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_lif_fast(data, options_json)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
 // --- Strip-parallel decoding of predictor-3 float TIFFs ---------------------
 //
 // `tiff_float_strip_plan` is called once (cheap: it only parses the IFD) to

@@ -1,4 +1,25 @@
-# Decoder performance A/B tests
+# Decoder performance tests
+
+> Method, conventions and the traps: **[docs/performance-method.md](../../docs/performance-method.md)**.
+
+## Single-build profiling
+
+```bash
+npm run benchmark:vscode                          # whole corpus
+ONLY=nl_01_depth.tif ITER=5 npm run benchmark:vscode
+```
+
+Runs the CURRENT working tree over the benchmark corpus in a real VS Code
+window, and reports per-phase medians. The first iteration of every file is
+discarded — cold opens pay WASM compile, worker-pool boot and a per-format GPU
+validation stall that never recur. Build the corpus first with
+`npm run benchmark:corpus`.
+
+Both this and the A/B script below drive `runner.cjs`, which scrapes the
+extension's own Output-channel `[Perf]` lines rather than measuring separately,
+so the benchmark and the user can never disagree.
+
+## A/B against a baseline commit
 
 Both benchmarks compare the working tree with the exact v1.9.0 commit
 `4b1c8fdb068b9cf96d9339fd0efd87d157dde8f0`. They create a detached temporary

@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-// FITS, DICOM, NetCDF and CZI are decoded by Rust/WASM only — their
+// FITS, DICOM, NetCDF, CZI, ND2 and LIF are decoded by Rust/WASM only — their
 // TypeScript parsers have all been deleted. These tests assert format
 // semantics (row order, numeric domain, mesh projection, mosaic assembly)
 // rather than parity, so they now drive the wasm decoders directly. Broader
@@ -41,6 +41,8 @@ const parseFits = (buf) => toDecoded(wasm.decode_fits_fast(new Uint8Array(buf)))
 const parseDicom = (buf, frameIndex = 0) => toDecoded(wasm.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0));
 const parseNetCdf = (buf, options = {}) => toDecoded(wasm.decode_netcdf_fast(new Uint8Array(buf), JSON.stringify(options)));
 const parseCzi = (buf, options = {}) => toDecoded(wasm.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options)));
+const parseNd2 = (buf, options = {}) => toDecoded(wasm.decode_nd2_fast(new Uint8Array(buf), JSON.stringify(options)));
+const parseLif = (buf, options = {}) => toDecoded(wasm.decode_lif_fast(new Uint8Array(buf), JSON.stringify(options)));
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');
 
 function arrayBuffer(file) {
@@ -191,16 +193,115 @@ function testCzi() {
 	console.log('✅ CZI: mosaic assembly, Z/C plane selection, channel names, scaling');
 }
 
+
+/**
+ * `synthetic-stack.nd2` is 4x3, uint16, 2 channels, 2 timepoints x 3 Z, with
+ * each sample encoding its own coordinate as `1000*frame + 100*channel +
+ * 10*y + x`. Rows are padded by two bytes so that a decoder ignoring
+ * `uiWidthBytes` shears the image instead of quietly passing.
+ */
+function testNd2() {
+	const buffer = arrayBuffer('synthetic-stack.nd2');
+
+	const first = parseNd2(buffer);
+	assert.deepStrictEqual([first.width, first.height, first.channels], [4, 3, 1],
+		'a multi-channel fluorescence ND2 yields one plane at a time');
+	assert.strictEqual(first.metadata.format, 'ND2');
+	assert.strictEqual(first.metadata.pixelTypeName, 'uint16');
+	assert.deepStrictEqual(first.numericDomain, {
+		bitsPerSample: 16, sampleFormat: 1,
+		typeMin: 0, typeMax: 65535, sourceNumericType: 'uint16',
+	});
+	// Row padding: without honouring uiWidthBytes, row 1 would start mid-row.
+	assert.strictEqual(first.data[0], 0, 'pixel (0,0) of frame 0 channel 0');
+	assert.strictEqual(first.data[3], 3, 'pixel (3,0) follows x');
+	assert.strictEqual(first.data[4], 10, 'row 1 starts after the padded stride');
+	assert.strictEqual(first.data[11], 23, 'last pixel is (3,2)');
+
+	// The time loop is declared (2); the Z loop of 3 is not, and has to be
+	// recovered as the leftover factor of the 6 stored frames.
+	const axes = Object.fromEntries(first.metadata.selectors.map(s => [s.name, s.size]));
+	assert.deepStrictEqual(axes, { T: 2, P: 3, C: 2 },
+		'the undeclared inner loop is recovered from the frame count');
+
+	// Frame index is the mixed radix of the axes: T=1,P=2 -> frame 1*3+2 = 5.
+	const late = parseNd2(buffer, { indices: { T: 1, P: 2, C: 1 } });
+	assert.strictEqual(late.data[0], 5 * 1000 + 100, 'T/P flatten to the right frame');
+	assert.strictEqual(late.data[11], 5 * 1000 + 100 + 23);
+
+	// Channels are independent measurements, so C selects rather than composites.
+	const second = parseNd2(buffer, { indices: { C: 1 } });
+	assert.strictEqual(second.data[0], 100, 'channel 1 of frame 0');
+
+	// Out-of-range coordinates clamp instead of throwing, because the slider
+	// can outrun a reload.
+	const clamped = parseNd2(buffer, { indices: { T: 99, P: 99, C: 99 } });
+	assert.strictEqual(clamped.data[0], 5 * 1000 + 100, 'coordinates clamp to the last plane');
+
+	assert.strictEqual(Math.round(first.metadata.scalingXUm * 100) / 100, 0.25,
+		'calibration is reported in micrometres per pixel');
+
+	// A legacy container must be named as such, not called corrupt.
+	const legacy = new Uint8Array(64);
+	assert.throws(() => wasm.decode_nd2_fast(legacy, '{}'), /legacy/i,
+		'a non-chunk ND2 reports that it is a legacy file');
+}
+
+/**
+ * `synthetic-stack.lif` is 4x3, uint16, 2 channels, 2 Z, one series, with each
+ * sample encoding `1000*channel + 100*z + 10*y + x`. It exercises the
+ * stride-driven addressing: channels are separated by a whole volume, so a
+ * decoder assuming interleaved samples reads the wrong plane entirely.
+ */
+function testLif() {
+	const buffer = arrayBuffer('synthetic-stack.lif');
+
+	const first = parseLif(buffer);
+	assert.deepStrictEqual([first.width, first.height, first.channels], [4, 3, 1]);
+	assert.strictEqual(first.metadata.format, 'LIF');
+	assert.strictEqual(first.metadata.seriesName, 'SeriesA');
+	assert.strictEqual(first.metadata.seriesCount, 1);
+	assert.deepStrictEqual(first.numericDomain, {
+		bitsPerSample: 16, sampleFormat: 1,
+		typeMin: 0, typeMax: 65535, sourceNumericType: 'uint16',
+	});
+	assert.strictEqual(first.data[0], 0);
+	assert.strictEqual(first.data[3], 3);
+	assert.strictEqual(first.data[4], 10, 'row stride comes from the Y BytesInc');
+	assert.strictEqual(first.data[11], 23);
+
+	const axes = Object.fromEntries(first.metadata.selectors.map(s => [s.name, s.size]));
+	assert.deepStrictEqual(axes, { Z: 2, C: 2 },
+		'a single-series file offers no series selector');
+
+	const z1 = parseLif(buffer, { indices: { Z: 1 } });
+	assert.strictEqual(z1.data[0], 100, 'Z steps by its own BytesInc');
+
+	// The planar channel layout is the point: channel 1 lives a whole volume
+	// further into the block, not one sample over.
+	const c1 = parseLif(buffer, { indices: { C: 1 } });
+	assert.strictEqual(c1.data[0], 1000, 'channel 1 is offset by its BytesInc');
+	const both = parseLif(buffer, { indices: { Z: 1, C: 1 } });
+	assert.strictEqual(both.data[11], 1000 + 100 + 23);
+
+	assert.deepStrictEqual(first.metadata.channelNames, ['Ch0', 'Ch1']);
+
+	const bad = new Uint8Array(64);
+	assert.throws(() => wasm.decode_lif_fast(bad, '{}'), /LIF/i);
+}
+
 async function main() {
-	console.log('Running FITS/DICOM/NetCDF/CZI parser tests...');
+	console.log('Running FITS/DICOM/NetCDF/CZI/ND2/LIF parser tests...');
 	await initWasm();
 	testFits();
 	testDicom();
 	await testJpegBaselineDicom();
 	testNetCdf();
 	testCzi();
+	testNd2();
+	testLif();
 	testMpasNetCdf();
-	console.log('FITS, DICOM, NetCDF, and CZI parser tests passed.');
+	console.log('FITS, DICOM, NetCDF, CZI, ND2 and LIF parser tests passed.');
 }
 
 main().catch(error => {

@@ -13,7 +13,9 @@ pub(crate) mod hdr;
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
-    feature = "czi"
+    feature = "czi",
+    feature = "nd2",
+    feature = "lif"
 ))]
 pub(crate) mod json_value;
 #[cfg(any(
@@ -24,9 +26,15 @@ pub(crate) mod json_value;
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
-    feature = "czi"
+    feature = "czi",
+    feature = "nd2",
+    feature = "lif"
 ))]
 pub(crate) mod metadata;
+#[cfg(feature = "lif")]
+pub(crate) mod lif;
+#[cfg(feature = "nd2")]
+pub(crate) mod nd2;
 #[cfg(feature = "netcdf")]
 pub(crate) mod netcdf;
 #[cfg(feature = "netpbm")]
@@ -41,7 +49,9 @@ pub(crate) mod png;
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
-    feature = "czi"
+    feature = "czi",
+    feature = "nd2",
+    feature = "lif"
 ))]
 pub(crate) mod scientific_common;
 #[cfg(feature = "tiff")]

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
 Prefer Rust for complete byte parsers and pixel algorithms; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. A narrowly scoped TypeScript accelerator is acceptable when measurement shows that the input bytes already match a JavaScript TypedArray and crossing WASM memory is the dominant cost. Such an accelerator must preserve the source buffer for unsupported inputs and delegate them to the authoritative Rust implementation.
 
-**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM and CZI. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
+**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
 
 **Shared decoder crate:** all byte parsing, decoded-pixel assembly, demosaicing, and format-neutral
 statistics live in the plain-Rust [`scientific-image-decoders`](crates/image-decoders) crate. It has
@@ -106,7 +106,7 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
   - **PfmProcessor**: Portable Float Map
   - **PpmProcessor**: Portable PixMap formats (PPM/PGM/PBM)
   - **PngProcessor**: PNG with uint8/16 and float16/32 support
-  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
+  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI/ND2/LIF lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
@@ -373,6 +373,17 @@ User docs live in [docs/](docs/), ship inside the VSIX, and open via the `tiffVi
 command. `docs/commands.md` is generated — run `npm run docs:commands` after changing `contributes.*`
 (`pretest` fails if it is stale). Conventions and packaging gotchas are documented at the top of
 [scripts/generate-command-docs.js](scripts/generate-command-docs.js).
+
+### Performance work
+
+**Read [docs/performance-method.md](docs/performance-method.md) before changing a
+decoder or a render path.** It is the method, not a tool tour: how the `[Perf]`
+phases are constructed and why they sum exactly to `webview`, why the first open
+of a session must always be discarded, how to check the machine is quiet enough
+to believe a number, and — most important — how to prove a faster decoder still
+produces identical pixels (`scripts/compare-wasm-builds.mjs`). The expensive
+mistakes here have been confident conclusions from bad measurements, and
+correct-looking changes that quietly altered pixels.
 
 ### Debugging Extension Host vs Webview
 - **Extension host** (TypeScript): Use VS Code debugger (F5), set breakpoints in `src/`

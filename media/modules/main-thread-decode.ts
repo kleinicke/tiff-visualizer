@@ -1,7 +1,7 @@
 "use strict";
 /**
  * Main-thread Rust/WASM decode path for the seven formats that have no
- * TypeScript parser: PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM and CZI.
+ * TypeScript parser: PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF.
  *
  * `DecodeWorkerClient.decodeWithFallback` runs these when the decode worker is
  * unavailable or its response is not ok. That used to be where the TypeScript
@@ -20,6 +20,8 @@
 import { initWasm } from './tiff-wasm-wrapper.js';
 import {
 	decodeCziWithWasm,
+	decodeLifWithWasm,
+	decodeNd2WithWasm,
 	decodeDicomWithWasm,
 	decodeFitsWithWasm,
 	decodeNetcdfWithWasm,
@@ -71,6 +73,16 @@ export async function decodeNetcdfLocal(buffer: ArrayBuffer, options: Record<str
 export async function decodeDicomLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	const wasm = await requireWasm('DICOM');
 	return decodeDicomWithWasm(wasm.decode_dicom_fast, buffer, Number(options.frameIndex || 0), 'main');
+}
+
+export async function decodeNd2Local(buffer: ArrayBuffer, options: Record<string, any> = {}) {
+	const wasm = await requireWasm('ND2');
+	return decodeNd2WithWasm(wasm.decode_nd2_fast, buffer, options, 'main');
+}
+
+export async function decodeLifLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
+	const wasm = await requireWasm('LIF');
+	return decodeLifWithWasm(wasm.decode_lif_fast, buffer, options, 'main');
 }
 
 export async function decodeCziLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {

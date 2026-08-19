@@ -34,6 +34,8 @@ export type DecoderKind =
 	| 'dicom'
 	| 'netcdf'
 	| 'czi'
+	| 'nd2'
+	| 'lif'
 	| 'layered';
 
 export interface FormatEntry {
@@ -69,6 +71,8 @@ export const FORMATS: readonly FormatEntry[] = [
 	{ kind: 'dicom', label: 'DICOM', extensions: ['dcm', 'dicom'] },
 	{ kind: 'netcdf', label: 'NetCDF', extensions: ['nc', 'cdf'] },
 	{ kind: 'czi', label: 'Zeiss CZI', extensions: ['czi'] },
+	{ kind: 'nd2', label: 'Nikon ND2', extensions: ['nd2'] },
+	{ kind: 'lif', label: 'Leica LIF', extensions: ['lif'] },
 	{ kind: 'layered', label: 'OpenRaster', extensions: ['ora'], layeredFormat: 'ora' },
 	{ kind: 'layered', label: 'Krita', extensions: ['kra'], layeredFormat: 'kra' },
 	{ kind: 'layered', label: 'Photoshop', extensions: ['psd'], layeredFormat: 'psd' },

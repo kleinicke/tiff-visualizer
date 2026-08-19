@@ -64,6 +64,8 @@
     "medical imaging",
     "netcdf",
     "czi",
+    "nd2",
+    "lif",
     "zeiss",
     "microscopy",
     "openraster",
@@ -98,7 +100,7 @@
         "priority": "default",
         "selector": [
           {
-            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,czi,ora,kra,psd,psb,xcf,afphoto,af}"
+            "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,czi,nd2,lif,ora,kra,psd,psb,xcf,afphoto,af}"
           }
         ]
       },
@@ -311,7 +313,7 @@
         {
           "command": "tiffVisualizer.browseAndAddToCollection",
           "title": "Add Image to Visualizer Collection",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf|czi|ora|kra|psd|psb|xcf|afphoto|af)$/i && tiffVisualizer.activeMode != 'layers'",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf|czi|nd2|lif|ora|kra|psd|psb|xcf|afphoto|af)$/i && tiffVisualizer.activeMode != 'layers'",
           "group": "navigation@1"
         },
         {
@@ -323,7 +325,7 @@
         {
           "command": "tiffVisualizer.addLayer",
           "title": "Add Image as Layer",
-          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf|czi|ora|kra|psd|psb|xcf|afphoto|af)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
+          "when": "resourceExtname =~ /^\\.(png|jpe?g|tiff?|exr|pfm|npy|npz|pp[mgb]|hdr|tga|webp|avif|bmp|ico|jxl|fits?|fts|dcm|dicom|nc|cdf|czi|nd2|lif|ora|kra|psd|psb|xcf|afphoto|af)$/i && tiffVisualizer.hasActivePreview && tiffVisualizer.activeMode == 'layers'",
           "group": "navigation@1"
         }
       ],
@@ -377,13 +379,14 @@
     "typecheck": "npm run typecheck:src && npm run typecheck:media",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
-    "test": "npm run test:format-registry && npm run test:format-defaults && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:dicom-dataset && npm run test:volume-export && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels",
+    "test": "npm run test:format-registry && npm run test:format-defaults && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior && npm run test:wasm && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:scientific-formats && npm run test:microscopy-matrix && npm run test:dicom-dataset && npm run test:volume-export && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:image-renderer-channels && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels",
     "test:unit": "npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:format-defaults": "node test/format-defaults-test.js",
     "test:format-registry": "node test/format-registry-test.js",
     "test:behavior": "npm run compile && node test/simple-behavior-test.js",
     "test:scientific-formats": "node test/scientific-formats-test.js",
+    "test:microscopy-matrix": "node test/microscopy-matrix-test.js",
     "test:dicom-dataset": "node test/dicom-dataset-test.js",
     "test:volume-export": "node test/volume-export-test.js",
     "test:visualization": "node test/visualization-test.js",
@@ -411,7 +414,10 @@
     "benchmark:accelerators": "npm run compile:quick && playwright test test/playwright/accelerator-speed.spec.ts --workers=1 --headed",
     "benchmark:accelerators:software": "npm run compile:quick && playwright test test/playwright/accelerator-speed.spec.ts --workers=1",
     "benchmark:decoders:ab": "node scripts/benchmark-decoders-head-to-head.mjs",
+    "benchmark:vscode": "node scripts/benchmark-vscode.mjs",
     "benchmark:vscode:ab": "node scripts/benchmark-vscode-head-to-head.mjs",
+    "benchmark:corpus": "node scripts/benchmark-corpus.mjs",
+    "compare:wasm": "node scripts/compare-wasm-builds.mjs",
     "benchmark:decoder-strategies": "node scripts/benchmark-decoder-strategies.mjs",
     "benchmark:layers:4k": "npm run compile:quick && LAYER_BENCH_PRESET=4k node test/layer-compositor-benchmark.js",
     "benchmark:layers:8k": "npm run compile:quick && LAYER_BENCH_PRESET=8k node test/layer-compositor-benchmark.js",

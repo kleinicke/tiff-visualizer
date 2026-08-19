@@ -9,7 +9,7 @@ import type { ScientificDecodedImage } from './types.js';
 type VsCodeApi = { postMessage: (msg: any) => any };
 
 export interface ScientificArrayProcessorConfig {
-	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi';
+	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif';
 	/**
 	 * Keep the source bytes in the decode worker between requests. Worth it for
 	 * formats where one file is decoded repeatedly to show different planes, and
@@ -17,7 +17,7 @@ export interface ScientificArrayProcessorConfig {
 	 */
 	cacheSourceInWorker?: boolean;
 	formatLabel: string;
-	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi';
+	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif';
 	parse: (buffer: ArrayBuffer, options?: Record<string, any>) => ScientificDecodedImage | Promise<ScientificDecodedImage>;
 }
 
