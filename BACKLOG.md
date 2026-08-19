@@ -1629,6 +1629,192 @@ memory or threading benefits, which are the only reasons to leave the browser.
 **Difficulty: 4** as a shell once steps 1 and 2 are done; **5** and a rewrite if
 attempted before them.
 
+### Step 3a — how ply-visualizer gets included
+
+Step 3 says "one app covering both images and 3D" without saying how the two
+codebases meet. They should **not** be merged into one repository up front.
+ply-visualizer is a shipping extension with its own pnpm workspace, webpack
+config, Playwright suite and release cadence; folding that into a restructure
+happening simultaneously here means two moving targets and no clean bisect when
+something breaks.
+
+Ranked options:
+
+1. **Path dependency (do this first).** The desktop app declares
+   `"pointcloud-engine": "link:../ply-visualizer/engine"` — pnpm supports this
+   natively — and Cargo uses
+   `pointcloud-parser = { path = "../ply-visualizer/wasm/pointcloud-parser" }`.
+   Both repositories stay independent. `ply-visualizer/engine` is already a
+   proper package with its own `package.json` and `main: src/main.ts`, so it is
+   consumable as-is today, with no changes on the ply side. The cost is that a
+   clone needs both repositories side by side — fine locally, a wrinkle in CI.
+2. **`git subtree add` once the desktop app is real.** Brings ply in with full
+   history, no submodule friction. Deliberately deferred until step 3 has
+   proven itself.
+3. **Avoid git submodules.** The detached-HEAD and forgotten-`--recursive` tax
+   is not worth it for two repositories the same person owns and edits together.
+
+**The ply side already solved the host problem.** `engine/src/main.ts:32` does
+`const isVSCode = typeof acquireVsCodeApi !== 'undefined'` and branches; the
+standalone `engine/index.html` host is what website-ply deploys. That is step 2
+of this item, already shipping over there. Read that implementation before
+designing this repository's `Host` interface rather than inventing a second one.
+
+**Delete ply's decoder fork as part of this.**
+`ply-visualizer/wasm/tiff-decoder` is a single-`lib.rs` fork wrapping the `tiff`
+crate, entirely superseded by `crates/image-decoders`. Retiring it is the
+concrete first deliverable of step 1's remaining migration work, and it is
+worth doing whether or not the desktop app happens.
+
+### Step 3b — execution order for the restructure
+
+The point of this ordering is that the extension keeps building and passing
+tests at every checkpoint.
+
+1. **Verify the boundary before moving anything.** `media/` must import nothing
+   from `src/`. The only coupling should be `acquireVsCodeApi` and the message
+   protocol. Fix any leak found here first — everything below assumes it.
+2. **Move `media/` sources to `packages/image-engine/`.** Mechanical, but three
+   things will bite: the entry points and `mediaModuleTsFiles` list in
+   `esbuild.js`; the webview resource URIs in `imagePreview.ts` and
+   `imagePreviewManager.ts`; and the `build:wasm` script in `package.json`,
+   which hardcodes `media/wasm/`. Consider keeping the *build output* landing in
+   `media/` at the repository root so only sources move.
+3. **Checkpoint.** `npm run compile`, `npm run test`, and F5 into the Extension
+   Development Host. This is the commit worth being able to return to.
+4. **Extract the state layer** (see step 3c — it is a shared prerequisite).
+5. **Extract `host-adapter`** — one interface (`openFile`, `saveFile`,
+   `prompt`, `pickList`, `notify`, `store`) that the *existing* extension
+   implements, replacing direct `vscode.*` calls in `commands.ts` a group at a
+   time. This is step 2 of this item done incrementally, with the extension's
+   own test suite validating each move. When it is finished, the result is both
+   a working extension and a written spec of what Tauri must provide.
+6. **Scaffold `apps/desktop`** (Tauri 2 + Vite) against `packages/image-engine`
+   with an `acquireVsCodeApi` shim over `host-adapter`. Target for this step is
+   narrow: open a TIFF and render it. Nothing else.
+7. **Add ply** via the path dependency from step 3a, routing by file extension
+   with `import()` so Three.js is not downloaded or parsed when opening a TIFF.
+
+**The shim is the cheap on-ramp, not a replacement for step 2.** A desktop
+`acquireVsCodeApi()` that routes `postMessage` to a same-window TypeScript host
+lets the entire webview run unmodified before a single one of the 153 call
+sites is converted. Use it to get to a rendering window fast; still do the
+proper `Host` interface afterwards, because the shim leaves the format
+processors knowing about a VS Code-shaped protocol.
+
+**Package manager and bundler for the merged app: pnpm + Vite.** ply is already
+pnpm; Vite is Tauri's default and handles Svelte, WASM and web workers cleanly,
+which matters because this repository has four worker bundles. Leave esbuild in
+the VS Code extension package and webpack in ply's — there is no reason to
+touch two working extension builds to get a third target.
+
+One thing to decide before starting: whether the extension's `package.json`
+stays at the repository root (simplest for `vsce`, but then the root is both
+workspace root and extension manifest, which pnpm dislikes) or moves to
+`packages/vscode-tiff/`. Moving it is cleaner; `vsce package` runs from
+whichever directory holds the manifest.
+
+### Step 3c — adopt Svelte for the panel UI
+
+**Verdict: yes, scoped to the panels and to the new desktop chrome, and only
+after the workspace split.** ply-visualizer already ran this exact migration —
+`ply-visualizer/docs/SVELTE_MIGRATION_PLAN.md` has phases 0–6 all marked DONE,
+30 components, and a `mount()`-into-existing-DOM island pattern
+(`errorOverlayMount.ts` and friends). Follow that plan; do not write a new one.
+
+What is in scope here, by measurement:
+
+| Module | LOC | Svelte helps? |
+| --- | --- | --- |
+| `measure-panel.ts` | 2,618 (89 `createElement`) | yes |
+| `layers-panel.ts` | 1,494 (108 `createElement`) | yes |
+| `histogram-overlay.ts` | 1,426 | partly — canvas drawing stays |
+| channels / debayer / metadata / range panels | ~1,050 | yes |
+| `imagePreview.ts` | 6,855 (47 `createElement`) | partly — orchestration only |
+| decoders, compositors, renderers, workers, processors | ~27,000 | **no** |
+
+`media/` currently has 353 `createElement`/`innerHTML` calls and 165
+`addEventListener` calls. Roughly 6–7k lines of imperative DOM are in scope,
+concentrated in the two panels where the manual-DOM tax is worst. The other
+~27k is untouched, exactly as ply's plan documents in its "What Svelte does NOT
+touch" section.
+
+**The argument that actually decides it is the desktop port, not the panels.**
+Going to Tauri means rebuilding UI that VS Code currently provides for free: 17
+`showInputBox`/`QuickPick` calls, 46 `showError`/`Information`/`WarningMessage`
+toasts, 10 status bar entry classes, file dialogs, progress indicators. ply
+already has `Modal.svelte`, `FileList.svelte`, `ErrorOverlay.svelte`,
+`LoadingOverlay.svelte`, `PerformanceStats.svelte` and `FileItem.svelte`. If
+both engines share one framework, that chrome is written once; if this side
+stays vanilla, it gets hand-rolled in imperative DOM while an equivalent sits in
+the sibling repository. So the real question is not "should the extension use
+Svelte" but "should the merged desktop app have one UI layer or two" — and the
+answer is one.
+
+Sequencing, and **do not run this concurrently with the restructure** — bisect
+is worth more than parallelism:
+
+- The useful overlap is ply's **phase 1, the state layer**, which its plan calls
+  "the real prerequisite". Pulling settings and UI state out of the panels into
+  stores is substantially the same work as decoupling them from
+  `vscode.postMessage` for `host-adapter`. Do it once; it serves both. This is
+  why it appears as step 4 in 3b above.
+- Then Svelte phase 0 tooling, then leaf islands — toasts, overlays, modals.
+  These are *new* UI needed for the desktop app anyway, so build them in Svelte
+  from the start rather than migrating anything.
+- Migrate `layers-panel` and `measure-panel` **last**: largest, riskiest, and
+  deferrable indefinitely without blocking the desktop app. The panels keep
+  working as vanilla DOM alongside Svelte islands, which is what ply's phase 2
+  demonstrated.
+- Do **not** rewrite `imagePreview.ts`. It stays the imperative shell that
+  mounts islands, the same role ply's `main.ts` plays today.
+
+Honest cost: esbuild does not do Svelte, so `packages/image-engine` moves to
+Vite — which is wanted for Tauri regardless. That changes the extension's
+webview build too, which is the one genuine risk, and the reason the workspace
+split in 3b comes first.
+
+**Difficulty: 3** for the state layer and leaf islands, **4** including the two
+large panels.
+
+### Step 3d — compositing backend on desktop: benchmark before porting
+
+Step 3 lists "native GPU via `wgpu`" as a benefit. There is a cheaper and more
+portable option worth measuring first, specifically for the **2D layer
+compositor** — not for ply's 3D renderer, where the GPU is the whole point.
+
+`wasm/tiff-decoder/src/compositor/` is already 1,746 lines of Rust. Compiled
+natively rather than to WASM it gets real SIMD, `rayon` across all cores, and —
+the significant one — no texture upload/readback on every layer edit. For a
+moderate number of layers at moderate resolution that plausibly beats the
+WebGPU path end-to-end, because that path is transfer-bound rather than
+math-bound. At 20 layers on 8K it plausibly does not. **This is a benchmark, not
+a decision already taken**; the existing compositor interface is the seam to put
+a third backend behind.
+
+**This does not transfer to the extension.** In the webview the same Rust
+compiles to WASM, and `wasm/tiff-decoder/Cargo.toml` has neither `rayon` nor
+`simd128` enabled — it is single-threaded scalar, and WASM threads would need
+`SharedArrayBuffer` plus COOP/COEP headers that a VS Code webview does not
+reliably provide. **Keep WebGPU in the extension.** The native/WASM split is an
+argument *for* the shared core: one Rust source, two compile targets, backend
+chosen per host at runtime.
+
+Unrelated cheap win noticed while measuring this: enabling `simd128` in the
+WASM build is a build-flag change with no code change, and has not been done.
+
+For ply's Three.js `WebGPURenderer` (`engine/src/rendering/rendererBackend.ts`),
+the realistic desktop options are, worst to best: rely on the OS webview's
+WebGPU and ship a WebGL2-fallback Linux build; render natively offscreen and
+read back (do not — the per-frame readback negates it); or put a native `wgpu`
+surface in the Tauri window with a transparent webview stacked over it for UI.
+Only the third beats the browser, and it means replacing Three.js as ply's
+renderer — a rewrite of much of that engine, plus z-order, transparency, DPI and
+input-forwarding quirks on three window systems. Ship on the existing
+WebGPU-with-WebGL2-fallback path first; `rendererBackend.ts` is already an
+abstraction boundary, so a native backend can go behind it later if profiling on
+real datasets justifies it.
+
 ---
 
 ## 12. Rust-first migration of the data and pixel layers

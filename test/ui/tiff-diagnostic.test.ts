@@ -164,9 +164,9 @@ describe('TIFF Visualizer - Diagnostic Tests', () => {
         console.log('🎮 Testing basic TIFF Visualizer commands...');
         
         const commands = [
-            'TIFF Visualizer: Zoom In',
-            'TIFF Visualizer: Zoom Out',
-            'TIFF Visualizer: Reset Zoom'
+            'Scientific Image Visualizer: Zoom In',
+            'Scientific Image Visualizer: Zoom Out',
+            'Scientific Image Visualizer: Reset Zoom'
         ];
         
         for (const command of commands) {

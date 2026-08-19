@@ -170,11 +170,11 @@ test.describe('TIFF Visualizer Extension Test', () => {
     
     // Test various TIFF Visualizer commands
     const commandsToTest = [
-      'TIFF Visualizer: Zoom In',
-      'TIFF Visualizer: Zoom Out',
-      'TIFF Visualizer: Set Gamma',
-      'TIFF Visualizer: Set Brightness',
-      'TIFF Visualizer: Set Normalization Range'
+      'Scientific Image Visualizer: Zoom In',
+      'Scientific Image Visualizer: Zoom Out',
+      'Scientific Image Visualizer: Set Gamma',
+      'Scientific Image Visualizer: Set Brightness',
+      'Scientific Image Visualizer: Set Normalization Range'
     ];
     
     for (const command of commandsToTest) {

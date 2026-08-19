@@ -117,167 +117,167 @@
       {
         "command": "tiffVisualizer.openDicomFolder",
         "title": "Open Folder as DICOM Dataset",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.openVolumeIn3D",
         "title": "Open DICOM Volume in 3D Viewer",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.zoomIn",
         "title": "Zoom In",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.zoomOut",
         "title": "Zoom Out",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.copyImage",
         "title": "Copy Image",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.pastePosition",
         "title": "Paste Position",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.resetZoom",
         "title": "Reset Zoom",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.setNormalizationRange",
         "title": "Set Normalization Range",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.exportLayers",
         "title": "Export…",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.setGamma",
         "title": "Set Gamma",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.setBrightness",
         "title": "Set Brightness",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.selectForCompare",
         "title": "Select Image for Side-by-Side Compare",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.compareWithSelected",
         "title": "Compare Side by Side with Selected",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleLayers",
         "title": "Open Layers View",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.addLayer",
         "title": "Add Image as Layer",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleNanColor",
         "title": "Toggle NaN Color (Black/Fuchsia)",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.browseAndAddToCollection",
         "title": "Add Images to Collection",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.openComparisonPanel",
         "title": "Open Comparison Gallery (Legacy Renderer)",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.resetAllSettings",
         "title": "Reset All Settings to Defaults",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleHistogram",
         "title": "Toggle Histogram",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleMetadata",
         "title": "Toggle Metadata Panel",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleMeasure",
         "title": "Measure",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleChannels",
         "title": "Channels",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleScaleBar",
         "title": "Toggle Scale Bar",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.convertColormapToFloat",
         "title": "Decode Colormap Image to Float",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.applyColormap",
         "title": "Apply Colormap (Pseudocolor)",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleDebayer",
         "title": "Debayer (Demosaic CFA Image)",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.revertToOriginal",
         "title": "Revert to Original Image",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleColorPickerMode",
         "title": "Toggle Color Picker: Show Modified Values",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.copyImageInfo",
         "title": "Copy Image Information to Clipboard",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.toggleRgb24Mode",
         "title": "Toggle RGB as 24-bit Grayscale",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.openAsPointCloud",
         "title": "Open as Point Cloud",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       },
       {
         "command": "tiffVisualizer.showDocumentation",
         "title": "Show Documentation",
-        "category": "TIFF Visualizer"
+        "category": "Scientific Image Visualizer"
       }
     ],
     "keybindings": [
@@ -351,7 +351,7 @@
       ]
     },
     "configuration": {
-      "title": "TIFF Visualizer",
+      "title": "Scientific Image Visualizer",
       "properties": {
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",

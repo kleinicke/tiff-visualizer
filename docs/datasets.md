@@ -30,7 +30,7 @@ scale.
 ## DICOM
 
 For a folder of DICOM files — including extensionless ones, which is the normal
-case for exported studies — run **TIFF Visualizer: Open Folder as DICOM
+case for exported studies — run **Scientific Image Visualizer: Open Folder as DICOM
 Dataset**.
 
 The viewer then:

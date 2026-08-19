@@ -227,21 +227,21 @@ test.describe('TIFF Visualizer Comprehensive Tests', () => {
     
     // Test zoom in command
     await page.keyboard.press('Ctrl+Shift+P');
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Zoom In');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Zoom In');
     await page.keyboard.press('Enter');
     console.log('✅ Zoom In command executed');
     await page.waitForTimeout(2000);
     
     // Test zoom out command
     await page.keyboard.press('Ctrl+Shift+P');
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Zoom Out');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Zoom Out');
     await page.keyboard.press('Enter');
     console.log('✅ Zoom Out command executed');
     await page.waitForTimeout(2000);
     
     // Test reset zoom command
     await page.keyboard.press('Ctrl+Shift+P');
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Reset Zoom');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Reset Zoom');
     await page.keyboard.press('Enter');
     console.log('✅ Reset Zoom command executed');
     await page.waitForTimeout(2000);

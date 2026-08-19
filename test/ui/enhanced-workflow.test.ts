@@ -48,7 +48,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         console.log('\n🎯 Step 2: Setting manual normalization borders (0 to 2)...');
         
         try {
-            await workbench.executeCommand('TIFF Visualizer: Set Normalization Range');
+            await workbench.executeCommand('Scientific Image Visualizer: Set Normalization Range');
             await testUtils.getDriver().sleep(2000);
             
             // This should open the normalization options dialog
@@ -65,7 +65,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         console.log('\n🤖 Step 3: Setting automatic borders...');
         
         try {
-            await workbench.executeCommand('TIFF Visualizer: Set Normalization Range');
+            await workbench.executeCommand('Scientific Image Visualizer: Set Normalization Range');
             await testUtils.getDriver().sleep(2000);
             console.log('✅ Auto normalization command executed');
         } catch (error) {
@@ -76,7 +76,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         console.log('\n⚡ Step 4: Applying gamma correction...');
         
         try {
-            await workbench.executeCommand('TIFF Visualizer: Set Gamma');
+            await workbench.executeCommand('Scientific Image Visualizer: Set Gamma');
             await testUtils.getDriver().sleep(2000);
             console.log('✅ Gamma correction command executed');
         } catch (error) {
@@ -99,7 +99,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         
         for (const zoomCmd of zoomCommands) {
             try {
-                await workbench.executeCommand(`TIFF Visualizer: ${zoomCmd}`);
+                await workbench.executeCommand(`Scientific Image Visualizer: ${zoomCmd}`);
                 await testUtils.getDriver().sleep(500);
                 console.log(`✅ ${zoomCmd} executed successfully`);
             } catch (error) {
@@ -110,7 +110,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         // Test brightness adjustment
         console.log('\n💡 Testing brightness adjustment...');
         try {
-            await workbench.executeCommand('TIFF Visualizer: Set Brightness');
+            await workbench.executeCommand('Scientific Image Visualizer: Set Brightness');
             await testUtils.getDriver().sleep(1000);
             console.log('✅ Brightness command executed');
         } catch (error) {
@@ -153,7 +153,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         console.log('✅ UINT8 image opened successfully');
         
         // Test some commands with UINT8 image
-        await workbench.executeCommand('TIFF Visualizer: Zoom In');
+        await workbench.executeCommand('Scientific Image Visualizer: Zoom In');
         await testUtils.getDriver().sleep(500);
         console.log('✅ UINT8 image commands working');
         
@@ -172,7 +172,7 @@ describe('TIFF Visualizer - Enhanced Workflow Test', () => {
         console.log('✅ Float32 depth image opened successfully');
         
         // Test Float32 specific commands
-        await workbench.executeCommand('TIFF Visualizer: Set Normalization Range');
+        await workbench.executeCommand('Scientific Image Visualizer: Set Normalization Range');
         await testUtils.getDriver().sleep(1000);
         console.log('✅ Float32 normalization commands available');
         

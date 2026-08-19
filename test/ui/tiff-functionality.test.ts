@@ -163,7 +163,7 @@ describe('TIFF Visualizer - Comprehensive Functionality Tests', () => {
             // Test that the extension doesn't crash with invalid operations
             try {
                 // Try to execute commands without a file open
-                await workbench.executeCommand('TIFF Visualizer: Export as PNG');
+                await workbench.executeCommand('Scientific Image Visualizer: Export as PNG');
                 console.log('✅ Command executed without error');
             } catch (error) {
                 // Expected behavior - command should either work or fail gracefully

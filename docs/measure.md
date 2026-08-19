@@ -3,7 +3,7 @@
 # Measurement and quantitative analysis
 
 Open with `Ctrl`/`Cmd` + `Shift` + `M`, **Measure** from the right-click menu, or
-**TIFF Visualizer: Measure** from the command palette. Everything lives in that
+**Scientific Image Visualizer: Measure** from the command palette. Everything lives in that
 one panel, and nothing about it is visible until you open it.
 
 ## The guarantee that matters

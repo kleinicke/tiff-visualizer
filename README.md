@@ -37,7 +37,7 @@ NetCDF-4/HDF5 and compressed CZI subblocks (JPEG, JPEG XR, Zstd) are not yet sup
 
 Images above roughly 268 megapixels (for example 20480x20480) decode correctly and their pixel values, metadata and statistics remain fully available, but cannot be displayed: a browser canvas cannot exceed 2^28 pixels. Tiled rendering for images that large is planned.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
-Extensionless DICOM studies can be opened with **TIFF Visualizer: Open Folder as DICOM Dataset**. The viewer scans technical headers, groups images by series, removes duplicate SOP instances, and orders slices spatially.
+Extensionless DICOM studies can be opened with **Scientific Image Visualizer: Open Folder as DICOM Dataset**. The viewer scans technical headers, groups images by series, removes duplicate SOP instances, and orders slices spatially.
 
 ## Features
 
@@ -82,7 +82,7 @@ Float Image Visualization Options:
 ## Multi-dimensional and multi-view images
 
 - **OME-TIFF:** Navigate images/series, channels, Z slices, and timepoints from OME-XML. Multi-file datasets are presented as one logical image while C/Z/T changes transparently select the referenced TIFF and IFD. `BinaryOnly` members automatically follow metadata stored in a master OME-TIFF or companion `.ome`/`.ome.xml` file.
-- **DICOM:** Use **TIFF Visualizer: Open Folder as DICOM Dataset**, select an acquisition series, and navigate its slices and available time, echo, and frame dimensions. Physical files remain grouped by DICOM identity instead of being mixed into a filename-sorted collection. Multi-frame objects, including JPEG Baseline objects, expose a Frame control.
+- **DICOM:** Use **Scientific Image Visualizer: Open Folder as DICOM Dataset**, select an acquisition series, and navigate its slices and available time, echo, and frame dimensions. Physical files remain grouped by DICOM identity instead of being mixed into a filename-sorted collection. Multi-frame objects, including JPEG Baseline objects, expose a Frame control.
 - **Ordinary multi-page TIFF:** Navigate top-level pages even when no semantic dimension metadata is available.
 - **CZI:** Step through Z with the arrow keys and channels with `[` / `]`, or use one slider per axis; channel sliders show the dye name from the embedded metadata. Mosaic tiles are assembled into the full frame.
 - **NetCDF:** Select a numeric variable and move through its non-spatial dimensions. Regular X/Y arrays render as rasters; MPAS `nCells` fields render on their unstructured cell polygons in an equirectangular mesh view.
@@ -91,7 +91,7 @@ Float Image Visualization Options:
 
 ## Documentation
 
-Full documentation ships with the extension: run **TIFF Visualizer: Show Documentation** from the Command Palette, or right-click inside an open image and choose **Show Documentation**. It opens in VS Code's markdown preview — no browser needed.
+Full documentation ships with the extension: run **Scientific Image Visualizer: Show Documentation** from the Command Palette, or right-click inside an open image and choose **Show Documentation**. It opens in VS Code's markdown preview — no browser needed.
 
 You can also read it on GitHub: [documentation index](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/index.md) — [formats](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/formats.md) · [viewing](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/viewing.md) · [normalization & gamma](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/rendering.md) · [measurement](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/measure.md) · [layers](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/layers.md) · [commands](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/commands.md) · [troubleshooting](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/troubleshooting.md)
 

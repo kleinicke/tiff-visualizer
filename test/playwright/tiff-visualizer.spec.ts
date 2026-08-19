@@ -109,7 +109,7 @@ test.describe('TIFF Visualizer Extension', () => {
     
     // Test zoom in command
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Zoom In');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Zoom In');
     await page.keyboard.press('Enter');
     
     // Wait for zoom to be applied
@@ -117,7 +117,7 @@ test.describe('TIFF Visualizer Extension', () => {
     
     // Test zoom out command
     await page.keyboard.press('Ctrl+Shift+P');
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Zoom Out');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Zoom Out');
     await page.keyboard.press('Enter');
     
     await page.waitForTimeout(1000);

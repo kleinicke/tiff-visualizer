@@ -143,11 +143,11 @@ export class TIFFTestRunner {
     console.log('Testing TIFF Visualizer commands...');
     
     const commands = [
-      'TIFF Visualizer: Set Gamma',
-      'TIFF Visualizer: Set Brightness',
-      'TIFF Visualizer: Set Normalization Range',
-      'TIFF Visualizer: Zoom In',
-      'TIFF Visualizer: Zoom Out'
+      'Scientific Image Visualizer: Set Gamma',
+      'Scientific Image Visualizer: Set Brightness',
+      'Scientific Image Visualizer: Set Normalization Range',
+      'Scientific Image Visualizer: Zoom In',
+      'Scientific Image Visualizer: Zoom Out'
     ];
 
     for (const command of commands) {

@@ -133,7 +133,7 @@ test.describe('TIFF Interactive Tests', () => {
     
     // Test gamma correction
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Gamma');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Set Gamma');
     await page.keyboard.press('Enter');
     console.log('✅ Gamma correction command executed');
     
@@ -142,7 +142,7 @@ test.describe('TIFF Interactive Tests', () => {
     
     // Test brightness correction
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Brightness');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Set Brightness');
     await page.keyboard.press('Enter');
     console.log('✅ Brightness correction command executed');
     
@@ -257,7 +257,7 @@ test.describe('TIFF Interactive Tests', () => {
     
     // Test auto normalization (for float images)
     await page.keyboard.press('Ctrl+Shift+P'); // Open command palette
-    await page.fill('.monaco-quick-input-widget input', 'TIFF Visualizer: Set Normalization Range');
+    await page.fill('.monaco-quick-input-widget input', 'Scientific Image Visualizer: Set Normalization Range');
     await page.keyboard.press('Enter');
     console.log('✅ Auto normalization command executed');
     

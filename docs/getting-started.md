@@ -29,7 +29,7 @@ a panel you open explicitly. Nothing overlays your image until you ask for it.
 | --- | --- |
 | Status bar (bottom) | Size, pixel position, zoom, normalization range, gamma, brightness, histogram toggle, layers toggle, file size |
 | Right-click in the image | The full command menu for the current image |
-| Command Palette | Every command, prefixed **TIFF Visualizer:** |
+| Command Palette | Every command, prefixed **Scientific Image Visualizer:** |
 | Panels | Histogram, Metadata, Measure, Debayer, Layers — each opened by command or status bar click |
 
 Most status bar entries are clickable. Clicking the zoom entry resets zoom;
