@@ -11,6 +11,9 @@ echo "Building WASM module..."
 cd wasm/tiff-decoder
 
 # Build with wasm-pack
-wasm-pack build --target web --out-dir ../../media/wasm --out-name tiff-wasm --no-typescript
+# SIMD128 is enabled deliberately: it is a codegen-only change (identical
+# decoder output) worth 5-64% on the decode paths. See BACKLOG.md item 11 step 3d.
+RUSTFLAGS="-C target-feature=+simd128" \
+  wasm-pack build --target web --out-dir ../../media/wasm --out-name tiff-wasm --no-typescript
 
 echo "WASM build complete!"

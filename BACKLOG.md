@@ -1800,8 +1800,30 @@ reliably provide. **Keep WebGPU in the extension.** The native/WASM split is an
 argument *for* the shared core: one Rust source, two compile targets, backend
 chosen per host at runtime.
 
-Unrelated cheap win noticed while measuring this: enabling `simd128` in the
-WASM build is a build-flag change with no code change, and has not been done.
+**Done, and unrelated to the desktop app: `simd128` is now enabled** in
+`build:wasm` and `scripts/build-wasm.sh` via
+`RUSTFLAGS="-C target-feature=+simd128"`. A build-flag change with no code
+change. Measured on 3072x3072 single-strip TIFFs, best-of-7 x 4 alternating
+runs, decode plus `get_data_as_f32`:
+
+| Sample | Before | After | Delta |
+| --- | --- | --- | --- |
+| u8 RGB, uncompressed | 41.0 ms | 14.9 ms | **-64%** |
+| u16 gray, uncompressed | 29.5 ms | 21.3 ms | **-28%** |
+| u8 RGB, Deflate + predictor 2 | 230.5 ms | 191.3 ms | **-17%** |
+| u16 gray, Deflate + predictor 2 | 122.3 ms | 109.1 ms | **-11%** |
+| f32 gray, Deflate | 220.3 ms | 208.2 ms | -5% |
+| f32 gray, uncompressed | 62.8 ms | 62.9 ms | none |
+
+The pattern is what autovectorization predicts: widening and interleaving loops
+vectorize well, inflate does not, and the f32 uncompressed path is already a
+straight memory copy with nothing to vectorize. Decoded output is byte-for-byte
+identical (checksums matched on every sample; `test:wasm`, `test:formats` and
+`test:behavior` all pass). The module grows 2.97 MB to 3.00 MB, +1.3%.
+
+Not yet explored, and the obvious follow-up: the same reasoning applies to the
+compositor and measurement kernels, and explicit `std::simd` in the hot loops
+would go beyond what LLVM autovectorizes on its own.
 
 For ply's Three.js `WebGPURenderer` (`engine/src/rendering/rendererBackend.ts`),
 the realistic desktop options are, worst to best: rely on the OS webview's
