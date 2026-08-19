@@ -793,3 +793,39 @@ pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadataJs, JsValue> 
         .map(|inner| TiffStripMetadataJs { inner })
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+/// Like `decode_tiff_float_strip_range`, but returns native little-endian
+/// sample bytes so the caller can wrap them in the carrier type its pipeline
+/// expects with no conversion pass.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_tiff_strip_range_raw(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    rows_per_strip: u32,
+    predictor: u32,
+    sample_format: u32,
+    little_endian: bool,
+) -> Result<Vec<u8>, JsValue> {
+    let plan = core::TiffFloatStripPlan {
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        sample_format,
+        little_endian,
+        rows_per_strip,
+        offsets: Vec::new(),
+        counts: Vec::new(),
+    };
+    core::decode_tiff_strip_range_raw(blob, counts, first_strip, &plan)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}

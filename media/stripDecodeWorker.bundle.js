@@ -172,6 +172,19 @@ function decode_tiff_float_strip_range(blob, counts, first_strip, width, height,
   wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
   return v3;
 }
+function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+  return v3;
+}
 function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
@@ -2284,6 +2297,58 @@ self.onmessage = async (event) => {
   try {
     await ready;
     const started = performance.now();
+    if (job.raw) {
+      const bytes = decode_tiff_strip_range_raw(
+        new Uint8Array(job.blob),
+        new Uint32Array(job.counts),
+        job.firstStrip,
+        job.width,
+        job.height,
+        job.channels,
+        job.bitsPerSample,
+        job.compression,
+        job.rowsPerStrip,
+        job.predictor,
+        job.sampleFormat,
+        job.littleEndian
+      );
+      const view = job.bitsPerSample === 8 ? bytes : job.sampleFormat === 3 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4) : new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+      let rmin = Infinity;
+      let rmax = -Infinity;
+      let nonFinite = false;
+      for (let i = 0; i < view.length; i++) {
+        const value = view[i];
+        if (value < rmin) {
+          rmin = value;
+        }
+        if (value > rmax) {
+          rmax = value;
+        }
+        if (value !== value) {
+          nonFinite = true;
+        }
+      }
+      if (nonFinite || !Number.isFinite(rmin) || !Number.isFinite(rmax)) {
+        rmin = Infinity;
+        rmax = -Infinity;
+        for (let i = 0; i < view.length; i++) {
+          const value = view[i];
+          if (Number.isFinite(value)) {
+            if (value < rmin) {
+              rmin = value;
+            }
+            if (value > rmax) {
+              rmax = value;
+            }
+          }
+        }
+      }
+      self.postMessage(
+        { id: job.id, samples: view, min: rmin, max: rmax, ms: performance.now() - started },
+        [bytes.buffer]
+      );
+      return;
+    }
     const samples = decode_tiff_float_strip_range(
       new Uint8Array(job.blob),
       new Uint32Array(job.counts),

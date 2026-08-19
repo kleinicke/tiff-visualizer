@@ -24,6 +24,24 @@ const MIN_PIXELS = 2_000_000;
 /** Cap the pool: more workers than this stops helping and costs memory. */
 const MAX_WORKERS = 8;
 
+/**
+ * Which typed array the decoded samples arrive in.
+ *
+ * Mirrors `pickTiffArrayCtor` in tiff-processor: float or signed or >16-bit
+ * needs a Float32Array carrier; other integers use the narrowest array that
+ * holds the depth. Matching it matters twice over — the processor can then use
+ * the interleaved buffer directly instead of rebuilding it, and the WebGL
+ * renderer accepts integer data only in a Uint16Array.
+ */
+function carrierFor(bitsPerSample: number, sampleFormat: number): 'u8' | 'u16' | 'f32' | null {
+	if (sampleFormat === 1 && bitsPerSample === 8) { return 'u8'; }
+	if (sampleFormat === 1 && bitsPerSample === 16) { return 'u16'; }
+	if (sampleFormat === 3 && bitsPerSample === 32) { return 'f32'; }
+	// Signed, half-float, 64-bit and >16-bit integers all need widening, which
+	// the f32 conversion path in Rust already does.
+	return null;
+}
+
 export interface StripParallelResult {
 	width: number;
 	height: number;
@@ -38,7 +56,7 @@ export interface StripParallelResult {
 	pageCount: number;
 	allTagsJson: string;
 	omeXml: string | undefined;
-	data: Float32Array;
+	data: Float32Array | Uint16Array | Uint8Array;
 	min: number;
 	max: number;
 	workers: number;
@@ -74,17 +92,24 @@ class StripDecodePool {
 			new URL('./stripDecodeWorker.bundle.js', import.meta.url).href,
 			new URL('../stripDecodeWorker.bundle.js', import.meta.url).href,
 		];
-		let source: string | null = null;
-		for (const url of candidates) {
-			try {
-				const response = await fetch(url);
-				if (response.ok) { source = await response.text(); break; }
-			} catch { /* try next candidate */ }
+		if (!this._blobUrl) {
+			let source: string | null = null;
+			for (const url of candidates) {
+				try {
+					const response = await fetch(url);
+					if (response.ok) { source = await response.text(); break; }
+				} catch { /* try next candidate */ }
+			}
+			if (!source) { throw new Error('stripDecodeWorker.bundle.js not found'); }
+			this._blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
 		}
-		if (!source) { throw new Error('stripDecodeWorker.bundle.js not found'); }
 
-		// Compiled once here and instantiated N times: the main thread can fetch
-		// webview-resource URLs, the blob workers cannot.
+		// Compiled once and instantiated N times: the main thread can fetch
+		// webview-resource URLs, the blob workers cannot. Retained across a
+		// retire/respawn cycle so only instantiation is repaid.
+		if (this._module) {
+			return this._spawn(this._module);
+		}
 		const wasmUrls = [
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
@@ -98,8 +123,10 @@ class StripDecodePool {
 		}
 		if (!compiled) { throw new Error('tiff-wasm.wasm not found for the strip pool'); }
 		this._module = compiled;
+		return this._spawn(compiled);
+	}
 
-		this._blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+	private async _spawn(compiled: WebAssembly.Module): Promise<boolean> {
 		const cores = (globalThis.navigator as any)?.hardwareConcurrency || 4;
 		// Leave a core for the UI thread and the ordinary decode worker.
 		const count = Math.max(2, Math.min(MAX_WORKERS, cores - 1));
@@ -139,9 +166,24 @@ class StripDecodePool {
 		});
 	}
 
-	private _teardown() {
+	/**
+	 * Terminate every pool worker and allow a fresh pool to boot later.
+	 *
+	 * WebAssembly linear memory grows but never shrinks, so N workers whose
+	 * heaps each expanded to hold a slice of a 100-500MB raster retain that
+	 * memory for the session. The main thread's following WebGL upload then
+	 * contends with it -- measured at 10240x10240, keeping the pool alive more
+	 * than doubled `webgl-texture-upload` (201ms -> 491ms), eating most of the
+	 * decode win. The compiled module is kept so respawning is cheap.
+	 */
+	retire() {
 		for (const entry of this._workers) { entry.worker.terminate(); }
 		this._workers = [];
+		this._bootPromise = null;
+	}
+
+	private _teardown() {
+		this.retire();
 		if (this._blobUrl) { URL.revokeObjectURL(this._blobUrl); this._blobUrl = null; }
 	}
 }
@@ -234,6 +276,7 @@ export async function tryStripParallelDecode(
 		if (remainingStrips <= remainingWorkers) { /* one strip each from here */ }
 	}
 
+	const raw = carrierFor(plan.bits_per_sample, plan.sample_format);
 	const dispatchStart = performance.now();
 	const jobs = ranges.map((range, index) => {
 		let blobLength = 0;
@@ -249,6 +292,7 @@ export async function tryStripParallelDecode(
 			rangeCounts[i - range.first] = count;
 		}
 		return pool.run({
+			raw: !!raw,
 			blob: blob.buffer,
 			counts: rangeCounts.buffer,
 			firstStrip: range.first,
@@ -262,26 +306,45 @@ export async function tryStripParallelDecode(
 		}, [blob.buffer, rangeCounts.buffer], index);
 	});
 
-	let parts: any[];
-	try { parts = await Promise.all(jobs); } catch (error) {
+	// Copy each range in as it ARRIVES rather than after Promise.all: the
+	// workers finish at different times, so the copies hide behind the ranges
+	// still decoding instead of running as one serial pass at the end.
+	const total = width * height * channels;
+	const data: Float32Array | Uint16Array | Uint8Array =
+		raw === 'u8' ? new Uint8Array(total)
+			: raw === 'u16' ? new Uint16Array(total)
+				: new Float32Array(total);
+	let min = Infinity;
+	let max = -Infinity;
+	let copyMs = 0;
+	try {
+		await Promise.all(jobs.map(async (job, index) => {
+			const part = await job;
+			const copyStart = performance.now();
+			data.set(part.samples, ranges[index].first * rowsPerStrip * width * channels);
+			copyMs += performance.now() - copyStart;
+			if (part.min < min) { min = part.min; }
+			if (part.max > max) { max = part.max; }
+		}));
+	} catch (error) {
 		console.warn('[StripPool] Range decode failed, falling back:', error);
 		return null;
 	}
 	timings.push({ name: 'strip-workers', durationMs: performance.now() - dispatchStart });
-
-	const assembleStart = performance.now();
-	const data = new Float32Array(width * height * channels);
-	let min = Infinity;
-	let max = -Infinity;
-	for (let index = 0; index < parts.length; index++) {
-		const part = parts[index];
-		data.set(part.samples, ranges[index].first * rowsPerStrip * width * channels);
-		if (part.min < min) { min = part.min; }
-		if (part.max > max) { max = part.max; }
-	}
-	timings.push({ name: 'strip-assemble', durationMs: performance.now() - assembleStart });
+	// Sum of the copies themselves; most of this is off the critical path now.
+	timings.push({ name: 'strip-assemble', durationMs: copyMs });
 
 	const meta = await metadataPromise;
+
+	// Retire the pool before returning so its expanded WASM heaps are released
+	// on this task, ahead of the caller's WebGL upload. Same reasoning as the
+	// decode worker's `retireWorker`, and the same 64MB threshold.
+	if (data.byteLength >= 64 * 1024 * 1024) {
+		pool.retire();
+		setTimeout(() => { void pool.ensure(); }, 0);
+		timings.push({ name: 'strip-pool-retired', durationMs: 0 });
+	}
+
 	return {
 		width, height, channels,
 		bitsPerSample: plan.bits_per_sample,

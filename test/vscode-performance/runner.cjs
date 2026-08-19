@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
 
-const PERF_LINE = /\[Perf\] ([^\r\n:]+?): (?:read ([0-9.]+)ms \| )?(?:decode ([0-9.]+)ms(?: \[([^\]]*)\])? \| )?webview ([0-9.]+)ms \| total ([0-9.]+)ms/g;
+const PERF_LINE = /\[Perf\] ([^\r\n:]+?): (?:read ([0-9.]+)ms \| )?(?:decode ([0-9.]+)ms(?: \[([^\]]*)\])? \| )?[^\r\n]*?webview ([0-9.]+)ms \| total ([0-9.]+)ms/g;
 
 function filesUnder(directory, result = []) {
 	if (!fs.existsSync(directory)) return result;

@@ -478,6 +478,31 @@ impl JpegResult {
 
 /// Decode a complete JPEG codestream. DICOM parsing and frame extraction stay
 /// in TypeScript; this reuses the same zune-jpeg codec already used by TIFF.
+///
+/// # Output is not bit-stable across build flags
+///
+/// Enabling `-C target-feature=+simd128` changes this decoder's output by +/-1
+/// on a minority of samples (measured: 3687 of 262144 on a 512x512 JPEG-baseline
+/// DICOM, maximum absolute difference 1). Nothing here is wrong in either build.
+///
+/// The JPEG standard (ISO/IEC 10918-1) does NOT specify a bit-exact inverse DCT:
+/// it defines an accuracy tolerance and lets implementations choose their own
+/// IDCT. zune-jpeg's hand-written SIMD is AVX2-gated and so is not active on
+/// wasm32; what changes is that LLVM autovectorizes its *scalar* IDCT
+/// differently once simd128 is available, and the intermediate rounding lands
+/// differently. Two conformant JPEG decoders routinely disagree by +/-1 for the
+/// same reason.
+///
+/// Consequences worth knowing:
+/// - Only LOSSY JPEG pixel data is affected. Uncompressed and lossless DICOM
+///   transfer syntaxes are bit-exact (verified: `1.2.840.10008.1.2.1` shows zero
+///   differing samples, `1.2.840.10008.1.2.4.50` shows the +/-1 spread).
+/// - Pixel-inspector readouts on lossy JPEG images can therefore differ by 1
+///   between builds. For lossy data there is no single "correct" stored value to
+///   be off by; quantitative work should not be reading lossy JPEG anyway.
+/// - `test/goldens/external/dicom-fixture-external-0002-dcm.json` was captured
+///   before simd128 was enabled and so fails against current builds. Re-capturing
+///   it is a decision to accept IDCT variance, not a routine refresh.
 #[cfg(feature = "jpeg")]
 pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, DecodeError> {
     use zune_jpeg::JpegDecoder;
@@ -1121,4 +1146,80 @@ pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadata, DecodeError
         all_tags_json: m.all_tags_json,
         ome_xml: m.ome_xml,
     })
+}
+
+/// Decode a strip range and return the samples as **native little-endian
+/// bytes** at their source width, rather than converting to f32.
+///
+/// This exists because the caller's carrier type is chosen by bit depth and
+/// sample format (8-bit unsigned -> Uint8Array, <=16-bit unsigned ->
+/// Uint16Array, float32 -> Float32Array), and handing back f32 for integer
+/// images forced a second full pass on the JavaScript side to rebuild the
+/// right carrier — and, worse, disqualified the GPU's integer texture path.
+/// Returning raw bytes lets the caller wrap them in a typed array with no
+/// conversion at all.
+///
+/// Predictor 3 reassembles to big-endian by definition, and predictor 1/2 keep
+/// the file's byte order, so both are normalised to little-endian here.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_strip_range_raw(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    plan: &TiffFloatStripPlan,
+) -> Result<Vec<u8>, DecodeError> {
+    let inner = formats::tiff::strips::FloatStripPlan {
+        width: plan.width,
+        height: plan.height,
+        channels: plan.channels,
+        bits_per_sample: plan.bits_per_sample,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        sample_format: plan.sample_format,
+        little_endian: plan.little_endian,
+        rows_per_strip: plan.rows_per_strip,
+        offsets: Vec::new(),
+        counts: Vec::new(),
+    };
+    let row_bytes = inner.row_bytes();
+    let first = first_strip as usize;
+
+    let mut rows_total = 0usize;
+    for index in 0..counts.len() {
+        rows_total += inner.rows_in(first + index);
+    }
+    let mut raster = vec![0u8; rows_total * row_bytes];
+
+    let mut in_pos = 0usize;
+    let mut out_pos = 0usize;
+    for (index, &count) in counts.iter().enumerate() {
+        let rows = inner.rows_in(first + index);
+        if rows == 0 {
+            break;
+        }
+        let end = in_pos
+            .checked_add(count as usize)
+            .filter(|end| *end <= blob.len())
+            .ok_or_else(|| {
+                DecodeError::new("Strip range: compressed blob is shorter than its counts")
+            })?;
+        formats::tiff::strips::decode_float_predictor_strip(
+            &blob[in_pos..end],
+            &inner,
+            rows,
+            &mut raster[out_pos..out_pos + rows * row_bytes],
+        )?;
+        in_pos = end;
+        out_pos += rows * row_bytes;
+    }
+    raster.truncate(out_pos);
+
+    let bytes_per_sample = (plan.bits_per_sample / 8) as usize;
+    let big_endian = plan.predictor == 3 || !plan.little_endian;
+    if big_endian && bytes_per_sample > 1 {
+        for sample in raster.chunks_exact_mut(bytes_per_sample) {
+            sample.reverse();
+        }
+    }
+    Ok(raster)
 }

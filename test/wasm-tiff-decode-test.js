@@ -186,6 +186,26 @@ async function main() {
 		console.log('✅ Deflate + float predictor 3 (6 strips) matches the uncompressed reference exactly');
 	}
 
+	// 5b-iii. Predictor 3 with FLOAT16 samples. The first implementation of the
+	//     float-predictor path rejected bits_per_sample == 16, silently sending
+	//     every half-float TIFF back to the tiff crate's whole-image reader —
+	//     and, worse, a later widening of the shared strip plan briefly let this
+	//     shape reach a reassembly that reads big-endian f32/f64, which returned
+	//     a quarter of the samples. Both are regressions this guards.
+	{
+		const half = decode(mod, 'deflate_pred3_f16.tif');
+		const twin = decode(mod, 'pred_ref_f16_as_f32.tif');
+		assert.strictEqual(half.compression, 8, 'deflate_pred3_f16.tif compression tag');
+		assert.strictEqual(half.bitsPerSample, 16, 'must decode as 16-bit samples');
+		assert.strictEqual(half.width, twin.width);
+		assert.strictEqual(half.height, twin.height);
+		assert.strictEqual(half.data.length, twin.data.length,
+			'half-float decode must produce one sample per pixel, not a quarter of them');
+		assert.deepStrictEqual(half.data, twin.data,
+			'Deflate + float predictor 3 on FLOAT16 must match its float32 twin exactly');
+		console.log('✅ Deflate + float predictor 3 on float16 (6 strips) matches its float32 twin exactly');
+	}
+
 	// 5c. Sub-16-bit unsigned chunky samples (10/12/14-bit RGB), the non-byte-
 	//     aligned bit depths that tiff crate's read_image() rejects with
 	//     "color type RGB(n) is unsupported" before decompression is even

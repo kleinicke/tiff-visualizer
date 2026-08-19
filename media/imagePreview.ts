@@ -899,6 +899,12 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	// names to avoid double counting.
 	const FETCH_MARK = /^fetch(\(.*\))?$/;
 	const DECODE_MARK = /^decode-(worker|local)\(.*\)$|^decode-(wasm|geotiff)(-worker|-local|-strip-pool)?$/;
+	// Statistics and the non-finite sweep, both full passes over the samples.
+	const STATS_MARK = /^(stats|finite-scan|histogram-stats)$/;
+	// Rebuilding the interleaved buffer, or splitting it into planes.
+	const SHUFFLE_MARK = /^(interleave|deinterleave|raster-copy)$/;
+	// Getting the pixels onto the canvas, GPU or CPU.
+	const RENDER_MARK = /^(render|render-webgl|canvas-upload|webgl-context-setup|webgl-texture-upload)$/;
 
 	/**
 	 * Compose the per-load [Perf] summary: read time, decode time, which decoder
@@ -919,9 +925,20 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			else if (mark.startsWith('decode-wasm')) { engine = `wasm (${mark.endsWith('-local') ? 'main' : 'worker'})`; }
 			else if (mark.startsWith('decode-geotiff')) { engine = `geotiff.js (${mark.endsWith('-worker') ? 'worker' : 'main'})`; }
 		}
+		const statsMs = PerfTrace.totalMatching(STATS_MARK);
+		const shuffleMs = PerfTrace.totalMatching(SHUFFLE_MARK);
+		const renderMs = PerfTrace.totalMatching(RENDER_MARK);
+		// Whatever the named phases did not account for: settings round-trip,
+		// layer sync, DOM finalize, and any un-instrumented work in between.
+		const otherMs = Math.max(0, Number(webviewMs) - fetchMs - decodeMs - statsMs - shuffleMs - renderMs);
+
 		const parts = [];
 		if (fetchMs > 0) { parts.push(`read ${fetchMs.toFixed(0)}ms`); }
 		if (decodeMs > 0) { parts.push(`decode ${decodeMs.toFixed(0)}ms${engine ? ` [${engine}]` : ''}`); }
+		if (statsMs > 0) { parts.push(`stats ${statsMs.toFixed(0)}ms`); }
+		if (shuffleMs > 0) { parts.push(`reshape ${shuffleMs.toFixed(0)}ms`); }
+		if (renderMs > 0) { parts.push(`render ${renderMs.toFixed(0)}ms`); }
+		if (otherMs >= 1) { parts.push(`other ${otherMs.toFixed(0)}ms`); }
 		parts.push(`webview ${webviewMs}ms`);
 		parts.push(`total ${totalMs}ms`);
 		return `[Perf] ${label}: ${parts.join(' | ')}`;

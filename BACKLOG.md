@@ -1745,8 +1745,108 @@ width-agnostic, so 16-bit works identically; the crate now converts binary16 to
 binary32 directly rather than pulling in `half`. That file went from
 `decode 208ms [wasm (worker)] / total 413ms` to `decode 90ms / total 232ms`.
 
-Remaining follow-ups: the pool is never torn down (8 idle workers hold their
-WASM heaps for the session); a 10240x10240 f32 image is 419 MB assembled with
+**The pool must be retired after a large decode.** WebAssembly linear memory
+grows but never shrinks, so eight workers whose heaps each expanded to hold a
+slice of a 419MB raster retain that memory for the session, and the main
+thread's following WebGL upload contends with it. Measured at 10240x10240,
+keeping the pool alive more than doubled `webgl-texture-upload` (201ms ->
+491ms), eating a large part of the decode win. `pool.retire()` now runs before
+the result is returned, above the same 64MB threshold the decode worker uses for
+`retireWorker`, keeping the compiled module so respawning only repays
+instantiation.
+
+**Where the time actually goes now** (medians of 4 warm opens, cold discarded):
+
+| Phase | `nl_01_depth.tif` 29MB | `nl_01_depth_x2.tif` 77MB |
+| --- | ---: | ---: |
+| fetch | 170 ms | 258 ms |
+| decode (workers) | 130 ms | 552 ms |
+| decode (assemble) | 12 ms | 188 ms |
+| WebGL upload | 35 ms | 247 ms |
+| **total** | **431 ms** (was 800) | **1342 ms** (was 3038) |
+
+1.9x and 2.3x end to end. The total improves less than decode alone because
+decode was 82-86% of the time before and is now 35-54%: what remains is the
+webview fetch ceiling (~330-500 MB/s regardless of API, see the fetch experiment)
+and the WebGL upload of a 104-419MB float texture, neither of which
+parallelizing the decoder touches.
+
+**Carrier types matter more than the decode.** The pool originally returned
+`Float32Array` for every image, which is what the f32 conversion in Rust
+produced. For integer TIFFs that was wrong twice over: `canUseStoredInterleaved`
+in [tiff-processor.ts](media/modules/tiff-processor.ts) rejects a mismatched
+carrier and rebuilds the interleaved buffer, and the WebGL renderer accepts
+integer data only in a `Uint16Array`. `decode_tiff_strip_range_raw` now returns
+native little-endian sample bytes and the worker wraps them in the carrier the
+pipeline expects (`Uint8Array` / `Uint16Array` / `Float32Array`) with no
+conversion pass at all — which also makes the float path zero-copy.
+
+Measured on `pred2_rgb8_deflate.tif` (5120x5120 RGB8, 78.6M samples):
+
+| Phase | Before | After |
+| --- | ---: | ---: |
+| decode | 886 ms | 307 ms |
+| interleave | 213 ms | skipped |
+| finite-scan | 112 ms | 54 ms |
+| **total** | **1415 ms** | **644 ms** |
+
+Worth remembering when reading these numbers: decode cost tracks SAMPLE COUNT,
+not file size. That RGB8 file is 1.2 MB but holds 78.6M samples (314 MB
+decoded), while `pred1_u16_deflate.tif` is 14.4 MB and holds 26.2M — twelve
+times the file size, a third of the work.
+
+**Integer images were rendering on the CPU because of one missing property.**
+`isFloat` was passed to `canRender()` but not to `render()`, and
+`_getTextureFormat` treats a missing value as float (`isFloat !== false`) — so
+integer data was given an `r32f` texture, the upload failed, and the renderer
+silently fell back to the CPU path. Forwarding it, and adding native 8-bit
+integer textures (`r8ui`/`rgb8ui`/`rgba8ui`, since `canRender` previously
+required a `Uint16Array`), moved them onto the GPU:
+
+| File | `render` before | after |
+| --- | ---: | ---: |
+| `pred1_u16_deflate.tif` | 187 ms | **23-31 ms** |
+| `pred2_u16_deflate.tif` | 240 ms | **34 ms** |
+| `pred2_rgb8_deflate.tif` | 159 ms | 123 ms |
+
+Traces confirm `webgl-texImage2D-r16ui` / `-rgb8ui` with `canvas-upload-skipped`.
+RGB8 gains least because it is now genuinely upload-bound (78.6 MB texture)
+rather than CPU-render-bound. Only tiff-processor had the bug: png and ppm
+already forwarded `isFloat`, and exr/npy/pfm are float-only so the missing value
+happened to select the right branch.
+
+**Assembly now overlaps decode.** The pool awaited `Promise.all` and then copied
+every range in one serial pass; it now copies each range as it arrives, so the
+copies hide behind the ranges still decoding. Verified identical at every split.
+NOT cleanly measured: the machine was under load average 17 during the
+comparison, with totals swinging 1210-2274 ms on identical builds, so no
+improvement is claimed — only that the change cannot be slower and removes
+`strip-assemble` from the critical path by construction.
+
+**The non-finite pre-scan was dead work for integer images.** `renderTiffWithSettings`
+walks every sample of every plane checking `Number.isFinite` before choosing the
+render path. That is necessary when integer VALUES sit in a `Float32Array`
+carrier (geotiff.js output, and signed/wide integers per `tiffNeedsFloatCarrier`),
+because such a carrier can hold Infinity. Once the strip pool started returning
+genuine `Uint8Array`/`Uint16Array` carriers, the scan became provably incapable
+of finding anything for those images — and it showed up in the `[Perf]` line as a
+`stats` phase appearing only on integer files (20ms on uint16, 54ms on 8-bit
+RGB). Now skipped when every plane is an integer typed array; the float-carrier
+case still scans.
+
+**`texSubImage2D` overlap is blocked on the load pipeline, not the renderer.**
+Uploading ranges to the GPU as they decode needs the target canvas at decode
+time, but `_ensureContext(canvas)` binds to the display canvas that only exists
+once rendering starts, and the assembled buffer is required regardless (pixel
+inspection, stats, histogram and layers all read `rawTiffData.data`, and without
+`SharedArrayBuffer` the workers cannot write into one shared buffer). So this
+would not remove the assembly, only overlap the GPU upload — a ceiling of the
+`webgl-texture-upload` phase, roughly 46 ms at 5120x5120 and 247 ms at
+10240x10240, in exchange for restructuring decode/settings/stats/render into an
+interleaved pipeline. Not worth it at that ratio. -- it transferred one buffer directly, while the
+pool copies N slices into one array. Uploading per strip range with
+`texSubImage2D` instead of assembling first would remove it and overlap upload
+with decode. Also: a 10240x10240 f32 image is 419 MB assembled with
 each worker holding its slice on top, so a memory budget that shrinks the pool
 for very large images is still missing; and there is no committed regression
 sample for predictor 3 with 16-bit floats (it is verified only against
@@ -1920,6 +2020,34 @@ WebGPU path end-to-end, because that path is transfer-bound rather than
 math-bound. At 20 layers on 8K it plausibly does not. **This is a benchmark, not
 a decision already taken**; the existing compositor interface is the seam to put
 a third backend behind.
+
+**Caveat found later: simd128 is not output-neutral for JPEG.** The claim that
+decoded output is byte-for-byte identical holds for TIFF (verified across all 49
+`test-samples` files) and EXR, but NOT for lossy JPEG. Enabling simd128 shifts
+`decode_jpeg_fast` output by +/-1 on a minority of samples — measured at 3687 of
+262144 on a 512x512 JPEG-baseline DICOM, maximum absolute difference 1.
+
+Neither build is wrong: ISO/IEC 10918-1 does not specify a bit-exact inverse
+DCT, only an accuracy tolerance, so conformant decoders routinely differ by
++/-1. zune-jpeg's own SIMD is AVX2-gated and inactive on wasm32; what changes is
+LLVM autovectorizing its scalar IDCT once simd128 is available.
+
+Scope, measured rather than assumed:
+
+| Input | Affected? |
+| --- | --- |
+| DICOM `1.2.840.10008.1.2.4.50` (JPEG baseline, lossy) | **yes**, 1.4% of samples by +/-1 |
+| DICOM `1.2.840.10008.1.2.1` (uncompressed) | no, bit-exact |
+| JPEG-in-TIFF (`jpeg_ycbcr*.tif`, compression 7) | no, bit-exact |
+| WebP-in-TIFF, CCITT, palette, all other TIFF | no, bit-exact |
+
+**Resolved:** the golden was re-captured, accepting IDCT variance as the cost of
+simd128's 4-32% decode win. `node scripts/capture-goldens.js` rewrote exactly one
+of 140 goldens — `dicom-fixture-external-0002-dcm`, one `dataDigest` line, with
+dimensions and per-sample structure unchanged — which is itself confirmation
+that the effect is confined to lossy JPEG. The reasoning lives on
+`decode_jpeg_fast` in [lib.rs](crates/image-decoders/src/lib.rs) so it is found
+from the code rather than only here.
 
 **This does not transfer to the extension.** In the webview the same Rust
 compiles to WASM, and `wasm/tiff-decoder/Cargo.toml` has neither `rayon` nor

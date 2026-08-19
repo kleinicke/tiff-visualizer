@@ -4,10 +4,13 @@
 
 - Rename the Command Palette category and the settings section from "TIFF Visualizer" to "Scientific Image Visualizer". Command IDs are unchanged, so keybindings and tasks keep working.
 - Massive rust rewrite
+- Integer images no longer scan every sample looking for Infinity before rendering. The check only applies to integer values carried in a float array; when the data is a genuine integer array it cannot find anything, so it is skipped (54ms on a 5120x5120 8-bit RGB image).
+- Integer TIFFs (8-bit and 16-bit) now render on the GPU instead of falling back to the CPU renderer. A 5120x5120 uint16 image spends 23ms on rendering where it previously spent 187ms.
+- Integer TIFFs (8-bit and 16-bit) decoded by the worker pool now arrive in their native carrier instead of being widened to float, so the interleaved buffer is used directly rather than rebuilt. A 5120x5120 8-bit RGB image went from 1415ms to 644ms.
 - Large TIFFs now decode across a pool of workers, one strip range each, roughly 2-3x faster end to end: a 5120x5120 float32 image drops from 660ms to 168ms of decode (907ms to 412ms total) and a 10240x10240 one from 2905ms to 774ms. Applies to byte-aligned strip TIFFs with predictor 1, 2 or 3 and 8/16/32/64-bit integer or float samples, including half floats; everything else keeps its existing path. The pool and its WASM module start booting alongside the file read, so cold opens benefit too.
 - Float TIFFs written with Deflate and the floating-point predictor (predictor 3) — what GDAL, libtiff and most scientific tools emit — now decode through a dedicated per-strip Rust path instead of the `tiff` crate's whole-image reader. 30-36% faster: a 5120x5120 float32 image goes from 689ms to 440ms, and 10240x10240 from 2743ms to 1811ms.
 - OpenEXR images no longer re-scan every sample in JavaScript to find the display range; the Rust decoder reports it. Saves about 25ms on a 5120x5120 EXR.
-- The `[Perf]` load line in the output channel now reports read time, decode time and which decoder ran, for every format rather than only TIFF: `[Perf] TIFF: read 84ms | decode 665ms [wasm (worker)] | webview 907ms | total 907ms`.
+- The `[Perf]` load line in the output channel now breaks a load into its phases for every format, not just TIFF: `[Perf] TIFF: read 142ms | decode 238ms [wasm (8 strip workers)] | stats 20ms | reshape 12ms | render 99ms | other 8ms | webview 486ms | total 557ms`. Phases are only shown when they cost anything, so a line stays short when nothing unusual happened.
 - Build the Rust/WASM decoder with SIMD128 enabled.
 - Add full in-editor documentation, opened with **Scientific Image Visualizer: Show Documentation** from the Command Palette or the right-click menu. Nothing opens on install.
 - Add a measurement panel (`Ctrl`/`Cmd` + `Shift` + `M`): ROI tools with full undo, calibrated area/perimeter/shape/intensity statistics, intensity profiles along a line, and a results table linked both ways to the image.

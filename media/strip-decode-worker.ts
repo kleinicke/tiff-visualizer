@@ -11,7 +11,7 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_tiff_float_strip_range } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_tiff_float_strip_range, decode_tiff_strip_range_raw } from './wasm/tiff-wasm.js';
 
 let ready: Promise<unknown> | null = null;
 
@@ -33,6 +33,55 @@ self.onmessage = async (event: MessageEvent) => {
 	try {
 		await ready;
 		const started = performance.now();
+		// `raw` asks for native little-endian sample bytes, which the caller
+		// wraps in the carrier its pipeline wants (Uint8/Uint16/Float32) with no
+		// conversion. Half floats and >16-bit integers still need widening, so
+		// those keep the f32 path.
+		if (job.raw) {
+			const bytes = decode_tiff_strip_range_raw(
+				new Uint8Array(job.blob),
+				new Uint32Array(job.counts),
+				job.firstStrip,
+				job.width,
+				job.height,
+				job.channels,
+				job.bitsPerSample,
+				job.compression,
+				job.rowsPerStrip,
+				job.predictor,
+				job.sampleFormat,
+				job.littleEndian,
+			);
+			const view = job.bitsPerSample === 8
+				? bytes
+				: job.sampleFormat === 3
+					? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)
+					: new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+			let rmin = Infinity;
+			let rmax = -Infinity;
+			let nonFinite = false;
+			for (let i = 0; i < view.length; i++) {
+				const value = view[i];
+				if (value < rmin) { rmin = value; }
+				if (value > rmax) { rmax = value; }
+				if (value !== value) { nonFinite = true; }
+			}
+			if (nonFinite || !Number.isFinite(rmin) || !Number.isFinite(rmax)) {
+				rmin = Infinity; rmax = -Infinity;
+				for (let i = 0; i < view.length; i++) {
+					const value = view[i];
+					if (Number.isFinite(value)) {
+						if (value < rmin) { rmin = value; }
+						if (value > rmax) { rmax = value; }
+					}
+				}
+			}
+			(self as any).postMessage(
+				{ id: job.id, samples: view, min: rmin, max: rmax, ms: performance.now() - started },
+				[bytes.buffer],
+			);
+			return;
+		}
 		const samples = decode_tiff_float_strip_range(
 			new Uint8Array(job.blob),
 			new Uint32Array(job.counts),

@@ -32,7 +32,7 @@ export interface RenderParams {
 	flipY?: boolean;
 }
 
-type TextureFormat = 'r32f' | 'rgb32f' | 'rgba32f' | 'r16ui' | 'rgb16ui' | 'rgba16ui' | '';
+type TextureFormat = 'r32f' | 'rgb32f' | 'rgba32f' | 'r16ui' | 'rgb16ui' | 'rgba16ui' | 'r8ui' | 'rgb8ui' | 'rgba8ui' | '';
 
 const validatedUploadPixelsByFormat = new Map<string, number>();
 const validatedColormapUploads = new Set<string>();
@@ -97,7 +97,12 @@ export class WebGL2FloatRenderer {
 			if (wantsRgb24 && this.rgb32fFailed) { return false; }
 			if (!wantsScalar && !wantsRgb24 && !wantsColor) { return false; }
 		} else {
-			if (this.uintTextureFailed || !(params.data instanceof Uint16Array)) { return false; }
+			// Both widths upload as native integer textures; the shader samples a
+			// usampler2D and normalizes with typeMax, so it does not care which.
+			const isUintCarrier = params.data instanceof Uint16Array
+				|| params.data instanceof Uint8Array
+				|| params.data instanceof Uint8ClampedArray;
+			if (this.uintTextureFailed || !isUintCarrier) { return false; }
 			if (!wantsScalar && !wantsRgb24 && !wantsColor) { return false; }
 			if (params.settings?.displayColormap && params.settings.displayColormap !== 'none' && !wantsScalar) { return false; }
 		}
@@ -284,6 +289,15 @@ export class WebGL2FloatRenderer {
 			case 'rgba16ui':
 				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, data);
 				break;
+			case 'r8ui':
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, data);
+				break;
+			case 'rgb8ui':
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8UI, width, height, 0, gl.RGB_INTEGER, gl.UNSIGNED_BYTE, data);
+				break;
+			case 'rgba8ui':
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, data);
+				break;
 			default:
 				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
 		}
@@ -309,7 +323,7 @@ export class WebGL2FloatRenderer {
 		console.log(`[WebGL2] Float texture upload took ${(performance.now() - start).toFixed(2)}ms`);
 	}
 
-	_getTextureFormat(params: { channels?: number; isFloat?: boolean; settings?: any }): TextureFormat {
+	_getTextureFormat(params: { channels?: number; isFloat?: boolean; settings?: any; data?: ArrayBufferView }): TextureFormat {
 		const channels = params.channels || 1;
 		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && channels === 3;
 		if (params.isFloat !== false) {
@@ -317,9 +331,12 @@ export class WebGL2FloatRenderer {
 			if (channels === 4) { return 'rgba32f'; }
 			return 'r32f';
 		}
-		if (wantsRgb24 || channels === 3) { return 'rgb16ui'; }
-		if (channels === 4) { return 'rgba16ui'; }
-		return 'r16ui';
+		// 8-bit samples get an 8-bit texture rather than being widened to 16: the
+		// upload is a third of the bytes and needs no conversion pass.
+		const eightBit = params.data?.BYTES_PER_ELEMENT === 1;
+		if (wantsRgb24 || channels === 3) { return eightBit ? 'rgb8ui' : 'rgb16ui'; }
+		if (channels === 4) { return eightBit ? 'rgba8ui' : 'rgba16ui'; }
+		return eightBit ? 'r8ui' : 'r16ui';
 	}
 
 	_uploadColormapIfNeeded(colormapName: string): void {

@@ -515,6 +515,38 @@ export function decode_tiff_float_strip_range(blob, counts, first_strip, width, 
 }
 
 /**
+ * Like `decode_tiff_float_strip_range`, but returns native little-endian
+ * sample bytes so the caller can wrap them in the carrier type its pipeline
+ * expects with no conversion pass.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {number} bits_per_sample
+ * @param {number} compression
+ * @param {number} rows_per_strip
+ * @param {number} predictor
+ * @param {number} sample_format
+ * @param {boolean} little_endian
+ * @returns {Uint8Array}
+ */
+export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
  * @param {Uint8Array} data
  * @returns {TiffResult}
  */

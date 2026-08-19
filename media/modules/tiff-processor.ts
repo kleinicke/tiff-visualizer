@@ -334,13 +334,22 @@ export class TiffProcessor {
 						const parallel = await tryStripParallelDecode(buffer, mainWasm);
 						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 						if (parallel) {
+							// renderTiff still needs per-channel planes: it takes the
+							// channel count from rasters.length and scans them for
+							// non-finite samples. The planes use the SAME carrier type
+							// as the interleaved buffer so that
+							// `canUseStoredInterleaved` holds and the interleaved copy
+							// is used directly rather than rebuilt (~213ms on a
+							// 5120x5120 RGB8 image).
 							const pixelCount = parallel.width * parallel.height;
-							const rasters: Float32Array[] = [];
+							const Carrier = (parallel.data as any).constructor as
+								{ new(length: number): Float32Array | Uint16Array | Uint8Array };
+							const rasters: any[] = [];
 							if (parallel.channels === 1) {
 								rasters.push(parallel.data);
 							} else {
 								for (let c = 0; c < parallel.channels; c++) {
-									const channel = new Float32Array(pixelCount);
+									const channel = new Carrier(pixelCount);
 									for (let i = 0; i < pixelCount; i++) {
 										channel[i] = parallel.data[i * parallel.channels + c];
 									}
@@ -775,9 +784,20 @@ export class TiffProcessor {
 		// route through the same float rendering path as true IEEE float data.
 		let isFloat = showNorm || tiffNeedsFloatCarrier(sampleFormat, bitsPerSample);
 
-		// Check if non-float data contains non-finite values (Infinity/-Infinity).
-		// If so, force float rendering path which handles them correctly with nanColor.
-		if (!isFloat) {
+		// Integer samples can still arrive in a Float32Array carrier — geotiff.js
+		// hands back floats, and signed/wide integers need one (see
+		// tiffNeedsFloatCarrier) — and such a carrier CAN hold Infinity. When it
+		// does, rendering must take the float path so nanColor applies. But when
+		// every plane is a genuine integer typed array, no element can be
+		// non-finite, so the scan is guaranteed to find nothing: skip it rather
+		// than walk every sample (54ms on a 5120x5120 RGB8 image).
+		const allIntegerCarriers = rastersCopy.length > 0 && rastersCopy.every(
+			(plane: any) => ArrayBuffer.isView(plane)
+				&& !(plane instanceof Float32Array)
+				&& !(plane instanceof Float64Array));
+		if (!isFloat && allIntegerCarriers) {
+			PerfTrace.mark('finite-scan-skipped');
+		} else if (!isFloat) {
 			outer:
 			for (let i = 0; i < rastersCopy.length; i++) {
 				for (let j = 0; j < rastersCopy[i].length; j++) {
@@ -979,6 +999,11 @@ export class TiffProcessor {
 				data: interleavedData as Float32Array,
 				width,
 				height,
+				// Must be forwarded: _getTextureFormat treats a MISSING isFloat as
+				// float (`isFloat !== false`), so omitting it gave integer data an
+				// r32f texture, failed the upload and silently fell back to the CPU
+				// renderer -- ~190ms on a 5120x5120 uint16 image.
+				isFloat,
 				min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
 				max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
 				typeMax,
