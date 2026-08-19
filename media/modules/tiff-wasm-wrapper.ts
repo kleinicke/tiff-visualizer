@@ -17,6 +17,7 @@ import initTiffWasm, {
     compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
     build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
     local_threshold_mask_fast, local_auto_threshold_mask_fast, compute_stability_curve_fast,
+    tiff_float_strip_plan, tiff_strip_metadata,
 } from '../wasm/tiff-wasm.js';
 
 /**
@@ -55,6 +56,8 @@ async function initWasm(): Promise<any> {
                 label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast,
                 build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
                 local_threshold_mask_fast, local_auto_threshold_mask_fast, compute_stability_curve_fast,
+                // IFD-only reads backing the strip-parallel decode path.
+                tiff_float_strip_plan, tiff_strip_metadata,
             };
             return wasmModule;
         } catch (error) {

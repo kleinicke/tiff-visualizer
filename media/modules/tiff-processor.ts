@@ -1,7 +1,8 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
-import { TiffWasmProcessor } from './tiff-wasm-wrapper.js';
+import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
+import { tryStripParallelDecode } from './strip-parallel-decode.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, TagEntry } from './tiff-tag-utils.js';
@@ -313,11 +314,89 @@ export class TiffProcessor {
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			let wasmResult: any = null;
 			let workerTiffFailed = false;
+
+			// Strip-parallel path: for large, byte-aligned, chunky strip TIFFs
+			// (predictor 1/2/3, no orientation/palette/CMYK/CFA post-processing)
+			// the strips are independently compressed, so a pool of workers can
+			// decode disjoint ranges concurrently. Rust decides eligibility --
+			// tiff_float_strip_plan returns nothing for any other shape -- and
+			// this returns null whenever the pool is unavailable or the file is
+			// too small to be worth it, leaving the normal route untouched.
+			// Only a trivially small file is rejected on size: a well-compressed
+			// TIFF can be 2MB and still hold 10M pixels, which is exactly the
+			// case the pool helps most. The real gates (strip count, pixel
+			// count) are applied against the plan inside tryStripParallelDecode.
+			if (pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
+				try {
+					const mainWasm = getWasmModuleSync() || await getWasmModule();
+					if (mainWasm) {
+						const parallelStart = performance.now();
+						const parallel = await tryStripParallelDecode(buffer, mainWasm);
+						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+						if (parallel) {
+							const pixelCount = parallel.width * parallel.height;
+							const rasters: Float32Array[] = [];
+							if (parallel.channels === 1) {
+								rasters.push(parallel.data);
+							} else {
+								for (let c = 0; c < parallel.channels; c++) {
+									const channel = new Float32Array(pixelCount);
+									for (let i = 0; i < pixelCount; i++) {
+										channel[i] = parallel.data[i * parallel.channels + c];
+									}
+									rasters.push(channel);
+								}
+							}
+							wasmResult = {
+								pageIndex: 0,
+								pageCount: parallel.pageCount,
+								width: parallel.width,
+								height: parallel.height,
+								channels: parallel.channels,
+								bitsPerSample: parallel.bitsPerSample,
+								sampleFormat: parallel.sampleFormat,
+								compression: parallel.compression,
+								predictor: parallel.predictor,
+								photometricInterpretation: parallel.photometricInterpretation,
+								planarConfiguration: 1,
+								rowsPerStrip: parallel.rowsPerStrip,
+								stripCount: parallel.stripCount,
+								tileWidth: 0,
+								tileLength: 0,
+								tileCount: 0,
+								directDecode: true,
+								data: parallel.data,
+								rasters,
+								min: parallel.min,
+								max: parallel.max,
+								allTagsJson: parallel.allTagsJson,
+								omeXml: parallel.omeXml,
+								decodedWith: `wasm (${parallel.workers} strip workers)`,
+								decodeTimings: parallel.timings,
+							};
+							// localBuffer is cleared after its declaration below.
+							decodeInfo = { engine: wasmResult.decodedWith, durationMs: performance.now() - parallelStart };
+							PerfTrace.mark('decode-wasm-strip-pool');
+							for (const timing of parallel.timings) {
+								PerfTrace.detail(String(timing.name), Number(timing.durationMs) || 0);
+							}
+							console.log(`[TiffProcessor] Strip-parallel decode: ${decodeInfo.durationMs.toFixed(2)}ms across ${parallel.workers} workers`);
+						}
+					}
+				} catch (error) {
+					if ((error as any)?.name === 'AbortError') { throw error; }
+					console.warn('[TiffProcessor] Strip-parallel decode failed, using the normal path:', error);
+					wasmResult = null;
+				}
+			}
 			let localBuffer: ArrayBuffer | null = buffer;
+			// The strip pool already produced the pixels; drop the retained copy
+			// so the geotiff.js fallback path below is not entered with stale bytes.
+			if (wasmResult) { localBuffer = null; }
 			// 24-bit grayscale is a post-decode reinterpretation (combine R/G/B
 			// into one value), handled later in renderTiff/ImageRenderer, so the
 			// Rust/WASM decoder can decode these images like any other RGB TIFF.
-			if (this.decodeWorker?.canDecode('tiff')) {
+			if (!wasmResult && this.decodeWorker?.canDecode('tiff')) {
 				const workerStart = performance.now();
 				const workerResponse = await this.decodeWorker.decode('tiff', buffer, { pageIndex });
 				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }

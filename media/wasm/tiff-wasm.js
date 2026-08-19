@@ -199,6 +199,22 @@ function getArrayI32FromWasm0(ptr, len) {
     return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 /**
+ * Tags and page count for a strip-parallel decode. Parses the IFD only — the
+ * pixels come from `decode_tiff_float_strip_range` on the worker pool.
+ * @param {Uint8Array} data
+ * @returns {TiffStripMetadataJs}
+ */
+export function tiff_strip_metadata(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_strip_metadata(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffStripMetadataJs.__wrap(ret[0]);
+}
+
+/**
  * @param {Uint8Array} data
  * @param {boolean} top_down
  * @returns {DecodedArray}
@@ -211,6 +227,17 @@ export function decode_pfm_fast(data, top_down) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffFloatStripPlanJs | undefined}
+ */
+export function tiff_float_strip_plan(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_float_strip_plan(ptr0, len0);
+    return ret === 0 ? undefined : TiffFloatStripPlanJs.__wrap(ret);
 }
 
 /**
@@ -452,6 +479,39 @@ export function decode_exr_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return ExrResult.__wrap(ret[0]);
+}
+
+/**
+ * Decode strips `[first_strip, first_strip + counts.len())`.
+ *
+ * `blob` is those strips' compressed bytes concatenated in order; `counts`
+ * their individual lengths. The geometry arguments come from the plan.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {number} bits_per_sample
+ * @param {number} compression
+ * @param {number} rows_per_strip
+ * @param {number} predictor
+ * @param {number} sample_format
+ * @param {boolean} little_endian
+ * @returns {Float32Array}
+ */
+export function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
 }
 
 /**
@@ -2415,6 +2475,124 @@ export class StabilityCurveResult {
 }
 if (Symbol.dispose) StabilityCurveResult.prototype[Symbol.dispose] = StabilityCurveResult.prototype.free;
 
+const TiffFloatStripPlanJsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_tifffloatstripplanjs_free(ptr >>> 0, 1));
+
+export class TiffFloatStripPlanJs {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(TiffFloatStripPlanJs.prototype);
+        obj.__wbg_ptr = ptr;
+        TiffFloatStripPlanJsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        TiffFloatStripPlanJsFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_tifffloatstripplanjs_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get compression() {
+        const ret = wasm.pngresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get strip_count() {
+        const ret = wasm.tifffloatstripplanjs_strip_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get little_endian() {
+        const ret = wasm.tifffloatstripplanjs_little_endian(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get sample_format() {
+        const ret = wasm.exrresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get rows_per_strip() {
+        const ret = wasm.stabilitycurveresult_plateau_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get bits_per_sample() {
+        const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.histogramresult_non_finite_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {Float64Array}
+     */
+    get counts() {
+        const ret = wasm.tifffloatstripplanjs_counts(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.tifffloatstripplanjs_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Strip byte offsets as f64 (exact for any offset below 2^53, which covers
+     * BigTIFF in practice and avoids BigInt64Array plumbing on the JS side).
+     * @returns {Float64Array}
+     */
+    get offsets() {
+        const ret = wasm.tifffloatstripplanjs_offsets(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {number}
+     */
+    get channels() {
+        const ret = wasm.tifffloatstripplanjs_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get predictor() {
+        const ret = wasm.tifffloatstripplanjs_predictor(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+}
+if (Symbol.dispose) TiffFloatStripPlanJs.prototype[Symbol.dispose] = TiffFloatStripPlanJs.prototype.free;
+
 const TiffResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_tiffresult_free(ptr >>> 0, 1));
@@ -2667,6 +2845,78 @@ export class TiffResult {
     }
 }
 if (Symbol.dispose) TiffResult.prototype[Symbol.dispose] = TiffResult.prototype.free;
+
+const TiffStripMetadataJsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_tiffstripmetadatajs_free(ptr >>> 0, 1));
+
+export class TiffStripMetadataJs {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(TiffStripMetadataJs.prototype);
+        obj.__wbg_ptr = ptr;
+        TiffStripMetadataJsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        TiffStripMetadataJsFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_tiffstripmetadatajs_free(ptr, 0);
+    }
+    /**
+     * @returns {number}
+     */
+    get page_count() {
+        const ret = wasm.histogramresult_non_finite_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {string}
+     */
+    get all_tags_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.tiffstripmetadatajs_all_tags_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @returns {number}
+     */
+    get photometric_interpretation() {
+        const ret = wasm.tifffloatstripplanjs_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {string}
+     */
+    get ome_xml() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.tiffstripmetadatajs_ome_xml(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) TiffStripMetadataJs.prototype[Symbol.dispose] = TiffStripMetadataJs.prototype.free;
 
 const EXPECTED_RESPONSE_TYPES = new Set(['basic', 'cors', 'default']);
 

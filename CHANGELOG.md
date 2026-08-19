@@ -4,6 +4,7 @@
 
 - Rename the Command Palette category and the settings section from "TIFF Visualizer" to "Scientific Image Visualizer". Command IDs are unchanged, so keybindings and tasks keep working.
 - Massive rust rewrite
+- Large TIFFs now decode across a pool of workers, one strip range each, roughly 2-3x faster end to end: a 5120x5120 float32 image drops from 660ms to 168ms of decode (907ms to 412ms total) and a 10240x10240 one from 2905ms to 774ms. Applies to byte-aligned strip TIFFs with predictor 1, 2 or 3 and 8/16/32/64-bit integer or float samples, including half floats; everything else keeps its existing path. The pool and its WASM module start booting alongside the file read, so cold opens benefit too.
 - Float TIFFs written with Deflate and the floating-point predictor (predictor 3) — what GDAL, libtiff and most scientific tools emit — now decode through a dedicated per-strip Rust path instead of the `tiff` crate's whole-image reader. 30-36% faster: a 5120x5120 float32 image goes from 689ms to 440ms, and 10240x10240 from 2743ms to 1811ms.
 - OpenEXR images no longer re-scan every sample in JavaScript to find the display range; the Rust decoder reports it. Saves about 25ms on a 5120x5120 EXR.
 - The `[Perf]` load line in the output channel now reports read time, decode time and which decoder ran, for every format rather than only TIFF: `[Perf] TIFF: read 84ms | decode 665ms [wasm (worker)] | webview 907ms | total 907ms`.

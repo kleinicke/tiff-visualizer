@@ -992,3 +992,133 @@ pub use decode_pfm_fast as decode_pfm;
 pub use decode_png16_fast as decode_png16;
 #[cfg(feature = "netpbm")]
 pub use decode_ppm_fast as decode_netpbm;
+
+// ---------------------------------------------------------------------------
+// Strip-parallel decoding of predictor-3 float TIFFs.
+//
+// The single-threaded path (`try_decode_float_predictor_strips`) already treats
+// each strip as an independent unit of work. These two entry points expose that
+// split so a caller can fan strips out across workers: `tiff_float_strip_plan`
+// reports the layout once, then each worker calls `decode_tiff_float_strip_range`
+// with ONLY the compressed bytes for its own strips. Total bytes moved across
+// the worker boundary is therefore one file's worth, not one per worker.
+// ---------------------------------------------------------------------------
+
+/// Layout of a predictor-3 float TIFF, or `None` if the file is not that shape.
+pub struct TiffFloatStripPlan {
+    pub width: u32,
+    pub height: u32,
+    pub channels: u32,
+    pub bits_per_sample: u32,
+    pub compression: u32,
+    /// 1 = none, 2 = horizontal, 3 = floating-point.
+    pub predictor: u32,
+    /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
+    pub sample_format: u32,
+    pub little_endian: bool,
+    pub rows_per_strip: u32,
+    /// Byte offset of each strip within the file.
+    pub offsets: Vec<u64>,
+    /// Compressed length of each strip.
+    pub counts: Vec<u64>,
+}
+
+#[cfg(feature = "tiff")]
+pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
+    formats::tiff::float_strip_plan_for(data).map(|plan| TiffFloatStripPlan {
+        width: plan.width,
+        height: plan.height,
+        channels: plan.channels,
+        bits_per_sample: plan.bits_per_sample,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        sample_format: plan.sample_format,
+        little_endian: plan.little_endian,
+        rows_per_strip: plan.rows_per_strip,
+        offsets: plan.offsets,
+        counts: plan.counts,
+    })
+}
+
+/// Decode a contiguous run of strips.
+///
+/// `blob` is the concatenation of those strips' compressed bytes and `counts`
+/// their individual lengths, so the caller slices the file once rather than
+/// handing every worker the whole thing. `first_strip` locates the run so the
+/// last strip's short row count is handled correctly.
+///
+/// Returns the decoded samples for exactly these strips, row-major, ready to be
+/// copied into the assembled image at row `first_strip * rows_per_strip`.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_float_strip_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    plan: &TiffFloatStripPlan,
+) -> Result<Vec<f32>, DecodeError> {
+    let inner = formats::tiff::strips::FloatStripPlan {
+        width: plan.width,
+        height: plan.height,
+        channels: plan.channels,
+        bits_per_sample: plan.bits_per_sample,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        sample_format: plan.sample_format,
+        little_endian: plan.little_endian,
+        rows_per_strip: plan.rows_per_strip,
+        offsets: Vec::new(),
+        counts: Vec::new(),
+    };
+    let row_bytes = inner.row_bytes();
+    let first = first_strip as usize;
+
+    let mut rows_total = 0usize;
+    for index in 0..counts.len() {
+        rows_total += inner.rows_in(first + index);
+    }
+    let mut raster = vec![0u8; rows_total * row_bytes];
+
+    let mut in_pos = 0usize;
+    let mut out_pos = 0usize;
+    for (index, &count) in counts.iter().enumerate() {
+        let rows = inner.rows_in(first + index);
+        if rows == 0 {
+            break;
+        }
+        let end = in_pos
+            .checked_add(count as usize)
+            .filter(|end| *end <= blob.len())
+            .ok_or_else(|| DecodeError::new("Strip range: compressed blob is shorter than its counts"))?;
+        formats::tiff::strips::decode_float_predictor_strip(
+            &blob[in_pos..end],
+            &inner,
+            rows,
+            &mut raster[out_pos..out_pos + rows * row_bytes],
+        )?;
+        in_pos = end;
+        out_pos += rows * row_bytes;
+    }
+
+    Ok(formats::tiff::strips::strip_bytes_to_f32(
+        &raster[..out_pos],
+        &inner,
+    ))
+}
+
+/// Metadata accompanying a strip-parallel decode.
+pub struct TiffStripMetadata {
+    pub page_count: u32,
+    pub photometric_interpretation: u32,
+    pub all_tags_json: String,
+    pub ome_xml: String,
+}
+
+#[cfg(feature = "tiff")]
+pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadata, DecodeError> {
+    formats::tiff::strip_metadata_for(data).map(|m| TiffStripMetadata {
+        page_count: m.page_count,
+        photometric_interpretation: m.photometric_interpretation,
+        all_tags_json: m.all_tags_json,
+        ome_xml: m.ome_xml,
+    })
+}

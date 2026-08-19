@@ -1,7 +1,7 @@
 mod cmyk;
 mod codecs;
 mod orientation;
-mod strips;
+pub(crate) mod strips;
 pub(crate) mod tags;
 
 use crate::pipeline::stats::{
@@ -733,4 +733,102 @@ pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) ->
         }
     }
     false
+}
+
+/// Parse just enough of `data` to describe a predictor-3 float strip layout.
+/// Used by the strip-parallel entry points in the crate root.
+pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan> {
+    let mut decoder = Decoder::new(Cursor::new(data)).ok()?;
+    let (width, height) = decoder.dimensions().ok()?;
+    let color_type = decoder.colortype().ok()?;
+    let channels = match color_type {
+        tiff::ColorType::Gray(_) => 1,
+        tiff::ColorType::GrayA(_) => 2,
+        tiff::ColorType::RGB(_) => 3,
+        tiff::ColorType::RGBA(_) | tiff::ColorType::CMYK(_) => 4,
+        _ => return None,
+    };
+    let bits_per_sample = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::BitsPerSample)
+        .ok()
+        .and_then(|v| v.first().copied())
+        .unwrap_or(0) as u32;
+    let compression = decoder
+        .get_tag_u64(tiff::tags::Tag::Compression)
+        .unwrap_or(1) as u32;
+    let predictor = decoder
+        .get_tag_u64(tiff::tags::Tag::Predictor)
+        .unwrap_or(1) as u32;
+    let planar_configuration = decoder
+        .get_tag_u64(tiff::tags::Tag::PlanarConfiguration)
+        .unwrap_or(1) as u32;
+    // The strip-parallel path returns raw samples with no post-processing, so
+    // anything decode_tiff_impl would transform afterwards must disqualify the
+    // file here: orientation flips, CMYK->RGB, palette expansion and CFA all
+    // rewrite the pixels, and reproducing them per strip would duplicate logic
+    // that is only correct on the whole image.
+    let photometric = decoder
+        .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
+        .unwrap_or(1) as u32;
+    if photometric != 1 && photometric != 2 {
+        return None;
+    }
+    let orientation = decoder.get_tag_u64(tiff::tags::Tag::Orientation).unwrap_or(1);
+    if orientation != 1 {
+        return None;
+    }
+    if decoder.get_tag_u64_vec(tiff::tags::Tag::ColorMap).is_ok() {
+        return None;
+    }
+    if demosaic::neutralize_cfa_photometric(data).is_some() {
+        return None;
+    }
+    strips::float_predictor_plan(
+        data,
+        &mut decoder,
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        planar_configuration,
+    )
+}
+
+/// Metadata for a strip-parallel decode: everything the worker result needs
+/// that the strip plan does not already carry. Deliberately does NOT decode
+/// pixels — the strip workers produce those.
+pub(crate) struct StripMetadata {
+    pub page_count: u32,
+    pub photometric_interpretation: u32,
+    pub all_tags_json: String,
+    pub ome_xml: String,
+}
+
+pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeError> {
+    let cfa_patched = demosaic::neutralize_cfa_photometric(data);
+    let raw: &[u8] = cfa_patched.as_deref().unwrap_or(data);
+    let mut decoder = Decoder::new(Cursor::new(raw))
+        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
+    let mut page_count = 1u32;
+    while decoder.more_images() {
+        if decoder.next_image().is_err() {
+            break;
+        }
+        page_count += 1;
+    }
+    let mut decoder = Decoder::new(Cursor::new(raw))
+        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
+    let photometric_interpretation = decoder
+        .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
+        .unwrap_or(1) as u32;
+    Ok(StripMetadata {
+        page_count,
+        photometric_interpretation,
+        all_tags_json: extract_page_tags_json(data, 0),
+        ome_xml: extract_ome_xml(data),
+    })
 }

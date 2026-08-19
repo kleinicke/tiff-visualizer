@@ -1658,16 +1658,105 @@ Verified byte-identical against the previous decoder on all 52 TIFFs in
 (`test-samples/deflate_pred3_f32.tif`, 6 strips) checked against its
 uncompressed twin in `test:wasm`.
 
-**Next, and now actually possible:** these files have 427 and 160 strips
-respectively, each an independent Deflate stream, and the new function already
-decodes them one at a time. Parallelizing needs a WASM entry point taking a
-strip range (`first_strip`, `strip_count`) plus a worker pool — one WASM
-instance per worker, each decoding a disjoint range, results transferred back
-and concatenated. No `SharedArrayBuffer` and no COOP/COEP required, so it works
-in the VS Code webview today. Open questions before starting: per-worker memory
-(a 10240x10240 f32 image is 419MB assembled, so ranges must be sized rather than
-split evenly), and whether the fixed worker+instance startup cost is worth it
-below some strip count.
+**Strip-parallel API: done and measured; webview integration still to do.**
+Two WASM entry points now expose the split:
+
+- `tiff_float_strip_plan(data)` — parses only the IFD and reports the layout
+  (dimensions, bits, compression, predictor, sample format, endianness,
+  rows-per-strip, and every strip's offset/length), or nothing if the file is
+  not a byte-aligned chunky strip shape.
+- `decode_tiff_float_strip_range(blob, counts, first_strip, ...)` — decodes one
+  contiguous run of strips from **only those strips' compressed bytes**. The
+  caller slices the file per worker, so total bytes crossing the worker boundary
+  is one file's worth, not one copy per worker.
+
+**It is not predictor-3-only.** The plan and the per-strip decoder cover
+predictors 1 (none), 2 (horizontal) and 3 (floating-point) across 8/16/32/64-bit
+chunky strip layouts, uint/int/float. Predictor 2 is undone per sample in the
+file's byte order; predictor 3 undoes byte-wise differencing then de-planarizes.
+Measured with real 5120x5120 images and Node `worker_threads` (10-core machine,
+best of 3, output verified identical to the whole-image decoder at every split):
+
+| File | predictor | serial | 8 workers | speedup |
+| --- | --- | --- | --- | --- |
+| `nl_01_depth.tif` f32 Deflate | 3 | 464 ms | 65 ms | **7.1x** |
+| `l_01_depth.tif` f32 Deflate | 3 | 241 ms | 30 ms | **8.0x** |
+| `nl_01_depth_x2.tif` f32 Deflate 10240<sup>2</sup> | 3 | 2460 ms | 369 ms (6 workers) | **6.7x** |
+| `pred1_f32_deflate.tif` | 1 | 370 ms | 68 ms | **5.5x** |
+| `pred2_u16_deflate.tif` | 2 | 197 ms | 37 ms | **5.4x** |
+| `pred1_u16_deflate.tif` | 1 | 172 ms | 40 ms | **4.3x** |
+| `pred1_f32_none.tif` uncompressed | 1 | 133 ms | 21 ms (6 workers) | **6.5x** |
+| `pred2_rgb8_deflate.tif` | 2 | 156 ms | 77 ms | 2.0x |
+
+Scaling tracks how much work each strip carries. The 8-bit RGB case scales
+worst (2x) because its strips are small and cheap, so fixed per-range cost
+dominates; the uncompressed case is erratic because it is memory-bandwidth
+bound, not CPU bound.
+
+**Wired into the webview and shipping.** [strip-parallel-decode.ts](media/modules/strip-parallel-decode.ts)
+owns the pool; [strip-decode-worker.ts](media/strip-decode-worker.ts) is its
+member (its own bundle, since N of them each instantiate a WASM module).
+[tiff-processor.ts](media/modules/tiff-processor.ts) tries it before the
+ordinary decode-worker route and falls through untouched when it returns null.
+
+Measured in a real VS Code session (median of 3 warm opens, cold first open
+discarded):
+
+| File | MB | decode before | decode after | total before | total after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `nl_01_depth.tif` pred 3 | 29.3 | 660 ms | **168 ms** | 907 ms | **412 ms** |
+| `nl_01_depth_x2.tif` pred 3 | 76.6 | 2905 ms | **774 ms** | 4369 ms | **1302 ms** |
+| `pred1_f32_deflate.tif` pred 1 | 37.5 | 320 ms | **173 ms** | 718 ms | **575 ms** |
+| `pred1_f32_none.tif` pred 1 | 100.0 | 297 ms | **105 ms** | 677 ms | **479 ms** |
+| `pred1_u16_deflate.tif` pred 1 | 14.4 | 298 ms | **98 ms** | 648 ms | **455 ms** |
+| `pred2_u16_deflate.tif` pred 2 | 10.0 | 341 ms | **119 ms** | 669 ms | **475 ms** |
+
+Design decisions worth keeping:
+
+- **Ranges are balanced by compressed bytes, not strip count.** Strips vary in
+  cost and an even split leaves workers idle — 160 strips over 8 workers
+  measured slower than over 6 before this.
+- **Each worker receives only its own strips' bytes**, so total data crossing
+  the worker boundary is one file's worth rather than one copy per worker.
+- **The WASM module is compiled once on the main thread and instantiated N
+  times.** Pool workers run from a blob URL and cannot fetch webview-resource
+  URLs themselves.
+- **Min/max is computed per range inside the workers** and combined on
+  assembly, keeping the stats pass parallel and off the main thread.
+- **Eligibility is decided in Rust.** `tiff_float_strip_plan` returns nothing
+  for orientation flips, palette, CMYK or CFA, so the parallel path never has to
+  re-implement a pixel transform that is only correct on the whole image.
+- Gates: >= 4 MB file (reading the plan needs a main-thread WASM instance, not
+  worth instantiating below that), >= 16 strips, >= 2M pixels, pool capped at 8
+  and at `hardwareConcurrency - 1`.
+
+**Cold opens.** The pool's cost is almost entirely startup — fetching the worker
+bundle, compiling the WASM once, instantiating it N times — so `prewarmStripPool()`
+and `getWasmModule()` are kicked off from `imagePreview.ts` as soon as a TIFF is
+recognised, overlapping with the file read rather than being paid serially
+before the first decode. Cold `nl_01_depth.tif`: 1480 ms -> 1318 ms total, with
+decode 917 ms -> 310 ms. The gap between cold and warm (556 ms) is startup that
+prewarming overlaps but cannot remove.
+
+**Coverage note.** The first implementation rejected `bits_per_sample == 16`,
+which silently excluded half-float TIFFs — a real and common shape (a 1.96 MB
+3600x3000 fp16 file in `depth_scene/`). Predictor 3's byte-plane form is
+width-agnostic, so 16-bit works identically; the crate now converts binary16 to
+binary32 directly rather than pulling in `half`. That file went from
+`decode 208ms [wasm (worker)] / total 413ms` to `decode 90ms / total 232ms`.
+
+Remaining follow-ups: the pool is never torn down (8 idle workers hold their
+WASM heaps for the session); a 10240x10240 f32 image is 419 MB assembled with
+each worker holding its slice on top, so a memory budget that shrinks the pool
+for very large images is still missing; and there is no committed regression
+sample for predictor 3 with 16-bit floats (it is verified only against
+`test_data`, which is outside the repo).
+
+**Note on the whole-image path.** `try_decode_float_predictor_strips` still
+returns early for predictors 1 and 2: its reassembly reads big-endian floats,
+which is correct only for the byte-plane form. Predictor 1 and 2 files keep
+their existing whole-image routes. Widening *that* path is a separate, smaller
+win than the parallel one.
 
 ### Step 3a — how ply-visualizer gets included
 

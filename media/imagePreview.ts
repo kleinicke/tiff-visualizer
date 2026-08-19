@@ -52,6 +52,8 @@ import type {
 } from './modules/layer-compositor-worker-client.js';
 import { WebGL2LayerCompositor } from './modules/webgl2-layer-compositor.js';
 import { WebGPULayerCompositor } from './modules/webgpu-layer-compositor.js';
+import { prewarmStripPool } from './modules/strip-parallel-decode.js';
+import { getWasmModule } from './modules/tiff-wasm-wrapper.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
@@ -896,7 +898,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 	// `fetch-`/`decode-` prefixes, so these patterns anchor on the exact mark
 	// names to avoid double counting.
 	const FETCH_MARK = /^fetch(\(.*\))?$/;
-	const DECODE_MARK = /^decode-(worker|local)\(.*\)$|^decode-(wasm|geotiff)(-worker|-local)?$/;
+	const DECODE_MARK = /^decode-(worker|local)\(.*\)$|^decode-(wasm|geotiff)(-worker|-local|-strip-pool)?$/;
 
 	/**
 	 * Compose the per-load [Perf] summary: read time, decode time, which decoder
@@ -913,6 +915,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 		if (!engine && mark) {
 			const inner = mark.match(/^decode-(?:worker|local)\((.*)\)$/);
 			if (inner) { engine = `${inner[1]} (${mark.startsWith('decode-worker') ? 'worker' : 'main'})`; }
+			else if (mark === 'decode-wasm-strip-pool') { engine = 'wasm (strip pool)'; }
 			else if (mark.startsWith('decode-wasm')) { engine = `wasm (${mark.endsWith('-local') ? 'main' : 'worker'})`; }
 			else if (mark.startsWith('decode-geotiff')) { engine = `geotiff.js (${mark.endsWith('-worker') ? 'worker' : 'main'})`; }
 		}
@@ -6430,6 +6433,12 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			// Boot alongside the format's file fetch. PNG starts this itself only
 			// after its IHDR confirms that the 16-bit worker path is necessary.
 			void decodeWorkerClient.start();
+		}
+		if (format?.kind === 'tiff') {
+			// Both of these are needed before a strip-parallel decode can start
+			// and both are pure startup cost, so overlap them with the fetch.
+			void getWasmModule();
+			prewarmStripPool();
 		}
 		if (format?.kind === 'layered' && layeredFormat) {
 			handleLayeredPreview(layeredFormat, uri, gen);

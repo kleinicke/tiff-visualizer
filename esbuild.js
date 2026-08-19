@@ -63,6 +63,19 @@ const decodeWorkerBuildOptions = {
   format: 'esm',
 };
 
+// Pool member for parallel TIFF strip decoding. Bundled separately (rather than
+// reusing decodeWorker) because the pool spawns N of these and each one
+// instantiates its own WASM module; keeping it minimal keeps that cost down.
+const stripDecodeWorkerBuildOptions = {
+  entryPoints: ['media/strip-decode-worker.ts'],
+  bundle: true,
+  outfile: 'media/stripDecodeWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 const fastRawWorkerBuildOptions = {
   entryPoints: ['media/fast-raw-worker.ts'],
   bundle: true,
@@ -126,6 +139,7 @@ const mediaModuleTsFiles = [
   ...findMediaTsFiles('media/modules'),
   'media/imagePreview.ts',
   'media/decode-worker.ts',
+  'media/strip-decode-worker.ts',
   'media/fast-raw-worker.ts',
   'media/layer-compositor-worker.ts',
   'media/comparisonPanel.ts',
@@ -233,6 +247,16 @@ if (isWatch) {
     },
   };
 
+  stripDecodeWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('strip decode worker watch build failed:', error);
+      } else {
+        console.log('strip decode worker watch build succeeded');
+      }
+    },
+  };
+
   fastRawWorkerBuildOptions.watch = {
     onRebuild(error) {
       if (error) {
@@ -319,6 +343,9 @@ async function buildAll() {
     // Build decode worker
     await build(decodeWorkerBuildOptions);
     console.log('Decode worker built successfully');
+
+    await build(stripDecodeWorkerBuildOptions);
+    console.log('Strip decode worker built successfully');
 
     await build(fastRawWorkerBuildOptions);
     console.log('Fast raw worker built successfully');

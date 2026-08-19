@@ -18,6 +18,7 @@ const B = rootArg >= 0 ? args[rootArg + 1] : path.join(DATA, 'benchmark');
 // Where each file actually lives. Checked in order; first hit wins.
 const SEARCH = [
   DATA,
+  path.join(DATA, 'depth_scene'),
   path.join(DATA, 'testfiles/scientific'),
   path.join(DATA, 'testfiles/layered'),
   path.join(DATA, 'images-advanced/avif'),
@@ -54,6 +55,17 @@ const GROUPS = {
       'nl_01_depth_norm_rgb_u16.ppm': 'uint16 RGB binary - largest raw payload at 150MB',
       'nl_01_depth_norm.tga': 'uint8 BGR, bottom-up',
       'nl_01_depth_norm.bmp': 'uint8 BGR, bottom-up, row-padded',
+    },
+  },
+  predictors: {
+    description: 'Same 5120x5120 scene re-encoded across the TIFF predictor/sample-format matrix, to check that the strip-parallel decode path covers all of them and not just the predictor-3 float case it was first built for. Plus one real half-float file.',
+    files: {
+      'pred1_f32_none.tif': 'predictor 1 (none), float32, uncompressed - memory-bandwidth bound',
+      'pred1_f32_deflate.tif': 'predictor 1, float32, Deflate',
+      'pred1_u16_deflate.tif': 'predictor 1, uint16, Deflate',
+      'pred2_u16_deflate.tif': 'predictor 2 (horizontal), uint16, Deflate',
+      'pred2_rgb8_deflate.tif': 'predictor 2, 8-bit RGB - smallest strips, scales worst',
+      'l_00_l_01_f300_w1600_h1600.tif': 'predictor 3 with FLOAT16 samples, 3600x3000 - the case the first implementation rejected',
     },
   },
   containers: {

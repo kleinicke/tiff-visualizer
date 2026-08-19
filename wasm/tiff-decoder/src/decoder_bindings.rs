@@ -652,3 +652,144 @@ pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
         .map(Into::into)
         .map_err(js_error)
 }
+
+// --- Strip-parallel decoding of predictor-3 float TIFFs ---------------------
+//
+// `tiff_float_strip_plan` is called once (cheap: it only parses the IFD) to
+// learn the strip layout. The caller then slices the file per worker and each
+// worker calls `decode_tiff_float_strip_range` with just its own strips.
+
+#[wasm_bindgen]
+pub struct TiffFloatStripPlanJs {
+    inner: core::TiffFloatStripPlan,
+}
+
+#[wasm_bindgen]
+impl TiffFloatStripPlanJs {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 {
+        self.inner.channels
+    }
+    #[wasm_bindgen(getter)]
+    pub fn bits_per_sample(&self) -> u32 {
+        self.inner.bits_per_sample
+    }
+    #[wasm_bindgen(getter)]
+    pub fn compression(&self) -> u32 {
+        self.inner.compression
+    }
+    #[wasm_bindgen(getter)]
+    pub fn rows_per_strip(&self) -> u32 {
+        self.inner.rows_per_strip
+    }
+    #[wasm_bindgen(getter)]
+    pub fn predictor(&self) -> u32 {
+        self.inner.predictor
+    }
+    #[wasm_bindgen(getter)]
+    pub fn sample_format(&self) -> u32 {
+        self.inner.sample_format
+    }
+    #[wasm_bindgen(getter)]
+    pub fn little_endian(&self) -> bool {
+        self.inner.little_endian
+    }
+    #[wasm_bindgen(getter)]
+    pub fn strip_count(&self) -> u32 {
+        self.inner.offsets.len() as u32
+    }
+    /// Strip byte offsets as f64 (exact for any offset below 2^53, which covers
+    /// BigTIFF in practice and avoids BigInt64Array plumbing on the JS side).
+    #[wasm_bindgen(getter)]
+    pub fn offsets(&self) -> Vec<f64> {
+        self.inner.offsets.iter().map(|v| *v as f64).collect()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn counts(&self) -> Vec<f64> {
+        self.inner.counts.iter().map(|v| *v as f64).collect()
+    }
+}
+
+#[wasm_bindgen]
+pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlanJs> {
+    core::tiff_float_strip_plan(data).map(|inner| TiffFloatStripPlanJs { inner })
+}
+
+/// Decode strips `[first_strip, first_strip + counts.len())`.
+///
+/// `blob` is those strips' compressed bytes concatenated in order; `counts`
+/// their individual lengths. The geometry arguments come from the plan.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_tiff_float_strip_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    rows_per_strip: u32,
+    predictor: u32,
+    sample_format: u32,
+    little_endian: bool,
+) -> Result<Vec<f32>, JsValue> {
+    let plan = core::TiffFloatStripPlan {
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        sample_format,
+        little_endian,
+        rows_per_strip,
+        offsets: Vec::new(),
+        counts: Vec::new(),
+    };
+    core::decode_tiff_float_strip_range(blob, counts, first_strip, &plan)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub struct TiffStripMetadataJs {
+    inner: core::TiffStripMetadata,
+}
+
+#[wasm_bindgen]
+impl TiffStripMetadataJs {
+    #[wasm_bindgen(getter)]
+    pub fn page_count(&self) -> u32 {
+        self.inner.page_count
+    }
+    #[wasm_bindgen(getter)]
+    pub fn photometric_interpretation(&self) -> u32 {
+        self.inner.photometric_interpretation
+    }
+    #[wasm_bindgen(getter)]
+    pub fn all_tags_json(&self) -> String {
+        self.inner.all_tags_json.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn ome_xml(&self) -> String {
+        self.inner.ome_xml.clone()
+    }
+}
+
+/// Tags and page count for a strip-parallel decode. Parses the IFD only — the
+/// pixels come from `decode_tiff_float_strip_range` on the worker pool.
+#[wasm_bindgen]
+pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadataJs, JsValue> {
+    core::tiff_strip_metadata(data)
+        .map(|inner| TiffStripMetadataJs { inner })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}

@@ -787,6 +787,312 @@ pub(crate) fn decode_zstd(
 /// strip, which is what makes this shape parallelizable: `first_strip`/
 /// `strip_count` let a caller decode a sub-range without touching the rest.
 #[allow(clippy::too_many_arguments)]
+/// Geometry needed to decode a range of predictor-3 float strips without
+/// re-parsing the IFD. Split out from `try_decode_float_predictor_strips` so a
+/// caller can decode strips `[first, first + count)` on its own thread with
+/// nothing but the compressed bytes for that range.
+#[derive(Clone, Debug)]
+pub struct FloatStripPlan {
+    pub width: u32,
+    pub height: u32,
+    pub channels: u32,
+    pub bits_per_sample: u32,
+    pub compression: u32,
+    /// 1 = none, 2 = horizontal, 3 = floating-point.
+    pub predictor: u32,
+    /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
+    pub sample_format: u32,
+    /// File byte order, which is how predictor 1 and 2 samples are stored.
+    /// Predictor 3 always reassembles to big-endian regardless.
+    pub little_endian: bool,
+    pub rows_per_strip: u32,
+    pub offsets: Vec<u64>,
+    pub counts: Vec<u64>,
+}
+
+impl FloatStripPlan {
+    pub fn strip_count(&self) -> usize {
+        self.offsets.len()
+    }
+    pub fn row_bytes(&self) -> usize {
+        (self.width as usize) * (self.channels as usize) * (self.bits_per_sample as usize / 8)
+    }
+    /// First image row covered by `strip`.
+    pub fn first_row(&self, strip: usize) -> usize {
+        strip * self.rows_per_strip as usize
+    }
+    /// Rows actually covered by `strip` (the last strip may be short).
+    pub fn rows_in(&self, strip: usize) -> usize {
+        let first = self.first_row(strip);
+        if first >= self.height as usize {
+            0
+        } else {
+            (self.rows_per_strip as usize).min(self.height as usize - first)
+        }
+    }
+}
+
+/// Read the tags describing a predictor-3 float strip layout, or `None` when
+/// this file is not that shape. Same guards as
+/// `try_decode_float_predictor_strips`, which is built on top of it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn float_predictor_plan(
+    data: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    predictor: u32,
+    planar_configuration: u32,
+) -> Option<FloatStripPlan> {
+    use tiff::tags::Tag;
+
+    if planar_configuration != 1 || !matches!(predictor, 1..=3) {
+        return None;
+    }
+    // Byte-aligned widths only. Sub-byte and 9..15-bit shapes have their own
+    // dedicated paths (try_decode_subbit_strips) and are not worth duplicating.
+    if !matches!(bits_per_sample, 8 | 16 | 32 | 64) {
+        return None;
+    }
+    if !matches!(compression, 1 | 5 | 8 | 32946) {
+        return None;
+    }
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .unwrap_or(1) as u32;
+    // Predictor 3 is defined only for floating-point samples. Half floats are
+    // included: the byte-plane form is width-agnostic, so 16-bit works exactly
+    // like 32- and 64-bit.
+    if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 16 | 32 | 64)) {
+        return None;
+    }
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return None;
+    }
+    let little_endian = tiff_is_little_endian(data)?;
+    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
+        Ok(value) if !value.is_empty() => value,
+        _ => return None,
+    };
+    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
+        Ok(value) if value.len() == offsets.len() => value,
+        _ => return None,
+    };
+    let rows_per_strip = decoder
+        .get_tag_u64_vec(Tag::RowsPerStrip)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .unwrap_or(height as u64);
+    if rows_per_strip == 0 {
+        return None;
+    }
+    Some(FloatStripPlan {
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        sample_format,
+        little_endian,
+        rows_per_strip: rows_per_strip as u32,
+        offsets,
+        counts,
+    })
+}
+
+/// Decompress and un-predict one strip into `out`, which must be exactly
+/// `rows * row_bytes` long. This is the whole per-strip unit of work: it reads
+/// only `block` and writes only `out`, so strips can be processed in any order,
+/// on any thread, with no shared state.
+pub(crate) fn decode_float_predictor_strip(
+    block: &[u8],
+    plan: &FloatStripPlan,
+    rows: usize,
+    out: &mut [u8],
+) -> Result<(), DecodeError> {
+    let row_bytes = plan.row_bytes();
+    let bytes_per_sample = plan.bits_per_sample as usize / 8;
+    let samples_per_row = (plan.width as usize) * (plan.channels as usize);
+    let expected = rows * row_bytes;
+
+    let mut decompressed =
+        decompress_strip_or_tile(block, plan.compression, expected, "Strip decode")?;
+    if decompressed.len() < expected {
+        return Err(DecodeError::new(
+            "Strip decode: strip shorter than its declared geometry",
+        ));
+    }
+    decompressed.truncate(expected);
+
+    for row in 0..rows {
+        let row_start = row * row_bytes;
+        let row_slice = &mut decompressed[row_start..row_start + row_bytes];
+        let dst = &mut out[row_start..row_start + row_bytes];
+
+        match plan.predictor {
+            // No predictor: the row is already the sample bytes.
+            1 => dst.copy_from_slice(row_slice),
+
+            // Horizontal differencing, applied per SAMPLE (not per byte), so it
+            // must be undone in the sample's own width and byte order.
+            2 => {
+                undo_horizontal_predictor_row(
+                    row_slice,
+                    samples_per_row,
+                    plan.channels as usize,
+                    bytes_per_sample,
+                    plan.little_endian,
+                );
+                dst.copy_from_slice(row_slice);
+            }
+
+            // Floating-point predictor: differencing runs over the row's raw
+            // bytes, and the row is stored as byte planes (all MSBs, then all
+            // second bytes, ...). Undo the differencing, then de-planarize.
+            _ => {
+                for i in 1..row_bytes {
+                    row_slice[i] = row_slice[i].wrapping_add(row_slice[i - 1]);
+                }
+                for sample in 0..samples_per_row {
+                    for byte in 0..bytes_per_sample {
+                        dst[sample * bytes_per_sample + byte] =
+                            row_slice[byte * samples_per_row + sample];
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Undo TIFF predictor 2 for one row, in place, for byte-aligned sample widths.
+/// Each sample is added to the sample `channels` positions earlier, wrapping at
+/// the sample width, and samples are stored in the file's byte order.
+fn undo_horizontal_predictor_row(
+    row: &mut [u8],
+    samples_per_row: usize,
+    channels: usize,
+    bytes_per_sample: usize,
+    little_endian: bool,
+) {
+    macro_rules! undo {
+        ($ty:ty, $read:path, $write:path, $n:expr) => {{
+            for index in channels..samples_per_row {
+                let cur_at = index * $n;
+                let prev_at = (index - channels) * $n;
+                let mut cur_bytes = [0u8; $n];
+                let mut prev_bytes = [0u8; $n];
+                cur_bytes.copy_from_slice(&row[cur_at..cur_at + $n]);
+                prev_bytes.copy_from_slice(&row[prev_at..prev_at + $n]);
+                let sum = <$ty>::wrapping_add($read(cur_bytes), $read(prev_bytes));
+                row[cur_at..cur_at + $n].copy_from_slice(&$write(sum));
+            }
+        }};
+    }
+    match (bytes_per_sample, little_endian) {
+        (1, _) => {
+            for index in channels..samples_per_row {
+                row[index] = row[index].wrapping_add(row[index - channels]);
+            }
+        }
+        (2, true) => undo!(u16, u16::from_le_bytes, u16::to_le_bytes, 2),
+        (2, false) => undo!(u16, u16::from_be_bytes, u16::to_be_bytes, 2),
+        (4, true) => undo!(u32, u32::from_le_bytes, u32::to_le_bytes, 4),
+        (4, false) => undo!(u32, u32::from_be_bytes, u32::to_be_bytes, 4),
+        (8, true) => undo!(u64, u64::from_le_bytes, u64::to_le_bytes, 8),
+        (8, false) => undo!(u64, u64::from_be_bytes, u64::to_be_bytes, 8),
+        _ => {}
+    }
+}
+
+/// Reassemble decoded sample bytes into f32.
+///
+/// Predictor 3 leaves samples big-endian (the byte planes are MSB-first by
+/// definition); predictors 1 and 2 leave them in the file's byte order.
+/// IEEE 754 binary16 -> binary32. Written out rather than pulling in `half`,
+/// which is only an indirect dependency here.
+#[inline]
+fn half_bits_to_f32(bits: u16) -> f32 {
+    let sign = ((bits >> 15) as u32) << 31;
+    let exponent = ((bits >> 10) & 0x1f) as u32;
+    let mantissa = (bits & 0x3ff) as u32;
+    let out = match exponent {
+        // Zero and subnormals: renormalize into a binary32 exponent.
+        0 => {
+            if mantissa == 0 {
+                sign
+            } else {
+                let shift = mantissa.leading_zeros() - 21;
+                let exponent = 127 - 15 - shift;
+                let mantissa = (mantissa << (shift + 1)) & 0x3ff;
+                sign | (exponent << 23) | (mantissa << 13)
+            }
+        }
+        // Infinity and NaN.
+        31 => sign | 0x7f80_0000 | (mantissa << 13),
+        _ => sign | ((exponent + 127 - 15) << 23) | (mantissa << 13),
+    };
+    f32::from_bits(out)
+}
+
+pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f32> {
+    let big_endian = plan.predictor == 3 || !plan.little_endian;
+    let bytes_per_sample = plan.bits_per_sample as usize / 8;
+
+    macro_rules! map {
+        ($n:expr, $conv:expr) => {
+            raster
+                .chunks_exact($n)
+                .map(|b| {
+                    let mut arr = [0u8; $n];
+                    arr.copy_from_slice(b);
+                    if big_endian {
+                        arr.reverse();
+                    }
+                    // `arr` is now little-endian; $conv reads it as such.
+                    #[allow(clippy::redundant_closure_call)]
+                    ($conv)(arr)
+                })
+                .collect()
+        };
+    }
+
+    match (bytes_per_sample, plan.sample_format) {
+        (1, 2) => raster.iter().map(|v| *v as i8 as f32).collect(),
+        (1, _) => raster.iter().map(|v| *v as f32).collect(),
+        (2, 3) => map!(2, |a| half_bits_to_f32(u16::from_le_bytes(a))),
+        (2, 2) => map!(2, |a| i16::from_le_bytes(a) as f32),
+        (2, _) => map!(2, |a| u16::from_le_bytes(a) as f32),
+        (4, 3) => map!(4, f32::from_le_bytes),
+        (4, 2) => map!(4, |a| i32::from_le_bytes(a) as f32),
+        (4, _) => map!(4, |a| u32::from_le_bytes(a) as f32),
+        (8, 3) => map!(8, |a| f64::from_le_bytes(a) as f32),
+        (8, 2) => map!(8, |a| i64::from_le_bytes(a) as f32),
+        (8, _) => map!(8, |a| u64::from_le_bytes(a) as f32),
+        _ => Vec::new(),
+    }
+}
+
+/// Decode chunky, strip-based **floating-point** samples that use TIFF
+/// predictor 3, which neither `try_decode_general_strips_tiles` (planar or
+/// tiled-LZW only, <=16bpp) nor `try_decode_uncompressed_strips` (predictor 1
+/// only) accepts. Before this existed, every float TIFF written by the common
+/// encoders — Deflate + predictor 3 is what GDAL, libtiff and most scientific
+/// tools emit — fell through to the `tiff` crate's monolithic `read_image()`.
+///
+/// Predictor 3 stores each row as byte planes: all the most-significant bytes
+/// of the row's samples, then all the second bytes, and so on, with horizontal
+/// differencing applied across the whole byte sequence.
+///
+/// Each strip is independent, which is what makes this parallelizable; see
+/// `float_predictor_plan` + `decode_float_predictor_strip` for the split form.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn try_decode_float_predictor_strips(
     data: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
@@ -798,114 +1104,66 @@ pub(crate) fn try_decode_float_predictor_strips(
     predictor: u32,
     planar_configuration: u32,
 ) -> Result<Option<DecodingResult>, DecodeError> {
-    use tiff::tags::Tag;
-
-    if predictor != 3 || planar_configuration != 1 {
-        return Ok(None);
-    }
-    // 16-bit half floats are legal but rarer; restrict to the widths whose
-    // reassembly is exercised by the test corpus.
-    if bits_per_sample != 32 && bits_per_sample != 64 {
-        return Ok(None);
-    }
-    if !matches!(compression, 1 | 5 | 8 | 32946) {
-        return Ok(None);
-    }
-    let sample_format = decoder
-        .get_tag_u64_vec(Tag::SampleFormat)
-        .ok()
-        .and_then(|values| values.first().copied())
-        .unwrap_or(1) as u32;
-    if sample_format != 3 {
-        return Ok(None);
-    }
-    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return Ok(None);
-    }
-
-    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
-        Ok(value) if !value.is_empty() => value,
-        _ => return Ok(None),
+    let plan = match float_predictor_plan(
+        data,
+        decoder,
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        planar_configuration,
+    ) {
+        Some(plan) => plan,
+        None => return Ok(None),
     };
-    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
-        Ok(value) if value.len() == offsets.len() => value,
-        _ => return Ok(None),
-    };
-    let rows_per_strip = decoder
-        .get_tag_u64_vec(Tag::RowsPerStrip)
-        .ok()
-        .and_then(|values| values.first().copied())
-        .unwrap_or(height as u64) as usize;
-    if rows_per_strip == 0 {
+    // The plan is broader than this function: it also describes predictor 1 and
+    // 2 layouts and 16-bit floats, which the strip-parallel API handles. The
+    // reassembly below reads big-endian f32/f64, so anything else must be
+    // declined here or it would silently reinterpret the bytes.
+    if plan.predictor != 3 || !matches!(plan.bits_per_sample, 32 | 64) {
         return Ok(None);
     }
 
-    let bytes_per_sample = (bits_per_sample / 8) as usize;
-    let samples_per_row = (width as usize) * (channels as usize);
-    let row_bytes = samples_per_row * bytes_per_sample;
+    let row_bytes = plan.row_bytes();
     let total_bytes = row_bytes
         .checked_mul(height as usize)
         .ok_or_else(|| DecodeError::new("Float predictor decode: raster byte count overflow"))?;
-
     let mut raster = vec![0u8; total_bytes];
-    let mut plane = vec![0u8; row_bytes];
 
-    for (strip_index, (&offset, &count)) in offsets.iter().zip(counts.iter()).enumerate() {
-        let first_row = strip_index * rows_per_strip;
-        if first_row >= height as usize {
+    for strip in 0..plan.strip_count() {
+        let rows = plan.rows_in(strip);
+        if rows == 0 {
             break;
         }
-        let rows_here = rows_per_strip.min(height as usize - first_row);
-        let expected = rows_here * row_bytes;
-
-        let start = offset as usize;
-        let end = start
-            .checked_add(count as usize)
-            .ok_or_else(|| DecodeError::new("Float predictor decode: strip range overflow"))?;
-        if end > data.len() {
-            return Ok(None);
-        }
-        let mut block =
-            decompress_strip_or_tile(&data[start..end], compression, expected, "Float predictor decode")?;
-        if block.len() < expected {
-            return Ok(None);
-        }
-        block.truncate(expected);
-
-        for row in 0..rows_here {
-            let row_start = row * row_bytes;
-            let row_slice = &mut block[row_start..row_start + row_bytes];
-            // Horizontal differencing runs over the raw bytes of the whole row.
-            for i in 1..row_bytes {
-                row_slice[i] = row_slice[i].wrapping_add(row_slice[i - 1]);
-            }
-            // De-planarize: byte plane k holds byte k (MSB first) of every
-            // sample in the row.
-            for sample in 0..samples_per_row {
-                for byte in 0..bytes_per_sample {
-                    plane[sample * bytes_per_sample + byte] =
-                        row_slice[byte * samples_per_row + sample];
-                }
-            }
-            let out_start = (first_row + row) * row_bytes;
-            raster[out_start..out_start + row_bytes].copy_from_slice(&plane);
-        }
+        let start = plan.offsets[strip] as usize;
+        let end = match start.checked_add(plan.counts[strip] as usize) {
+            Some(value) if value <= data.len() => value,
+            _ => return Ok(None),
+        };
+        let out_start = plan.first_row(strip) * row_bytes;
+        decode_float_predictor_strip(
+            &data[start..end],
+            &plan,
+            rows,
+            &mut raster[out_start..out_start + rows * row_bytes],
+        )?;
     }
 
-    // The byte planes are stored MSB-first regardless of the file's byte order,
-    // so the reassembled samples are big-endian and must be read as such.
-    Ok(Some(match bits_per_sample {
-        32 => DecodingResult::F32(
+    Ok(Some(if bits_per_sample == 32 {
+        DecodingResult::F32(
             raster
                 .chunks_exact(4)
                 .map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
                 .collect(),
-        ),
-        _ => DecodingResult::F64(
+        )
+    } else {
+        DecodingResult::F64(
             raster
                 .chunks_exact(8)
                 .map(|b| f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
                 .collect(),
-        ),
+        )
     }))
 }
