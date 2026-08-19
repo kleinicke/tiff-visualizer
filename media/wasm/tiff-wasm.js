@@ -1256,7 +1256,7 @@ export class ExrResult {
      * @returns {number}
      */
     get format() {
-        const ret = wasm.exrresult_format(this.__wbg_ptr);
+        const ret = wasm.decodedarray_height(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1270,14 +1270,28 @@ export class ExrResult {
      * @returns {number}
      */
     get channels() {
-        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        const ret = wasm.decodedarray_width(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
+    get data_max() {
+        const ret = wasm.decodedarray_non_finite_count(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_min() {
+        const ret = wasm.decodedarray_data_max(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * @returns {number}
+     */
     get data_type() {
-        const ret = wasm.exrresult_data_type(this.__wbg_ptr);
+        const ret = wasm.decodedarray_channels(this.__wbg_ptr);
         return ret >>> 0;
     }
 }
@@ -1702,28 +1716,28 @@ export class PngResult {
      * @returns {number}
      */
     get width() {
-        const ret = wasm.exrresult_channels(this.__wbg_ptr);
+        const ret = wasm.pngresult_width(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
     get height() {
-        const ret = wasm.exrresult_format(this.__wbg_ptr);
+        const ret = wasm.pngresult_height(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
     get channels() {
-        const ret = wasm.exrresult_data_type(this.__wbg_ptr);
+        const ret = wasm.exrresult_width(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
     get bit_depth() {
-        const ret = wasm.pngresult_bit_depth(this.__wbg_ptr);
+        const ret = wasm.exrresult_height(this.__wbg_ptr);
         return ret >>> 0;
     }
 }
@@ -2368,7 +2382,7 @@ export class StabilityCurveResult {
      * @returns {number}
      */
     get suggested_bin() {
-        const ret = wasm.pngresult_bit_depth(this.__wbg_ptr);
+        const ret = wasm.exrresult_height(this.__wbg_ptr);
         return ret;
     }
     /**

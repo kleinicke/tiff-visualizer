@@ -14,8 +14,8 @@ use cmyk::convert_cmyk_to_rgb;
 use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, unpack_bilevel};
 use orientation::{apply_orientation, TiffOrientation};
 use strips::{
-    decode_zstd, try_decode_general_strips_tiles, try_decode_subbit_strips,
-    try_decode_uncompressed_strips,
+    decode_zstd, try_decode_float_predictor_strips, try_decode_general_strips_tiles,
+    try_decode_subbit_strips, try_decode_uncompressed_strips,
 };
 use tags::{extract_ome_xml, extract_page_tags_json};
 
@@ -303,6 +303,19 @@ pub(crate) fn decode_tiff_impl(
         planar_configuration,
         tile_width,
         tile_length,
+    )? {
+        direct_decode = true;
+        result
+    } else if let Some(result) = try_decode_float_predictor_strips(
+        data,
+        &mut decoder,
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        planar_configuration,
     )? {
         direct_decode = true;
         result

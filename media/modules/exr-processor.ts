@@ -142,6 +142,19 @@ export class ExrProcessor {
 			canvas.width = width;
 			canvas.height = height;
 
+			// The Rust decoder computes min/max over the same channel convention as
+			// calculateFloatStats while packing, so the JS scan below can be
+			// skipped. Guarded on the channel count agreeing: the Rust range was
+			// scanned over its own output_channels, and if this processor derived
+			// a different count the scanned-channel sets could differ.
+			const decoded = exrResult as { stats?: { min: number, max: number }, channels?: number };
+			const decodedStats = (decoded.stats
+				&& Number.isFinite(decoded.stats.min) && Number.isFinite(decoded.stats.max)
+				&& (decoded.channels === undefined || decoded.channels === channels))
+				? { min: decoded.stats.min, max: decoded.stats.max }
+				: undefined;
+			this._cachedStats = decodedStats;
+
 			// Store raw EXR data for pixel inspection and re-rendering
 			this.rawExrData = {
 				width,

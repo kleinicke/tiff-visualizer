@@ -169,6 +169,23 @@ async function main() {
 		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
 	}
 
+	// 5b-ii. Deflate + floating-point predictor (3) across MULTIPLE strips is the
+	//     shape every common encoder emits for float TIFFs (GDAL, libtiff). It
+	//     used to fall through to the tiff crate's read_image(); the dedicated
+	//     per-strip path (try_decode_float_predictor_strips) must produce the
+	//     exact same samples as the uncompressed, unpredicted twin.
+	{
+		const z = decode(mod, 'deflate_pred3_f32.tif');
+		const r = decode(mod, 'pred_ref_f32.tif');
+		assert.strictEqual(z.compression, 8, 'deflate_pred3_f32.tif compression tag');
+		assert.strictEqual(z.width, r.width);
+		assert.strictEqual(z.height, r.height);
+		assert.strictEqual(z.data.length, r.data.length, 'deflate+predictor3: length');
+		assert.deepStrictEqual(z.data, r.data,
+			'Deflate + float predictor (multi-strip) must match the uncompressed reference exactly');
+		console.log('✅ Deflate + float predictor 3 (6 strips) matches the uncompressed reference exactly');
+	}
+
 	// 5c. Sub-16-bit unsigned chunky samples (10/12/14-bit RGB), the non-byte-
 	//     aligned bit depths that tiff crate's read_image() rejects with
 	//     "color type RGB(n) is unsupported" before decompression is even

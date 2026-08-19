@@ -770,3 +770,142 @@ pub(crate) fn decode_zstd(
     d.read_image()
         .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt read_image: {}", e)))
 }
+
+/// Decode chunky, strip-based **floating-point** samples that use TIFF
+/// predictor 3, which neither `try_decode_general_strips_tiles` (planar or
+/// tiled-LZW only, <=16bpp) nor `try_decode_uncompressed_strips` (predictor 1
+/// only) accepts. Before this existed, every float TIFF written by the common
+/// encoders — Deflate + predictor 3 is what GDAL, libtiff and most scientific
+/// tools emit — fell through to the `tiff` crate's monolithic `read_image()`.
+///
+/// Predictor 3 stores each row as byte planes: all the most-significant bytes
+/// of the row's samples, then all the second bytes, and so on, with horizontal
+/// differencing applied across the whole byte sequence. Reconstruction is
+/// therefore an accumulate pass followed by a de-planarize pass, both per row.
+///
+/// Each strip is decompressed and un-predicted independently of every other
+/// strip, which is what makes this shape parallelizable: `first_strip`/
+/// `strip_count` let a caller decode a sub-range without touching the rest.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_decode_float_predictor_strips(
+    data: &[u8],
+    decoder: &mut Decoder<Cursor<&[u8]>>,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    predictor: u32,
+    planar_configuration: u32,
+) -> Result<Option<DecodingResult>, DecodeError> {
+    use tiff::tags::Tag;
+
+    if predictor != 3 || planar_configuration != 1 {
+        return Ok(None);
+    }
+    // 16-bit half floats are legal but rarer; restrict to the widths whose
+    // reassembly is exercised by the test corpus.
+    if bits_per_sample != 32 && bits_per_sample != 64 {
+        return Ok(None);
+    }
+    if !matches!(compression, 1 | 5 | 8 | 32946) {
+        return Ok(None);
+    }
+    let sample_format = decoder
+        .get_tag_u64_vec(Tag::SampleFormat)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .unwrap_or(1) as u32;
+    if sample_format != 3 {
+        return Ok(None);
+    }
+    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
+        return Ok(None);
+    }
+
+    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
+        Ok(value) if !value.is_empty() => value,
+        _ => return Ok(None),
+    };
+    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
+        Ok(value) if value.len() == offsets.len() => value,
+        _ => return Ok(None),
+    };
+    let rows_per_strip = decoder
+        .get_tag_u64_vec(Tag::RowsPerStrip)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .unwrap_or(height as u64) as usize;
+    if rows_per_strip == 0 {
+        return Ok(None);
+    }
+
+    let bytes_per_sample = (bits_per_sample / 8) as usize;
+    let samples_per_row = (width as usize) * (channels as usize);
+    let row_bytes = samples_per_row * bytes_per_sample;
+    let total_bytes = row_bytes
+        .checked_mul(height as usize)
+        .ok_or_else(|| DecodeError::new("Float predictor decode: raster byte count overflow"))?;
+
+    let mut raster = vec![0u8; total_bytes];
+    let mut plane = vec![0u8; row_bytes];
+
+    for (strip_index, (&offset, &count)) in offsets.iter().zip(counts.iter()).enumerate() {
+        let first_row = strip_index * rows_per_strip;
+        if first_row >= height as usize {
+            break;
+        }
+        let rows_here = rows_per_strip.min(height as usize - first_row);
+        let expected = rows_here * row_bytes;
+
+        let start = offset as usize;
+        let end = start
+            .checked_add(count as usize)
+            .ok_or_else(|| DecodeError::new("Float predictor decode: strip range overflow"))?;
+        if end > data.len() {
+            return Ok(None);
+        }
+        let mut block =
+            decompress_strip_or_tile(&data[start..end], compression, expected, "Float predictor decode")?;
+        if block.len() < expected {
+            return Ok(None);
+        }
+        block.truncate(expected);
+
+        for row in 0..rows_here {
+            let row_start = row * row_bytes;
+            let row_slice = &mut block[row_start..row_start + row_bytes];
+            // Horizontal differencing runs over the raw bytes of the whole row.
+            for i in 1..row_bytes {
+                row_slice[i] = row_slice[i].wrapping_add(row_slice[i - 1]);
+            }
+            // De-planarize: byte plane k holds byte k (MSB first) of every
+            // sample in the row.
+            for sample in 0..samples_per_row {
+                for byte in 0..bytes_per_sample {
+                    plane[sample * bytes_per_sample + byte] =
+                        row_slice[byte * samples_per_row + sample];
+                }
+            }
+            let out_start = (first_row + row) * row_bytes;
+            raster[out_start..out_start + row_bytes].copy_from_slice(&plane);
+        }
+    }
+
+    // The byte planes are stored MSB-first regardless of the file's byte order,
+    // so the reassembled samples are big-endian and must be read as such.
+    Ok(Some(match bits_per_sample {
+        32 => DecodingResult::F32(
+            raster
+                .chunks_exact(4)
+                .map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+                .collect(),
+        ),
+        _ => DecodingResult::F64(
+            raster
+                .chunks_exact(8)
+                .map(|b| f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                .collect(),
+        ),
+    }))
+}

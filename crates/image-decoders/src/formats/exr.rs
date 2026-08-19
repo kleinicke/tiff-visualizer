@@ -200,6 +200,15 @@ pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, DecodeError> {
     };
 
     let format = if output_channels == 1 { 1028 } else { 1023 };
+    // Computed here rather than in the webview: the samples are already hot in
+    // cache from the interleave above, and the JS fallback was a second full
+    // pass over the whole image (~50ms at 5120x5120).
+    let (range_min, range_max) = crate::pipeline::stats::compute_min_max_f32(
+        &interleaved,
+        width as u32,
+        height as u32,
+        output_channels as u32,
+    );
     let pack_time = crate::time::now_ms() - pack_start;
     let total_time = crate::time::now_ms() - start_time;
     let all_tags_json = extract_exr_tags_json(&image.attributes, &layer.attributes);
@@ -212,6 +221,8 @@ pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, DecodeError> {
         channel_names_csv: channel_names.join(","),
         displayed_channels_csv: selection.displayed_names.join(","),
         format,
+        data_min: range_min,
+        data_max: range_max,
         data_type: 1015,
         timing_read_ms: read_time,
         timing_pack_ms: pack_time,

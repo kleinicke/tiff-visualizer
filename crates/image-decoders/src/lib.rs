@@ -122,6 +122,11 @@ pub struct ExrResult {
     timing_read_ms: f64,
     timing_pack_ms: f64,
     timing_total_ms: f64,
+    // Min/max over the scanned channels, computed during the pack pass that
+    // already walks every sample. Without these the webview re-scanned the
+    // whole image in JavaScript purely to get the normalization range.
+    data_min: f64,
+    data_max: f64,
     // JSON array of every EXR header attribute (image + layer, named fields
     // plus the crate's generic "other"/custom-attribute bags), in the same
     // {"tag","name","group","value"} shape as TiffResult.all_tags_json.
@@ -599,6 +604,14 @@ impl ExrResult {
 
     pub fn timing_total_ms(&self) -> f64 {
         self.timing_total_ms
+    }
+
+    pub fn data_min(&self) -> f64 {
+        self.data_min
+    }
+
+    pub fn data_max(&self) -> f64 {
+        self.data_max
     }
 
     pub fn all_tags_json(&self) -> String {

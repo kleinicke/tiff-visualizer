@@ -892,6 +892,38 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 			: '';
 	}
 
+	// Top-level PerfTrace marks only. The sub-phase details share the same
+	// `fetch-`/`decode-` prefixes, so these patterns anchor on the exact mark
+	// names to avoid double counting.
+	const FETCH_MARK = /^fetch(\(.*\))?$/;
+	const DECODE_MARK = /^decode-(worker|local)\(.*\)$|^decode-(wasm|geotiff)(-worker|-local)?$/;
+
+	/**
+	 * Compose the per-load [Perf] summary: read time, decode time, which decoder
+	 * ran, and the end-to-end total. Reads PerfTrace totals, which are recorded
+	 * for every load regardless of DETAILED_PERF_TRACING.
+	 */
+	function formatLoadPerf(label: string, webviewMs: string, totalMs: string | number) {
+		const fetchMs = PerfTrace.totalMatching(FETCH_MARK);
+		const decodeMs = PerfTrace.totalMatching(DECODE_MARK);
+		const mark = PerfTrace.firstMatching(DECODE_MARK);
+		// Prefer the decoder's own self-reported engine string; fall back to the
+		// mark name, which encodes worker-vs-main-thread and the decoder family.
+		let engine = currentLoadDecodeInfo?.engine || '';
+		if (!engine && mark) {
+			const inner = mark.match(/^decode-(?:worker|local)\((.*)\)$/);
+			if (inner) { engine = `${inner[1]} (${mark.startsWith('decode-worker') ? 'worker' : 'main'})`; }
+			else if (mark.startsWith('decode-wasm')) { engine = `wasm (${mark.endsWith('-local') ? 'main' : 'worker'})`; }
+			else if (mark.startsWith('decode-geotiff')) { engine = `geotiff.js (${mark.endsWith('-worker') ? 'worker' : 'main'})`; }
+		}
+		const parts = [];
+		if (fetchMs > 0) { parts.push(`read ${fetchMs.toFixed(0)}ms`); }
+		if (decodeMs > 0) { parts.push(`decode ${decodeMs.toFixed(0)}ms${engine ? ` [${engine}]` : ''}`); }
+		parts.push(`webview ${webviewMs}ms`);
+		parts.push(`total ${totalMs}ms`);
+		return `[Perf] ${label}: ${parts.join(' | ')}`;
+	}
+
 	function resetTiffCanvasReady() {
 		// Release a stale waiter before replacing it; its generation check will
 		// prevent it from rendering into the next image.
@@ -1658,7 +1690,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] TIFF Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
+				logToOutput(formatLoadPerf('TIFF', webviewTime, totalTime));
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
@@ -1703,7 +1735,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] EXR Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('EXR', webviewTime, totalTime));
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
@@ -1736,7 +1768,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] PFM Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('PFM', webviewTime, totalTime));
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -1830,7 +1862,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] PPM/PGM Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('PPM/PGM', webviewTime, totalTime));
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -1862,7 +1894,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] PNG/JPEG Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('PNG/JPEG', webviewTime, totalTime));
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -1894,7 +1926,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] NPY/NPZ Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('NPY/NPZ', webviewTime, totalTime));
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -1923,7 +1955,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] HDR Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('HDR', webviewTime, totalTime));
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -1951,7 +1983,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] TGA Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('TGA', webviewTime, totalTime));
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -1979,7 +2011,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] Web Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('Web', webviewTime, totalTime));
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -2007,7 +2039,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(`[Perf] JXL Image loaded in ${webviewTime}ms (total: ${totalTime}ms)`);
+				logToOutput(formatLoadPerf('JXL', webviewTime, totalTime));
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -3414,7 +3446,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
+							logToOutput(formatLoadPerf(`${currentLoadFormat}`, webviewTime, totalTime));
 							initialLoadStartTime = 0; // Reset
 						}
 					} else if (pngProcessor.hasLazyNativeReadback()) {
@@ -3427,7 +3459,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeNetcdfLocal } 
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(`[Perf] ${currentLoadFormat} Image loaded in ${webviewTime}ms (total: ${totalTime}ms${formatDecodeInfo()})`);
+							logToOutput(formatLoadPerf(`${currentLoadFormat}`, webviewTime, totalTime));
 							initialLoadStartTime = 0;
 						}
 					}

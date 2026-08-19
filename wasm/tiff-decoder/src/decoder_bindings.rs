@@ -297,6 +297,16 @@ impl ExrResult {
     pub fn timing_total_ms(&self) -> f64 {
         self.inner.timing_total_ms()
     }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_min(&self) -> f64 {
+        self.inner.data_min()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_max(&self) -> f64 {
+        self.inner.data_max()
+    }
     #[wasm_bindgen(getter)]
     pub fn all_tags_json(&self) -> String {
         self.inner.all_tags_json()

@@ -182,6 +182,56 @@ fn scan_channels(channels: u32) -> u32 {
     }
 }
 
+/// Min/max only, over the same scanned channels as `compute_image_range_f32`,
+/// without the valid/non-finite counts.
+///
+/// Kept separate because the counting version cannot vectorize: `f32::min` has
+/// NaN-propagation semantics and `is_finite()` adds a per-sample branch, which
+/// together measured ~90ms on a 26M-sample mono image -- slower than the
+/// JavaScript scan it was meant to replace. This version uses plain `<`/`>`
+/// comparisons, which are false for NaN (so NaN is skipped exactly as
+/// `Number.isFinite` skips it) and which LLVM turns into SIMD min/max. The rare
+/// infinity case is fixed up with a second, careful pass rather than paid for on
+/// every sample.
+pub fn compute_min_max_f32(data: &[f32], width: u32, height: u32, channels: u32) -> (f64, f64) {
+    let pixels = (width as usize).saturating_mul(height as usize);
+    let stride = channels as usize;
+    let scanned = scan_channels(channels) as usize;
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+
+    if stride <= 1 {
+        for &value in &data[..pixels.min(data.len())] {
+            if value < min {
+                min = value;
+            }
+            if value > max {
+                max = value;
+            }
+        }
+    } else {
+        for pixel in data.chunks(stride).take(pixels) {
+            for &value in pixel.iter().take(scanned) {
+                if value < min {
+                    min = value;
+                }
+                if value > max {
+                    max = value;
+                }
+            }
+        }
+    }
+
+    // Infinities are legal float samples but must not become the display range;
+    // the comparison loop above cannot exclude them, so redo the scan carefully
+    // in that (rare) case only.
+    if min.is_infinite() || max.is_infinite() {
+        let range = compute_image_range_f32(data, width, height, channels);
+        return (range.min, range.max);
+    }
+    (min as f64, max as f64)
+}
+
 pub fn compute_image_range_f32(data: &[f32], width: u32, height: u32, channels: u32) -> ImageRange {
     let pixels = (width as usize).saturating_mul(height as usize);
     let stride = channels as usize;

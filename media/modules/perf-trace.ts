@@ -33,10 +33,18 @@ interface ActiveTrace {
 	phases: string[];
 	detailed: boolean;
 	conciseLabel: string;
+	/**
+	 * Per-phase totals, recorded even when DETAILED_PERF_TRACING is off, so the
+	 * concise [Perf] line can report fetch/decode without the full trace.
+	 */
+	totals: Map<string, number>;
 }
 
 export class PerfTrace {
 	static _active: ActiveTrace | null = null;
+
+	/** Totals of the most recently finished trace, for post-end() summaries. */
+	static _lastTotals: Map<string, number> = new Map();
 
 	static _log: (message: string) => void = (message: string) => console.log(message);
 
@@ -50,7 +58,8 @@ export class PerfTrace {
 
 	static begin(label: string, options: { conciseLabel?: string } = {}) {
 		const conciseLabel = String(options.conciseLabel || '');
-		if (!DETAILED_PERF_TRACING && !conciseLabel) { return; }
+		// The trace is always created: even without detailed tracing or a concise
+		// label, the per-phase totals feed the [Perf] load summary line.
 		const now = performance.now();
 		PerfTrace._active = {
 			label,
@@ -59,15 +68,18 @@ export class PerfTrace {
 			phases: [],
 			detailed: DETAILED_PERF_TRACING,
 			conciseLabel,
+			totals: new Map(),
 		};
 	}
 
 	/** Record the phase that just finished. No-op when no trace is active. */
 	static mark(name: string) {
 		const trace = PerfTrace._active;
-		if (!trace?.detailed) { return; }
+		if (!trace) { return; }
 		const now = performance.now();
-		trace.phases.push(`${name} ${(now - trace.last).toFixed(0)}ms`);
+		const elapsed = now - trace.last;
+		trace.totals.set(name, (trace.totals.get(name) || 0) + elapsed);
+		if (trace.detailed) { trace.phases.push(`${name} ${elapsed.toFixed(0)}ms`); }
 		trace.last = now;
 	}
 
@@ -77,8 +89,9 @@ export class PerfTrace {
 	 */
 	static detail(name: string, durationMs: number) {
 		const trace = PerfTrace._active;
-		if (!trace?.detailed || !Number.isFinite(durationMs)) { return; }
-		trace.phases.push(`${name} ${Math.max(0, durationMs).toFixed(0)}ms`);
+		if (!trace || !Number.isFinite(durationMs)) { return; }
+		trace.totals.set(name, (trace.totals.get(name) || 0) + Math.max(0, durationMs));
+		if (trace.detailed) { trace.phases.push(`${name} ${Math.max(0, durationMs).toFixed(0)}ms`); }
 	}
 
 	/**
@@ -96,12 +109,35 @@ export class PerfTrace {
 		const trace = PerfTrace._active;
 		if (!trace) { return; }
 		PerfTrace._active = null;
+		PerfTrace._lastTotals = trace.totals;
 		const total = (performance.now() - trace.start).toFixed(0);
 		if (trace.detailed) {
 			PerfTrace._log(`[PerfTrace] ${trace.label}: ${trace.phases.join(' | ')} | total ${total}ms`);
 		} else if (trace.conciseLabel) {
 			PerfTrace._log(`[Perf] ${trace.conciseLabel} in ${total}ms`);
 		}
+	}
+
+	/**
+	 * Total milliseconds recorded for every phase whose name matches `pattern`.
+	 * Returns 0 when no trace is active or nothing matched.
+	 */
+	static totalMatching(pattern: RegExp): number {
+		const totals = PerfTrace._active?.totals || PerfTrace._lastTotals;
+		let sum = 0;
+		for (const [name, value] of totals) {
+			if (pattern.test(name)) { sum += value; }
+		}
+		return sum;
+	}
+
+	/** Name of the first recorded phase matching `pattern`, or ''. */
+	static firstMatching(pattern: RegExp): string {
+		const totals = PerfTrace._active?.totals || PerfTrace._lastTotals;
+		for (const name of totals.keys()) {
+			if (pattern.test(name)) { return name; }
+		}
+		return '';
 	}
 
 	/** Drop the active trace without logging (e.g. load failed or superseded). */

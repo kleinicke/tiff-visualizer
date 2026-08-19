@@ -4,6 +4,9 @@
 
 - Rename the Command Palette category and the settings section from "TIFF Visualizer" to "Scientific Image Visualizer". Command IDs are unchanged, so keybindings and tasks keep working.
 - Massive rust rewrite
+- Float TIFFs written with Deflate and the floating-point predictor (predictor 3) — what GDAL, libtiff and most scientific tools emit — now decode through a dedicated per-strip Rust path instead of the `tiff` crate's whole-image reader. 30-36% faster: a 5120x5120 float32 image goes from 689ms to 440ms, and 10240x10240 from 2743ms to 1811ms.
+- OpenEXR images no longer re-scan every sample in JavaScript to find the display range; the Rust decoder reports it. Saves about 25ms on a 5120x5120 EXR.
+- The `[Perf]` load line in the output channel now reports read time, decode time and which decoder ran, for every format rather than only TIFF: `[Perf] TIFF: read 84ms | decode 665ms [wasm (worker)] | webview 907ms | total 907ms`.
 - Build the Rust/WASM decoder with SIMD128 enabled.
 - Add full in-editor documentation, opened with **Scientific Image Visualizer: Show Documentation** from the Command Palette or the right-click menu. Nothing opens on install.
 - Add a measurement panel (`Ctrl`/`Cmd` + `Shift` + `M`): ROI tools with full undo, calibrated area/perimeter/shape/intensity statistics, intensity profiles along a line, and a results table linked both ways to the image.

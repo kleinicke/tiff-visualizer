@@ -1629,6 +1629,46 @@ memory or threading benefits, which are the only reasons to leave the browser.
 **Difficulty: 4** as a shell once steps 1 and 2 are done; **5** and a rewrite if
 attempted before them.
 
+### Step 3e — TIFF strip decoding: single-threaded path landed, parallelism next
+
+**Why the earlier `exp/strips` attempt was a dead end, concretely:** the float
+TIFFs that matter here (`nl_01_depth.tif`, `nl_01_depth_x2.tif`) use
+**predictor 3**, the floating-point predictor. Neither
+`try_decode_general_strips_tiles` (planar or tiled-LZW only, <=16bpp) nor
+`try_decode_uncompressed_strips` (predictor 1 only) accepted them, so they fell
+through to the `tiff` crate's monolithic `read_image()` — which cannot be
+parallelized from outside. Any strip-level worker pool built on top of that was
+always going to be a dead end, no matter how the JavaScript side was arranged.
+
+**Done:** `try_decode_float_predictor_strips` in
+[strips.rs](crates/image-decoders/src/formats/tiff/strips.rs) decodes
+predictor-3 float strips directly — decompress, accumulate the horizontal
+differences over the row's raw bytes, de-planarize the byte planes, per strip,
+independently. Measured (best-of-3 x 3 alternating runs, WASM, single-threaded):
+
+| File | Before | After | Delta |
+| --- | --- | --- | --- |
+| `nl_01_depth.tif` 5120x5120 f32, Deflate+pred3 | 689 ms | 440 ms | **-36%** |
+| `l_01_depth.tif` 3600x3000 f32, Deflate+pred3 | 330 ms | 230 ms | **-30%** |
+| `nl_01_depth_x2.tif` 10240x10240 f32, Deflate+pred3 | 2743 ms | 1811 ms | **-34%** |
+| `bl_..._zlib.tif` uint16 (not predictor 3) | 166 ms | 166 ms | unchanged |
+
+Verified byte-identical against the previous decoder on all 52 TIFFs in
+`test-samples/` plus `test_data/`, with a new multi-strip regression sample
+(`test-samples/deflate_pred3_f32.tif`, 6 strips) checked against its
+uncompressed twin in `test:wasm`.
+
+**Next, and now actually possible:** these files have 427 and 160 strips
+respectively, each an independent Deflate stream, and the new function already
+decodes them one at a time. Parallelizing needs a WASM entry point taking a
+strip range (`first_strip`, `strip_count`) plus a worker pool — one WASM
+instance per worker, each decoding a disjoint range, results transferred back
+and concatenated. No `SharedArrayBuffer` and no COOP/COEP required, so it works
+in the VS Code webview today. Open questions before starting: per-worker memory
+(a 10240x10240 f32 image is 419MB assembled, so ranges must be sized rather than
+split evenly), and whether the fixed worker+instance startup cost is worth it
+below some strip count.
+
 ### Step 3a — how ply-visualizer gets included
 
 Step 3 says "one app covering both images and 3D" without saying how the two

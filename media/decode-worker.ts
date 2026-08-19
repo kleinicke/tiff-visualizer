@@ -319,6 +319,10 @@ function decodeExrWasm(buffer: ArrayBuffer) {
 		shape: [result.width, result.height],
 		flipY: false,
 		allTagsJson: result.all_tags_json,
+		// Range computed by the Rust pack pass; the processor uses it instead of
+		// re-scanning every sample in JavaScript.
+		stats: { min: result.data_min, max: result.data_max },
+		channels: result.channels,
 		decodedWith: 'rust-exr-wasm (worker)',
 		decodeTimings: timings,
 	};

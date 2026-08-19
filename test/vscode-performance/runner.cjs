@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
 
-const PERF_LINE = /\[Perf\] ([^\r\n]+?) Image loaded in ([0-9.]+)ms \(total: ([0-9.]+)ms[^\r\n]*\)/g;
+const PERF_LINE = /\[Perf\] ([^\r\n:]+?): (?:read ([0-9.]+)ms \| )?(?:decode ([0-9.]+)ms(?: \[([^\]]*)\])? \| )?webview ([0-9.]+)ms \| total ([0-9.]+)ms/g;
 
 function filesUnder(directory, result = []) {
 	if (!fs.existsSync(directory)) return result;
@@ -22,7 +22,7 @@ function performanceLines(logRoot) {
 		let text;
 		try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
 		for (const match of text.matchAll(PERF_LINE)) {
-			matches.push({ line: match[0], format: match[1], loadMs: Number(match[2]), totalMs: Number(match[3]) });
+			matches.push({ line: match[0], format: match[1], fetchMs: Number(match[2] || 0), decodeMs: Number(match[3] || 0), engine: match[4] || '', loadMs: Number(match[5]), totalMs: Number(match[6]) });
 		}
 	}
 	return matches;
