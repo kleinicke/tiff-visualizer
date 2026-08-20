@@ -11,7 +11,7 @@ use crate::pipeline::stats::{
 };
 use crate::{demosaic, TiffResult};
 use cmyk::convert_cmyk_to_rgb;
-use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, unpack_bilevel};
+use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, decode_sgilog, decode_ycbcr_subsampled, unpack_bilevel};
 use orientation::{apply_orientation, TiffOrientation};
 use strips::{
     decode_zstd, try_decode_float_predictor_strips, try_decode_general_strips_tiles,
@@ -106,6 +106,48 @@ pub(crate) fn decode_tiff_impl(
     let cfa_patched = demosaic::neutralize_cfa_photometric(data);
     let data: &[u8] = cfa_patched.as_deref().unwrap_or(data);
     let cfa_photometric = cfa_patched.as_ref().map(|_| demosaic::PHOTOMETRIC_CFA);
+
+    // SGI Log HDR (photometric 32844/32845) is refused by the tiff crate in
+    // `Decoder::new`, exactly like CFA above, so it is detected from the raw
+    // IFD and decoded against a copy whose photometric says BlackIsZero. Only
+    // the tag plumbing comes from the crate; the samples are decoded by
+    // `decode_sgilog`, which owns both the run-length layer and the log
+    // luminance conversion.
+    {
+        let photometric_raw = raw_tag_u32(data, page_index, 262).unwrap_or(1);
+        let compression_raw = raw_tag_u32(data, page_index, 259).unwrap_or(1);
+        if matches!(photometric_raw, 32844 | 32845) && matches!(compression_raw, 34676 | 34677) {
+            let mut patched = data.to_vec();
+            if patch_photometric_to_grayscale(&mut patched, page_index) {
+                let mut sgi_decoder = Decoder::new(Cursor::new(patched.as_slice()))
+                    .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: decoder init: {}", e)))?
+                    .with_limits(tiff::decoder::Limits::unlimited());
+                for _ in 0..page_index {
+                    sgi_decoder
+                        .next_image()
+                        .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: page select: {}", e)))?;
+                }
+                let (w, h) = sgi_decoder.dimensions().map_err(|e| {
+                    DecodeError::new(&format!("SGI Log TIFF: dimensions: {}", e))
+                })?;
+                let orientation_tag = TiffOrientation::from_tag(
+                    sgi_decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1),
+                );
+                let mut result = decode_sgilog(
+                    data,
+                    &mut sgi_decoder,
+                    w,
+                    h,
+                    compression_raw,
+                    photometric_raw,
+                    orientation_tag,
+                )?;
+                result.all_tags_json = extract_page_tags_json(data, page_index);
+                result.ome_xml = extract_ome_xml(data);
+                return Ok(result);
+            }
+        }
+    }
 
     let cursor = Cursor::new(data);
     // The tiff crate's default limits cap a decoded buffer at 256 MiB, which
@@ -279,6 +321,26 @@ pub(crate) fn decode_tiff_impl(
         let mut result = decode_jpeg_ycbcr(data, &mut decoder, width, height, orientation)?;
         result.all_tags_json = extract_page_tags_json(data, page_index);
         return Ok(result);
+    }
+
+    // Chroma-subsampled YCbCr under a LOSSLESS compression. The tiff crate
+    // rejects any subsampling outright, and the layout is not a plain raster
+    // (samples are grouped into MCU-style units), so it has to be unpacked
+    // here. Old-style JPEG (6) is a separate, deprecated container and is
+    // deliberately not routed here.
+    if photometric_interpretation == 6 && matches!(compression, 1 | 5 | 8 | 32946) {
+        let subsampling = decoder
+            .get_tag_u32_vec(tiff::tags::Tag::Unknown(530))
+            .unwrap_or_else(|_| vec![1, 1]);
+        let subsampled = subsampling.first().copied().unwrap_or(1) > 1
+            || subsampling.get(1).copied().unwrap_or(1) > 1;
+        if subsampled {
+            let mut result =
+                decode_ycbcr_subsampled(data, &mut decoder, width, height, compression, orientation)?;
+            result.all_tags_json = extract_page_tags_json(data, page_index);
+            result.ome_xml = extract_ome_xml(data);
+            return Ok(result);
+        }
     }
 
     let decode_start = crate::time::now_ms();
@@ -673,6 +735,54 @@ pub(crate) fn decode_tiff_impl(
 /// the raw palette indices instead of refusing the image. Returns false (and
 /// leaves the buffer untouched) for anything it does not understand, e.g.
 /// BigTIFF.
+
+/// Read one SHORT/LONG tag straight out of the IFD, without the tiff crate.
+///
+/// Needed for photometric interpretations the crate rejects in `Decoder::new`:
+/// by the time construction has failed there is no decoder to ask, so the
+/// dispatch has to know what the file is beforehand.
+pub(crate) fn raw_tag_u32(data: &[u8], page_index: u32, want: u16) -> Option<u32> {
+    if data.len() < 8 {
+        return None;
+    }
+    let le = match &data[0..2] {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let rd16 = |b: &[u8]| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
+    let rd32 = |b: &[u8]| {
+        if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) }
+    };
+    if rd16(data.get(2..4)?) != 42 {
+        return None; // classic TIFF only; BigTIFF falls back
+    }
+    let mut ifd = rd32(data.get(4..8)?) as usize;
+    for _ in 0..page_index {
+        let count = rd16(data.get(ifd..ifd + 2)?) as usize;
+        let next = ifd + 2 + count * 12;
+        ifd = rd32(data.get(next..next + 4)?) as usize;
+        if ifd == 0 {
+            return None;
+        }
+    }
+    let count = rd16(data.get(ifd..ifd + 2)?) as usize;
+    for i in 0..count {
+        let at = ifd + 2 + i * 12;
+        if rd16(data.get(at..at + 2)?) != want {
+            continue;
+        }
+        let field_type = rd16(data.get(at + 2..at + 4)?);
+        let value = data.get(at + 8..at + 12)?;
+        return Some(match field_type {
+            3 => rd16(value) as u32, // SHORT: left-justified in the value field
+            4 => rd32(value),
+            _ => return None,
+        });
+    }
+    None
+}
+
 pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) -> bool {
     if buf.len() < 8 {
         return false;

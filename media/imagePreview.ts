@@ -5321,9 +5321,10 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			const isPlainKey = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 			const isRightArrow = e.key === 'ArrowRight' || e.code === 'ArrowRight';
 			const isLeftArrow = e.key === 'ArrowLeft' || e.code === 'ArrowLeft';
-			// A CZI stack navigates its own planes, but only while it is the sole
+			// A plane stack navigates its own planes, but only while it is the sole
 			// image; a multi-image collection keeps arrow keys for switching files.
-			const cziArrowAxis = imageCollection.totalImages > 1 || datasetManifest ? undefined : cziPrimaryAxis();
+			// Arrows are the SECOND slider's shortcut (see PLANE_AXIS_KEY_HINTS).
+			const cziArrowAxis = imageCollection.totalImages > 1 || datasetManifest ? undefined : planeAxisAt(1);
 			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) && cziArrowAxis && cziArrowAxis.size > 1) {
 				e.preventDefault();
 				e.stopPropagation();
@@ -5344,15 +5345,27 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				return;
 			}
 			if (!isTyping && cziSelectors.length) {
-				const channelAxis = cziSecondaryAxis();
-				if (channelAxis && channelAxis.size > 1 && (e.key === ']' || e.code === 'PageDown')) {
-					e.preventDefault();
-					navigateCziAxis(channelAxis, 1);
-					return;
-				} else if (channelAxis && channelAxis.size > 1 && (e.key === '[' || e.code === 'PageUp')) {
-					e.preventDefault();
-					navigateCziAxis(channelAxis, -1);
-					return;
+				// Position-based: slider 1 = [ ], slider 3 = < >, slider 4 = { }.
+				// (Slider 2 is the arrow keys, handled above so that it can defer
+				// to collection navigation.) Each pair is `previous`/`next`.
+				const PAIRS: [number, string, string][] = [
+					[0, '[', ']'],
+					[2, '<', '>'],
+					[3, '{', '}'],
+				];
+				for (const [index, previous, next] of PAIRS) {
+					const axis = planeAxisAt(index);
+					if (!axis || axis.size <= 1) { continue; }
+					if (e.key === next || (index === 0 && e.code === 'PageDown')) {
+						e.preventDefault();
+						navigateCziAxis(axis, 1);
+						return;
+					}
+					if (e.key === previous || (index === 0 && e.code === 'PageUp')) {
+						e.preventDefault();
+						navigateCziAxis(axis, -1);
+						return;
+					}
 				}
 			}
 			if (!isTyping && tiffProcessor.pageCount > 1) {
@@ -5511,6 +5524,68 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		document.body.appendChild(overlayElement);
 	}
 
+
+	/**
+	 * Make a floating overlay draggable by its body.
+	 *
+	 * The plane overlays sit over the image, so on a small window they cover
+	 * the part being inspected. Dragging is bound on the overlay itself rather
+	 * than a dedicated title bar — there is very little chrome to grab — but
+	 * interactive children are excluded, otherwise starting a drag on a slider
+	 * would fight the slider.
+	 *
+	 * The position is remembered per overlay class for the session, so stepping
+	 * to another image does not send it back to the corner. It is also clamped
+	 * back into view on resize, since a remembered position can end up off
+	 * screen when the window shrinks.
+	 */
+	const overlayPositions = new Map<string, { x: number, y: number }>();
+	function makeOverlayDraggable(overlay: HTMLElement, key: string) {
+		const clamp = (x: number, y: number) => {
+			const rect = overlay.getBoundingClientRect();
+			const maxX = Math.max(0, window.innerWidth - rect.width);
+			const maxY = Math.max(0, window.innerHeight - rect.height);
+			return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) };
+		};
+		const place = (x: number, y: number) => {
+			const at = clamp(x, y);
+			overlayPositions.set(key, at);
+			overlay.style.left = `${at.x}px`;
+			overlay.style.top = `${at.y}px`;
+			overlay.style.right = 'auto';
+			overlay.style.bottom = 'auto';
+		};
+		const remembered = overlayPositions.get(key);
+		if (remembered) { place(remembered.x, remembered.y); }
+
+		overlay.addEventListener('pointerdown', event => {
+			const target = event.target as HTMLElement;
+			// Never hijack a control the user meant to operate.
+			if (target.closest('input, select, button, a, textarea')) { return; }
+			if (event.button !== 0) { return; }
+			const rect = overlay.getBoundingClientRect();
+			const grabX = event.clientX - rect.left;
+			const grabY = event.clientY - rect.top;
+			overlay.setPointerCapture(event.pointerId);
+			overlay.classList.add('dataset-overlay--dragging');
+			const move = (e: PointerEvent) => place(e.clientX - grabX, e.clientY - grabY);
+			const up = () => {
+				overlay.classList.remove('dataset-overlay--dragging');
+				overlay.removeEventListener('pointermove', move);
+				overlay.removeEventListener('pointerup', up);
+				overlay.removeEventListener('pointercancel', up);
+			};
+			overlay.addEventListener('pointermove', move);
+			overlay.addEventListener('pointerup', up);
+			overlay.addEventListener('pointercancel', up);
+			event.preventDefault();
+		});
+		window.addEventListener('resize', () => {
+			const at = overlayPositions.get(key);
+			if (at) { place(at.x, at.y); }
+		});
+	}
+
 	function createTiffPageOverlay() {
 		tiffPageOverlay = document.createElement('div');
 		tiffPageOverlay.className = 'tiff-page-overlay';
@@ -5587,6 +5662,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			datasetCoordinates = Object.fromEntries((series?.axes || []).map(axis => [axis.key, 0]));
 			requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
 		});
+		makeOverlayDraggable(datasetOverlay, 'plane');
 		document.body.appendChild(datasetOverlay);
 	}
 
@@ -5687,6 +5763,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			netcdfSelection = { variableName: select.value, indices: {} };
 			reloadNetCdfSelection();
 		});
+		makeOverlayDraggable(netcdfOverlay, 'plane');
 		document.body.appendChild(netcdfOverlay);
 	}
 
@@ -5772,6 +5849,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			<div class="czi-key-hints"></div>
 			<div class="czi-view-info"></div>
 		`;
+		makeOverlayDraggable(cziOverlay, 'plane');
 		document.body.appendChild(cziOverlay);
 	}
 
@@ -5802,7 +5880,15 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		const rebuild = axisSignature !== cziRenderedAxes;
 
 		if (rebuild) {
-			controls.replaceChildren(...selectors.map((selector: any) => {
+			// Changing series changes the axis set, so the rows are rebuilt — and
+			// `replaceChildren` destroys the element the user was operating,
+			// which is why stepping the series slider with the keyboard silently
+			// lost focus after the first step. Remember which axis was focused
+			// and restore it onto the equivalent new row below.
+			const focusedAxis = (document.activeElement instanceof HTMLElement)
+				? document.activeElement.closest('.dataset-axis')?.getAttribute('data-axis') || ''
+				: '';
+			controls.replaceChildren(...selectors.map((selector: any, index: number) => {
 				const size = Math.max(1, Number(selector.size));
 				const row = document.createElement('label'); row.className = 'dataset-axis';
 				row.dataset.axis = selector.name;
@@ -5815,6 +5901,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				// Reserve the width of the largest reading ("29 / 29") so stepping the
 				// slider never reflows the row.
 				value.style.minWidth = `${String(size).length * 2 + 3}ch`;
+				// The shortcut for THIS row, at the end of it. Previously all the
+				// hints were collected into one centered line underneath, which
+				// separated a key from the slider it drives.
+				const hint = document.createElement('span');
+				hint.className = 'dataset-axis-hint';
+				hint.textContent = PLANE_AXIS_KEY_HINTS[index] || '';
+				hint.title = hint.textContent ? `Step ${selector.name} with ${hint.textContent}` : '';
 				// Update live while dragging rather than only on release.
 				input.addEventListener('input', () => {
 					const index = Number(input.value);
@@ -5823,16 +5916,30 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 					cziSelection.indices = { ...cziSelection.indices, [selector.name]: index };
 					requestCziPlane();
 				});
-				row.append(label, input, value); return row;
+				row.append(label, input, value, hint); return row;
 			}));
 			cziRenderedAxes = axisSignature;
+			if (focusedAxis) {
+				const restored = controls
+					.querySelector(`.dataset-axis[data-axis="${focusedAxis}"] input`) as HTMLInputElement | null;
+				restored?.focus();
+			}
 		}
 
 		selectors.forEach((selector: any, index: number) => {
 			const row = controls.children[index] as HTMLElement | undefined;
 			if (!row) { return; }
 			const size = Math.max(1, Number(selector.size));
-			const current = Math.min(size - 1, Math.max(0, Number(selector.value) || 0));
+			// `selector.value` describes the plane that just FINISHED decoding,
+			// which is not where the user is. Dragging from 1 to 5 starts a load
+			// for an intermediate plane; when it settled, writing its coordinate
+			// back visibly threw the slider backwards and stranded the trailing
+			// request. The user's own selection is the authority for the handle
+			// position; the decoded value is only a fallback for axes they have
+			// not touched.
+			const intended = cziSelection.indices[selector.name];
+			const target = Number.isFinite(intended) ? Number(intended) : Number(selector.value) || 0;
+			const current = Math.min(size - 1, Math.max(0, target));
 			const input = row.querySelector('input') as HTMLInputElement;
 			const value = row.querySelector('.dataset-axis-value') as HTMLElement;
 			// Never fight the slider the user is holding.
@@ -5845,19 +5952,14 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		showChannel(channelRow ? Number(channelRow.value) : 0);
 
 		controls.style.display = selectors.length ? 'flex' : 'none';
-		const hints = cziOverlay.querySelector('.czi-key-hints') as HTMLElement;
-		const primary = cziPrimaryAxis();
-		const secondary = cziSecondaryAxis();
-		const hintParts = [
-			primary && primary.size > 1 ? `← → ${primary.name}` : null,
-			secondary && secondary.size > 1 ? `[ ] ${secondary.name}` : null,
-		].filter(Boolean);
-		hints.textContent = hintParts.join('   ');
-		hints.style.display = hintParts.length ? 'block' : 'none';
-		const info = cziOverlay.querySelector('.czi-view-info') as HTMLElement;
-		// Pixel scaling is not repeated here: it feeds the measure calibration, so
-		// it is drawn as a real scale bar on the image like DICOM spacing is.
-		info.textContent = String(metadata.pixelTypeName || '');
+		// The hints now live on their own rows; the shared line is gone.
+		const hints = cziOverlay.querySelector('.czi-key-hints') as HTMLElement | null;
+		if (hints) { hints.style.display = 'none'; }
+		// The pixel type ("uint16", "Gray8") used to occupy a whole row here. It
+		// never changes while stepping planes and is available in the image
+		// details, so it only cost vertical space over the image.
+		const info = cziOverlay.querySelector('.czi-view-info') as HTMLElement | null;
+		if (info) { info.style.display = 'none'; }
 		cziOverlay.classList.toggle('dataset-overlay--loading', loading);
 		cziOverlay.style.display = 'flex';
 		if (datasetOverlay) { datasetOverlay.style.display = 'none'; }
@@ -5867,16 +5969,24 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 
 
 
-	/** Axis the arrow keys step through: Z for a stack, else the first plane axis. */
-	function cziPrimaryAxis(): { name: string, size: number, value: number } | undefined {
-		return cziSelectors.find(selector => selector.name === 'Z') || cziSelectors[0];
-	}
+	/**
+	 * Keyboard shortcuts are assigned by SLIDER POSITION, not by axis name.
+	 *
+	 * They used to be chosen by content — arrows drove Z if a Z axis existed,
+	 * brackets drove C — which meant the same key moved a different axis from
+	 * one series to the next, and an axis with no rule (a LIF series selector,
+	 * for instance) got no shortcut at all. Binding to position instead makes
+	 * the mapping stable and visible: the hint sits at the end of its own row,
+	 * so what a key does is always readable off the slider it belongs to.
+	 *
+	 * Sliders past the fourth are mouse-only; there are no obvious further key
+	 * pairs, and inventing obscure ones would be worse than leaving them out.
+	 */
+	const PLANE_AXIS_KEY_HINTS = ['[ ]', '← →', '< >', '{ }'];
 
-	/** Axis the bracket/page keys step through: the channel, else the second axis. */
-	function cziSecondaryAxis(): { name: string, size: number, value: number } | undefined {
-		const primary = cziPrimaryAxis();
-		return cziSelectors.find(selector => selector.name === 'C' && selector !== primary)
-			|| cziSelectors.find(selector => selector !== primary);
+	/** The axis a given shortcut pair drives, or undefined if there is no such slider. */
+	function planeAxisAt(index: number): { name: string, size: number, value: number } | undefined {
+		return cziSelectors[index];
 	}
 
 	/** Step a CZI plane axis, wrapping like DICOM dataset navigation does. */

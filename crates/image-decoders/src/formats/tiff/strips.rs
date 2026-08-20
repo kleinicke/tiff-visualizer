@@ -191,7 +191,7 @@ pub(crate) fn try_decode_uncompressed_strips(
 /// this, and so does this path, since we already know the exact decompressed
 /// size from the image/tile geometry and don't need the stream to tell us
 /// when to stop.
-fn decompress_strip_or_tile(
+pub(crate) fn decompress_strip_or_tile(
     block: &[u8],
     compression: u32,
     expected_len: usize,
@@ -281,6 +281,84 @@ fn unpack_msb_packed_row(row: &[u8], samples_per_row: usize, bits_per_sample: u3
         bit_buf &= (1u64 << bit_count) - 1;
     }
     out
+}
+
+/// Unpack one decompressed row into raw sample values, widened to `u64`.
+///
+/// Two regimes, because TIFF treats them differently:
+///
+/// * **Whole-byte samples** (8/16/24/32/64 bit) are stored in the FILE's byte
+///   order. Reading them MSB-first is only correct for big-endian files; a
+///   little-endian file decoded that way comes out byte-swapped. `caspian.tif`
+///   is little-endian, which is what exposed this.
+/// * **Sub-byte and odd depths** (1/2/4/10/12/14 ...) are a continuous
+///   MSB-first bit stream, unaffected by byte order (bit order is FillOrder's
+///   business, and FillOrder 2 is rejected by the caller). Only the row as a
+///   whole is padded to a byte boundary.
+fn unpack_row_u64(
+    row: &[u8],
+    samples_per_row: usize,
+    bits_per_sample: u32,
+    little_endian: bool,
+) -> Vec<u64> {
+    let mut out = Vec::with_capacity(samples_per_row);
+    if bits_per_sample % 8 == 0 {
+        let width = (bits_per_sample / 8) as usize;
+        for index in 0..samples_per_row {
+            let start = index * width;
+            let bytes = row.get(start..start + width).unwrap_or(&[]);
+            let mut value: u64 = 0;
+            if bytes.len() == width {
+                if little_endian {
+                    for (shift, byte) in bytes.iter().enumerate() {
+                        value |= (*byte as u64) << (8 * shift);
+                    }
+                } else {
+                    for byte in bytes {
+                        value = (value << 8) | *byte as u64;
+                    }
+                }
+            }
+            out.push(value);
+        }
+        return out;
+    }
+    let mask = if bits_per_sample >= 64 { u64::MAX } else { (1u64 << bits_per_sample) - 1 };
+    let mut bit_buf: u64 = 0;
+    let mut bit_count: u32 = 0;
+    let mut byte_idx = 0usize;
+    for _ in 0..samples_per_row {
+        while bit_count < bits_per_sample {
+            let byte = row.get(byte_idx).copied().unwrap_or(0);
+            byte_idx += 1;
+            bit_buf = (bit_buf << 8) | byte as u64;
+            bit_count += 8;
+        }
+        let shift = bit_count - bits_per_sample;
+        out.push((bit_buf >> shift) & mask);
+        bit_count -= bits_per_sample;
+        bit_buf &= if bit_count == 0 { 0 } else { (1u64 << bit_count) - 1 };
+    }
+    out
+}
+
+/// Horizontal (predictor 2) differencing over `u64` samples, wrapping modulo
+/// 2^bits_per_sample. The `u16` variant above cannot express the 24/32/64-bit
+/// depths this path now decodes.
+fn apply_horizontal_predictor2_u64(
+    row_values: &mut [u64],
+    row_width: usize,
+    channels: usize,
+    bits_per_sample: u32,
+) {
+    let mask = if bits_per_sample >= 64 { u64::MAX } else { (1u64 << bits_per_sample) - 1 };
+    for x in 1..row_width {
+        for c in 0..channels {
+            let idx = x * channels + c;
+            let prev = row_values[idx - channels];
+            row_values[idx] = row_values[idx].wrapping_add(prev) & mask;
+        }
+    }
 }
 
 /// Apply the horizontal (predictor 2) differencing predictor in place to one
@@ -499,13 +577,40 @@ pub(crate) fn try_decode_general_strips_tiles(
     use tiff::tags::Tag;
 
     let is_tiled = tile_width > 0 && tile_length > 0;
-    if planar_configuration != 2 && !(is_tiled && compression == 5) {
+    // Depths the tiff crate declines outright (`color type RGB(2) is
+    // unsupported`, `Gray(24) is unsupported`, ...). Anything that is not a
+    // plain 8/16/32/64-bit sample has to be unpacked here or not at all.
+    // 1-bit bilevel is deliberately excluded: `unpack_bilevel` expands it to
+    // 0/255 grayscale, which is what every other path and the CCITT decoder
+    // produce. Unpacking it here as raw 0/1 made a bilevel image decode
+    // differently depending on its compression.
+    let odd_depth = !matches!(bits_per_sample, 8 | 16 | 32 | 64) && bits_per_sample > 1;
+    // 9..=15-bit STRIPS already have a dedicated, well-tested path
+    // (`try_decode_subbit_strips`); leave those alone. Tiled layouts of the
+    // same depths have no other handler, so they are claimed here.
+    let subbit_strip_path_handles = !is_tiled && (9..=15).contains(&bits_per_sample);
+    let claim = planar_configuration == 2
+        || (is_tiled && compression == 5)
+        || (odd_depth && !subbit_strip_path_handles);
+    if !claim || bits_per_sample <= 1 {
+        return Ok(None);
+    }
+    // A palette image's samples are indices into ColorMap, not intensities.
+    // Expanding them is `decode_palette`'s job, and claiming 2/4-bit palette
+    // files here bypassed it: the raw indices came back as one channel while
+    // the caller had already been told the image has three, so the buffer was
+    // short and the picture wrong. Photometric 3 always belongs to that path.
+    if decoder
+        .get_tag_u32(tiff::tags::Tag::PhotometricInterpretation)
+        .map(|value| value == 3)
+        .unwrap_or(false)
+    {
         return Ok(None);
     }
 
     const CTX: &str = "Planar/tiled TIFF";
 
-    if bits_per_sample != 8 && !(9..=16).contains(&bits_per_sample) {
+    if bits_per_sample == 0 || bits_per_sample > 64 || (bits_per_sample > 32 && bits_per_sample != 64) {
         return Err(DecodeError::new(&format!(
             "{}: {}-bit samples are not supported",
             CTX, bits_per_sample
@@ -535,12 +640,23 @@ pub(crate) fn try_decode_general_strips_tiles(
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
-    if sample_format != 1 {
+    // 1 = unsigned, 2 = signed, 3 = IEEE float. Float only exists at 32/64 bits.
+    if !matches!(sample_format, 1 | 2 | 3) || (sample_format == 3 && !matches!(bits_per_sample, 32 | 64)) {
         return Err(DecodeError::new(&format!(
-            "{}: sample format {} is not supported (only unsigned integer)",
-            CTX, sample_format
+            "{}: sample format {} at {} bits is not supported",
+            CTX, sample_format, bits_per_sample
         )));
     }
+    // Differencing a float sample as an integer would corrupt it; predictor 3
+    // (floating-point predictor) is a different algorithm handled elsewhere.
+    if sample_format == 3 && predictor != 1 {
+        return Err(DecodeError::new(&format!(
+            "{}: predictor {} on float samples is not supported here",
+            CTX, predictor
+        )));
+    }
+    // Multi-byte samples are stored in the file's byte order.
+    let little_endian = data.first() == Some(&b'I');
 
     let planes = if planar_configuration == 2 {
         channels
@@ -598,10 +714,9 @@ pub(crate) fn try_decode_general_strips_tiles(
         )));
     }
 
-    let max_value = (1u32 << bits_per_sample.min(31)) - 1;
     let samples_per_row = (block_width as usize) * (channels_per_block as usize);
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
-    let mut out: Vec<u16> = vec![0u16; (width as usize) * (height as usize) * (channels as usize)];
+    let mut out: Vec<u64> = vec![0u64; (width as usize) * (height as usize) * (channels as usize)];
 
     let mut block_idx = 0usize;
     for plane in 0..planes {
@@ -630,7 +745,16 @@ pub(crate) fn try_decode_general_strips_tiles(
                 let valid_rows = block_height.min(height.saturating_sub(image_row_start));
                 let valid_cols = block_width.min(width.saturating_sub(image_col_start));
 
-                let expected_bytes = row_bytes.saturating_mul(block_height as usize);
+                // A tile is zero-padded by the encoder to its full declared
+                // size, so an edge tile really does carry `block_height` rows.
+                // A STRIP is not: `RowsPerStrip` may exceed the image height
+                // (a single strip covering everything is written that way, and
+                // the last strip of a series is short), and the strip then
+                // holds only the rows that exist. Demanding `RowsPerStrip`
+                // rows rejected valid files whose strip simply ended at the
+                // bottom of the image.
+                let rows_present = if is_tiled { block_height } else { valid_rows };
+                let expected_bytes = row_bytes.saturating_mul(rows_present as usize);
                 let decompressed =
                     decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
                 if decompressed.len() < expected_bytes {
@@ -648,14 +772,14 @@ pub(crate) fn try_decode_general_strips_tiles(
                     }
                     let row = &decompressed[row_idx * row_bytes..(row_idx + 1) * row_bytes];
                     let mut row_values =
-                        unpack_msb_packed_row(row, samples_per_row, bits_per_sample);
+                        unpack_row_u64(row, samples_per_row, bits_per_sample, little_endian);
 
                     if predictor == 2 {
-                        apply_horizontal_predictor2(
+                        apply_horizontal_predictor2_u64(
                             &mut row_values,
                             block_width as usize,
                             channels_per_block as usize,
-                            max_value,
+                            bits_per_sample,
                         );
                     }
 
@@ -679,13 +803,40 @@ pub(crate) fn try_decode_general_strips_tiles(
         }
     }
 
-    if bits_per_sample == 8 {
-        Ok(Some(DecodingResult::U8(
-            out.into_iter().map(|v| v as u8).collect(),
-        )))
-    } else {
-        Ok(Some(DecodingResult::U16(out)))
-    }
+    // Map the raw sample bits onto the narrowest result type that holds them
+    // without loss. Depths that have no exact variant (2/4/10/12/14/24-bit)
+    // widen to the next one up; the reported `bits_per_sample` still describes
+    // the source, so normalization keeps using the true type maximum.
+    Ok(Some(match (sample_format, bits_per_sample) {
+        (3, 32) => DecodingResult::F32(
+            out.into_iter().map(|v| f32::from_bits(v as u32)).collect(),
+        ),
+        (3, 64) => DecodingResult::F64(out.into_iter().map(f64::from_bits).collect()),
+        (2, bits) => {
+            // Sign-extend from the source width before widening.
+            let shift = 64 - bits;
+            let signed = out
+                .into_iter()
+                .map(|v| ((v << shift) as i64) >> shift);
+            if bits <= 8 {
+                DecodingResult::I8(signed.map(|v| v as i8).collect())
+            } else if bits <= 16 {
+                DecodingResult::I16(signed.map(|v| v as i16).collect())
+            } else {
+                DecodingResult::I32(signed.map(|v| v as i32).collect())
+            }
+        }
+        (_, bits) if bits <= 8 => {
+            DecodingResult::U8(out.into_iter().map(|v| v as u8).collect())
+        }
+        (_, bits) if bits <= 16 => {
+            DecodingResult::U16(out.into_iter().map(|v| v as u16).collect())
+        }
+        (_, bits) if bits <= 32 => {
+            DecodingResult::U32(out.into_iter().map(|v| v as u32).collect())
+        }
+        _ => DecodingResult::U64(out),
+    }))
 }
 
 /// Decode a ZSTD-compressed TIFF (compression 50000) using the pure-Rust

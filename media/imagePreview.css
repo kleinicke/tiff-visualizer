@@ -268,6 +268,8 @@ body img {
 }
 
 .dataset-overlay {
+	/* Draggable by its body; interactive children opt out in JS. */
+	cursor: grab;
 	position: fixed;
 	top: 10px;
 	left: 50%;
@@ -357,9 +359,17 @@ body img {
 .dataset-series-row,
 .dataset-axis {
 	display: grid;
-	grid-template-columns: minmax(4em, auto) minmax(120px, 1fr) minmax(4.5em, auto);
+	/* label | slider | reading | shortcut. The shortcut column is sized to the
+	   widest hint ("← →") and no more — it is a hint, not a control, so it
+	   should not push the slider around. */
+	grid-template-columns: minmax(4em, auto) minmax(120px, 1fr) minmax(4.5em, auto) 2.1em;
 	align-items: center;
 	gap: 7px;
+}
+
+.dataset-axis > .dataset-axis-hint {
+	/* Sits tight against the reading rather than a full gap away. */
+	margin-left: -3px;
 }
 
 .dataset-series-row {
@@ -394,6 +404,16 @@ body img {
 	white-space: nowrap;
 }
 
+.dataset-axis-hint {
+	white-space: nowrap;
+	text-align: left;
+	font-size: 0.85em;
+	letter-spacing: 0.02em;
+	color: var(--vscode-descriptionForeground, #aaa);
+	opacity: 0.75;
+	font-variant-numeric: tabular-nums;
+}
+
 .czi-key-hints {
 	padding-top: 2px;
 	font-size: 0.85em;
@@ -410,6 +430,21 @@ body img {
 	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 	color: var(--vscode-descriptionForeground, #aaa);
 	text-align: center;
+}
+
+.dataset-overlay--dragging {
+	cursor: grabbing;
+	user-select: none;
+}
+
+.dataset-overlay input,
+.dataset-overlay select,
+.dataset-overlay button {
+	cursor: default;
+}
+
+.dataset-overlay input[type='range'] {
+	cursor: pointer;
 }
 
 .dataset-overlay--loading .dataset-title::before {

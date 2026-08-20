@@ -788,27 +788,40 @@ impl TiffResult {
                     .collect()
             }
             1 | 2 => {
-                // Convert integers to float
-                match self.bits_per_sample {
-                    8 => self.data.iter().map(|&v| v as f32).collect(),
-                    // 9..=15 covers the sub-16-bit direct decode path
-                    // (try_decode_subbit_strips): those samples are still
-                    // packed as 2 bytes each (via convert_u16_to_bytes_simd),
-                    // just with a smaller reported bits_per_sample.
-                    9..=16 => self
-                        .data
-                        .chunks_exact(2)
-                        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) as f32)
-                        .collect(),
-                    32 => self
-                        .data
-                        .chunks_exact(4)
-                        .map(|bytes| {
-                            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32
-                        })
-                        .collect(),
-                    _ => vec![],
-                }
+                // `bits_per_sample` reports the SOURCE depth, which is not the
+                // width the samples are stored at. A decoder that unpacks an
+                // odd depth widens it to the next whole type before packing
+                // (2/4-bit -> 1 byte, 10/12/14-bit -> 2 bytes, 24-bit -> 4),
+                // so the read width has to be derived the same way. Keying off
+                // the source depth instead returned an EMPTY image for every
+                // depth that was not exactly 8, 9..=16 or 32 — 2/4/24-bit
+                // files decoded successfully and then displayed nothing.
+                let storage_bytes = match self.bits_per_sample {
+                    0 => return vec![],
+                    b if b <= 8 => 1usize,
+                    b if b <= 16 => 2,
+                    b if b <= 32 => 4,
+                    _ => 8,
+                };
+                // Sample format 2 is signed: the packed bytes are a two's
+                // complement value, so reading them as unsigned turns every
+                // negative sample into a huge positive one.
+                let signed = self.sample_format == 2;
+                self.data
+                    .chunks_exact(storage_bytes)
+                    .map(|bytes| {
+                        let mut raw: u64 = 0;
+                        for (shift, byte) in bytes.iter().enumerate() {
+                            raw |= (*byte as u64) << (8 * shift);
+                        }
+                        if signed {
+                            let shift = 64 - storage_bytes as u32 * 8;
+                            (((raw << shift) as i64) >> shift) as f32
+                        } else {
+                            raw as f32
+                        }
+                    })
+                    .collect()
             }
             _ => vec![],
         }
@@ -839,10 +852,25 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, DecodeError> {
 /// input unchanged when there is no CFA tag, so the common path copies nothing.
 #[cfg(feature = "tiff")]
 pub fn cfa_safe_bytes(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    match demosaic::neutralize_cfa_photometric(data) {
-        Some(patched) => std::borrow::Cow::Owned(patched),
-        None => std::borrow::Cow::Borrowed(data),
+    if let Some(patched) = demosaic::neutralize_cfa_photometric(data) {
+        return std::borrow::Cow::Owned(patched);
     }
+    // SGI Log photometrics (32844 CIE Log2(L), 32845 CIE Log2(Luv)) are refused
+    // by the tiff crate in `Decoder::new` just as CFA is. Page counting does not
+    // care what the photometric means, only how many IFDs there are, so
+    // neutralize it here too — otherwise enumerating pages fails for a file
+    // whose pixels decode perfectly well.
+    #[cfg(feature = "tiff")]
+    {
+        let photometric = formats::tiff::raw_tag_u32(data, 0, 262).unwrap_or(1);
+        if matches!(photometric, 32844 | 32845) {
+            let mut patched = data.to_vec();
+            if formats::tiff::patch_photometric_to_grayscale(&mut patched, 0) {
+                return std::borrow::Cow::Owned(patched);
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(data)
 }
 
 /// Return the number of top-level image file directories (pages) in a TIFF.
