@@ -552,6 +552,18 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		onHint: text => measurePanel.setHint(text),
 	});
 
+	// Adopt the session's scale-bar preference immediately.
+	//
+	// A NEW webview receives its settings embedded in the bootstrap HTML, not
+	// as an `updateSettings` message, so handling only the message left every
+	// freshly opened image drawing the bar again even though the session flag
+	// said otherwise. The overlay defaults to visible, so this only ever has to
+	// turn it off — but it is written as a plain assignment so the two paths
+	// (bootstrap here, message later) cannot drift apart.
+	if (typeof settingsManager.settings.showScaleBar === 'boolean') {
+		roiOverlay.setShowScaleBar(settingsManager.settings.showScaleBar);
+	}
+
 	zoomController.onScaleChanged = () => roiOverlay.scheduleRedraw();
 
 	const measurePanel = new MeasurePanel({
@@ -3393,6 +3405,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const changes = settingsManager.updateSettings(message.settings);
 				const updateApplyDuration = performance.now() - updateApplyStart;
 				const newResourceUri = settingsManager.settings.resourceUri;
+				// The scale bar is a SESSION preference held by the host, so it
+				// is applied on every settings message — including the first one
+				// a freshly created webview receives. Without that, turning it
+				// off only lasted until the next preview was built.
+				if (typeof message.settings?.showScaleBar === 'boolean') {
+					roiOverlay.setShowScaleBar(message.settings.showScaleBar);
+				}
 				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
 				if (changes.changedKeys.includes('gpuAcceleration')) {
 					if (_layerCompositorSelection === 'auto') {
@@ -3712,7 +3731,11 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				break;
 
 			case 'toggleScaleBar': {
-				const shown = roiOverlay.toggleScaleBar();
+				// The host owns the flag for the session; honour what it sends
+				// and only fall back to a local flip for older messages.
+				const shown = typeof message.shown === 'boolean'
+					? (roiOverlay.setShowScaleBar(message.shown), message.shown)
+					: roiOverlay.toggleScaleBar();
 				// An uncalibrated image draws nothing either way, so without this the
 				// command looks broken on the files where it is least obvious why.
 				if (shown && measureCalibration.origin === 'none') {

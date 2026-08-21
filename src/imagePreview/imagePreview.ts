@@ -157,6 +157,7 @@ export class ImagePreview extends MediaPreview {
 				normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 				nanColor: this._manager.settingsManager.getNanColor(),
+				showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 				gpuAcceleration: this.getGpuAccelerationEnabled()
 			};
 
@@ -326,6 +327,7 @@ export class ImagePreview extends MediaPreview {
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
+			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 			gpuAcceleration: this.getGpuAccelerationEnabled()
 		};
 
@@ -430,8 +432,14 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	public toggleScaleBar(): void {
+		// Flip the SESSION flag rather than telling one webview to flip its own
+		// copy. The settings-changed event then pushes the new value to every
+		// open preview, and any preview created later starts from it — which is
+		// what makes the choice stick for the session instead of resetting the
+		// next time a webview is built.
+		const shown = this._manager.settingsManager.toggleScaleBar();
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'toggleScaleBar' });
+			this._webviewEditor.webview.postMessage({ type: 'toggleScaleBar', shown });
 		}
 	}
 
@@ -1047,6 +1055,7 @@ export class ImagePreview extends MediaPreview {
 			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
+			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer'),
 			gpuAcceleration: this.getGpuAccelerationEnabled()
 		};

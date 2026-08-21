@@ -9,6 +9,16 @@ export class ImageSettingsManager {
 	private _comparisonBaseUri: vscode.Uri | undefined;
 	private _nanColor: 'black' | 'fuchsia' = 'black';
 	private _colorPickerShowModified: boolean = false;
+	/**
+	 * Whether the idle scale bar is drawn, for the whole session.
+	 *
+	 * It used to live only on the webview's overlay object, so it reset to "on"
+	 * every time a webview was created — opening another image, or VS Code
+	 * reloading the view after a tab move. Turning it off is a deliberate
+	 * choice about how the user wants to read images, not a per-file one, so it
+	 * belongs beside the other session preferences here.
+	 */
+	private _showScaleBar: boolean = true;
 
 	public get imageStats(): Readonly<ImageStats> | undefined {
 		return this._imageStats;
@@ -34,6 +44,16 @@ export class ImageSettingsManager {
 
 	public getColorPickerShowModified(): boolean {
 		return this._colorPickerShowModified;
+	}
+
+	public toggleScaleBar(): boolean {
+		this._showScaleBar = !this._showScaleBar;
+		this._fireSettingsChanged();
+		return this._showScaleBar;
+	}
+
+	public getShowScaleBar(): boolean {
+		return this._showScaleBar;
 	}
 
 	public updateImageStats(min: number, max: number): void {

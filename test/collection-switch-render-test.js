@@ -322,6 +322,38 @@ function testNetCdfControlsUseSeamlessReloads() {
 	console.log('✅ NetCDF variable and dimension controls use seamless decoder reloads');
 }
 
+/**
+ * Turning the scale bar off must last for the session.
+ *
+ * It used to live only on the webview's overlay object, which is rebuilt every
+ * time a webview is created — opening another image, moving a tab, an
+ * extension-host restart — so the setting silently came back on. It is a
+ * preference about how the user reads images, not a property of one file.
+ */
+function testScaleBarIsASessionPreference() {
+	const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'imageSettings.ts'), 'utf8');
+	const previewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'imagePreview.ts'), 'utf8');
+	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
+
+	assert.match(settingsSource, /toggleScaleBar\(\): boolean \{[\s\S]*?_fireSettingsChanged\(\);/,
+		'the host must own the scale-bar flag and announce changes to every preview');
+	assert.match(previewSource, /public toggleScaleBar\(\): void \{[\s\S]*?settingsManager\.toggleScaleBar\(\)/,
+		'the command must flip the session flag, not one webview\'s local copy');
+	assert.match(previewSource, /showScaleBar: this\._manager\.settingsManager\.getShowScaleBar\(\)/,
+		'the flag must ride along with the settings sent to a webview');
+	assert.match(webviewSource, /message\.settings\?\.showScaleBar === 'boolean'[\s\S]{0,120}?roiOverlay\.setShowScaleBar/,
+		'a webview must adopt the session flag from every settings update');
+	// A NEW webview is bootstrapped from `data-settings` in its HTML and never
+	// receives an `updateSettings` message first, so handling only the message
+	// left every freshly opened image drawing the bar again.
+	assert.match(webviewSource, /typeof settingsManager\.settings\.showScaleBar === 'boolean'[\s\S]{0,120}?roiOverlay\.setShowScaleBar/,
+		'a webview must adopt the session flag from its bootstrap settings too');
+	assert.match(previewSource, /const extendedSettings = \{[\s\S]*?\.\.\.settings,/,
+		'bootstrap settings must carry the same payload the message path sends');
+
+	console.log('✅ scale-bar visibility is a session preference, not per-webview state');
+}
+
 function testViewModeAndAcceleratorConsistency() {
 	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
 	const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'modules', 'settings-manager.ts'), 'utf8');
@@ -364,6 +396,7 @@ function main() {
 	testDeferredRenderUsesSafeCanvasContextHelper();
 	testSwitchKeepsOutgoingFrameUntilReplacementIsReady();
 	testNetCdfControlsUseSeamlessReloads();
+	testScaleBarIsASessionPreference();
 	testViewModeAndAcceleratorConsistency();
 	console.log('\n🎉 All collection-switch render tests passed.\n');
 }

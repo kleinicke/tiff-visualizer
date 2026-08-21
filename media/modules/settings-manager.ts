@@ -29,6 +29,8 @@ export interface ImageSettings {
   scale24BitFactor?: number;
   normalizedFloatMode?: boolean;
   colorPickerShowModified?: boolean;
+  /** Session-wide idle scale bar visibility, owned by the extension host. */
+  showScaleBar?: boolean;
   gpuAcceleration?: boolean;
   plyVisualizerInstalled?: boolean;
   resourceUri?: string;
