@@ -531,14 +531,20 @@ fn czi_xml_metadata(xml: &str) -> Vec<(String, JsonValue)> {
             fields.push((format!("scaling{}Um", axis), JsonValue::Num(value * 1e6)));
         }
     }
+    // Only real dye names ("DAPI", "Alexa Fluor 594"). A synthesized
+    // "Channel 2" carries no information a slider reading does not, and
+    // emitting one makes an unnamed channel look named downstream — where the
+    // presence of names is what decides dropdown versus slider.
     let mut channel_names: Vec<String> = Vec::new();
+    let mut any_missing = false;
     for block in channel_blocks(xml) {
-        let name = dye_name(block).unwrap_or_default();
-        if name.is_empty() {
-            channel_names.push(format!("Channel {}", channel_names.len() + 1));
-        } else {
-            channel_names.push(name);
+        match dye_name(block).filter(|name| !name.is_empty()) {
+            Some(name) => channel_names.push(name),
+            None => any_missing = true,
         }
+    }
+    if any_missing {
+        channel_names.clear();
     }
     // Channels are listed once per XML section (acquisition and display
     // setting), so keep only the first SizeC entries rather than every
@@ -923,11 +929,28 @@ pub(crate) fn decode_czi_impl(
             selectors
                 .iter()
                 .map(|(name, size, value)| {
-                    JsonValue::Obj(vec![
+                    let mut entry = vec![
                         ("name".to_string(), JsonValue::Str(name.clone())),
                         ("size".to_string(), JsonValue::Num(*size as f64)),
                         ("value".to_string(), JsonValue::Num(*value as f64)),
-                    ])
+                    ];
+                    // A selector whose options the FILE names carries them here.
+                    // The viewer has one rule — named options are a choice,
+                    // unnamed ones are an axis — and no knowledge of formats, so
+                    // every decoder must answer this question itself.
+                    if name == "C" {
+                        if let Some(names) = channel_names.as_ref() {
+                            if names.len() == *size as usize {
+                                entry.push((
+                                    "labels".to_string(),
+                                    JsonValue::Arr(
+                                        names.iter().map(|n| JsonValue::Str(n.clone())).collect(),
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                    JsonValue::Obj(entry)
                 })
                 .collect(),
         ),

@@ -125,6 +125,8 @@ export class TiffProcessor {
 	pageCount: number;
 	_sourceBuffer: ArrayBuffer | null;
 	_sourceBufferSrc: string | null;
+	/** Why the Rust decoder refused the current file, if it did. */
+	_lastWasmFailure = '';
 	omeMetadata: OmeMetadata | null;
 	omeBinaryOnly: OmeBinaryOnly | null;
 	omeXml: string | null;
@@ -597,6 +599,12 @@ export class TiffProcessor {
 					return { canvas, imageData, tiffData: this.rawTiffData, decodeInfo: decodeInfo as { engine: string, durationMs: number } };
 				} catch (wasmError) {
 					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
+					// Keep WHY the real decoder refused the file. If geotiff.js
+					// then fails too, the Rust message is the one that actually
+					// explains the file ("invalid code in LZW stream"), while
+					// geotiff.js tends to fail later and less informatively —
+					// reporting only the fallback's error told the user nothing.
+					this._lastWasmFailure = String(wasmError instanceof Error ? wasmError.message : wasmError);
 					// Disable WASM for the rest of the session — a failure can leave
 					// the module in an indeterminate state after a panic.
 					this._wasmAvailable = false;
@@ -616,7 +624,14 @@ export class TiffProcessor {
 				}
 			}
 			const decodeStart = performance.now();
-			const tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
+			let tiff;
+			try {
+				tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
+			} catch (fallbackError) {
+				throw new Error(this._lastWasmFailure
+					? `${this._lastWasmFailure} (the geotiff.js fallback also failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError})`
+					: String(fallbackError instanceof Error ? fallbackError.message : fallbackError));
+			}
 			this.pageCount = Math.max(1, await tiff.getImageCount());
 			if (pageIndex < 0 || pageIndex >= this.pageCount) {
 				throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${this.pageCount})`);

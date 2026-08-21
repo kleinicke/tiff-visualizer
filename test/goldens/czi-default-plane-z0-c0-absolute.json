@@ -20,7 +20,11 @@
       {
         "name": "C",
         "size": 2,
-        "value": 0
+        "value": 0,
+        "labels": [
+          "DAPI",
+          "GFP"
+        ]
       },
       {
         "name": "Z",

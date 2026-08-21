@@ -170,6 +170,8 @@ async function main() {
 		console.log('✅ Real master-TIFF and companion-OME BinaryOnly references resolve metadata targets');
 	}
 
+	testFilesetIfdMapping(parseOmeXml, omeIfdToCoordinates);
+
 	console.log('✅ OME metadata, namespace handling, entities, objective, channel colors, voxel sizes, and TiffData mappings');
 }
 
@@ -178,3 +180,51 @@ main().catch(error => {
 	console.error(error);
 	process.exit(1);
 });
+
+/**
+ * OME-TIFF filesets: the local IFD map must contain only planes that live in
+ * THIS file, and a file that declares no `<Channel>` elements must still map
+ * its channels.
+ *
+ * Both were real bugs. External `TiffData` entries reference planes in sibling
+ * files with IFD indices relative to those files; letting them into the local
+ * map made the last one claim local IFD 0, so a 4D fileset reported its first
+ * page as the wrong channel and timepoint and its Z slider moved nothing. And
+ * `FirstC` was clamped against the channel-description count, which is -1 when
+ * a file supplies none, collapsing every channel of a 3-channel image onto 0.
+ */
+function testFilesetIfdMapping(parseOmeXml, omeIfdToCoordinates) {
+	const corpus = '/Users/florian/Projects/cursor/test_data/testfiles/scientific/openmicroscopy-ome-tiff';
+	if (!fs.existsSync(corpus)) {
+		console.log('⏭  OME-TIFF corpus not present, skipping fileset mapping checks');
+		return;
+	}
+	const read = rel => {
+		const raw = fs.readFileSync(path.join(corpus, rel)).toString('latin1');
+		const start = raw.indexOf('<OME');
+		return parseOmeXml(raw.slice(start, raw.indexOf('</OME>') + 6));
+	};
+
+	// Three channels, no <Channel> elements, three local IFDs.
+	const plate = read('2003-FC/Iron-Plate.ome.tiff');
+	assert.strictEqual(plate.planeSizeC, 3);
+	assert.deepStrictEqual(
+		[0, 1, 2].map(ifd => omeIfdToCoordinates(plate, ifd).c),
+		[0, 1, 2],
+		'each IFD must map to its own channel even with no channel descriptions');
+
+	// A 4D fileset: only this file's ten Z planes are local, the other 850 are not.
+	const fourD = read('2013-06/tubhiswt-4D/tubhiswt_C0_TP1.ome.tif');
+	assert.strictEqual(Object.keys(fourD.ifdToCoordinate).length, 10,
+		'only planes stored in this file may enter the local IFD map');
+	assert.strictEqual(Object.keys(fourD.coordinateToPlane).length, 860,
+		'every plane of the fileset must still be reachable for dataset navigation');
+	assert.deepStrictEqual(
+		[0, 1, 2].map(ifd => omeIfdToCoordinates(fourD, ifd).z),
+		[0, 1, 2],
+		'the local IFDs are consecutive Z slices');
+	const first = omeIfdToCoordinates(fourD, 0);
+	assert.strictEqual(first.c, 0, 'IFD 0 belongs to this file\'s channel, not a sibling\'s');
+
+	console.log('✅ OME-TIFF fileset IFD mapping stays local and honours FirstC without channel elements');
+}

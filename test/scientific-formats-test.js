@@ -171,8 +171,13 @@ function testCzi() {
 
 	// Selectors expose only the axes with more than one coordinate; M is a
 	// mosaic axis and must not be offered as a plane selector.
+	//
+	// A selector carries `labels` when the FILE names its options, and omits
+	// them when it does not. That single fact is what the viewer uses to decide
+	// dropdown versus slider, for every format — so the presence of names here
+	// is part of the decoder's contract, not a display detail.
 	assert.deepStrictEqual(image.metadata.selectors, [
-		{ name: 'C', size: 2, value: 0 },
+		{ name: 'C', size: 2, value: 0, labels: ['DAPI', 'GFP'] },
 		{ name: 'Z', size: 3, value: 0 },
 	]);
 	assert.deepStrictEqual(image.metadata.channelNames, ['DAPI', 'GFP']);

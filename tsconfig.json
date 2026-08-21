@@ -17,3 +17,4 @@
 	"include": ["src/**/*", "media/modules/scientific-format-parsers.ts"],
 	"exclude": ["node_modules", ".vscode-test", "test-resources"]
 }
+ 

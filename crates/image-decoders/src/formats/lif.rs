@@ -623,28 +623,48 @@ pub(crate) fn decode_lif_impl(
     }
 
     // --- Metadata --------------------------------------------------------
-    let mut selectors: Vec<(String, usize, usize)> = Vec::new();
-    if series_count > 1 {
-        selectors.push(("S".to_string(), series_count, series_index));
-    }
-    for (axis, value) in plane_axes.iter().zip(selected.iter()) {
-        selectors.push((axis.name.to_string(), axis.size, *value));
-    }
-    if channel_count > 1 && !is_rgb {
-        selectors.push(("C".to_string(), channel_count, requested_channel));
-    }
-
+    // Only names the FILE supplied. A synthesized "Channel 3" is not a name —
+    // it says nothing a "3 / 4" slider reading does not — and emitting one
+    // makes an unnamed channel look named to every consumer downstream.
     let channel_names: Vec<String> = series
         .channels
         .iter()
-        .enumerate()
-        .map(|(index, channel)| {
-            channel
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("Channel {}", index + 1))
-        })
+        .filter_map(|channel| channel.name.clone())
         .collect();
+    let channel_names = if channel_names.len() == series.channels.len() {
+        channel_names
+    } else {
+        Vec::new()
+    };
+
+    // A selector carries optional per-option LABELS. A selector that has them
+    // is a choice among named, differently-shaped things and the UI renders it
+    // as a dropdown; one without them is a homogeneous axis and stays a slider.
+    // Nothing here decides which widget appears — the presence of names does.
+    let mut selectors: Vec<(String, usize, usize, Option<Vec<String>>)> = Vec::new();
+    if series_count > 1 {
+        selectors.push((
+            "S".to_string(),
+            series_count,
+            series_index,
+            // The series names are what make this a dropdown rather than a
+            // scrub: "Region 2_Merged" is not the fifth step of anything.
+            Some(series_list.iter().map(|item| item.name.clone()).collect()),
+        ));
+    }
+    for (axis, value) in plane_axes.iter().zip(selected.iter()) {
+        selectors.push((axis.name.to_string(), axis.size, *value, None));
+    }
+    if channel_count > 1 && !is_rgb {
+        // Same rule as every other selector and every other decoder: names
+        // present => a choice, names absent => an axis.
+        let labels = if channel_names.len() == channel_count {
+            Some(channel_names.clone())
+        } else {
+            None
+        };
+        selectors.push(("C".to_string(), channel_count, requested_channel, labels));
+    }
 
     let mut fields: Vec<(String, JsonValue)> = Vec::new();
     fields.push(("format".to_string(), JsonValue::Str("LIF".to_string())));
@@ -678,21 +698,32 @@ pub(crate) fn decode_lif_impl(
         "scalingYUm",
         series.scaling_y_um.map(JsonValue::Num),
     );
-    fields.push((
-        "channelNames".to_string(),
-        JsonValue::Arr(channel_names.iter().map(|n| JsonValue::Str(n.clone())).collect()),
-    ));
+    if !channel_names.is_empty() {
+        fields.push((
+            "channelNames".to_string(),
+            JsonValue::Arr(channel_names.iter().map(|n| JsonValue::Str(n.clone())).collect()),
+        ));
+    }
     fields.push((
         "selectors".to_string(),
         JsonValue::Arr(
             selectors
                 .iter()
-                .map(|(name, size, value)| {
-                    JsonValue::Obj(vec![
+                .map(|(name, size, value, labels)| {
+                    let mut fields = vec![
                         ("name".to_string(), JsonValue::Str(name.clone())),
                         ("size".to_string(), JsonValue::Num(*size as f64)),
                         ("value".to_string(), JsonValue::Num(*value as f64)),
-                    ])
+                    ];
+                    if let Some(labels) = labels {
+                        fields.push((
+                            "labels".to_string(),
+                            JsonValue::Arr(
+                                labels.iter().map(|l| JsonValue::Str(l.clone())).collect(),
+                            ),
+                        ));
+                    }
+                    JsonValue::Obj(fields)
                 })
                 .collect(),
         ),
@@ -702,7 +733,7 @@ pub(crate) fn decode_lif_impl(
         JsonValue::Obj(
             selectors
                 .iter()
-                .map(|(name, _, value)| (name.clone(), JsonValue::Num(*value as f64)))
+                .map(|(name, _, value, _)| (name.clone(), JsonValue::Num(*value as f64)))
                 .collect(),
         ),
     ));

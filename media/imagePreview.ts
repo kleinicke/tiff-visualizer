@@ -1054,9 +1054,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		show: false
 	};
 	let overlayElement: HTMLElement | null = null;
-	let tiffPageOverlay: HTMLElement | null = null;
-	let datasetOverlay: HTMLElement | null = null;
-	let netcdfOverlay: HTMLElement | null = null;
 	let layeredPreviewOverlay: HTMLElement | null = null;
 	let netcdfSelection: { variableName?: string; indices: Record<string, number> } = persistedState?.netcdfSelection && typeof persistedState.netcdfSelection === 'object'
 		? { variableName: persistedState.netcdfSelection.variableName, indices: { ...(persistedState.netcdfSelection.indices || {}) } }
@@ -1074,16 +1071,14 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	let planeNavProcessor: ScientificArrayProcessor | null = null;
 	const isPlaneNavProcessor = (p: unknown) => planeNavProcessors.includes(p as ScientificArrayProcessor);
 
-	let cziOverlay: HTMLElement | null = null;
-	let cziSelection: { indices: Record<string, number> } = persistedState?.cziSelection && typeof persistedState.cziSelection === 'object'
-		? { indices: { ...(persistedState.cziSelection.indices || {}) } }
+	let planeSelection: { indices: Record<string, number> } = persistedState?.planeSelection && typeof persistedState.planeSelection === 'object'
+		? { indices: { ...(persistedState.planeSelection.indices || {}) } }
 		: { indices: {} };
-	/** Plane axes of the loaded CZI, kept for keyboard navigation. */
-	let cziSelectors: { name: string, size: number, value: number }[] = [];
+	/** Plane axes of the loaded image, kept for keyboard navigation. */
 	/** Axis signature currently rendered as slider rows, to avoid rebuilding them. */
-	let cziRenderedAxes = '';
-	let cziLoadInFlight = false;
-	let cziLoadPending = false;
+	let planeRenderedAxes = '';
+	let planeLoadInFlight = false;
+	let planeLoadPending = false;
 	let datasetManifest: DatasetManifest | null = null;
 	let datasetSeriesIndex = 0;
 	let datasetCoordinates: Record<string, number> = {};
@@ -1123,7 +1118,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			measureCalibration,
 			isHistogramVisible: histogramOverlay.getVisibility(),
 			netcdfSelection,
-			cziSelection,
+			planeSelection,
 			// Include zoom so it isn't erased when the app-level state is written
 			scale: zoomState.scale,
 			offsetX: zoomState.x,
@@ -1245,10 +1240,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		setupMessageHandling();
 		setupEventListeners();
 		createImageCollectionOverlay();
-		createTiffPageOverlay();
-		createDatasetOverlay();
-		createNetCdfOverlay();
-		createCziOverlay();
+		createNavOverlay();
 		createLayeredPreviewOverlay();
 		createFilenameBadge();
 
@@ -1628,6 +1620,54 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	/**
 	 * Handle image loading error, with optional specific message.
 	 */
+
+	/**
+	 * Reject an image the browser cannot actually put on a canvas.
+	 *
+	 * Chromium caps a canvas at a maximum area (and a maximum per-axis size),
+	 * and silently gives back a canvas that is not the size asked for rather
+	 * than throwing. A 20480x20480 float TIFF decodes perfectly well and then
+	 * renders as a blank grey panel with nothing logged, which looks like a
+	 * hang rather than a limit.
+	 *
+	 * The limit is probed rather than hardcoded, because it differs between
+	 * platforms and VS Code hosts: allocate the requested size and see whether
+	 * the canvas kept it. The probe canvas is discarded immediately.
+	 */
+	function canvasCanHold(width: number, height: number): boolean {
+		if (!(width > 0 && height > 0)) { return false; }
+		// Fast path: anything inside the smallest limit any mainstream engine
+		// enforces is fine, and must NOT be probed — allocating a second
+		// full-size canvas to ask the question would double peak memory for
+		// every ordinary image.
+		const SAFE_AXIS = 16384;
+		const SAFE_AREA = 16384 * 16384;
+		if (width <= SAFE_AXIS && height <= SAFE_AXIS && width * height <= SAFE_AREA) {
+			return true;
+		}
+		try {
+			const probe = document.createElement('canvas');
+			probe.width = width;
+			probe.height = height;
+			if (probe.width !== width || probe.height !== height) { return false; }
+			// Chromium only fails the ALLOCATION when a context is requested.
+			const context = probe.getContext('2d');
+			if (!context) { return false; }
+			probe.width = 1;
+			probe.height = 1;
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Human-readable "this image is too big to display" message. */
+	function tooLargeMessage(width: number, height: number): string {
+		const megapixels = (width * height / 1e6).toFixed(1);
+		return `This image is ${width} x ${height} (${megapixels} megapixels), which exceeds the maximum canvas size this browser can allocate. `
+			+ `The file decoded correctly; it cannot be displayed at full resolution.`;
+	}
+
 	function onImageError(message: string = '') {
 		PerfTrace.cancel();
 		hasLoadedImage = true;
@@ -1657,6 +1697,10 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		try {
 			const result = await tiffProcessor.processTiff(src, pageIndex);
 			if (gen !== _loadGeneration) { return; }
+			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
+				onImageError(tooLargeMessage(result.canvas.width, result.canvas.height));
+				return;
+			}
 			const ome = tiffProcessor.omeMetadata;
 			if (ome && !datasetManifest) {
 				const images = ome.images?.length ? ome.images : [ome];
@@ -1819,15 +1863,18 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		try {
 			const result = await processor.process(src, decodeOptions);
 			if (gen !== _loadGeneration) { return; }
+			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
+				onImageError(tooLargeMessage(result.canvas.width, result.canvas.height));
+				return;
+			}
 			if (processor === dicomProcessor && !datasetManifest && Number(processor.metadata.frames || 1) > 1) {
 				vscode.postMessage({ type: 'registerDicomFrames', frames: Number(processor.metadata.frames) });
 			}
 			if (isPlaneNavProcessor(processor)) {
 				planeNavProcessor = processor;
-				cziSelection = { indices: { ...(processor.metadata.selectedIndices || {}) } };
-				cziSelectors = Array.isArray(processor.metadata.selectors) ? processor.metadata.selectors : [];
-				updateCziOverlay(processor.metadata, false);
-				onCziLoadSettled();
+				planeSelection = { indices: { ...(processor.metadata.selectedIndices || {}) } };
+				updatePlaneOverlay(processor.metadata, false);
+				onPlaneLoadSettled();
 			}
 			if (processor === netcdfProcessor) {
 				netcdfSelection = {
@@ -1845,10 +1892,10 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			if (!processor._pendingRenderData) { finalizeImageSetup(); }
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
-			if (processor === netcdfProcessor) { netcdfOverlay?.classList.remove('dataset-overlay--loading'); }
+			if (processor === netcdfProcessor) { navOverlay?.classList.remove('dataset-overlay--loading'); }
 			if (isPlaneNavProcessor(processor)) {
-				cziOverlay?.classList.remove('dataset-overlay--loading');
-				onCziLoadSettled();
+				navOverlay?.classList.remove('dataset-overlay--loading');
+				onPlaneLoadSettled();
 			}
 			console.error(`Error handling ${processor.config.formatLabel}:`, error);
 			onImageError(`Failed to load ${processor.config.formatLabel}: ${error instanceof Error ? error.message : String(error)}`);
@@ -4986,6 +5033,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		const isEditableEventTarget = (target: EventTarget | null): boolean => {
 			if (!(target instanceof HTMLElement)) { return false; }
 			if (target.isContentEditable || target.closest('[contenteditable="true"]')) { return true; }
+			// A control in the navigation overlay is never "typing", whatever
+			// element it happens to be built from. A dropdown there is a plane
+			// selector exactly like the sliders beside it, and treating it as a
+			// text field meant that merely CLICKING it — even without choosing
+			// anything — killed every navigation shortcut until focus moved
+			// away. Range inputs were already excluded for the same reason.
+			if (target.closest('.nav-overlay')) { return false; }
 			if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) { return true; }
 			if (!(target instanceof HTMLInputElement)) { return false; }
 			return !['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit'].includes(target.type);
@@ -5007,6 +5061,11 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			const target = e.target;
 			if (!(target instanceof HTMLElement)) { return; }
 			if (isEditableEventTarget(target)) { return; }
+			// Deliberately NOT selects. A native dropdown opens its popup on
+			// pointerDOWN and keeps it open only while it holds focus, so
+			// blurring on pointerUP shut the list again before it could be
+			// used. A select gives up focus on `change` instead (below), and
+			// its focus ring is suppressed in CSS.
 			if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLButtonElement)) { return; }
 			target.blur();
 		}, true);
@@ -5321,49 +5380,50 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			const isPlainKey = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 			const isRightArrow = e.key === 'ArrowRight' || e.code === 'ArrowRight';
 			const isLeftArrow = e.key === 'ArrowLeft' || e.code === 'ArrowLeft';
-			// A plane stack navigates its own planes, but only while it is the sole
-			// image; a multi-image collection keeps arrow keys for switching files.
-			// Arrows are the SECOND slider's shortcut (see PLANE_AXIS_KEY_HINTS).
-			const cziArrowAxis = imageCollection.totalImages > 1 || datasetManifest ? undefined : planeAxisAt(1);
-			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) && cziArrowAxis && cziArrowAxis.size > 1) {
+			// Arrow keys: the shared control model owns them whenever the file
+			// has navigable controls AND it is the only image open. A multi-image
+			// collection keeps the arrows for switching files, which is the one
+			// case where stepping between FILES outranks stepping within one.
+			const arrowsBelongToControls = imageCollection.totalImages <= 1;
+			const arrowPosition = (navControls.length === 1 && !navControls[0]?.isChoice) ? 0 : 1;
+			const arrowControl = arrowsBelongToControls ? navControlAt(arrowPosition) : undefined;
+			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) && arrowControl) {
 				e.preventDefault();
 				e.stopPropagation();
-				navigateCziAxis(cziArrowAxis, isRightArrow ? 1 : -1);
+				stepNavControl(arrowControl, isRightArrow ? 1 : -1);
 				return;
 			}
 			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) &&
-				(datasetManifest || imageCollection.totalImages > 1 || tiffProcessor.pageCount > 1)) {
+				(imageCollection.totalImages > 1 || tiffProcessor.pageCount > 1)) {
 				e.preventDefault();
 				e.stopPropagation();
-				if (datasetManifest) {
-					navigateDatasetPrimary(isRightArrow ? 1 : -1);
-				} else if (imageCollection.totalImages > 1) {
+				if (imageCollection.totalImages > 1) {
 					requestCollectionNavigation(isRightArrow ? 'next' : 'previous');
 				} else {
 					void navigateTiffPage(isRightArrow ? 1 : -1);
 				}
 				return;
 			}
-			if (!isTyping && cziSelectors.length) {
-				// Position-based: slider 1 = [ ], slider 3 = < >, slider 4 = { }.
-				// (Slider 2 is the arrow keys, handled above so that it can defer
-				// to collection navigation.) Each pair is `previous`/`next`.
+			if (!isTyping && navControls.length > 1) {
+				// Positions 0, 2 and 3 — position 1 is the arrows, handled above
+				// so it can defer to collection navigation. Identical for every
+				// format, because `navControls` is format-neutral.
 				const PAIRS: [number, string, string][] = [
 					[0, '[', ']'],
 					[2, '<', '>'],
 					[3, '{', '}'],
 				];
-				for (const [index, previous, next] of PAIRS) {
-					const axis = planeAxisAt(index);
-					if (!axis || axis.size <= 1) { continue; }
-					if (e.key === next || (index === 0 && e.code === 'PageDown')) {
+				for (const [position, previous, next] of PAIRS) {
+					const control = navControlAt(position);
+					if (!control) { continue; }
+					if (e.key === next || (position === 0 && e.code === 'PageDown')) {
 						e.preventDefault();
-						navigateCziAxis(axis, 1);
+						stepNavControl(control, 1);
 						return;
 					}
-					if (e.key === previous || (index === 0 && e.code === 'PageUp')) {
+					if (e.key === previous || (position === 0 && e.code === 'PageUp')) {
 						e.preventDefault();
-						navigateCziAxis(axis, -1);
+						stepNavControl(control, -1);
 						return;
 					}
 				}
@@ -5525,6 +5585,88 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	}
 
 
+
+	/**
+	 * One shared model of "things the keyboard can step" for every format.
+	 *
+	 * DICOM, NetCDF, CZI, ND2 and LIF all present the same two kinds of
+	 * control: a DROPDOWN choosing among named datasets of differing shape
+	 * (DICOM series, NetCDF variable, LIF series) and SLIDERS scrubbing
+	 * homogeneous axes (Z, T, C, stage position). They used to bind keys three
+	 * separate ways — DICOM gave the arrows to its primary axis and nothing to
+	 * the rest, NetCDF bound nothing at all, microscopy used a positional
+	 * scheme — so the same key did different things per format, or nothing.
+	 *
+	 * Now every overlay publishes its controls here in display order (dropdown
+	 * first, then sliders) and the key assignment is derived from that order
+	 * alone. Adding a format means publishing its controls; it does not mean
+	 * touching the keyboard handler.
+	 */
+	interface NavControl {
+		/** Shown in the row's hint cell. */
+		readonly label: string;
+		readonly size: number;
+		readonly value: number;
+		/** True when this control renders as a dropdown rather than a slider. */
+		readonly isChoice?: boolean;
+		/** Move to an absolute index; the overlay owns what that means. */
+		readonly go: (index: number) => void;
+	}
+	let navControls: NavControl[] = [];
+
+	/**
+	 * Keys per control position.
+	 *
+	 * A lone control gets the ARROWS rather than the brackets: arrows are the
+	 * obvious default and with only one thing to step there is no ambiguity to
+	 * resolve. From two controls up, the dropdown sits at position 1 with
+	 * `[ ]` and the first slider keeps the arrows — which is exactly what
+	 * DICOM already did, so its muscle memory survives unchanged.
+	 */
+	function navKeyHints(controls: readonly { isChoice?: boolean }[]): string[] {
+		// A single SLIDER gets the arrows: it is the obvious default and there is
+		// nothing to disambiguate. Everything else — a dropdown, or more than one
+		// control — starts at `[ ]` so the ordering is uniform.
+		if (controls.length === 1 && !controls[0]?.isChoice) { return ['← →']; }
+		return ['[ ]', '← →', '< >', '{ }'];
+	}
+
+	/** The control a given shortcut pair drives, if there is one. */
+	function navControlAt(position: number): NavControl | undefined {
+		const control = navControls[position];
+		return control && control.size > 1 ? control : undefined;
+	}
+
+	/** Step a control by `delta`, wrapping, like every overlay already did. */
+	function stepNavControl(control: NavControl | undefined, delta: number) {
+		if (!control || control.size <= 1) { return; }
+		const next = (control.value + delta + control.size) % control.size;
+		control.go(next);
+	}
+
+	/**
+	 * Apply the hint text to already-rendered rows.
+	 *
+	 * `rows` must be in the same order as the controls, so the hint always
+	 * lands on the row it describes.
+	 */
+	function paintNavHints(rows: (HTMLElement | null | undefined)[]) {
+		const hints = navKeyHints(navControls);
+		rows.forEach((row, index) => {
+			if (!row) { return; }
+			let cell = row.querySelector('.dataset-axis-hint') as HTMLElement | null;
+			if (!cell) {
+				cell = document.createElement('span');
+				cell.className = 'dataset-axis-hint';
+				row.appendChild(cell);
+			}
+			const control = navControls[index];
+			const text = (control && control.size > 1 && hints[index]) ? hints[index] : '';
+			cell.textContent = text;
+			cell.title = text ? `Step ${control.label} with ${text}` : '';
+		});
+	}
+
 	/**
 	 * Make a floating overlay draggable by its body.
 	 *
@@ -5548,6 +5690,12 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			return { x: Math.min(Math.max(0, x), maxX), y: Math.min(Math.max(0, y), maxY) };
 		};
 		const place = (x: number, y: number) => {
+			// The overlay is centred with `transform: translateX(-50%)`. A
+			// transform shifts what `getBoundingClientRect()` reports but NOT
+			// what `style.left` means, so leaving it in place made the overlay
+			// jump half its width on grab and then drift away from the pointer.
+			// Once dragged, position is expressed purely as left/top.
+			overlay.style.transform = 'none';
 			const at = clamp(x, y);
 			overlayPositions.set(key, at);
 			overlay.style.left = `${at.x}px`;
@@ -5558,14 +5706,26 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		const remembered = overlayPositions.get(key);
 		if (remembered) { place(remembered.x, remembered.y); }
 
+		// The container's zoom/pan handlers listen on `mousedown` and `click`,
+		// which are SEPARATE from the pointer events used for dragging — so
+		// stopping `pointerdown` alone still let every press reach the zoom
+		// handler, and moving the overlay zoomed the image underneath it.
+		for (const type of ['mousedown', 'click', 'dblclick', 'wheel'] as const) {
+			overlay.addEventListener(type, event => { event.stopPropagation(); });
+		}
 		overlay.addEventListener('pointerdown', event => {
 			const target = event.target as HTMLElement;
+			event.stopPropagation();
 			// Never hijack a control the user meant to operate.
 			if (target.closest('input, select, button, a, textarea')) { return; }
 			if (event.button !== 0) { return; }
+			// Measure BEFORE neutralizing the transform so the grab point is
+			// taken from the box the user actually sees, then re-anchor to that
+			// same box so the first move does not teleport the overlay.
 			const rect = overlay.getBoundingClientRect();
 			const grabX = event.clientX - rect.left;
 			const grabY = event.clientY - rect.top;
+			place(rect.left, rect.top);
 			overlay.setPointerCapture(event.pointerId);
 			overlay.classList.add('dataset-overlay--dragging');
 			const move = (e: PointerEvent) => place(e.clientX - grabX, e.clientY - grabY);
@@ -5584,86 +5744,44 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			const at = overlayPositions.get(key);
 			if (at) { place(at.x, at.y); }
 		});
-	}
-
-	function createTiffPageOverlay() {
-		tiffPageOverlay = document.createElement('div');
-		tiffPageOverlay.className = 'tiff-page-overlay';
-		tiffPageOverlay.style.display = 'none';
-		tiffPageOverlay.innerHTML = `
-			<div class="tiff-page-basic">
-				<button class="tiff-page-prev" type="button" tabindex="-1" title="Previous TIFF page (Left Arrow, [ or Page Up)" aria-label="Previous TIFF page">&#x2039;</button>
-				<span class="tiff-page-counter">Page 1 / 1</span>
-				<button class="tiff-page-next" type="button" tabindex="-1" title="Next TIFF page (Right Arrow, ] or Page Down)" aria-label="Next TIFF page">&#x203a;</button>
-			</div>
-			<div class="ome-axis-controls" aria-label="OME-TIFF dimensions">
-				<label class="ome-axis ome-axis-c"><span class="ome-axis-label">C</span><input type="range" data-default-value="0" title="Channel · Double-click to reset"><span class="ome-axis-value"></span></label>
-				<label class="ome-axis ome-axis-z"><span class="ome-axis-label">Z</span><input type="range" data-default-value="0" title="Z slice · Double-click to reset"><span class="ome-axis-value"></span></label>
-				<label class="ome-axis ome-axis-t"><span class="ome-axis-label">T</span><input type="range" data-default-value="0" title="Timepoint · Double-click to reset"><span class="ome-axis-value"></span></label>
-			</div>
-		`;
-		const bindTiffPageButton = (selector: string, delta: number) => {
-			const button = tiffPageOverlay?.querySelector(selector) as HTMLButtonElement | null;
-			button?.addEventListener('pointerdown', (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-			});
-			button?.addEventListener('click', (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				button.blur();
-				void navigateTiffPage(delta);
-			});
-			button?.addEventListener('keydown', (e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
-					e.preventDefault();
-					e.stopPropagation();
-				}
-			});
-		};
-		bindTiffPageButton('.tiff-page-prev', -1);
-		bindTiffPageButton('.tiff-page-next', 1);
-		for (const axis of ['C', 'Z', 'T'] as OmeAxis[]) {
-			const input = tiffPageOverlay.querySelector(`.ome-axis-${axis.toLowerCase()} input`) as HTMLInputElement | null;
-			input?.addEventListener('input', () => void navigateOmeAxis(axis, Number(input.value)));
+		// The gesture can end anywhere, including outside the overlay.
+		for (const end of ['pointerup', 'pointercancel'] as const) {
+			window.addEventListener(end, () => { navControlHeld = false; });
 		}
-		document.body.appendChild(tiffPageOverlay);
 	}
 
-	function createDatasetOverlay() {
-		datasetOverlay = document.createElement('div');
-		datasetOverlay.className = 'dataset-overlay';
-		datasetOverlay.style.display = 'none';
-		datasetOverlay.innerHTML = `
-			<div class="dataset-heading">
-				<button class="dataset-prev" type="button" tabindex="-1" title="Previous dataset plane (Left Arrow)" aria-label="Previous dataset plane">&#x2039;</button>
-				<span class="dataset-title"></span>
-				<button class="dataset-next" type="button" tabindex="-1" title="Next dataset plane (Right Arrow)" aria-label="Next dataset plane">&#x203a;</button>
-			</div>
-			<label class="dataset-series-row"><span>Series</span><select class="dataset-series"></select></label>
-			<div class="dataset-axis-controls"></div>
-		`;
-		const bindButton = (selector: string, delta: number) => {
-			const button = datasetOverlay?.querySelector(selector) as HTMLButtonElement | null;
-			button?.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); });
-			button?.addEventListener('click', e => {
-				e.preventDefault(); e.stopPropagation(); button.blur(); navigateDatasetPrimary(delta);
-			});
-			button?.addEventListener('keydown', e => {
-				if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); }
-			});
-		};
-		bindButton('.dataset-prev', -1);
-		bindButton('.dataset-next', 1);
-		const select = datasetOverlay.querySelector('.dataset-series') as HTMLSelectElement;
-		select.addEventListener('change', () => {
-			datasetSeriesIndex = Number(select.value);
-			const series = datasetManifest?.series[datasetSeriesIndex];
-			datasetCoordinates = Object.fromEntries((series?.axes || []).map(axis => [axis.key, 0]));
-			requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
-		});
-		makeOverlayDraggable(datasetOverlay, 'plane');
-		document.body.appendChild(datasetOverlay);
+
+
+	/**
+	 * Resolve a desired coordinate to a plane that actually exists.
+	 *
+	 * A DICOM series is frequently SPARSE — not every (C, Z, T) combination has
+	 * an image — so stepping one axis on its own can name a plane that is not
+	 * in the series. Snapping keeps the invariant "navigation always lands on a
+	 * real plane" while letting every axis be an ordinary navigable control:
+	 * the requested axis value is honoured exactly, and the remaining axes fall
+	 * to the nearest available plane.
+	 */
+	function snapToDatasetPlane(
+		series: { axes: { key: string }[], planes: { coordinates: Record<string, number> }[] },
+		desired: Record<string, number>,
+		pinnedAxis: string,
+	): Record<string, number> {
+		if (!series.planes.length) { return desired; }
+		let best: Record<string, number> | null = null;
+		let bestCost = Number.POSITIVE_INFINITY;
+		for (const plane of series.planes) {
+			if ((plane.coordinates[pinnedAxis] || 0) !== (desired[pinnedAxis] || 0)) { continue; }
+			let cost = 0;
+			for (const axis of series.axes) {
+				if (axis.key === pinnedAxis) { continue; }
+				cost += Math.abs((plane.coordinates[axis.key] || 0) - (desired[axis.key] || 0));
+			}
+			if (cost < bestCost) { bestCost = cost; best = plane.coordinates; }
+		}
+		// No plane carries that coordinate on the pinned axis at all: leave the
+		// request untouched rather than silently jumping somewhere unrelated.
+		return best ? { ...best } : desired;
 	}
 
 	function requestDatasetNavigation(seriesIndex: number, coordinates: Record<string, number>) {
@@ -5673,98 +5791,19 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		vscode.postMessage({ type: 'navigateDataset', seriesIndex, coordinates });
 	}
 
-	function navigateDatasetPrimary(delta: number) {
-		const series = datasetManifest?.series[datasetSeriesIndex];
-		if (!series || series.planes.length === 0) { return; }
-		const currentIndex = series.planes.findIndex(plane =>
-			series.axes.every(axis => (plane.coordinates[axis.key] || 0) === (datasetCoordinates[axis.key] || 0)));
-		const startIndex = currentIndex >= 0 ? currentIndex : 0;
-		const targetIndex = (startIndex + delta + series.planes.length) % series.planes.length;
-		datasetCoordinates = { ...series.planes[targetIndex].coordinates };
-		requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
-	}
-
 	function updateDatasetOverlay(loading = datasetLoading) {
-		if (!datasetOverlay) { return; }
 		const manifest = datasetManifest;
 		if (!manifest || manifest.series.length === 0) {
-			datasetOverlay.style.display = 'none';
+			// Only tear the overlay down if this format still OWNS it. During a
+			// switch ownership is released and the manifest is briefly absent
+			// before the next one arrives; hiding on that transient state is
+			// what made the controls blink in and out while stepping through a
+			// study. An unclaimed overlay is left for the incoming image.
+			if (navOwner === 'dataset') { hideNavOverlay('dataset'); }
 			return;
 		}
-		const series = manifest.series[Math.max(0, Math.min(manifest.series.length - 1, datasetSeriesIndex))];
-		const title = datasetOverlay.querySelector('.dataset-title') as HTMLElement;
-		title.textContent = manifest.label;
-		const seriesRow = datasetOverlay.querySelector('.dataset-series-row') as HTMLElement;
-		const select = datasetOverlay.querySelector('.dataset-series') as HTMLSelectElement;
-		if (select.options.length !== manifest.series.length || Array.from(select.options).some((option, index) => option.text !== manifest.series[index].label)) {
-			select.replaceChildren(...manifest.series.map((item, index) => {
-				const option = document.createElement('option'); option.value = String(index); option.text = item.label; return option;
-			}));
-		}
-		select.value = String(datasetSeriesIndex);
-		seriesRow.style.display = manifest.series.length > 1 ? 'grid' : 'none';
-		const controls = datasetOverlay.querySelector('.dataset-axis-controls') as HTMLElement;
-
-		// Rebuild the sliders only when the axes actually change shape.
-		//
-		// This used to replaceChildren() unconditionally, which made dragging a
-		// slider impossible: the `input` handler below calls
-		// requestDatasetNavigation, which calls straight back into this function,
-		// which destroyed the very element the pointer was dragging. The drag
-		// died with it, so a slice slider could only ever be nudged one step at a
-		// time. Reusing the elements and writing only their values keeps the drag
-		// alive across the loads it triggers.
-		const signature = datasetAxisSignature(series.axes);
-		if (controls.dataset.axisSignature !== signature) {
-			controls.dataset.axisSignature = signature;
-			controls.replaceChildren(...series.axes.map(axis => {
-				const row = document.createElement('label'); row.className = 'dataset-axis'; row.dataset.axisKey = axis.key;
-				const axisLabel = document.createElement('span'); axisLabel.className = 'dataset-axis-label'; axisLabel.textContent = axis.label;
-				const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, axis.size - 1)); input.step = '1'; input.dataset.defaultValue = '0'; input.title = `${axis.label} · Double-click to reset`;
-				const value = document.createElement('span'); value.className = 'dataset-axis-value';
-				input.addEventListener('input', () => {
-					datasetCoordinates = { ...datasetCoordinates, [axis.key]: Number(input.value) };
-					requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
-				});
-				row.append(axisLabel, input, value); return row;
-			}));
-		}
-
-		for (const axis of series.axes) {
-			const row = controls.querySelector(`.dataset-axis[data-axis-key="${CSS.escape(axis.key)}"]`);
-			if (!row) { continue; }
-			const input = row.querySelector('input') as HTMLInputElement;
-			const value = row.querySelector('.dataset-axis-value') as HTMLElement;
-			const axisValue = datasetCoordinates[axis.key] || 0;
-			// Never write into the control the user is holding: a load that
-			// resolves mid-drag would otherwise yank the thumb back to where the
-			// drag started.
-			if (document.activeElement !== input) { input.value = String(axisValue); }
-			value.textContent = `${axisValue + 1} / ${axis.size}${axis.valueLabels?.[axisValue] ? ` · ${axis.valueLabels[axisValue]}` : ''}`;
-		}
-		datasetOverlay.classList.toggle('dataset-overlay--loading', loading);
-		datasetOverlay.style.display = 'flex';
-		if (tiffPageOverlay) tiffPageOverlay.style.display = 'none';
-		if (filenameBadge) filenameBadge.style.display = 'block';
-	}
-
-	function createNetCdfOverlay() {
-		netcdfOverlay = document.createElement('div');
-		netcdfOverlay.className = 'dataset-overlay netcdf-overlay';
-		netcdfOverlay.style.display = 'none';
-		netcdfOverlay.innerHTML = `
-			<div class="dataset-title">NetCDF</div>
-			<label class="dataset-series-row"><span>Variable</span><select class="dataset-series netcdf-variable"></select></label>
-			<div class="dataset-axis-controls netcdf-dimension-controls"></div>
-			<div class="netcdf-view-info"></div>
-		`;
-		const select = netcdfOverlay.querySelector('.netcdf-variable') as HTMLSelectElement;
-		select.addEventListener('change', () => {
-			netcdfSelection = { variableName: select.value, indices: {} };
-			reloadNetCdfSelection();
-		});
-		makeOverlayDraggable(netcdfOverlay, 'plane');
-		document.body.appendChild(netcdfOverlay);
+		renderNavOverlay({ owner: 'dataset', title: manifest.label, controls: datasetControls(), loading });
+		if (filenameBadge) { filenameBadge.style.display = 'block'; }
 	}
 
 	function createLayeredPreviewOverlay() {
@@ -5839,136 +5878,416 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		}
 	}
 
-	function createCziOverlay() {
-		cziOverlay = document.createElement('div');
-		cziOverlay.className = 'dataset-overlay czi-overlay';
-		cziOverlay.style.display = 'none';
-		cziOverlay.innerHTML = `
-			<div class="dataset-title">CZI</div>
-			<div class="dataset-axis-controls czi-dimension-controls"></div>
-			<div class="czi-key-hints"></div>
-			<div class="czi-view-info"></div>
-		`;
-		makeOverlayDraggable(cziOverlay, 'plane');
-		document.body.appendChild(cziOverlay);
+	// --- Control sources ------------------------------------------------
+	//
+	// Every source produces the SAME shape — `{ name, size, value, labels? }` —
+	// and `controlsFromSelectors` turns it into controls. There is exactly one
+	// rule and it lives in one place:
+	//
+	//     labels present => a choice among named things  => dropdown
+	//     labels absent  => a homogeneous axis           => slider
+	//
+	// No source decides a widget, a key, or a layout, and none of them names a
+	// format. Changing navigation behaviour is a single edit here, not five
+	// edits and five retests.
+
+	interface Selector {
+		readonly name: string;
+		readonly size: number;
+		readonly value: number;
+		readonly labels?: readonly string[];
 	}
 
+	/** The one and only selector -> control conversion. */
+	function controlsFromSelectors(
+		namespace: string,
+		selectors: readonly Selector[],
+		go: (selector: Selector, index: number) => void,
+	): NavControlSpec[] {
+		return selectors.map(selector => ({
+			key: `${namespace}:${selector.name}`,
+			label: selector.name,
+			size: Math.max(1, selector.size),
+			value: selector.value,
+			labels: selector.labels && selector.labels.length === selector.size
+				? selector.labels
+				: undefined,
+			go: (index: number) => go(selector, index),
+		}));
+	}
 
-	/** Render one slider per CZI plane axis (Z, C, T, ...) with size > 1. */
+	/** Normalize a decoder's raw `selectors` metadata into the common shape. */
+	function readSelectors(metadata: Record<string, any>): Selector[] {
+		const raw: any[] = Array.isArray(metadata.selectors) ? metadata.selectors : [];
+		return raw.map((selector: any) => ({
+			name: String(selector.name),
+			size: Math.max(1, Number(selector.size)),
+			value: Number(selector.value ?? 0) || 0,
+			labels: Array.isArray(selector.labels) && selector.labels.length
+				? selector.labels.map((entry: any) => String(entry))
+				: undefined,
+		}));
+	}
+
+	/** CZI / ND2 / LIF. */
+	function planeControlsFromSelectors(metadata: Record<string, any>): NavControlSpec[] {
+		const selectors = readSelectors(metadata).map(selector => ({
+			...selector,
+			value: Number(planeSelection.indices[selector.name] ?? selector.value) || 0,
+		}));
+		return controlsFromSelectors('sel', selectors, (selector, index) => {
+			planeSelection.indices = { ...planeSelection.indices, [selector.name]: index };
+			requestPlaneReload();
+		});
+	}
+
+	/** DICOM: the series choice, then the series' own axes. */
+	function datasetControls(): NavControlSpec[] {
+		const manifest = datasetManifest;
+		if (!manifest || !manifest.series.length) { return []; }
+		const seriesIndex = Math.max(0, Math.min(manifest.series.length - 1, datasetSeriesIndex));
+		const series = manifest.series[seriesIndex];
+		const selectors: Selector[] = [];
+		if (manifest.series.length > 1) {
+			selectors.push({
+				name: 'Series',
+				size: manifest.series.length,
+				value: seriesIndex,
+				labels: manifest.series.map((item: any) => String(item.label)),
+			});
+		}
+		for (const axis of series.axes) {
+			const size = Math.max(1, axis.size);
+			const complete = Array.isArray(axis.valueLabels)
+				&& axis.valueLabels.length === size
+				&& axis.valueLabels.every((entry: any) => !!entry);
+			selectors.push({
+				name: axis.label,
+				size,
+				value: datasetCoordinates[axis.key] || 0,
+				labels: complete ? axis.valueLabels.map((entry: any) => String(entry)) : undefined,
+			});
+		}
+		return controlsFromSelectors('dicom', selectors, (selector, index) => {
+			if (selector.name === 'Series') {
+				datasetSeriesIndex = index;
+				const target = manifest.series[index];
+				datasetCoordinates = Object.fromEntries((target?.axes || []).map((axis: any) => [axis.key, 0]));
+				requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
+				return;
+			}
+			const axis = series.axes.find((candidate: any) => candidate.label === selector.name);
+			if (!axis) { return; }
+			datasetCoordinates = snapToDatasetPlane(series, { ...datasetCoordinates, [axis.key]: index }, axis.key);
+			requestDatasetNavigation(datasetSeriesIndex, datasetCoordinates);
+		});
+	}
+
+	/** NetCDF: the variable choice, then the variable's dimensions. */
+	function netcdfControls(metadata: Record<string, any>): NavControlSpec[] {
+		const variables: any[] = Array.isArray(metadata.variables) ? metadata.variables : [];
+		const names = variables.map((variable: any) => String(variable.name ?? variable));
+		const selectors: Selector[] = [];
+		if (names.length > 1) {
+			selectors.push({
+				name: 'Variable',
+				size: names.length,
+				value: Math.max(0, names.indexOf(String(netcdfSelection.variableName ?? ''))),
+				labels: names,
+			});
+		}
+		for (const selector of readSelectors(metadata)) {
+			selectors.push({
+				...selector,
+				value: Number(netcdfSelection.indices[selector.name] ?? selector.value) || 0,
+			});
+		}
+		return controlsFromSelectors('nc', selectors, (selector, index) => {
+			if (selector.name === 'Variable') {
+				netcdfSelection = { variableName: names[index], indices: {} };
+			} else {
+				netcdfSelection.indices = { ...netcdfSelection.indices, [selector.name]: index };
+			}
+			reloadNetCdfSelection();
+		});
+	}
+
+	/** TIFF: OME C/Z/T, or the page index for a plain multi-page file. */
+	function tiffControls(): NavControlSpec[] {
+		if (tiffProcessor.pageCount <= 1) { return []; }
+		const ome = tiffProcessor.omeMetadata;
+		if (!ome) {
+			return controlsFromSelectors('tiff', [{
+				name: 'Page',
+				size: tiffProcessor.pageCount,
+				value: tiffProcessor.pageIndex,
+			}], (_selector, index) => { void navigateTiffToPage(index); });
+		}
+		const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+		const current: Record<OmeAxis, number> = { C: coordinates.c, Z: coordinates.z, T: coordinates.t };
+		const sizes: Record<OmeAxis, number> = { C: ome.planeSizeC, Z: ome.sizeZ, T: ome.sizeT };
+		const channelNames = ome.channels.map((channel: any) => String(channel?.name || ''));
+		const named = channelNames.length === sizes.C && channelNames.every((name: string) => !!name);
+		const selectors: Selector[] = (['C', 'Z', 'T'] as OmeAxis[]).map(axis => ({
+			name: axis,
+			size: sizes[axis],
+			value: current[axis],
+			labels: axis === 'C' && named ? channelNames : undefined,
+		}));
+		return controlsFromSelectors('ome', selectors, (selector, index) => {
+			void navigateOmeAxis(selector.name as OmeAxis, index);
+		});
+	}
+
+	// ------------------------------------------------------------------
+	// One navigation overlay for every dimensioned format
+	// ------------------------------------------------------------------
+	//
+	// DICOM, NetCDF, OME-TIFF, CZI, ND2 and LIF all present the same thing: an
+	// ordered list of controls that pick which plane of a multi-dimensional
+	// file is on screen. They used to have four overlays, four render
+	// functions and three key bindings between them, so the same concept
+	// behaved differently depending on which decoder produced it.
+	//
+	// There is now ONE overlay element and ONE renderer. A format contributes a
+	// list of `NavControlSpec` and nothing else; it does not own a widget, a
+	// key, or a row. Whether a control appears as a dropdown or a slider is
+	// decided by the DATA — a control that arrives with per-option names is a
+	// choice among named things, one without is a homogeneous axis.
+
+	interface NavControlSpec {
+		/** Stable identity, used for row reuse and focus restoration. */
+		readonly key: string;
+		readonly label: string;
+		readonly size: number;
+		readonly value: number;
+		/** Present => render a dropdown; absent => render a slider. */
+		readonly labels?: readonly string[];
+		readonly go: (index: number) => void;
+	}
+
+	let navOverlay: HTMLElement | null = null;
 	/**
-	 * Refresh the CZI overlay.
+	 * Which format currently owns the shared overlay.
 	 *
-	 * Rows are rebuilt only when the axes themselves change. Re-creating them on
-	 * every plane load made the title flicker and dropped the slider the user was
-	 * dragging, so a same-axes update only writes values.
+	 * Every format's update function targets the same element now, and each of
+	 * them hides it when IT has nothing to show. Without an owner the last
+	 * updater to run wins: opening a DICOM study ran the TIFF updater too,
+	 * which saw `pageCount <= 1`, hid the overlay, and made it flicker in and
+	 * out on every navigation; NetCDF lost its overlay outright the same way.
+	 * A non-owner's request to hide is ignored.
 	 */
-	function updateCziOverlay(metadata: Record<string, any>, loading = false) {
-		if (!cziOverlay) { return; }
-		const selectors = Array.isArray(metadata.selectors) ? metadata.selectors : [];
-		const channelNames: string[] = Array.isArray(metadata.channelNames) ? metadata.channelNames : [];
-		const title = cziOverlay.querySelector('.dataset-title') as HTMLElement;
-		const controls = cziOverlay.querySelector('.czi-dimension-controls') as HTMLElement;
-		// The channel name lives in the title rather than beside the C slider: it
-		// varies in length, and a value label that resizes drags the slider with it.
-		const label = planeNavProcessor?.config.formatLabel || 'CZI';
-		const showChannel = (index: number) => {
-			const name = channelNames[index];
-			const next = name ? `${label} · ${name}` : label;
-			if (title.textContent !== next) { title.textContent = next; }
-		};
-		const axisSignature = `${label}|` + selectors.map((selector: any) => `${selector.name}:${selector.size}`).join(',');
-		const rebuild = axisSignature !== cziRenderedAxes;
+	type NavOwner = 'plane' | 'dataset' | 'netcdf' | 'tiff';
+	let navOwner: NavOwner | null = null;
 
-		if (rebuild) {
-			// Changing series changes the axis set, so the rows are rebuilt — and
-			// `replaceChildren` destroys the element the user was operating,
-			// which is why stepping the series slider with the keyboard silently
-			// lost focus after the first step. Remember which axis was focused
-			// and restore it onto the equivalent new row below.
-			const focusedAxis = (document.activeElement instanceof HTMLElement)
-				? document.activeElement.closest('.dataset-axis')?.getAttribute('data-axis') || ''
+	/** True while a pointer is held on a control, so re-renders leave it alone. */
+	let navControlHeld = false;
+
+	function createNavOverlay() {
+		navOverlay = document.createElement('div');
+		navOverlay.className = 'dataset-overlay nav-overlay';
+		navOverlay.style.display = 'none';
+		navOverlay.innerHTML = `
+			<div class="dataset-title"></div>
+			<div class="dataset-axis-controls"></div>
+		`;
+		makeOverlayDraggable(navOverlay, 'plane');
+		document.body.appendChild(navOverlay);
+	}
+
+	/** Signature of the control SHAPE; rows are rebuilt only when this changes. */
+	function navSignature(controls: readonly NavControlSpec[]): string {
+		return controls
+			.map(c => `${c.key}:${c.size}:${c.labels ? 'choice' : 'axis'}`)
+			.join(',');
+	}
+
+	/**
+	 * Render the overlay for `controls`.
+	 *
+	 * Rows are reused across renders wherever the shape is unchanged: rebuilding
+	 * them destroys the element the user is dragging or has focused, which is
+	 * what made the sliders feel broken. When a rebuild IS required (the axis
+	 * set genuinely changed, e.g. a new series), focus is captured and restored
+	 * onto the equivalent new row.
+	 */
+	function renderNavOverlay(options: {
+		owner: NavOwner,
+		title: string,
+		controls: readonly NavControlSpec[],
+		loading?: boolean,
+	}) {
+		if (!navOverlay) { return; }
+		const { owner, title, loading = false } = options;
+		// A control with a single option is not navigable: it cannot be stepped,
+		// has no shortcut, and only takes a row over the image. Dropping it here
+		// also makes "is this the lone control?" — which decides whether the
+		// arrows or the brackets apply — count only real ones.
+		const controls = options.controls.filter(control => control.size > 1);
+		if (!controls.length) {
+			// Hide when this format owns the overlay, and also when NOBODY does:
+			// a switch releases ownership without hiding (so the controls stay up
+			// through the decode), and the incoming format is then the one that
+			// decides whether they are still needed. Without the unclaimed case,
+			// moving from a DICOM study to a plain image left the study's
+			// controls stranded on screen.
+			if (navOwner === owner || navOwner === null) { hideNavOverlay(owner); }
+			return;
+		}
+		navOwner = owner;
+		navControls = controls.map(spec => ({
+			label: spec.label,
+			size: spec.size,
+			value: spec.value,
+			isChoice: !!spec.labels && spec.size > 1,
+			go: spec.go,
+		}));
+
+		const titleEl = navOverlay.querySelector('.dataset-title') as HTMLElement;
+		if (titleEl.textContent !== title) { titleEl.textContent = title; }
+		const rows = navOverlay.querySelector('.dataset-axis-controls') as HTMLElement;
+
+		const signature = navSignature(controls);
+		if (rows.dataset.signature !== signature) {
+			const focusedKey = (document.activeElement instanceof HTMLElement)
+				? document.activeElement.closest('[data-nav-key]')?.getAttribute('data-nav-key') || ''
 				: '';
-			controls.replaceChildren(...selectors.map((selector: any, index: number) => {
-				const size = Math.max(1, Number(selector.size));
-				const row = document.createElement('label'); row.className = 'dataset-axis';
-				row.dataset.axis = selector.name;
-				const label = document.createElement('span'); label.className = 'dataset-axis-label'; label.textContent = selector.name;
-				const input = document.createElement('input');
-				input.type = 'range'; input.min = '0'; input.max = String(size - 1); input.step = '1';
-				input.dataset.defaultValue = '0';
-				input.title = `${selector.name} · Double-click to reset`;
-				const value = document.createElement('span'); value.className = 'dataset-axis-value';
-				// Reserve the width of the largest reading ("29 / 29") so stepping the
-				// slider never reflows the row.
-				value.style.minWidth = `${String(size).length * 2 + 3}ch`;
-				// The shortcut for THIS row, at the end of it. Previously all the
-				// hints were collected into one centered line underneath, which
-				// separated a key from the slider it drives.
-				const hint = document.createElement('span');
-				hint.className = 'dataset-axis-hint';
-				hint.textContent = PLANE_AXIS_KEY_HINTS[index] || '';
-				hint.title = hint.textContent ? `Step ${selector.name} with ${hint.textContent}` : '';
-				// Update live while dragging rather than only on release.
-				input.addEventListener('input', () => {
-					const index = Number(input.value);
-					value.textContent = `${index + 1} / ${size}`;
-					if (selector.name === 'C') { showChannel(index); }
-					cziSelection.indices = { ...cziSelection.indices, [selector.name]: index };
-					requestCziPlane();
-				});
-				row.append(label, input, value, hint); return row;
-			}));
-			cziRenderedAxes = axisSignature;
-			if (focusedAxis) {
-				const restored = controls
-					.querySelector(`.dataset-axis[data-axis="${focusedAxis}"] input`) as HTMLInputElement | null;
+			rows.replaceChildren(...controls.map(spec => buildNavRow(spec)));
+			rows.dataset.signature = signature;
+			if (focusedKey) {
+				const restored = rows.querySelector(
+					`[data-nav-key="${CSS.escape(focusedKey)}"] input, [data-nav-key="${CSS.escape(focusedKey)}"] select`,
+				) as HTMLElement | null;
 				restored?.focus();
 			}
 		}
 
-		selectors.forEach((selector: any, index: number) => {
-			const row = controls.children[index] as HTMLElement | undefined;
+		controls.forEach((spec, index) => {
+			const row = rows.children[index] as HTMLElement | undefined;
 			if (!row) { return; }
-			const size = Math.max(1, Number(selector.size));
-			// `selector.value` describes the plane that just FINISHED decoding,
-			// which is not where the user is. Dragging from 1 to 5 starts a load
-			// for an intermediate plane; when it settled, writing its coordinate
-			// back visibly threw the slider backwards and stranded the trailing
-			// request. The user's own selection is the authority for the handle
-			// position; the decoded value is only a fallback for axes they have
-			// not touched.
-			const intended = cziSelection.indices[selector.name];
-			const target = Number.isFinite(intended) ? Number(intended) : Number(selector.value) || 0;
-			const current = Math.min(size - 1, Math.max(0, target));
-			const input = row.querySelector('input') as HTMLInputElement;
-			const value = row.querySelector('.dataset-axis-value') as HTMLElement;
-			// Never fight the slider the user is holding.
-			if (document.activeElement !== input) { input.value = String(current); }
-			value.textContent = `${Number(input.value) + 1} / ${size}`;
+			// Point the row's listeners at the CURRENT spec.
+			navRowSpecs.set(row, spec);
+			const current = Math.min(Math.max(0, spec.value), Math.max(0, spec.size - 1));
+			const select = row.querySelector('select') as HTMLSelectElement | null;
+			if (select) {
+				// Never write into the control the user is operating.
+				if (document.activeElement !== select) { select.value = String(current); }
+				return;
+			}
+			const input = row.querySelector('input') as HTMLInputElement | null;
+			const value = row.querySelector('.dataset-axis-value') as HTMLElement | null;
+			if (!input || !value) { return; }
+			const held = navControlHeld && document.activeElement === input;
+			if (!held && document.activeElement !== input) { input.value = String(current); }
+			// Nothing trails the reading. A name whose length changes with the
+			// value re-sizes this cell and drags the slider with it, which is
+			// why names belong in the control that carries them (a dropdown) or
+			// in the title — never after the slider.
+			value.textContent = `${Number(input.value) + 1} / ${spec.size}`;
 		});
 
-		const channelSelector = selectors.find((selector: any) => selector.name === 'C');
-		const channelRow = channelSelector ? controls.querySelector('.dataset-axis[data-axis="C"] input') as HTMLInputElement | null : null;
-		showChannel(channelRow ? Number(channelRow.value) : 0);
-
-		controls.style.display = selectors.length ? 'flex' : 'none';
-		// The hints now live on their own rows; the shared line is gone.
-		const hints = cziOverlay.querySelector('.czi-key-hints') as HTMLElement | null;
-		if (hints) { hints.style.display = 'none'; }
-		// The pixel type ("uint16", "Gray8") used to occupy a whole row here. It
-		// never changes while stepping planes and is available in the image
-		// details, so it only cost vertical space over the image.
-		const info = cziOverlay.querySelector('.czi-view-info') as HTMLElement | null;
-		if (info) { info.style.display = 'none'; }
-		cziOverlay.classList.toggle('dataset-overlay--loading', loading);
-		cziOverlay.style.display = 'flex';
-		if (datasetOverlay) { datasetOverlay.style.display = 'none'; }
-		if (tiffPageOverlay) { tiffPageOverlay.style.display = 'none'; }
-		if (netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
+		paintNavHints(Array.from(rows.children) as HTMLElement[]);
+		navOverlay.classList.toggle('dataset-overlay--loading', loading);
+		navOverlay.style.display = 'flex';
 	}
 
+	/**
+	 * The live spec for a row.
+	 *
+	 * Rows outlive the specs that created them (they are reused so a drag is not
+	 * destroyed mid-gesture), so a listener must never close over the spec it
+	 * was built with — after one render that spec is stale, which is exactly why
+	 * a slider would move a single step and then stop responding. The current
+	 * spec is stored on the element and read at event time.
+	 */
+	const navRowSpecs = new WeakMap<HTMLElement, NavControlSpec>();
 
+	function buildNavRow(spec: NavControlSpec): HTMLElement {
+		const isChoice = !!spec.labels && spec.size > 1;
+		const row = document.createElement('label');
+		row.className = isChoice ? 'dataset-series-row' : 'dataset-axis';
+		row.dataset.navKey = spec.key;
+		// `data-axis` is retained: existing styling and tests key off it.
+		row.dataset.axis = spec.label;
 
+		const label = document.createElement('span');
+		label.className = 'dataset-axis-label';
+		label.textContent = spec.label;
+		const hint = document.createElement('span');
+		hint.className = 'dataset-axis-hint';
+
+		if (isChoice) {
+			const select = document.createElement('select');
+			select.tabIndex = -1;
+			select.className = 'dataset-series';
+			// A long list (hundreds of ND2 stage positions) is not ideal in a
+			// dropdown, but it must still WORK: options are plain and cheap, and
+			// the browser scrolls them.
+			select.replaceChildren(...spec.labels!.map((text, index) => {
+				const option = document.createElement('option');
+				option.value = String(index);
+				option.text = text || `${spec.label} ${index + 1}`;
+				return option;
+			}));
+			select.addEventListener('change', () => {
+				navRowSpecs.get(row)?.go(Number(select.value));
+			});
+			row.append(label, select, hint);
+			navRowSpecs.set(row, spec);
+			return row;
+		}
+
+		const input = document.createElement('input');
+		// Out of the Tab order, like the navigation buttons it replaces: Tab
+		// should not walk through a dozen plane sliders, and a focused slider
+		// must not swallow the arrow keys that drive navigation.
+		input.tabIndex = -1;
+		input.type = 'range';
+		input.min = '0';
+		input.max = String(Math.max(0, spec.size - 1));
+		input.step = '1';
+		input.dataset.defaultValue = '0';
+		input.title = `${spec.label} · Double-click to reset`;
+		const value = document.createElement('span');
+		value.className = 'dataset-axis-value';
+		// Reserve the widest reading so stepping never reflows the row.
+		value.style.minWidth = `${String(spec.size).length * 2 + 3}ch`;
+		input.addEventListener('input', () => {
+			navRowSpecs.get(row)?.go(Number(input.value));
+		});
+		// A held control must not be written to by a re-render that its own
+		// movement triggered; `activeElement` alone is not reliable for this.
+		input.addEventListener('pointerdown', () => { navControlHeld = true; });
+		row.append(label, input, value, hint);
+		navRowSpecs.set(row, spec);
+		return row;
+	}
+
+	/** Release the overlay without hiding it, so it survives the next decode. */
+	function releaseNavOverlay() {
+		navOwner = null;
+	}
+
+	function hideNavOverlay(owner?: NavOwner) {
+		// A format that is not showing must not blank another format's overlay.
+		if (owner && navOwner && navOwner !== owner) { return; }
+		navOwner = null;
+		navControls = [];
+		if (navOverlay) { navOverlay.style.display = 'none'; }
+	}
+
+	function updatePlaneOverlay(metadata: Record<string, any>, loading = false) {
+		// The title is just the format. The channel name used to be appended
+		// here because there was nowhere better to put it; now a named channel
+		// IS a dropdown showing that name, so repeating it in the title would
+		// say the same thing twice.
+		renderNavOverlay({
+			owner: 'plane',
+			title: planeNavProcessor?.config.formatLabel || 'Image',
+			controls: planeControlsFromSelectors(metadata),
+			loading,
+		});
+	}
 	/**
 	 * Keyboard shortcuts are assigned by SLIDER POSITION, not by axis name.
 	 *
@@ -5982,25 +6301,20 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	 * Sliders past the fourth are mouse-only; there are no obvious further key
 	 * pairs, and inventing obscure ones would be worse than leaving them out.
 	 */
-	const PLANE_AXIS_KEY_HINTS = ['[ ]', '← →', '< >', '{ }'];
 
-	/** The axis a given shortcut pair drives, or undefined if there is no such slider. */
-	function planeAxisAt(index: number): { name: string, size: number, value: number } | undefined {
-		return cziSelectors[index];
-	}
 
 	/** Step a CZI plane axis, wrapping like DICOM dataset navigation does. */
-	function navigateCziAxis(axis: { name: string, size: number, value: number } | undefined, delta: number) {
+	function navigatePlaneAxis(axis: { name: string, size: number, value: number } | undefined, delta: number) {
 		if (!axis || axis.size <= 1) { return; }
-		const current = Number(cziSelection.indices[axis.name] ?? axis.value) || 0;
+		const current = Number(planeSelection.indices[axis.name] ?? axis.value) || 0;
 		const next = (current + delta + axis.size) % axis.size;
-		cziSelection.indices = { ...cziSelection.indices, [axis.name]: next };
+		planeSelection.indices = { ...planeSelection.indices, [axis.name]: next };
 		axis.value = next;
-		requestCziPlane();
+		requestPlaneReload();
 	}
 
 	/**
-	 * Request the plane in `cziSelection`, coalescing while one is in flight.
+	 * Request the plane in `planeSelection`, coalescing while one is in flight.
 	 *
 	 * Dragging a slider emits far more events than a decode-and-render cycle can
 	 * absorb. Rather than debouncing on a timer — which makes the image lag the
@@ -6008,26 +6322,26 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	 * position is kept as the trailing request, so the image tracks the slider as
 	 * fast as the machine allows and always lands on the released value.
 	 */
-	function requestCziPlane() {
-		if (cziLoadInFlight) { cziLoadPending = true; return; }
-		cziLoadInFlight = true;
-		reloadCziSelection();
+	function requestPlaneReload() {
+		if (planeLoadInFlight) { planeLoadPending = true; return; }
+		planeLoadInFlight = true;
+		reloadPlaneSelection();
 	}
 
 	/** Called when a CZI load settles, to run whatever the user asked for since. */
-	function onCziLoadSettled() {
-		cziLoadInFlight = false;
-		if (!cziLoadPending) { return; }
-		cziLoadPending = false;
-		requestCziPlane();
+	function onPlaneLoadSettled() {
+		planeLoadInFlight = false;
+		if (!planeLoadPending) { return; }
+		planeLoadPending = false;
+		requestPlaneReload();
 	}
 
-	function reloadCziSelection() {
+	function reloadPlaneSelection() {
 		const src = settingsManager.settings.src || '';
 		const resourceUri = settingsManager.settings.resourceUri || '';
-		if (!src || !resourceUri) { cziLoadInFlight = false; return; }
-		cziOverlay?.classList.add('dataset-overlay--loading');
-		switchToNewImage(src, resourceUri, { cziOptions: { indices: { ...cziSelection.indices } }, planeChange: true });
+		if (!src || !resourceUri) { planeLoadInFlight = false; return; }
+		navOverlay?.classList.add('dataset-overlay--loading');
+		switchToNewImage(src, resourceUri, { planeOptions: { indices: { ...planeSelection.indices } }, planeChange: true });
 	}
 
 
@@ -6035,86 +6349,25 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		const src = settingsManager.settings.src || '';
 		const resourceUri = settingsManager.settings.resourceUri || '';
 		if (!src || !resourceUri) { return; }
-		netcdfOverlay?.classList.add('dataset-overlay--loading');
+		navOverlay?.classList.add('dataset-overlay--loading');
 		switchToNewImage(src, resourceUri, { netcdfOptions: { ...netcdfSelection, indices: { ...netcdfSelection.indices } } });
 	}
 
 	function updateNetCdfOverlay(metadata: Record<string, any>, loading = false) {
-		if (!netcdfOverlay || !Array.isArray(metadata.variables)) { return; }
-		const select = netcdfOverlay.querySelector('.netcdf-variable') as HTMLSelectElement;
-		if (select.options.length !== metadata.variables.length || Array.from(select.options).some((option, index) => option.value !== metadata.variables[index].name)) {
-			select.replaceChildren(...metadata.variables.map((variable: any) => {
-				const option = document.createElement('option');
-				option.value = variable.name;
-				option.text = `${variable.label}${variable.unit ? ` · ${variable.unit}` : ''}`;
-				return option;
-			}));
-		}
-		select.value = String(metadata.variable || '');
-		const controls = netcdfOverlay.querySelector('.netcdf-dimension-controls') as HTMLElement;
-		const selectors = Array.isArray(metadata.selectors) ? metadata.selectors : [];
-		controls.replaceChildren(...selectors.map((selector: any) => {
-			const row = document.createElement('label'); row.className = 'dataset-axis';
-			const label = document.createElement('span'); label.className = 'dataset-axis-label'; label.textContent = selector.name;
-			const input = document.createElement('input'); input.type = 'range'; input.min = '0'; input.max = String(Math.max(0, Number(selector.size) - 1)); input.step = '1'; input.dataset.defaultValue = '0'; input.value = String(selector.value || 0); input.title = `${selector.name} · Double-click to reset`;
-			const value = document.createElement('span'); value.className = 'dataset-axis-value'; value.textContent = `${Number(selector.value || 0) + 1} / ${selector.size}`;
-			input.addEventListener('input', () => { value.textContent = `${Number(input.value) + 1} / ${selector.size}`; });
-			input.addEventListener('change', () => {
-				netcdfSelection.indices = { ...netcdfSelection.indices, [selector.name]: Number(input.value) };
-				reloadNetCdfSelection();
-			});
-			row.append(label, input, value); return row;
-		}));
-		controls.style.display = selectors.some((selector: any) => Number(selector.size) > 1) ? 'flex' : 'none';
-		const info = netcdfOverlay.querySelector('.netcdf-view-info') as HTMLElement;
-		info.textContent = metadata.viewMode === 'mpas-mesh'
-			? `MPAS ${metadata.meshLocation || 'mesh'} · ${metadata.projection || 'projected'}`
-			: 'Regular raster';
-		netcdfOverlay.classList.toggle('dataset-overlay--loading', loading);
-		netcdfOverlay.style.display = 'flex';
-		if (datasetOverlay) { datasetOverlay.style.display = 'none'; }
-		if (tiffPageOverlay) { tiffPageOverlay.style.display = 'none'; }
+		renderNavOverlay({ owner: 'netcdf', title: 'NetCDF', controls: netcdfControls(metadata), loading });
 	}
-
 	function updateTiffPageOverlay(loading = false) {
-		if (!tiffPageOverlay) { return; }
-		if (datasetManifest) {
-			tiffPageOverlay.style.display = 'none';
-			return;
-		}
-		if (tiffProcessor.pageCount <= 1) {
-			tiffPageOverlay.style.display = 'none';
-			return;
-		}
-		const counter = tiffPageOverlay.querySelector('.tiff-page-counter');
+		// A dataset manifest (a DICOM study) owns the overlay when present.
+		// A DICOM study owns the overlay when present; never speak for it.
+		if (datasetManifest) { return; }
 		const ome = tiffProcessor.omeMetadata;
-		const basic = tiffPageOverlay.querySelector('.tiff-page-basic') as HTMLElement | null;
-		const axes = tiffPageOverlay.querySelector('.ome-axis-controls') as HTMLElement | null;
-		if (counter) { counter.textContent = `${ome ? 'IFD' : 'Page'} ${tiffProcessor.pageIndex + 1} / ${tiffProcessor.pageCount}`; }
-		if (basic) { basic.classList.toggle('tiff-page-basic--ome', !!ome); }
-		if (axes) { axes.style.display = ome ? 'flex' : 'none'; }
-		if (ome) {
-			const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
-			const values: Record<OmeAxis, number> = { C: coordinates.c, Z: coordinates.z, T: coordinates.t };
-			const sizes: Record<OmeAxis, number> = { C: ome.planeSizeC, Z: ome.sizeZ, T: ome.sizeT };
-			for (const axis of ['C', 'Z', 'T'] as OmeAxis[]) {
-				const row = tiffPageOverlay.querySelector(`.ome-axis-${axis.toLowerCase()}`) as HTMLElement | null;
-				const input = row?.querySelector('input') as HTMLInputElement | null;
-				const label = row?.querySelector('.ome-axis-value') as HTMLElement | null;
-				if (!row || !input || !label) { continue; }
-				const size = sizes[axis];
-				row.style.display = size > 1 || axis === 'C' && ome.channels.length > 0 ? 'grid' : 'none';
-				input.min = '0'; input.max = String(Math.max(0, size - 1)); input.step = '1'; input.value = String(values[axis]);
-				const channel = axis === 'C' ? ome.channels[values.C] : undefined;
-				label.textContent = `${values[axis] + 1} / ${size}${channel ? ` · ${channel.name}` : ''}`;
-				if (channel?.colorCss) { row.style.setProperty('--ome-channel-color', channel.colorCss.slice(0, 7)); }
-				else { row.style.removeProperty('--ome-channel-color'); }
-			}
-		}
-		tiffPageOverlay.classList.toggle('tiff-page-overlay--loading', loading);
-		tiffPageOverlay.style.display = 'flex';
+		renderNavOverlay({
+			owner: 'tiff',
+			title: ome ? 'OME-TIFF' : 'TIFF',
+			controls: tiffControls(),
+			loading,
+		});
 	}
-
 	async function navigateTiffPage(delta: number): Promise<void> {
 		const total = tiffProcessor.pageCount;
 		if (total <= 1) { return; }
@@ -6465,7 +6718,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
-	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, cziOptions?: Record<string, any>, planeChange?: boolean } = {}) {
+	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange?: boolean } = {}) {
 		// Every switch gets a new generation so any in-flight load from a
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
@@ -6505,7 +6758,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		// refetched and the WASM module re-instantiated for every notch of the
 		// slider — the dominant cost of stepping through a stack, far larger
 		// than the decode itself. Plane requests are already coalesced by
-		// `requestCziPlane()` (one in flight, newest kept as trailing), and a
+		// `requestPlaneReload()` (one in flight, newest kept as trailing), and a
 		// superseded load still bails out on the generation check, so there is
 		// nothing here that needs the worker destroyed.
 		if (!planeChange) {
@@ -6520,6 +6773,9 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
 		if (!planeChange) {
+			// Let the incoming image claim (or clear) the navigation controls,
+			// while they stay on screen until it does.
+			releaseNavOverlay();
 			tiffProcessor.pageIndex = Math.max(0, Number(options.pageIndex || 0));
 			tiffProcessor.pageCount = 1;
 			updateTiffPageOverlay();
@@ -6580,13 +6836,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		// image is ready to be shown.
 
 		// Load the new image based on file type
-		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex, options.netcdfOptions, options.cziOptions, planeChange);
+		loadImageByType(uri, resourceUri, gen, options.formatHint, options.pageIndex, options.frameIndex, options.netcdfOptions, options.planeOptions, planeChange);
 	}
 
 	/**
 	 * Load image by type (wrapper function)
 	 */
-	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, cziOptions?: Record<string, any>, planeChange = false) {
+	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange = false) {
 		// Wait until the browser has painted the loading UI (counter, filename
 		// badge, loading dot) before starting synchronous decode work, so every
 		// switch gives immediate visual feedback. This also lets a burst of
@@ -6602,15 +6858,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		PerfTrace.mark('paint-yield');
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
-		if (!lower.endsWith('.nc') && !lower.endsWith('.cdf') && netcdfOverlay) { netcdfOverlay.style.display = 'none'; }
-		// Every plane-navigable format shares this overlay, so the reset has to
-		// recognise all of them; matching only `.czi` hid the ND2/LIF sliders
-		// and dropped their keyboard navigation on each load.
-		const planeNavKind = resolveFormat(resourceUri, formatHint)?.kind;
-		if (!(planeNavKind === 'czi' || planeNavKind === 'nd2' || planeNavKind === 'lif')) {
-			cziSelectors = []; cziRenderedAxes = '';
-			if (cziOverlay) { cziOverlay.style.display = 'none'; }
-		}
+
 		// The cache is keyed by URI/page/frame and knows nothing about plane
 		// coordinates, so on a plane step it would hand back the plane we are
 		// trying to move away from.
@@ -6620,6 +6868,18 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		// One lookup instead of an ordered if/else chain, so no branch can
 		// silently shadow another and the routing is inspectable in one table.
 		const format = resolveFormat(resourceUri, formatHint);
+
+		// Keep the current overlay on screen while the next image decodes, the
+		// same way the outgoing FRAME is kept until its replacement is ready.
+		// Hiding it up front blanked the controls for the whole decode — which
+		// is what made them "disappear when switching" — and for a format whose
+		// overlay is driven by a host message (a DICOM manifest) they could stay
+		// gone entirely. Only a format that can never navigate clears it, and it
+		// is cleared as soon as the format is known rather than on every load.
+		const NAVIGABLE_KINDS = ['tiff', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'];
+		if (!format || !NAVIGABLE_KINDS.includes(format.kind)) {
+			hideNavOverlay();
+		}
 		const localBinaryPgm = format?.kind === 'netpbm' && lower.endsWith('.pgm');
 		const fastRawFormat = format?.kind === 'pfm' ||
 			(format?.kind === 'netpbm' && lower.endsWith('.ppm')) ||
@@ -6666,11 +6926,11 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		} else if (format?.kind === 'netcdf') {
 			handleScientificArray(netcdfProcessor, uri, gen, netcdfOptions || netcdfSelection);
 		} else if (format?.kind === 'czi') {
-			handleScientificArray(cziProcessor, uri, gen, cziOptions || cziSelection);
+			handleScientificArray(cziProcessor, uri, gen, planeOptions || planeSelection);
 		} else if (format?.kind === 'nd2') {
-			handleScientificArray(nd2Processor, uri, gen, cziOptions || cziSelection);
+			handleScientificArray(nd2Processor, uri, gen, planeOptions || planeSelection);
 		} else if (format?.kind === 'lif') {
-			handleScientificArray(lifProcessor, uri, gen, cziOptions || cziSelection);
+			handleScientificArray(lifProcessor, uri, gen, planeOptions || planeSelection);
 		} else {
 			// Fallback to regular image loading
 			const newImage = document.createElement('img');

@@ -22,7 +22,12 @@
       {
         "name": "C",
         "size": 3,
-        "value": 0
+        "value": 0,
+        "labels": [
+          "Alexa Fluor 594",
+          "Alexa Fluor 488",
+          "DAPI"
+        ]
       },
       {
         "name": "Z",

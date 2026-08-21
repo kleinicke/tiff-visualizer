@@ -205,13 +205,18 @@ function coordinatesForLinearIndex(metadata: Pick<OmeMetadata, 'dimensionOrder' 
 	return coordinates;
 }
 
-function channelIndexForFirstC(channels: OmeChannel[], firstC: number): number {
+function channelIndexForFirstC(channels: OmeChannel[], firstC: number, planeSizeC: number): number {
 	let sampleOffset = 0;
 	for (let index = 0; index < channels.length; index++) {
 		if (firstC === sampleOffset || firstC === index) { return index; }
 		sampleOffset += Math.max(1, channels[index].samplesPerPixel);
 	}
-	return Math.max(0, Math.min(channels.length - 1, firstC));
+	// `Channel` elements are OPTIONAL. Clamping to `channels.length - 1` gave
+	// -1 for a file that declares none, so every FirstC collapsed to 0 and all
+	// of a 3-channel image's IFDs claimed the same coordinate. Without channel
+	// descriptions, FirstC already IS the plane index.
+	const upper = Math.max(channels.length, planeSizeC) - 1;
+	return Math.max(0, Math.min(upper, firstC));
 }
 
 /** Convert the OME signed 32-bit RGBA integer to a CSS #RRGGBBAA color. */
@@ -313,7 +318,7 @@ function parseOmeImage(source: string, ome: Attributes, image: Attributes, image
 		const uuid = uuidElement?.attributes || {};
 		return {
 			ifd: nonNegativeInt(attrs.IFD, 0),
-			firstC: channelIndexForFirstC(channels, nonNegativeInt(attrs.FirstC, 0)),
+			firstC: channelIndexForFirstC(channels, nonNegativeInt(attrs.FirstC, 0), metadata.planeSizeC),
 			firstZ: nonNegativeInt(attrs.FirstZ, 0),
 			firstT: nonNegativeInt(attrs.FirstT, 0),
 			// Per the OME-TIFF specification, an attribute-free TiffData covers all
@@ -328,11 +333,28 @@ function parseOmeImage(source: string, ome: Attributes, image: Attributes, image
 		for (const mapping of metadata.tiffData) {
 			const firstCoordinates = { c: mapping.firstC, z: mapping.firstZ, t: mapping.firstT };
 			const firstLinear = linearIndex(metadata, firstCoordinates);
+			// A TiffData carrying a FileName describes a plane in ANOTHER file,
+			// and its IFD index is relative to that file. Letting those entries
+			// into the local maps meant the last external entry claimed local
+			// IFD 0: a 4D fileset reported its first page as C1/T42, so the Z
+			// slider computed pages that did not exist and appeared to do
+			// nothing, and a 2-channel fileset mapped both channels onto the one
+			// page it actually contains. `coordinateToPlane` still records every
+			// entry — that is the map the multi-file dataset path needs.
+			// A fileset's TiffData reference every plane by UUID, INCLUDING the
+			// planes in this very file. Treating a self-reference as external
+			// emptied the local map, so a file that does contain its own pages
+			// had to fall back to a positional guess. A reference is local when
+			// it names no file, or when the UUID it names is this document's.
+			const isLocal = !mapping.fileName
+				|| (!!metadata.uuid && mapping.uuid === metadata.uuid);
 			for (let offset = 0; offset < mapping.planeCount; offset++) {
 				const coordinates = coordinatesForLinearIndex(metadata, firstLinear + offset);
 				const ifd = mapping.ifd + offset;
-				metadata.coordinateToIfd[coordinateKey(coordinates)] = ifd;
-				metadata.ifdToCoordinate[String(ifd)] = coordinates;
+				if (isLocal) {
+					metadata.coordinateToIfd[coordinateKey(coordinates)] = ifd;
+					metadata.ifdToCoordinate[String(ifd)] = coordinates;
+				}
 				metadata.coordinateToPlane[coordinateKey(coordinates)] = { ...coordinates, ifd, fileName: mapping.fileName, uuid: mapping.uuid };
 			}
 		}

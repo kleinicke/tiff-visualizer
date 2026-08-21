@@ -215,20 +215,106 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 		'collection arrow controls must not enter the keyboard tab order');
 	assert.match(webviewSource, /imageCollection\.totalImages > 1 \|\| tiffProcessor\.pageCount > 1[\s\S]*?navigateTiffPage\(isRightArrow \? 1 : -1\)/,
 		'physical arrow keys must navigate multi-page and OME-TIFF planes instead of panning');
-	assert.match(webviewSource, /tiff-page-prev[^>]*tabindex="-1"[\s\S]*tiff-page-next[^>]*tabindex="-1"/,
-		'TIFF page arrow controls must not enter the keyboard tab order');
-	assert.match(webviewSource, /bindTiffPageButton\('\.tiff-page-prev', -1\)[\s\S]*bindTiffPageButton\('\.tiff-page-next', 1\)/,
-		'TIFF page buttons must use isolated mouse navigation handlers');
-	assert.match(webviewSource, /function navigateDatasetPrimary[\s\S]*series\.planes\.findIndex[\s\S]*series\.planes\[targetIndex\]\.coordinates/,
-		'dataset arrows must advance through complete plane coordinates rather than changing only one C, Z, or T axis');
+	// Multi-page TIFF and OME-TIFF no longer have their own buttons: they are
+	// ordinary controls in the one shared navigation overlay. The invariants
+	// those buttons carried still apply to every control in it — stay out of
+	// the Tab order, and never let a press reach the canvas zoom handlers.
+	assert.match(webviewSource, /function buildNavRow[\s\S]*?input\.tabIndex = -1;/,
+		'navigation sliders must not enter the keyboard tab order');
+	assert.match(webviewSource, /function buildNavRow[\s\S]*?select\.tabIndex = -1;/,
+		'navigation dropdowns must not enter the keyboard tab order');
+	assert.match(webviewSource, /overlay\.addEventListener\('pointerdown'[\s\S]*?event\.stopPropagation\(\);/,
+		'overlay presses must not bubble into canvas click/zoom handling');
+	assert.match(webviewSource, /function tiffControls[\s\S]*?name: 'Page'/,
+		'multi-page TIFF must contribute to the shared navigation model');
+	// A DICOM series is often sparse, so navigation must never name a plane the
+	// series does not contain. This used to be enforced by walking the plane
+	// list from a dedicated arrow handler; the arrows are now an ordinary
+	// navigable control, and the same invariant is held by snapping the desired
+	// coordinate onto a real plane. Assert the mechanism, not the old function.
+	assert.match(webviewSource, /function snapToDatasetPlane[\s\S]*?for \(const plane of series\.planes\)[\s\S]*?return best \? \{ \.\.\.best \} : desired;/,
+		'dataset navigation must resolve a desired coordinate onto a plane that exists');
+	assert.match(webviewSource, /function datasetControls[\s\S]*?datasetCoordinates = snapToDatasetPlane\(/,
+		'stepping a dataset axis must go through the plane snap rather than setting a raw coordinate');
+
+	// --- Navigation-overlay regressions -----------------------------------
+	// Every assertion below is a bug that shipped at least once. They are cheap
+	// to keep and each one names the symptom, because the symptom is what a
+	// future refactor will reintroduce.
+
+	// The controls must survive a switch. Hiding them at the START of a load
+	// blanked them for the whole decode, and for a host-message-driven overlay
+	// (a DICOM manifest) they never came back.
+	assert.doesNotMatch(webviewSource, /const format = resolveFormat\(resourceUri, formatHint\);\s*\n\s*hideNavOverlay\(\);/,
+		'the navigation overlay must not be hidden before the incoming format is known');
+	assert.match(webviewSource, /NAVIGABLE_KINDS[\s\S]{0,200}?if \(!format \|\| !NAVIGABLE_KINDS\.includes\(format\.kind\)\) \{\s*\n\s*hideNavOverlay\(\);/,
+		'only a format that can never navigate may clear the overlay on load');
+	assert.match(webviewSource, /function switchToNewImage[\s\S]*?releaseNavOverlay\(\);/,
+		'a real switch must release overlay ownership without hiding it');
+	assert.match(webviewSource, /if \(navOwner === owner \|\| navOwner === null\) \{ hideNavOverlay\(owner\); \}/,
+		'an unclaimed overlay must be clearable by the incoming format');
+
+	// Rows are reused so a drag survives the reload it triggers; their
+	// listeners must therefore read the CURRENT spec, not the one they were
+	// built with, or a slider moves a single step and then appears stuck.
+	assert.match(webviewSource, /navRowSpecs\.get\(row\)\?\.go\(/,
+		'row listeners must dispatch through the live spec, not a build-time closure');
+	assert.match(webviewSource, /function renderNavOverlay[\s\S]*?navRowSpecs\.set\(row, spec\);/,
+		'each render must refresh the spec stored on a reused row');
+
+	// The container's zoom/pan handlers listen on mouse events, which are a
+	// separate stream from the pointer events used for dragging.
+	assert.match(webviewSource, /for \(const type of \['mousedown', 'click', 'dblclick', 'wheel'\][\s\S]{0,160}?stopPropagation\(\)/,
+		'overlay mouse events must not reach the canvas zoom handlers');
+
+	// `transform` shifts getBoundingClientRect but not `style.left`, so a
+	// centred overlay jumped half its width on grab.
+	assert.match(webviewSource, /const place = \(x: number, y: number\) => \{[\s\S]*?overlay\.style\.transform = 'none';/,
+		'dragging must neutralize the centring transform before writing left/top');
+
+	// A name whose length changes with the value re-sizes the reading cell and
+	// drags the slider with it. That was fixed once for CZI, lost in the
+	// overlay consolidation, and fixed again: names live in the control that
+	// carries them (a dropdown), never after a slider.
+	assert.doesNotMatch(webviewSource, /valueSuffix/,
+		'nothing may be appended after a slider reading');
+	assert.match(webviewSource, /value\.textContent = `\$\{Number\(input\.value\) \+ 1\} \/ \$\{spec\.size\}`;/,
+		'a slider reading must be exactly "n / total"');
+	// One rule for the widget, applied by every format: named values are a
+	// dropdown, unnamed values are a slider.
+	// ONE conversion, used by every source. A source supplies names or it does
+	// not; nothing downstream knows which format it came from.
+	assert.match(webviewSource, /function controlsFromSelectors[\s\S]*?labels: selector\.labels && selector\.labels\.length === selector\.size/,
+		'a single conversion must decide dropdown-vs-slider from the data alone');
+	assert.doesNotMatch(webviewSource, /function (planeControlsFromSelectors|datasetControls|netcdfControls|tiffControls)[\s\S]{0,900}?document\.createElement/,
+		'no control source may build DOM: widgets belong to the shared renderer');
+
+	// Clicking a plane DROPDOWN must not disable the shortcuts. A <select> was
+	// classed as "typing", so merely focusing one — without choosing anything —
+	// made the keydown handler bail and every navigation key stopped working.
+	assert.match(webviewSource, /const isEditableEventTarget[\s\S]*?if \(target\.closest\('\.nav-overlay'\)\) \{ return false; \}/,
+		'navigation controls must never count as text entry');
+	// A native dropdown opens its popup on pointerDOWN and keeps it only while
+	// focused, so blurring on pointerUP closed the list before it was usable.
+	assert.doesNotMatch(webviewSource, /addEventListener\('pointerup'[\s\S]{0,400}?HTMLSelectElement/,
+		'a dropdown must not be blurred on pointerup or its popup closes immediately');
+	assert.match(cssSource, /\.dataset-overlay select:focus[\s\S]{0,200}?outline: none;/,
+		'navigation controls must not show a focus ring');
+	assert.match(webviewSource, /window\.addEventListener\('keydown'[\s\S]*?\}, true\);/,
+		'the navigation keydown handler must run in capture, ahead of any focused control');
 
 	console.log('✅ collection switches retain the outgoing frame, persistent loading UI, and isolated navigation controls');
 }
 
 function testNetCdfControlsUseSeamlessReloads() {
 	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
-	assert.match(webviewSource, /function createNetCdfOverlay[\s\S]*netcdf-variable[\s\S]*netcdf-dimension-controls/,
-		'NetCDF must expose variable and non-spatial dimension controls');
+	// NetCDF builds its controls into the one shared navigation model rather
+	// than owning an overlay: the Variable dropdown first, then one control per
+	// non-spatial dimension.
+	assert.match(webviewSource, /function netcdfControls[\s\S]*?name: 'Variable'[\s\S]*?labels: names/,
+		'NetCDF must expose the variable choice as a named dropdown control');
+	assert.match(webviewSource, /function netcdfControls[\s\S]*?for \(const selector of readSelectors\(metadata\)\)/,
+		'NetCDF must expose one control per non-spatial dimension');
 	assert.match(webviewSource, /function reloadNetCdfSelection[\s\S]*switchToNewImage\(src, resourceUri, \{ netcdfOptions:/,
 		'NetCDF selection changes must use the seamless image replacement path');
 	assert.match(webviewSource, /handleScientificArray\(netcdfProcessor, uri, gen, netcdfOptions \|\| netcdfSelection\)/,

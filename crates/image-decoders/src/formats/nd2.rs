@@ -934,14 +934,22 @@ pub(crate) fn decode_nd2_impl(
 
     let channel_names = channel_names(&chunks, data, channels);
 
-    let mut selectors: Vec<(String, usize, usize)> = axes
+    // `labels` present => the options are NAMED and the viewer renders a
+    // choice; absent => a homogeneous axis and it renders a scrub. Every
+    // decoder answers this the same way, so the viewer needs no format rules.
+    let mut selectors: Vec<(String, usize, usize, Option<Vec<String>>)> = axes
         .iter()
         .zip(selected.iter())
         .filter(|(axis, _)| axis.size > 1)
-        .map(|(axis, value)| (axis.name.clone(), axis.size, *value))
+        .map(|(axis, value)| (axis.name.clone(), axis.size, *value, None))
         .collect();
     if channels > 1 && !is_rgb {
-        selectors.push(("C".to_string(), channels, requested_channel));
+        let labels = if channel_names.len() == channels {
+            Some(channel_names.clone())
+        } else {
+            None
+        };
+        selectors.push(("C".to_string(), channels, requested_channel, labels));
     }
 
     let mut fields: Vec<(String, JsonValue)> = Vec::new();
@@ -993,12 +1001,21 @@ pub(crate) fn decode_nd2_impl(
         JsonValue::Arr(
             selectors
                 .iter()
-                .map(|(name, size, value)| {
-                    JsonValue::Obj(vec![
+                .map(|(name, size, value, labels)| {
+                    let mut entry = vec![
                         ("name".to_string(), JsonValue::Str(name.clone())),
                         ("size".to_string(), JsonValue::Num(*size as f64)),
                         ("value".to_string(), JsonValue::Num(*value as f64)),
-                    ])
+                    ];
+                    if let Some(labels) = labels {
+                        entry.push((
+                            "labels".to_string(),
+                            JsonValue::Arr(
+                                labels.iter().map(|l| JsonValue::Str(l.clone())).collect(),
+                            ),
+                        ));
+                    }
+                    JsonValue::Obj(entry)
                 })
                 .collect(),
         ),
@@ -1008,7 +1025,7 @@ pub(crate) fn decode_nd2_impl(
         JsonValue::Obj(
             selectors
                 .iter()
-                .map(|(name, _, value)| (name.clone(), JsonValue::Num(*value as f64)))
+                .map(|(name, _, value, _)| (name.clone(), JsonValue::Num(*value as f64)))
                 .collect(),
         ),
     ));
@@ -1050,17 +1067,20 @@ fn channel_names(
                         .filter(|s| !s.is_empty())
                         .or_else(|| plane.get("sOpticalConfigName").and_then(Lv::as_str))
                         .filter(|s| !s.is_empty());
-                    names.push(match name {
-                        Some(text) => text.to_string(),
-                        None => format!("Channel {}", names.len() + 1),
-                    });
+                    match name {
+                        Some(text) => names.push(text.to_string()),
+                        // An unnamed plane makes the whole set unnamed: a
+                        // synthesized "Channel 2" is not a name.
+                        None => return Vec::new(),
+                    }
                 }
             }
         }
     }
     names.truncate(channels);
-    while names.len() < channels && !names.is_empty() {
-        names.push(format!("Channel {}", names.len() + 1));
+    // Partial naming is no naming: report all or nothing.
+    if names.len() != channels {
+        return Vec::new();
     }
     names
 }

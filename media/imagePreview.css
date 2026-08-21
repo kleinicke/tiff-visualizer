@@ -373,7 +373,9 @@ body img {
 }
 
 .dataset-series-row {
-	grid-template-columns: minmax(4em, auto) minmax(120px, 1fr);
+	/* label | dropdown | shortcut. The third column matches `.dataset-axis` so a
+	   dropdown row and a slider row line up in the same overlay. */
+	grid-template-columns: minmax(4em, auto) minmax(120px, 1fr) 2.1em;
 }
 
 .dataset-series {
@@ -441,6 +443,20 @@ body img {
 .dataset-overlay select,
 .dataset-overlay button {
 	cursor: default;
+}
+
+/* A navigation control must never LOOK focused. It still takes focus while it
+   is being operated — a native dropdown needs focus to keep its popup open —
+   but the ring implies keyboard ownership the control does not have: the
+   shortcuts are handled globally in capture and keep working regardless. */
+.dataset-overlay input:focus,
+.dataset-overlay input:focus-visible,
+.dataset-overlay select:focus,
+.dataset-overlay select:focus-visible,
+.dataset-overlay button:focus,
+.dataset-overlay button:focus-visible {
+	outline: none;
+	box-shadow: none;
 }
 
 .dataset-overlay input[type='range'] {
