@@ -1345,20 +1345,25 @@ export class MeasurePanel {
 		block.className = 'measure-cta';
 
 		const result = this.thresholdMask ? this.ensureParticles() : null;
+		const pending = !!this.thresholdMask && !result;
 		const count = result ? result.particles.length : 0;
 
 		const button = document.createElement('button');
 		button.className = 'measure-cta-button';
-		button.disabled = count === 0;
-		button.textContent = count === 0
-			? 'No objects to add'
-			: `Add ${count} object${count === 1 ? '' : 's'} as ROIs`;
+		button.disabled = pending || count === 0;
+		button.textContent = pending
+			? 'Analyzing objects…'
+			: count === 0
+				? 'No objects to add'
+				: `Add ${count} object${count === 1 ? '' : 's'} as ROIs`;
 		button.onclick = () => this.commitParticles();
 		block.appendChild(button);
 
 		const caption = document.createElement('div');
 		caption.className = 'measure-cta-caption';
-		caption.textContent = count === 0
+		caption.textContent = pending
+			? 'Applying the size, shape, edge, and splitting settings to the current mask.'
+			: count === 0
 			? (this.thresholdMask
 				? 'Every object was filtered out. Loosen the size or shape limits above.'
 				: 'Pick a threshold method above first.')
@@ -2104,7 +2109,7 @@ export class MeasurePanel {
 		const source = this.host.getSource();
 		if (!this.thresholdMask || !source) { return 'No threshold applied yet.'; }
 		const result = this.ensureParticles();
-		if (!result) { return 'No threshold applied yet.'; }
+		if (!result) { return 'Analyzing objects…'; }
 		const rejected = result.rejected;
 		const dropped = rejected.tooSmall + rejected.tooLarge + rejected.shape + rejected.edge;
 		const parts = [`${result.particles.length} objects`];
@@ -2153,11 +2158,20 @@ export class MeasurePanel {
 			const result = await this.runParticles();
 			if (token !== this.particleToken) { return; }
 			this.particleResult = result;
-			if (result) { this.refreshMaskOverlay(); }
+			// The count, CTA, and green accepted-object preview are one result and
+			// must update together. Refreshing only the canvas left the panel saying
+			// "No objects" even while accepted objects were visibly green.
+			if (result && this.isVisible()) { this.render(); }
 		} catch (error) {
 			console.warn('[MeasurePanel] Particle analysis failed:', error);
 		} finally {
 			this.particleAnalysisRunning = false;
+			// A filter can change while the worker/WASM pass is in flight. The old
+			// result is correctly discarded above; immediately service the newer
+			// request so the panel cannot remain stuck in its pending state.
+			if (token !== this.particleToken && this.thresholdMask && this.isVisible()) {
+				void this.startParticleAnalysis();
+			}
 		}
 	}
 

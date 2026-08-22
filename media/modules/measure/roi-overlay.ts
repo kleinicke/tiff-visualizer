@@ -864,7 +864,14 @@ export class RoiOverlay {
 		if (!(lengthOnScreen > 20) || lengthOnScreen > window.innerWidth * 0.6) { return; }
 
 		const x = Math.max(rect.left, 0) + 16;
-		const y = Math.min(rect.bottom, window.innerHeight) - 22;
+		// Browser hosts can reserve fixed chrome at the bottom of the viewport.
+		// The VS Code webview leaves this variable unset, so its placement stays
+		// unchanged, while the standalone site keeps the bar above its status bar.
+		const configuredInset = Number.parseFloat(getComputedStyle(document.documentElement)
+			.getPropertyValue('--measure-scale-bar-bottom-inset'));
+		const bottomInset = Number.isFinite(configuredInset) ? Math.max(0, configuredInset) : 0;
+		const visibleBottom = window.innerHeight - bottomInset;
+		const y = Math.min(rect.bottom, visibleBottom) - 22;
 
 		ctx.save();
 		ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';

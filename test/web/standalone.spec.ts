@@ -52,6 +52,10 @@ test('keeps display menus transient and lets explicit zoom sizing win', async ({
 
   await page.locator('#web-status-normalization').click();
   await expect(page.locator('#web-control-popover')).toBeVisible();
+  await page.locator('#web-status-normalization').click();
+  await expect(page.locator('#web-control-popover')).toBeHidden();
+  await page.locator('#web-status-normalization').click();
+  await expect(page.locator('#web-control-popover')).toBeVisible();
   await page.locator('#web-status-size').click();
   await expect(page.locator('#web-control-popover')).toBeHidden();
 
@@ -67,4 +71,27 @@ test('keeps display menus transient and lets explicit zoom sizing win', async ({
   }));
   expect(sizing.inlineWidth).toBe(`${sizing.intrinsicWidth * 2}px`);
   expect(sizing.maxHeight).toBe('none');
+});
+
+test('honours explicit zoom width for a CZI canvas', async ({ page }) => {
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/scientific/synthetic-stack.czi'));
+
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  await expect(canvas).toBeVisible({ timeout: 30_000 });
+  await page.locator('#web-status-zoom').click();
+  await page.locator('#web-control-popover select[name="scale"]').selectOption('5');
+  await page.locator('#web-control-popover button[type="submit"]').click();
+
+  const sizing = await canvas.evaluate(element => ({
+    intrinsicWidth: (element as HTMLCanvasElement).width,
+    inlineWidth: (element as HTMLElement).style.width,
+    renderedWidth: element.getBoundingClientRect().width,
+    flex: getComputedStyle(element).flex,
+  }));
+  expect(sizing.inlineWidth).toBe(`${sizing.intrinsicWidth * 5}px`);
+  expect(sizing.renderedWidth).toBe(sizing.intrinsicWidth * 5);
+  expect(sizing.flex).toMatch(/^0 0/);
 });

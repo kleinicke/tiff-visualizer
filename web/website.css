@@ -1,5 +1,8 @@
 :root {
   color-scheme: dark;
+  /* Consumed by the shared measurement overlay. The website owns this fixed
+     strip; the extension host leaves the variable unset and keeps inset 0. */
+  --measure-scale-bar-bottom-inset: 28px;
   --web-accent: #a7f36b;
   --web-accent-strong: #c4ff91;
   --web-bg: #111612;
@@ -332,6 +335,8 @@ body.web-app {
 
 .web-app.web-has-image > canvas:not(.scale-to-fit),
 .web-app.web-has-image > img:not(.scale-to-fit) {
+  flex: none;
+  max-width: none !important;
   max-height: none !important;
 }
 

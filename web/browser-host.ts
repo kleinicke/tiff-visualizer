@@ -48,6 +48,8 @@ let currentDataset: BrowserDatasetManifest | null = null;
 let currentDatasetSeries = 0;
 let currentDatasetCoordinates: Record<string, number> = {};
 let layersActive = false;
+type ControlPopoverKind = 'normalization' | 'gamma' | 'exposure' | 'zoom';
+let activeControlPopover: ControlPopoverKind | null = null;
 
 function baseSettings(): ViewerSettings {
   return {
@@ -171,13 +173,19 @@ function sendCurrentSettings(reason: string): void {
 function closeControlPopover(): void {
   const popover = document.getElementById('web-control-popover');
   if (popover) popover.hidden = true;
+  activeControlPopover = null;
 }
 
-function openControlPopover(kind: 'normalization' | 'gamma' | 'exposure' | 'zoom'): void {
+function openControlPopover(kind: ControlPopoverKind): void {
   const popover = document.getElementById('web-control-popover') as HTMLElement | null;
   const title = document.getElementById('web-control-title');
   const content = document.getElementById('web-control-content');
   if (!popover || !title || !content) return;
+  if (!popover.hidden && activeControlPopover === kind) {
+    closeControlPopover();
+    return;
+  }
+  activeControlPopover = kind;
   content.replaceChildren();
   const form = document.createElement('form');
   form.className = 'web-control-form';
