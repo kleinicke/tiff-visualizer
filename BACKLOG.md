@@ -1515,6 +1515,49 @@ combined codebase** — the renderers, panels, layer compositor and format
 processors are all web code. Any plan that implies rewriting those is not worth
 evaluating.
 
+### Product and web distribution decision (August 2026)
+
+The public web presence is a **portfolio of independently shipped products**, not
+one universal viewer and not a website loaded remotely by the extensions:
+
+- Create a new repository for the main `f-kleinicke.de` landing page. It shows
+  the current projects and links to each live application, marketplace listing,
+  source repository, results page, and—when available—desktop download.
+- Keep each substantial application on its own subdomain and deployment. The
+  existing extension-statistics site remains at `extensions.f-kleinicke.de`;
+  the point-cloud viewer, scientific-image viewer, and future barcode-scanning
+  results get separate subdomains. They may share branding and navigation, but
+  their build and release pipelines must not depend on one another.
+- The standalone scientific-image site is another **host of the same local
+  image engine** extracted below. The VS Code extension bundles that engine in
+  its VSIX; it must not embed or depend at runtime on the hosted site. This
+  preserves offline use, reproducible extension releases, CSP isolation, and
+  privacy for local scientific and medical data.
+- The point-cloud site continues to use `ply-visualizer/engine`, which already
+  serves both its standalone browser application and VS Code webview. Do not
+  revive the older separate `website-ply` implementation that drifted behind
+  the extension.
+- A future downloadable Tauri application combines the image and point-cloud
+  engines in one desktop product. The two VS Code extensions remain separate,
+  focused marketplace products.
+
+Both extension repositories now use **npm** and commit only `package-lock.json`.
+Do not introduce a cross-repository workspace: matching package managers do not
+require coupling their builds or releases.
+
+Suggested public shape (final subdomain names are a deployment concern):
+
+```text
+f-kleinicke.de                 portfolio / project landing page
+extensions.f-kleinicke.de      VS Code extension statistics
+<3d>.f-kleinicke.de            point-cloud and mesh live application
+<images>.f-kleinicke.de        scientific-image live application
+<barcode>.f-kleinicke.de       barcode-scanning results / demo
+```
+
+The landing page owns discovery; each linked application owns its actual UI,
+assets, tests, hosting, and release cadence.
+
 ### Do not merge the two extensions
 
 Stated here so the question stops being reopened. Against a merge: two
@@ -1558,6 +1601,18 @@ exist twice.
 
 ### Step 2 — host abstraction in the webview
 
+**Status (August 2026): first standalone browser host implemented.** The
+`web/` host supplies local file selection, drag-and-drop, collections,
+downloads, persisted state, themes, bottom-bar display controls, the existing
+right-click analysis tools, multi-frame DICOM navigation, and browser
+equivalents for the main viewer commands. Selecting all members together also
+supports embedded multi-file OME data. `npm run web:build` produces the
+independently deployable `web-dist/` application while continuing to bundle the
+same `media/` viewer sources used by VS Code. The remaining work is to replace
+the compatibility `acquireVsCodeApi` shim with the narrower `Host` interface
+below and add an explicit directory-permission flow for folder DICOM studies
+and referenced external OME metadata.
+
 **The number that matters: 153 `postMessage` call sites across 18 modules**,
 reaching down into the format processors themselves. The webview is not
 host-agnostic, and that is the entire cost of running this code anywhere other
@@ -1575,13 +1630,15 @@ than a VS Code webview.
   VS Code/Electron. This repository's Playwright suite currently pays the
   Electron cost on every run.
 - Secondary benefit: a standalone web build becomes a public demo, the same way
-  the point-cloud engine is.
+  the point-cloud engine is. Deploy it independently on the image viewer's
+  subdomain and link it from the portfolio landing page; do not couple its
+  deployment to the landing-page repository.
 
 **Difficulty: 3.** Mechanical but broad; do it incrementally, one module group
 at a time, with the VS Code host as the only implementation until the last
 call site is converted.
 
-### Step 3 — one Tauri desktop app (optional, and only after 1 and 2)
+### Step 3 — one downloadable Tauri desktop app (optional, and only after 1 and 2)
 
 If a desktop app happens, it should be **one** app covering both images and 3D,
 not two — the marketplace-discovery argument that keeps the extensions separate
@@ -1931,17 +1988,16 @@ sites is converted. Use it to get to a rendering window fast; still do the
 proper `Host` interface afterwards, because the shim leaves the format
 processors knowing about a VS Code-shaped protocol.
 
-**Package manager and bundler for the merged app: pnpm + Vite.** ply is already
-pnpm; Vite is Tauri's default and handles Svelte, WASM and web workers cleanly,
-which matters because this repository has four worker bundles. Leave esbuild in
-the VS Code extension package and webpack in ply's — there is no reason to
-touch two working extension builds to get a third target.
+**Package-manager decision: npm for both extension repositories.** The future
+Tauri repository can make its own choice when it is created; consuming two built
+engines does not require a cross-repository workspace. Vite remains the natural Tauri
+bundler because it handles Svelte, WASM and web workers cleanly, but leave
+esbuild in this extension and webpack in ply—there is no reason to touch two
+working extension builds to get a third target.
 
-One thing to decide before starting: whether the extension's `package.json`
-stays at the repository root (simplest for `vsce`, but then the root is both
-workspace root and extension manifest, which pnpm dislikes) or moves to
-`packages/vscode-tiff/`. Moving it is cleaner; `vsce package` runs from
-whichever directory holds the manifest.
+Keep this extension's `package.json` at the repository root for now. That is the
+least surprising layout for npm and `vsce`; moving it to `packages/vscode-tiff/`
+would add release churn without helping the first browser-host extraction.
 
 ### Step 3c — adopt Svelte for the panel UI
 

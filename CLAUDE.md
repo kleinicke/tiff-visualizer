@@ -35,6 +35,8 @@ npm install              # Install dependencies
 npm run compile          # Build using esbuild (creates 4 bundles: Node.js, Web, Webview, Decode Worker)
 npm run watch            # Watch mode for development
 npm run vscode:prepublish # Production build
+npm run web:build        # Build the standalone site into web-dist/
+npm run web:dev          # Build and serve the standalone site locally
 ```
 
 ### Testing & Quality
@@ -42,6 +44,7 @@ npm run vscode:prepublish # Production build
 npm run test             # Run all tests (behavior + visualization)
 npm run test:behavior    # Run behavioral tests (fast, no VS Code required)
 npm run test:visualization # Run visualization tests
+npm run test:web         # Playwright smoke tests against the standalone site
 npm run test:ui          # Run UI tests with Extension Tester
 npm run lint             # Run ESLint
 npm run pretest          # Compile and lint before testing
@@ -70,6 +73,11 @@ The extension uses five primary build targets:
 5. **Layer compositor worker bundle** (`media/layer-compositor-worker.ts` → `media/layerCompositorWorker.bundle.js`) - Retains raster assets off-thread, composes full-resolution editable layer stacks, produces scaled interaction previews, and reuses group/clipping/dirty-region caches. The synchronous CPU path remains the fallback and export correctness reference.
 
 This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).
+
+The standalone browser host is built from `web/` and deployed independently at
+`https://images.f-kleinicke.de`. Netlify uses the root `netlify.toml`; Node 24 is
+pinned in `.nvmrc`. The browser host must continue to process user files locally
+and must not upload image data to the deployment.
 
 ### Custom Editor Pattern
 Uses VS Code's `CustomReadonlyEditorProvider` API:

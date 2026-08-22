@@ -16,7 +16,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: 18
+        node-version-file: .nvmrc
         cache: 'npm'
     
     - name: Install dependencies
@@ -27,6 +27,9 @@ jobs:
     
     - name: Build extension
       run: npm run compile:quick
+
+    - name: Test standalone website
+      run: npm run test:web
 
     - name: Run Playwright tests
       run: npm run test:playwright
@@ -39,4 +42,4 @@ jobs:
         path: |
           playwright-report/
           test-results/
-        retention-days: 30 
+        retention-days: 30

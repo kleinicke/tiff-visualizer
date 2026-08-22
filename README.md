@@ -14,6 +14,21 @@ only a thin WebAssembly adapter around it, so decoder improvements are native-
 testable here and can later be consumed by other applications without copying
 the implementation.
 
+## Standalone website
+
+The browser version is available at **https://images.f-kleinicke.de**.
+
+`npm run web:dev` builds and serves the same viewer as a local browser
+application. Choose or drop one or more images; processing stays on the device.
+The compact bottom bar contains pixel values, dimensions, zoom, normalization,
+gamma, exposure, color-picker mode, file size, and Layers. Right-click the image
+for histogram, channels, measurement, metadata, colormaps, and export actions.
+
+A single multi-frame DICOM object exposes its Frame navigator in the browser.
+For multi-file OME-TIFF, select the metadata-bearing image and all referenced
+TIFF files together. Opening a folder as a grouped DICOM study still requires a
+future browser directory-permission flow.
+
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
 ## Supported Sample Types

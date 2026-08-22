@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" class="vscode-dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Open and inspect scientific, HDR, microscopy, medical, and standard image files locally in your browser.">
+  <meta name="theme-color" content="#111612">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://images.f-kleinicke.de/">
+  <meta property="og:title" content="Scientific Image Visualizer">
+  <meta property="og:description" content="Inspect every value locally across scientific, HDR, microscopy, medical, and standard image formats.">
+  <meta property="og:image" content="https://images.f-kleinicke.de/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Scientific Image Visualizer">
+  <meta name="twitter:description" content="Inspect every value. Locally.">
+  <meta name="twitter:image" content="https://images.f-kleinicke.de/og.png">
+  <title>Scientific Image Visualizer</title>
+  <link rel="canonical" href="https://images.f-kleinicke.de/">
+  <link rel="icon" href="./icon.png">
+  <link rel="stylesheet" href="./media/imagePreview.css">
+  <link rel="stylesheet" href="./website.css">
+  <meta
+    id="image-preview-settings"
+    data-settings='{"normalization":{"min":0,"max":1,"autoNormalize":true,"gammaMode":false},"gamma":{"in":2.2,"out":2.2},"brightness":{"offset":0},"rgbAs24BitGrayscale":false,"scale24BitFactor":1000,"normalizedFloatMode":false,"nanColor":"black","colorPickerShowModified":false,"showScaleBar":true,"gpuAcceleration":true,"plyVisualizerInstalled":false,"resourceUri":"welcome.png","src":"data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=","surfaceMode":"editor","extensionVersion":"web-1","vscodeVersion":"browser"}'
+  >
+</head>
+<body class="container image vscode-dark web-app">
+  <header class="web-toolbar" aria-label="Viewer toolbar">
+    <a class="web-brand" href="./" aria-label="Scientific Image Visualizer home">
+      <span class="web-brand-mark" aria-hidden="true">SI</span>
+      <span>
+        <strong>Scientific Image Visualizer</strong>
+        <small id="web-file-summary">Local browser viewer</small>
+      </span>
+    </a>
+    <nav class="web-actions" aria-label="Image tools">
+      <button type="button" data-web-action="open">Open files</button>
+      <button type="button" class="web-more-button" data-web-action="more" aria-expanded="false" aria-controls="web-more-menu">More</button>
+    </nav>
+    <div class="web-more-menu" id="web-more-menu" hidden>
+      <button type="button" data-web-command="tiffVisualizer.copyImage">Copy image</button>
+      <button type="button" data-web-command="tiffVisualizer.exportLayers">Export current view</button>
+      <button type="button" data-web-command="tiffVisualizer.toggleNanColor">Toggle NaN colour</button>
+      <button type="button" data-web-action="theme">Toggle light theme</button>
+      <a href="https://github.com/kleinicke/tiff-visualizer" target="_blank" rel="noreferrer">Source and documentation</a>
+    </div>
+  </header>
+
+  <main class="web-empty-state" id="web-empty-state">
+    <div class="web-empty-copy">
+      <p class="web-eyebrow">Private by design · files stay on this device</p>
+      <h1>See what ordinary image viewers leave behind.</h1>
+      <p class="web-lede">Inspect exact pixels, channels, metadata, histograms, layers, and measurements across scientific and high-dynamic-range image formats.</p>
+      <div class="web-empty-actions">
+        <button type="button" class="web-primary-action" data-web-action="open">Choose images</button>
+        <span>or drop files anywhere</span>
+      </div>
+      <p class="web-format-list">TIFF & OME-TIFF · FITS · DICOM · CZI · ND2 · LIF · NetCDF · EXR · NPY/NPZ · PNG · HDR · PFM · layered documents</p>
+    </div>
+    <aside class="web-capability-card" aria-label="Viewer capabilities">
+      <div><span>01</span><strong>Decode locally</strong><small>Rust and WebAssembly</small></div>
+      <div><span>02</span><strong>Render precisely</strong><small>WebGPU, WebGL2, or CPU</small></div>
+      <div><span>03</span><strong>Analyse directly</strong><small>Raw values, ROIs, and exports</small></div>
+    </aside>
+  </main>
+
+  <div class="web-drop-overlay" id="web-drop-overlay" aria-hidden="true">
+    <strong>Drop images to open</strong>
+    <span>Multiple files become a navigable collection</span>
+  </div>
+  <div class="web-toast-region" id="web-toast-region" aria-live="polite" aria-atomic="true"></div>
+  <nav class="web-legal-nav" aria-label="Legal and portfolio links">
+    <a href="https://f-kleinicke.de/">About</a>
+    <a href="https://f-kleinicke.de/impressum.html">Impressum</a>
+    <a href="https://f-kleinicke.de/datenschutz.html">Datenschutz</a>
+  </nav>
+  <footer class="web-status-bar" id="web-status-bar" aria-label="Image status and display controls">
+    <button type="button" id="web-status-layers" data-status-action="layers" title="Add images as layers">Layers</button>
+    <span class="web-status-separator" aria-hidden="true"></span>
+    <button type="button" id="web-status-exposure" data-status-action="exposure">Exposure: +0.0 EV</button>
+    <button type="button" id="web-status-gamma" data-status-action="gamma">γ: 2.2→2.2</button>
+    <button type="button" id="web-status-normalization" data-status-action="normalization">Auto-Norm</button>
+    <button type="button" id="web-status-color-picker" data-status-action="color-picker" title="Switch pixel inspection between original and displayed values">Values: Original</button>
+    <button type="button" id="web-status-zoom" data-status-action="zoom">Whole Image</button>
+    <span class="web-status-readout" id="web-status-size">—</span>
+    <span class="web-status-readout web-status-bytes" id="web-status-bytes">—</span>
+  </footer>
+  <div class="web-control-popover" id="web-control-popover" role="dialog" aria-modal="false" aria-labelledby="web-control-title" hidden>
+    <div class="web-control-heading">
+      <strong id="web-control-title">Display settings</strong>
+      <button type="button" data-web-action="close-control" aria-label="Close">Close</button>
+    </div>
+    <div id="web-control-content"></div>
+  </div>
+  <div class="loading-indicator" aria-label="Loading image"></div>
+  <div class="image-load-error"><p>The image could not be displayed.</p></div>
+  <input id="web-file-input" class="web-file-input" type="file" multiple>
+  <input id="web-import-input" class="web-file-input" type="file">
+
+  <script src="./media/geotiff.min.js"></script>
+  <script src="./browserHost.bundle.js"></script>
+  <script type="module" src="./media/imagePreview.bundle.js"></script>
+</body>
+</html>
