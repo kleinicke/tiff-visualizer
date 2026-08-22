@@ -8,27 +8,6 @@ are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity 
 
 The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit floating-point images. You can inspect exact pixel values, normalize image data to custom ranges, adjust gamma and brightness, compare images, and export rendered or layered results. Decoding runs in Rust compiled to WebAssembly and compositing runs on the GPU, so large scientific images open and respond at native speed.
 
-The reusable byte decoders live in the plain-Rust
-[`scientific-image-decoders`](crates/image-decoders) crate. The extension keeps
-only a thin WebAssembly adapter around it, so decoder improvements are native-
-testable here and can later be consumed by other applications without copying
-the implementation.
-
-## Standalone website
-
-The browser version is available at **https://images.f-kleinicke.de**.
-
-`npm run web:dev` builds and serves the same viewer as a local browser
-application. Choose or drop one or more images; processing stays on the device.
-The compact bottom bar contains pixel values, dimensions, zoom, normalization,
-gamma, exposure, color-picker mode, file size, and Layers. Right-click the image
-for histogram, channels, measurement, metadata, colormaps, and export actions.
-
-A single multi-frame DICOM object exposes its Frame navigator in the browser.
-For multi-file OME-TIFF, select the metadata-bearing image and all referenced
-TIFF files together. Opening a folder as a grouped DICOM study still requires a
-future browser directory-permission flow.
-
 ![tiff-visualizer](https://github.com/kleinicke/tiff-visualizer/releases/download/v1.0.0/TiffVisualizerVSCode.gif)
 
 ## Supported Sample Types
@@ -38,7 +17,7 @@ future browser directory-permission flow.
 | TIFF / OME-TIFF                              |   Yes |     Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation                                                                                                                                                                  |
 | EXR                                          |    No |      No |     Yes |     Yes | HDR floating-point format                                                                                                                                                                                                           |
 | NPY / NPZ                                    |   Yes |     Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit                                                                                                                                                                     |
-| FITS / DICOM / NetCDF / CZI / ND2 / LIF      |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes, and Zeiss/Nikon/Leica microscopy stacks                                                                                                                                                        |
+| FITS / DICOM / NetCDF / CZI / ND2 / LIF      |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes, and Zeiss/Nikon/Leica microscopy stacks                                                                                                                   |
 | HDR                                          |    No |      No |      No |     Yes | Radiance RGBE, decoded to float32                                                                                                                                                                                                   |
 | PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
@@ -109,6 +88,10 @@ Float Image Visualization Options:
 Full documentation ships with the extension: run **Scientific Image Visualizer: Show Documentation** from the Command Palette, or right-click inside an open image and choose **Show Documentation**. It opens in VS Code's markdown preview — no browser needed.
 
 You can also read it on GitHub: [documentation index](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/index.md) — [formats](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/formats.md) · [viewing](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/viewing.md) · [normalization & gamma](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/rendering.md) · [measurement](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/measure.md) · [layers](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/layers.md) · [commands](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/commands.md) · [troubleshooting](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/troubleshooting.md)
+
+## Companion website
+
+A browser-based version is also available at [images.f-kleinicke.de](https://images.f-kleinicke.de/).
 
 ## Feature Requests and Issues
 

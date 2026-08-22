@@ -1,6 +1,6 @@
 # Change Log
 
-## 1.10.0 (2026-08-21)
+## 1.10.0 (2026-08-22)
 
 - Rename the Command Palette category and the settings section from "TIFF Visualizer" to "Scientific Image Visualizer".
 - Massive rust rewrite
@@ -11,6 +11,7 @@
 - Improve DICOM reading and add CZI, nd2, lif compatibility
 - Add documentation command to see
 - Set max canvas size to 268 megapixel
+- Created corresponding website version
 
 ## 1.9.0 (2026-07-24)
 

@@ -14,6 +14,7 @@ playwright-report/**
 test-results/**
 .github/**
 .claude/**
+.netlify/**
 
 # Development-only project instructions and test tooling
 AGENTS.md
@@ -26,6 +27,11 @@ run-behavioral-tests.js
 TESTING.md
 scripts/**
 out/media/**
+out/src/**
+BACKLOG.md
+benchmark-vscode-result.json
+.nvmrc
+netlify.toml
 
 **/*.map
 
@@ -45,10 +51,20 @@ test-samples/**
 # Rust/WASM source and build artifacts. The runtime binary lives in
 # media/wasm/; nothing under wasm/ is needed in the package.
 wasm/**
+crates/**
+target/**
+Cargo.toml
+Cargo.lock
 scripts/build-wasm.sh
+
+# The standalone website is deployed separately. Its shared runtime assets are
+# already emitted into media/ for the VS Code extension package.
+web/**
+web-dist/**
 
 # Exclude source files for webview (using bundle instead)
 media/modules/**
+media/**/*.ts
 media/imagePreview.ts
 media/decode-worker.ts
 media/layer-compositor-worker.ts
