@@ -1,4 +1,5 @@
 const assert = require('assert');
+const fs = require('fs');
 const { buildSync } = require('esbuild');
 
 const bundle = buildSync({
@@ -39,5 +40,14 @@ const ome = createOmeDataset({
 ], { name: 'z0.tif', url: 'blob:z0' });
 assert.ok(ome, 'selected OME files should create a browser dataset');
 assert.equal(findDatasetPlane(ome.manifest, 0, { c: 0, z: 1, t: 0 }).plane.src, 'blob:z1');
+
+const html = fs.readFileSync('web/index.html', 'utf8');
+const css = fs.readFileSync('web/website.css', 'utf8');
+const host = fs.readFileSync('web/browser-host.ts', 'utf8');
+assert.match(html, /class="web-drop-zone"/, 'the empty state should be centered on a large drop target');
+assert.doesNotMatch(html, /data-web-action="close-control"/, 'display popovers should not need a close button');
+assert.match(css, /> canvas:not\(\.scale-to-fit\)[\s\S]*?max-height: none !important/, 'zoomed canvases must not retain fit-mode height limits');
+assert.match(css, /\.web-app \.dataset-overlay \{ top: 58px; \}/, 'dataset navigation should sit below the website toolbar');
+assert.match(host, /!controlPopover\.contains\(target as Node\)/, 'display popovers should close after an outside click');
 
 console.log('Browser dataset host tests passed');

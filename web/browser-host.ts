@@ -672,7 +672,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   });
-  document.querySelector('[data-web-action="close-control"]')?.addEventListener('click', closeControlPopover);
   document.querySelectorAll('[data-web-command]').forEach(button => {
     button.addEventListener('click', () => {
       executeCommand((button as HTMLElement).dataset.webCommand || '');
@@ -693,6 +692,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!moreMenu.hidden && !moreMenu.contains(event.target as Node) && event.target !== moreButton) {
       moreMenu.hidden = true;
       moreButton.setAttribute('aria-expanded', 'false');
+    }
+    const target = event.target;
+    const clickedStatusControl = target instanceof Element && !!target.closest('[data-status-action]');
+    if (!controlPopover.hidden && !controlPopover.contains(target as Node) && !clickedStatusControl) {
+      closeControlPopover();
     }
   });
   document.addEventListener('keydown', event => {

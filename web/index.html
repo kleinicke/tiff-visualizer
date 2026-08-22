@@ -47,21 +47,12 @@
   </header>
 
   <main class="web-empty-state" id="web-empty-state">
-    <div class="web-empty-copy">
-      <p class="web-eyebrow">Private by design · files stay on this device</p>
-      <h1>See what ordinary image viewers leave behind.</h1>
-      <p class="web-lede">Inspect exact pixels, channels, metadata, histograms, layers, and measurements across scientific and high-dynamic-range image formats.</p>
-      <div class="web-empty-actions">
-        <button type="button" class="web-primary-action" data-web-action="open">Choose images</button>
-        <span>or drop files anywhere</span>
-      </div>
-      <p class="web-format-list">TIFF & OME-TIFF · FITS · DICOM · CZI · ND2 · LIF · NetCDF · EXR · NPY/NPZ · PNG · HDR · PFM · layered documents</p>
-    </div>
-    <aside class="web-capability-card" aria-label="Viewer capabilities">
-      <div><span>01</span><strong>Decode locally</strong><small>Rust and WebAssembly</small></div>
-      <div><span>02</span><strong>Render precisely</strong><small>WebGPU, WebGL2, or CPU</small></div>
-      <div><span>03</span><strong>Analyse directly</strong><small>Raw values, ROIs, and exports</small></div>
-    </aside>
+    <button type="button" class="web-drop-zone" data-web-action="open">
+      <span class="web-drop-symbol" aria-hidden="true">↓</span>
+      <strong>Drop images here</strong>
+      <span>or click to choose files</span>
+    </button>
+    <p class="web-local-note">Files stay on this device</p>
   </main>
 
   <div class="web-drop-overlay" id="web-drop-overlay" aria-hidden="true">
@@ -88,7 +79,6 @@
   <div class="web-control-popover" id="web-control-popover" role="dialog" aria-modal="false" aria-labelledby="web-control-title" hidden>
     <div class="web-control-heading">
       <strong id="web-control-title">Display settings</strong>
-      <button type="button" data-web-action="close-control" aria-label="Close">Close</button>
     </div>
     <div id="web-control-content"></div>
   </div>
