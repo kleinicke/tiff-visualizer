@@ -30,6 +30,13 @@ interface ViewerSettings {
 
 const STORAGE_STATE = 'scientific-image-visualizer.webview-state';
 const STORAGE_THEME = 'scientific-image-visualizer.theme';
+const POINT_CLOUD_URL = 'https://3d.f-kleinicke.de/';
+const POINT_CLOUD_ORIGIN = new URL(POINT_CLOUD_URL).origin;
+const POINT_CLOUD_FORMATS = new Set([
+  'tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide',
+  'pfm', 'npy', 'npy-float', 'npy-uint', 'png',
+]);
+const SUPPORTED_FORMATS_TOOLTIP = 'TIFF/OME-TIFF, EXR, PFM, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM/PGM/PBM, FITS, DICOM, classic NetCDF, CZI, ND2, LIF, ORA, KRA, PSD/PSB, XCF, and Affinity Photo';
 const formatSettings = new Map<string, ViewerSettings>();
 let files: BrowserFileEntry[] = [];
 let fileIndex = 0;
@@ -63,7 +70,7 @@ function baseSettings(): ViewerSettings {
     colorPickerShowModified: false,
     showScaleBar: true,
     gpuAcceleration: true,
-    plyVisualizerInstalled: false,
+    plyVisualizerInstalled: true,
     extensionVersion: 'web-1',
     vscodeVersion: 'browser',
     surfaceMode: 'editor',
@@ -140,6 +147,7 @@ function syncStatusBar(): void {
   const exposure = document.getElementById('web-status-exposure');
   const colorPicker = document.getElementById('web-status-color-picker');
   const layers = document.getElementById('web-status-layers');
+  const pointCloud = document.querySelector('[data-web-point-cloud]') as HTMLButtonElement | null;
   if (size) size.textContent = currentPixel || currentSize || '—';
   if (bytes) bytes.textContent = files[fileIndex] ? formatBytes(files[fileIndex].file.size) : '—';
   if (zoom) zoom.textContent = currentZoom === 'fit' ? 'Whole Image' : `${Math.round(currentZoom * 100)}%`;
@@ -158,6 +166,74 @@ function syncStatusBar(): void {
     colorPicker.setAttribute('aria-pressed', String(!!currentSettings.colorPickerShowModified));
   }
   if (layers) layers.setAttribute('aria-pressed', String(layersActive));
+  if (pointCloud) {
+    pointCloud.hidden = !files[fileIndex] || !POINT_CLOUD_FORMATS.has(currentFormatInfo?.formatType || '');
+  }
+  document.body.classList.toggle('web-image-zoomed', currentZoom !== 'fit');
+}
+
+async function openCurrentAsPointCloud(): Promise<void> {
+  const entry = files[fileIndex];
+  if (!entry || !POINT_CLOUD_FORMATS.has(currentFormatInfo?.formatType || '')) {
+    showToast('This image format cannot be opened as a point cloud.');
+    return;
+  }
+
+  // Keep this call synchronous with the click so Safari does not classify the
+  // new viewer tab as an unsolicited popup.
+  const target = window.open(POINT_CLOUD_URL, '_blank');
+  if (!target) {
+    showToast('Allow pop-ups for this site to open the 3D viewer.');
+    return;
+  }
+
+  showToast('Opening this image in the 3D viewer…');
+  const handoffId = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const dataPromise = entry.file.arrayBuffer();
+  let settled = false;
+
+  const finish = () => {
+    settled = true;
+    window.clearInterval(probeTimer);
+    window.clearTimeout(timeoutTimer);
+    window.removeEventListener('message', receiveReady);
+  };
+  const receiveReady = async (event: MessageEvent) => {
+    if (
+      settled || event.origin !== POINT_CLOUD_ORIGIN || event.source !== target ||
+      event.data?.type !== 'scientific-image-viewer-ready' || event.data?.id !== handoffId
+    ) return;
+    finish();
+    try {
+      const data = await dataPromise;
+      target.postMessage({
+        type: 'scientific-image-depth',
+        id: handoffId,
+        fileName: entry.file.name,
+        data,
+      }, POINT_CLOUD_ORIGIN, [data]);
+    } catch (error) {
+      target.close();
+      showToast(`Could not open the 3D viewer: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  window.addEventListener('message', receiveReady);
+  const sendProbe = () => {
+    if (target.closed) {
+      finish();
+      return;
+    }
+    target.postMessage({ type: 'scientific-image-handoff-probe', id: handoffId }, POINT_CLOUD_ORIGIN);
+  };
+  const probeTimer = window.setInterval(sendProbe, 250);
+  const timeoutTimer = window.setTimeout(() => {
+    if (settled) return;
+    finish();
+    showToast('The 3D viewer opened, but the automatic image handoff timed out.');
+  }, 15000);
+  sendProbe();
 }
 
 function sendCurrentSettings(reason: string): void {
@@ -502,7 +578,7 @@ function executeCommand(command: string): void {
     const inverted = window.confirm('Invert the colormap direction? Select Cancel for normal direction.');
     sendToViewer({ type: 'convertColormapToFloat', colormap: colormap.trim(), min, max, logarithmic, inverted });
   } else if (command === 'tiffVisualizer.openAsPointCloud') {
-    showToast('The browser-to-3D handoff will be added with the combined desktop application.');
+    void openCurrentAsPointCloud();
   } else {
     showToast('That action currently requires the VS Code extension.');
   }
@@ -673,6 +749,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const action = (button as HTMLElement).dataset.statusAction;
       if (action === 'normalization' || action === 'gamma' || action === 'exposure' || action === 'zoom') {
         openControlPopover(action);
+      } else if (action === 'options') {
+        const anchor = (button as HTMLElement).getBoundingClientRect();
+        sendToViewer({ type: 'showContextMenu', x: anchor.left, y: anchor.top });
       } else if (action === 'color-picker') {
         executeCommand('tiffVisualizer.toggleColorPickerMode');
       } else if (action === 'layers') {
@@ -686,6 +765,10 @@ document.addEventListener('DOMContentLoaded', () => {
       moreMenu.hidden = true;
       moreButton.setAttribute('aria-expanded', 'false');
     });
+  });
+  document.querySelectorAll('[data-supported-formats]').forEach(element => {
+    element.setAttribute('title', SUPPORTED_FORMATS_TOOLTIP);
+    element.setAttribute('aria-label', `${element.textContent?.trim() || 'Supported formats'}: ${SUPPORTED_FORMATS_TOOLTIP}`);
   });
   moreButton.addEventListener('click', event => {
     event.stopPropagation();

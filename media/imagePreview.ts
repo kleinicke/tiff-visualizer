@@ -3392,6 +3392,15 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				copyImage();
 				break;
 
+			case 'showContextMenu':
+				document.dispatchEvent(new MouseEvent('contextmenu', {
+					bubbles: true,
+					cancelable: true,
+					clientX: Number(message.x || 8),
+					clientY: Number(message.y || 8),
+				}));
+				break;
+
 			case 'pastePosition':
 				// Pass the state from the extension (for cross-webview paste)
 				pastePosition(message.state);
@@ -5001,7 +5010,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				return;
 			}
 
-			if (e.button !== 0) {
+			if (e.button !== 0 || e.target !== imageElement) {
 				return;
 			}
 
@@ -5014,7 +5023,9 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				return;
 			}
 
-			if (e.button !== 0) {
+			// The website toolbar, status bar, and popovers live inside this body,
+			// too. Only a click on the displayed pixels is an image zoom gesture.
+			if (e.button !== 0 || e.target !== imageElement) {
 				return;
 			}
 
@@ -5293,14 +5304,18 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			// bottom edge, shift it back so it isn't clipped by the webview bounds.
 			// (An over-tall menu is capped and made scrollable via CSS max-height.)
 			const edgeMargin = 8;
+			const bottomInset = Math.max(0, Number.parseFloat(
+				getComputedStyle(document.documentElement).getPropertyValue('--context-menu-bottom-inset'),
+			) || 0);
+			const menuBottom = window.innerHeight - bottomInset - edgeMargin;
 			const menuRect = menu.getBoundingClientRect();
 			let menuLeft = e.clientX;
 			let menuTop = e.clientY;
 			if (menuLeft + menuRect.width > window.innerWidth - edgeMargin) {
 				menuLeft = Math.max(edgeMargin, window.innerWidth - menuRect.width - edgeMargin);
 			}
-			if (menuTop + menuRect.height > window.innerHeight - edgeMargin) {
-				menuTop = Math.max(edgeMargin, window.innerHeight - menuRect.height - edgeMargin);
+			if (menuTop + menuRect.height > menuBottom) {
+				menuTop = Math.max(edgeMargin, menuBottom - menuRect.height);
 			}
 			menu.style.left = `${menuLeft}px`;
 			menu.style.top = `${menuTop}px`;
@@ -6866,19 +6881,23 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	 * Load image by type (wrapper function)
 	 */
 	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange = false) {
-		// Wait until the browser has painted the loading UI (counter, filename
-		// badge, loading dot) before starting synchronous decode work, so every
-		// switch gives immediate visual feedback. This also lets a burst of
-		// queued switch messages (rapid key presses) be processed first — all
-		// but the newest switch bail out here instead of running a full load.
-		// The plain timeout races as a fallback because requestAnimationFrame
-		// does not fire while the webview is hidden.
-		await new Promise(resolve => {
-			requestAnimationFrame(() => setTimeout(resolve, 0));
-			setTimeout(resolve, 100);
-		});
+		// Yield only while replacing an existing frame (or changing a plane).
+		// That lets the loading badge paint and coalesces rapid navigation, but a
+		// direct first open has neither an outgoing frame nor queued navigation.
+		// Making first open wait for requestAnimationFrame was particularly costly
+		// in a newly-created VS Code webview, where Chromium may not schedule the
+		// first frame for hundreds of milliseconds.
+		const shouldYieldForLoadingUi = _imageTransitionActive || planeChange;
+		if (shouldYieldForLoadingUi) {
+			// The plain timeout races as a fallback because requestAnimationFrame
+			// does not fire while the webview is hidden.
+			await new Promise(resolve => {
+				requestAnimationFrame(() => setTimeout(resolve, 0));
+				setTimeout(resolve, 100);
+			});
+		}
 		if (gen !== _loadGeneration) { return; }
-		PerfTrace.mark('paint-yield');
+		PerfTrace.mark(shouldYieldForLoadingUi ? 'paint-yield' : 'load-start');
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
 

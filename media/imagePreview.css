@@ -1132,7 +1132,7 @@ body img {
 	min-width: 120px;
 	user-select: none;
 	/* Never let the menu exceed the viewport: scroll if it is too tall. */
-	max-height: calc(100vh - 16px);
+	max-height: calc(100vh - 16px - var(--context-menu-bottom-inset, 0px));
 	overflow-y: auto;
 	overflow-x: hidden;
 }

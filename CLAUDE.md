@@ -39,6 +39,13 @@ npm run web:build        # Build the standalone site into web-dist/
 npm run web:dev          # Build and serve the standalone site locally
 ```
 
+### Website Deployment
+```bash
+npm run typecheck:web && npm run test:web-host && npm run web:build
+netlify deploy --prod --dir=web-dist
+```
+The repository is already linked to the production Netlify site at `https://images.f-kleinicke.de`.
+
 ### Testing & Quality
 ```bash
 npm run test             # Run all tests (behavior + visualization)

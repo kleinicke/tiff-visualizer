@@ -28,7 +28,7 @@ const server = createServer((request, response) => {
   }
   response.writeHead(200, {
     'content-type': types.get(extname(file)) || 'application/octet-stream',
-    'cross-origin-opener-policy': 'same-origin',
+    'cross-origin-opener-policy': 'same-origin-allow-popups',
     'cross-origin-embedder-policy': 'require-corp',
     'x-content-type-options': 'nosniff',
   });

@@ -21,7 +21,7 @@
   <link rel="stylesheet" href="./website.css">
   <meta
     id="image-preview-settings"
-    data-settings='{"normalization":{"min":0,"max":1,"autoNormalize":true,"gammaMode":false},"gamma":{"in":2.2,"out":2.2},"brightness":{"offset":0},"rgbAs24BitGrayscale":false,"scale24BitFactor":1000,"normalizedFloatMode":false,"nanColor":"black","colorPickerShowModified":false,"showScaleBar":true,"gpuAcceleration":true,"plyVisualizerInstalled":false,"resourceUri":"welcome.png","src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=","surfaceMode":"editor","extensionVersion":"web-1","vscodeVersion":"browser"}'
+    data-settings='{"normalization":{"min":0,"max":1,"autoNormalize":true,"gammaMode":false},"gamma":{"in":2.2,"out":2.2},"brightness":{"offset":0},"rgbAs24BitGrayscale":false,"scale24BitFactor":1000,"normalizedFloatMode":false,"nanColor":"black","colorPickerShowModified":false,"showScaleBar":true,"gpuAcceleration":true,"plyVisualizerInstalled":true,"resourceUri":"welcome.png","src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=","surfaceMode":"editor","extensionVersion":"web-1","vscodeVersion":"browser"}'
   >
 </head>
 <body class="container image vscode-dark web-app">
@@ -34,12 +34,13 @@
       </span>
     </a>
     <nav class="web-actions" aria-label="Image tools">
-      <button type="button" data-web-action="open">Open files</button>
+      <button type="button" data-web-action="open" data-supported-formats>Open files</button>
       <button type="button" class="web-more-button" data-web-action="more" aria-expanded="false" aria-controls="web-more-menu">More</button>
     </nav>
     <div class="web-more-menu" id="web-more-menu" hidden>
       <button type="button" data-web-command="tiffVisualizer.copyImage">Copy image</button>
       <button type="button" data-web-command="tiffVisualizer.exportLayers">Export current view</button>
+      <button type="button" data-web-command="tiffVisualizer.openAsPointCloud" data-web-point-cloud hidden>Open as point cloud</button>
       <button type="button" data-web-command="tiffVisualizer.toggleNanColor">Toggle NaN colour</button>
       <button type="button" data-web-action="theme">Toggle light theme</button>
       <a href="https://github.com/kleinicke/tiff-visualizer" target="_blank" rel="noreferrer">Source and documentation</a>
@@ -47,12 +48,12 @@
   </header>
 
   <main class="web-empty-state" id="web-empty-state">
-    <button type="button" class="web-drop-zone" data-web-action="open">
+    <button type="button" class="web-drop-zone" data-web-action="open" data-supported-formats>
       <span class="web-drop-symbol" aria-hidden="true">↓</span>
       <strong>Drop images here</strong>
       <span>or click to choose files</span>
     </button>
-    <p class="web-local-note">Files stay on this device</p>
+    <p class="web-local-note">Files stay on this device · <span class="web-format-hint" data-supported-formats tabindex="0">Supported formats</span></p>
   </main>
 
   <div class="web-drop-overlay" id="web-drop-overlay" aria-hidden="true">
@@ -66,6 +67,8 @@
     <a href="https://f-kleinicke.de/datenschutz.html">Datenschutz</a>
   </nav>
   <footer class="web-status-bar" id="web-status-bar" aria-label="Image status and display controls">
+    <button type="button" id="web-status-options" data-status-action="options" title="Show all image actions">Options</button>
+    <span class="web-status-separator" aria-hidden="true"></span>
     <button type="button" id="web-status-layers" data-status-action="layers" title="Add images as layers">Layers</button>
     <span class="web-status-separator" aria-hidden="true"></span>
     <button type="button" id="web-status-exposure" data-status-action="exposure">Exposure: +0.0 EV</button>

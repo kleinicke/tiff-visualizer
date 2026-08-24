@@ -8,7 +8,9 @@
 [[headers]]
   for = "/*"
   [headers.values]
-    Cross-Origin-Opener-Policy = "same-origin"
+    # Keep the opener connection to the trusted 3D viewer so a selected local
+    # depth image can be transferred directly between the two tabs.
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
     Cross-Origin-Embedder-Policy = "require-corp"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
