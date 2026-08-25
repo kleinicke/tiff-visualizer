@@ -1,6 +1,6 @@
 "use strict";
 
-import { writeRoiZip } from './imagej-roi.js';
+import { zipSync } from 'fflate';
 
 /**
  * Minimal `.xlsx` writer.
@@ -87,11 +87,11 @@ export function buildXlsx(sheet: SheetData): Uint8Array {
 	const contentTypesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`;
 
-	return writeRoiZip([
-		{ name: '[Content_Types].xml', bytes: encoder.encode(contentTypesXml) },
-		{ name: '_rels/.rels', bytes: encoder.encode(rootRelsXml) },
-		{ name: 'xl/workbook.xml', bytes: encoder.encode(workbookXml) },
-		{ name: 'xl/_rels/workbook.xml.rels', bytes: encoder.encode(workbookRelsXml) },
-		{ name: 'xl/worksheets/sheet1.xml', bytes: encoder.encode(sheetXml) },
-	]);
+	return zipSync({
+		'[Content_Types].xml': encoder.encode(contentTypesXml),
+		'_rels/.rels': encoder.encode(rootRelsXml),
+		'xl/workbook.xml': encoder.encode(workbookXml),
+		'xl/_rels/workbook.xml.rels': encoder.encode(workbookRelsXml),
+		'xl/worksheets/sheet1.xml': encoder.encode(sheetXml),
+	});
 }

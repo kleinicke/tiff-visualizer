@@ -1,10 +1,16 @@
 import { DecodeWorkerClient } from './decode-worker-client.js';
-import { decodeLayeredPreview } from './layered-preview-decoders.js';
 import { ImageRenderer, ImageStatsCalculator, NormalizationHelper } from './normalization-helper.js';
 import type { DecodedLayeredPreview, LayeredDocumentFormat, LayeredDocumentSummary, LayeredPixelArray } from './layered-document.js';
 import type { DeferredRenderOptions } from './types.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
+
+async function decodeLayeredLocally(format: LayeredDocumentFormat, buffer: ArrayBuffer, options?: Record<string, any>) {
+	const url = (window as any).__tiffVisualizerVendorAssets?.layeredPreviewFallback;
+	if (!url) { throw new Error('Layered preview fallback asset is unavailable'); }
+	const decoder = await import(url) as typeof import('./layered-preview-decoders.js');
+	return decoder.decodeLayeredPreview(format, buffer, options || {});
+}
 
 export class LayeredPreviewProcessor {
 	settingsManager: any;
@@ -37,7 +43,7 @@ export class LayeredPreviewProcessor {
 			(format === 'psd' || format === 'psb' || format === 'ora' || format === 'kra');
 		const decoded = await DecodeWorkerClient.decodeWithFallback(
 			this.decodeWorker, format, buffer, src, signal,
-			(localBuffer, options) => decodeLayeredPreview(format, localBuffer, options),
+			(localBuffer, options) => decodeLayeredLocally(format, localBuffer, options),
 			splitLayeredDecode ? { previewOnly: true } : {},
 		);
 		this._cachedStats = undefined;
@@ -68,7 +74,7 @@ export class LayeredPreviewProcessor {
 			if (signal?.aborted || token !== this._deferredDecodeToken) { return; }
 			const decoded = await DecodeWorkerClient.decodeWithFallback(
 				this.decodeWorker, format, buffer, src, signal,
-				(localBuffer, options) => decodeLayeredPreview(format, localBuffer, options),
+				(localBuffer, options) => decodeLayeredLocally(format, localBuffer, options),
 				{ layersOnly: true },
 			);
 			if (signal?.aborted || token !== this._deferredDecodeToken || !this._lastRaw) { return; }

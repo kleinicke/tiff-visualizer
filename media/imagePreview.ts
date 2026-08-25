@@ -33,7 +33,6 @@ import {
 import { RoiManager } from './modules/measure/roi-manager.js';
 import { RoiOverlay } from './modules/measure/roi-overlay.js';
 import { autoCalibration, calibrationFromCzi, calibrationFromDicom, calibrationFromTagList } from './modules/measure/calibration.js';
-import { importImageJRois } from './modules/measure/imagej-roi.js';
 import { deserializeRoi, parseSidecar, serializeRoi } from './modules/measure/roi-io.js';
 import { toScalarPlane, UNCALIBRATED, type Calibration, type MeasurementSource } from './modules/measure/types.js';
 import type { TagEntry } from './modules/tiff-tag-utils.js';
@@ -60,7 +59,7 @@ import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { installRangeDoubleClickReset, datasetAxisSignature } from './modules/range-controls.js';
-import { analyzeLayerExports, LayerExportFormat, writeLayerDocument } from './modules/layer-document-writers.js';
+import type { LayerExportFormat } from './modules/layer-document-writers.js';
 import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
@@ -86,6 +85,24 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		nativeImage?: HTMLImageElement | null;
 		visibleTotalMs?: number | null;
 	} | undefined;
+	let layerWriterPromise: Promise<typeof import('./modules/layer-document-writers.js')> | null = null;
+	let imagejRoiPromise: Promise<typeof import('./modules/measure/imagej-roi.js')> | null = null;
+	function loadLayerWriter() {
+		if (!layerWriterPromise) {
+			const url = (window as any).__tiffVisualizerVendorAssets?.layerDocumentWriter;
+			if (!url) { return Promise.reject(new Error('Layer document writer asset is unavailable')); }
+			layerWriterPromise = import(url) as Promise<typeof import('./modules/layer-document-writers.js')>;
+		}
+		return layerWriterPromise;
+	}
+	function loadImagejRoi() {
+		if (!imagejRoiPromise) {
+			const url = (window as any).__tiffVisualizerVendorAssets?.imagejRoi;
+			if (!url) { return Promise.reject(new Error('ImageJ ROI asset is unavailable')); }
+			imagejRoiPromise = import(url) as Promise<typeof import('./modules/measure/imagej-roi.js')>;
+		}
+		return imagejRoiPromise;
+	}
 	// The tiny native-image bootstrap acquires the API before loading this full
 	// application. Reuse it: acquireVsCodeApi() may only be called once.
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
@@ -164,14 +181,16 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	// loads compete with a decoder they never use.
 	const decodeWorkerClient = new DecodeWorkerClient();
 	const pngDecodeWorkerClient = new DecodeWorkerClient('pngDecodeWorker.bundle.js');
+	const layeredDecodeWorkerClient = new DecodeWorkerClient('layeredDecodeWorker.bundle.js', false);
 	const fastRawWorkerClient = new FastRawWorkerClient(decodeWorkerClient);
 	const layerCompositorWorker = new LayerCompositorWorkerClient();
 	layerCompositorWorker.start();
 	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
-	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
+	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	pngProcessor.decodeWorker = pngDecodeWorkerClient;
+	layeredPreviewProcessor.decodeWorker = layeredDecodeWorkerClient;
 	// Binary NetPBM and native float32 NPY are already TypedArray-compatible.
 	// Their tiny worker avoids the full decoder bundle and WASM memory roundtrip;
 	// unsupported variants return their input and use the complete Rust path.
@@ -2459,7 +2478,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const p = new LayeredPreviewProcessor(settingsManager, noop);
 				p._isInitialLoad = false;
 				p.decodeEditableLayers = false;
-				p.decodeWorker = decodeWorkerClient;
+				p.decodeWorker = layeredDecodeWorkerClient;
 				await p.process(src, layeredFormat);
 				const raw = p._lastRaw;
 				return lastRawToLayer(raw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, resourceUri);
@@ -2473,21 +2492,21 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				await p.processExr(src); return exrRawToLayer(p.rawExrData, name, resourceUri);
 			}
 			if (lower.endsWith('.pfm')) {
-				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
 				await p.processPfm(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
 			}
 			if (lower.match(/\.(ppm|pgm|pbm)$/)) {
-				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
 				await p.processPpm(src); return lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxval) || 255 }, name, resourceUri);
 			}
 			if (lower.match(/\.(png|jpg|jpeg)$/)) {
-				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = pngDecodeWorkerClient;
 				await p.processPng(src);
 				const layer = lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxValue) || 255 }, name, resourceUri);
 				return layer || decodeViaImage(src, name, resourceUri);
 			}
 			if (lower.match(/\.(npy|npz)$/)) {
-				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = lower.endsWith('.npy') ? fastRawWorkerClient : decodeWorkerClient;
 				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
 			}
 			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
@@ -3424,10 +3443,11 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				break;
 
 			case 'getLayerExportCompatibility':
+				const layerWriter = layerManager.hasCompositeStack() ? await loadLayerWriter() : null;
 				vscode.postMessage({
 					type: 'didGetLayerExportCompatibility',
 					options: layerManager.hasCompositeStack()
-						? analyzeLayerExports(layerManager.layers)
+						? layerWriter!.analyzeLayerExports(layerManager.layers)
 						: [{ format: 'png', label: 'PNG', description: '✓ Rendered image', detail: 'Exports exactly the current rendered image.', compatible: true }],
 				});
 				break;
@@ -3834,7 +3854,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				// cannot transfer a typed array to a webview.
 				const bytes = new Uint8Array(message.bytes || []);
 				if (message.kind === 'imagej') {
-					const imported = importImageJRois(bytes, message.fileName || 'RoiSet');
+					const imported = (await loadImagejRoi()).importImageJRois(bytes, message.fileName || 'RoiSet');
 					if (imported.length === 0) {
 						measurePanel.setHint('No ROIs could be read from that file.');
 					} else {
@@ -6489,6 +6509,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		_loadAbortController?.abort();
 		decodeWorkerClient.cancelActiveDecodes();
 		pngDecodeWorkerClient.cancelActiveDecodes();
+		layeredDecodeWorkerClient.cancelActiveDecodes();
 		fastRawWorkerClient.cancelActiveDecodes();
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
@@ -6857,6 +6878,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		if (!planeChange) {
 			decodeWorkerClient.cancelActiveDecodes();
 			pngDecodeWorkerClient.cancelActiveDecodes();
+			layeredDecodeWorkerClient.cancelActiveDecodes();
 			fastRawWorkerClient.cancelActiveDecodes();
 			resetTiffCanvasReady();
 		}
@@ -7123,7 +7145,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			const rendered = await renderedExportImage();
 			if (!rendered) { throw new Error('The current image has no rendered pixels to export'); }
 			if (format !== 'png' && !layerManager.hasCompositeStack()) { throw new Error(`${format.toUpperCase()} layered export requires an active Layers composition`); }
-			const result = writeLayerDocument(format, layerManager.layers, rendered.width, rendered.height, rendered);
+			const result = (await loadLayerWriter()).writeLayerDocument(format, layerManager.layers, rendered.width, rendered.height, rendered);
 			let binary = '';
 			for (let offset = 0; offset < result.data.length; offset += 0x8000) {
 				binary += String.fromCharCode(...result.data.subarray(offset, Math.min(result.data.length, offset + 0x8000)));

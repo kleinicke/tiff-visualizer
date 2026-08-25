@@ -30,12 +30,20 @@ export class FastRawWorkerClient implements DecodeWorkerLike {
 	}
 
 	private async boot(): Promise<void> {
+		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
+			bundleName?: string;
+			sourcePromise?: Promise<string>;
+		} | undefined;
 		const candidates = [
 			new URL('./fastRawWorker.bundle.js', import.meta.url).href,
 			new URL('../fastRawWorker.bundle.js', import.meta.url).href,
 		];
 		let source: string | null = null;
+		if (warmup?.bundleName === 'fastRawWorker.bundle.js' && warmup.sourcePromise) {
+			try { source = await warmup.sourcePromise; } catch { /* use ordinary candidates */ }
+		}
 		for (const url of candidates) {
+			if (source) { break; }
 			try { const response = await fetch(url); if (response.ok) { source = await response.text(); break; } }
 			catch { /* try the next packaged location */ }
 		}

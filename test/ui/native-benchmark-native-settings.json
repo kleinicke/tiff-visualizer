@@ -1,0 +1,10 @@
+{
+  "workbench.editorAssociations": {
+    "*.png": "imagePreview.previewEditor",
+    "*.jpg": "imagePreview.previewEditor",
+    "*.bmp": "imagePreview.previewEditor",
+    "*.ico": "imagePreview.previewEditor",
+    "*.webp": "imagePreview.previewEditor",
+    "*.avif": "imagePreview.previewEditor"
+  }
+}

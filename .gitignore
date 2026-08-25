@@ -38,6 +38,14 @@ media/decodeWorker.bundle.js
 media/decodeWorker.bundle.js.map
 media/pngDecodeWorker.bundle.js
 media/pngDecodeWorker.bundle.js.map
+media/layeredDecodeWorker.bundle.js
+media/layeredDecodeWorker.bundle.js.map
+media/layeredPreviewFallback.bundle.js
+media/layeredPreviewFallback.bundle.js.map
+media/layerDocumentWriter.bundle.js
+media/layerDocumentWriter.bundle.js.map
+media/imagejRoi.bundle.js
+media/imagejRoi.bundle.js.map
 media/layerCompositorWorker.bundle.js
 media/layerCompositorWorker.bundle.js.map
 media/comparisonPanel.bundle.js

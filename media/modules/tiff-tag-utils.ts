@@ -1,6 +1,18 @@
 "use strict";
 
-import pako from 'pako';
+import { loadPako } from './lazy-vendor-loader.js';
+
+async function inflateZlib(bytes: Uint8Array): Promise<Uint8Array> {
+	const NativeDecompressionStream = (globalThis as any).DecompressionStream;
+	if (typeof NativeDecompressionStream === 'function') {
+		try {
+			const source = new Blob([bytes as BlobPart]).stream();
+			const decoded = source.pipeThrough(new NativeDecompressionStream('deflate'));
+			return new Uint8Array(await new Response(decoded).arrayBuffer());
+		} catch { /* use the compatibility inflater below */ }
+	}
+	return (await loadPako()).inflate(bytes);
+}
 
 /**
  * Shared helpers for the TIFF tag/metadata dump surfaced in the Metadata panel.
@@ -189,7 +201,7 @@ export interface PngChunkMetadata {
  * payloads with pako where needed. Malformed/unsupported individual chunks
  * are skipped rather than aborting the whole scan.
  */
-export function parsePngChunks(bytes: Uint8Array): PngChunkMetadata {
+export async function parsePngChunks(bytes: Uint8Array): Promise<PngChunkMetadata> {
 	const result: PngChunkMetadata = { exifBlob: null, textEntries: [] };
 	const sig = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 	if (!(bytes instanceof Uint8Array) || bytes.length < 8) { return result; }
@@ -223,7 +235,7 @@ export function parsePngChunks(bytes: Uint8Array): PngChunkMetadata {
 				if (nullIdx >= 0) {
 					const keyword = latin1Decode(chunk.subarray(0, nullIdx));
 					const compressed = chunk.subarray(nullIdx + 2); // skip null + 1-byte compression method
-					const text = new TextDecoder('utf-8').decode(pako.inflate(compressed));
+					const text = new TextDecoder('utf-8').decode(await inflateZlib(compressed));
 					result.textEntries.push({ name: keyword, value: text });
 				}
 			} else if (type === 'iTXt') {
@@ -237,7 +249,7 @@ export function parsePngChunks(bytes: Uint8Array): PngChunkMetadata {
 				p = translatedEnd + 1;
 				const textBytes = chunk.subarray(p);
 				const text = compressionFlag === 1
-					? new TextDecoder('utf-8').decode(pako.inflate(textBytes))
+					? new TextDecoder('utf-8').decode(await inflateZlib(textBytes))
 					: new TextDecoder('utf-8').decode(textBytes);
 				result.textEntries.push({ name: keyword, value: text });
 			} else if (type === 'IEND') {

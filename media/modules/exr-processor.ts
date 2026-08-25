@@ -7,6 +7,7 @@ import type { ImageSettings } from './settings-manager.js';
 import type { SettingsManager } from './settings-manager.js';
 import type { TagEntry } from './tiff-tag-utils.js';
 import type { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
+import { loadParseExr } from './lazy-vendor-loader.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 
@@ -92,12 +93,6 @@ export class ExrProcessor {
 	async processExr(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData; exrData: ExrImageData }> {
 		const loadSignal = this.loadSignal;
 		try {
-			// Check if parseExr is available (from parse-exr library)
-			// @ts-ignore
-			if (typeof parseExr === 'undefined') {
-				throw new Error('parseExr library not loaded. Make sure parse-exr is included.');
-			}
-
 			const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'exr');
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
@@ -111,8 +106,7 @@ export class ExrProcessor {
 			const FloatType = 1015;
 			const exrResult = await DecodeWorkerClient.decodeWithFallback(
 				this.decodeWorker, 'exr', buffer, src, loadSignal,
-				// @ts-ignore
-				(b) => parseExr(b, FloatType));
+				async (b) => (await loadParseExr())(b, FloatType));
 			if (exrResult.wasmFallbackReason) {
 				console.warn('[ExrProcessor] Rust EXR decoder fell back to parse-exr:', exrResult.wasmFallbackReason);
 			}

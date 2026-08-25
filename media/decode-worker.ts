@@ -17,20 +17,10 @@
  */
 
 import './modules/worker-shims.js';
-// Vendored, window-attaching parse-exr build with channel-name support — the
-// npm parse-exr package lacks channelNames/displayedChannels, so the worker
-// must use the exact same build as the main thread.
-import './parse-exr.js';
-// Keep the compatibility TIFF fallback in this worker too. Some valid TIFF
-// variants are not supported by the Rust decoder, and decoding those with
-// geotiff.js on the webview thread would freeze the UI.
-import * as WorkerGeoTIFF from './geotiff.min.js';
-import UPNG from './upng.min.js';
 import parseHdr from 'parse-hdr';
 import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
-import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
 // media/tsconfig.json) types `self` as `Window & typeof globalThis`, which
@@ -39,6 +29,11 @@ import { decodeLayeredPreview } from './modules/layered-preview-decoders.js';
 // `onmessage` directly). Adding the `webworker` lib would conflict with
 // `dom`, so `self` is pragmatically typed as `any` instead.
 declare const self: any;
+// Referenced only by dead compatibility helpers retained temporarily for
+// source-level decoder tests. Production routing never calls them; fallbacks
+// are loaded by the webview after a Rust failure.
+declare const WorkerGeoTIFF: any;
+declare const UPNG: any;
 
 // Parser-only instances: the constructors just assign fields, and the
 // _parse* methods used here touch no DOM or vscode APIs.
@@ -276,8 +271,7 @@ async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0) {
 		return decodeTiffWasm(buffer, pageIndex);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'WASM decode failed');
-		console.warn('[DecodeWorker] TIFF WASM decode failed, using geotiff.js in worker:', message);
-		return decodeTiffGeotiff(buffer, message, pageIndex);
+		throw new Error(message);
 	}
 }
 
@@ -351,8 +345,7 @@ async function decodeExr(buffer: ArrayBuffer) {
 		return decodeExrWasm(buffer);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'WASM EXR decode failed');
-		console.warn('[DecodeWorker] EXR WASM decode failed, using parse-exr in worker:', message);
-		return decodeExrParseExr(buffer, message);
+		throw new Error(message);
 	}
 }
 
@@ -499,8 +492,7 @@ async function decodePng16(buffer: ArrayBuffer) {
 		return decodePng16Wasm(buffer);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'WASM PNG decode failed');
-		console.warn('[DecodeWorker] PNG WASM decode failed, using UPNG in worker:', message);
-		return decodePng16Upng(buffer, message);
+		throw new Error(message);
 	}
 }
 
@@ -604,16 +596,6 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeNd2(buffer, options);
 		case 'lif':
 			return decodeLif(buffer, options);
-		case 'ora':
-		case 'kra':
-		case 'psd':
-		case 'psb':
-		case 'xcf':
-		case 'affinity':
-			return decodeLayeredPreview(format, buffer, {
-				previewOnly: options?.previewOnly === true,
-				layersOnly: options?.layersOnly === true,
-			});
 		default:
 			throw new Error(`Unknown decode format: ${format}`);
 	}
@@ -656,13 +638,9 @@ let sourceCache: { key: string, buffer: ArrayBuffer } | null = null;
 self.onmessage = async (event: MessageEvent<any>) => {
 	const msg = event.data;
 	if (msg.type === 'init') {
-		// GeoTIFF is ready as soon as the worker bundle has loaded. Advertise
-		// that immediately so early image loads do not fall back to the UI
-		// thread while WASM is still initializing.
-		self.postMessage({ type: 'ready', caps: { tiff: true, tiffWasm: false } });
 		tiffWasmInitPromise = initTiffDecoder(msg.tiffWasmModule || msg.tiffWasmBuffer, msg.tiffWasmUrls);
 		await tiffWasmInitPromise;
-		self.postMessage({ type: 'caps', caps: { tiff: true, tiffWasm: tiffWasmReady } });
+		self.postMessage({ type: 'ready', caps: { tiff: tiffWasmReady, tiffWasm: tiffWasmReady } });
 		return;
 	}
 

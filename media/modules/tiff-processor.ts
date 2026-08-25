@@ -10,10 +10,7 @@ import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml } from './ome-tiff.js';
-
-// GeoTIFF is loaded globally via script tag; the geotiff npm library isn't a
-// real TS-typed dependency in this project, so it's treated as `any`.
-const GeoTIFF: any = (window as any).GeoTIFF;
+import { loadGeoTiff } from './lazy-vendor-loader.js';
 
 interface VsCodeApi {
 	postMessage: (msg: any) => any;
@@ -627,6 +624,7 @@ export class TiffProcessor {
 			const decodeStart = performance.now();
 			let tiff;
 			try {
+				const GeoTIFF = await loadGeoTiff();
 				tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
 			} catch (fallbackError) {
 				throw new Error(this._lastWasmFailure

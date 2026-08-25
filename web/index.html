@@ -90,7 +90,17 @@
   <input id="web-file-input" class="web-file-input" type="file" multiple>
   <input id="web-import-input" class="web-file-input" type="file">
 
-  <script src="./media/geotiff.min.js"></script>
+  <script>
+    window.__tiffVisualizerVendorAssets = {
+      geotiff: './media/geotiff.min.js',
+      pako: './media/pako.min.js',
+      upng: './media/upng.min.js',
+      parseExr: './media/parse-exr.js',
+      layeredPreviewFallback: './media/layeredPreviewFallback.bundle.js',
+      layerDocumentWriter: './media/layerDocumentWriter.bundle.js',
+      imagejRoi: './media/imagejRoi.bundle.js'
+    };
+  </script>
   <script src="./browserHost.bundle.js"></script>
   <script type="module" src="./media/imagePreview.bundle.js"></script>
 </body>

@@ -6,6 +6,7 @@ import { PerfTrace } from './perf-trace.js';
 import { findJpegExifBlob, parsePngChunks, TagEntry } from './tiff-tag-utils.js';
 import { extractExifTagsFromBlob } from './tiff-wasm-wrapper.js';
 import { DeferredRenderOptions } from './types.js';
+import { loadUpng } from './lazy-vendor-loader.js';
 
 interface RawImageData {
     width: number;
@@ -109,7 +110,7 @@ export class PngProcessor {
             this._cachedStatsRgb24Mode = false;
 
             const arrayBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'png');
-            const { exifBlob, textEntries } = parsePngChunks(new Uint8Array(arrayBuffer));
+			const { exifBlob, textEntries } = await parsePngChunks(new Uint8Array(arrayBuffer));
             this._lastAllTags = textEntries.map(({ name, value }): TagEntry => ({ tag: null, name, group: 'PNG', value }));
             if (exifBlob) {
                 this._lastAllTags.push(...await extractExifTagsFromBlob(exifBlob));
@@ -131,12 +132,11 @@ export class PngProcessor {
 			await this.decodeWorker?.start();
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
-            // Decode with UPNG.js — in the decode worker when available,
-            // locally otherwise (16-bit path only; 8-bit returned above).
+			// Decode with the precise Rust worker. Only a rejected/unsupported
+			// 16-bit PNG loads UPNG locally as the compatibility fallback.
             const png = await DecodeWorkerClient.decodeWithFallback(
                 this.decodeWorker, 'png16', arrayBuffer, src, loadSignal,
-                // @ts-ignore
-                (b) => UPNG.decode(b));
+				async (b) => (await loadUpng()).decode(b));
             if (png.wasmFallbackReason) {
                 console.warn('[PngProcessor] Rust PNG decoder fell back to UPNG:', png.wasmFallbackReason);
             }
@@ -178,8 +178,7 @@ export class PngProcessor {
             // Convert palette images to RGBA8
             let rawData;
             if (colorType === 3) {
-                // @ts-ignore
-                const rgba = UPNG.toRGBA8(png);
+				const rgba = (await loadUpng()).toRGBA8(png);
                 rawData = new Uint8Array(rgba[0]); // First frame
                 channels = 4;
                 pngBitDepth = 8;

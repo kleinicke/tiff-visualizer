@@ -73,6 +73,46 @@ const pngDecodeWorkerBuildOptions = {
   format: 'esm',
 };
 
+const layeredDecodeWorkerBuildOptions = {
+  entryPoints: ['media/layered-decode-worker.ts'],
+  bundle: true,
+  outfile: 'media/layeredDecodeWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
+const layeredPreviewFallbackBuildOptions = {
+  entryPoints: ['media/layered-preview-fallback.ts'],
+  bundle: true,
+  outfile: 'media/layeredPreviewFallback.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
+const layerDocumentWriterBuildOptions = {
+  entryPoints: ['media/layer-document-writer-entry.ts'],
+  bundle: true,
+  outfile: 'media/layerDocumentWriter.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
+const imagejRoiBuildOptions = {
+  entryPoints: ['media/imagej-roi-entry.ts'],
+  bundle: true,
+  outfile: 'media/imagejRoi.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 // Pool member for parallel TIFF strip decoding. Bundled separately (rather than
 // reusing decodeWorker) because the pool spawns N of these and each one
 // instantiates its own WASM module; keeping it minimal keeps that cost down.
@@ -150,6 +190,10 @@ const mediaModuleTsFiles = [
   'media/imagePreview.ts',
   'media/decode-worker.ts',
   'media/png-decode-worker.ts',
+  'media/layered-decode-worker.ts',
+  'media/layered-preview-fallback.ts',
+  'media/layer-document-writer-entry.ts',
+  'media/imagej-roi-entry.ts',
   'media/strip-decode-worker.ts',
   'media/fast-raw-worker.ts',
   'media/layer-compositor-worker.ts',
@@ -268,6 +312,34 @@ if (isWatch) {
     },
   };
 
+  layeredDecodeWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) console.error('layered decode worker watch build failed:', error);
+      else console.log('layered decode worker watch build succeeded');
+    },
+  };
+
+  layeredPreviewFallbackBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) console.error('layered preview fallback watch build failed:', error);
+      else console.log('layered preview fallback watch build succeeded');
+    },
+  };
+
+  layerDocumentWriterBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) console.error('layer document writer watch build failed:', error);
+      else console.log('layer document writer watch build succeeded');
+    },
+  };
+
+  imagejRoiBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) console.error('ImageJ ROI watch build failed:', error);
+      else console.log('ImageJ ROI watch build succeeded');
+    },
+  };
+
   stripDecodeWorkerBuildOptions.watch = {
     onRebuild(error) {
       if (error) {
@@ -367,6 +439,18 @@ async function buildAll() {
 
     await build(pngDecodeWorkerBuildOptions);
     console.log('PNG decode worker built successfully');
+
+    await build(layeredDecodeWorkerBuildOptions);
+    console.log('Layered decode worker built successfully');
+
+    await build(layeredPreviewFallbackBuildOptions);
+    console.log('Layered preview fallback built successfully');
+
+    await build(layerDocumentWriterBuildOptions);
+    console.log('Layer document writer built successfully');
+
+    await build(imagejRoiBuildOptions);
+    console.log('ImageJ ROI bundle built successfully');
 
     await build(stripDecodeWorkerBuildOptions);
     console.log('Strip decode worker built successfully');

@@ -46,6 +46,7 @@ async function fetchFirstArrayBuffer(urls: string[]): Promise<ArrayBuffer | null
 
 export class DecodeWorkerClient {
 	_workerBundleName: string;
+	_needsWasm: boolean;
 	_worker: Worker | null;
 	_ready: boolean;
 	_caps: { tiff?: boolean; tiffWasm?: boolean };
@@ -59,8 +60,9 @@ export class DecodeWorkerClient {
 	_tiffWasmModule: WebAssembly.Module | null;
 	_tiffWasmCompilePromise: Promise<WebAssembly.Module | null> | null;
 
-	constructor(workerBundleName = 'decodeWorker.bundle.js') {
+	constructor(workerBundleName = 'decodeWorker.bundle.js', needsWasm = true) {
 		this._workerBundleName = workerBundleName;
+		this._needsWasm = needsWasm;
 		this._worker = null;
 		this._ready = false;
 		this._caps = {};
@@ -87,6 +89,13 @@ export class DecodeWorkerClient {
 	}
 
 	async _boot() {
+		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
+			bundleName?: string;
+			sourcePromise?: Promise<string>;
+			wasmBytesPromise?: Promise<ArrayBuffer>;
+			wasmModulePromise?: Promise<WebAssembly.Module>;
+		} | undefined;
+		const matchingWarmup = warmup?.bundleName === this._workerBundleName ? warmup : undefined;
 		const candidates = [
 			new URL(`./${this._workerBundleName}`, import.meta.url).href,
 			new URL(`../${this._workerBundleName}`, import.meta.url).href,
@@ -95,7 +104,16 @@ export class DecodeWorkerClient {
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
 		];
-		if (!this._tiffWasmBytes && !this._tiffWasmFetchPromise) {
+		if (this._needsWasm && !this._tiffWasmBytes && !this._tiffWasmFetchPromise) {
+			if (matchingWarmup?.wasmBytesPromise) {
+				this._tiffWasmFetchPromise = matchingWarmup.wasmBytesPromise
+					.then(bytes => {
+						this._tiffWasmBytes = bytes;
+						return bytes;
+					})
+					.catch(() => fetchFirstArrayBuffer(tiffWasmUrls))
+					.finally(() => { this._tiffWasmFetchPromise = null; });
+			} else {
 			this._tiffWasmFetchPromise = fetchFirstArrayBuffer(tiffWasmUrls)
 				.then(bytes => {
 					this._tiffWasmBytes = bytes;
@@ -104,9 +122,14 @@ export class DecodeWorkerClient {
 				.finally(() => {
 					this._tiffWasmFetchPromise = null;
 				});
+			}
 		}
-		let source = null;
+		let source: string | null = null;
+		if (matchingWarmup?.sourcePromise) {
+			try { source = await matchingWarmup.sourcePromise; } catch { /* use ordinary candidates */ }
+		}
 		for (const url of candidates) {
+			if (source) { break; }
 			try {
 				const response = await fetch(url);
 				if (response.ok) {
@@ -135,11 +158,19 @@ export class DecodeWorkerClient {
 		// VS Code webview-resource URLs are authorized in the webview, but a
 		// blob worker may be unable to fetch them. Fetch the WASM here and
 		// transfer a copy into the worker; retain URLs as a browser fallback.
-		const cachedWasmBytes = this._tiffWasmBytes || await this._tiffWasmFetchPromise;
+		const cachedWasmBytes = this._needsWasm ? (this._tiffWasmBytes || await this._tiffWasmFetchPromise) : null;
 		// Large decoded rasters retire their worker to release its expanded WASM
 		// heap. Keep the immutable compiled module in the webview so the next
 		// worker can instantiate it without recompiling the multi-megabyte binary.
-		if (!this._tiffWasmModule && !this._tiffWasmCompilePromise && cachedWasmBytes) {
+		if (!this._tiffWasmModule && !this._tiffWasmCompilePromise && matchingWarmup?.wasmModulePromise) {
+			this._tiffWasmCompilePromise = matchingWarmup.wasmModulePromise
+				.then(module => {
+					this._tiffWasmModule = module;
+					return module;
+				})
+				.catch((): WebAssembly.Module | null => null)
+				.finally((): void => { this._tiffWasmCompilePromise = null; });
+		} else if (!this._tiffWasmModule && !this._tiffWasmCompilePromise && cachedWasmBytes) {
 			this._tiffWasmCompilePromise = WebAssembly.compile(cachedWasmBytes)
 				.then(module => {
 					this._tiffWasmModule = module;
@@ -171,8 +202,9 @@ export class DecodeWorkerClient {
 		if (!this._ready || !this._worker) {
 			return false;
 		}
-		// TIFF is routed to the worker whenever either its WASM decoder or its
-		// geotiff.js compatibility fallback is available.
+		// TIFF is routed to this worker only when its primary WASM decoder is
+		// available. geotiff.js now belongs exclusively to the lazy webview
+		// fallback path.
 		if (format === 'tiff') {
 			return !!this._caps.tiff;
 		}

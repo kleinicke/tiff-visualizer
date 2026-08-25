@@ -1106,16 +1106,57 @@ export class ImagePreview extends MediaPreview {
 
 		const cssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.css'));
 		const jsUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.bundle.js'));
+		const decodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'decodeWorker.bundle.js'));
+		const fastRawWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'fastRawWorker.bundle.js'));
+		const layeredDecodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layeredDecodeWorker.bundle.js'));
+		const wasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'tiff-wasm.wasm'));
 		const geotiffUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'geotiff.min.js'));
 		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
 		const upngUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'upng.min.js'));
 		const parseExrUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'parse-exr.js'));
-		const vendorScripts: string[] = [];
-		if (isTiff) { vendorScripts.push(geotiffUri.toString(), pakoUri.toString()); }
-		if (lower.endsWith('.png')) { vendorScripts.push(upngUri.toString()); }
-		if (isExr) { vendorScripts.push(parseExrUri.toString()); }
-		if (isLayeredDocument) { vendorScripts.push(pakoUri.toString(), upngUri.toString()); }
-		const appScripts = [...vendorScripts, jsUri.toString()];
+		const layeredPreviewFallbackUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layeredPreviewFallback.bundle.js'));
+		const layerDocumentWriterUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layerDocumentWriter.bundle.js'));
+		const imagejRoiUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagejRoi.bundle.js'));
+		const vendorAssets = {
+			geotiff: geotiffUri.toString(),
+			pako: pakoUri.toString(),
+			upng: upngUri.toString(),
+			parseExr: parseExrUri.toString(),
+			layeredPreviewFallback: layeredPreviewFallbackUri.toString(),
+			layerDocumentWriter: layerDocumentWriterUri.toString(),
+			imagejRoi: imagejRoiUri.toString(),
+			nonce,
+		};
+		const warmFastRawDecoder = lower.endsWith('.ppm') || isPfm || lower.endsWith('.npy');
+		const warmGeneralDecoder = isTiff || lower.endsWith('.npz') || isExr || isHdr || isScientificArray;
+		const warmDecoderUri = isLayeredDocument ? layeredDecodeWorkerUri : warmFastRawDecoder ? fastRawWorkerUri : warmGeneralDecoder ? decodeWorkerUri : null;
+		const warmDecoderBundleName = isLayeredDocument ? 'layeredDecodeWorker.bundle.js'
+			: warmFastRawDecoder ? 'fastRawWorker.bundle.js' : 'decodeWorker.bundle.js';
+		const decoderWarmupScript = warmDecoderUri ? /* html */`
+	<script nonce="${nonce}">
+		(function () {
+			const sourcePromise = fetch(${JSON.stringify(warmDecoderUri.toString())}).then(response => {
+				if (!response.ok) throw new Error('decode worker warmup failed');
+				return response.text();
+			});
+			const wasmBytesPromise = ${warmGeneralDecoder ? `fetch(${JSON.stringify(wasmUri.toString())}).then(response => {
+				if (!response.ok) throw new Error('decoder WASM warmup failed');
+				return response.arrayBuffer();
+			})` : 'null'};
+			const wasmModulePromise = wasmBytesPromise ? wasmBytesPromise.then(bytes => WebAssembly.compile(bytes)) : null;
+			// Consume failures here as well as in DecodeWorkerClient so an optional
+			// warmup never becomes an unhandled rejection.
+			sourcePromise.catch(() => {});
+			wasmModulePromise?.catch(() => {});
+			window.__tiffVisualizerDecoderWarmup = {
+				bundleName: ${JSON.stringify(warmDecoderBundleName)},
+				sourcePromise,
+				wasmBytesPromise,
+				wasmModulePromise
+			};
+		}());
+	</script>` : '';
+		const appScripts = [jsUri.toString()];
 		const staticScripts = appScripts.map((scriptUri, index) =>
 			`<script${index === appScripts.length - 1 ? ' type="module"' : ''} src="${escapeAttribute(scriptUri)}" nonce="${nonce}"></script>`
 		).join('\n\t');
@@ -1193,7 +1234,7 @@ export class ImagePreview extends MediaPreview {
 
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' ${cspSource} 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
 <body class="container image${nativeFirstPaint ? ' loading' : ''}">
@@ -1214,6 +1255,8 @@ export class ImagePreview extends MediaPreview {
 		});
 	</script>
 	
+	<script nonce="${nonce}">window.__tiffVisualizerVendorAssets = ${JSON.stringify(vendorAssets)};</script>
+	${decoderWarmupScript}
 	${bootstrapScript || staticScripts}
 </body>
 </html>`;

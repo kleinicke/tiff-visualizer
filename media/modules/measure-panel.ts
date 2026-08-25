@@ -3,7 +3,6 @@
 import { areaUnit, calibrationFromKnownDistance, describeCalibration, formatNumber } from './measure/calibration.js';
 import { maskContour } from './measure/geometry.js';
 import { compileExpression, ExpressionError } from './measure/expression.js';
-import { exportImageJRois } from './measure/imagej-roi.js';
 import { analyzeParticles, countIntensityMaxima, particleToRoi, type SplitMode } from './measure/particles.js';
 import type { RoiManager } from './measure/roi-manager.js';
 import {
@@ -2438,7 +2437,10 @@ export class MeasurePanel {
 		this.host.saveSidecar(JSON.stringify(sidecar, null, 2));
 	}
 
-	private exportImageJ(): void {
+	private async exportImageJ(): Promise<void> {
+		const url = (window as any).__tiffVisualizerVendorAssets?.imagejRoi;
+		if (!url) { throw new Error('ImageJ ROI asset is unavailable'); }
+		const { exportImageJRois } = await import(url) as typeof import('./measure/imagej-roi.js');
 		const result = exportImageJRois(this.host.manager.list(), roi =>
 			roi.kind === 'mask' ? maskContour(roi as never) : []);
 		this.host.saveBinaryFile(`${this.baseName()}-RoiSet.zip`, result.bytes);
