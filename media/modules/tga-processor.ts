@@ -1,6 +1,7 @@
 "use strict";
 import TgaLoader from 'tga-js';
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { Stats } from './types.js';
 
@@ -48,8 +49,7 @@ export class TgaProcessor {
         try {
             this._cachedStats = undefined;
 
-            const response = await fetch(src, { signal: loadSignal });
-            const arrayBuffer = await response.arrayBuffer();
+			const arrayBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'tga');
             if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
             const tga = new TgaLoader();
@@ -93,7 +93,10 @@ export class TgaProcessor {
             if (this._isInitialLoad) {
                 this._postFormatInfo(width, height, logicalChannels, originalBitDepth);
                 this._pendingRenderData = true;
-                return { canvas, imageData: new ImageData(width, height) };
+				// The deferred settings response paints the real ImageData. A full-size
+				// blank placeholder allocated another 100MB at 5120² and the handler
+				// uploaded it before immediately replacing it.
+				return { canvas, imageData: new ImageData(1, 1) };
             }
 
             this._postFormatInfo(width, height, logicalChannels, originalBitDepth);

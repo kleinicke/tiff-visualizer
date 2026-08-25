@@ -70,19 +70,27 @@ export class PpmProcessor {
 
     async processPpm(src: string) {
         const loadSignal = this.loadSignal;
-        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
-        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-        // Binary P5 is small enough that its in-place TypedArray conversion is
-        // cheaper than a worker round trip, even at 5120². Keep RGB P6 and all
-        // compatibility variants off-thread.
-        const bytes = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength));
-        const decodeClient = bytes.length === 2 && bytes[0] === 80 && bytes[1] === 53
-            ? null
-            : this.decodeWorker;
-        // Parse in the decode worker when available, locally otherwise.
-        const { width, height, channels, data, numericDomain, formatLabel: format, stats } = await DecodeWorkerClient.decodeWithFallback(
-            decodeClient, 'ppm', buffer, src, loadSignal,
-            (b: ArrayBuffer) => decodeBinaryNetpbmFast(b) || decodePpmLocal(b));
+        const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'ppm');
+        let decoded: any;
+        if (speculative?.ok) {
+            decoded = speculative.result;
+        } else {
+            const buffer = speculative?.buffer instanceof ArrayBuffer
+                ? speculative.buffer
+                : await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'ppm');
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+            // Binary P5 is small enough that its in-place TypedArray conversion is
+            // cheaper than a worker round trip, even at 5120². Keep RGB P6 and all
+            // compatibility variants off-thread.
+            const bytes = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength));
+            const decodeClient = bytes.length === 2 && bytes[0] === 80 && bytes[1] === 53
+                ? null
+                : this.decodeWorker;
+            decoded = await DecodeWorkerClient.decodeWithFallback(
+                decodeClient, 'ppm', buffer, src, loadSignal,
+                (b: ArrayBuffer) => decodeBinaryNetpbmFast(b) || decodePpmLocal(b));
+        }
+        const { width, height, channels, data, numericDomain, formatLabel: format, stats } = decoded;
         const maxval = numericDomain.typeMax;
 
         // Keep RGB data for color display
@@ -123,7 +131,6 @@ export class PpmProcessor {
         this._lastRenderUsedWebGL = false;
         const settings = this.settingsManager.settings;
         const rgbAs24BitMode = (settings.rgbAs24BitGrayscale ?? false) && channels === 3;
-        const isGammaMode = settings.normalization?.gammaMode || false;
 
         // Invalidate cached stats if rgb24 mode changed
         if (this._cachedStatsRgb24Mode !== rgbAs24BitMode) {
@@ -178,7 +185,7 @@ export class PpmProcessor {
         };
         const typeMax = rgbAs24BitMode ? 16777215 : maxval;
         if (renderOptions.targetCanvas && this._webglRenderer.canRender({
-            data,
+			data,
             width,
             height,
             channels,
@@ -186,14 +193,14 @@ export class PpmProcessor {
             settings
         })) {
             const rendered = this._webglRenderer.render(renderOptions.targetCanvas, {
-                data: data as Uint16Array,
+                data,
                 width,
                 height,
                 channels,
                 isFloat: false,
-                min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
-                max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
-                typeMax,
+				min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
+				max: (stats && Number.isFinite(stats.max)) ? stats.max : typeMax,
+				typeMax,
                 settings,
                 nanColor: { r: 0, g: 0, b: 0 }
             });

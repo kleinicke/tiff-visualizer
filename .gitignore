@@ -32,6 +32,7 @@ web-dist/
 wasm/tiff-decoder/target/
 
 # Generated bundles
+media/chunks/
 media/imagePreview.bundle.js
 media/imagePreview.bundle.js.map
 media/decodeWorker.bundle.js

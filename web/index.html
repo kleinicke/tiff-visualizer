@@ -19,6 +19,20 @@
   <link rel="icon" href="./icon.png">
   <link rel="stylesheet" href="./media/imagePreview.css">
   <link rel="stylesheet" href="./website.css">
+  <script async src="https://analytics.re4vive.com/js/pa-GabvR7klxXIEzqdnoWcJw.js"></script>
+  <script>
+    ((window.plausible =
+      window.plausible ||
+      function () {
+        (plausible.q = plausible.q || []).push(arguments);
+      }),
+      (plausible.init =
+        plausible.init ||
+        function (options) {
+          plausible.o = options || {};
+        }));
+    plausible.init();
+  </script>
   <meta
     id="image-preview-settings"
     data-settings='{"normalization":{"min":0,"max":1,"autoNormalize":true,"gammaMode":false},"gamma":{"in":2.2,"out":2.2},"brightness":{"offset":0},"rgbAs24BitGrayscale":false,"scale24BitFactor":1000,"normalizedFloatMode":false,"nanColor":"black","colorPickerShowModified":false,"showScaleBar":true,"gpuAcceleration":true,"plyVisualizerInstalled":true,"resourceUri":"welcome.png","src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=","surfaceMode":"editor","extensionVersion":"web-1","vscodeVersion":"browser"}'
@@ -91,8 +105,9 @@
   <input id="web-import-input" class="web-file-input" type="file">
 
   <script>
-    window.__tiffVisualizerVendorAssets = {
-      geotiff: './media/geotiff.min.js',
+	window.__tiffVisualizerVendorAssets = {
+	  wasm: './media/wasm/tiff-wasm.wasm',
+	  geotiff: './media/geotiff.min.js',
       pako: './media/pako.min.js',
       upng: './media/upng.min.js',
       parseExr: './media/parse-exr.js',

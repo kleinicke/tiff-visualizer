@@ -33,7 +33,23 @@ export class FastRawWorkerClient implements DecodeWorkerLike {
 		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
 			bundleName?: string;
 			sourcePromise?: Promise<string>;
+			workerPromise?: Promise<{ worker: Worker; blobUrl: string }>;
 		} | undefined;
+		if (warmup?.bundleName === 'fastRawWorker.bundle.js' && warmup.workerPromise) {
+			try {
+				const adopted = await warmup.workerPromise;
+				this.worker = adopted.worker;
+				this.blobUrl = adopted.blobUrl;
+				adopted.worker.onmessage = event => {
+					if (event.data?.type === 'ready') { this.ready = true; return; }
+					const resolve = this.pending.get(event.data?.id);
+					if (resolve) { this.pending.delete(event.data.id); resolve(event.data); }
+				};
+				adopted.worker.onerror = () => this.teardown();
+				this.ready = true;
+				return;
+			} catch { /* use ordinary startup */ }
+		}
 		const candidates = [
 			new URL('./fastRawWorker.bundle.js', import.meta.url).href,
 			new URL('../fastRawWorker.bundle.js', import.meta.url).href,

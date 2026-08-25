@@ -50,14 +50,21 @@ export class HdrProcessor {
 
     async processHdr(src: string) {
         const loadSignal = this.loadSignal;
-        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'hdr');
-        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-
         // parse-hdr returns { shape:[width,height], exposure, gamma, data:Float32Array }
         // data is RGBA stride-4, alpha is always 1.0
         // Parsed in the decode worker when available, locally otherwise.
-        const parsed = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'hdr', buffer, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
+        const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'hdr');
+        let parsed: any;
+        if (speculative?.ok) {
+            parsed = speculative.result;
+        } else {
+            const buffer = speculative?.buffer instanceof ArrayBuffer
+                ? speculative.buffer
+                : await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'hdr');
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+            parsed = await DecodeWorkerClient.decodeWithFallback(
+                this.decodeWorker, 'hdr', buffer, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
+        }
         const width = parsed.shape[0];
         const height = parsed.shape[1];
         this._lastAllTags = parseAllTagsJson(parsed.allTagsJson);

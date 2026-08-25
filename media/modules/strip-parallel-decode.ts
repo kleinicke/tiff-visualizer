@@ -110,10 +110,20 @@ class StripDecodePool {
 		if (this._module) {
 			return this._spawn(this._module);
 		}
+		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
+			wasmModulePromise?: Promise<WebAssembly.Module>;
+		} | undefined;
+		if (warmup?.wasmModulePromise) {
+			try {
+				this._module = await warmup.wasmModulePromise;
+				return this._spawn(this._module);
+			} catch { /* use the explicit asset below */ }
+		}
 		const wasmUrls = [
+			(globalThis as any).__tiffVisualizerVendorAssets?.wasm,
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
-		];
+		].filter((url): url is string => typeof url === 'string' && url.length > 0);
 		let compiled: WebAssembly.Module | null = null;
 		for (const url of wasmUrls) {
 			try {

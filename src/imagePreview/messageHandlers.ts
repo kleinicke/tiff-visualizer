@@ -118,6 +118,36 @@ class StatsMessageHandler implements MessageHandler {
 }
 
 class FormatInfoMessageHandler implements MessageHandler {
+	private formatFileSize(bytes: number): string {
+		const kb = 1024;
+		const mb = kb * 1024;
+		if (bytes < kb) { return `${bytes} B`; }
+		if (bytes < mb) { return `${(bytes / kb).toFixed(2)} KB`; }
+		return `${(bytes / mb).toFixed(2)} MB`;
+	}
+
+	private async logOpenedImage(value: any, preview: ImagePreview): Promise<void> {
+		const output = require('../extension').getOutputChannel();
+		let size = '';
+		let resource = preview.resource;
+		try {
+			resource = value.resourceUri ? vscode.Uri.parse(value.resourceUri) : preview.resource;
+			const stat = await vscode.workspace.fs.stat(resource);
+			size = this.formatFileSize(stat.size);
+		} catch {
+			// Size reporting must never interfere with opening an image. Schemes
+			// without stat support retain the previous log format.
+		}
+		const channelCount = Number(value.samplesPerPixel ?? value.channels);
+		const dimensions = Number.isFinite(channelCount) && channelCount > 0
+			? `${channelCount}x${value.width}x${value.height}`
+			: `${value.width}x${value.height}`;
+		const sizeSuffix = size ? `, ${size}` : '';
+		let fileName = resource.path.split('/').pop() || resource.path;
+		try { fileName = decodeURIComponent(fileName); } catch { /* keep encoded filename */ }
+		output.appendLine(`📂 Opened 1: ${fileName} (${dimensions}, ${value.bitsPerSample}-bit${sizeSuffix})`);
+	}
+
 	handle(message: any, preview: ImagePreview): void {
 		// Accept format info from any source (TIFF and non-TIFF processors)
 		preview.getSizeStatusBarEntry().updateFormatInfo(message.value);
@@ -138,9 +168,7 @@ class FormatInfoMessageHandler implements MessageHandler {
 
 			// Log format detection (only on initial load to avoid duplicate logs)
 			if (message.value.isInitialLoad) {
-				const output = require('../extension').getOutputChannel();
-				const formatDetails = `${message.value.formatType} (${message.value.width}×${message.value.height}, ${message.value.bitsPerSample}bit)`;
-				output.appendLine(`   Format detected: ${formatDetails}`);
+				void this.logOpenedImage(message.value, preview);
 			}
 		}
 

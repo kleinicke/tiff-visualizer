@@ -4,7 +4,6 @@ import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { PerfTrace } from './perf-trace.js';
 import { findJpegExifBlob, parsePngChunks, TagEntry } from './tiff-tag-utils.js';
-import { extractExifTagsFromBlob } from './tiff-wasm-wrapper.js';
 import { DeferredRenderOptions } from './types.js';
 import { loadUpng } from './lazy-vendor-loader.js';
 
@@ -113,7 +112,10 @@ export class PngProcessor {
 			const { exifBlob, textEntries } = await parsePngChunks(new Uint8Array(arrayBuffer));
             this._lastAllTags = textEntries.map(({ name, value }): TagEntry => ({ tag: null, name, group: 'PNG', value }));
             if (exifBlob) {
-                this._lastAllTags.push(...await extractExifTagsFromBlob(exifBlob));
+				// The decode worker takes ownership of arrayBuffer below. Preserve only
+				// the small Exif payload and decode it after first paint; TIFF/WASM glue
+				// is otherwise an unnecessary startup dependency for ordinary PNGs.
+				this._scheduleEmbeddedExifTags(exifBlob.slice(), loadSignal, true);
             }
             if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
@@ -124,7 +126,7 @@ export class PngProcessor {
                 // The bytes are already resident for IHDR/metadata inspection.
                 // Decode this exact buffer through Chromium instead of making
                 // the Image element fetch the same resource a second time.
-                return this._processWithNativeAPI(src, arrayBuffer);
+                return this._processWithNativeAPI(src, arrayBuffer, this._detectPngChannels(arrayBuffer));
             }
 
 			// Ordinary 8-bit PNGs never pay for the multi-megabyte decode worker.
@@ -272,6 +274,29 @@ export class PngProcessor {
         }
     }
 
+	_scheduleEmbeddedExifTags(exifBlob: Uint8Array, loadSignal: AbortSignal | undefined, append: boolean): void {
+		const load = async () => {
+			if (loadSignal?.aborted) { return; }
+			try {
+				const { extractExifTagsFromBlob } = await import('./tiff-wasm-wrapper.js');
+				const tags = await extractExifTagsFromBlob(exifBlob);
+				if (loadSignal?.aborted) { return; }
+				this._lastAllTags = append ? [...this._lastAllTags, ...tags] : tags;
+				this.onMetadataTagsReady?.();
+			} catch (error) {
+				console.warn('[PngProcessor] Failed to read embedded Exif tags:', error);
+			}
+		};
+		const requestIdle = (globalThis as typeof globalThis & {
+			requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+		}).requestIdleCallback;
+		if (requestIdle) {
+			requestIdle(() => { void load(); }, { timeout: 1000 });
+		} else {
+			setTimeout(() => { void load(); }, 250);
+		}
+	}
+
     /**
      * Fetch a JPEG's bytes and, if it carries an Exif APP1 segment, decode it
      * into tags for the Metadata panel. Runs independently of (and doesn't
@@ -283,10 +308,7 @@ export class PngProcessor {
             if (loadSignal?.aborted) { return; }
             const exifBlob = findJpegExifBlob(new Uint8Array(arrayBuffer));
             if (!exifBlob) { return; }
-            const tags = await extractExifTagsFromBlob(exifBlob);
-            if (loadSignal?.aborted) { return; }
-            this._lastAllTags = tags;
-            this.onMetadataTagsReady?.();
+			this._scheduleEmbeddedExifTags(exifBlob.slice(), loadSignal, false);
         } catch (error) {
             console.warn('[PngProcessor] Failed to read JPEG Exif tags:', error);
         }
@@ -296,7 +318,7 @@ export class PngProcessor {
      * Process image using native browser Image API (for 8-bit PNGs and JPEGs)
      * @param src - Source URI
      */
-    async _processWithNativeAPI(src: string, encodedBytes?: ArrayBuffer): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
+    async _processWithNativeAPI(src: string, encodedBytes?: ArrayBuffer, encodedChannels?: number | null): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
         const lowerSrc = src.toLowerCase();
         const isJpeg = lowerSrc.includes('.jpg') || lowerSrc.includes('.jpeg');
         const bootstrapImage = bootstrapImageFor(src);
@@ -334,7 +356,7 @@ export class PngProcessor {
                         this._cachedStats = undefined;
                         this._cachedStatsRgb24Mode = false;
                         this._lazyNativeReadback = { image, canvas, ctx, width: canvas.width, height: canvas.height, format: 'JPEG' };
-                        this._postFormatInfo(canvas.width, canvas.height, 4, 8, 'JPEG');
+                        this._postFormatInfo(canvas.width, canvas.height, 3, 8, 'JPEG');
                         this._pendingRenderData = false;
                         this._isInitialLoad = false;
                         resolve({ canvas, imageData: null, canvasAlreadyRendered: true, lazyPixelData: true, displayElement: image });
@@ -370,7 +392,8 @@ export class PngProcessor {
                         originalImageData: imageData
                     };
 
-                    this._postFormatInfo(canvas.width, canvas.height, 4, 8, format);
+                    const reportedChannels = isJpeg ? 3 : encodedChannels || (hasAlpha ? 4 : 3);
+                    this._postFormatInfo(canvas.width, canvas.height, reportedChannels, 8, format);
 
                     if (bootstrapImage && this.canDisplayNativeForSettings(this.settingsManager.settings)) {
                         this._pendingRenderData = false;
@@ -726,4 +749,13 @@ export class PngProcessor {
             return null;
         }
     }
+
+	_detectPngChannels(arrayBuffer: ArrayBuffer): number | null {
+		const data = new Uint8Array(arrayBuffer);
+		if (data.length < 26 || data[0] !== 137 || data[1] !== 80 || data[2] !== 78 || data[3] !== 71) {
+			return null;
+		}
+		// PNG IHDR color type: grayscale, RGB, palette, grayscale+alpha, RGBA.
+		return ({ 0: 1, 2: 3, 3: 3, 4: 2, 6: 4 } as Record<number, number>)[data[25]] ?? null;
+	}
 }

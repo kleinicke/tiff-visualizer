@@ -18,7 +18,15 @@ const browserBuild = {
 
 await Promise.all([
   build({ ...browserBuild, entryPoints: ['web/browser-host.ts'], outfile: `${outputDirectory}/browserHost.bundle.js`, format: 'iife' }),
-  build({ ...browserBuild, entryPoints: ['media/imagePreview.ts'], outfile: `${mediaDirectory}/imagePreview.bundle.js`, format: 'esm' }),
+  build({
+    ...browserBuild,
+    entryPoints: ['media/imagePreview.ts'],
+    outdir: mediaDirectory,
+    entryNames: 'imagePreview.bundle',
+    chunkNames: 'chunks/[name]-[hash]',
+    format: 'esm',
+    splitting: true,
+  }),
   build({ ...browserBuild, entryPoints: ['media/decode-worker.ts'], outfile: `${mediaDirectory}/decodeWorker.bundle.js`, format: 'esm' }),
 	build({ ...browserBuild, entryPoints: ['media/png-decode-worker.ts'], outfile: `${mediaDirectory}/pngDecodeWorker.bundle.js`, format: 'esm' }),
 	build({ ...browserBuild, entryPoints: ['media/layered-decode-worker.ts'], outfile: `${mediaDirectory}/layeredDecodeWorker.bundle.js`, format: 'esm' }),

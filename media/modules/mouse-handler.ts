@@ -498,8 +498,8 @@ export class MouseHandler {
 			}
 		}
 		// Fallback to canvas pixel reading for standard images
-		if (this.imageElement) {
-			const canvas = this.imageElement as unknown as HTMLCanvasElement;
+		if (this.imageElement instanceof HTMLCanvasElement) {
+			const canvas = this.imageElement;
 			const ctx = canvas.getContext('2d', { willReadFrequently: true });
 			if (ctx) {
 				const pixel = ctx.getImageData(x, y, 1, 1).data;

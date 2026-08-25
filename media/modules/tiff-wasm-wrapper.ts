@@ -43,7 +43,27 @@ async function initWasm(): Promise<any> {
 
     wasmInitPromise = (async () => {
         try {
-            await initTiffWasm();
+			// Code-split processor chunks live under media/chunks/, so allowing the
+			// wasm-pack glue to resolve its default URL relative to import.meta.url
+			// would incorrectly request media/chunks/wasm/. Prefer the module already
+			// compiled by the tiny VS Code bootstrap; the standalone web build uses
+			// the explicit asset URL instead.
+			const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
+				wasmModulePromise?: Promise<WebAssembly.Module>;
+			} | undefined;
+			let initInput: WebAssembly.Module | ArrayBuffer | undefined;
+			if (warmup?.wasmModulePromise) {
+				try { initInput = await warmup.wasmModulePromise; } catch { /* use explicit asset */ }
+			}
+			if (!initInput) {
+				const wasmUrl = (globalThis as any).__tiffVisualizerVendorAssets?.wasm;
+				if (wasmUrl) {
+					const response = await fetch(wasmUrl);
+					if (!response.ok) { throw new Error(`TIFF WASM fetch failed (${response.status})`); }
+					initInput = await response.arrayBuffer();
+				}
+			}
+			await initTiffWasm(initInput);
             // These decode_*_fast entries back the main-thread decode path
             // in `main-thread-decode.ts`, taken when the decode worker is
             // unavailable. They share this one cached module instance rather

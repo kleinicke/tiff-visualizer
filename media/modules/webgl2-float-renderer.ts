@@ -18,7 +18,7 @@ export interface CanRenderParams {
 }
 
 export interface RenderParams {
-	data: Float32Array | Uint16Array;
+	data: TypedPixelData;
 	width: number;
 	height: number;
 	channels?: number;
@@ -53,7 +53,7 @@ export class WebGL2FloatRenderer {
 	dummyUintTexture: WebGLTexture | null;
 	colormapTexture: WebGLTexture | null;
 	vao: WebGLVertexArrayObject | null;
-	textureData: Float32Array | Uint16Array | null;
+	textureData: TypedPixelData | null;
 	textureFormat: TextureFormat;
 	colormapName: string;
 	textureWidth: number;
@@ -261,7 +261,7 @@ export class WebGL2FloatRenderer {
 		return true;
 	}
 
-	_uploadTextureIfNeeded(data: Float32Array | Uint16Array, width: number, height: number, textureFormat: TextureFormat): void {
+	_uploadTextureIfNeeded(data: TypedPixelData, width: number, height: number, textureFormat: TextureFormat): void {
 		const gl = this.gl as WebGL2RenderingContext;
 		if (this.textureData === data && this.textureWidth === width && this.textureHeight === height && this.textureFormat === textureFormat) {
 			PerfTrace.detail('webgl-texture-upload-skipped', 0);
@@ -323,7 +323,7 @@ export class WebGL2FloatRenderer {
 		console.log(`[WebGL2] Float texture upload took ${(performance.now() - start).toFixed(2)}ms`);
 	}
 
-	_getTextureFormat(params: { channels?: number; isFloat?: boolean; settings?: any; data?: ArrayBufferView }): TextureFormat {
+	_getTextureFormat(params: { channels?: number; isFloat?: boolean; settings?: any; data?: TypedPixelData }): TextureFormat {
 		const channels = params.channels || 1;
 		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && channels === 3;
 		if (params.isFloat !== false) {

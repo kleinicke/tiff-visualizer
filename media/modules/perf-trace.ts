@@ -84,6 +84,28 @@ export class PerfTrace {
 	}
 
 	/**
+	 * Record a phase whose final portion was already measured by an overlapping
+	 * bootstrap task. The elapsed wall time is partitioned, never double-counted:
+	 * up to `tailDurationMs` is assigned to the tail phase and the remainder to
+	 * the preceding phase.
+	 */
+	static markWithTail(precedingName: string, tailName: string, tailDurationMs: number) {
+		const trace = PerfTrace._active;
+		if (!trace) { return; }
+		const now = performance.now();
+		const elapsed = Math.max(0, now - trace.last);
+		const tail = Math.min(elapsed, Math.max(0, Number(tailDurationMs) || 0));
+		const preceding = elapsed - tail;
+		trace.totals.set(precedingName, (trace.totals.get(precedingName) || 0) + preceding);
+		trace.totals.set(tailName, (trace.totals.get(tailName) || 0) + tail);
+		if (trace.detailed) {
+			trace.phases.push(`${precedingName} ${preceding.toFixed(0)}ms`);
+			trace.phases.push(`${tailName} ${tail.toFixed(0)}ms`);
+		}
+		trace.last = now;
+	}
+
+	/**
 	 * Append an externally measured detail without changing the active timer.
 	 * No-op when no trace is active.
 	 */

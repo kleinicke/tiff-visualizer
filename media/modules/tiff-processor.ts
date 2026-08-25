@@ -11,6 +11,8 @@ import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml } from './ome-tiff.js';
 import { loadGeoTiff } from './lazy-vendor-loader.js';
+import { tiffFormatTypeFor, tiffNeedsFloatCarrier, tiffTypeMax } from './tiff-format-utils.js';
+export { tiffFormatTypeFor, tiffNeedsFloatCarrier, tiffTypeMax } from './tiff-format-utils.js';
 
 interface VsCodeApi {
 	postMessage: (msg: any) => any;
@@ -25,29 +27,6 @@ interface TiffLayoutInfo {
 	tileLength?: number;
 	tileCount?: number;
 	directDecode?: boolean;
-}
-
-/**
- * First entry of a possibly per-channel SampleFormat tag value.
- */
-function primarySampleFormat(sampleFormat: number | number[]): number {
-	return Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat;
-}
-
-/**
- * Whether a TIFF sample needs a Float32Array carrier end-to-end rather than
- * an unsigned integer typed array. True for IEEE float (3) and signed
- * integer (2) samples — an unsigned Uint16/Uint8 carrier can't represent
- * negative values (e.g. -1 wraps to 255/65535) — and also for unsigned (1)
- * samples wider than 16 bits (e.g. uint32), since there's no unsigned
- * TypedArray between Uint16Array and Float64Array that JS typed-array-backed
- * rendering/compositing code here understands. Float32 only represents
- * integers exactly up to 2^24 (16,777,216); values above that lose precision
- * once carried this way, which is accepted as a display-only approximation.
- */
-export function tiffNeedsFloatCarrier(sampleFormat: number | number[], bitsPerSample: number): boolean {
-	const format = primarySampleFormat(sampleFormat);
-	return format === 3 || format === 2 || bitsPerSample > 16;
 }
 
 /**
@@ -68,13 +47,6 @@ function pickTiffArrayCtor(sampleFormat: number | number[], bitsPerSample: numbe
  * 16-bit — gamma mode's [0, typeMax] full-range convention only covers the
  * positive half of signed data), and 2^bits - 1 for unsigned integers.
  */
-export function tiffTypeMax(sampleFormat: number | number[], bitsPerSample: number): number {
-	const format = primarySampleFormat(sampleFormat);
-	if (format === 3) { return 1.0; }
-	if (format === 2) { return Math.pow(2, bitsPerSample - 1) - 1; }
-	return Math.pow(2, bitsPerSample) - 1;
-}
-
 /**
  * Per-format settings key (AppStateManager.ImageFormatType) for a TIFF's
  * SampleFormat/bit depth. IEEE float and <=16-bit unsigned integer keep
@@ -87,14 +59,6 @@ export function tiffTypeMax(sampleFormat: number | number[], bitsPerSample: numb
  * [0, 2^32-1], and typical data (which rarely spans anywhere near that) would
  * render essentially black.
  */
-export function tiffFormatTypeFor(sampleFormat: number | number[], bitsPerSample?: number): 'tiff-float' | 'tiff-int-signed' | 'tiff-int-wide' | 'tiff-int' {
-	const format = primarySampleFormat(sampleFormat);
-	if (format === 3) { return 'tiff-float'; }
-	if (format === 2) { return 'tiff-int-signed'; }
-	if ((bitsPerSample || 0) > 16) { return 'tiff-int-wide'; }
-	return 'tiff-int';
-}
-
 /**
  * TIFF Processor Module
  * Handles TIFF image processing, normalization, and data extraction
@@ -268,13 +232,9 @@ export class TiffProcessor {
 				buffer = this._sourceBuffer.slice(0);
 				PerfTrace.mark('tiff-source-cache-hit');
 			} else {
-				const responseStart = performance.now();
-				const response = await fetch(src, { signal: loadSignal });
-				PerfTrace.detail('fetch-tiff-response', performance.now() - responseStart);
 				const readStart = performance.now();
-				const sourceBuffer = await response.arrayBuffer();
+				const sourceBuffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'tiff');
 				readDuration = performance.now() - readStart;
-				PerfTrace.detail('fetch-tiff-arrayBuffer', readDuration);
 				// Keep one immutable source copy so changing pages never refetches the
 				// whole TIFF. The per-decode slice can safely be transferred to the worker.
 				this._sourceBuffer = sourceBuffer;

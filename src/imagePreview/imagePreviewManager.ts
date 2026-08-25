@@ -231,10 +231,6 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		// Capture timestamp immediately when file is opened
 		const openTimestamp = Date.now();
 
-		// Log when opening a new file
-		const fileName = document.uri.path.split('/').pop() || document.uri.path;
-		getOutputChannel().appendLine(`📂 Opened 1: ${fileName}`);
-
 		this.createPreview(ImagePreview, this.extensionRoot, document, webviewEditor, openTimestamp);
 	}
 

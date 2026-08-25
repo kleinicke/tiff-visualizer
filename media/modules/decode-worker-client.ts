@@ -94,8 +94,32 @@ export class DecodeWorkerClient {
 			sourcePromise?: Promise<string>;
 			wasmBytesPromise?: Promise<ArrayBuffer>;
 			wasmModulePromise?: Promise<WebAssembly.Module>;
+			workerPromise?: Promise<{
+				worker: Worker;
+				blobUrl: string;
+				caps: { tiff?: boolean; tiffWasm?: boolean };
+				wasmModule?: WebAssembly.Module | null;
+			}>;
 		} | undefined;
 		const matchingWarmup = warmup?.bundleName === this._workerBundleName ? warmup : undefined;
+		if (matchingWarmup?.workerPromise) {
+			try {
+				const adopted = await matchingWarmup.workerPromise;
+				this._worker = adopted.worker;
+				this._blobUrl = adopted.blobUrl;
+				this._caps = adopted.caps || {};
+				this._tiffWasmModule = adopted.wasmModule || null;
+				adopted.worker.onmessage = event => this._onMessage(event.data);
+				adopted.worker.onerror = event => {
+					if (this._worker !== adopted.worker) { return; }
+					console.warn('[DecodeWorker] Adopted worker error:', event.message || event);
+					this._teardown();
+				};
+				this._ready = true;
+				console.log(`[DecodeWorker] Adopted warm worker (tiff=${!!this._caps.tiff}, tiffWasm=${!!this._caps.tiffWasm})`);
+				return;
+			} catch { /* fall through to ordinary startup */ }
+		}
 		const candidates = [
 			new URL(`./${this._workerBundleName}`, import.meta.url).href,
 			new URL(`../${this._workerBundleName}`, import.meta.url).href,
@@ -306,7 +330,71 @@ export class DecodeWorkerClient {
 	 * Fetch a source as bytes with consistent performance breakdown for
 	 * worker-decoded formats.
 	 */
+	static async takeSpeculativeDecode(src: string, signal: AbortSignal | undefined, format: string): Promise<any | null> {
+		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
+			imageSourceUri?: string;
+			speculativeFormat?: string;
+			speculativeDecodePromise?: Promise<any>;
+			speculativeDecodeMetrics?: { durationMs?: number; fileBytes?: number };
+			speculativeDecodeClaimed?: boolean;
+			imageBufferClaimed?: boolean;
+		} | undefined;
+		if (warmup?.imageSourceUri !== src || warmup.speculativeFormat !== format ||
+			!warmup.speculativeDecodePromise || warmup.speculativeDecodeClaimed) {
+			return null;
+		}
+		warmup.speculativeDecodeClaimed = true;
+		// The speculative request transferred this buffer. If it cannot return the
+		// bytes, the ordinary fallback must refetch rather than adopt a detached
+		// ArrayBuffer from imageBufferPromise.
+		warmup.imageBufferClaimed = true;
+		let response: any;
+		try {
+			response = await warmup.speculativeDecodePromise;
+		} catch {
+			// Bootstrap work is optional. Let the caller claim the prefetched source
+			// bytes or use its ordinary fetch/decode fallback.
+			return null;
+		}
+		if (signal?.aborted) { throw new DOMException('The operation was aborted.', 'AbortError'); }
+		const decodeDuration = Number(warmup.speculativeDecodeMetrics?.durationMs || 0);
+		PerfTrace.markWithTail(`fetch(${format})`, `decode-worker(${format})`, decodeDuration);
+		PerfTrace.note(`fetch-${format}-bytes`, `${(Number(warmup.speculativeDecodeMetrics?.fileBytes || 0) / (1024 * 1024)).toFixed(1)}MB`);
+		PerfTrace.note(`decode-${format}-bootstrap`, response?.ok ? 'adopted' : 'fallback');
+		return response;
+	}
+
 	static async fetchArrayBuffer(src: string, signal: AbortSignal | undefined, format: string): Promise<ArrayBuffer> {
+		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
+			imageSourceUri?: string;
+			imageBufferPromise?: Promise<ArrayBuffer>;
+			sourceReadMetrics?: { responseMs?: number; arrayBufferMs?: number };
+			imageBufferClaimed?: boolean;
+		} | undefined;
+		if (warmup?.imageSourceUri === src && warmup.imageBufferPromise && !warmup.imageBufferClaimed) {
+			warmup.imageBufferClaimed = true;
+			try {
+				const waitStart = performance.now();
+				const buffer = await warmup.imageBufferPromise;
+				if (signal?.aborted) { throw new DOMException('The operation was aborted.', 'AbortError'); }
+				const waitDuration = performance.now() - waitStart;
+				const responseDuration = Number(warmup.sourceReadMetrics?.responseMs || 0);
+				const readDuration = Number(warmup.sourceReadMetrics?.arrayBufferMs || 0);
+				PerfTrace.detail(`fetch-${format}-bootstrap-wait`, waitDuration);
+				PerfTrace.detail(`fetch-${format}-response`, responseDuration);
+				PerfTrace.detail(`fetch-${format}-arrayBuffer`, readDuration);
+				const megabytes = buffer.byteLength / (1024 * 1024);
+				PerfTrace.note(`fetch-${format}-bytes`, `${megabytes.toFixed(1)}MB`);
+				if (readDuration > 0) {
+					PerfTrace.note(`fetch-${format}-arrayBuffer-rate`, `${(megabytes / (readDuration / 1000)).toFixed(0)}MB/s`);
+				}
+				PerfTrace.mark(`fetch(${format})`);
+				return buffer;
+			} catch (error) {
+				if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) { throw error; }
+				// Optional bootstrap failed; preserve the normal fetch path.
+			}
+		}
 		const responseStart = performance.now();
 		const response = await fetch(src, { signal });
 		PerfTrace.detail(`fetch-${format}-response`, performance.now() - responseStart);

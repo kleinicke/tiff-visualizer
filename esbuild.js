@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const isWatch = process.argv.includes('--watch');
+fs.rmSync(path.join(__dirname, 'media', 'chunks'), { recursive: true, force: true });
 
 // Build extension for Node.js (desktop)
 const extensionBuildOptions = {
@@ -44,11 +45,15 @@ const appStateManagerBuildOptions = {
 const webviewBuildOptions = {
   entryPoints: ['media/imagePreview.ts'],
   bundle: true,
-  outfile: 'media/imagePreview.bundle.js',
+  outdir: 'media',
+  entryNames: 'imagePreview.bundle',
+  chunkNames: 'chunks/[name]-[hash]',
   platform: 'browser',
   target: 'es2020',
   sourcemap: true,
   format: 'esm',
+  splitting: true,
+  minify: !isWatch,
 };
 
 // Build the decode worker (runs format decoders off the webview UI thread).

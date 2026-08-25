@@ -81,16 +81,23 @@ export class NpyProcessor {
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
 
-        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
-        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'npy');
+        let parsed: any;
+        if (speculative?.ok) {
+            parsed = speculative.result;
+        } else {
+            const buffer = speculative?.buffer instanceof ArrayBuffer
+                ? speculative.buffer
+                : await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 
-        // Decode in the worker when available, on this thread otherwise. The
-        // Rust decoder dispatches between plain .npy and .npz internally, so
-        // both paths take the same call.
-        const parsed = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'npy', buffer, src, loadSignal,
-            (b: ArrayBuffer, options?: Record<string, any>) => decodeNativeF32NpyFast(b, options?.computeStats !== false) || decodeNpyLocal(b),
-            { computeStats: NormalizationHelper.needsStats(this.settingsManager.settings) });
+            // Decode in the worker when available, on this thread otherwise. The
+            // Rust decoder dispatches between plain .npy and .npz internally.
+            parsed = await DecodeWorkerClient.decodeWithFallback(
+                this.decodeWorker, 'npy', buffer, src, loadSignal,
+                (b: ArrayBuffer, options?: Record<string, any>) => decodeNativeF32NpyFast(b, options?.computeStats !== false) || decodeNpyLocal(b),
+                { computeStats: NormalizationHelper.needsStats(this.settingsManager.settings) });
+        }
         const { data, width, height, metadata, numericDomain, channels, stats } = parsed;
         // The numpy dtype string (e.g. "<f4") is user-visible display info,
         // not part of the DecodedArray schema — it travels through

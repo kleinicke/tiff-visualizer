@@ -3,13 +3,8 @@
 import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions } from './modules/settings-manager.js';
 import type { ImageSettings, SettingsUpdateResult } from './modules/settings-manager.js';
 import type { DeferredRenderOptions } from './modules/types.js';
-import { TiffProcessor, tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-processor.js';
-import { ExrProcessor } from './modules/exr-processor.js';
-import { NpyProcessor } from './modules/npy-processor.js';
-import { PfmProcessor } from './modules/pfm-processor.js';
-import { PpmProcessor } from './modules/ppm-processor.js';
+import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
 import { PngProcessor } from './modules/png-processor.js';
-import { HdrProcessor } from './modules/hdr-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
 import { WebImageProcessor } from './modules/web-image-processor.js';
 import { JxlProcessor } from './modules/jxl-processor.js';
@@ -51,8 +46,6 @@ import type {
 } from './modules/layer-compositor-worker-client.js';
 import { WebGL2LayerCompositor } from './modules/webgl2-layer-compositor.js';
 import { WebGPULayerCompositor } from './modules/webgpu-layer-compositor.js';
-import { prewarmStripPool } from './modules/strip-parallel-decode.js';
-import { getWasmModule } from './modules/tiff-wasm-wrapper.js';
 import { PerfTrace } from './modules/perf-trace.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
@@ -60,11 +53,9 @@ import { LayersPanel } from './modules/layers-panel.js';
 import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome-tiff.js';
 import { installRangeDoubleClickReset, datasetAxisSignature } from './modules/range-controls.js';
 import type { LayerExportFormat } from './modules/layer-document-writers.js';
-import { ScientificArrayProcessor } from './modules/scientific-array-processor.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
 import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-registry.js';
-import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, decodeNd2Local, decodeNetcdfLocal } from './modules/main-thread-decode.js';
 
 /**
  * Main Image Preview Application
@@ -132,6 +123,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		postMessage: (message: { type: string, [key: string]: any }) => {
 			// Track formatInfo when it's sent
 			if (message.type === 'formatInfo' && message.value) {
+				// The extension host uses this URI to report the correct on-disk size,
+				// including when a collection switch is showing a different resource
+				// from the custom document that owns the webview.
+				message = {
+					...message,
+					value: { ...message.value, resourceUri: settingsManager.settings.resourceUri },
+				};
 				currentFormatInfo = message.value;
 				lastFormatInfoPost = {
 					time: performance.now(),
@@ -153,29 +151,38 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	};
 
 	// Initialize all modules
-	const tiffProcessor = new TiffProcessor(settingsManager, vscode);
-	const exrProcessor = new ExrProcessor(settingsManager, vscode);
+	const dormantProcessor = (): any => ({
+		_isInitialLoad: true, _pendingRenderData: null, _lastRaw: null,
+		_lastAllTags: [], metadata: {}, rawTiffData: null, rawExrData: null,
+		pageIndex: 0, pageCount: 1, omeMetadata: null, omeBinaryOnly: null,
+		// MouseHandler probes processors in a fixed order. A lazy family that has
+		// not been installed yet must behave like an empty processor, not merely
+		// be truthy and then throw when its pixel accessor is called.
+		getColorAtPixel: () => '',
+	});
+	let tiffProcessor: any = dormantProcessor();
+	let exrProcessor: any = dormantProcessor();
 	const zoomController = new ZoomController(settingsManager, vscode);
 	const mouseHandler = new MouseHandler(settingsManager, vscode, tiffProcessor);
-	const npyProcessor = new NpyProcessor(settingsManager, vscode);
-	const pfmProcessor = new PfmProcessor(settingsManager, vscode);
-	const ppmProcessor = new PpmProcessor(settingsManager, vscode);
+	let npyProcessor: any = dormantProcessor();
+	let pfmProcessor: any = dormantProcessor();
+	let ppmProcessor: any = dormantProcessor();
 	const pngProcessor = new PngProcessor(settingsManager, vscode);
 	pngProcessor.onMetadataTagsReady = () => updateMetadataData();
-	const hdrProcessor = new HdrProcessor(settingsManager, vscode);
+	let hdrProcessor: any = dormantProcessor();
 	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
-	const fitsProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decodeFitsLocal });
-	const dicomProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer, options) => decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) });
-	const netcdfProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer, options) => decodeNetcdfLocal(buffer, options || {}) });
-	const cziProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer, options) => decodeCziLocal(buffer, options || {}) });
-	const nd2Processor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer, options) => decodeNd2Local(buffer, options || {}) });
-	const lifProcessor = new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer, options) => decodeLifLocal(buffer, options || {}) });
-	const scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
+	let fitsProcessor: any = dormantProcessor();
+	let dicomProcessor: any = dormantProcessor();
+	let netcdfProcessor: any = dormantProcessor();
+	let cziProcessor: any = dormantProcessor();
+	let nd2Processor: any = dormantProcessor();
+	let lifProcessor: any = dormantProcessor();
+	let scientificProcessors: any[] = [];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
-	const allProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, layeredPreviewProcessor, ...scientificProcessors];
+	const allProcessors: any[] = [pngProcessor, tgaProcessor, webImageProcessor, jxlProcessor, layeredPreviewProcessor];
 	// Off-thread decoder. It is started by loadImageByType only for formats that
 	// need it; eagerly compiling the full WASM module made native JPEG/PNG/WebP
 	// loads compete with a decoder they never use.
@@ -183,20 +190,78 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	const pngDecodeWorkerClient = new DecodeWorkerClient('pngDecodeWorker.bundle.js');
 	const layeredDecodeWorkerClient = new DecodeWorkerClient('layeredDecodeWorker.bundle.js', false);
 	const fastRawWorkerClient = new FastRawWorkerClient(decodeWorkerClient);
+	const processorFamilyLoads = new Map<string, Promise<void>>();
+	const installProcessor = (processor: any, worker: DecodeWorkerClient | FastRawWorkerClient = decodeWorkerClient) => {
+		processor.decodeWorker = worker;
+		processor._isInitialLoad = true;
+		if (typeof _loadAbortController !== 'undefined') {
+			processor.loadSignal = _loadAbortController.signal;
+		}
+		allProcessors.push(processor);
+		return processor;
+	};
+	function ensureProcessorFamily(kind: string): Promise<void> {
+		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(kind) ? 'scientific' : kind;
+		const existing = processorFamilyLoads.get(family);
+		if (existing) { return existing; }
+		const load = (async () => {
+			if (family === 'tiff') {
+				const pendingPageIndex = Number(tiffProcessor.pageIndex || 0);
+				const [{ TiffProcessor }, wasm, strips] = await Promise.all([
+					import('./modules/tiff-processor.js'),
+					import('./modules/tiff-wasm-wrapper.js'),
+					import('./modules/strip-parallel-decode.js'),
+				]);
+				tiffProcessor = installProcessor(new TiffProcessor(settingsManager, vscode));
+				tiffProcessor.pageIndex = pendingPageIndex;
+				mouseHandler.tiffProcessor = tiffProcessor;
+				void wasm.getWasmModule();
+				strips.prewarmStripPool();
+			} else if (family === 'exr') {
+				const { ExrProcessor } = await import('./modules/exr-processor.js');
+				exrProcessor = installProcessor(new ExrProcessor(settingsManager, vscode));
+				mouseHandler.setExrProcessor(exrProcessor);
+			} else if (family === 'npy') {
+				const { NpyProcessor } = await import('./modules/npy-processor.js');
+				npyProcessor = installProcessor(new NpyProcessor(settingsManager, vscode), fastRawWorkerClient);
+				mouseHandler.setNpyProcessor(npyProcessor);
+			} else if (family === 'pfm') {
+				const { PfmProcessor } = await import('./modules/pfm-processor.js');
+				pfmProcessor = installProcessor(new PfmProcessor(settingsManager, vscode), fastRawWorkerClient);
+				mouseHandler.setPfmProcessor(pfmProcessor);
+			} else if (family === 'netpbm') {
+				const { PpmProcessor } = await import('./modules/ppm-processor.js');
+				ppmProcessor = installProcessor(new PpmProcessor(settingsManager, vscode), fastRawWorkerClient);
+				mouseHandler.setPpmProcessor(ppmProcessor);
+			} else if (family === 'hdr') {
+				const { HdrProcessor } = await import('./modules/hdr-processor.js');
+				hdrProcessor = installProcessor(new HdrProcessor(settingsManager, vscode));
+				mouseHandler.setHdrProcessor(hdrProcessor);
+			} else if (family === 'scientific') {
+				const [{ ScientificArrayProcessor }, decoders] = await Promise.all([
+					import('./modules/scientific-array-processor.js'),
+					import('./modules/main-thread-decode.js'),
+				]);
+				fitsProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decoders.decodeFitsLocal }));
+				dicomProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) }));
+				netcdfProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNetcdfLocal(buffer, options || {}) }));
+				cziProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeCziLocal(buffer, options || {}) }));
+				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
+				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
+				scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
+				mouseHandler.setScientificProcessors(scientificProcessors);
+				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor];
+			}
+		})();
+		processorFamilyLoads.set(family, load);
+		return load;
+	}
 	const layerCompositorWorker = new LayerCompositorWorkerClient();
 	layerCompositorWorker.start();
 	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
-	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, ...scientificProcessors];
-	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
 	pngProcessor.decodeWorker = pngDecodeWorkerClient;
 	layeredPreviewProcessor.decodeWorker = layeredDecodeWorkerClient;
-	// Binary NetPBM and native float32 NPY are already TypedArray-compatible.
-	// Their tiny worker avoids the full decoder bundle and WASM memory roundtrip;
-	// unsupported variants return their input and use the complete Rust path.
-	ppmProcessor.decodeWorker = fastRawWorkerClient;
-	npyProcessor.decodeWorker = fastRawWorkerClient;
-	pfmProcessor.decodeWorker = fastRawWorkerClient;
 	const histogramOverlay = new HistogramOverlay(settingsManager, vscode);
 	const metadataPanel = new MetadataPanel(settingsManager, vscode);
 	const debayerPanel = new DebayerPanel(settings => { void handleDebayerSettingsChanged(settings); });
@@ -341,7 +406,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		if (generation !== _loadGeneration || planes.length < 2) { return; }
 		channelPlanes = planes;
 		channelSettings = adoptChannelSettings(planes, channelSettings, {
-			colors: ome.channels?.map(channel => channel?.colorCss),
+			colors: ome.channels?.map((channel: any) => channel?.colorCss),
 		});
 		channelsPanel.render();
 		if (compositeEnabled) { scheduleCompositeRender(); }
@@ -1147,10 +1212,10 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	 * coalescing reload serve all three; only the title differs. Adding a
 	 * fourth such format means adding it to this list and nothing else here.
 	 */
-	const planeNavProcessors: ScientificArrayProcessor[] = [cziProcessor, nd2Processor, lifProcessor];
+	let planeNavProcessors: any[] = [];
 	/** Whichever of the above produced the image on screen, if any. */
-	let planeNavProcessor: ScientificArrayProcessor | null = null;
-	const isPlaneNavProcessor = (p: unknown) => planeNavProcessors.includes(p as ScientificArrayProcessor);
+	let planeNavProcessor: any = null;
+	const isPlaneNavProcessor = (p: unknown) => planeNavProcessors.includes(p);
 
 	let planeSelection: { indices: Record<string, number> } = persistedState?.planeSelection && typeof persistedState.planeSelection === 'object'
 		? { indices: { ...(persistedState.planeSelection.indices || {}) } }
@@ -1786,7 +1851,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			const ome = tiffProcessor.omeMetadata;
 			if (ome && !datasetManifest) {
 				const images = ome.images?.length ? ome.images : [ome];
-				const externalPlaneCount = images.flatMap(image => Object.values(image.coordinateToPlane || {})).filter(plane => !!plane.fileName).length;
+				const externalPlaneCount = images.flatMap((image: any) => Object.values(image.coordinateToPlane || {})).filter((plane: any) => !!plane.fileName).length;
 				const requestKey = `${ome.uuid || ome.imageId || ''}:${images.length}:${externalPlaneCount}`;
 				if (externalPlaneCount > 0 && requestKey !== omeDatasetRequestKey) {
 					omeDatasetRequestKey = requestKey;
@@ -1794,13 +1859,13 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 						type: 'registerOmeDataset',
 						dataset: {
 							uuid: ome.uuid,
-							series: images.map(image => ({
+							series: images.map((image: any) => ({
 								imageId: image.imageId,
 								imageName: image.imageName,
 								sizeC: image.planeSizeC,
 								sizeZ: image.sizeZ,
 								sizeT: image.sizeT,
-								channelNames: image.channels.map(channel => channel.name),
+								channelNames: image.channels.map((channel: any) => channel.name),
 								planes: Object.values(image.coordinateToPlane || {}),
 							})),
 							currentResourceUri: settingsManager.settings.resourceUri,
@@ -1939,7 +2004,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		}
 	}
 
-	async function handleScientificArray(processor: ScientificArrayProcessor, src: string, gen: number = _loadGeneration, decodeOptions: Record<string, any> = {}) {
+	async function handleScientificArray(processor: any, src: string, gen: number = _loadGeneration, decodeOptions: Record<string, any> = {}) {
 		currentLoadFormat = processor.config.formatLabel;
 		currentLoadDecodeInfo = null;
 		try {
@@ -2138,7 +2203,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
 			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
+			const ctx = tgaProcessor._pendingRenderData ? null : canvas.getContext('2d');
 			if (ctx) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
@@ -2376,7 +2441,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, sourceNumericType: ti.sourceNumericType || inferred, name, uri };
 	}
 
-	function scientificTypeInfo(processor: ScientificArrayProcessor): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
+	function scientificTypeInfo(processor: any): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
 		return {
 			// Scientific decoders intentionally use a Float32 carrier so rescale,
 			// signed values, and NaN no-data remain representable. Keep that
@@ -2484,19 +2549,23 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				return lastRawToLayer(raw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, resourceUri);
 			}
 			if (isTiffExtension(lower)) {
-				const p = new TiffProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await ensureProcessorFamily('tiff');
+				const p = new tiffProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
 			}
 			if (lower.endsWith('.exr')) {
-				const p = new ExrProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				await ensureProcessorFamily('exr');
+				const p = new exrProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.processExr(src); return exrRawToLayer(p.rawExrData, name, resourceUri);
 			}
 			if (lower.endsWith('.pfm')) {
-				const p = new PfmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
+				await ensureProcessorFamily('pfm');
+				const p = new pfmProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
 				await p.processPfm(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
 			}
 			if (lower.match(/\.(ppm|pgm|pbm)$/)) {
-				const p = new PpmProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
+				await ensureProcessorFamily('netpbm');
+				const p = new ppmProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
 				await p.processPpm(src); return lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxval) || 255 }, name, resourceUri);
 			}
 			if (lower.match(/\.(png|jpg|jpeg)$/)) {
@@ -2506,9 +2575,12 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				return layer || decodeViaImage(src, name, resourceUri);
 			}
 			if (lower.match(/\.(npy|npz)$/)) {
-				const p = new NpyProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = lower.endsWith('.npy') ? fastRawWorkerClient : decodeWorkerClient;
+				await ensureProcessorFamily('npy');
+				const p = new npyProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = lower.endsWith('.npy') ? fastRawWorkerClient : decodeWorkerClient;
 				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
 			}
+			const isScientific = /\.(fits|fit|fts|dcm|dicom|nc|cdf|czi|nd2|lif)$/.test(lower);
+			if (isScientific) { await ensureProcessorFamily('scientific'); }
 			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
 				lower.match(/\.(dcm|dicom)$/) ? dicomProcessor.config :
 				lower.match(/\.(nc|cdf)$/) ? netcdfProcessor.config :
@@ -2516,7 +2588,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				lower.match(/\.nd2$/) ? nd2Processor.config :
 				lower.match(/\.lif$/) ? lifProcessor.config : null;
 			if (scientificConfig) {
-				const p = new ScientificArrayProcessor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
+				const p = new fitsProcessor.constructor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.process(src); return lastRawToLayer(p._lastRaw, scientificTypeInfo(p), name, resourceUri);
 			}
 			return decodeViaImage(src, name, resourceUri);
@@ -4022,7 +4094,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				fileFields['Dimension Order'] = ome.dimensionOrder;
 				if (ome.imageName) { fileFields['Image Name'] = ome.imageName; }
 				if (ome.pixelType) { fileFields['OME Pixel Type'] = ome.pixelType; }
-				if (ome.channels.length) { fileFields['OME Channels'] = ome.channels.map(channel => channel.name).join(', '); }
+				if (ome.channels.length) { fileFields['OME Channels'] = ome.channels.map((channel: any) => channel.name).join(', '); }
 				if (ome.physicalSizeX !== undefined) { fileFields['Physical Size X'] = `${ome.physicalSizeX} ${ome.physicalSizeXUnit || ''}`.trim(); }
 				if (ome.physicalSizeY !== undefined) { fileFields['Physical Size Y'] = `${ome.physicalSizeY} ${ome.physicalSizeYUnit || ''}`.trim(); }
 				if (ome.physicalSizeZ !== undefined) { fileFields['Physical Size Z'] = `${ome.physicalSizeZ} ${ome.physicalSizeZUnit || ''}`.trim(); }
@@ -6978,6 +7050,11 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		PerfTrace.mark(shouldYieldForLoadingUi ? 'paint-yield' : 'load-start');
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
+		const format = resolveFormat(resourceUri, formatHint);
+		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(format.kind)) {
+			await ensureProcessorFamily(format.kind);
+			if (gen !== _loadGeneration) { return; }
+		}
 
 		// The cache is keyed by URI/page/frame and knows nothing about plane
 		// coordinates, so on a plane step it would hand back the plane we are
@@ -6987,8 +7064,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		}
 		// One lookup instead of an ordered if/else chain, so no branch can
 		// silently shadow another and the routing is inspectable in one table.
-		const format = resolveFormat(resourceUri, formatHint);
-
 		// Keep the current overlay on screen while the next image decodes, the
 		// same way the outgoing FRAME is kept until its replacement is ready.
 		// Hiding it up front blanked the controls for the whole decode — which
@@ -7010,12 +7085,6 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			// Boot alongside the format's file fetch. PNG starts this itself only
 			// after its IHDR confirms that the 16-bit worker path is necessary.
 			void decodeWorkerClient.start();
-		}
-		if (format?.kind === 'tiff') {
-			// Both of these are needed before a strip-parallel decode can start
-			// and both are pure startup cost, so overlap them with the fetch.
-			void getWasmModule();
-			prewarmStripPool();
 		}
 		if (format?.kind === 'layered' && layeredFormat) {
 			handleLayeredPreview(layeredFormat, uri, gen);

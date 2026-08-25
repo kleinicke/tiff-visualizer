@@ -1118,6 +1118,7 @@ export class ImagePreview extends MediaPreview {
 		const layerDocumentWriterUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layerDocumentWriter.bundle.js'));
 		const imagejRoiUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagejRoi.bundle.js'));
 		const vendorAssets = {
+			wasm: wasmUri.toString(),
 			geotiff: geotiffUri.toString(),
 			pako: pakoUri.toString(),
 			upng: upngUri.toString(),
@@ -1130,29 +1131,125 @@ export class ImagePreview extends MediaPreview {
 		const warmFastRawDecoder = lower.endsWith('.ppm') || isPfm || lower.endsWith('.npy');
 		const warmGeneralDecoder = isTiff || lower.endsWith('.npz') || isExr || isHdr || isScientificArray;
 		const warmDecoderUri = isLayeredDocument ? layeredDecodeWorkerUri : warmFastRawDecoder ? fastRawWorkerUri : warmGeneralDecoder ? decodeWorkerUri : null;
-		const warmDecoderBundleName = isLayeredDocument ? 'layeredDecodeWorker.bundle.js'
+		const warmDecoderBundleName = !warmDecoderUri ? null : isLayeredDocument ? 'layeredDecodeWorker.bundle.js'
 			: warmFastRawDecoder ? 'fastRawWorker.bundle.js' : 'decodeWorker.bundle.js';
-		const decoderWarmupScript = warmDecoderUri ? /* html */`
+		const speculativeDecodeFormat = lower.endsWith('.ppm') ? 'ppm'
+			: isPfm ? 'pfm'
+				: lower.endsWith('.npy') ? 'npy'
+					: isExr ? 'exr'
+						: isHdr ? 'hdr'
+							: null;
+		// PGM stays on its cheaper main-thread decoder, but its source can travel
+		// while the viewer and lazy NetPBM processor chunk are loading.
+		const warmSourceRead = !!warmDecoderUri || lower.endsWith('.pgm') || lower.endsWith('.pbm') || lower.endsWith('.tga');
+		const decoderWarmupScript = warmSourceRead ? /* html */`
 	<script nonce="${nonce}">
 		(function () {
-			const sourcePromise = fetch(${JSON.stringify(warmDecoderUri.toString())}).then(response => {
+			const imageSourceUri = ${JSON.stringify(uri.toString())};
+			const sourceReadMetrics = {};
+			const imageBufferPromise = (async () => {
+				const responseStart = performance.now();
+				const response = await fetch(imageSourceUri);
+				sourceReadMetrics.responseMs = performance.now() - responseStart;
+				if (!response.ok) throw new Error('image source warmup failed');
+				const readStart = performance.now();
+				const buffer = await response.arrayBuffer();
+				sourceReadMetrics.arrayBufferMs = performance.now() - readStart;
+				return buffer;
+			})();
+			const sourcePromise = ${warmDecoderUri ? `fetch(${JSON.stringify(warmDecoderUri.toString())}).then(response => {
 				if (!response.ok) throw new Error('decode worker warmup failed');
 				return response.text();
-			});
+			})` : 'null'};
 			const wasmBytesPromise = ${warmGeneralDecoder ? `fetch(${JSON.stringify(wasmUri.toString())}).then(response => {
 				if (!response.ok) throw new Error('decoder WASM warmup failed');
 				return response.arrayBuffer();
 			})` : 'null'};
 			const wasmModulePromise = wasmBytesPromise ? wasmBytesPromise.then(bytes => WebAssembly.compile(bytes)) : null;
+			const readyWorkerPromise = sourcePromise ? Promise.all([
+				sourcePromise,
+				wasmModulePromise ? wasmModulePromise.catch(() => null) : Promise.resolve(null),
+				wasmBytesPromise
+			]).then(([source, wasmModule, wasmBytes]) => new Promise((resolve, reject) => {
+				const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+				const worker = ${warmFastRawDecoder ? 'new Worker(blobUrl)' : `new Worker(blobUrl, { type: 'module' })`};
+				const timeout = setTimeout(() => {
+					worker.terminate();
+					URL.revokeObjectURL(blobUrl);
+					reject(new Error('decode worker warmup timed out'));
+				}, 20000);
+				worker.onerror = event => {
+					clearTimeout(timeout);
+					worker.terminate();
+					URL.revokeObjectURL(blobUrl);
+					reject(new Error(event.message || 'decode worker warmup failed'));
+				};
+				worker.onmessage = event => {
+					if (event.data?.type !== 'ready') return;
+					clearTimeout(timeout);
+					worker.onmessage = null;
+					worker.onerror = null;
+					resolve({ worker, blobUrl, caps: event.data.caps || {}, wasmModule });
+				};
+				const wasmBuffer = wasmModule || !wasmBytes ? null : wasmBytes.slice(0);
+				const initMessage = { type: 'init', tiffWasmModule: wasmModule, tiffWasmBuffer: wasmBuffer };
+				worker.postMessage(initMessage, wasmBuffer ? [wasmBuffer] : []);
+			})) : null;
+			const speculativeFormat = ${JSON.stringify(speculativeDecodeFormat)};
+			const speculativeDecodeMetrics = {};
+			const speculativeDecodePromise = speculativeFormat && readyWorkerPromise
+				? Promise.all([readyWorkerPromise, imageBufferPromise]).then(([adopted, buffer]) => new Promise(resolve => {
+					const id = 0;
+					const timeout = setTimeout(() => resolve({ ok: false, error: 'speculative decode timed out' }), 30000);
+					speculativeDecodeMetrics.start = performance.now();
+					speculativeDecodeMetrics.fileBytes = buffer.byteLength;
+					adopted.worker.onmessage = event => {
+						if (event.data?.id !== id) return;
+						clearTimeout(timeout);
+						speculativeDecodeMetrics.end = performance.now();
+						speculativeDecodeMetrics.durationMs = speculativeDecodeMetrics.end - speculativeDecodeMetrics.start;
+						adopted.worker.onmessage = null;
+						resolve(event.data);
+					};
+					try {
+						adopted.worker.postMessage({
+							id,
+							format: speculativeFormat,
+							buffer,
+							options: { computeStats: ${!settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false} }
+						}, [buffer]);
+					} catch (error) {
+						clearTimeout(timeout);
+						resolve({ ok: false, error: String(error), buffer });
+					}
+				}))
+				: null;
+			// Adopting the worker replaces its message handler, so ownership passes
+			// to the viewer only after the bootstrap decode response has arrived.
+			const workerPromise = readyWorkerPromise && speculativeDecodePromise
+				? Promise.all([readyWorkerPromise, speculativeDecodePromise]).then(([adopted]) => adopted)
+				: readyWorkerPromise;
 			// Consume failures here as well as in DecodeWorkerClient so an optional
 			// warmup never becomes an unhandled rejection.
-			sourcePromise.catch(() => {});
+			sourcePromise?.catch(() => {});
+			imageBufferPromise.catch(() => {});
 			wasmModulePromise?.catch(() => {});
+			speculativeDecodePromise?.catch(() => {});
+			workerPromise?.catch(() => {});
 			window.__tiffVisualizerDecoderWarmup = {
 				bundleName: ${JSON.stringify(warmDecoderBundleName)},
+				imageSourceUri,
+				imageBufferPromise,
+				sourceReadMetrics,
+				imageBufferClaimed: false,
+				speculativeFormat,
+				speculativeDecodePromise,
+				speculativeDecodeMetrics,
+				speculativeDecodeClaimed: false,
 				sourcePromise,
 				wasmBytesPromise,
-				wasmModulePromise
+				wasmModulePromise,
+				workerPromise
 			};
 		}());
 	</script>` : '';

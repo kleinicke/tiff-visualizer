@@ -63,13 +63,21 @@ export class PfmProcessor {
 
     async processPfm(src: string) {
         const loadSignal = this.loadSignal;
-        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'pfm');
-        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-        // Parse in the decode worker when available, locally otherwise. The
-        // display entry point skips stats because PFM starts in gamma mode.
-        const { width, height, channels, data, stats } = await DecodeWorkerClient.decodeWithFallback(
-            this.decodeWorker, 'pfm', buffer, src, loadSignal,
-            (b: ArrayBuffer) => decodeNativePfmFast(b) || decodePfmLocal(b, { topDown: true }));
+        const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'pfm');
+        let decoded: any;
+        if (speculative?.ok) {
+            decoded = speculative.result;
+        } else {
+            const buffer = speculative?.buffer instanceof ArrayBuffer
+                ? speculative.buffer
+                : await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'pfm');
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+            // Parse in the decode worker when available, locally otherwise.
+            decoded = await DecodeWorkerClient.decodeWithFallback(
+                this.decodeWorker, 'pfm', buffer, src, loadSignal,
+                (b: ArrayBuffer) => decodeNativePfmFast(b) || decodePfmLocal(b, { topDown: true }));
+        }
+        const { width, height, channels, data, stats } = decoded;
         const displayData = data;
 
         // Invalidate stats cache for new image; adopt the decoder's stats.

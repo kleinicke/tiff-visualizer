@@ -93,9 +93,6 @@ export class ExrProcessor {
 	async processExr(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData; exrData: ExrImageData }> {
 		const loadSignal = this.loadSignal;
 		try {
-			const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'exr');
-			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-
 			// Invalidate stats cache for new image
 			this._cachedStats = undefined;
 
@@ -104,9 +101,19 @@ export class ExrProcessor {
 			// Use FloatType (1015) to get Float32Array with decoded float values
 			// HalfFloatType (1016) returns Uint16Array with raw bytes which need decoding
 			const FloatType = 1015;
-			const exrResult = await DecodeWorkerClient.decodeWithFallback(
-				this.decodeWorker, 'exr', buffer, src, loadSignal,
-				async (b) => (await loadParseExr())(b, FloatType));
+			const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'exr');
+			let exrResult: any;
+			if (speculative?.ok) {
+				exrResult = speculative.result;
+			} else {
+				const buffer = speculative?.buffer instanceof ArrayBuffer
+					? speculative.buffer
+					: await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'exr');
+				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				exrResult = await DecodeWorkerClient.decodeWithFallback(
+					this.decodeWorker, 'exr', buffer, src, loadSignal,
+					async (b) => (await loadParseExr())(b, FloatType));
+			}
 			if (exrResult.wasmFallbackReason) {
 				console.warn('[ExrProcessor] Rust EXR decoder fell back to parse-exr:', exrResult.wasmFallbackReason);
 			}
@@ -171,6 +178,8 @@ export class ExrProcessor {
 						height: height,
 						channels: channels,
 						samplesPerPixel: channels,
+						bitsPerSample: type === 1016 ? 16 : 32,
+						sampleFormat: 3,
 						dataType: type === 1016 ? 'float16' : 'float32',
 						isHdr: true,
 						formatLabel: 'EXR',
