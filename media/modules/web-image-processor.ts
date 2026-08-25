@@ -5,6 +5,12 @@ import type { Stats } from './types.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 
+function bootstrapImageFor(src: string): HTMLImageElement | null {
+    const image = (window as any).__tiffVisualizerBootstrap?.nativeImage;
+    if (!(image instanceof HTMLImageElement)) return null;
+    return image.src === src || image.currentSrc === src ? image : null;
+}
+
 /**
  * Web Image Processor for TIFF Visualizer.
  * Handles native browser formats: WebP, AVIF, BMP, ICO.
@@ -42,7 +48,7 @@ export class WebImageProcessor {
         this.loadSignal = undefined; // Set before each load; superseded loads are discarded by the caller's generation check
     }
 
-    async processWebImage(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData }> {
+    async processWebImage(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData | null; canvasAlreadyRendered?: boolean; displayElement?: HTMLElement }> {
         const lower = src.toLowerCase();
         let formatName = 'WebP';
         let formatType = 'webp';
@@ -52,13 +58,17 @@ export class WebImageProcessor {
 
         this._cachedStats = undefined;
 
-        const image = new Image();
+        const bootstrapImage = bootstrapImageFor(src);
+        const image = bootstrapImage || new Image();
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) throw new Error('Could not get canvas context');
 
         return new Promise((resolve, reject) => {
-            image.onload = () => {
+            let settled = false;
+            const onLoad = () => {
+                if (settled) return;
+                settled = true;
                 try {
                     canvas.width = image.naturalWidth;
                     canvas.height = image.naturalHeight;
@@ -85,6 +95,19 @@ export class WebImageProcessor {
                         originalImageData: imageData
                     };
 
+                    const canKeepNative = !!bootstrapImage &&
+                        this.settingsManager.settings.normalization?.gammaMode === true &&
+                        NormalizationHelper.isIdentityTransformation(this.settingsManager.settings) &&
+                        this.settingsManager.settings.rgbAs24BitGrayscale !== true &&
+                        (!this.settingsManager.settings.displayColormap || this.settingsManager.settings.displayColormap === 'none');
+                    if (canKeepNative) {
+                        this._postFormatInfo(canvas.width, canvas.height, hasAlpha ? 4 : 3, 8, formatName, formatType);
+                        this._pendingRenderData = false;
+                        this._isInitialLoad = false;
+                        resolve({ canvas, imageData: null, canvasAlreadyRendered: true, displayElement: image });
+                        return;
+                    }
+
                     if (this._isInitialLoad) {
                         this._postFormatInfo(canvas.width, canvas.height, hasAlpha ? 4 : 3, 8, formatName, formatType);
                         this._pendingRenderData = true;
@@ -103,14 +126,22 @@ export class WebImageProcessor {
                 }
             };
 
-            image.onerror = () => {
+            const onError = () => {
+                if (settled) return;
+                settled = true;
                 reject(new Error(
                     `Failed to load ${formatName} image. ` +
                     `Check that ${formatName} is supported by your VS Code/Electron version.`
                 ));
             };
 
-            image.src = src;
+            image.addEventListener('load', onLoad, { once: true });
+            image.addEventListener('error', onError, { once: true });
+            if (bootstrapImage?.complete) {
+                queueMicrotask(() => bootstrapImage.naturalWidth > 0 ? onLoad() : onError());
+            } else if (!bootstrapImage) {
+                image.src = src;
+            }
         });
     }
 

@@ -45,6 +45,7 @@ async function fetchFirstArrayBuffer(urls: string[]): Promise<ArrayBuffer | null
 }
 
 export class DecodeWorkerClient {
+	_workerBundleName: string;
 	_worker: Worker | null;
 	_ready: boolean;
 	_caps: { tiff?: boolean; tiffWasm?: boolean };
@@ -58,7 +59,8 @@ export class DecodeWorkerClient {
 	_tiffWasmModule: WebAssembly.Module | null;
 	_tiffWasmCompilePromise: Promise<WebAssembly.Module | null> | null;
 
-	constructor() {
+	constructor(workerBundleName = 'decodeWorker.bundle.js') {
+		this._workerBundleName = workerBundleName;
 		this._worker = null;
 		this._ready = false;
 		this._caps = {};
@@ -86,8 +88,8 @@ export class DecodeWorkerClient {
 
 	async _boot() {
 		const candidates = [
-			new URL('./decodeWorker.bundle.js', import.meta.url).href,
-			new URL('../decodeWorker.bundle.js', import.meta.url).href,
+			new URL(`./${this._workerBundleName}`, import.meta.url).href,
+			new URL(`../${this._workerBundleName}`, import.meta.url).href,
 		];
 		const tiffWasmUrls = [
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
@@ -114,7 +116,7 @@ export class DecodeWorkerClient {
 			} catch { /* try next candidate */ }
 		}
 		if (!source) {
-			throw new Error('decodeWorker.bundle.js not found');
+			throw new Error(`${this._workerBundleName} not found`);
 		}
 
 		const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));

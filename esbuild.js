@@ -63,6 +63,16 @@ const decodeWorkerBuildOptions = {
   format: 'esm',
 };
 
+const pngDecodeWorkerBuildOptions = {
+  entryPoints: ['media/png-decode-worker.ts'],
+  bundle: true,
+  outfile: 'media/pngDecodeWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 // Pool member for parallel TIFF strip decoding. Bundled separately (rather than
 // reusing decodeWorker) because the pool spawns N of these and each one
 // instantiates its own WASM module; keeping it minimal keeps that cost down.
@@ -139,6 +149,7 @@ const mediaModuleTsFiles = [
   ...findMediaTsFiles('media/modules'),
   'media/imagePreview.ts',
   'media/decode-worker.ts',
+  'media/png-decode-worker.ts',
   'media/strip-decode-worker.ts',
   'media/fast-raw-worker.ts',
   'media/layer-compositor-worker.ts',
@@ -247,6 +258,16 @@ if (isWatch) {
     },
   };
 
+  pngDecodeWorkerBuildOptions.watch = {
+    onRebuild(error) {
+      if (error) {
+        console.error('PNG decode worker watch build failed:', error);
+      } else {
+        console.log('PNG decode worker watch build succeeded');
+      }
+    },
+  };
+
   stripDecodeWorkerBuildOptions.watch = {
     onRebuild(error) {
       if (error) {
@@ -343,6 +364,9 @@ async function buildAll() {
     // Build decode worker
     await build(decodeWorkerBuildOptions);
     console.log('Decode worker built successfully');
+
+    await build(pngDecodeWorkerBuildOptions);
+    console.log('PNG decode worker built successfully');
 
     await build(stripDecodeWorkerBuildOptions);
     console.log('Strip decode worker built successfully');

@@ -18,7 +18,7 @@ const path = require('node:path');
 const vscode = require('vscode');
 
 // Phases are optional: a format that emits no read/decode marks still matches.
-const PERF_LINE = /\[Perf\] ([^\r\n:]+?): (?:read ([0-9.]+)ms \| )?(?:decode ([0-9.]+)ms(?: \[([^\]]*)\])? \| )?[^\r\n]*?webview ([0-9.]+)ms \| total ([0-9.]+)ms/g;
+const PERF_LINE = /\[Perf\] ([^\r\n:]+?): (?:read ([0-9.]+)ms \| )?(?:decode ([0-9.]+)ms(?: \[([^\]]*)\])? \| )?[^\r\n]*?webview ([0-9.]+)ms \| total ([0-9.]+)ms(?: \| visible ([0-9.]+)ms)?/g;
 // Only emitted when DETAILED_PERF_TRACING is on in media/modules/perf-trace.ts.
 const TRACE_LINE = /\[PerfTrace\] ([^\r\n]+)/g;
 
@@ -47,6 +47,7 @@ function scrape(logRoot) {
 				engine: m[4] || '',
 				loadMs: Number(m[5]),
 				totalMs: Number(m[6]),
+				visibleMs: Number(m[7] || 0),
 			});
 		}
 		for (const m of text.matchAll(TRACE_LINE)) trace.push(m[1]);
@@ -91,7 +92,7 @@ async function run() {
 		} catch {
 			// A file that never reports must not abort the whole run: record it
 			// as a miss so the rest of the corpus still produces numbers.
-			perf = { line: '', format: 'NO-PERF-LINE', fetchMs: 0, decodeMs: 0, engine: '', loadMs: 0, totalMs: 0 };
+			perf = { line: '', format: 'NO-PERF-LINE', fetchMs: 0, decodeMs: 0, engine: '', loadMs: 0, totalMs: 0, visibleMs: 0 };
 		}
 		results.push({ id: input.id, file: input.file, wallMs: performance.now() - started, ...perf, trace });
 		await vscode.commands.executeCommand('workbench.action.closeActiveEditor');

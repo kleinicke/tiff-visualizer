@@ -121,6 +121,7 @@ export class TiffProcessor {
 	_wasmProcessor: TiffWasmProcessor;
 	_webglRenderer: WebGL2FloatRenderer;
 	_wasmAvailable: boolean;
+	_wasmInitPromise: Promise<boolean> | null;
 	pageIndex: number;
 	pageCount: number;
 	_sourceBuffer: ArrayBuffer | null;
@@ -152,6 +153,7 @@ export class TiffProcessor {
 		this._wasmProcessor = new TiffWasmProcessor();
 		this._webglRenderer = new WebGL2FloatRenderer();
 		this._wasmAvailable = false;
+		this._wasmInitPromise = null;
 		this.pageIndex = 0;
 		this.pageCount = 1;
 		this._sourceBuffer = null;
@@ -159,24 +161,20 @@ export class TiffProcessor {
 		this.omeMetadata = null;
 		this.omeBinaryOnly = null;
 		this.omeXml = null;
-		this._wasmProcessor.init().then(available => {
-			this._wasmAvailable = available;
-			// This runs once at webview startup, not when a file is opened, so
-			// the wording must describe a CAPABILITY rather than the current
-			// file. It previously read "Using geotiff.js fallback", which
-			// appeared while opening a DICOM or NetCDF and looked like that
-			// file was being decoded by geotiff.js. The shared wasm module now
-			// backs every format's main-thread path, so its availability is
-			// worth reporting — just not as a claim about this image.
-			if (available) {
-				console.log('[Startup] Rust/WASM decoder ready (shared by all formats)');
-			} else {
-				console.log('[Startup] Rust/WASM decoder unavailable; TIFF will use geotiff.js and formats without a JS decoder will fail');
-			}
-		}).catch(err => {
-			console.warn('[TiffProcessor] WASM initialization failed:', err);
-			this._wasmAvailable = false;
-		});
+	}
+
+	private _ensureLocalWasm(): Promise<boolean> {
+		if (!this._wasmInitPromise) {
+			this._wasmInitPromise = this._wasmProcessor.init().then(available => {
+				this._wasmAvailable = available;
+				return available;
+			}).catch(err => {
+				console.warn('[TiffProcessor] WASM initialization failed:', err);
+				this._wasmAvailable = false;
+				return false;
+			});
+		}
+		return this._wasmInitPromise;
 	}
 
 	/**
@@ -442,6 +440,9 @@ export class TiffProcessor {
 				}
 			}
 
+			if (!wasmResult && !workerTiffFailed && !this.decodeWorker?.canDecode('tiff')) {
+				await this._ensureLocalWasm();
+			}
 			const useWasm = !wasmResult && !workerTiffFailed && this._wasmAvailable;
 			console.log(`[TiffProcessor] Decode decision: worker=${!!wasmResult}, wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
 

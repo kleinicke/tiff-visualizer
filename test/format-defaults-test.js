@@ -50,7 +50,7 @@ const AUTO_NORMALIZE = [
 
 const GAMMA_MODE = [
 	// Authored pictures whose integer samples do span the type's range.
-	'png', 'jpg', 'ppm', 'tiff-int', 'tga', 'webp', 'avif', 'bmp', 'jxl',
+	'png', 'jpg', 'ppm', 'tiff-int', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl',
 	// Layered creative documents are authored pictures too.
 	'ora', 'kra', 'psd', 'psb', 'xcf', 'affinity',
 	// Float images conventionally stored in 0..1.
@@ -104,6 +104,26 @@ async function main() {
 			`'${format}': autoNormalize and gammaMode must not agree — exactly one applies`);
 	}
 	console.log('✅ every format selects exactly one of auto-normalize / gamma mode');
+	count++;
+
+	// The host chooses the initial HTML fast path before the webview reports its
+	// format. Looking up another format must therefore be side-effect free and
+	// must not leak the settings from the currently open document.
+	const manager = new AppStateManager();
+	manager.setImageFormat('png');
+	manager.updateGamma(1.4, 2.2);
+	const pngSettings = manager.getSettingsForFormat('png');
+	const jpegSettings = manager.getSettingsForFormat('jpg');
+	assert.deepStrictEqual(pngSettings.gamma, { in: 1.4, out: 2.2 },
+		'the active format lookup must return its current settings');
+	assert.deepStrictEqual(jpegSettings.gamma, { in: 2.2, out: 2.2 },
+		'a different format lookup must return that format\'s defaults');
+	assert.strictEqual(manager.currentFormat, 'png',
+		'looking up initial settings for another document must not switch the active format');
+	jpegSettings.gamma.in = 9;
+	assert.strictEqual(manager.getSettingsForFormat('jpg').gamma.in, 2.2,
+		'callers must receive a copy rather than mutate the cached/default settings');
+	console.log('✅ side-effect-free per-format lookup preserves active and cached settings');
 	count++;
 
 	console.log(`\n🎉 All ${count} per-format default checks passed.\n`);

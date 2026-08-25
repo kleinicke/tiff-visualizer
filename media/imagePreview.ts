@@ -81,8 +81,15 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	type DatasetSeries = { id: string, label: string, axes: DatasetAxis[], planes: DatasetPlane[] };
 	type DatasetManifest = { id: string, kind: 'dicom' | 'ome-tiff', label: string, series: DatasetSeries[] };
 
+	const nativeBootstrap = (window as any).__tiffVisualizerBootstrap as {
+		vscode?: { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
+		nativeImage?: HTMLImageElement | null;
+		visibleTotalMs?: number | null;
+	} | undefined;
+	// The tiny native-image bootstrap acquires the API before loading this full
+	// application. Reuse it: acquireVsCodeApi() may only be called once.
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
-	const originalVscode = acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
+	const originalVscode = nativeBootstrap?.vscode || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
 	const settingsManager = new SettingsManager();
 	const stateExtensionVersion = settingsManager.settings.extensionVersion;
 	const stateVsCodeVersion = settingsManager.settings.vscodeVersion;
@@ -156,6 +163,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	// need it; eagerly compiling the full WASM module made native JPEG/PNG/WebP
 	// loads compete with a decoder they never use.
 	const decodeWorkerClient = new DecodeWorkerClient();
+	const pngDecodeWorkerClient = new DecodeWorkerClient('pngDecodeWorker.bundle.js');
 	const fastRawWorkerClient = new FastRawWorkerClient(decodeWorkerClient);
 	const layerCompositorWorker = new LayerCompositorWorkerClient();
 	layerCompositorWorker.start();
@@ -163,6 +171,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
 	const workerProcessors = [tiffProcessor, exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, layeredPreviewProcessor, ...scientificProcessors];
 	for (const p of workerProcessors) { p.decodeWorker = decodeWorkerClient; }
+	pngProcessor.decodeWorker = pngDecodeWorkerClient;
 	// Binary NetPBM and native float32 NPY are already TypedArray-compatible.
 	// Their tiny worker avoids the full decoder bundle and WASM memory roundtrip;
 	// unsupported variants return their input and use the complete Rust path.
@@ -890,6 +899,8 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	let isShowingPeer = false;
 	let initialLoadStartTime = 0;
 	let extensionLoadStartTime = 0; // Time when extension started loading (from settings)
+	let visibleTotalMs: number | null = nativeBootstrap?.visibleTotalMs ?? null;
+	let visiblePaintPromise: Promise<number> | null = visibleTotalMs === null ? null : Promise.resolve(visibleTotalMs);
 	let currentLoadFormat = '';
 	let currentLoadDecodeInfo: { engine: string, durationMs: number } | null = null;
 	let _deferredHistogramTimer: number | null = null;
@@ -956,6 +967,45 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		parts.push(`webview ${webviewMs}ms`);
 		parts.push(`total ${totalMs}ms`);
 		return `[Perf] ${label}: ${parts.join(' | ')}`;
+	}
+
+	/** Record when a newly committed image has had one browser paint opportunity. */
+	function scheduleVisiblePaintMeasurement(): void {
+		if (visibleTotalMs !== null || visiblePaintPromise) { return; }
+		visiblePaintPromise = new Promise(resolve => {
+			let finished = false;
+			const markVisible = () => {
+				if (finished) { return; }
+				finished = true;
+				visibleTotalMs = extensionLoadStartTime
+					? Math.max(0, Date.now() - extensionLoadStartTime)
+					: Math.max(0, performance.now() - initialLoadStartTime);
+				resolve(visibleTotalMs);
+			};
+			requestAnimationFrame(() => requestAnimationFrame(markVisible));
+			// Hidden webviews may not receive animation frames. Preserve logging
+			// without claiming a value earlier than the DOM commit.
+			setTimeout(markVisible, 100);
+		});
+	}
+
+	function logLoadPerformance(label: string, webviewMs: string, totalMs: string | number): void {
+		// Capture phase totals immediately; PerfTrace may be reused by another
+		// navigation before the paint callback runs.
+		const summary = formatLoadPerf(label, webviewMs, totalMs);
+		const pendingVisible = visiblePaintPromise;
+		if (visibleTotalMs !== null) {
+			logToOutput(`${summary} | visible ${visibleTotalMs.toFixed(0)}ms`);
+		} else if (pendingVisible) {
+			void pendingVisible.then(ms => logToOutput(`${summary} | visible ${ms.toFixed(0)}ms`));
+		} else {
+			logToOutput(summary);
+		}
+	}
+
+	function resetVisibleTiming(): void {
+		visibleTotalMs = null;
+		visiblePaintPromise = null;
 	}
 
 	function resetTiffCanvasReady() {
@@ -1319,6 +1369,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 	 * Always resets zoom to 'fit' when file is rewritten to avoid dimension mismatch issues
 	 */
 	function reloadImage() {
+		resetVisibleTiming();
 		// Reset the state
 		hasLoadedImage = false;
 		canvas = null;
@@ -1781,7 +1832,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('TIFF', webviewTime, totalTime));
+				logLoadPerformance('TIFF', webviewTime, totalTime);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
@@ -1826,7 +1877,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('EXR', webviewTime, totalTime));
+				logLoadPerformance('EXR', webviewTime, totalTime);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
@@ -1859,7 +1910,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('PFM', webviewTime, totalTime));
+				logLoadPerformance('PFM', webviewTime, totalTime);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -1957,7 +2008,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('PPM/PGM', webviewTime, totalTime));
+				logLoadPerformance('PPM/PGM', webviewTime, totalTime);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -1989,7 +2040,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('PNG/JPEG', webviewTime, totalTime));
+				logLoadPerformance('PNG/JPEG', webviewTime, totalTime);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -2021,7 +2072,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('NPY/NPZ', webviewTime, totalTime));
+				logLoadPerformance('NPY/NPZ', webviewTime, totalTime);
 			}
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 		} catch (error) {
@@ -2050,7 +2101,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('HDR', webviewTime, totalTime));
+				logLoadPerformance('HDR', webviewTime, totalTime);
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -2078,7 +2129,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('TGA', webviewTime, totalTime));
+				logLoadPerformance('TGA', webviewTime, totalTime);
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -2095,9 +2146,9 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			if (gen !== _loadGeneration) { return; }
 			canvas = result.canvas;
 			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
+			imageElement = result.displayElement || canvas;
+			const ctx = webImageProcessor._pendingRenderData ? null : canvas.getContext('2d');
+			if (ctx && primaryImageData && !result.canvasAlreadyRendered) {
 				await renderImageDataToCanvas(primaryImageData, ctx);
 			}
 			hasLoadedImage = true;
@@ -2106,7 +2157,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('Web', webviewTime, totalTime));
+				logLoadPerformance('Web', webviewTime, totalTime);
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -2134,7 +2185,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 				const endTime = performance.now();
 				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logToOutput(formatLoadPerf('JXL', webviewTime, totalTime));
+				logLoadPerformance('JXL', webviewTime, totalTime);
 			}
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
@@ -2223,6 +2274,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 			jxlProcessor._pendingRenderData ||
 			scientificProcessors.some(processor => !!processor._pendingRenderData);
 		if (!hasPendingDeferred) {
+			scheduleVisiblePaintMeasurement();
 			clearCollectionLoadingState();
 		}
 
@@ -3561,7 +3613,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(formatLoadPerf(`${currentLoadFormat}`, webviewTime, totalTime));
+							logLoadPerformance(`${currentLoadFormat}`, webviewTime, totalTime);
 							initialLoadStartTime = 0; // Reset
 						}
 					} else if (pngProcessor.hasLazyNativeReadback()) {
@@ -3574,7 +3626,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 							const endTime = performance.now();
 							const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
 							const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-							logToOutput(formatLoadPerf(`${currentLoadFormat}`, webviewTime, totalTime));
+							logLoadPerformance(`${currentLoadFormat}`, webviewTime, totalTime);
 							initialLoadStartTime = 0;
 						}
 					}
@@ -6431,10 +6483,12 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		const src = settingsManager.settings.src || '';
 		if (!src) { return; }
 		const gen = ++_loadGeneration;
+		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
 		_pendingZoomState = zoomController.getCurrentState();
 		_loadAbortController?.abort();
 		decodeWorkerClient.cancelActiveDecodes();
+		pngDecodeWorkerClient.cancelActiveDecodes();
 		fastRawWorkerClient.cancelActiveDecodes();
 		_loadAbortController = new AbortController();
 		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
@@ -6760,6 +6814,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		// Every switch gets a new generation so any in-flight load from a
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
+		resetVisibleTiming();
 
 		// A plane change (dragging the Z/T/C/S slider of a CZI, ND2 or LIF) is
 		// NOT a new image: same file, same format, same settings, usually the
@@ -6801,6 +6856,7 @@ import { decodeCziLocal, decodeDicomLocal, decodeFitsLocal, decodeLifLocal, deco
 		// nothing here that needs the worker destroyed.
 		if (!planeChange) {
 			decodeWorkerClient.cancelActiveDecodes();
+			pngDecodeWorkerClient.cancelActiveDecodes();
 			fastRawWorkerClient.cancelActiveDecodes();
 			resetTiffCanvasReady();
 		}

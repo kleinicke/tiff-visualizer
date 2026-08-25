@@ -126,6 +126,7 @@ async function main() {
 			read: median(warm.map(r => r.fetchMs)),
 			decode: median(warm.map(r => r.decodeMs)),
 			total: median(warm.map(r => r.totalMs)),
+			visible: median(warm.map(r => r.visibleMs || 0)),
 			engine: warm[0].engine || '-',
 			samples: warm.length,
 			cold: runs[0].totalMs,

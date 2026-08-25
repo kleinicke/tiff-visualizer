@@ -13,8 +13,13 @@ decoder or a render path.
 Every image load logs one line to the extension's Output channel:
 
 ```
-[Perf] TIFF: read 142ms | decode 238ms [wasm (8 strip workers)] | stats 20ms | render 99ms | other 8ms | webview 486ms | total 557ms
+[Perf] TIFF: read 142ms | decode 238ms [wasm (8 strip workers)] | stats 20ms | render 99ms | other 8ms | webview 486ms | total 557ms | visible 531ms
 ```
+
+`visible` uses the same extension-host open timestamp as `total`. It is recorded
+after the completed image element has been committed and Chromium has had a
+paint opportunity; for the native-image fast path this happens before the full
+viewer and picker code starts.
 
 `test/vscode-performance/runner.cjs` boots a real VS Code, opens files, and
 **scrapes that same log**. It does not measure anything in parallel with the

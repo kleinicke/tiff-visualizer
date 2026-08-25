@@ -13,7 +13,7 @@ import { HistogramStatusBarEntry } from './histogramStatusBarEntry';
 import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { MessageRouter } from './messageHandlers';
 import type { IImagePreviewManager, LayerExportFormat, LayerExportOption, LayerExportResult } from './types';
-import type { ImageSettings } from './appStateManager';
+import type { ImageFormatType, ImageSettings } from './appStateManager';
 import type { DatasetManifest, DatasetPlane, DatasetSeries, WebviewDatasetManifest } from './datasetTypes';
 import { parseOmeDatasetXml, tiffImageDescription } from './omeMetadataFile';
 
@@ -22,6 +22,25 @@ interface WebviewImageSettings extends ImageSettings {
 	nanColor: 'black' | 'fuchsia';
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
+}
+
+function nativeFormatForPath(path: string): ImageFormatType | undefined {
+	if (/\.png$/i.test(path)) { return 'png'; }
+	if (/\.jpe?g$/i.test(path)) { return 'jpg'; }
+	if (/\.webp$/i.test(path)) { return 'webp'; }
+	if (/\.avif$/i.test(path)) { return 'avif'; }
+	if (/\.bmp$/i.test(path)) { return 'bmp'; }
+	if (/\.ico$/i.test(path)) { return 'ico'; }
+	return undefined;
+}
+
+function canUseNativeFirstPaint(settings: ImageSettings, surfaceMode: 'editor' | 'layers'): boolean {
+	return surfaceMode === 'editor' &&
+		settings.normalization.gammaMode === true &&
+		settings.normalization.autoNormalize === false &&
+		Math.abs(settings.gamma.in - settings.gamma.out) < 0.001 &&
+		Math.abs(settings.brightness.offset) < 0.001 &&
+		settings.rgbAs24BitGrayscale !== true;
 }
 
 export class ImagePreview extends MediaPreview {
@@ -1042,17 +1061,22 @@ export class ImagePreview extends MediaPreview {
 		const isScientificArray = /\.(?:fits|fit|fts|dcm|dicom|nc|cdf|czi)$/.test(lower);
 		const isLayeredDocument = /\.(?:ora|kra|psd|psb|xcf|afphoto|af)$/.test(lower);
 		this._isTiff = isTiff || isPpm || isPng || isPfm || isNpy || isExr || isHdr || isTga || isWebImage || isJxl || isScientificArray || isLayeredDocument;
+		const nativeFormat = nativeFormatForPath(lower);
+		const targetImageSettings = nativeFormat
+			? this._manager.appStateManager.getSettingsForFormat(nativeFormat)
+			: this._manager.appStateManager.imageSettings;
+		const nativeFirstPaint = !!nativeFormat && canUseNativeFirstPaint(targetImageSettings, this._surfaceMode);
 
 		// Merge settings from both managers:
 		// - normalization, gamma, brightness, rgbAs24BitGrayscale, scale24BitFactor, normalizedFloatMode from appStateManager (per-format)
 		// - nan color / color-picker mode from preview settings
 		const settings = {
-			normalization: this._manager.appStateManager.imageSettings.normalization,
-			gamma: this._manager.appStateManager.imageSettings.gamma,
-			brightness: this._manager.appStateManager.imageSettings.brightness,
-			rgbAs24BitGrayscale: this._manager.appStateManager.imageSettings.rgbAs24BitGrayscale,
-			scale24BitFactor: this._manager.appStateManager.imageSettings.scale24BitFactor,
-			normalizedFloatMode: this._manager.appStateManager.imageSettings.normalizedFloatMode,
+			normalization: targetImageSettings.normalization,
+			gamma: targetImageSettings.gamma,
+			brightness: targetImageSettings.brightness,
+			rgbAs24BitGrayscale: targetImageSettings.rgbAs24BitGrayscale,
+			scale24BitFactor: targetImageSettings.scale24BitFactor,
+			normalizedFloatMode: targetImageSettings.normalizedFloatMode,
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
@@ -1086,6 +1110,75 @@ export class ImagePreview extends MediaPreview {
 		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
 		const upngUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'upng.min.js'));
 		const parseExrUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'parse-exr.js'));
+		const vendorScripts: string[] = [];
+		if (isTiff) { vendorScripts.push(geotiffUri.toString(), pakoUri.toString()); }
+		if (lower.endsWith('.png')) { vendorScripts.push(upngUri.toString()); }
+		if (isExr) { vendorScripts.push(parseExrUri.toString()); }
+		if (isLayeredDocument) { vendorScripts.push(pakoUri.toString(), upngUri.toString()); }
+		const appScripts = [...vendorScripts, jsUri.toString()];
+		const staticScripts = appScripts.map((scriptUri, index) =>
+			`<script${index === appScripts.length - 1 ? ' type="module"' : ''} src="${escapeAttribute(scriptUri)}" nonce="${nonce}"></script>`
+		).join('\n\t');
+		const bootstrapScript = nativeFirstPaint ? /* html */`
+	<script nonce="${nonce}">
+		(function () {
+			const vscode = acquireVsCodeApi();
+			const image = document.getElementById('native-fast-preview');
+			const persisted = vscode.getState() || {};
+			const stateAllowsNative = !persisted.colormapConversionState &&
+				(!persisted.displayColormap || persisted.displayColormap === 'none') &&
+				!persisted.debayer && !persisted.compositeEnabled &&
+				!(Array.isArray(persisted.layers) && (persisted.layers.length > 1 || persisted.layerActive));
+			window.__tiffVisualizerBootstrap = {
+				vscode,
+				nativeImage: stateAllowsNative ? image : null,
+				visibleTotalMs: null
+			};
+
+			let appStarted = false;
+			const scripts = ${JSON.stringify(appScripts)};
+			function startApp() {
+				if (appStarted) return;
+				appStarted = true;
+				let index = 0;
+				const loadNext = () => {
+					if (index >= scripts.length) return;
+					const script = document.createElement('script');
+					const isApp = index === scripts.length - 1;
+					script.src = scripts[index++];
+					script.nonce = ${JSON.stringify(nonce)};
+					if (isApp) script.type = 'module';
+					script.addEventListener('load', loadNext, { once: true });
+					script.addEventListener('error', loadNext, { once: true });
+					document.body.append(script);
+				};
+				loadNext();
+			}
+
+			if (!stateAllowsNative || !image) {
+				image?.remove();
+				startApp();
+				return;
+			}
+			const showThenStart = () => {
+				document.body.classList.remove('loading');
+				document.body.classList.add('ready');
+				requestAnimationFrame(() => requestAnimationFrame(() => {
+					// The first frame had an opportunity to reach the screen. Keep
+					// the same click/open origin as the existing total measurement.
+					window.__tiffVisualizerBootstrap.visibleTotalMs = Math.max(0, Date.now() - ${this._openTimestamp});
+					startApp();
+				}));
+				setTimeout(startApp, 100);
+			};
+			image.addEventListener('load', showThenStart, { once: true });
+			image.addEventListener('error', startApp, { once: true });
+			if (image.complete) {
+				if (image.naturalWidth > 0) showThenStart();
+				else startApp();
+			}
+		}());
+	</script>` : '';
 
 		return /* html */`<!DOCTYPE html>
 <html lang="en">
@@ -1103,11 +1196,12 @@ export class ImagePreview extends MediaPreview {
 	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
-<body class="container image">
+<body class="container image${nativeFirstPaint ? ' loading' : ''}">
 	<div class="loading-indicator" aria-label="Loading image"></div>
 	<div class="image-load-error">
 		<p>${vscode.l10n.t("An error occurred while loading the image.")}</p>
 	</div>
+	${nativeFirstPaint ? `<img id="native-fast-preview" class="scale-to-fit" src="${escapeAttribute(uri.toString())}" alt="">` : ''}
 	
 	<script nonce="${nonce}">
 		// Add error handler for module loading
@@ -1120,11 +1214,7 @@ export class ImagePreview extends MediaPreview {
 		});
 	</script>
 	
-	<script src="${escapeAttribute(geotiffUri.toString())}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(pakoUri.toString())}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(upngUri.toString())}" nonce="${nonce}"></script>
-	<script src="${escapeAttribute(parseExrUri.toString())}" nonce="${nonce}"></script>
-	<script type="module" src="${escapeAttribute(jsUri.toString())}" nonce="${nonce}"></script>
+	${bootstrapScript || staticScripts}
 </body>
 </html>`;
 	}

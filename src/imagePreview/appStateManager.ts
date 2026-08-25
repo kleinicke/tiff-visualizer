@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'jxl' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
 
 export interface ImageStats {
 	min: number;
@@ -293,6 +293,20 @@ export class AppStateManager {
 		}
 	}
 
+	/**
+	 * Return the settings that would be selected for a format without changing
+	 * the active preview. HTML generation uses this to decide whether a native
+	 * browser image is visually identical to the configured render before the
+	 * webview has reported its decoded format.
+	 */
+	public getSettingsForFormat(format: ImageFormatType): ImageSettings {
+		if (this._currentFormat === format) {
+			return this._deepCopySettings(this._imageSettings);
+		}
+		const cached = this._formatSettingsCache.get(format);
+		return this._deepCopySettings(cached || this._getDefaultSettingsForFormat(format));
+	}
+
 	private _deepCopySettings(settings: ImageSettings): ImageSettings {
 		return {
 			normalization: { ...settings.normalization },
@@ -327,7 +341,7 @@ export class AppStateManager {
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
-		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
+		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'ico' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;

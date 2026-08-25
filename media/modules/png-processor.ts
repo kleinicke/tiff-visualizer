@@ -33,6 +33,12 @@ interface LazyNativeReadback {
     format: string;
 }
 
+function bootstrapImageFor(src: string): HTMLImageElement | null {
+    const image = (window as any).__tiffVisualizerBootstrap?.nativeImage;
+    if (!(image instanceof HTMLImageElement)) return null;
+    return image.src === src || image.currentSrc === src ? image : null;
+}
+
 /**
  * PNG Processor for TIFF Visualizer using UPNG.js
  * Supports proper uint16 PNG handling and grayscale/RGB channel detection
@@ -92,7 +98,7 @@ export class PngProcessor {
             // Starting an independent full-file Exif fetch first made the two
             // reads contend and delayed first paint for large JPEGs.
             const result = await this._processWithNativeAPI(src);
-            if (!loadSignal?.aborted) { void this._loadJpegExifTags(src, loadSignal); }
+            if (!loadSignal?.aborted) { this._scheduleJpegExifTags(src, loadSignal); }
             return result;
         }
 
@@ -216,6 +222,18 @@ export class PngProcessor {
             canvas.width = width;
             canvas.height = height;
 
+            // The tiny bootstrap has already painted the browser's native PNG.
+            // Keep that exact element for identity display while retaining the
+            // precise decoded samples for the picker, histogram and any later
+            // settings render. This avoids a visually pointless img→canvas swap.
+            const bootstrapImage = bootstrapImageFor(src);
+            if (bootstrapImage && this.canDisplayNativeForSettings(this.settingsManager.settings)) {
+                this._postFormatInfo(width, height, channels, pngBitDepth, 'PNG');
+                this._pendingRenderData = false;
+                this._isInitialLoad = false;
+                return { canvas, imageData: null, canvasAlreadyRendered: true, displayElement: bootstrapImage };
+            }
+
             // Send format info BEFORE rendering (for deferred rendering)
             if (this._isInitialLoad) {
                 this._postFormatInfo(width, height, channels, bitDepth, 'PNG');
@@ -233,6 +251,25 @@ export class PngProcessor {
         } catch (error) {
             console.error('UPNG.js processing failed, falling back to browser Image API:', error);
             return this._processWithNativeAPI(src);
+        }
+    }
+
+    /**
+     * Embedded JPEG metadata needs a second byte consumer, but it is not part
+     * of first paint or pixel picking. Let Chromium finish the visible image
+     * and the viewer controls before asking for the cached resource bytes.
+     */
+    _scheduleJpegExifTags(src: string, loadSignal: AbortSignal | undefined): void {
+        const load = () => {
+            if (!loadSignal?.aborted) { void this._loadJpegExifTags(src, loadSignal); }
+        };
+        const requestIdle = (globalThis as typeof globalThis & {
+            requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+        }).requestIdleCallback;
+        if (requestIdle) {
+            requestIdle(load, { timeout: 1000 });
+        } else {
+            setTimeout(load, 250);
         }
     }
 
@@ -263,7 +300,8 @@ export class PngProcessor {
     async _processWithNativeAPI(src: string, encodedBytes?: ArrayBuffer): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
         const lowerSrc = src.toLowerCase();
         const isJpeg = lowerSrc.includes('.jpg') || lowerSrc.includes('.jpeg');
-        const image = new Image();
+        const bootstrapImage = bootstrapImageFor(src);
+        const image = bootstrapImage || new Image();
         const canvas = document.createElement('canvas');
         canvas.classList.add('scale-to-fit');
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -272,13 +310,16 @@ export class PngProcessor {
             throw new Error('Could not get canvas context');
         }
 
-        const objectUrl = encodedBytes
+        const objectUrl = encodedBytes && !bootstrapImage
             ? URL.createObjectURL(new Blob([encodedBytes], { type: 'image/png' }))
             : null;
         const releaseObjectUrl = () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
 
         return new Promise((resolve, reject) => {
-            image.onload = () => {
+            let settled = false;
+            const onLoad = () => {
+                if (settled) return;
+                settled = true;
                 try {
                     canvas.width = image.naturalWidth;
                     canvas.height = image.naturalHeight;
@@ -288,7 +329,7 @@ export class PngProcessor {
                             'Image';
 
                     // Large JPEGs: show <img> immediately and use 1x1 canvas for pixel picking
-                    if (isJpeg && canvas.width * canvas.height > 100_000) {
+                    if (isJpeg && (bootstrapImage || canvas.width * canvas.height > 100_000)) {
                         image.classList.add('scale-to-fit');
                         this._lastRaw = null;
                         this._cachedStats = undefined;
@@ -296,6 +337,7 @@ export class PngProcessor {
                         this._lazyNativeReadback = { image, canvas, ctx, width: canvas.width, height: canvas.height, format: 'JPEG' };
                         this._postFormatInfo(canvas.width, canvas.height, 4, 8, 'JPEG');
                         this._pendingRenderData = false;
+                        this._isInitialLoad = false;
                         resolve({ canvas, imageData: null, canvasAlreadyRendered: true, lazyPixelData: true, displayElement: image });
                         return;
                     }
@@ -330,6 +372,13 @@ export class PngProcessor {
                     };
 
                     this._postFormatInfo(canvas.width, canvas.height, 4, 8, format);
+
+                    if (bootstrapImage && this.canDisplayNativeForSettings(this.settingsManager.settings)) {
+                        this._pendingRenderData = false;
+                        this._isInitialLoad = false;
+                        resolve({ canvas, imageData: null, canvasAlreadyRendered: true, displayElement: image });
+                        return;
+                    }
                     this._pendingRenderData = true;
 
                     resolve({ canvas, imageData, canvasAlreadyRendered: true });
@@ -340,13 +389,29 @@ export class PngProcessor {
                 }
             };
 
-            image.onerror = () => {
+            const onError = () => {
+                if (settled) return;
+                settled = true;
                 releaseObjectUrl();
                 reject(new Error('Failed to load image'));
             };
 
-            image.src = objectUrl || src;
+            image.addEventListener('load', onLoad, { once: true });
+            image.addEventListener('error', onError, { once: true });
+            if (bootstrapImage?.complete) {
+                queueMicrotask(() => bootstrapImage.naturalWidth > 0 ? onLoad() : onError());
+            } else if (!bootstrapImage) {
+                image.src = objectUrl || src;
+            }
         });
+    }
+
+    canDisplayNativeForSettings(settings: any): boolean {
+        const isGammaMode = settings.normalization?.gammaMode || false;
+        const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
+        const rgbAs24BitMode = settings.rgbAs24BitGrayscale === true;
+        const hasColormap = !!settings.displayColormap && settings.displayColormap !== 'none';
+        return isGammaMode && isIdentity && !rgbAs24BitMode && !hasColormap;
     }
 
     /**
@@ -445,11 +510,7 @@ export class PngProcessor {
 
     canUseLazyNativeCanvasForSettings(settings: any): boolean {
         if (!this._lazyNativeReadback) return false;
-        const isGammaMode = settings.normalization?.gammaMode || false;
-        const isIdentity = NormalizationHelper.isIdentityTransformation(settings);
-        const rgbAs24BitMode = settings.rgbAs24BitGrayscale === true;
-        const hasColormap = !!settings.displayColormap && settings.displayColormap !== 'none';
-        return isGammaMode && isIdentity && !rgbAs24BitMode && !hasColormap;
+        return this.canDisplayNativeForSettings(settings);
     }
 
     _ensureLazyNativeImageData(): ImageData | null {

@@ -108,7 +108,7 @@
       {
         "viewType": "tiffVisualizer.previewEditor.option",
         "displayName": "Scientific Image Visualizer",
-        "priority": "option",
+        "priority": "default",
         "selector": [
           {
             "filenamePattern": "*.{png,jpeg,jpg,bmp,ico,webp,avif}"
@@ -369,7 +369,7 @@
     "docs:commands": "node scripts/generate-command-docs.js",
     "docs:check": "node scripts/generate-command-docs.js --check",
     "pretest": "npm run compile:quick && npm run lint && npm run docs:check",
-    "lint": "eslint src media/imagePreview.ts media/decode-worker.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules web --ext ts,js",
+    "lint": "eslint src media/imagePreview.ts media/decode-worker.ts media/png-decode-worker.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules web --ext ts,js",
     "typecheck": "npm run typecheck:src && npm run typecheck:media && npm run typecheck:web",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
