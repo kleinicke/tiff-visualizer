@@ -1,6 +1,6 @@
 "use strict";
 /**
- * One member of the TIFF strip-decode pool.
+ * One member of the shared TIFF-strip / EXR-ZIP decode pool.
  *
  * Each instance owns its own WASM module, decodes a contiguous run of strips
  * from only that run's compressed bytes, and transfers the samples back. There
@@ -11,7 +11,7 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_tiff_float_strip_range, decode_tiff_strip_range_raw } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_zip_f32_blocks, decode_tiff_float_strip_range, decode_tiff_strip_range_raw } from './wasm/tiff-wasm.js';
 
 let ready: Promise<unknown> | null = null;
 
@@ -33,6 +33,39 @@ self.onmessage = async (event: MessageEvent) => {
 	try {
 		await ready;
 		const started = performance.now();
+		if (job.kind === 'exr-zip') {
+			const bytes = decode_exr_zip_f32_blocks(
+				new Uint8Array(job.blob),
+				new Uint32Array(job.counts),
+				new Uint32Array(job.rows),
+				job.width,
+			);
+			const samples = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+			let min = Infinity;
+			let max = -Infinity;
+			let sawNonFinite = false;
+			for (let index = 0; index < samples.length; index++) {
+				const value = samples[index];
+				if (value < min) { min = value; }
+				if (value > max) { max = value; }
+				if (!Number.isFinite(value)) { sawNonFinite = true; }
+			}
+			if (sawNonFinite || !Number.isFinite(min) || !Number.isFinite(max)) {
+				min = Infinity; max = -Infinity;
+				for (let index = 0; index < samples.length; index++) {
+					const value = samples[index];
+					if (Number.isFinite(value)) {
+						if (value < min) { min = value; }
+						if (value > max) { max = value; }
+					}
+				}
+			}
+			(self as any).postMessage(
+				{ id: job.id, samples, min, max, ms: performance.now() - started },
+				[bytes.buffer],
+			);
+			return;
+		}
 		// `raw` asks for native little-endian sample bytes, which the caller
 		// wraps in the carrier its pipeline wants (Uint8/Uint16/Float32) with no
 		// conversion. Half floats and >16-bit integers still need widening, so

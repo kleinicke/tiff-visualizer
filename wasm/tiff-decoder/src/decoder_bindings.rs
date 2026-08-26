@@ -557,6 +557,54 @@ pub fn decode_exr_fast(data: &[u8]) -> Result<ExrResult, JsValue> {
         .map_err(js_error)
 }
 
+/// Metadata plus the independently compressed scanline blocks for the common
+/// single-channel Float32 ZIP16 EXR layout. `None` means the caller must use
+/// the full compatibility decoder.
+#[wasm_bindgen]
+pub struct ExrZipPlanJs {
+    inner: core::ExrZipPlan,
+}
+
+#[wasm_bindgen]
+impl ExrZipPlanJs {
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 { self.inner.width }
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 { self.inner.height }
+    #[wasm_bindgen(getter)]
+    pub fn data_y(&self) -> i32 { self.inner.data_y }
+    #[wasm_bindgen(getter)]
+    pub fn channel_name(&self) -> String { self.inner.channel_name.clone() }
+    #[wasm_bindgen(getter)]
+    pub fn counts(&self) -> Vec<u32> { self.inner.counts.clone() }
+    #[wasm_bindgen(getter)]
+    pub fn y_coordinates(&self) -> Vec<i32> { self.inner.y_coordinates.clone() }
+    #[wasm_bindgen(getter)]
+    pub fn all_tags_json(&self) -> String { self.inner.all_tags_json.clone() }
+    /// Move the compressed payload into JavaScript without retaining a second
+    /// copy in the plan object.
+    pub fn take_compressed(&mut self) -> Vec<u8> { std::mem::take(&mut self.inner.compressed) }
+}
+
+#[wasm_bindgen]
+pub fn exr_zip_f32_plan(data: &[u8]) -> Result<Option<ExrZipPlanJs>, JsValue> {
+    prepare();
+    core::exr_zip_f32_plan(data)
+        .map(|plan| plan.map(|inner| ExrZipPlanJs { inner }))
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_exr_zip_f32_blocks(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<Vec<u8>, JsValue> {
+    core::decode_exr_zip_f32_blocks(blob, counts, rows, width)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 #[wasm_bindgen]
 pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, JsValue> {
     prepare();

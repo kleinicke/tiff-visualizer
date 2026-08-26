@@ -29,7 +29,7 @@ all-formats = [
     "demosaic",
 ]
 tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt"]
-exr = ["dep:exr"]
+exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
 jpeg = ["dep:zune-jpeg"]
@@ -47,6 +47,7 @@ demosaic = []
 [dependencies]
 tiff = { version = "0.11.3", features = ["webp"], optional = true }
 exr = { version = "1.74", default-features = false, optional = true }
+zune-inflate = { version = "0.2.54", default-features = false, features = ["zlib"], optional = true }
 png = { version = "0.17", default-features = false, optional = true }
 ruzstd = { version = "0.8", optional = true }
 weezl = { version = "0.1.12", optional = true }

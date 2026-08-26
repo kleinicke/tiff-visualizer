@@ -159,6 +159,10 @@ function getArrayI32FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
+function getArrayU32FromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
 function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -171,6 +175,21 @@ function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, c
   var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v3;
+}
+function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_zip_f32_blocks(ptr0, len0, ptr1, len1, ptr2, len2, width);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+  return v4;
 }
 function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
@@ -188,10 +207,6 @@ function decode_tiff_float_strip_range(blob, counts, first_strip, width, height,
 function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
-}
-function getArrayU32FromWasm0(ptr, len) {
-  ptr = ptr >>> 0;
-  return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 var DecodedArrayFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
@@ -657,6 +672,109 @@ var ExrResult = class _ExrResult {
   }
 };
 if (Symbol.dispose) ExrResult.prototype[Symbol.dispose] = ExrResult.prototype.free;
+var ExrZipPlanJsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_exrzipplanjs_free(ptr >>> 0, 1));
+var ExrZipPlanJs = class _ExrZipPlanJs {
+  static __wrap(ptr) {
+    ptr = ptr >>> 0;
+    const obj = Object.create(_ExrZipPlanJs.prototype);
+    obj.__wbg_ptr = ptr;
+    ExrZipPlanJsFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    ExrZipPlanJsFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_exrzipplanjs_free(ptr, 0);
+  }
+  /**
+   * @returns {string}
+   */
+  get channel_name() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.exrzipplanjs_channel_name(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * @returns {string}
+   */
+  get all_tags_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.exrzipplanjs_all_tags_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * @returns {Int32Array}
+   */
+  get y_coordinates() {
+    const ret = wasm.exrzipplanjs_y_coordinates(this.__wbg_ptr);
+    var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * Move the compressed payload into JavaScript without retaining a second
+   * copy in the plan object.
+   * @returns {Uint8Array}
+   */
+  take_compressed() {
+    const ret = wasm.exrzipplanjs_take_compressed(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get width() {
+    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {Uint32Array}
+   */
+  get counts() {
+    const ret = wasm.exrzipplanjs_counts(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get data_y() {
+    const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * @returns {number}
+   */
+  get height() {
+    const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+};
+if (Symbol.dispose) ExrZipPlanJs.prototype[Symbol.dispose] = ExrZipPlanJs.prototype.free;
 var HdrResultFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
 } } : new FinalizationRegistry((ptr) => wasm.__wbg_hdrresult_free(ptr >>> 0, 1));
@@ -1075,7 +1193,7 @@ var RgbaLayerCompositor = class {
    * @returns {number}
    */
   get covered_count() {
-    const ret = wasm.rgbalayercompositor_covered_count(this.__wbg_ptr);
+    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2297,6 +2415,50 @@ self.onmessage = async (event) => {
   try {
     await ready;
     const started = performance.now();
+    if (job.kind === "exr-zip") {
+      const bytes = decode_exr_zip_f32_blocks(
+        new Uint8Array(job.blob),
+        new Uint32Array(job.counts),
+        new Uint32Array(job.rows),
+        job.width
+      );
+      const samples2 = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
+      let min2 = Infinity;
+      let max2 = -Infinity;
+      let sawNonFinite2 = false;
+      for (let index = 0; index < samples2.length; index++) {
+        const value = samples2[index];
+        if (value < min2) {
+          min2 = value;
+        }
+        if (value > max2) {
+          max2 = value;
+        }
+        if (!Number.isFinite(value)) {
+          sawNonFinite2 = true;
+        }
+      }
+      if (sawNonFinite2 || !Number.isFinite(min2) || !Number.isFinite(max2)) {
+        min2 = Infinity;
+        max2 = -Infinity;
+        for (let index = 0; index < samples2.length; index++) {
+          const value = samples2[index];
+          if (Number.isFinite(value)) {
+            if (value < min2) {
+              min2 = value;
+            }
+            if (value > max2) {
+              max2 = value;
+            }
+          }
+        }
+      }
+      self.postMessage(
+        { id: job.id, samples: samples2, min: min2, max: max2, ms: performance.now() - started },
+        [bytes.buffer]
+      );
+      return;
+    }
     if (job.raw) {
       const bytes = decode_tiff_strip_range_raw(
         new Uint8Array(job.blob),

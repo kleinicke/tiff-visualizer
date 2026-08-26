@@ -18,7 +18,7 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 
@@ -349,6 +349,30 @@ async function decodeExr(buffer: ArrayBuffer) {
 	}
 }
 
+function planExrZip(buffer: ArrayBuffer) {
+	if (!tiffWasmReady || typeof exr_zip_f32_plan !== 'function') {
+		throw new Error('EXR ZIP planner is not initialized');
+	}
+	const started = performance.now();
+	const plan = exr_zip_f32_plan(new Uint8Array(buffer));
+	if (!plan) {
+		return { supported: false, source: buffer };
+	}
+	return {
+		supported: true,
+		source: buffer,
+		width: plan.width,
+		height: plan.height,
+		dataY: plan.data_y,
+		channelName: plan.channel_name,
+		counts: plan.counts,
+		yCoordinates: plan.y_coordinates,
+		allTagsJson: plan.all_tags_json,
+		compressed: plan.take_compressed(),
+		planMs: performance.now() - started,
+	};
+}
+
 function decodeHdrWasm(buffer: ArrayBuffer) {
 	if (!tiffWasmReady || typeof decode_hdr_fast !== 'function') {
 		throw new Error('HDR WASM decoder not initialized');
@@ -574,6 +598,8 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeTiff(buffer, Number(options.pageIndex || 0));
 		case 'exr':
 			return decodeExr(buffer);
+		case 'exr-zip-plan':
+			return planExrZip(buffer);
 		case 'npy':
 			return decodeNpy(buffer);
 		case 'pfm':

@@ -8,6 +8,7 @@ import type { SettingsManager } from './settings-manager.js';
 import type { TagEntry } from './tiff-tag-utils.js';
 import type { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { loadParseExr } from './lazy-vendor-loader.js';
+import { tryParallelExrDecode } from './exr-parallel-decode.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 
@@ -51,6 +52,7 @@ export class ExrProcessor {
 	loadSignal: AbortSignal | undefined;
 	decodeWorker: DecodeWorkerClient | null;
 	rawExrData?: ExrImageData;
+	_lastDecodeInfo: { engine: string; durationMs: number } | null;
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -65,6 +67,7 @@ export class ExrProcessor {
 		this._webglRenderer = new WebGL2FloatRenderer();
 		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 		this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
+		this._lastDecodeInfo = null;
 	}
 
 	/**
@@ -93,6 +96,7 @@ export class ExrProcessor {
 	async processExr(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData; exrData: ExrImageData }> {
 		const loadSignal = this.loadSignal;
 		try {
+			this._lastDecodeInfo = null;
 			// Invalidate stats cache for new image
 			this._cachedStats = undefined;
 
@@ -106,16 +110,38 @@ export class ExrProcessor {
 			if (speculative?.ok) {
 				exrResult = speculative.result;
 			} else {
-				const buffer = speculative?.buffer instanceof ArrayBuffer
+				let buffer = speculative?.buffer instanceof ArrayBuffer
 					? speculative.buffer
 					: await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'exr');
 				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-				exrResult = await DecodeWorkerClient.decodeWithFallback(
-					this.decodeWorker, 'exr', buffer, src, loadSignal,
-					async (b) => (await loadParseExr())(b, FloatType));
+				let parallel: Awaited<ReturnType<typeof tryParallelExrDecode>> | null = null;
+				try {
+					parallel = await tryParallelExrDecode(buffer, this.decodeWorker);
+				} catch (error) {
+					console.warn('[ExrProcessor] Parallel ZIP path failed, using the full decoder:', error);
+				}
+				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				if (parallel?.result) {
+					exrResult = parallel.result;
+				} else {
+					buffer = parallel?.source instanceof ArrayBuffer && parallel.source.byteLength
+						? parallel.source
+						: buffer.byteLength ? buffer : await (await fetch(src, { signal: loadSignal })).arrayBuffer();
+					exrResult = await DecodeWorkerClient.decodeWithFallback(
+						this.decodeWorker, 'exr', buffer, src, loadSignal,
+						async (b) => (await loadParseExr())(b, FloatType));
+				}
 			}
 			if (exrResult.wasmFallbackReason) {
 				console.warn('[ExrProcessor] Rust EXR decoder fell back to parse-exr:', exrResult.wasmFallbackReason);
+			}
+			if (exrResult.decodedWith) {
+				const decodeTimings = Array.isArray(exrResult.decodeTimings) ? exrResult.decodeTimings : [];
+				const durationMs = decodeTimings.reduce((sum: number, timing: any) => {
+					const value = Number(timing?.durationMs);
+					return sum + (Number.isFinite(value) ? value : 0);
+				}, 0);
+				this._lastDecodeInfo = { engine: String(exrResult.decodedWith), durationMs };
 			}
 
 			const { width, height, data, format, type, channelNames, displayedChannels } = exrResult;

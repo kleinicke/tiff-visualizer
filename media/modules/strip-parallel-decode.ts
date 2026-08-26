@@ -213,6 +213,95 @@ export function prewarmStripPool(): void {
 	void pool.ensure();
 }
 
+export interface ExrZipBlockPlan {
+	width: number;
+	height: number;
+	dataY: number;
+	counts: Uint32Array;
+	yCoordinates: Int32Array;
+	compressed: Uint8Array;
+}
+
+/** Decode independently compressed EXR ZIP16 blocks across the shared pool. */
+export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
+	data: Float32Array;
+	min: number;
+	max: number;
+	workers: number;
+	durationMs: number;
+} | null> {
+	const { width, height, dataY, counts, yCoordinates, compressed } = plan;
+	if (counts.length < MIN_STRIPS || counts.length !== yCoordinates.length
+		|| width * height < MIN_PIXELS) { return null; }
+	if (!await pool.ensure() || pool.size < 2) { return null; }
+
+	const rows = new Uint32Array(counts.length);
+	const offsets = new Uint32Array(counts.length);
+	let totalCompressed = 0;
+	for (let index = 0; index < counts.length; index++) {
+		const row = yCoordinates[index] - dataY;
+		if (row !== index * 16 || row >= height) { return null; }
+		rows[index] = Math.min(16, height - row);
+		offsets[index] = totalCompressed;
+		totalCompressed += counts[index];
+	}
+	if (totalCompressed !== compressed.byteLength) { return null; }
+
+	const workerCount = Math.min(pool.size, counts.length);
+	const target = totalCompressed / workerCount;
+	const ranges: { first: number; last: number }[] = [];
+	let cursor = 0;
+	for (let workerIndex = 0; workerIndex < workerCount && cursor < counts.length; workerIndex++) {
+		const remainingWorkers = workerCount - workerIndex;
+		const maxEnd = counts.length - (remainingWorkers - 1);
+		let end = cursor;
+		let bytes = 0;
+		while (end < maxEnd && (bytes < target || end === cursor)) { bytes += counts[end++]; }
+		if (workerIndex === workerCount - 1) { end = counts.length; }
+		ranges.push({ first: cursor, last: end });
+		cursor = end;
+	}
+
+	const started = performance.now();
+	const jobs = ranges.map((range, workerIndex) => {
+		const blobStart = offsets[range.first];
+		const last = range.last - 1;
+		const blobEnd = offsets[last] + counts[last];
+		const blob = compressed.slice(blobStart, blobEnd);
+		const rangeCounts = counts.slice(range.first, range.last);
+		const rangeRows = rows.slice(range.first, range.last);
+		return pool.run({
+			kind: 'exr-zip',
+			blob: blob.buffer,
+			counts: rangeCounts.buffer,
+			rows: rangeRows.buffer,
+			width,
+		}, [blob.buffer, rangeCounts.buffer, rangeRows.buffer], workerIndex);
+	});
+
+	const output = new Float32Array(width * height);
+	let min = Infinity;
+	let max = -Infinity;
+	try {
+		await Promise.all(jobs.map(async (job, index) => {
+			const part = await job;
+			const row = yCoordinates[ranges[index].first] - dataY;
+			output.set(part.samples, row * width);
+			if (part.min < min) { min = part.min; }
+			if (part.max > max) { max = part.max; }
+		}));
+	} catch (error) {
+		console.warn('[StripPool] EXR ZIP range failed, falling back:', error);
+		return null;
+	}
+	const durationMs = performance.now() - started;
+	if (output.byteLength >= 64 * 1024 * 1024) {
+		pool.retire();
+		setTimeout(() => { void pool.ensure(); }, 0);
+	}
+	return { data: output, min, max, workers: ranges.length, durationMs };
+}
+
 /**
  * Decode `buffer` across the pool, or return `null` when this file is not a
  * shape the parallel path handles (the caller then uses the normal route).

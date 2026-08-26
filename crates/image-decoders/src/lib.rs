@@ -137,6 +137,18 @@ pub struct ExrResult {
     all_tags_json: String,
 }
 
+/// Compressed blocks and metadata for the guarded parallel EXR ZIP16 path.
+pub struct ExrZipPlan {
+    pub width: u32,
+    pub height: u32,
+    pub data_y: i32,
+    pub channel_name: String,
+    pub compressed: Vec<u8>,
+    pub counts: Vec<u32>,
+    pub y_coordinates: Vec<i32>,
+    pub all_tags_json: String,
+}
+
 pub struct PngResult {
     width: u32,
     height: u32,
@@ -1058,6 +1070,20 @@ pub use decode_lif_fast as decode_lif;
 pub use decode_dicom_fast as decode_dicom;
 #[cfg(feature = "exr")]
 pub use decode_exr_fast as decode_exr;
+#[cfg(feature = "exr")]
+pub fn exr_zip_f32_plan(data: &[u8]) -> Result<Option<ExrZipPlan>, DecodeError> {
+    formats::exr::zip_f32_plan(data)
+}
+
+#[cfg(feature = "exr")]
+pub fn decode_exr_zip_f32_blocks(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<Vec<u8>, DecodeError> {
+    formats::exr::decode_zip_f32_blocks(blob, counts, rows, width)
+}
 #[cfg(feature = "fits")]
 pub use decode_fits_fast as decode_fits;
 #[cfg(feature = "hdr")]

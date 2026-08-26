@@ -21,6 +21,7 @@ export interface DecodeWorkerLike {
 	start(): Promise<void>;
 	canDecode(format: string): boolean;
 	decode(format: string, buffer: ArrayBuffer, options?: Record<string, any>): Promise<any> | null;
+	retireAfterDecode?(): void;
 }
 
 /**
@@ -304,6 +305,13 @@ export class DecodeWorkerClient {
 		}
 		console.log(`[DecodeWorker] Cancelling ${this._pending.size} superseded decode(s)`);
 		this._teardown();
+	}
+
+	/** Release a WASM heap after a large decode result has safely transferred. */
+	retireAfterDecode(): void {
+		if (this._pending.size !== 0) { return; }
+		this._teardown();
+		setTimeout(() => { void this.start(); }, 0);
 	}
 
 	_teardown(): void {

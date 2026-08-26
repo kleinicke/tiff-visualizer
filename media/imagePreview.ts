@@ -218,9 +218,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				void wasm.getWasmModule();
 				strips.prewarmStripPool();
 			} else if (family === 'exr') {
-				const { ExrProcessor } = await import('./modules/exr-processor.js');
+				const [{ ExrProcessor }, strips] = await Promise.all([
+					import('./modules/exr-processor.js'),
+					import('./modules/strip-parallel-decode.js'),
+				]);
 				exrProcessor = installProcessor(new ExrProcessor(settingsManager, vscode));
 				mouseHandler.setExrProcessor(exrProcessor);
+				strips.prewarmStripPool();
 			} else if (family === 'npy') {
 				const { NpyProcessor } = await import('./modules/npy-processor.js');
 				npyProcessor = installProcessor(new NpyProcessor(settingsManager, vscode), fastRawWorkerClient);
@@ -1943,6 +1947,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		try {
 			const result = await exrProcessor.processExr(src);
 			if (gen !== _loadGeneration) { return; }
+			currentLoadDecodeInfo = exrProcessor._lastDecodeInfo;
 
 			canvas = result.canvas;
 			primaryImageData = result.imageData;

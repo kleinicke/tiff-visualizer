@@ -1136,8 +1136,7 @@ export class ImagePreview extends MediaPreview {
 		const speculativeDecodeFormat = lower.endsWith('.ppm') ? 'ppm'
 			: isPfm ? 'pfm'
 				: lower.endsWith('.npy') ? 'npy'
-					: isExr ? 'exr'
-						: isHdr ? 'hdr'
+					: isHdr ? 'hdr'
 							: null;
 		// PGM stays on its cheaper main-thread decoder, but its source can travel
 		// while the viewer and lazy NetPBM processor chunk are loading.
