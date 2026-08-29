@@ -1945,9 +1945,11 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling TIFF:', error);
 			const msg = String(error instanceof Error ? error.message : error);
-			if (msg.includes('50000') || msg.toLowerCase().includes('zstd')) {
-				onImageError('ZSTD compression (method 50000) is not supported. Re-save the TIFF with LZW, Deflate, or no compression.');
-			} else if (msg.toLowerCase().includes('compression')) {
+			// ZSTD itself is decoded (strips, tiles and planar layouts alike),
+			// so a failure here is about the specific file, not the codec:
+			// report what the decoder actually said instead of claiming the
+			// compression is unsupported.
+			if (msg.toLowerCase().includes('compression')) {
 				onImageError(`Unsupported TIFF compression: ${msg}`);
 			} else {
 				onImageError(`Failed to load TIFF: ${msg}`);

@@ -45,10 +45,13 @@ unavailable.
 
 Decoded by a Rust/WebAssembly decoder built on
 [image-tiff](https://github.com/image-rs/image-tiff), with a JavaScript fallback
-for files it cannot yet handle. Supports LZW and Deflate compression with
-predictors, tiled and stripped layouts, multi-channel data, and bit depths of 8,
-16, 32 and 64 in unsigned, signed and floating-point sample formats. Big TIFF
-(`tf8`, `btf`) is included.
+for files it cannot yet handle. Supports LZW, Deflate and Zstd (the compression
+GDAL writes for modern GeoTIFFs) with horizontal and floating-point predictors,
+tiled and stripped layouts, both planar configurations, multi-channel data, and
+bit depths of 8, 16, 32 and 64 in unsigned, signed and floating-point sample
+formats. Big TIFF (`tf8`, `btf`) is included. Zstd is decoded in pure Rust, so
+it works in VS Code Web as well as on the desktop, and tiles that a sparse
+GeoTIFF never wrote read as zeros.
 
 Multi-page files are navigable with `[` and `]`. OME-TIFF adds semantic
 dimensions and multi-file datasets — see [datasets](./datasets.md).

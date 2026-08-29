@@ -8,7 +8,7 @@
  *   - JPEG-in-TIFF          (compression 7, decoded to RGB)
  *   - Uncompressed bilevel  (1-bit, expanded to 8-bit grayscale)
  *   - Palette / RGBPalette  (indices expanded to RGB via the ColorMap)
- *   - ZSTD                  (compression 50000)
+ *   - ZSTD                  (compression 50000, stripped, tiled and planar)
  *
  * The CCITT-compressed images are byte-for-byte copies of an uncompressed
  * reference, so a correct decode must match the reference exactly.
@@ -166,6 +166,39 @@ async function main() {
 		const z = decode(mod, zstdFile);
 		const r = decode(mod, refFile);
 		assert.strictEqual(z.compression, 50000, `${zstdFile} compression tag`);
+		assert.strictEqual(z.data.length, r.data.length, `${label}: length`);
+		assert.deepStrictEqual(z.data, r.data,
+			`ZSTD ${label} must match the uncompressed reference exactly`);
+		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
+	}
+
+	// 5c. TILED and PLANAR ZSTD. Cloud-optimized GeoTIFFs are tiled by
+	//     definition, and `decode_zstd` only understands strip layouts, so
+	//     these go through the block decoder (try_decode_general_strips_tiles),
+	//     which decompresses each tile itself. Every one must match its
+	//     uncompressed twin sample for sample.
+	//
+	//     The fixtures come from scripts/make-zstd-testdata.py: each pair is
+	//     written by tifffile from one array, so the reference is an encoder
+	//     this decoder has no part in, and the pairs were additionally
+	//     cross-checked by decoding both files with tifffile/imagecodecs.
+	//     The sparse file has one tile's TileOffsets/TileByteCounts entry
+	//     patched to zero, which is what GDAL's SPARSE_OK leaves behind and
+	//     what libtiff reads back as zeros.
+	for (const [zstdFile, refFile, label] of [
+		['zstd_tiled_u16.tif', 'zstd_ref_u16.tif', 'tiled, horizontal predictor, uint16'],
+		['zstd_tiled_rgb8.tif', 'zstd_ref_rgb8.tif', 'tiled, horizontal predictor, RGB8'],
+		['zstd_tiled_f32.tif', 'zstd_ref_f32.tif', 'tiled, float predictor, float32'],
+		['zstd_tiled_nopred_u16.tif', 'zstd_ref_u16.tif', 'tiled, no predictor, partial edge tiles'],
+		['zstd_planar_rgb8.tif', 'zstd_ref_rgb8.tif', 'planar configuration 2, RGB8'],
+		['zstd_tiled_sparse_u16.tif', 'zstd_tiled_sparse_ref_u16.tif', 'tiled with an unwritten (sparse) tile'],
+	]) {
+		const z = decode(mod, zstdFile);
+		const r = decode(mod, refFile);
+		assert.strictEqual(z.compression, 50000, `${zstdFile} compression tag`);
+		assert.strictEqual(z.width, r.width, `${label}: width`);
+		assert.strictEqual(z.height, r.height, `${label}: height`);
+		assert.strictEqual(z.channels, r.channels, `${label}: channels`);
 		assert.strictEqual(z.data.length, r.data.length, `${label}: length`);
 		assert.deepStrictEqual(z.data, r.data,
 			`ZSTD ${label} must match the uncompressed reference exactly`);

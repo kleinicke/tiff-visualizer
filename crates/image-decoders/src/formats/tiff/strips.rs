@@ -250,6 +250,29 @@ pub(crate) fn decompress_strip_or_tile(
             })?;
             Ok(buf)
         }
+        // ZSTD, via the pure-Rust ruzstd crate so the WASM build needs no C
+        // toolchain. A single strip or tile is one complete zstd frame; GDAL
+        // writes exactly one frame per block, but concatenated frames are legal
+        // so the decoder is re-created until the input is consumed.
+        50000 => {
+            let mut buf = Vec::with_capacity(expected_len);
+            let mut rest = block;
+            while !rest.is_empty() && buf.len() < expected_len {
+                let mut cursor = std::io::Cursor::new(rest);
+                let mut dec = ruzstd::decoding::StreamingDecoder::new(&mut cursor).map_err(|e| {
+                    DecodeError::new(&format!("{}: ZSTD decoder init failed: {:?}", context, e))
+                })?;
+                dec.read_to_end(&mut buf).map_err(|e| {
+                    DecodeError::new(&format!("{}: ZSTD decode failed: {:?}", context, e))
+                })?;
+                let consumed = cursor.position() as usize;
+                if consumed == 0 || consumed > rest.len() {
+                    break;
+                }
+                rest = &rest[consumed..];
+            }
+            Ok(buf)
+        }
         _ => Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             context, compression
@@ -432,7 +455,10 @@ pub(crate) fn try_decode_subbit_strips(
         // tiff crate produces its usual (clear) "unsupported color type" error.
         return Ok(None);
     }
-    if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
+    // ZSTD is in this list because `decode_zstd` cannot help here: it rebuilds
+    // the raster as an uncompressed TIFF, which the tiff crate then rejects for
+    // a 9..=15-bit color type. Such files are routed straight to this path.
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) {
         return Ok(None);
     }
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
@@ -601,8 +627,13 @@ pub(crate) fn try_decode_general_strips_tiles(
     // (`try_decode_subbit_strips`); leave those alone. Tiled layouts of the
     // same depths have no other handler, so they are claimed here.
     let subbit_strip_path_handles = !is_tiled && (9..=15).contains(&bits_per_sample);
+    // TILED ZSTD has no other handler: `decode_zstd` rebuilds a single-strip
+    // TIFF and so only understands strip layouts, and the tiff crate's own
+    // zstd support is a C dependency the WASM build cannot use. Cloud-optimized
+    // GeoTIFFs are tiled by definition, so this is the common shape in the
+    // wild. Strip ZSTD keeps using `decode_zstd`.
     let claim = planar_configuration == 2
-        || (is_tiled && compression == 5)
+        || (is_tiled && matches!(compression, 5 | 50000))
         || (odd_depth && !subbit_strip_path_handles);
     if !claim || bits_per_sample <= 1 {
         return Ok(None);
@@ -631,13 +662,13 @@ pub(crate) fn try_decode_general_strips_tiles(
             CTX, bits_per_sample
         )));
     }
-    if compression != 1 && compression != 5 && compression != 8 && compression != 32946 {
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) {
         return Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             CTX, compression
         )));
     }
-    if predictor != 1 && predictor != 2 {
+    if !matches!(predictor, 1 | 2 | 3) {
         return Err(DecodeError::new(&format!(
             "{}: predictor {} is not supported",
             CTX, predictor
@@ -664,12 +695,19 @@ pub(crate) fn try_decode_general_strips_tiles(
             CTX, sample_format, bits_per_sample
         )));
     }
-    // Differencing a float sample as an integer would corrupt it; predictor 3
-    // (floating-point predictor) is a different algorithm handled elsewhere.
-    if sample_format == 3 && predictor != 1 {
+    // Differencing a float sample as an integer would corrupt it: predictor 2
+    // is defined for integer samples only, and predictor 3 (the floating-point
+    // predictor, undone per block below) only for float ones.
+    if sample_format == 3 && predictor == 2 {
         return Err(DecodeError::new(&format!(
-            "{}: predictor {} on float samples is not supported here",
-            CTX, predictor
+            "{}: horizontal predictor on float samples is not supported",
+            CTX
+        )));
+    }
+    if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 32 | 64)) {
+        return Err(DecodeError::new(&format!(
+            "{}: the floating-point predictor is only supported on 32/64-bit float samples",
+            CTX
         )));
     }
     // Multi-byte samples are stored in the file's byte order.
@@ -735,6 +773,10 @@ pub(crate) fn try_decode_general_strips_tiles(
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
     let mut out: Vec<u64> = vec![0u64; (width as usize) * (height as usize) * (channels as usize)];
 
+    // Scratch buffers for the floating-point predictor, reused across rows.
+    let mut fp_planes: Vec<u8> = Vec::new();
+    let mut fp_samples: Vec<u8> = Vec::new();
+
     let mut block_idx = 0usize;
     for plane in 0..planes {
         for tile_row in 0..blocks_down {
@@ -772,8 +814,14 @@ pub(crate) fn try_decode_general_strips_tiles(
                 // bottom of the image.
                 let rows_present = if is_tiled { block_height } else { valid_rows };
                 let expected_bytes = row_bytes.saturating_mul(rows_present as usize);
-                let decompressed =
-                    decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?;
+                // A byte count of zero marks a block that was never written
+                // (GDAL's SPARSE_OK). libtiff reads those as all-zero pixels,
+                // and there is no compressed stream to hand to a codec.
+                let decompressed = if count == 0 {
+                    vec![0u8; expected_bytes]
+                } else {
+                    decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?
+                };
                 if decompressed.len() < expected_bytes {
                     return Err(DecodeError::new(&format!(
                         "{}: block decompressed to {} bytes, expected at least {}",
@@ -788,8 +836,33 @@ pub(crate) fn try_decode_general_strips_tiles(
                         continue;
                     }
                     let row = &decompressed[row_idx * row_bytes..(row_idx + 1) * row_bytes];
+                    // Predictor 3 stores each row as byte planes (all the
+                    // samples' first bytes, then all their second bytes, ...)
+                    // with the differencing applied across those raw bytes.
+                    // Undoing it yields big-endian samples regardless of the
+                    // file's byte order, which is why the unpack below is told
+                    // so. Rows are independent, so a skipped padding row costs
+                    // nothing here.
+                    let (row, row_is_little_endian) = if predictor == 3 {
+                        let bytes_per_sample = bits_per_sample as usize / 8;
+                        fp_planes.clear();
+                        fp_planes.extend_from_slice(row);
+                        for i in 1..row_bytes {
+                            fp_planes[i] = fp_planes[i].wrapping_add(fp_planes[i - 1]);
+                        }
+                        fp_samples.resize(row_bytes, 0);
+                        for sample in 0..samples_per_row {
+                            for byte in 0..bytes_per_sample {
+                                fp_samples[sample * bytes_per_sample + byte] =
+                                    fp_planes[byte * samples_per_row + sample];
+                            }
+                        }
+                        (fp_samples.as_slice(), false)
+                    } else {
+                        (row, little_endian)
+                    };
                     let mut row_values =
-                        unpack_row_u64(row, samples_per_row, bits_per_sample, little_endian);
+                        unpack_row_u64(row, samples_per_row, bits_per_sample, row_is_little_endian);
 
                     if predictor == 2 {
                         apply_horizontal_predictor2_u64(
@@ -857,12 +930,11 @@ pub(crate) fn decode_zstd(
     original: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
 ) -> Result<DecodingResult, DecodeError> {
-    use std::io::Read;
     use tiff::tags::Tag;
 
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
         return Err(DecodeError::new(
-            "ZSTD: tiled TIFFs are not supported by the pure-Rust path",
+            "ZSTD: tiled TIFFs are handled by the block decoder, not here",
         ));
     }
     let planar = decoder.get_tag_u32(Tag::PlanarConfiguration).unwrap_or(1);
@@ -896,17 +968,35 @@ pub(crate) fn decode_zstd(
         .unwrap_or_else(|_| vec![1; spp as usize]);
 
     // Decompress every strip with pure-Rust ruzstd, concatenated in row order.
+    // Knowing each strip's decompressed size lets a strip that was never
+    // written (byte count 0, GDAL's SPARSE_OK) be filled with zeros, the way
+    // libtiff reads it.
+    let rows_per_strip = decoder
+        .get_tag_u32(Tag::RowsPerStrip)
+        .unwrap_or(height)
+        .max(1);
+    let bits_per_pixel: u64 = bits.iter().map(|b| *b as u64).sum();
+    let row_bytes = ((width as u64 * bits_per_pixel + 7) / 8) as usize;
     let mut raster: Vec<u8> = Vec::new();
-    for (off, cnt) in offsets.iter().zip(counts.iter()) {
+    for (index, (off, cnt)) in offsets.iter().zip(counts.iter()).enumerate() {
         let start = *off as usize;
         let end = start.saturating_add(*cnt as usize);
         if end > original.len() {
             return Err(DecodeError::new("ZSTD: strip byte range out of bounds"));
         }
-        let mut dec = ruzstd::decoding::StreamingDecoder::new(Cursor::new(&original[start..end]))
-            .map_err(|e| DecodeError::new(&format!("ZSTD: decoder init: {:?}", e)))?;
-        dec.read_to_end(&mut raster)
-            .map_err(|e| DecodeError::new(&format!("ZSTD: decompress: {:?}", e)))?;
+        let first_row = (index as u64) * rows_per_strip as u64;
+        let rows = (rows_per_strip as u64).min((height as u64).saturating_sub(first_row)) as usize;
+        let expected = rows.saturating_mul(row_bytes);
+        if *cnt == 0 {
+            raster.resize(raster.len() + expected, 0);
+            continue;
+        }
+        raster.extend_from_slice(&decompress_strip_or_tile(
+            &original[start..end],
+            50000,
+            expected,
+            "ZSTD",
+        )?);
     }
 
     // Match the rebuilt TIFF's byte order to the original so multi-byte samples

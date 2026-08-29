@@ -358,11 +358,22 @@ pub(crate) fn decode_tiff_impl(
 
     // Read image data (decompression happens here). ZSTD (50000) is decoded
     // with the pure-Rust ruzstd crate rather than the tiff crate's C zstd, so
-    // the WASM build needs no C toolchain. The decompressed strips are rebuilt
-    // into an uncompressed TIFF and handed back to the tiff crate, which still
-    // performs predictor un-application and type/endianness handling.
+    // the WASM build needs no C toolchain. For a plain STRIP layout the
+    // decompressed strips are rebuilt into an uncompressed TIFF and handed back
+    // to the tiff crate, which still performs predictor un-application and
+    // type/endianness handling. Tiled and planar-2 ZSTD cannot be expressed
+    // that way, so they go to the block decoder below, which decompresses each
+    // tile itself — that is the shape cloud-optimized GeoTIFFs use.
+    // 9..=15-bit samples are excluded too: rebuilding them as an uncompressed
+    // TIFF only moves the failure to the tiff crate, which has no color type
+    // for those depths. `try_decode_subbit_strips` unpacks them itself.
+    let zstd_strips = compression == 50000
+        && tile_width == 0
+        && tile_length == 0
+        && planar_configuration != 2
+        && !(9..=15).contains(&bits_per_sample);
     let mut direct_decode = false;
-    let mut decode_result = if compression == 50000 {
+    let mut decode_result = if zstd_strips {
         decode_zstd(data, &mut decoder)?
     } else if let Some(result) = try_decode_general_strips_tiles(
         data,
