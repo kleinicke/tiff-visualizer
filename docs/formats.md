@@ -129,8 +129,9 @@ holds, let you pick one, then treat it as an image with extra dimensions.
   and mosaic tiles are assembled into the full frame. Arrow keys step through Z
   and `[` / `]` through channels, as for a dataset. Channel sliders are
   labelled with the dye name from the embedded metadata, and pixel scaling is
-  reported in micrometres. Only uncompressed subblocks decode; JPEG, JPEG XR
-  and Zstd subblocks report the codec they would need.
+  reported in micrometres. Uncompressed and Zstd-0/Zstd-1 subblocks decode,
+  the latter including the optional hi-lo byte packing; JPEG and JPEG XR
+  subblocks report the codec they would need.
 
 See [datasets](./datasets.md) for navigation.
 
@@ -164,7 +165,9 @@ one that looks plausible and is wrong.
 - NetCDF-4 / HDF5 containers (classic NetCDF only)
 - Legacy (pre-2012) ND2 files, which use a different container entirely, and
   ND2 files written with Nikon's lossless or lossy compression
-- Compressed CZI subblocks (JPEG, JPEG XR, Zstd) and multi-file CZI sets
+- CZI subblocks compressed with JPEG or JPEG XR, and multi-file CZI sets.
+  Zstd-0 and Zstd-1 subblocks do decode, including Zstd-1's optional hi-lo
+  byte packing
 - DICOM JPEG XL and JPEG XR transfer syntaxes, the MPEG/HEVC video ones, and
   lossless JPEG with predictor 5 or 6 — the pure-Rust decoder reproduces
   selection values 1-4 and 7 exactly and those two incorrectly, so they are

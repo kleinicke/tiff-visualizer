@@ -17,6 +17,10 @@ checks plus parser regression tests:
   `-jpeglossless-predictor6` uses a predictor the decoder does NOT reproduce
   correctly and must be refused. These are written by
   `scripts/make-dicom-testdata.py`, which needs pydicom and imagecodecs.
+- `synthetic-czi-none.czi` and its compressed twins (`-zstd0`, `-zstd1`,
+  `-zstd1-hilo`): the same 64 x 48 pixels as an uncompressed subblock and as
+  Zstd-0/Zstd-1, the last with hi-lo byte packing. Written by
+  `scripts/make-czi-testdata.py`, which needs pylibCZIrw.
 
 The generated fixtures are dedicated to the public domain under CC0-1.0. They
 do not derive from clinical, astronomical, or meteorological source data.

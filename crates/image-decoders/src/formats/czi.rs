@@ -31,6 +31,7 @@ use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{ascii, get_slice, js_number, ScientificParsed};
 use crate::DecodeError;
 use std::collections::HashMap;
+use std::io::Cursor;
 
 /// Axis order used for the plane selector UI; unknown axes are appended.
 const CZI_AXIS_ORDER: [&str; 10] = ["S", "I", "V", "H", "R", "T", "C", "Z", "B", "M"];
@@ -334,6 +335,68 @@ fn czi_directory_entry(data: &[u8], offset: usize) -> Result<CziDirectoryEntry, 
         dimensions,
         byte_length: 32 + dimension_count * 20,
     })
+}
+
+/// Decompress one CZI subblock.
+///
+/// Zstd-0 (compression 5) is a bare zstd frame of the tile's bytes. Zstd-1
+/// (compression 6) puts a small header in front: one byte giving the header's
+/// own size, and when that size is 3, a chunk type and a flags byte whose bit
+/// 0 says the encoder applied "hi-lo byte packing" — every sample's low byte
+/// written first for the WHOLE tile, then every high byte. That has to be
+/// interleaved back before the samples mean anything.
+fn decode_czi_subblock(
+    payload: &[u8],
+    compression: i32,
+    expected: usize,
+    bytes_per_channel: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    use std::io::Read;
+
+    let (frame, hi_lo_packed) = match compression {
+        5 => (payload, false),
+        6 => {
+            let header_size = *payload
+                .first()
+                .ok_or_else(|| DecodeError::new("CZI Zstd-1 subblock is empty"))? as usize;
+            if header_size == 0 || header_size > payload.len() {
+                return Err(DecodeError::new("CZI Zstd-1 header size is out of range"));
+            }
+            // Header size 1 is the header alone: no flags, nothing applied.
+            let packed = header_size >= 3 && (payload[2] & 0x01) != 0;
+            (&payload[header_size..], packed)
+        }
+        other => {
+            return Err(DecodeError::new(&format!(
+                "CZI subblock compression {} is not supported",
+                other
+            )))
+        }
+    };
+
+    let mut out = Vec::with_capacity(expected);
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new(Cursor::new(frame))
+        .map_err(|e| DecodeError::new(&format!("CZI Zstd decoder init: {:?}", e)))?;
+    decoder
+        .read_to_end(&mut out)
+        .map_err(|e| DecodeError::new(&format!("CZI Zstd decode failed: {:?}", e)))?;
+
+    if hi_lo_packed {
+        if bytes_per_channel != 2 {
+            return Err(DecodeError::new(&format!(
+                "CZI hi-lo byte packing is defined for 16-bit samples, not {}-byte ones",
+                bytes_per_channel
+            )));
+        }
+        let half = out.len() / 2;
+        let mut interleaved = Vec::with_capacity(out.len());
+        for index in 0..half {
+            interleaved.push(out[index]);
+            interleaved.push(out[half + index]);
+        }
+        out = interleaved;
+    }
+    Ok(out)
 }
 
 /// Read the subblock directory, falling back to a sequential segment scan.
@@ -774,10 +837,11 @@ pub(crate) fn decode_czi_impl(
     // native build produces from the loop below. Same inputs must give the
     // same answer on both targets.
     for entry in &selected {
-        if entry.compression != 0 {
+        if !matches!(entry.compression, 0 | 5 | 6) {
             let codec = compression_name(entry.compression);
             return Err(DecodeError::new(&format!(
-                "Compressed CZI is not supported yet ({}); only uncompressed subblocks decode",
+                "CZI subblocks compressed with {} are not supported; uncompressed and \
+                 Zstd-0/Zstd-1 subblocks decode",
                 codec
             )));
         }
@@ -825,10 +889,14 @@ pub(crate) fn decode_czi_impl(
         let tile_height = (dim_y.size.max(0)) as usize;
         let stride = mul(mul(tile_width, channels)?, bytes_per_channel)?;
         let total_needed = mul(stride, tile_height)?;
-        if pixels_start
-            .checked_add(total_needed)
-            .map(|end| end > data.len())
-            .unwrap_or(true)
+        // Only an UNCOMPRESSED subblock occupies its full pixel size in the
+        // file; a compressed one is smaller, and its own range is checked
+        // against the subblock's declared data size below.
+        if entry.compression == 0
+            && pixels_start
+                .checked_add(total_needed)
+                .map(|end| end > data.len())
+                .unwrap_or(true)
         {
             return Err(DecodeError::new("CZI subblock data is truncated"));
         }
@@ -836,8 +904,36 @@ pub(crate) fn decode_czi_impl(
         let origin_x = i64_to_usize(dim_x.start as i64 - min_x, "tile origin")?;
         let origin_y = i64_to_usize(dim_y.start as i64 - min_y, "tile origin")?;
 
+        // A compressed subblock is decompressed into its own buffer; an
+        // uncompressed one is read straight out of the file. Either way the
+        // row loop below sees `tile` starting at `tile_start`.
+        let decompressed;
+        let (tile, tile_start) = if entry.compression == 0 {
+            (data, pixels_start)
+        } else {
+            let data_size = i64_to_usize(i64_le(data, add(segment.data_start, 8)?)?, "subblock size")?;
+            let end = add(pixels_start, data_size)?;
+            if end > data.len() {
+                return Err(DecodeError::new("CZI subblock data is truncated"));
+            }
+            decompressed = decode_czi_subblock(
+                &data[pixels_start..end],
+                entry.compression,
+                total_needed,
+                bytes_per_channel,
+            )?;
+            if decompressed.len() < total_needed {
+                return Err(DecodeError::new(&format!(
+                    "CZI subblock decompressed to {} bytes, expected {}",
+                    decompressed.len(),
+                    total_needed
+                )));
+            }
+            (decompressed.as_slice(), 0usize)
+        };
+
         for row in 0..tile_height {
-            let source_row = add(pixels_start, mul(row, stride)?)?;
+            let source_row = add(tile_start, mul(row, stride)?)?;
             let target_row = mul(add(origin_y, row)?, width)?;
             let target_row = add(target_row, origin_x)?;
             let target_row = mul(target_row, channels)?;
@@ -846,7 +942,7 @@ pub(crate) fn decode_czi_impl(
             for _col in 0..tile_width {
                 for channel in 0..channels {
                     let sample_offset = add(source, mul(channel, bytes_per_channel)?)?;
-                    let value = read_sample(data, entry.pixel_type, sample_offset)?;
+                    let value = read_sample(tile, entry.pixel_type, sample_offset)?;
                     // BGR(A) types are stored channel-reversed for the colour triple.
                     let index = if pixel_type.bgr && channel < 3 {
                         2 - channel

@@ -90,6 +90,33 @@ function testDicomFrameLabels() {
 	assert.deepStrictEqual(image.metadata.frameLabels, ['Series 4', 'Series 4', 'Series 6', 'Series 6']);
 }
 
+/** Compressed CZI subblocks must decode to the same pixels as the
+ * uncompressed twin. Zstd-1 optionally applies "hi-lo byte packing" — every
+ * sample's low byte for the whole tile, then every high byte — and only the
+ * third fixture exercises that: the other two decode correctly even if the
+ * unpacking is skipped entirely. scripts/make-czi-testdata.py asserts that
+ * file really is packed before writing it. */
+function testCziCompressedSubblocks() {
+	const reference = parseCzi(arrayBuffer('synthetic-czi-none.czi'));
+	assert.deepStrictEqual([reference.width, reference.height, reference.channels], [64, 48, 1]);
+
+	for (const [file, label] of [
+		['synthetic-czi-zstd0.czi', 'Zstd-0'],
+		['synthetic-czi-zstd1.czi', 'Zstd-1'],
+		['synthetic-czi-zstd1-hilo.czi', 'Zstd-1 with hi-lo byte packing'],
+	]) {
+		const image = parseCzi(arrayBuffer(file));
+		assert.deepStrictEqual(
+			[image.width, image.height, image.channels],
+			[reference.width, reference.height, reference.channels],
+			`${label}: geometry`,
+		);
+		assert.deepStrictEqual(Array.from(image.data), Array.from(reference.data),
+			`CZI ${label} must decode to the same samples as the uncompressed twin`);
+		console.log(`  ✅ CZI ${label} matches the uncompressed twin exactly`);
+	}
+}
+
 /** Every compressed transfer syntax must decode to the SAME samples as the
  * uncompressed twin. The fixtures are written by scripts/make-dicom-testdata.py
  * and all hold identical pixels, so any difference here is a decoder bug rather
@@ -364,6 +391,7 @@ async function main() {
 	await testJpegBaselineDicom();
 	testNetCdf();
 	testCzi();
+	testCziCompressedSubblocks();
 	testNd2();
 	testLif();
 	testMpasNetCdf();

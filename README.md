@@ -27,7 +27,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
-NetCDF-4/HDF5, compressed CZI subblocks (JPEG, JPEG XR, Zstd), compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. DICOM decodes native, Deflated Explicit VR, RLE Lossless, JPEG Baseline, JPEG-LS, JPEG 2000 and lossless JPEG pixel data; JPEG XL, JPEG XR and the video transfer syntaxes are not yet supported.
+NetCDF-4/HDF5, CZI subblocks compressed with JPEG or JPEG XR (Zstd-0 and Zstd-1 decode), compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. DICOM decodes native, Deflated Explicit VR, RLE Lossless, JPEG Baseline, JPEG-LS, JPEG 2000 and lossless JPEG pixel data; JPEG XL, JPEG XR and the video transfer syntaxes are not yet supported.
 
 Images above roughly 268 megapixels (for example 20480x20480) decode correctly and their pixel values, metadata and statistics remain fully available, but cannot be displayed: a browser canvas cannot exceed 2^28 pixels. Tiled rendering for images that large is planned.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
