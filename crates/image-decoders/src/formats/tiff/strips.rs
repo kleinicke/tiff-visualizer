@@ -214,6 +214,10 @@ pub(crate) struct BlockCodecInfo {
     /// TIFF tag 50674 (LercParameters), second value: an extra codec applied
     /// on top of the LERC blob. 0 = none, 1 = Deflate, 2 = ZSTD.
     pub lerc_additional_compression: u32,
+    /// PhotometricInterpretation 6: the block's samples are YCbCr and have to
+    /// be converted on the way out. Only the codecs that carry colour
+    /// themselves (JPEG 2000) consult this.
+    pub ycbcr: bool,
 }
 
 /// `decompress_strip_or_tile` plus the layout the typed codecs need. Callers
@@ -319,6 +323,14 @@ pub(crate) fn decompress_block(
         // LERC, including GDAL's LERC_DEFLATE and LERC_ZSTD, which wrap the
         // same blob in a second codec named by tag 50674.
         34887 => decode_lerc_block(block, expected_len, context, codec_info(info, context, "LERC")?),
+        // JPEG 2000. 34712 is the registered code; 33003/33004/33005 are what
+        // Aperio slide scanners write (YCbCr, lossy, and RGB respectively).
+        34712 | 33003 | 33004 | 33005 => decode_jpeg2000_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "JPEG 2000")?,
+        ),
         _ => Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             context, compression
@@ -477,6 +489,63 @@ fn decode_lerc_block(
         }
     }
     Ok(out)
+}
+
+/// Decode one JPEG 2000-compressed strip/tile.
+///
+/// `decode_native` is deliberate: this crate's other entry point returns 8-bit
+/// RGBA for display, which would silently throw away half of a 16-bit
+/// scientific image.
+fn decode_jpeg2000_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
+    let image = dicom_toolkit_jpeg2000::Image::new(block, &settings)
+        .map_err(|e| DecodeError::new(&format!("{}: JPEG 2000 header: {:?}", context, e)))?;
+    let raw = image
+        .decode_native()
+        .map_err(|e| DecodeError::new(&format!("{}: JPEG 2000 decode failed: {:?}", context, e)))?;
+    let mut data = raw.data;
+
+    // An Aperio 33003 block holds YCbCr, which the codestream does not convert
+    // for us; the TIFF says so through PhotometricInterpretation 6.
+    if info.ycbcr && raw.num_components >= 3 && raw.bytes_per_sample == 1 {
+        ycbcr_to_rgb_in_place(&mut data, raw.num_components as usize);
+    }
+
+    // The crate returns native little-endian samples; a big-endian TIFF wants
+    // them the other way round.
+    if raw.bytes_per_sample == 2 && !info.little_endian {
+        for pair in data.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+    }
+    if data.len() < expected_len {
+        return Err(DecodeError::new(&format!(
+            "{}: JPEG 2000 block holds {} bytes, expected {}",
+            context,
+            data.len(),
+            expected_len
+        )));
+    }
+    Ok(data)
+}
+
+/// CCIR 601-1 / JFIF inverse transform, in place over interleaved 8-bit
+/// samples. The same coefficients the subsampled-YCbCr path uses, which is
+/// what TIFF 6.0 specifies for the default YCbCrCoefficients.
+fn ycbcr_to_rgb_in_place(data: &mut [u8], channels: usize) {
+    for pixel in data.chunks_exact_mut(channels) {
+        let y = pixel[0] as f32;
+        let cb = pixel[1] as f32 - 128.0;
+        let cr = pixel[2] as f32 - 128.0;
+        pixel[0] = (y + 1.402 * cr).clamp(0.0, 255.0) as u8;
+        pixel[1] = (y - 0.344_136 * cb - 0.714_136 * cr).clamp(0.0, 255.0) as u8;
+        pixel[2] = (y + 1.772 * cb).clamp(0.0, 255.0) as u8;
+    }
 }
 
 fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
@@ -848,10 +917,10 @@ pub(crate) fn try_decode_general_strips_tiles(
     // GeoTIFFs are tiled by definition, so this is the common shape in the
     // wild. Strip ZSTD keeps using `decode_zstd`.
     //
-    // LERC, LZMA and PNG-in-TIFF have no handler at all outside this path —
-    // the tiff crate knows none of the three — so every layout of them is
-    // claimed here, strips included.
-    let block_only_codec = matches!(compression, 34887 | 34925 | 34933);
+    // LERC, LZMA, PNG-in-TIFF and JPEG 2000 have no handler at all outside
+    // this path — the tiff crate knows none of them — so every layout of them
+    // is claimed here, strips included.
+    let block_only_codec = matches!(compression, 34887 | 34925 | 34933 | 34712 | 33003 | 33004 | 33005);
     let claim = planar_configuration == 2
         || (is_tiled && matches!(compression, 5 | 50000))
         || block_only_codec
@@ -883,7 +952,9 @@ pub(crate) fn try_decode_general_strips_tiles(
             CTX, bits_per_sample
         )));
     }
-    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000 | 34887 | 34925 | 34933) {
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000)
+        && !block_only_codec
+    {
         return Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             CTX, compression
@@ -945,6 +1016,10 @@ pub(crate) fn try_decode_general_strips_tiles(
             .ok()
             .and_then(|values| values.get(1).copied())
             .unwrap_or(0),
+        ycbcr: decoder
+            .get_tag_u32(Tag::PhotometricInterpretation)
+            .map(|value| value == 6)
+            .unwrap_or(false),
     };
 
     let planes = if planar_configuration == 2 {
@@ -1366,6 +1441,9 @@ impl FloatStripPlan {
             sample_format: self.sample_format,
             little_endian: self.little_endian,
             lerc_additional_compression: self.lerc_additional_compression,
+            // The plan is only handed out for photometric 1 and 2, so a block
+            // reached through it never carries YCbCr.
+            ycbcr: false,
         }
     }
 }
@@ -1408,7 +1486,10 @@ pub(crate) fn float_predictor_plan(
     // Every codec `decompress_block` implements. LERC and PNG hand back typed
     // values rather than the strip's bytes, which is why the plan carries the
     // sample layout they need to re-serialize against.
-    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000 | 34925 | 34933 | 34887) {
+    if !matches!(
+        compression,
+        1 | 5 | 8 | 32946 | 50000 | 34925 | 34933 | 34887 | 34712 | 33003 | 33004 | 33005
+    ) {
         return None;
     }
     let sample_format = decoder

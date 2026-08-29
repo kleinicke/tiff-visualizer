@@ -52,17 +52,20 @@ floating-point sample formats. Big TIFF (`tf8`, `btf`) is included. Tiles that
 a sparse GeoTIFF never wrote read as zeros.
 
 Compression: none, LZW, Deflate, PackBits, Zstd, LZMA, LERC (including GDAL's
-LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, WebP, and CCITT Group 3/4 and
-Modified Huffman fax. Every one of these is decoded in pure Rust, so they work
-the same in VS Code Web as on the desktop. LERC is lossy when it was written
-that way; the decoder reproduces the reconstruction its own encoder defines,
-and pixels a LERC blob marks invalid read as zero.
+LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including the
+Aperio 33003/33004/33005 codes slide scanners write), WebP, and CCITT Group 3/4
+and Modified Huffman fax. Every one of these is decoded in pure Rust, so they
+work the same in VS Code Web as on the desktop. LERC is lossy when it was
+written that way; the decoder reproduces the reconstruction its own encoder
+defines, and pixels a LERC blob marks invalid read as zero. JPEG 2000 decodes
+at its native bit depth, so a 16-bit image stays 16-bit.
 
-Not decoded: JPEG 2000 (including the Aperio variants used by some slide
-scanners), JPEG XR, JPEG XL in TIFF, old-style JPEG (compression 6), and the
-legacy PixarLog, SGILog, ThunderScan, NeXT and JBIG codecs — none has a
-pure-Rust decoder to build on. Such files report the codec by name rather than
-failing silently.
+Not decoded: JPEG XR, JPEG XL in TIFF, old-style JPEG (compression 6), and the
+legacy PixarLog, SGILog, ThunderScan, NeXT and JBIG codecs. JPEG XR is the
+frustrating one: a pure-Rust decoder exists, but it reaches its input through a
+temporary file and there is no filesystem in WebAssembly, so it cannot run
+where this extension does. Files using any of these report the codec by name
+rather than failing silently.
 
 Multi-page files are navigable with `[` and `]`. OME-TIFF adds semantic
 dimensions and multi-file datasets — see [datasets](./datasets.md).

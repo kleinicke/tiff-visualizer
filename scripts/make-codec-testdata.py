@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "tifffile", "imagecodecs"]
 # ///
-"""Regenerate the LZMA, PNG-in-TIFF and LERC fixtures in test-samples/.
+"""Regenerate the LZMA, PNG-in-TIFF, LERC and JPEG 2000 fixtures.
 
 These are the TIFF codecs the Rust decoder gained after ZSTD; none of them can
 be produced by an ordinary image editor, and LERC in particular has variants
@@ -30,6 +30,7 @@ Defaults to ../test-samples relative to this script.
 
 from __future__ import annotations
 
+import struct
 import sys
 from pathlib import Path
 
@@ -44,6 +45,15 @@ def sample_image() -> np.ndarray:
     xs = np.arange(WIDTH, dtype=np.float64)[None, :]
     ys = np.arange(HEIGHT, dtype=np.float64)[:, None]
     return (np.sin(xs / 5.0) * np.cos(ys / 4.0) + 1.0) / 2.0
+
+
+def patch_photometric(path: Path, value: int) -> None:
+    """Rewrite tag 262 in place; tifffile will not write this combination."""
+    raw = bytearray(path.read_bytes())
+    with tifffile.TiffFile(path) as handle:
+        tag = handle.pages[0].tags["PhotometricInterpretation"]
+        struct.pack_into(handle.byteorder + "H", raw, tag.valueoffset, value)
+    path.write_bytes(bytes(raw))
 
 
 def main() -> None:
@@ -63,7 +73,11 @@ def main() -> None:
         print(f"{name:32} {path.stat().st_size:>7} bytes")
         return path
 
-    lossless = {"level": 0}
+    # A fresh dict per call: tifffile hands compressionargs to the codec, and
+    # the JPEG 2000 encoder adds its own key to it, which then leaks into every
+    # later write that shares the object.
+    def lossless() -> dict:
+        return {"level": 0}
 
     # LZMA (34925). Each block is a standalone .xz stream.
     write("lzma_u16.tif", u16, compression="LZMA")
@@ -76,19 +90,19 @@ def main() -> None:
     write("png_in_tiff_rgb16.tif", rgb16, compression="PNG", photometric="rgb")
 
     # LERC (34887), lossless, in the shapes GDAL writes.
-    write("lerc_u16.tif", u16, compression="LERC", compressionargs=lossless)
-    write("lerc_f32.tif", f32, compression="LERC", compressionargs=lossless)
-    write("lerc_rgb8.tif", rgb8, compression="LERC", compressionargs=lossless, photometric="rgb")
-    write("lerc_tiled_f32.tif", f32, compression="LERC", compressionargs=lossless, tile=(32, 32))
+    write("lerc_u16.tif", u16, compression="LERC", compressionargs=lossless())
+    write("lerc_f32.tif", f32, compression="LERC", compressionargs=lossless())
+    write("lerc_rgb8.tif", rgb8, compression="LERC", compressionargs=lossless(), photometric="rgb")
+    write("lerc_tiled_f32.tif", f32, compression="LERC", compressionargs=lossless(), tile=(32, 32))
     # LERC_DEFLATE and LERC_ZSTD: the same blob inside a second codec, named
     # by the second value of tag 50674 (LercParameters).
     write(
         "lerc_deflate_u16.tif", u16, compression="LERC",
-        compressionargs={**lossless, "compression": "deflate"},
+        compressionargs={**lossless(), "compression": "deflate"},
     )
     write(
         "lerc_zstd_u16.tif", u16, compression="LERC",
-        compressionargs={**lossless, "compression": "zstd"},
+        compressionargs={**lossless(), "compression": "zstd"},
     )
 
     # Uncompressed twins for everything above.
@@ -103,6 +117,36 @@ def main() -> None:
         "lerc_lossy_f32.tif", f32, compression="LERC", compressionargs={"level": 0.01}
     )
     write("lerc_lossy_ref_f32.tif", tifffile.imread(lossy))
+
+    # JPEG 2000 (34712) and the codes Aperio slide scanners write (33005 RGB,
+    # 33003 YCbCr). tifffile encodes all of them as the same JP2 codestream, so
+    # the YCbCr case has to be built by hand below.
+    write("jp2_u16.tif", u16, compression="JPEG2000", compressionargs=lossless())
+    write("jp2_rgb8.tif", rgb8, compression="JPEG2000", compressionargs=lossless(), photometric="rgb")
+    write("jp2_aperio_rgb8.tif", rgb8, compression=33005, compressionargs=lossless(), photometric="rgb")
+
+    # No JPEG XR fixtures: the only pure-Rust decoder (jpegxr-pure-rs) reaches
+    # its input through a temporary FILE, and wasm32 has no filesystem, so the
+    # codec cannot be decoded where this extension runs. See docs/formats.md.
+
+    # An Aperio 33003 block holds YCbCr and says so through
+    # PhotometricInterpretation 6. Nothing here writes that combination, so:
+    # convert to YCbCr, store the planes as if they were RGB, then patch tag
+    # 262 to 6 — which is the file layout a slide scanner produces. The
+    # reference is the ORIGINAL RGB, so the test proves the decoder applies the
+    # conversion (a round trip through 8-bit YCbCr is worth about +/-2).
+    r, g, b = (rgb8[..., i].astype(np.float64) for i in range(3))
+    ycbcr = np.stack([
+        0.299 * r + 0.587 * g + 0.114 * b,
+        128 - 0.168736 * r - 0.331264 * g + 0.5 * b,
+        128 + 0.5 * r - 0.418688 * g - 0.081312 * b,
+    ], -1).round().clip(0, 255).astype(np.uint8)
+    aperio = write(
+        "jp2_aperio_ycbcr.tif", ycbcr, compression=33003,
+        compressionargs=lossless(), photometric="rgb",
+    )
+    patch_photometric(aperio, 6)
+    write("jp2_aperio_ycbcr_ref.tif", rgb8, photometric="rgb")
 
     # A PALETTE image under a codec the tiff crate does not implement: the
     # indices have to come from the block decoder before the ColorMap can
@@ -122,7 +166,7 @@ def main() -> None:
     mask[10:20, 10:30] = False
     masked = write(
         "lerc_masked_f32.tif", f32, compression="LERC",
-        compressionargs={**lossless, "masks": mask},
+        compressionargs={**lossless(), "masks": mask},
     )
     write("lerc_masked_ref_f32.tif", tifffile.imread(masked))
 

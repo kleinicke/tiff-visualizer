@@ -46,6 +46,17 @@ Pure-Rust decoder for LERC-compressed TIFF strips and tiles (compression 34887).
 
 ---
 
+## dicom-toolkit-jpeg2000 (Rust crate)
+
+Pure-Rust JPEG 2000 decoder for JP2-compressed TIFF strips and tiles
+(compressions 34712 and Aperio's 33003/33004/33005), used through its
+native-bit-depth entry point.
+
+- **Homepage**: https://crates.io/crates/dicom-toolkit-jpeg2000
+- **License**: MIT OR Apache-2.0
+
+---
+
 ## lzma-rs (Rust crate)
 
 Pure-Rust xz/LZMA decoder for LZMA-compressed TIFF strips and tiles

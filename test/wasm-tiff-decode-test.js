@@ -12,6 +12,7 @@
  *   - LZMA                  (compression 34925)
  *   - PNG-in-TIFF           (compression 34933)
  *   - LERC                  (compression 34887, incl. LERC_DEFLATE/LERC_ZSTD)
+ *   - JPEG 2000             (compression 34712 and Aperio's 33003/33005)
  *
  * The CCITT-compressed images are byte-for-byte copies of an uncompressed
  * reference, so a correct decode must match the reference exactly.
@@ -241,6 +242,42 @@ async function main() {
 		assert.deepStrictEqual(img.data, ref.data,
 			`${label} must match the uncompressed reference exactly`);
 		console.log(`✅ ${label} matches the uncompressed reference exactly`);
+	}
+
+	// 5e. JPEG 2000 (34712, plus Aperio's 33003/33005), decoded at NATIVE bit
+	//     depth — the display-oriented entry point of the same crate flattens
+	//     16-bit samples to 8, which would quietly halve a scientific image.
+	for (const [file, refFile, comp, label] of [
+		['jp2_u16.tif', 'codec_ref_u16.tif', 34712, 'JPEG 2000, uint16'],
+		['jp2_rgb8.tif', 'codec_ref_rgb8.tif', 34712, 'JPEG 2000, RGB8'],
+		['jp2_aperio_rgb8.tif', 'codec_ref_rgb8.tif', 33005, 'JPEG 2000, Aperio RGB (33005)'],
+	]) {
+		const img = decode(mod, file);
+		const ref = decode(mod, refFile);
+		assert.strictEqual(img.compression, comp, `${file} compression tag`);
+		assert.strictEqual(img.channels, ref.channels, `${label}: channels`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`${label} must match the reference decode exactly`);
+		console.log(`✅ ${label} matches the reference decode exactly`);
+	}
+
+	// 5e-ii. Aperio's 33003 holds YCbCr and says so through
+	//     PhotometricInterpretation 6; the codestream does not convert it. The
+	//     fixture stores a known RGB image as YCbCr, so a decoder that skips
+	//     the conversion is off by far more than the +/-2 an 8-bit YCbCr round
+	//     trip costs.
+	{
+		const img = decode(mod, 'jp2_aperio_ycbcr.tif');
+		const ref = decode(mod, 'jp2_aperio_ycbcr_ref.tif');
+		assert.strictEqual(img.compression, 33003, 'jp2_aperio_ycbcr.tif compression tag');
+		assert.strictEqual(img.channels, 3, 'YCbCr must expand to three channels');
+		let worst = 0;
+		for (let i = 0; i < ref.data.length; i++) {
+			worst = Math.max(worst, Math.abs(img.data[i] - ref.data[i]));
+		}
+		assert.ok(worst <= 2,
+			`Aperio YCbCr JPEG 2000 must come back as RGB (worst channel error ${worst}, expected <= 2)`);
+		console.log(`✅ Aperio YCbCr JPEG 2000 (33003) converts to RGB (worst error ${worst})`);
 	}
 
 	// 5d-i. A PALETTE image compressed with a codec the tiff crate does not

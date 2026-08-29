@@ -28,7 +28,7 @@ all-formats = [
     "lif",
     "demosaic",
 ]
-tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:lzma-rs", "dep:lerc-reader", "dep:png"]
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:lzma-rs", "dep:lerc-reader", "dep:png", "dep:dicom-toolkit-jpeg2000"]
 exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
@@ -53,6 +53,10 @@ ruzstd = { version = "0.8", optional = true }
 lzma-rs = { version = "0.3", optional = true }
 # LERC decoding only; `default-features = false` drops its ndarray dependency.
 lerc-reader = { version = "0.5", default-features = false, optional = true }
+# JPEG 2000 at NATIVE bit depth (`decode_native`). The sibling `pdfluent-jpeg2000`
+# shares the codestream reader but its `decode()` flattens 16-bit samples to 8,
+# which is wrong for scientific data — this is the variant to use.
+dicom-toolkit-jpeg2000 = { version = "0.5", optional = true }
 weezl = { version = "0.1.12", optional = true }
 flate2 = { version = "1.1", optional = true }
 zune-jpeg = { version = "0.5", optional = true }
