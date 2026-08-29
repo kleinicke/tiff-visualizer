@@ -28,7 +28,7 @@ all-formats = [
     "lif",
     "demosaic",
 ]
-tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:lzma-rs", "dep:lerc-reader", "dep:png", "dep:dicom-toolkit-jpeg2000"]
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:lzma-rs", "dep:lerc-reader", "dep:png", "dep:dicom-toolkit-jpeg2000", "dep:jpegxr-wasm"]
 exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
@@ -60,6 +60,9 @@ dicom-toolkit-jpeg2000 = { version = "0.5", optional = true }
 # JPEG-LS and lossless JPEG for DICOM. Both are zero-dependency and touch no
 # filesystem, which matters: the pure-Rust JPEG XR decoder does, and that is
 # exactly why JPEG XR cannot be supported here.
+# Vendored at crates/jpegxr because the published crate decodes only through a
+# temporary file, which WebAssembly has nowhere to put. See its VENDORING.md.
+jpegxr-wasm = { path = "../jpegxr", optional = true }
 pure_jpegls = { version = "2.0", optional = true }
 pure_jpegli = { version = "2.0", optional = true }
 weezl = { version = "0.1.12", optional = true }

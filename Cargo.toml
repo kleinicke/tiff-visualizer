@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/image-decoders",
+    "crates/jpegxr",
     "wasm/tiff-decoder",
 ]
 resolver = "2"

@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["numpy", "tifffile", "imagecodecs"]
 # ///
-"""Regenerate the LZMA, PNG-in-TIFF, LERC and JPEG 2000 fixtures.
+"""Regenerate the LZMA, PNG-in-TIFF, LERC, JPEG 2000 and JPEG XR fixtures.
 
 These are the TIFF codecs the Rust decoder gained after ZSTD; none of them can
 be produced by an ordinary image editor, and LERC in particular has variants
@@ -125,9 +125,13 @@ def main() -> None:
     write("jp2_rgb8.tif", rgb8, compression="JPEG2000", compressionargs=lossless(), photometric="rgb")
     write("jp2_aperio_rgb8.tif", rgb8, compression=33005, compressionargs=lossless(), photometric="rgb")
 
-    # No JPEG XR fixtures: the only pure-Rust decoder (jpegxr-pure-rs) reaches
-    # its input through a temporary FILE, and wasm32 has no filesystem, so the
-    # codec cannot be decoded where this extension runs. See docs/formats.md.
+    # JPEG XR (34934). The float32 encoder is lossy even at its default
+    # setting, so that file's reference is imagecodecs' own decode (jxrlib)
+    # rather than the input array.
+    write("jxr_u16.tif", u16, compression="JPEGXR")
+    write("jxr_rgb8.tif", rgb8, compression="JPEGXR", photometric="rgb")
+    jxr_float = write("jxr_f32.tif", f32, compression="JPEGXR")
+    write("jxr_f32_ref.tif", tifffile.imread(jxr_float))
 
     # An Aperio 33003 block holds YCbCr and says so through
     # PhotometricInterpretation 6. Nothing here writes that combination, so:

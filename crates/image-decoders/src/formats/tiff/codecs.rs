@@ -315,8 +315,8 @@ pub(crate) fn decode_palette(
 
     let index_bits = d.get_tag_u32(Tag::BitsPerSample).unwrap_or(8);
     // Codecs the tiff crate does not implement (ZSTD, LZMA, PNG-in-TIFF,
-    // LERC, JPEG 2000): read the indices with our own block decoder instead
-    // of
+    // LERC, JPEG 2000, JPEG XR): read the indices with our own block decoder
+    // instead of
     // `read_image()`, which would only report the compression as unsupported.
     // Sub-byte indices are left to `read_image()` on purpose — the block
     // decoder already unpacks them to one value per sample, which the
@@ -331,7 +331,7 @@ pub(crate) fn decode_palette(
         Some(super::strips::decode_zstd(&patched, &mut d)?)
     } else if matches!(
         compression,
-        34887 | 34925 | 34933 | 50000 | 34712 | 33003 | 33004 | 33005
+        34887 | 34925 | 34933 | 50000 | 34712 | 33003 | 33004 | 33005 | 34934 | 22610
     ) && index_bits >= 8
     {
         super::strips::try_decode_general_strips_tiles(

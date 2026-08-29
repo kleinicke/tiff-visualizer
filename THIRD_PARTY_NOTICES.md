@@ -46,6 +46,18 @@ Pure-Rust decoder for LERC-compressed TIFF strips and tiles (compression 34887).
 
 ---
 
+## JXRLib / jpegxr-pure-rs (vendored at crates/jpegxr)
+
+Pure-Rust JPEG XR decoder, vendored from
+[jpegxr-pure-rs](https://github.com/henriksson-lab/jpegxr-pure-rs) 0.1.0, which
+is a translation of Microsoft's JXRLib. Two changes were made so it can decode
+without a filesystem; they are listed in `crates/jpegxr/VENDORING.md`.
+
+- **License**: BSD-3-Clause (New BSD), Copyright (c) 2009 Microsoft. The
+  upstream licence text ships verbatim at `crates/jpegxr/LICENSE.md`.
+
+---
+
 ## dicom-toolkit-jpeg2000 (Rust crate)
 
 Pure-Rust JPEG 2000 decoder for JP2-compressed TIFF strips and tiles

@@ -323,6 +323,13 @@ pub(crate) fn decompress_block(
         // LERC, including GDAL's LERC_DEFLATE and LERC_ZSTD, which wrap the
         // same blob in a second codec named by tag 50674.
         34887 => decode_lerc_block(block, expected_len, context, codec_info(info, context, "LERC")?),
+        // JPEG XR. 22610 is the code Hamamatsu NDPI files use.
+        34934 | 22610 => decode_jpegxr_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "JPEG XR")?,
+        ),
         // JPEG 2000. 34712 is the registered code; 33003/33004/33005 are what
         // Aperio slide scanners write (YCbCr, lossy, and RGB respectively).
         34712 | 33003 | 33004 | 33005 => decode_jpeg2000_block(
@@ -526,6 +533,52 @@ fn decode_jpeg2000_block(
     if data.len() < expected_len {
         return Err(DecodeError::new(&format!(
             "{}: JPEG 2000 block holds {} bytes, expected {}",
+            context,
+            data.len(),
+            expected_len
+        )));
+    }
+    Ok(data)
+}
+
+/// Decode one JPEG XR-compressed strip/tile.
+///
+/// The decoder returns rows padded to its own stride and samples in the
+/// machine's little-endian order; a TIFF strip is neither padded nor
+/// necessarily little-endian.
+fn decode_jpegxr_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let image = jpegxr::decode_bytes(block)
+        .map_err(|e| DecodeError::new(&format!("{}: JPEG XR decode failed: {:?}", context, e)))?;
+    let format = image.pixel_format();
+    let bytes_per_sample = (format.bits_per_sample() as usize).div_ceil(8);
+    let row_bytes = (image.width() as usize) * (format.channel_count() as usize) * bytes_per_sample;
+    let stride = image.stride();
+    let pixels = image.pixels();
+
+    let mut data = Vec::with_capacity(row_bytes * image.height() as usize);
+    for row in 0..image.height() as usize {
+        let start = row * stride;
+        let end = start
+            .checked_add(row_bytes)
+            .filter(|end| *end <= pixels.len())
+            .ok_or_else(|| {
+                DecodeError::new(&format!("{}: JPEG XR row {} is short", context, row))
+            })?;
+        data.extend_from_slice(&pixels[start..end]);
+    }
+    if bytes_per_sample > 1 && !info.little_endian {
+        for sample in data.chunks_exact_mut(bytes_per_sample) {
+            sample.reverse();
+        }
+    }
+    if data.len() < expected_len {
+        return Err(DecodeError::new(&format!(
+            "{}: JPEG XR block holds {} bytes, expected {}",
             context,
             data.len(),
             expected_len
@@ -917,10 +970,13 @@ pub(crate) fn try_decode_general_strips_tiles(
     // GeoTIFFs are tiled by definition, so this is the common shape in the
     // wild. Strip ZSTD keeps using `decode_zstd`.
     //
-    // LERC, LZMA, PNG-in-TIFF and JPEG 2000 have no handler at all outside
-    // this path — the tiff crate knows none of them — so every layout of them
-    // is claimed here, strips included.
-    let block_only_codec = matches!(compression, 34887 | 34925 | 34933 | 34712 | 33003 | 33004 | 33005);
+    // LERC, LZMA, PNG-in-TIFF, JPEG 2000 and JPEG XR have no handler at all
+    // outside this path — the tiff crate knows none of them — so every layout
+    // of them is claimed here, strips included.
+    let block_only_codec = matches!(
+        compression,
+        34887 | 34925 | 34933 | 34712 | 33003 | 33004 | 33005 | 34934 | 22610
+    );
     let claim = planar_configuration == 2
         || (is_tiled && matches!(compression, 5 | 50000))
         || block_only_codec
@@ -1488,7 +1544,8 @@ pub(crate) fn float_predictor_plan(
     // sample layout they need to re-serialize against.
     if !matches!(
         compression,
-        1 | 5 | 8 | 32946 | 50000 | 34925 | 34933 | 34887 | 34712 | 33003 | 33004 | 33005
+        1 | 5 | 8 | 32946 | 50000 | 34925 | 34933 | 34887 | 34712 | 33003 | 33004 | 33005 | 34934
+            | 22610
     ) {
         return None;
     }

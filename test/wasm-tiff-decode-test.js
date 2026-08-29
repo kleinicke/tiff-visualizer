@@ -13,6 +13,7 @@
  *   - PNG-in-TIFF           (compression 34933)
  *   - LERC                  (compression 34887, incl. LERC_DEFLATE/LERC_ZSTD)
  *   - JPEG 2000             (compression 34712 and Aperio's 33003/33005)
+ *   - JPEG XR               (compression 34934, decoded by the vendored crates/jpegxr)
  *
  * The CCITT-compressed images are byte-for-byte copies of an uncompressed
  * reference, so a correct decode must match the reference exactly.
@@ -246,11 +247,18 @@ async function main() {
 
 	// 5e. JPEG 2000 (34712, plus Aperio's 33003/33005), decoded at NATIVE bit
 	//     depth — the display-oriented entry point of the same crate flattens
-	//     16-bit samples to 8, which would quietly halve a scientific image.
+	//     16-bit samples to 8, which would quietly halve a scientific image —
+	//     and JPEG XR (34934), decoded by the vendored crates/jpegxr. The JPEG
+	//     XR files matter twice over: they are the only coverage of that
+	//     crate's in-memory input path, which is the whole reason it is
+	//     vendored (see crates/jpegxr/VENDORING.md).
 	for (const [file, refFile, comp, label] of [
 		['jp2_u16.tif', 'codec_ref_u16.tif', 34712, 'JPEG 2000, uint16'],
 		['jp2_rgb8.tif', 'codec_ref_rgb8.tif', 34712, 'JPEG 2000, RGB8'],
 		['jp2_aperio_rgb8.tif', 'codec_ref_rgb8.tif', 33005, 'JPEG 2000, Aperio RGB (33005)'],
+		['jxr_u16.tif', 'codec_ref_u16.tif', 34934, 'JPEG XR, uint16'],
+		['jxr_rgb8.tif', 'codec_ref_rgb8.tif', 34934, 'JPEG XR, RGB8'],
+		['jxr_f32.tif', 'jxr_f32_ref.tif', 34934, 'JPEG XR, lossy float32'],
 	]) {
 		const img = decode(mod, file);
 		const ref = decode(mod, refFile);
