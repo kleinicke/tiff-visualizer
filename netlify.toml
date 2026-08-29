@@ -15,4 +15,4 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=()"
-    Content-Security-Policy = "default-src 'self'; base-uri 'self'; connect-src 'self' blob: data:; font-src 'self' data:; frame-ancestors 'none'; img-src 'self' blob: data:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+    Content-Security-Policy = "default-src 'self'; base-uri 'self'; connect-src 'self' https://analytics.re4vive.com blob: data:; font-src 'self' data:; frame-ancestors 'none'; img-src 'self' blob: data:; object-src 'none'; script-src 'self' https://analytics.re4vive.com 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"

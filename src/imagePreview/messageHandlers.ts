@@ -241,7 +241,7 @@ class InitialDataMessageHandler implements MessageHandler {
 
 class RegisterDicomFramesMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
-		preview.registerDicomFrames(Number(message.frames || 1));
+		preview.registerDicomFrames(Number(message.frames || 1), message.frameLabels);
 	}
 }
 

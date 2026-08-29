@@ -48,6 +48,8 @@ await Promise.all([
 await Promise.all([
   cp('web/index.html', `${outputDirectory}/index.html`),
   cp('web/website.css', `${outputDirectory}/website.css`),
+  cp('web/plausible-init.js', `${outputDirectory}/plausible-init.js`),
+  cp('web/vendor-assets.js', `${outputDirectory}/vendor-assets.js`),
   cp('web/og.png', `${outputDirectory}/og.png`),
   cp('icon.png', `${outputDirectory}/icon.png`),
   cp('media/imagePreview.css', `${mediaDirectory}/imagePreview.css`),

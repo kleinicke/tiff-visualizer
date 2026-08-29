@@ -323,7 +323,11 @@ fn unpack_row_u64(
         }
         return out;
     }
-    let mask = if bits_per_sample >= 64 { u64::MAX } else { (1u64 << bits_per_sample) - 1 };
+    let mask = if bits_per_sample >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits_per_sample) - 1
+    };
     let mut bit_buf: u64 = 0;
     let mut bit_count: u32 = 0;
     let mut byte_idx = 0usize;
@@ -337,7 +341,11 @@ fn unpack_row_u64(
         let shift = bit_count - bits_per_sample;
         out.push((bit_buf >> shift) & mask);
         bit_count -= bits_per_sample;
-        bit_buf &= if bit_count == 0 { 0 } else { (1u64 << bit_count) - 1 };
+        bit_buf &= if bit_count == 0 {
+            0
+        } else {
+            (1u64 << bit_count) - 1
+        };
     }
     out
 }
@@ -351,7 +359,11 @@ fn apply_horizontal_predictor2_u64(
     channels: usize,
     bits_per_sample: u32,
 ) {
-    let mask = if bits_per_sample >= 64 { u64::MAX } else { (1u64 << bits_per_sample) - 1 };
+    let mask = if bits_per_sample >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits_per_sample) - 1
+    };
     for x in 1..row_width {
         for c in 0..channels {
             let idx = x * channels + c;
@@ -610,7 +622,10 @@ pub(crate) fn try_decode_general_strips_tiles(
 
     const CTX: &str = "Planar/tiled TIFF";
 
-    if bits_per_sample == 0 || bits_per_sample > 64 || (bits_per_sample > 32 && bits_per_sample != 64) {
+    if bits_per_sample == 0
+        || bits_per_sample > 64
+        || (bits_per_sample > 32 && bits_per_sample != 64)
+    {
         return Err(DecodeError::new(&format!(
             "{}: {}-bit samples are not supported",
             CTX, bits_per_sample
@@ -641,7 +656,9 @@ pub(crate) fn try_decode_general_strips_tiles(
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     // 1 = unsigned, 2 = signed, 3 = IEEE float. Float only exists at 32/64 bits.
-    if !matches!(sample_format, 1 | 2 | 3) || (sample_format == 3 && !matches!(bits_per_sample, 32 | 64)) {
+    if !matches!(sample_format, 1 | 2 | 3)
+        || (sample_format == 3 && !matches!(bits_per_sample, 32 | 64))
+    {
         return Err(DecodeError::new(&format!(
             "{}: sample format {} at {} bits is not supported",
             CTX, sample_format, bits_per_sample
@@ -808,16 +825,12 @@ pub(crate) fn try_decode_general_strips_tiles(
     // widen to the next one up; the reported `bits_per_sample` still describes
     // the source, so normalization keeps using the true type maximum.
     Ok(Some(match (sample_format, bits_per_sample) {
-        (3, 32) => DecodingResult::F32(
-            out.into_iter().map(|v| f32::from_bits(v as u32)).collect(),
-        ),
+        (3, 32) => DecodingResult::F32(out.into_iter().map(|v| f32::from_bits(v as u32)).collect()),
         (3, 64) => DecodingResult::F64(out.into_iter().map(f64::from_bits).collect()),
         (2, bits) => {
             // Sign-extend from the source width before widening.
             let shift = 64 - bits;
-            let signed = out
-                .into_iter()
-                .map(|v| ((v << shift) as i64) >> shift);
+            let signed = out.into_iter().map(|v| ((v << shift) as i64) >> shift);
             if bits <= 8 {
                 DecodingResult::I8(signed.map(|v| v as i8).collect())
             } else if bits <= 16 {
@@ -826,15 +839,9 @@ pub(crate) fn try_decode_general_strips_tiles(
                 DecodingResult::I32(signed.map(|v| v as i32).collect())
             }
         }
-        (_, bits) if bits <= 8 => {
-            DecodingResult::U8(out.into_iter().map(|v| v as u8).collect())
-        }
-        (_, bits) if bits <= 16 => {
-            DecodingResult::U16(out.into_iter().map(|v| v as u16).collect())
-        }
-        (_, bits) if bits <= 32 => {
-            DecodingResult::U32(out.into_iter().map(|v| v as u32).collect())
-        }
+        (_, bits) if bits <= 8 => DecodingResult::U8(out.into_iter().map(|v| v as u8).collect()),
+        (_, bits) if bits <= 16 => DecodingResult::U16(out.into_iter().map(|v| v as u16).collect()),
+        (_, bits) if bits <= 32 => DecodingResult::U32(out.into_iter().map(|v| v as u32).collect()),
         _ => DecodingResult::U64(out),
     }))
 }

@@ -55,6 +55,8 @@ let currentDataset: BrowserDatasetManifest | null = null;
 let currentDatasetSeries = 0;
 let currentDatasetCoordinates: Record<string, number> = {};
 let layersActive = false;
+const loadingLog: string[] = [];
+let loadingLogArmed = false;
 type ControlPopoverKind = 'normalization' | 'gamma' | 'exposure' | 'zoom';
 let activeControlPopover: ControlPopoverKind | null = null;
 
@@ -113,6 +115,51 @@ function showToast(message: string): void {
   window.setTimeout(() => toast.remove(), 4200);
 }
 
+function renderLoadingLog(): void {
+  const output = document.getElementById('web-log-output');
+  if (!output) return;
+  if (loadingLog.length === 0) {
+    output.replaceChildren(Object.assign(document.createElement('span'), {
+      className: 'web-log-empty',
+      textContent: 'Open an image to record its loading times.',
+    }));
+    return;
+  }
+  output.textContent = loadingLog.join('\n');
+  output.scrollTop = output.scrollHeight;
+}
+
+function appendLoadingLog(message: unknown): void {
+  const line = String(message || '').trim();
+  if (!line) return;
+  loadingLog.push(line);
+  renderLoadingLog();
+}
+
+function setLoadingLogOpen(open: boolean): void {
+  const panel = document.getElementById('web-log-panel') as HTMLElement | null;
+  if (!panel) return;
+  panel.hidden = !open;
+  if (open) {
+    renderLoadingLog();
+    panel.querySelector<HTMLElement>('.web-log-close')?.focus();
+  }
+}
+
+function formatOpenedImageLine(value: any): string | null {
+  const entry = files[fileIndex];
+  if (!entry || !value) return null;
+  const width = Number(value.width);
+  const height = Number(value.height);
+  const channels = Number(value.samplesPerPixel ?? value.channels);
+  const bits = Number(value.bitsPerSample);
+  const dimensions = Number.isFinite(channels) && channels > 0
+    ? `${channels}x${width}x${height}`
+    : `${width}x${height}`;
+  const bitDepth = Number.isFinite(bits) ? `${bits}-bit` : 'unknown bit depth';
+  return `📂 Opened 1: ${entry.file.name} (${dimensions}, ${bitDepth}, ${formatLogBytes(entry.file.size)})`;
+}
+
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return String(value);
   const absolute = Math.abs(value);
@@ -125,6 +172,12 @@ function formatBytes(size: number): string {
   if (size < 1024 ** 2) return `${(size / 1024).toFixed(1)} KB`;
   if (size < 1024 ** 3) return `${(size / 1024 ** 2).toFixed(1)} MB`;
   return `${(size / 1024 ** 3).toFixed(2)} GB`;
+}
+
+function formatLogBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 ** 2) return `${(size / 1024).toFixed(2)} KB`;
+  return `${(size / 1024 ** 2).toFixed(2)} MB`;
 }
 
 function normalizationLabel(): string {
@@ -377,11 +430,98 @@ function bytesFromBase64(value: string): Uint8Array {
 }
 
 function collectionState() {
-  return { totalImages: files.length, currentIndex: fileIndex, show: files.length > 1 };
+  // Website files are navigated exclusively through the toolbar tabs. Keeping
+  // the shared viewer collection at one item prevents its arrow-key handler
+  // from switching website tabs.
+  return { totalImages: files.length > 0 ? 1 : 0, currentIndex: 0, show: false };
 }
 
 function updateCollectionOverlay(): void {
   sendToViewer({ type: 'updateImageCollectionOverlay', data: collectionState() });
+}
+
+function updateTabScrollControls(): void {
+  const tabList = document.getElementById('web-image-tabs');
+  const previous = document.getElementById('web-image-tabs-previous') as HTMLButtonElement | null;
+  const next = document.getElementById('web-image-tabs-next') as HTMLButtonElement | null;
+  if (!tabList || !previous || !next) return;
+  const overflowing = tabList.scrollWidth > tabList.clientWidth + 1;
+  previous.hidden = !overflowing;
+  next.hidden = !overflowing;
+  previous.disabled = !overflowing || tabList.scrollLeft <= 1;
+  next.disabled = !overflowing || tabList.scrollLeft + tabList.clientWidth >= tabList.scrollWidth - 1;
+}
+
+function renderImageTabs(): void {
+  const tabList = document.getElementById('web-image-tabs');
+  const tabShell = document.getElementById('web-image-tabs-shell');
+  if (!tabList || !tabShell) return;
+  tabList.replaceChildren();
+  tabShell.hidden = files.length === 0;
+  files.forEach((entry, index) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'web-image-tab';
+    wrapper.dataset.active = String(index === fileIndex);
+
+    const select = document.createElement('button');
+    select.type = 'button';
+    select.className = 'web-image-tab-select';
+    select.dataset.imageIndex = String(index);
+    select.textContent = entry.file.name;
+    select.title = `${entry.file.name} · ${formatBytes(entry.file.size)}`;
+    select.setAttribute('role', 'tab');
+    select.setAttribute('aria-selected', String(index === fileIndex));
+    select.tabIndex = index === fileIndex ? 0 : -1;
+    select.addEventListener('click', () => {
+      if (index !== fileIndex) switchTo(index);
+    });
+    wrapper.appendChild(select);
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'web-image-tab-close';
+    close.dataset.closeImageIndex = String(index);
+    close.textContent = '×';
+    close.setAttribute('aria-label', `Close ${entry.file.name}`);
+    close.addEventListener('click', () => closeImageAt(index, true));
+    wrapper.appendChild(close);
+    tabList.appendChild(wrapper);
+  });
+  tabList.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  window.requestAnimationFrame(updateTabScrollControls);
+}
+
+function closeImageAt(index: number, restoreFocus = false): void {
+  if (index < 0 || index >= files.length) return;
+  const closingActiveImage = index === fileIndex;
+  const [removed] = files.splice(index, 1);
+  URL.revokeObjectURL(removed.url);
+  if (files.length === 0) {
+    fileIndex = 0;
+    currentDataset = null;
+    currentDatasetCoordinates = {};
+    currentFormatInfo = null;
+    currentStats = null;
+    currentSize = '';
+    currentPixel = '';
+    document.body.classList.remove('web-has-image', 'web-image-zoomed');
+    sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
+    renderImageTabs();
+    updateCollectionOverlay();
+    syncStatusBar();
+    return;
+  }
+  if (index < fileIndex) fileIndex--;
+  if (closingActiveImage) {
+    switchTo(Math.min(index, files.length - 1));
+  } else {
+    renderImageTabs();
+    updateCollectionOverlay();
+    syncStatusBar();
+  }
+  if (restoreFocus) {
+    document.querySelector<HTMLElement>('.web-image-tab-select[aria-selected="true"]')?.focus();
+  }
 }
 
 function switchTo(index: number, preserveDataset = false): void {
@@ -394,14 +534,12 @@ function switchTo(index: number, preserveDataset = false): void {
     sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
   }
   document.body.classList.add('web-has-image');
-  const summary = document.getElementById('web-file-summary');
-  if (summary) summary.textContent = files.length > 1
-    ? `${entry.file.name} · ${fileIndex + 1} of ${files.length}`
-    : entry.file.name;
+  renderImageTabs();
   sendToViewer({
     type: 'switchToImage',
     uri: entry.url,
     resourceUri: entry.file.name,
+    loadStartTime: Date.now(),
     collection: collectionState(),
   });
   updateCollectionOverlay();
@@ -415,16 +553,15 @@ function openFiles(selected: File[]): void {
     return;
   }
   if (currentDataset) sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
-  for (const entry of files) URL.revokeObjectURL(entry.url);
-  files = nextFiles.map(file => ({ file, url: URL.createObjectURL(file) }));
-  fileIndex = 0;
+  const firstNewIndex = files.length;
+  files.push(...nextFiles.map(file => ({ file, url: URL.createObjectURL(file) })));
   currentDataset = null;
   currentDatasetCoordinates = {};
   currentFormatInfo = null;
   currentStats = null;
   currentSize = '';
   currentPixel = '';
-  switchTo(0);
+  switchTo(firstNewIndex);
 }
 
 function addLayerFiles(selected: File[]): void {
@@ -442,10 +579,10 @@ function setDataset(manifest: BrowserDatasetManifest, seriesIndex = 0, coordinat
   sendToViewer({ type: 'setDataset', manifest, seriesIndex, coordinates });
 }
 
-function registerDicomFrames(frameCountValue: unknown): void {
+function registerDicomFrames(frameCountValue: unknown, frameLabelsValue?: unknown): void {
   const entry = files[fileIndex];
   if (!entry) return;
-  const manifest = createDicomFrameDataset({ name: entry.file.name, url: entry.url }, frameCountValue);
+  const manifest = createDicomFrameDataset({ name: entry.file.name, url: entry.url }, frameCountValue, frameLabelsValue);
   if (manifest) setDataset(manifest, 0, { frame: 0 });
 }
 
@@ -488,8 +625,7 @@ function navigateDataset(seriesIndexValue: unknown, coordinatesValue: unknown): 
     seriesIndex,
     coordinates,
   });
-  const summary = document.getElementById('web-file-summary');
-  if (summary) summary.textContent = plane.resourceUri;
+  renderImageTabs();
   syncStatusBar();
 }
 
@@ -500,6 +636,13 @@ function handleFormatInfo(message: ViewerMessage): void {
   }
   currentFormat = format;
   currentFormatInfo = message.value || null;
+  if (message.value?.isInitialLoad) {
+    const openedLine = formatOpenedImageLine(message.value);
+    if (openedLine) {
+      loadingLogArmed = true;
+      appendLoadingLog(openedLine);
+    }
+  }
   currentSettings = structuredClone(formatSettings.get(format) || defaultsForFormat(format));
   if (files[fileIndex]) {
     currentSettings.resourceUri = files[fileIndex].file.name;
@@ -622,23 +765,16 @@ function handleViewerMessage(message: ViewerMessage): void {
       executeCommand(String(message.command || ''));
       break;
     case 'toggleImage':
-      switchTo(fileIndex + 1);
-      break;
     case 'toggleImageReverse':
-      switchTo(fileIndex - 1);
-      break;
     case 'jumpToCollectionIndex':
-      switchTo(Number(message.index || 0));
+      // Website image tabs are intentionally click-only.
       break;
     case 'removeFromCollection': {
-      if (files.length <= 1) return;
-      const [removed] = files.splice(fileIndex, 1);
-      URL.revokeObjectURL(removed.url);
-      switchTo(Math.min(fileIndex, files.length - 1));
+      closeImageAt(fileIndex);
       break;
     }
     case 'registerDicomFrames':
-      registerDicomFrames(message.frames);
+      registerDicomFrames(message.frames, message.frameLabels);
       break;
     case 'registerOmeDataset':
       registerOmeDataset(message.dataset);
@@ -696,7 +832,10 @@ function handleViewerMessage(message: ViewerMessage): void {
       break;
     }
     case 'log':
-      if (message.value) console.info(message.value);
+      if (message.value) {
+        console.info(message.value);
+        if (loadingLogArmed) appendLoadingLog(message.value);
+      }
       break;
   }
 }
@@ -734,6 +873,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const moreMenu = document.getElementById('web-more-menu') as HTMLElement;
   const moreButton = document.querySelector('[data-web-action="more"]') as HTMLButtonElement;
   const controlPopover = document.getElementById('web-control-popover') as HTMLElement;
+  const logPanel = document.getElementById('web-log-panel') as HTMLElement;
+  const imageTabs = document.getElementById('web-image-tabs') as HTMLElement;
+  const previousImageTabs = document.getElementById('web-image-tabs-previous') as HTMLButtonElement;
+  const nextImageTabs = document.getElementById('web-image-tabs-next') as HTMLButtonElement;
 
   document.querySelectorAll('[data-web-action="open"]').forEach(button => {
     button.addEventListener('click', () => {
@@ -779,6 +922,25 @@ document.addEventListener('DOMContentLoaded', () => {
     applyTheme(document.documentElement.classList.contains('web-light') ? 'dark' : 'light');
     moreMenu.hidden = true;
   });
+  document.querySelector('[data-web-action="loading-log"]')?.addEventListener('click', () => {
+    setLoadingLogOpen(true);
+    moreMenu.hidden = true;
+    moreButton.setAttribute('aria-expanded', 'false');
+  });
+  document.querySelector('[data-web-action="close-loading-log"]')?.addEventListener('click', () => setLoadingLogOpen(false));
+  document.querySelector('[data-web-action="clear-loading-log"]')?.addEventListener('click', () => {
+    loadingLog.length = 0;
+    renderLoadingLog();
+  });
+  document.querySelector('[data-web-action="copy-loading-log"]')?.addEventListener('click', async () => {
+    if (loadingLog.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(loadingLog.join('\n'));
+      showToast('Loading log copied.');
+    } catch {
+      showToast('The browser could not copy the loading log.');
+    }
+  });
   document.addEventListener('click', event => {
     if (!moreMenu.hidden && !moreMenu.contains(event.target as Node) && event.target !== moreButton) {
       moreMenu.hidden = true;
@@ -792,6 +954,24 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !controlPopover.hidden) closeControlPopover();
+    if (event.key === 'Escape' && !logPanel.hidden) setLoadingLogOpen(false);
+  });
+  imageTabs.addEventListener('scroll', updateTabScrollControls, { passive: true });
+  previousImageTabs.addEventListener('click', () => {
+    imageTabs.scrollBy({ left: -Math.max(180, imageTabs.clientWidth * 0.7), behavior: 'smooth' });
+  });
+  nextImageTabs.addEventListener('click', () => {
+    imageTabs.scrollBy({ left: Math.max(180, imageTabs.clientWidth * 0.7), behavior: 'smooth' });
+  });
+  window.addEventListener('resize', updateTabScrollControls);
+  imageTabs.addEventListener('keydown', event => {
+    const target = event.target as HTMLElement;
+    const index = Number(target.dataset.imageIndex);
+    if (!Number.isInteger(index)) return;
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      closeImageAt(index, true);
+    }
   });
   fileInput.addEventListener('change', () => {
     const selected = Array.from(fileInput.files || []);

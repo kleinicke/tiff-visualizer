@@ -535,15 +535,36 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	/** Promote a directly opened multi-frame DICOM object to the shared dataset UI. */
-	public registerDicomFrames(frameCount: number): void {
+	public registerDicomFrames(frameCount: number, frameLabelsValue?: unknown): void {
 		const frames = Math.max(1, Math.trunc(frameCount));
 		if (this._datasetManifest || frames <= 1) { return; }
 		const resource = this.getCurrentImage();
-		this.setDatasetManifest({
-			id: `dicom-frames-${resource.toString()}`,
-			kind: 'dicom',
-			label: Utils.basename(resource),
-			series: [{
+		const frameLabels = Array.isArray(frameLabelsValue) && frameLabelsValue.length === frames
+			? frameLabelsValue.map(value => String(value || '').trim())
+			: [];
+		const groupedFrames = new Map<string, number[]>();
+		for (let frameIndex = 0; frameIndex < frames; frameIndex++) {
+			const label = frameLabels[frameIndex] || '';
+			if (!label) { continue; }
+			const group = groupedFrames.get(label) || [];
+			group.push(frameIndex);
+			groupedFrames.set(label, group);
+		}
+		const hasFrameGroups = groupedFrames.size > 1
+			&& [...groupedFrames.values()].reduce((sum, group) => sum + group.length, 0) === frames;
+		const series: DatasetSeries[] = hasFrameGroups
+			? [...groupedFrames.entries()].map(([label, indices], seriesIndex) => ({
+				id: `dicom-frame-group-${seriesIndex}`,
+				label,
+				axes: [{ key: 'frame', label: 'Frame', size: indices.length }],
+				planes: indices.map((frameIndex, localFrameIndex) => ({
+					coordinates: { frame: localFrameIndex },
+					resourceUri: resource.toString(),
+					format: 'dicom' as const,
+					frameIndex,
+				})),
+			}))
+			: [{
 				id: 'dicom-multiframe',
 				label: 'Multi-frame image',
 				axes: [{ key: 'frame', label: 'Frame', size: frames }],
@@ -553,7 +574,12 @@ export class ImagePreview extends MediaPreview {
 					format: 'dicom' as const,
 					frameIndex,
 				})),
-			}],
+			}];
+		this.setDatasetManifest({
+			id: `dicom-frames-${resource.toString()}`,
+			kind: 'dicom',
+			label: Utils.basename(resource),
+			series,
 			initialSeriesIndex: 0,
 			initialCoordinates: { frame: 0 },
 		});
@@ -931,6 +957,7 @@ export class ImagePreview extends MediaPreview {
 			type: 'switchToImage',
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
 			resourceUri: newResource.toString(),
+			loadStartTime: Date.now(),
 			collection: {
 				currentIndex: this._currentImageIndex,
 				totalImages: this._imageCollection.length,

@@ -1,5 +1,9 @@
 # Change Log
 
+## 1.11.0 (2026-08-22)
+
+- Noticeable speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure
+
 ## 1.10.0 (2026-08-22)
 
 - Rename the Command Palette category and the settings section from "TIFF Visualizer" to "Scientific Image Visualizer".

@@ -1062,14 +1062,14 @@ pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
 // WASM adapter's public JavaScript API has used them for years.
 #[cfg(feature = "czi")]
 pub use decode_czi_fast as decode_czi;
-#[cfg(feature = "nd2")]
-pub use decode_nd2_fast as decode_nd2;
-#[cfg(feature = "lif")]
-pub use decode_lif_fast as decode_lif;
 #[cfg(feature = "dicom")]
 pub use decode_dicom_fast as decode_dicom;
 #[cfg(feature = "exr")]
 pub use decode_exr_fast as decode_exr;
+#[cfg(feature = "lif")]
+pub use decode_lif_fast as decode_lif;
+#[cfg(feature = "nd2")]
+pub use decode_nd2_fast as decode_nd2;
 #[cfg(feature = "exr")]
 pub fn exr_zip_f32_plan(data: &[u8]) -> Result<Option<ExrZipPlan>, DecodeError> {
     formats::exr::zip_f32_plan(data)
@@ -1196,7 +1196,9 @@ pub fn decode_tiff_float_strip_range(
         let end = in_pos
             .checked_add(count as usize)
             .filter(|end| *end <= blob.len())
-            .ok_or_else(|| DecodeError::new("Strip range: compressed blob is shorter than its counts"))?;
+            .ok_or_else(|| {
+                DecodeError::new("Strip range: compressed blob is shorter than its counts")
+            })?;
         formats::tiff::strips::decode_float_predictor_strip(
             &blob[in_pos..end],
             &inner,

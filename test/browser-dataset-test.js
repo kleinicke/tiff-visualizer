@@ -20,6 +20,17 @@ assert.deepEqual(dicom.series[0].planes.map(plane => plane.frameIndex), [0, 1, 2
 assert.equal(findDatasetPlane(dicom, 0, { frame: 2 }).plane.frameIndex, 2);
 assert.equal(createDicomFrameDataset({ name: 'single.dcm', url: 'blob:single' }, 1), null);
 
+const groupedDicom = createDicomFrameDataset(
+  { name: 'combined.dcm', url: 'blob:combined' },
+  5,
+  ['Series 4', 'Series 4', 'Series 6', 'Series 6', 'Series 6'],
+);
+assert.ok(groupedDicom, 'labeled multi-frame DICOM should create a browser dataset');
+assert.deepEqual(groupedDicom.series.map(series => series.label), ['Series 4', 'Series 6']);
+assert.deepEqual(groupedDicom.series.map(series => series.planes.length), [2, 3]);
+assert.deepEqual(groupedDicom.series[1].planes.map(plane => plane.frameIndex), [2, 3, 4]);
+assert.equal(findDatasetPlane(groupedDicom, 1, { frame: 1 }).plane.frameIndex, 3);
+
 const ome = createOmeDataset({
   uuid: 'dataset-1',
   currentPageIndex: 0,
@@ -63,6 +74,23 @@ assert.match(html, /resourceUri":"welcome\.png","src":"data:image\/png;base64,/,
 assert.match(html, /data-web-command="tiffVisualizer\.openAsPointCloud"/, 'supported depth images should retain the point-cloud action');
 assert.match(html, /<footer[^>]*web-status-bar[\s\S]*?data-status-action="options"[\s\S]*?data-status-action="layers"/, 'Options should be the first website status-bar action');
 assert.match(html, /data-supported-formats/, 'the file-opening surface should expose its supported formats');
+assert.match(html, /data-web-action="loading-log"/, 'the quiet More menu should expose the loading log');
+assert.match(html, /id="web-image-tabs-shell"[^>]*hidden/, 'the toolbar should reserve its free space for open image tabs');
+assert.match(html, /id="web-image-tabs-previous"[\s\S]*?id="web-image-tabs"[^>]*role="tablist"[\s\S]*?id="web-image-tabs-next"/, 'overflowing image tabs should have scroll controls on both sides');
+assert.doesNotMatch(html, /id="web-file-summary"/, 'the current filename should not be repeated below the website title');
+assert.match(host, /files\.push\(\.\.\.nextFiles/, 'opening more files should add tabs instead of replacing the current collection');
+assert.match(host, /className = 'web-image-tab-select'/, 'each open image should receive a selectable tab');
+assert.match(host, /closeImageAt\(index, true\)/, 'image tabs should be individually closable');
+assert.doesNotMatch(host, /if \(files\.length > 1\) \{[\s\S]*?className = 'web-image-tab-close'/, 'the final image tab should retain its close button');
+assert.match(host, /case 'toggleImage':[\s\S]*?case 'jumpToCollectionIndex':[\s\S]*?click-only/, 'shared viewer navigation must not switch website image tabs');
+assert.match(css, /\.web-image-tabs \{[\s\S]*?overflow-x:\s*auto;/, 'overflowing image tabs should remain horizontally scrollable');
+assert.match(html, /id="web-log-panel"[^>]*role="dialog"/, 'loading timings should live in a separate diagnostics panel');
+assert.match(host, /loadingLog\.push\(line\)/, 'viewer output should be retained for the page session');
+assert.match(host, /type: 'switchToImage',[\s\S]*?loadStartTime: Date\.now\(\)/, 'website totals should start when an image begins opening');
+assert.match(host, /formatOpenedImageLine\(message\.value\)/, 'the website log should pair timings with file attributes');
+assert.match(host, /if \(loadingLogArmed\) appendLoadingLog\(message\.value\)/, 'the welcome-image timing should stay out of the user loading log');
+assert.match(imagePreview, /case 'switchToImage':[\s\S]*?extensionLoadStartTime = Number\(message\.loadStartTime\)/, 'switched images should use their own total-time clock');
+assert.match(imagePreview, /resetVisibleTiming\(\);\s*initialLoadStartTime = performance\.now\(\);/, 'switched images should produce full per-format performance summaries');
 assert.match(host, /type: 'showContextMenu'/, 'the Options status action should open the shared image menu');
 assert.match(host, /getBoundingClientRect\(\)[\s\S]*?type: 'showContextMenu', x: anchor\.left, y: anchor\.top/, 'the shared image menu should originate at the Options button');
 assert.match(imagePreview, /case 'showContextMenu':[\s\S]*?MouseEvent\('contextmenu'/, 'the shared viewer should open its real context menu on host request');

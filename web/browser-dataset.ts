@@ -26,14 +26,36 @@ export interface BrowserDatasetManifest {
   series: BrowserDatasetSeries[];
 }
 
-export function createDicomFrameDataset(file: BrowserDatasetFile, frameCountValue: unknown): BrowserDatasetManifest | null {
+export function createDicomFrameDataset(file: BrowserDatasetFile, frameCountValue: unknown, frameLabelsValue?: unknown): BrowserDatasetManifest | null {
   const frameCount = Math.max(1, Math.trunc(Number(frameCountValue || 1)));
   if (frameCount <= 1) return null;
-  return {
-    id: `dicom-frames-${file.name}`,
-    kind: 'dicom',
-    label: file.name,
-    series: [{
+  const frameLabels = Array.isArray(frameLabelsValue) && frameLabelsValue.length === frameCount
+    ? frameLabelsValue.map(value => String(value || '').trim())
+    : [];
+  const groupedFrames = new Map<string, number[]>();
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+    const label = frameLabels[frameIndex] || '';
+    if (!label) continue;
+    const group = groupedFrames.get(label) || [];
+    group.push(frameIndex);
+    groupedFrames.set(label, group);
+  }
+  const hasFrameGroups = groupedFrames.size > 1
+    && [...groupedFrames.values()].reduce((sum, group) => sum + group.length, 0) === frameCount;
+  const series: BrowserDatasetSeries[] = hasFrameGroups
+    ? [...groupedFrames.entries()].map(([label, indices], seriesIndex) => ({
+      id: `dicom-frame-group-${seriesIndex}`,
+      label,
+      axes: [{ key: 'frame', label: 'Frame', size: indices.length }],
+      planes: indices.map((frameIndex, localFrameIndex) => ({
+        coordinates: { frame: localFrameIndex },
+        resourceUri: file.name,
+        src: file.url,
+        format: 'dicom' as const,
+        frameIndex,
+      })),
+    }))
+    : [{
       id: 'dicom-multiframe',
       label: 'Multi-frame image',
       axes: [{ key: 'frame', label: 'Frame', size: frameCount }],
@@ -44,7 +66,12 @@ export function createDicomFrameDataset(file: BrowserDatasetFile, frameCountValu
         format: 'dicom' as const,
         frameIndex,
       })),
-    }],
+    }];
+  return {
+    id: `dicom-frames-${file.name}`,
+    kind: 'dicom',
+    label: file.name,
+    series,
   };
 }
 

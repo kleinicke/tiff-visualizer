@@ -441,6 +441,14 @@ fn dicom_image_info(context: &DicomContext) -> Result<DicomImageInfo, DecodeErro
     let imager_pixel_spacing = text(0x0018_1164, "");
     let slice_thickness = text(0x0018_0050, "");
     let spacing_between_slices = text(0x0018_0088, "");
+    // Frame Label Vector (0018,2002) is the standard top-level mapping from
+    // stored frame index to a human-readable frame group.  In particular it
+    // lets a multi-frame Secondary Capture retain acquisition/series labels
+    // without forcing callers to walk every Per-Frame Functional Group.
+    let frame_labels: Vec<String> = text(0x0018_2002, "")
+        .split('\\')
+        .map(|label| label.trim().to_string())
+        .collect();
 
     let mut fields: Vec<(String, JsonValue)> = Vec::new();
     fields.push(("format".to_string(), JsonValue::Str("DICOM".to_string())));
@@ -459,6 +467,12 @@ fn dicom_image_info(context: &DicomContext) -> Result<DicomImageInfo, DecodeErro
     fields.push(("bitsStored".to_string(), JsonValue::Num(bits_stored as f64)));
     fields.push(("signed".to_string(), JsonValue::Bool(signed)));
     fields.push(("frames".to_string(), JsonValue::Num(frames as f64)));
+    if frame_labels.len() == frames as usize && frame_labels.iter().any(|label| !label.is_empty()) {
+        fields.push((
+            "frameLabels".to_string(),
+            JsonValue::Arr(frame_labels.into_iter().map(JsonValue::Str).collect()),
+        ));
+    }
     fields.push(("rescaleSlope".to_string(), JsonValue::Num(slope)));
     fields.push(("rescaleIntercept".to_string(), JsonValue::Num(intercept)));
     // `windowCenter`/`windowWidth` are always present, even when absent from

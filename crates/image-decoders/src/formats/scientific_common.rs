@@ -131,12 +131,16 @@ mod f16_tests {
     #[test]
     fn matches_ieee_reference_values() {
         assert_eq!(f16_to_f32(0x0000), 0.0);
-        assert_eq!(f16_to_f32(0x8000).to_bits(), (-0.0f32).to_bits(), "-0 keeps its sign");
+        assert_eq!(
+            f16_to_f32(0x8000).to_bits(),
+            (-0.0f32).to_bits(),
+            "-0 keeps its sign"
+        );
         assert_eq!(f16_to_f32(0x3c00), 1.0);
         assert_eq!(f16_to_f32(0xbc00), -1.0);
         assert_eq!(f16_to_f32(0x4000), 2.0);
         assert_eq!(f16_to_f32(0x3555), 0.33325195); // nearest half to 1/3
-        assert_eq!(f16_to_f32(0x7bff), 65504.0);    // largest finite half
+        assert_eq!(f16_to_f32(0x7bff), 65504.0); // largest finite half
         assert_eq!(f16_to_f32(0x0400), 6.1035156e-5); // smallest normal
         assert_eq!(f16_to_f32(0x0001), 5.9604645e-8); // smallest subnormal
         assert_eq!(f16_to_f32(0x03ff), 6.0975552e-5); // largest subnormal

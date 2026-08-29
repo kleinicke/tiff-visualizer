@@ -138,7 +138,8 @@ pub(crate) fn zip_f32_plan(data: &[u8]) -> Result<Option<crate::ExrZipPlan>, Dec
         return Ok(None);
     }
     let channel = &header.channels.list[0];
-    if channel.sample_type != SampleType::F32 || channel.sampling.0 != 1 || channel.sampling.1 != 1 {
+    if channel.sample_type != SampleType::F32 || channel.sampling.0 != 1 || channel.sampling.1 != 1
+    {
         return Ok(None);
     }
 
@@ -159,14 +160,16 @@ pub(crate) fn zip_f32_plan(data: &[u8]) -> Result<Option<crate::ExrZipPlan>, Dec
     let mut counts = Vec::with_capacity(chunk_capacity);
     let mut y_coordinates = Vec::with_capacity(chunk_capacity);
     for chunk in chunks {
-        let chunk = chunk.map_err(|e| DecodeError::new(format!("Failed to read EXR chunk: {e}")))?;
+        let chunk =
+            chunk.map_err(|e| DecodeError::new(format!("Failed to read EXR chunk: {e}")))?;
         if chunk.layer_index != 0 {
             return Ok(None);
         }
         let CompressedBlock::ScanLine(CompressedScanLineBlock {
             y_coordinate,
             compressed_pixels_le,
-        }) = chunk.compressed_block else {
+        }) = chunk.compressed_block
+        else {
             return Ok(None);
         };
         let count = u32::try_from(compressed_pixels_le.len())
@@ -236,7 +239,9 @@ pub(crate) fn decode_zip_f32_blocks(
                 .map_err(|_| DecodeError::new("Malformed EXR ZIP block"))?
         };
         if bytes.len() != expected {
-            return Err(DecodeError::new("EXR ZIP block decompressed to the wrong size"));
+            return Err(DecodeError::new(
+                "EXR ZIP block decompressed to the wrong size",
+            ));
         }
         if source.len() != expected {
             exr_zip_differences_to_samples(&mut bytes);
@@ -246,13 +251,17 @@ pub(crate) fn decode_zip_f32_blocks(
         input_offset = input_end;
     }
     if input_offset != blob.len() {
-        return Err(DecodeError::new("EXR ZIP range contains trailing compressed bytes"));
+        return Err(DecodeError::new(
+            "EXR ZIP range contains trailing compressed bytes",
+        ));
     }
     Ok(output)
 }
 
 fn exr_zip_differences_to_samples(bytes: &mut [u8]) {
-    if bytes.len() < 2 { return; }
+    if bytes.len() < 2 {
+        return;
+    }
     let mut previous = bytes[0] as i16;
     for byte in &mut bytes[1..] {
         let sample = (previous + *byte as i16 - 128) as u8;

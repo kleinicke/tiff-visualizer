@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { buildDicom, dcmPixelSamples } = require('./lib/decoder-cases');
 
 // FITS, DICOM, NetCDF, CZI, ND2 and LIF are decoded by Rust/WASM only — their
 // TypeScript parsers have all been deleted. These tests assert format
@@ -73,6 +74,20 @@ function testDicom() {
 		bitsPerSample: 12, sampleFormat: 1,
 		typeMin: -1024, typeMax: 3071, sourceNumericType: 'uint16',
 	}, 'the Float32 decode carrier must retain the DICOM source domain');
+}
+
+function testDicomFrameLabels() {
+	const labels = Buffer.from('Series 4\\Series 4\\Series 6\\Series 6', 'latin1');
+	const paddedLabels = labels.length % 2 === 0 ? labels : Buffer.concat([labels, Buffer.from(' ')]);
+	const bytes = buildDicom({
+		explicit: true, little: true, rows: 1, columns: 1, frames: 4,
+		bitsAllocated: 16, bitsStored: 12, signed: 0,
+		photometric: 'MONOCHROME2', pixelDataVR: 'OW',
+		pixelBytes: dcmPixelSamples([1, 2, 3, 4], 16, true),
+		extraElements: [[0x0018, 0x2002, 'SH', paddedLabels]],
+	});
+	const image = parseDicom(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+	assert.deepStrictEqual(image.metadata.frameLabels, ['Series 4', 'Series 4', 'Series 6', 'Series 6']);
 }
 
 /** `decode_dicom_fast` decodes JPEG Baseline Pixel Data natively now (via
@@ -300,6 +315,7 @@ async function main() {
 	await initWasm();
 	testFits();
 	testDicom();
+	testDicomFrameLabels();
 	await testJpegBaselineDicom();
 	testNetCdf();
 	testCzi();

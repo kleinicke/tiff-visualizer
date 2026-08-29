@@ -11,7 +11,10 @@ use crate::pipeline::stats::{
 };
 use crate::{demosaic, TiffResult};
 use cmyk::convert_cmyk_to_rgb;
-use codecs::{decode_ccitt, decode_jpeg_ycbcr, decode_palette, decode_sgilog, decode_ycbcr_subsampled, unpack_bilevel};
+use codecs::{
+    decode_ccitt, decode_jpeg_ycbcr, decode_palette, decode_sgilog, decode_ycbcr_subsampled,
+    unpack_bilevel,
+};
 use orientation::{apply_orientation, TiffOrientation};
 use strips::{
     decode_zstd, try_decode_float_predictor_strips, try_decode_general_strips_tiles,
@@ -123,15 +126,17 @@ pub(crate) fn decode_tiff_impl(
                     .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: decoder init: {}", e)))?
                     .with_limits(tiff::decoder::Limits::unlimited());
                 for _ in 0..page_index {
-                    sgi_decoder
-                        .next_image()
-                        .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: page select: {}", e)))?;
+                    sgi_decoder.next_image().map_err(|e| {
+                        DecodeError::new(&format!("SGI Log TIFF: page select: {}", e))
+                    })?;
                 }
-                let (w, h) = sgi_decoder.dimensions().map_err(|e| {
-                    DecodeError::new(&format!("SGI Log TIFF: dimensions: {}", e))
-                })?;
+                let (w, h) = sgi_decoder
+                    .dimensions()
+                    .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: dimensions: {}", e)))?;
                 let orientation_tag = TiffOrientation::from_tag(
-                    sgi_decoder.get_tag_u32(tiff::tags::Tag::Orientation).unwrap_or(1),
+                    sgi_decoder
+                        .get_tag_u32(tiff::tags::Tag::Orientation)
+                        .unwrap_or(1),
                 );
                 let mut result = decode_sgilog(
                     data,
@@ -335,8 +340,14 @@ pub(crate) fn decode_tiff_impl(
         let subsampled = subsampling.first().copied().unwrap_or(1) > 1
             || subsampling.get(1).copied().unwrap_or(1) > 1;
         if subsampled {
-            let mut result =
-                decode_ycbcr_subsampled(data, &mut decoder, width, height, compression, orientation)?;
+            let mut result = decode_ycbcr_subsampled(
+                data,
+                &mut decoder,
+                width,
+                height,
+                compression,
+                orientation,
+            )?;
             result.all_tags_json = extract_page_tags_json(data, page_index);
             result.ome_xml = extract_ome_xml(data);
             return Ok(result);
@@ -750,9 +761,19 @@ pub(crate) fn raw_tag_u32(data: &[u8], page_index: u32, want: u16) -> Option<u32
         b"MM" => false,
         _ => return None,
     };
-    let rd16 = |b: &[u8]| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) };
+    let rd16 = |b: &[u8]| {
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
+    };
     let rd32 = |b: &[u8]| {
-        if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) }
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
     };
     if rd16(data.get(2..4)?) != 42 {
         return None; // classic TIFF only; BigTIFF falls back
@@ -866,9 +887,7 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
     let compression = decoder
         .get_tag_u64(tiff::tags::Tag::Compression)
         .unwrap_or(1) as u32;
-    let predictor = decoder
-        .get_tag_u64(tiff::tags::Tag::Predictor)
-        .unwrap_or(1) as u32;
+    let predictor = decoder.get_tag_u64(tiff::tags::Tag::Predictor).unwrap_or(1) as u32;
     let planar_configuration = decoder
         .get_tag_u64(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1) as u32;
@@ -883,7 +902,9 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
     if photometric != 1 && photometric != 2 {
         return None;
     }
-    let orientation = decoder.get_tag_u64(tiff::tags::Tag::Orientation).unwrap_or(1);
+    let orientation = decoder
+        .get_tag_u64(tiff::tags::Tag::Orientation)
+        .unwrap_or(1);
     if orientation != 1 {
         return None;
     }

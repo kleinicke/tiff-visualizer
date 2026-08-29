@@ -18,6 +18,8 @@ pub(crate) mod hdr;
     feature = "lif"
 ))]
 pub(crate) mod json_value;
+#[cfg(feature = "lif")]
+pub(crate) mod lif;
 #[cfg(any(
     feature = "tiff",
     feature = "exr",
@@ -31,8 +33,6 @@ pub(crate) mod json_value;
     feature = "lif"
 ))]
 pub(crate) mod metadata;
-#[cfg(feature = "lif")]
-pub(crate) mod lif;
 #[cfg(feature = "nd2")]
 pub(crate) mod nd2;
 #[cfg(feature = "netcdf")]

@@ -20,19 +20,7 @@
   <link rel="stylesheet" href="./media/imagePreview.css">
   <link rel="stylesheet" href="./website.css">
   <script async src="https://analytics.re4vive.com/js/pa-GabvR7klxXIEzqdnoWcJw.js"></script>
-  <script>
-    ((window.plausible =
-      window.plausible ||
-      function () {
-        (plausible.q = plausible.q || []).push(arguments);
-      }),
-      (plausible.init =
-        plausible.init ||
-        function (options) {
-          plausible.o = options || {};
-        }));
-    plausible.init();
-  </script>
+  <script src="./plausible-init.js"></script>
   <meta
     id="image-preview-settings"
     data-settings='{"normalization":{"min":0,"max":1,"autoNormalize":true,"gammaMode":false},"gamma":{"in":2.2,"out":2.2},"brightness":{"offset":0},"rgbAs24BitGrayscale":false,"scale24BitFactor":1000,"normalizedFloatMode":false,"nanColor":"black","colorPickerShowModified":false,"showScaleBar":true,"gpuAcceleration":true,"plyVisualizerInstalled":true,"resourceUri":"welcome.png","src":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=","surfaceMode":"editor","extensionVersion":"web-1","vscodeVersion":"browser"}'
@@ -44,9 +32,14 @@
       <span class="web-brand-mark" aria-hidden="true">SI</span>
       <span>
         <strong>Scientific Image Visualizer</strong>
-        <small id="web-file-summary">Local browser viewer</small>
+        <small>Local browser viewer</small>
       </span>
     </a>
+    <div class="web-image-tabs-shell" id="web-image-tabs-shell" hidden>
+      <button type="button" class="web-image-tabs-scroll" id="web-image-tabs-previous" aria-label="Scroll image tabs left">‹</button>
+      <div class="web-image-tabs" id="web-image-tabs" role="tablist" aria-label="Open images"></div>
+      <button type="button" class="web-image-tabs-scroll" id="web-image-tabs-next" aria-label="Scroll image tabs right">›</button>
+    </div>
     <nav class="web-actions" aria-label="Image tools">
       <button type="button" data-web-action="open" data-supported-formats>Open files</button>
       <button type="button" class="web-more-button" data-web-action="more" aria-expanded="false" aria-controls="web-more-menu">More</button>
@@ -57,9 +50,26 @@
       <button type="button" data-web-command="tiffVisualizer.openAsPointCloud" data-web-point-cloud hidden>Open as point cloud</button>
       <button type="button" data-web-command="tiffVisualizer.toggleNanColor">Toggle NaN colour</button>
       <button type="button" data-web-action="theme">Toggle light theme</button>
+      <button type="button" data-web-action="loading-log">Loading log</button>
       <a href="https://github.com/kleinicke/tiff-visualizer" target="_blank" rel="noreferrer">Source and documentation</a>
     </div>
   </header>
+
+  <aside class="web-log-panel" id="web-log-panel" role="dialog" aria-modal="false" aria-labelledby="web-log-title" hidden>
+    <div class="web-log-heading">
+      <div>
+        <span class="web-log-eyebrow">Diagnostics</span>
+        <strong id="web-log-title">Loading log</strong>
+      </div>
+      <button type="button" class="web-log-close" data-web-action="close-loading-log" aria-label="Close loading log">×</button>
+    </div>
+    <p class="web-log-description">Timings from images opened during this page session.</p>
+    <pre class="web-log-output" id="web-log-output" tabindex="0" aria-live="polite"><span class="web-log-empty">Open an image to record its loading times.</span></pre>
+    <div class="web-log-actions">
+      <button type="button" data-web-action="clear-loading-log">Clear</button>
+      <button type="button" data-web-action="copy-loading-log">Copy log</button>
+    </div>
+  </aside>
 
   <main class="web-empty-state" id="web-empty-state">
     <button type="button" class="web-drop-zone" data-web-action="open" data-supported-formats>
@@ -72,7 +82,7 @@
 
   <div class="web-drop-overlay" id="web-drop-overlay" aria-hidden="true">
     <strong>Drop images to open</strong>
-    <span>Multiple files become a navigable collection</span>
+    <span>Multiple files open as tabs</span>
   </div>
   <div class="web-toast-region" id="web-toast-region" aria-live="polite" aria-atomic="true"></div>
   <nav class="web-legal-nav" aria-label="Legal and portfolio links">
@@ -104,18 +114,7 @@
   <input id="web-file-input" class="web-file-input" type="file" multiple>
   <input id="web-import-input" class="web-file-input" type="file">
 
-  <script>
-	window.__tiffVisualizerVendorAssets = {
-	  wasm: './media/wasm/tiff-wasm.wasm',
-	  geotiff: './media/geotiff.min.js',
-      pako: './media/pako.min.js',
-      upng: './media/upng.min.js',
-      parseExr: './media/parse-exr.js',
-      layeredPreviewFallback: './media/layeredPreviewFallback.bundle.js',
-      layerDocumentWriter: './media/layerDocumentWriter.bundle.js',
-      imagejRoi: './media/imagejRoi.bundle.js'
-    };
-  </script>
+  <script src="./vendor-assets.js"></script>
   <script src="./browserHost.bundle.js"></script>
   <script type="module" src="./media/imagePreview.bundle.js"></script>
 </body>

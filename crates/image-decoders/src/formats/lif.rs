@@ -90,11 +90,14 @@ impl Node {
     }
 
     fn number(&self, key: &str) -> Option<f64> {
-        self.attribute(key).and_then(|v| v.trim().parse::<f64>().ok())
+        self.attribute(key)
+            .and_then(|v| v.trim().parse::<f64>().ok())
     }
 
     fn child(&self, name: &str) -> Option<&Node> {
-        self.children.iter().find(|c| c.name.eq_ignore_ascii_case(name))
+        self.children
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
     }
 
     /// Follow a chain of single child names.
@@ -206,9 +209,7 @@ fn parse_xml(text: &str) -> Option<Node> {
         }
         let self_closing = tag.ends_with('/');
         let body = tag.trim_end_matches('/');
-        let name_end = body
-            .find(|c: char| c.is_whitespace())
-            .unwrap_or(body.len());
+        let name_end = body.find(|c: char| c.is_whitespace()).unwrap_or(body.len());
         let name = body[..name_end].to_string();
         let attributes = parse_attributes(&body[name_end..]);
         let node = Node {
@@ -304,7 +305,10 @@ fn collect_series(node: &Node, prefix: &str, out: &mut Vec<Series>) {
 
 fn build_series(element: &Node, image: &Node, path: &str) -> Option<Series> {
     let description = image.child("ImageDescription")?;
-    let memory_block = element.child("Memory")?.attribute("MemoryBlockID")?.to_string();
+    let memory_block = element
+        .child("Memory")?
+        .attribute("MemoryBlockID")?
+        .to_string();
 
     let mut dimensions = Vec::new();
     if let Some(dims) = description.child("Dimensions") {
@@ -425,7 +429,8 @@ pub(crate) fn decode_lif_impl(
     }
     let xml_units = u64_to_usize(u32_le(data, 9)? as u64, "header length")?;
     let xml_text = utf16_at(data, 13, xml_units)?;
-    let root = parse_xml(&xml_text).ok_or_else(|| DecodeError::new("LIF header XML is unreadable"))?;
+    let root =
+        parse_xml(&xml_text).ok_or_else(|| DecodeError::new("LIF header XML is unreadable"))?;
 
     // The container version decides the width of every memory block's size
     // field: version 1 wrote a u32, version 2 a u64. Guessing wrong desynchronises
@@ -440,7 +445,11 @@ pub(crate) fn decode_lif_impl(
         }
         // [u32 testcode][u32 length][u8 0x2A][size][u8 0x2A][u32 name_units][name]
         let mut offset = add(cursor, 8)?;
-        if *get_slice(data, offset, 1, "LIF block")?.first().unwrap_or(&0) != MARKER {
+        if *get_slice(data, offset, 1, "LIF block")?
+            .first()
+            .unwrap_or(&0)
+            != MARKER
+        {
             break;
         }
         offset = add(offset, 1)?;
@@ -453,7 +462,11 @@ pub(crate) fn decode_lif_impl(
             offset = add(offset, 4)?;
             value
         };
-        if *get_slice(data, offset, 1, "LIF block")?.first().unwrap_or(&0) != MARKER {
+        if *get_slice(data, offset, 1, "LIF block")?
+            .first()
+            .unwrap_or(&0)
+            != MARKER
+        {
             break;
         }
         offset = add(offset, 1)?;
@@ -701,7 +714,12 @@ pub(crate) fn decode_lif_impl(
     if !channel_names.is_empty() {
         fields.push((
             "channelNames".to_string(),
-            JsonValue::Arr(channel_names.iter().map(|n| JsonValue::Str(n.clone())).collect()),
+            JsonValue::Arr(
+                channel_names
+                    .iter()
+                    .map(|n| JsonValue::Str(n.clone()))
+                    .collect(),
+            ),
         ));
     }
     fields.push((
@@ -769,4 +787,3 @@ fn read_sample(
         _ => return Err(DecodeError::new("Unsupported LIF sample width")),
     })
 }
-

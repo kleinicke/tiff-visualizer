@@ -2020,7 +2020,11 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				return;
 			}
 			if (processor === dicomProcessor && !datasetManifest && Number(processor.metadata.frames || 1) > 1) {
-				vscode.postMessage({ type: 'registerDicomFrames', frames: Number(processor.metadata.frames) });
+				vscode.postMessage({
+					type: 'registerDicomFrames',
+					frames: Number(processor.metadata.frames),
+					frameLabels: Array.isArray(processor.metadata.frameLabels) ? processor.metadata.frameLabels : undefined,
+				});
 			}
 			if (isPlaneNavProcessor(processor)) {
 				planeNavProcessor = processor;
@@ -3835,6 +3839,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				break;
 
 			case 'switchToImage':
+				if (Number.isFinite(Number(message.loadStartTime))) {
+					extensionLoadStartTime = Number(message.loadStartTime);
+				}
 				// The target position travels with the switch so the loading badge never
 				// flashes the outgoing image number before the separate overlay update.
 				if (message.collection) {
@@ -6913,6 +6920,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
 		resetVisibleTiming();
+		initialLoadStartTime = performance.now();
 
 		// A plane change (dragging the Z/T/C/S slider of a CZI, ND2 or LIF) is
 		// NOT a new image: same file, same format, same settings, usually the
@@ -6929,8 +6937,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// finalizeImageSetup once the final pixels are on screen.
 		let switchName = resourceUri.split('/').pop() || 'image';
 		try { switchName = decodeURIComponent(switchName); } catch { /* keep encoded name */ }
-		PerfTrace.begin(planeChange ? `plane ${switchName}` : `switch ${switchName}`,
-			{ conciseLabel: planeChange ? `Plane change ${switchName} completed` : `Collection switch ${switchName} completed` });
+		PerfTrace.begin(planeChange ? `plane ${switchName}` : `switch ${switchName}`);
 		if (!planeChange) {
 			// Caching the outgoing image is for stepping between FILES. Doing it
 			// per plane would fill the cache with planes of the file already open.

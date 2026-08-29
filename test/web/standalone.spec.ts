@@ -36,9 +36,40 @@ test('loads an image through the public browser host', async ({ page }) => {
     .setInputFiles(path.resolve('test-samples/orientation_tag1.tif'));
 
   await expect(page.locator('body')).toHaveClass(/web-has-image/);
-  await expect(page.locator('#web-file-summary')).toContainText('orientation_tag1.tif');
+  await expect(page.locator('.web-brand small')).toHaveText('Local browser viewer');
   await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
   await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Loading log' }).click();
+  await expect(page.locator('#web-log-panel')).toBeVisible();
+  await expect(page.locator('#web-log-output')).toContainText('📂 Opened 1: orientation_tag1.tif');
+  await expect(page.locator('#web-log-output')).toContainText('[Perf] TIFF:');
+  await expect(page.locator('#web-log-output')).toContainText(/total [\d.]+ms \| visible [\d.]+ms/);
+});
+
+test('keeps separately opened images available as toolbar tabs', async ({ page }) => {
+  await page.goto('/');
+  const input = page.locator('#web-file-input');
+  await input.setInputFiles(path.resolve('test-samples/orientation_tag1.tif'));
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+
+  await input.setInputFiles(path.resolve('test-samples/orientation_tag2.tif'));
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.getByRole('tab', { name: 'orientation_tag2.tif' })).toHaveAttribute('aria-selected', 'true');
+
+  await page.getByRole('tab', { name: 'orientation_tag1.tif' }).click();
+  await expect(page.getByRole('tab', { name: 'orientation_tag1.tif' })).toHaveAttribute('aria-selected', 'true');
+
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'orientation_tag1.tif' })).toHaveAttribute('aria-selected', 'true');
+
+  await page.getByRole('button', { name: 'Close orientation_tag2.tif' }).click();
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Close orientation_tag1.tif' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close orientation_tag1.tif' }).click();
+  await expect(page.getByRole('tab')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Drop images here/ })).toBeVisible();
 });
 
 test('keeps display menus transient and lets explicit zoom sizing win', async ({ page }) => {

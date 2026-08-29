@@ -345,7 +345,11 @@ pub(crate) fn decode_palette(
                 let shift = bit_count - index_bits;
                 unpacked.push((bit_buf >> shift) & mask);
                 bit_count -= index_bits;
-                bit_buf &= if bit_count == 0 { 0 } else { (1usize << bit_count) - 1 };
+                bit_buf &= if bit_count == 0 {
+                    0
+                } else {
+                    (1usize << bit_count) - 1
+                };
             }
         }
         indices = unpacked;
@@ -817,7 +821,10 @@ pub(crate) fn decode_sgilog(
         let start = offset as usize;
         let end = start.saturating_add(count as usize);
         if end > data.len() {
-            return Err(DecodeError::new(&format!("{}: strip {} out of bounds", CTX, index)));
+            return Err(DecodeError::new(&format!(
+                "{}: strip {} out of bounds",
+                CTX, index
+            )));
         }
         let rows_here = (rows_per_strip as usize).min(height as usize - row_base);
         if rows_here == 0 {
@@ -834,7 +841,9 @@ pub(crate) fn decode_sgilog(
                 if at + 3 > block.len() {
                     break;
                 }
-                *slot = ((block[at] as u32) << 16) | ((block[at + 1] as u32) << 8) | block[at + 2] as u32;
+                *slot = ((block[at] as u32) << 16)
+                    | ((block[at + 1] as u32) << 8)
+                    | block[at + 2] as u32;
             }
         } else {
             // SGILog: run-length over byte planes, most significant plane
@@ -904,8 +913,13 @@ pub(crate) fn decode_sgilog(
 
     // `apply_orientation` is generic over the sample type, so the float raster
     // reuses the same transform the byte paths use.
-    let (out, width, height) =
-        super::orientation::apply_orientation(&out, width, height, out_channels as u32, orientation);
+    let (out, width, height) = super::orientation::apply_orientation(
+        &out,
+        width,
+        height,
+        out_channels as u32,
+        orientation,
+    );
     let channels = out_channels as u32;
     let (min, max) = (
         out.iter().copied().fold(f32::INFINITY, f32::min),
@@ -968,14 +982,22 @@ fn logluv_to_rgb(raw: u32, is_24bit: bool) -> (f64, f64, f64) {
     let (luminance, u_prime, v_prime) = if is_24bit {
         let le = (raw >> 14) & 0x3ff;
         let ce = raw & 0x3fff;
-        let y = if le == 0 { 0.0 } else { ((le as f64 + 0.5) / 64.0 - 12.0).exp2() };
+        let y = if le == 0 {
+            0.0
+        } else {
+            ((le as f64 + 0.5) / 64.0 - 12.0).exp2()
+        };
         // UV_SQSIZ / UV_NDIVS decomposition from the LogLuv specification.
         let vi = (ce / 163) as f64;
         let ui = (ce % 163) as f64;
         (y, (ui + 0.5) * 0.003_25 + 0.0, (vi + 0.5) * 0.003_25 + 0.0)
     } else {
         let le = (raw >> 16) & 0x7fff;
-        let y = if le == 0 { 0.0 } else { ((le as f64 + 0.5) / 256.0 - 64.0).exp2() };
+        let y = if le == 0 {
+            0.0
+        } else {
+            ((le as f64 + 0.5) / 256.0 - 64.0).exp2()
+        };
         let u = ((raw >> 8) & 0xff) as f64;
         let v = (raw & 0xff) as f64;
         (y, (u + 0.5) / 410.0, (v + 0.5) / 410.0)
