@@ -1253,8 +1253,13 @@ pub(crate) fn decode_zstd(
         predictor,
         &raster,
     );
+    // Unlimited, like every other decoder this crate builds: the tiff crate's
+    // default caps the buffer it will allocate, and the rebuilt file is the
+    // WHOLE image in one strip, so a large GeoTIFF failed here with "decoder
+    // limits exceeded" while the same pixels decoded fine tiled.
     let mut d = Decoder::new(Cursor::new(rebuilt.as_slice()))
-        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt decoder: {}", e)))?;
+        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt decoder: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
     d.read_image()
         .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt read_image: {}", e)))
 }

@@ -266,7 +266,8 @@ pub(crate) fn decode_palette(
     // all greens, then all blues.
     let cmap = {
         let mut d = Decoder::new(Cursor::new(data))
-            .map_err(|e| DecodeError::new(&format!("Palette: decoder init: {}", e)))?;
+            .map_err(|e| DecodeError::new(&format!("Palette: decoder init: {}", e)))?
+            .with_limits(tiff::decoder::Limits::unlimited());
         for _ in 0..page_index {
             d.next_image()
                 .map_err(|e| DecodeError::new(&format!("Palette: page select: {}", e)))?;
@@ -286,8 +287,11 @@ pub(crate) fn decode_palette(
         return Err(DecodeError::new("Palette: could not patch photometric tag"));
     }
 
+    // Unlimited for the same reason as everywhere else: the tiff crate's
+    // default limits reject a large image outright.
     let mut d = Decoder::new(Cursor::new(patched.as_slice()))
-        .map_err(|e| DecodeError::new(&format!("Palette: patched decoder init: {}", e)))?;
+        .map_err(|e| DecodeError::new(&format!("Palette: patched decoder init: {}", e)))?
+        .with_limits(tiff::decoder::Limits::unlimited());
     for _ in 0..page_index {
         d.next_image()
             .map_err(|e| DecodeError::new(&format!("Palette: patched page select: {}", e)))?;
