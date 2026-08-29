@@ -38,7 +38,7 @@ netpbm = []
 npy = []
 fits = []
 netcdf = []
-dicom = ["dep:dicom-object", "dep:dicom-pixeldata"]
+dicom = ["dep:dicom-object", "dep:dicom-pixeldata", "dep:dicom-toolkit-jpeg2000", "dep:pure_jpegls", "dep:pure_jpegli", "dep:flate2"]
 czi = []
 nd2 = []
 lif = []
@@ -57,6 +57,11 @@ lerc-reader = { version = "0.5", default-features = false, optional = true }
 # shares the codestream reader but its `decode()` flattens 16-bit samples to 8,
 # which is wrong for scientific data — this is the variant to use.
 dicom-toolkit-jpeg2000 = { version = "0.5", optional = true }
+# JPEG-LS and lossless JPEG for DICOM. Both are zero-dependency and touch no
+# filesystem, which matters: the pure-Rust JPEG XR decoder does, and that is
+# exactly why JPEG XR cannot be supported here.
+pure_jpegls = { version = "2.0", optional = true }
+pure_jpegli = { version = "2.0", optional = true }
 weezl = { version = "0.1.12", optional = true }
 flate2 = { version = "1.1", optional = true }
 zune-jpeg = { version = "0.5", optional = true }

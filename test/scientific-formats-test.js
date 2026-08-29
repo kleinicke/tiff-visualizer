@@ -90,6 +90,50 @@ function testDicomFrameLabels() {
 	assert.deepStrictEqual(image.metadata.frameLabels, ['Series 4', 'Series 4', 'Series 6', 'Series 6']);
 }
 
+/** Every compressed transfer syntax must decode to the SAME samples as the
+ * uncompressed twin. The fixtures are written by scripts/make-dicom-testdata.py
+ * and all hold identical pixels, so any difference here is a decoder bug rather
+ * than a property of the file.
+ *
+ * JPEG 2000, JPEG-LS and lossless JPEG are decoded from the encapsulated
+ * fragments by pure-Rust crates — `dicom-pixeldata`'s own adapters for the
+ * first two are C libraries that do not build for WebAssembly. Deflated
+ * Explicit VR is inflated before parsing, and RLE and JPEG Baseline still go
+ * through dicom-pixeldata. */
+function testDicomTransferSyntaxes() {
+	const reference = parseDicom(arrayBuffer('synthetic-ct-codec-ref.dcm'));
+	assert.deepStrictEqual([reference.width, reference.height, reference.channels], [64, 48, 1]);
+
+	for (const [file, syntax, label] of [
+		['synthetic-ct-deflated.dcm', '1.2.840.10008.1.2.1.99', 'Deflated Explicit VR'],
+		['synthetic-ct-jpeg2000.dcm', '1.2.840.10008.1.2.4.90', 'JPEG 2000 Lossless'],
+		['synthetic-ct-jpegls.dcm', '1.2.840.10008.1.2.4.80', 'JPEG-LS Lossless'],
+		['synthetic-ct-jpeglossless.dcm', '1.2.840.10008.1.2.4.70', 'JPEG Lossless SV1'],
+		['synthetic-ct-rle.dcm', '1.2.840.10008.1.2.5', 'RLE Lossless'],
+	]) {
+		const image = parseDicom(arrayBuffer(file));
+		assert.strictEqual(image.metadata.transferSyntax, syntax, `${label}: transfer syntax`);
+		assert.deepStrictEqual(
+			[image.width, image.height, image.channels],
+			[reference.width, reference.height, reference.channels],
+			`${label}: geometry`,
+		);
+		assert.deepStrictEqual(Array.from(image.data), Array.from(reference.data),
+			`${label} must decode to the same samples as the uncompressed twin`);
+		console.log(`  ✅ ${label} matches the uncompressed twin exactly`);
+	}
+
+	// A lossless-JPEG predictor the decoder reproduces incorrectly must be
+	// REFUSED, not returned as a plausible-looking wrong image. Predictor 6 is
+	// one of the two it gets wrong; the error has to name it.
+	assert.throws(
+		() => parseDicom(arrayBuffer('synthetic-ct-jpeglossless-predictor6.dcm')),
+		/predictor 6 is not supported/,
+		'an unsupported lossless-JPEG predictor must fail loudly',
+	);
+	console.log('  ✅ Lossless JPEG with an unsupported predictor is refused, not mis-decoded');
+}
+
 /** `decode_dicom_fast` decodes JPEG Baseline Pixel Data natively now (via
  * dicom-object/dicom-pixeldata in Rust) instead of throwing the
  * `requires codec: jpeg-baseline` error that used to route through the
@@ -316,6 +360,7 @@ async function main() {
 	testFits();
 	testDicom();
 	testDicomFrameLabels();
+	testDicomTransferSyntaxes();
 	await testJpegBaselineDicom();
 	testNetCdf();
 	testCzi();

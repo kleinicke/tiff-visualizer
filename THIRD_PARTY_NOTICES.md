@@ -57,6 +57,17 @@ native-bit-depth entry point.
 
 ---
 
+## pure_jpegls and pure_jpegli (Rust crates)
+
+Pure-Rust JPEG-LS and lossless JPEG decoders, used for the DICOM
+1.2.840.10008.1.2.4.80/.81 and .57/.70 transfer syntaxes.
+
+- **Homepage**: https://crates.io/crates/pure_jpegls and
+  https://crates.io/crates/pure_jpegli
+- **License**: MIT OR Apache-2.0
+
+---
+
 ## lzma-rs (Rust crate)
 
 Pure-Rust xz/LZMA decoder for LZMA-compressed TIFF strips and tiles

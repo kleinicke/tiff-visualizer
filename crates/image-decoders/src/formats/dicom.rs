@@ -55,11 +55,28 @@ struct TagEntry {
 struct Encoding {
     explicit: bool,
     little: bool,
-    /// `Some(_)` for a compressed transfer syntax we can actually decode via
-    /// `dicom-object`/`dicom-pixeldata` (JPEG Baseline or RLE Lossless); the
-    /// payload is an informational label only (no error text depends on it
-    /// anymore, now that both decode successfully).
-    compressed: Option<&'static str>,
+    /// `Some(_)` for an encapsulated (compressed) transfer syntax, naming the
+    /// decoder that handles it.
+    compressed: Option<CompressedCodec>,
+}
+
+/// Which decoder handles an encapsulated transfer syntax.
+///
+/// `dicom-pixeldata` carries adapters for JPEG Baseline and RLE Lossless, and
+/// nothing else that builds for WebAssembly — its JPEG 2000 and JPEG-LS
+/// adapters are C libraries behind Cargo features. The other three codecs are
+/// decoded here instead, straight from the encapsulated fragments, by
+/// pure-Rust crates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CompressedCodec {
+    /// Handed to `dicom-object`/`dicom-pixeldata`.
+    DicomRs,
+    /// 1.2.840.10008.1.2.4.90 / .91
+    Jpeg2000,
+    /// 1.2.840.10008.1.2.4.80 / .81
+    JpegLs,
+    /// 1.2.840.10008.1.2.4.57 / .70 (process 14, selection value 1)
+    JpegLossless,
 }
 
 struct DicomContext<'a> {
@@ -201,15 +218,39 @@ fn parse_dicom_context(data: &[u8]) -> Result<DicomContext<'_>, DecodeError> {
                 little: false,
                 compressed: None,
             },
+            // Deflated Explicit VR: the DATASET after the file meta group is
+            // one raw deflate stream. `decode_dicom_impl` inflates it before
+            // parsing, so by the time the body is read it is plain explicit
+            // little-endian.
+            "1.2.840.10008.1.2.1.99" => Encoding {
+                explicit: true,
+                little: true,
+                compressed: None,
+            },
             "1.2.840.10008.1.2.4.50" => Encoding {
                 explicit: true,
                 little: true,
-                compressed: Some("jpeg-baseline"),
+                compressed: Some(CompressedCodec::DicomRs),
             },
             "1.2.840.10008.1.2.5" => Encoding {
                 explicit: true,
                 little: true,
-                compressed: Some("rle-lossless"),
+                compressed: Some(CompressedCodec::DicomRs),
+            },
+            "1.2.840.10008.1.2.4.57" | "1.2.840.10008.1.2.4.70" => Encoding {
+                explicit: true,
+                little: true,
+                compressed: Some(CompressedCodec::JpegLossless),
+            },
+            "1.2.840.10008.1.2.4.80" | "1.2.840.10008.1.2.4.81" => Encoding {
+                explicit: true,
+                little: true,
+                compressed: Some(CompressedCodec::JpegLs),
+            },
+            "1.2.840.10008.1.2.4.90" | "1.2.840.10008.1.2.4.91" => Encoding {
+                explicit: true,
+                little: true,
+                compressed: Some(CompressedCodec::Jpeg2000),
             },
             _ => {
                 return Err(DecodeError::new(&format!(
@@ -706,6 +747,230 @@ fn decode_native_frame(
     Ok(raw)
 }
 
+/// Locate the fragments of encapsulated Pixel Data.
+///
+/// The value is a sequence of items: a Basic Offset Table first (often empty),
+/// then one or more fragments, ended by a Sequence Delimitation item. Each
+/// item is (FFFE,E000) plus a 4-byte length.
+fn encapsulated_fragments(
+    data: &[u8],
+    pixel_offset: usize,
+) -> Result<(Vec<u32>, Vec<(usize, usize)>), DecodeError> {
+    let mut offset = pixel_offset;
+    let mut offset_table: Vec<u32> = Vec::new();
+    let mut fragments: Vec<(usize, usize)> = Vec::new();
+    let mut first = true;
+
+    while offset.checked_add(8).map(|e| e <= data.len()).unwrap_or(false) {
+        let group = read_u16(data, offset, true).unwrap_or(0);
+        let element = read_u16(data, offset + 2, true).unwrap_or(0);
+        let length = read_u32(data, offset + 4, true).unwrap_or(0) as usize;
+        if group != 0xfffe {
+            break;
+        }
+        if element == 0xe0dd {
+            break; // Sequence Delimitation
+        }
+        if element != 0xe000 {
+            break;
+        }
+        let start = offset + 8;
+        let end = start
+            .checked_add(length)
+            .filter(|end| *end <= data.len())
+            .ok_or_else(|| DecodeError::new("DICOM: encapsulated fragment runs past the file"))?;
+        if first {
+            // Basic Offset Table: 32-bit offsets of each frame's first
+            // fragment, measured from the end of this item.
+            for chunk in data[start..end].chunks_exact(4) {
+                offset_table.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+            first = false;
+        } else {
+            fragments.push((start, end));
+        }
+        offset = end;
+    }
+    if fragments.is_empty() {
+        return Err(DecodeError::new("DICOM: encapsulated Pixel Data has no fragments"));
+    }
+    Ok((offset_table, fragments))
+}
+
+/// The compressed bytes of one frame, joining fragments where a frame was
+/// split across several.
+fn encapsulated_frame_bytes(
+    data: &[u8],
+    pixel_offset: usize,
+    frame: u32,
+    frames: u32,
+) -> Result<Vec<u8>, DecodeError> {
+    let (offset_table, fragments) = encapsulated_fragments(data, pixel_offset)?;
+    let frame = frame as usize;
+
+    // One fragment per frame is what almost every encoder writes.
+    if fragments.len() == frames as usize {
+        let (start, end) = fragments[frame.min(fragments.len() - 1)];
+        return Ok(data[start..end].to_vec());
+    }
+    // Otherwise the Basic Offset Table says where each frame starts. Its
+    // offsets are relative to the first fragment's item header.
+    if offset_table.len() == frames as usize && frames > 0 {
+        let base = fragments[0].0 - 8;
+        let frame_start = base + offset_table[frame.min(offset_table.len() - 1)] as usize;
+        let frame_end = offset_table
+            .get(frame + 1)
+            .map(|next| base + *next as usize)
+            .unwrap_or(usize::MAX);
+        let mut out = Vec::new();
+        for (start, end) in &fragments {
+            if *start >= frame_start && *start < frame_end {
+                out.extend_from_slice(&data[*start..*end]);
+            }
+        }
+        if !out.is_empty() {
+            return Ok(out);
+        }
+    }
+    // A single frame split across fragments is simply their concatenation.
+    if frames <= 1 {
+        let mut out = Vec::new();
+        for (start, end) in &fragments {
+            out.extend_from_slice(&data[*start..*end]);
+        }
+        return Ok(out);
+    }
+    Err(DecodeError::new(&format!(
+        "DICOM: {} fragments for {} frames with no usable offset table",
+        fragments.len(),
+        frames
+    )))
+}
+
+/// Refuse a lossless-JPEG codestream whose predictor the decoder gets wrong.
+///
+/// `pure_jpegli` reproduces selection values 1, 2, 3, 4 and 7 exactly (checked
+/// against libjpeg-turbo's own encoder) but not 5 or 6, which come back
+/// visibly wrong rather than slightly wrong. Transfer syntax .70 mandates
+/// selection value 1 and .57 files use it in practice, so this refuses the two
+/// broken cases by name instead of returning a corrupt image.
+///
+/// The predictor is the first byte after the component specification in the
+/// SOS segment (ITU-T T.81 Annex H: Ss carries the selection value).
+fn check_lossless_jpeg_predictor(encoded: &[u8]) -> Result<(), DecodeError> {
+    let mut offset = 2usize; // past SOI
+    while offset + 4 <= encoded.len() {
+        if encoded[offset] != 0xff {
+            offset += 1;
+            continue;
+        }
+        let marker = encoded[offset + 1];
+        if marker == 0xd8 || marker == 0xd9 {
+            offset += 2;
+            continue;
+        }
+        let length = u16::from_be_bytes([encoded[offset + 2], encoded[offset + 3]]) as usize;
+        if marker == 0xda {
+            // SOS: length, component count, then two bytes per component.
+            let components = *encoded.get(offset + 4).unwrap_or(&0) as usize;
+            let predictor = encoded.get(offset + 5 + 2 * components).copied().unwrap_or(1);
+            if matches!(predictor, 5 | 6) {
+                return Err(DecodeError::new(&format!(
+                    "DICOM lossless JPEG: predictor {} is not supported (the decoder \
+                     reproduces selection values 1-4 and 7 exactly, 5 and 6 incorrectly)",
+                    predictor
+                )));
+            }
+            return Ok(());
+        }
+        offset = offset.checked_add(2 + length).ok_or_else(|| {
+            DecodeError::new("DICOM lossless JPEG: malformed marker segment")
+        })?;
+    }
+    Ok(())
+}
+
+/// Decode one frame compressed with a codec this crate decodes itself —
+/// JPEG 2000, JPEG-LS or lossless JPEG. Returns the raw (pre Rescale
+/// Slope/Intercept) samples, like `decode_native_frame`.
+///
+/// Each codec hands back samples of its own width, so they are written into a
+/// little-endian buffer of `bits_allocated` and read back through
+/// `read_sample`, which is where signedness and Bits Stored are handled for
+/// every other path too.
+fn decode_own_codec_frame(
+    context: &DicomContext,
+    info: &DicomImageInfo,
+    frame: u32,
+    codec: CompressedCodec,
+) -> Result<Vec<f64>, DecodeError> {
+    let encoded =
+        encapsulated_frame_bytes(context.data, context.pixel_offset, frame, info.frames)?;
+    let width = info.columns;
+    let height = info.rows;
+    let bytes_per_sample = ((info.bits_allocated / 8).max(1)) as usize;
+
+    let bytes: Vec<u8> = match codec {
+        CompressedCodec::Jpeg2000 => {
+            let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
+            let image = dicom_toolkit_jpeg2000::Image::new(&encoded, &settings)
+                .map_err(|e| DecodeError::new(&format!("DICOM JPEG 2000 header: {:?}", e)))?;
+            let raw = image
+                .decode_native()
+                .map_err(|e| DecodeError::new(&format!("DICOM JPEG 2000 decode: {:?}", e)))?;
+            // Already little-endian at the codestream's own width; widen to
+            // Bits Allocated when the two disagree (12-bit in 16, say).
+            if raw.bytes_per_sample as usize == bytes_per_sample {
+                raw.data
+            } else if raw.bytes_per_sample == 1 && bytes_per_sample == 2 {
+                raw.data.iter().flat_map(|v| [*v, 0]).collect()
+            } else {
+                return Err(DecodeError::new(&format!(
+                    "DICOM JPEG 2000: {} bytes per sample, dataset says {}",
+                    raw.bytes_per_sample, bytes_per_sample
+                )));
+            }
+        }
+        CompressedCodec::JpegLs | CompressedCodec::JpegLossless => {
+            if codec == CompressedCodec::JpegLossless {
+                check_lossless_jpeg_predictor(&encoded)?;
+            }
+            let (samples, _, _) = if codec == CompressedCodec::JpegLs {
+                jpegls::decode(&encoded, width, height)
+                    .map_err(|e| DecodeError::new(&format!("DICOM JPEG-LS decode: {:?}", e)))?
+            } else {
+                jpegli::decode(&encoded, width, height).map_err(|e| {
+                    DecodeError::new(&format!("DICOM lossless JPEG decode: {:?}", e))
+                })?
+            };
+            if bytes_per_sample == 1 {
+                samples.iter().map(|v| *v as u8).collect()
+            } else {
+                samples.iter().flat_map(|v| v.to_le_bytes()).collect()
+            }
+        }
+        CompressedCodec::DicomRs => unreachable!("handled by decode_compressed_frame"),
+    };
+
+    let sample_count = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|v| v.checked_mul(info.samples as usize))
+        .ok_or_else(|| DecodeError::new("DICOM: dimensions overflow"))?;
+    let mut raw = Vec::with_capacity(sample_count);
+    for index in 0..sample_count {
+        raw.push(read_sample(
+            &bytes,
+            0x7fe0_0010,
+            true,
+            index * bytes_per_sample,
+            info.bits_allocated,
+            info.bits_stored,
+            info.signed,
+        )?);
+    }
+    Ok(raw)
+}
+
 /// Decode one frame of compressed (encapsulated) Pixel Data — JPEG Baseline
 /// or RLE Lossless — via `dicom-object` (parsing) and `dicom-pixeldata`
 /// (codec decode). Returns the raw (pre Rescale Slope/Intercept) samples in
@@ -769,6 +1034,44 @@ fn decode_compressed_frame(
     Ok((raw, photometric))
 }
 
+/// Inflate a Deflated Explicit VR Little Endian dataset (transfer syntax
+/// 1.2.840.10008.1.2.1.99), returning the file meta group followed by the
+/// inflated body. `None` for every other transfer syntax, and for a stream
+/// that does not inflate — a truncated file should reach the parser and get
+/// its usual error, not a decompression one.
+fn inflate_deflated_dataset(data: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    if !(data.len() >= 132 && ascii(data, 128, 4) == "DICM") {
+        return None;
+    }
+    let mut offset = 132usize;
+    let mut deflated = false;
+    while offset.checked_add(8).map(|e| e <= data.len()).unwrap_or(false) {
+        let el = dicom_element(data, offset, true, true)?;
+        if el.group != 0x0002 {
+            break;
+        }
+        if el.tag == 0x0002_0010 {
+            deflated = trim_dicom_string(&ascii(data, el.value_offset, el.length as usize))
+                == "1.2.840.10008.1.2.1.99";
+        }
+        offset = el.value_offset.checked_add(el.length as usize)?;
+    }
+    if !deflated || offset >= data.len() {
+        return None;
+    }
+
+    let mut body = Vec::new();
+    flate2::read::DeflateDecoder::new(&data[offset..])
+        .read_to_end(&mut body)
+        .ok()?;
+    let mut out = Vec::with_capacity(offset + body.len());
+    out.extend_from_slice(&data[..offset]);
+    out.extend_from_slice(&body);
+    Some(out)
+}
+
 /// Decode one DICOM frame — native (uncompressed) or compressed (JPEG
 /// Baseline / RLE Lossless) Pixel Data alike. Patient-identifying tags are
 /// not retained.
@@ -776,12 +1079,26 @@ pub(crate) fn decode_dicom_impl(
     data: &[u8],
     frame_index: u32,
 ) -> Result<ScientificParsed, DecodeError> {
+    // Deflated Explicit VR stores the dataset as one deflate stream; every
+    // offset below is into the inflated form.
+    let inflated = inflate_deflated_dataset(data);
+    let data = inflated.as_deref().unwrap_or(data);
+
     let context = parse_dicom_context(data)?;
     let info = dicom_image_info(&context)?;
     let safe_frame = frame_index.min(info.frames.saturating_sub(1));
 
-    let (raw, photometric) = if context.encoding.compressed.is_some() {
-        decode_compressed_frame(data, safe_frame)?
+    let (raw, photometric) = if let Some(codec) = context.encoding.compressed {
+        if codec == CompressedCodec::DicomRs {
+            decode_compressed_frame(data, safe_frame)?
+        } else {
+            // These codecs carry no colour transform of their own beyond what
+            // the dataset already declares, so the photometric stays as read.
+            (
+                decode_own_codec_frame(&context, &info, safe_frame, codec)?,
+                info.photometric.clone(),
+            )
+        }
     } else {
         (
             decode_native_frame(&context, &info, safe_frame)?,

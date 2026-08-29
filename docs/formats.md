@@ -165,7 +165,10 @@ one that looks plausible and is wrong.
 - Legacy (pre-2012) ND2 files, which use a different container entirely, and
   ND2 files written with Nikon's lossless or lossy compression
 - Compressed CZI subblocks (JPEG, JPEG XR, Zstd) and multi-file CZI sets
-- DICOM compression other than JPEG Baseline
+- DICOM JPEG XL and JPEG XR transfer syntaxes, the MPEG/HEVC video ones, and
+  lossless JPEG with predictor 5 or 6 — the pure-Rust decoder reproduces
+  selection values 1-4 and 7 exactly and those two incorrectly, so they are
+  refused rather than returned wrong (transfer syntax .70 mandates value 1)
 - Writing back to any scientific format — export targets are listed in
   [export](./export.md)
 

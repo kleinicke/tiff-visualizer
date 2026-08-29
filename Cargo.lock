@@ -592,6 +592,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pure_jpegli"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8e94c774550c1e1d116eb595b691dc9c328c9d4470fff7fbaba0873e984d576"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
+name = "pure_jpegls"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "480f6d9c01d5eb952d227ef21e7e1395ae6332df183f70d532ea8dd18d0850fa"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,6 +677,8 @@ dependencies = [
  "lerc-reader",
  "lzma-rs",
  "png",
+ "pure_jpegli",
+ "pure_jpegls",
  "ruzstd",
  "tiff",
  "weezl",

@@ -10,6 +10,13 @@ checks plus parser regression tests:
   no patient, study, institution, or device identifiers.
 - `synthetic-temperature.nc`: classic NetCDF CDF-1 with a 24 x 32 float
   `temperature(latitude, longitude)` variable.
+- `synthetic-ct-codec-ref.dcm` and its compressed twins
+  (`-deflated`, `-jpeg2000`, `-jpegls`, `-jpeglossless`, `-rle`): the same
+  64 x 48 12-bit pixels under six transfer syntaxes, so a decode can be
+  compared against an uncompressed reference rather than merely inspected.
+  `-jpeglossless-predictor6` uses a predictor the decoder does NOT reproduce
+  correctly and must be refused. These are written by
+  `scripts/make-dicom-testdata.py`, which needs pydicom and imagecodecs.
 
 The generated fixtures are dedicated to the public domain under CC0-1.0. They
 do not derive from clinical, astronomical, or meteorological source data.
@@ -25,9 +32,12 @@ Current decoder scope:
 - FITS: numeric primary/IMAGE HDUs (`BITPIX` 8, 16, 32, 64, -32, -64); the
   first 2D plane is displayed for higher-dimensional arrays.
 - DICOM: native uncompressed Implicit/Explicit VR Little Endian and Explicit VR
-  Big Endian Pixel Data; the first frame is displayed for multi-frame files.
+  Big Endian Pixel Data, Deflated Explicit VR, and the RLE Lossless, JPEG
+  Baseline, JPEG-LS, JPEG 2000 and lossless JPEG encapsulated syntaxes; the
+  first frame is displayed for multi-frame files.
 - NetCDF: classic CDF-1/CDF-2; the first numeric variable with at least two
   dimensions and its first 2D slice are displayed.
 
-Compressed DICOM transfer syntaxes and NetCDF-4/HDF5 are deliberately reported
-as unsupported rather than being decoded incorrectly.
+The remaining DICOM transfer syntaxes (JPEG XL, JPEG XR, the video ones) and
+NetCDF-4/HDF5 are deliberately reported as unsupported rather than being
+decoded incorrectly.
