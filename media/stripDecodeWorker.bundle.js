@@ -176,6 +176,19 @@ function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, c
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v3;
 }
+function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v3;
+}
 function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -190,19 +203,6 @@ function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
   var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v4;
-}
-function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
-  }
-  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v3;
 }
 function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
@@ -1986,13 +1986,6 @@ var TiffResult = class _TiffResult {
   /**
    * @returns {number}
    */
-  get sample_kind() {
-    const ret = wasm.tiffresult_sample_kind(this.__wbg_ptr);
-    return ret >>> 0;
-  }
-  /**
-   * @returns {number}
-   */
   get strip_count() {
     const ret = wasm.tiffresult_strip_count(this.__wbg_ptr);
     return ret >>> 0;
@@ -2070,15 +2063,6 @@ var TiffResult = class _TiffResult {
     const ret = wasm.tiffresult_get_data_as_f32(this.__wbg_ptr);
     var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-    return v1;
-  }
-  /**
-   * @returns {Uint8Array}
-   */
-  take_data_as_u8() {
-    const ret = wasm.tiffresult_take_data_as_u8(this.__wbg_ptr);
-    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v1;
   }
   /**
@@ -2180,13 +2164,6 @@ var TiffResult = class _TiffResult {
    */
   get channels() {
     const ret = wasm.tiffresult_channels(this.__wbg_ptr);
-    return ret >>> 0;
-  }
-  /**
-   * @returns {number}
-   */
-  get data_len() {
-    const ret = wasm.tiffresult_data_len(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**

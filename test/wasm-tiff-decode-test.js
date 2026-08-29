@@ -9,6 +9,9 @@
  *   - Uncompressed bilevel  (1-bit, expanded to 8-bit grayscale)
  *   - Palette / RGBPalette  (indices expanded to RGB via the ColorMap)
  *   - ZSTD                  (compression 50000, stripped, tiled and planar)
+ *   - LZMA                  (compression 34925)
+ *   - PNG-in-TIFF           (compression 34933)
+ *   - LERC                  (compression 34887, incl. LERC_DEFLATE/LERC_ZSTD)
  *
  * The CCITT-compressed images are byte-for-byte copies of an uncompressed
  * reference, so a correct decode must match the reference exactly.
@@ -203,6 +206,73 @@ async function main() {
 		assert.deepStrictEqual(z.data, r.data,
 			`ZSTD ${label} must match the uncompressed reference exactly`);
 		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
+	}
+
+	// 5d. LZMA (34925), PNG-in-TIFF (34933) and LERC (34887) — the codecs the
+	//     `tiff` crate knows nothing about, so every layout of them runs
+	//     through the block decoder. LERC is the one codec geotiff.js could
+	//     decode and this decoder could not; the others tifffile/imagecodecs
+	//     writes and nothing else here covered.
+	//
+	//     Fixtures come from scripts/make-codec-testdata.py. LZMA blocks are
+	//     standalone .xz streams; PNG blocks are complete PNG images (16-bit
+	//     PNG is big-endian, so the RGB16 file exercises the swap into the
+	//     TIFF's little-endian order); the LERC files include GDAL's
+	//     LERC_DEFLATE and LERC_ZSTD wrappers and a tiled layout.
+	for (const [file, refFile, comp, label] of [
+		['lzma_u16.tif', 'codec_ref_u16.tif', 34925, 'LZMA, uint16 strips'],
+		['lzma_tiled_pred2_u16.tif', 'codec_ref_u16.tif', 34925, 'LZMA, tiled, horizontal predictor'],
+		['lzma_pred3_f32.tif', 'codec_ref_f32.tif', 34925, 'LZMA, float predictor, float32'],
+		['png_in_tiff_u16.tif', 'codec_ref_u16.tif', 34933, 'PNG-in-TIFF, uint16'],
+		['png_in_tiff_rgb16.tif', 'codec_ref_rgb16.tif', 34933, 'PNG-in-TIFF, RGB16 (byte order swapped)'],
+		['lerc_u16.tif', 'codec_ref_u16.tif', 34887, 'LERC, lossless uint16'],
+		['lerc_f32.tif', 'codec_ref_f32.tif', 34887, 'LERC, lossless float32'],
+		['lerc_rgb8.tif', 'codec_ref_rgb8.tif', 34887, 'LERC, 3 values per pixel'],
+		['lerc_tiled_f32.tif', 'codec_ref_f32.tif', 34887, 'LERC, tiled float32'],
+		['lerc_deflate_u16.tif', 'codec_ref_u16.tif', 34887, 'LERC_DEFLATE (tag 50674 = 1)'],
+		['lerc_zstd_u16.tif', 'codec_ref_u16.tif', 34887, 'LERC_ZSTD (tag 50674 = 2)'],
+	]) {
+		const img = decode(mod, file);
+		const ref = decode(mod, refFile);
+		assert.strictEqual(img.compression, comp, `${file} compression tag`);
+		assert.strictEqual(img.width, ref.width, `${label}: width`);
+		assert.strictEqual(img.height, ref.height, `${label}: height`);
+		assert.strictEqual(img.channels, ref.channels, `${label}: channels`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`${label} must match the uncompressed reference exactly`);
+		console.log(`✅ ${label} matches the uncompressed reference exactly`);
+	}
+
+	// 5d-i. A PALETTE image compressed with a codec the tiff crate does not
+	//     implement. The ColorMap expansion decodes the indices through a
+	//     separate path, which used to hand the file straight to the tiff
+	//     crate and fail on the compression alone.
+	{
+		const img = decode(mod, 'palette_zstd.tif');
+		const ref = decode(mod, 'palette_codec_ref.tif');
+		assert.strictEqual(img.compression, 50000, 'palette_zstd.tif compression tag');
+		assert.strictEqual(img.channels, 3, 'palette indices must expand to RGB');
+		assert.deepStrictEqual(img.data, ref.data,
+			'a ZSTD palette image must expand exactly like its uncompressed twin');
+		console.log('✅ Palette image under a block-only codec (ZSTD) expands through the ColorMap');
+	}
+
+	// 5d-ii. The two LERC cases whose pixels are NOT the input array: a lossy
+	//     blob, where the reconstruction is the codec's to define, and a
+	//     masked blob, whose invalid pixels the codec reads back as zero.
+	//     Both references are imagecodecs' decode of the same file — Esri's
+	//     own LERC library — so these assert agreement with the reference
+	//     implementation, not merely a lossless round trip.
+	for (const [file, refFile, label] of [
+		['lerc_lossy_f32.tif', 'lerc_lossy_ref_f32.tif', 'LERC lossy (maxZError 0.01)'],
+		['lerc_masked_f32.tif', 'lerc_masked_ref_f32.tif', 'LERC with an invalid-pixel mask'],
+	]) {
+		const img = decode(mod, file);
+		const ref = decode(mod, refFile);
+		assert.strictEqual(img.compression, 34887, `${file} compression tag`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`${label} must match Esri's own decoder sample for sample`);
+		console.log(`✅ ${label} matches Esri's reference decoder exactly`);
 	}
 
 	// 5b-ii. Deflate + floating-point predictor (3) across MULTIPLE strips is the

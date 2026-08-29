@@ -272,7 +272,16 @@ export class SizeStatusBarEntry extends PreviewStatusBarEntry {
 			'8': 'Deflate (ZIP)',
 			'32773': 'PackBits',
 			'32946': 'Deflate (ZIP)',
-			'50000': 'Zstd'
+			'33003': 'JPEG 2000 (Aperio YCbCr)',
+			'33005': 'JPEG 2000 (Aperio RGB)',
+			'34712': 'JPEG 2000',
+			'34887': 'LERC',
+			'34925': 'LZMA',
+			'34933': 'PNG',
+			'34934': 'JPEG XR',
+			'50000': 'Zstd',
+			'50001': 'WebP',
+			'50002': 'JPEG XL'
 		};
 		return compressionMap[compression.toString()] || `Unknown (${compression})`;
 	}

@@ -310,10 +310,43 @@ pub(crate) fn decode_palette(
     let orientation = TiffOrientation::from_tag(d.get_tag_u32(Tag::Orientation).unwrap_or(1));
 
     let index_bits = d.get_tag_u32(Tag::BitsPerSample).unwrap_or(8);
-    let mut indices: Vec<usize> = match d
-        .read_image()
-        .map_err(|e| DecodeError::new(&format!("Palette: index decode failed: {}", e)))?
+    // Codecs the tiff crate does not implement (ZSTD, LZMA, PNG-in-TIFF,
+    // LERC): read the indices with our own block decoder instead of
+    // `read_image()`, which would only report the compression as unsupported.
+    // Sub-byte indices are left to `read_image()` on purpose — the block
+    // decoder already unpacks them to one value per sample, which the
+    // row-by-row unpacking below would then unpack a second time.
+    let block_decoded = if compression == 50000
+        && index_bits >= 8
+        && tile_width == 0
+        && tile_length == 0
+        && planar != 2
     {
+        // Strip ZSTD has its own reader, the same one the non-palette path uses.
+        Some(super::strips::decode_zstd(&patched, &mut d)?)
+    } else if matches!(compression, 34887 | 34925 | 34933 | 50000) && index_bits >= 8 {
+        super::strips::try_decode_general_strips_tiles(
+            &patched,
+            &mut d,
+            width,
+            height,
+            1,
+            index_bits,
+            compression,
+            predictor,
+            planar,
+            tile_width,
+            tile_length,
+        )?
+    } else {
+        None
+    };
+    let mut indices: Vec<usize> = match match block_decoded {
+        Some(result) => result,
+        None => d
+            .read_image()
+            .map_err(|e| DecodeError::new(&format!("Palette: index decode failed: {}", e)))?,
+    } {
         DecodingResult::U8(v) => v.iter().map(|&x| x as usize).collect(),
         DecodingResult::U16(v) => v.iter().map(|&x| x as usize).collect(),
         _ => return Err(DecodeError::new("Palette: unexpected index sample type")),

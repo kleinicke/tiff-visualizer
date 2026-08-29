@@ -37,6 +37,25 @@ Used as the primary TIFF decoder, compiled to WebAssembly.
 
 ---
 
+## lerc-reader (Rust crate)
+
+Pure-Rust decoder for LERC-compressed TIFF strips and tiles (compression 34887).
+
+- **Homepage**: https://github.com/i-norden/lerc-rust
+- **License**: MIT OR Apache-2.0
+
+---
+
+## lzma-rs (Rust crate)
+
+Pure-Rust xz/LZMA decoder for LZMA-compressed TIFF strips and tiles
+(compression 34925).
+
+- **Homepage**: https://github.com/gendx/lzma-rs
+- **License**: MIT
+
+---
+
 ## geotiff.js
 
 Used as the fallback TIFF decoder.

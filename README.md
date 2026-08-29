@@ -35,7 +35,7 @@ Extensionless DICOM studies can be opened with **Scientific Image Visualizer: Op
 
 ## Features
 
-- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files, including the LZW, Deflate and Zstd GeoTIFFs that GDAL writes, tiled or stripped.
+- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files: LZW, Deflate, PackBits, Zstd, LZMA, LERC (with GDAL's LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, WebP and CCITT fax, tiled or stripped.
 - **Scientific Image Inspection**: Inspect uint8, uint16, float16, and float32 image data in grayscale, RGB, and RGBA images.
 - **Dataset Navigation**: Browse DICOM series/slices and multi-file OME C/Z/T planes as one logical dataset while the viewer switches physical files transparently.
 - **Interactive Pixel Values**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.

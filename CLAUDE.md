@@ -469,8 +469,8 @@ return ImageRenderer.render(
 The extension handles diverse image formats with minimal processor code. Each format processor converts to Float32Array and delegates rendering to the central pipeline:
 
 - **TIFF** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)):
-  - Decoded by Rust/WASM. geotiff.js remains only for TIFF cases the Rust decoder does not yet cover; it is not a general fallback
-  - Supports LZW/Deflate compression, predictors, multi-channel
+  - Decoded by Rust/WASM. geotiff.js remains only for TIFF cases the Rust decoder does not yet cover; it is not a general fallback. As of the LERC work its decoder registry (raw, LZW, Deflate, PackBits, JPEG, LERC, WebP-via-`createImageBitmap`) is a strict SUBSET of the Rust decoder's codecs, so it no longer covers any compression on its own
+  - Supports LZW, Deflate, PackBits, Zstd, LZMA, LERC (incl. LERC_DEFLATE/LERC_ZSTD), PNG-in-TIFF, JPEG, WebP and CCITT fax, with predictors and multi-channel data. JPEG 2000, JPEG XR and JPEG XL in TIFF are not decoded: no pure-Rust decoder exists to build on
   - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
   - Sets `typeMax` based on bit depth for proper gamma mode normalization
   - Rasters are always copied into Float32Array internally (even for integer TIFFs) before interleaving — relevant when tracking how special float values (NaN, Infinity) propagate

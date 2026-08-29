@@ -197,6 +197,36 @@ pub(crate) fn decompress_strip_or_tile(
     expected_len: usize,
     context: &str,
 ) -> Result<Vec<u8>, DecodeError> {
+    decompress_block(block, compression, expected_len, context, None)
+}
+
+/// How the samples in a block are laid out, for the codecs that decode to
+/// TYPED values rather than to the file's raw bytes. LERC and PNG both hand
+/// back numbers of a known type; turning those back into a TIFF strip means
+/// writing them in the file's own byte order and width, which the byte-in,
+/// byte-out codecs (LZW, Deflate, ZSTD, LZMA) never need to know.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct BlockCodecInfo {
+    pub bits_per_sample: u32,
+    /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
+    pub sample_format: u32,
+    pub little_endian: bool,
+    /// TIFF tag 50674 (LercParameters), second value: an extra codec applied
+    /// on top of the LERC blob. 0 = none, 1 = Deflate, 2 = ZSTD.
+    pub lerc_additional_compression: u32,
+}
+
+/// `decompress_strip_or_tile` plus the layout the typed codecs need. Callers
+/// that can meet a LERC or PNG block must pass `info`; the others may pass
+/// `None` and get a clear error rather than a wrong picture if such a block
+/// turns up anyway.
+pub(crate) fn decompress_block(
+    block: &[u8],
+    compression: u32,
+    expected_len: usize,
+    context: &str,
+    info: Option<&BlockCodecInfo>,
+) -> Result<Vec<u8>, DecodeError> {
     use std::io::Read;
 
     match compression {
@@ -273,10 +303,195 @@ pub(crate) fn decompress_strip_or_tile(
             }
             Ok(buf)
         }
+        // LZMA. libtiff and tifffile both write each strip/tile as a
+        // standalone .xz stream (magic FD 37 7A 58 5A 00), not a bare LZMA1
+        // chunk, so this is the xz entry point.
+        34925 => {
+            let mut out = Vec::with_capacity(expected_len);
+            lzma_rs::xz_decompress(&mut std::io::Cursor::new(block), &mut out).map_err(|e| {
+                DecodeError::new(&format!("{}: LZMA decode failed: {:?}", context, e))
+            })?;
+            Ok(out)
+        }
+        // PNG-in-TIFF: every block is a complete PNG stream covering exactly
+        // that strip or tile.
+        34933 => decode_png_block(block, expected_len, context, codec_info(info, context, "PNG")?),
+        // LERC, including GDAL's LERC_DEFLATE and LERC_ZSTD, which wrap the
+        // same blob in a second codec named by tag 50674.
+        34887 => decode_lerc_block(block, expected_len, context, codec_info(info, context, "LERC")?),
         _ => Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             context, compression
         ))),
+    }
+}
+
+/// A typed codec cannot run without knowing the sample layout; a caller that
+/// did not supply one has a bug, and saying so beats decoding garbage.
+fn codec_info<'a>(
+    info: Option<&'a BlockCodecInfo>,
+    context: &str,
+    codec: &str,
+) -> Result<&'a BlockCodecInfo, DecodeError> {
+    info.ok_or_else(|| {
+        DecodeError::new(&format!(
+            "{}: {} blocks need the sample layout, which this path does not have",
+            context, codec
+        ))
+    })
+}
+
+/// Decode one PNG-compressed strip/tile. The PNG crate returns 16-bit samples
+/// big-endian (PNG's own order); a little-endian TIFF wants them the other way
+/// round, so they are swapped back into the file's order.
+fn decode_png_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let mut decoder = png::Decoder::new(block);
+    // Keep the samples exactly as stored: no palette expansion, no
+    // 1/2/4-bit widening. A TIFF strip must come back with the geometry the
+    // IFD promised, and any expansion here would change its stride.
+    decoder.set_transformations(png::Transformations::IDENTITY);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| DecodeError::new(&format!("{}: PNG header: {}", context, e)))?;
+    let mut buffer = vec![0u8; reader.output_buffer_size()];
+    let frame = reader
+        .next_frame(&mut buffer)
+        .map_err(|e| DecodeError::new(&format!("{}: PNG decode failed: {}", context, e)))?;
+    buffer.truncate(frame.buffer_size());
+    if info.bits_per_sample == 16 && info.little_endian {
+        for pair in buffer.chunks_exact_mut(2) {
+            pair.swap(0, 1);
+        }
+    }
+    if buffer.len() < expected_len {
+        return Err(DecodeError::new(&format!(
+            "{}: PNG block holds {} bytes, expected {}",
+            context,
+            buffer.len(),
+            expected_len
+        )));
+    }
+    Ok(buffer)
+}
+
+/// Decode one LERC-compressed strip/tile.
+///
+/// LERC is a *value* codec: it hands back numbers, with a validity mask and a
+/// declared maximum error, not the strip's bytes. Re-serializing them in the
+/// file's own sample type and byte order lets the rest of the block path treat
+/// a LERC tile exactly like any other. Values the blob marks invalid are
+/// written as zero, which is how libtiff's own LERC codec reads them back:
+/// the TIFF encoder always marks every pixel valid, so a mask only appears in
+/// blobs that came from somewhere else.
+fn decode_lerc_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    use std::io::Read;
+
+    // GDAL's LERC_DEFLATE / LERC_ZSTD put a second codec around the blob.
+    let blob = match info.lerc_additional_compression {
+        0 => std::borrow::Cow::Borrowed(block),
+        1 => {
+            let mut inflated = Vec::new();
+            flate2::read::ZlibDecoder::new(block)
+                .read_to_end(&mut inflated)
+                .map_err(|e| {
+                    DecodeError::new(&format!("{}: LERC Deflate wrapper failed: {}", context, e))
+                })?;
+            std::borrow::Cow::Owned(inflated)
+        }
+        2 => std::borrow::Cow::Owned(decompress_strip_or_tile(
+            block,
+            50000,
+            expected_len,
+            context,
+        )?),
+        other => {
+            return Err(DecodeError::new(&format!(
+                "{}: LERC additional compression {} is not supported",
+                context, other
+            )))
+        }
+    };
+
+    let decoded = lerc_reader::decode_to_f64(&blob)
+        .map_err(|e| DecodeError::new(&format!("{}: LERC decode failed: {}", context, e)))?;
+    let bytes_per_sample = (info.bits_per_sample as usize + 7) / 8;
+    if decoded.pixels.len().saturating_mul(bytes_per_sample) < expected_len {
+        return Err(DecodeError::new(&format!(
+            "{}: LERC block holds {} samples ({} bytes), expected {}",
+            context,
+            decoded.pixels.len(),
+            decoded.pixels.len() * bytes_per_sample,
+            expected_len
+        )));
+    }
+
+    let mut out = Vec::with_capacity(decoded.pixels.len() * bytes_per_sample);
+    let mask = decoded.mask.as_deref();
+    let depth = decoded.info.depth.max(1) as usize;
+    for (index, value) in decoded.pixels.iter().enumerate() {
+        // The mask is one byte per PIXEL; a multi-band blob stores `depth`
+        // values per pixel, so several samples share one mask entry.
+        let valid = mask.is_none_or(|m| m.get(index / depth).copied().unwrap_or(1) != 0);
+        let value = if valid { *value } else { 0.0 };
+        match (info.sample_format, info.bits_per_sample) {
+            (3, 32) => out.extend_from_slice(&to_file_order_4(
+                (value as f32).to_bits(),
+                info.little_endian,
+            )),
+            (3, 64) => {
+                let bits = value.to_bits();
+                if info.little_endian {
+                    out.extend_from_slice(&bits.to_le_bytes());
+                } else {
+                    out.extend_from_slice(&bits.to_be_bytes());
+                }
+            }
+            (2, 8) => out.push((value as i8) as u8),
+            (2, 16) => out.extend_from_slice(&to_file_order_2(
+                (value as i16) as u16,
+                info.little_endian,
+            )),
+            (2, 32) => out.extend_from_slice(&to_file_order_4(
+                (value as i32) as u32,
+                info.little_endian,
+            )),
+            (_, 8) => out.push(value as u8),
+            (_, 16) => out.extend_from_slice(&to_file_order_2(value as u16, info.little_endian)),
+            (_, 32) => out.extend_from_slice(&to_file_order_4(value as u32, info.little_endian)),
+            (format, bits) => {
+                return Err(DecodeError::new(&format!(
+                    "{}: LERC with sample format {} at {} bits is not supported",
+                    context, format, bits
+                )))
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
+    if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
+    }
+}
+
+fn to_file_order_4(value: u32, little_endian: bool) -> [u8; 4] {
+    if little_endian {
+        value.to_le_bytes()
+    } else {
+        value.to_be_bytes()
     }
 }
 
@@ -632,8 +847,14 @@ pub(crate) fn try_decode_general_strips_tiles(
     // zstd support is a C dependency the WASM build cannot use. Cloud-optimized
     // GeoTIFFs are tiled by definition, so this is the common shape in the
     // wild. Strip ZSTD keeps using `decode_zstd`.
+    //
+    // LERC, LZMA and PNG-in-TIFF have no handler at all outside this path —
+    // the tiff crate knows none of the three — so every layout of them is
+    // claimed here, strips included.
+    let block_only_codec = matches!(compression, 34887 | 34925 | 34933);
     let claim = planar_configuration == 2
         || (is_tiled && matches!(compression, 5 | 50000))
+        || block_only_codec
         || (odd_depth && !subbit_strip_path_handles);
     if !claim || bits_per_sample <= 1 {
         return Ok(None);
@@ -662,7 +883,7 @@ pub(crate) fn try_decode_general_strips_tiles(
             CTX, bits_per_sample
         )));
     }
-    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) {
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000 | 34887 | 34925 | 34933) {
         return Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             CTX, compression
@@ -712,6 +933,19 @@ pub(crate) fn try_decode_general_strips_tiles(
     }
     // Multi-byte samples are stored in the file's byte order.
     let little_endian = data.first() == Some(&b'I');
+
+    // Tag 50674 (LercParameters) is [version, additional compression]; the
+    // second value names the codec GDAL wrapped the LERC blob in.
+    let codec_info = BlockCodecInfo {
+        bits_per_sample,
+        sample_format,
+        little_endian,
+        lerc_additional_compression: decoder
+            .get_tag_u32_vec(Tag::Unknown(50674))
+            .ok()
+            .and_then(|values| values.get(1).copied())
+            .unwrap_or(0),
+    };
 
     let planes = if planar_configuration == 2 {
         channels
@@ -820,7 +1054,13 @@ pub(crate) fn try_decode_general_strips_tiles(
                 let decompressed = if count == 0 {
                     vec![0u8; expected_bytes]
                 } else {
-                    decompress_strip_or_tile(block_bytes, compression, expected_bytes, CTX)?
+                    decompress_block(
+                        block_bytes,
+                        compression,
+                        expected_bytes,
+                        CTX,
+                        Some(&codec_info),
+                    )?
                 };
                 if decompressed.len() < expected_bytes {
                     return Err(DecodeError::new(&format!(
