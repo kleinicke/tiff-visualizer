@@ -77,6 +77,8 @@ The extension uses five primary build targets:
 2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
 3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
 4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Runs pure-data decoders, including TIFF/WASM, EXR, NPY/NPZ, NetPBM, HDR, FITS, DICOM, and NetCDF, off the UI thread. Bytes and typed arrays cross as zero-copy transfers; every path retains a main-thread fallback.
+The TIFF decode also has a **worker pool** ([media/modules/strip-parallel-decode.ts](media/modules/strip-parallel-decode.ts)): eligible files are split into units of work — one strip, or one whole tile ROW, since both are full-width bands that drop into the image at a single offset — and decoded concurrently. Eligibility is decided in Rust (`tiff_float_strip_plan`), which covers byte-aligned chunky layouts, predictors 1/2/3, and every codec `decompress_block` implements. `test:strip-parallel` asserts the pool's output is identical to the single-threaded decode for every eligible file in `test-samples`; that equality is the whole contract, so do not widen the plan without running it.
+
 5. **Layer compositor worker bundle** (`media/layer-compositor-worker.ts` → `media/layerCompositorWorker.bundle.js`) - Retains raster assets off-thread, composes full-resolution editable layer stacks, produces scaled interaction previews, and reuses group/clipping/dirty-region caches. The synchronous CPU path remains the fallback and export correctness reference.
 
 This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).

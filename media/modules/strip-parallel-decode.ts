@@ -1,18 +1,22 @@
 "use strict";
 /**
- * Parallel TIFF decoding across a pool of workers, one strip range each.
+ * Parallel TIFF decoding across a pool of workers, one range of units each.
  *
- * Strips in a TIFF are compressed independently, so a contiguous run of them is
- * a self-contained unit of work. `tiff_float_strip_plan` reports the layout
- * from the IFD alone; this module slices the file per worker so each one
- * receives ONLY its own strips' compressed bytes (total bytes crossing the
- * worker boundary is one file's worth, not one copy per worker), then
- * assembles the returned samples.
+ * Blocks in a TIFF are compressed independently, so a contiguous run of them is
+ * a self-contained unit of work. A UNIT here is one strip, or one whole tile
+ * ROW: both are full-width bands of the image, so a worker's output drops into
+ * the assembled image at a single offset. (A single tile would not qualify —
+ * it covers only part of each row it touches.)
+ *
+ * `tiff_float_strip_plan` reports the layout from the IFD alone; this module
+ * slices the file per worker so each one receives ONLY its own units'
+ * compressed bytes (total bytes crossing the worker boundary is one file's
+ * worth, not one copy per worker), then assembles the returned samples.
  *
  * Eligibility is decided in Rust: the plan is returned only for byte-aligned
- * chunky strip layouts with predictor 1/2/3 and no pixel post-processing
- * pending (no orientation flip, palette, CMYK or CFA), so nothing here has to
- * re-implement those transforms.
+ * chunky layouts with predictor 1/2/3, a codec the block decoder implements,
+ * and no pixel post-processing pending (no orientation flip, palette, CMYK or
+ * CFA), so nothing here has to re-implement those transforms.
  *
  * Falls back to `null` for anything it cannot handle; the caller then uses the
  * ordinary single-worker path.
@@ -54,6 +58,10 @@ export interface StripParallelResult {
 	predictor: number;
 	rowsPerStrip: number;
 	stripCount: number;
+	/** Tile geometry when the file was tiled; both zero for strips. */
+	tileWidth: number;
+	tileLength: number;
+	tileCount: number;
 	photometricInterpretation: number;
 	pageCount: number;
 	allTagsJson: string;
@@ -335,6 +343,18 @@ export async function tryStripParallelDecode(
 	const offsets: Float64Array = plan.offsets;
 	const counts: Float64Array = plan.counts;
 	const rowsPerStrip: number = plan.rows_per_strip;
+	// One entry per unit for a stripped file; one per tile for a tiled one.
+	const blocksPerUnit: number = plan.blocks_per_unit || 1;
+	const tileWidth: number = plan.tile_width || 0;
+	const tileLength: number = plan.tile_length || 0;
+	const blocksAcross: number = plan.blocks_across || 1;
+	const lercAdditionalCompression: number = plan.lerc_additional_compression || 0;
+	/** Compressed bytes of unit `i`, summed over the blocks it covers. */
+	const unitBytes = (i: number) => {
+		let total = 0;
+		for (let b = 0; b < blocksPerUnit; b++) { total += counts[i * blocksPerUnit + b]; }
+		return total;
+	};
 	const timings: { name: string, durationMs: number }[] = [
 		{ name: 'strip-plan', durationMs: performance.now() - planStart },
 	];
@@ -355,7 +375,7 @@ export async function tryStripParallelDecode(
 	// measured slower than over 6).
 	const workerCount = Math.min(pool.size, stripCount);
 	let totalBytes = 0;
-	for (let i = 0; i < stripCount; i++) { totalBytes += counts[i]; }
+	for (let i = 0; i < stripCount; i++) { totalBytes += unitBytes(i); }
 	const targetPerWorker = totalBytes / workerCount;
 
 	const ranges: { first: number, last: number }[] = [];
@@ -368,7 +388,7 @@ export async function tryStripParallelDecode(
 		// Always leave at least one strip for each remaining worker.
 		const maxEnd = stripCount - (remainingWorkers - 1);
 		while (end < maxEnd && (acc < targetPerWorker || end === cursor)) {
-			acc += counts[end];
+			acc += unitBytes(end);
 			end++;
 		}
 		if (w === workerCount - 1) { end = stripCount; }
@@ -380,17 +400,20 @@ export async function tryStripParallelDecode(
 	const raw = carrierFor(plan.bits_per_sample, plan.sample_format);
 	const dispatchStart = performance.now();
 	const jobs = ranges.map((range, index) => {
+		// Blocks, not units: a tile row contributes `blocksPerUnit` of them.
+		const firstBlock = range.first * blocksPerUnit;
+		const lastBlock = range.last * blocksPerUnit;
 		let blobLength = 0;
-		for (let i = range.first; i < range.last; i++) { blobLength += counts[i]; }
+		for (let i = firstBlock; i < lastBlock; i++) { blobLength += counts[i]; }
 		const blob = new Uint8Array(blobLength);
-		const rangeCounts = new Uint32Array(range.last - range.first);
+		const rangeCounts = new Uint32Array(lastBlock - firstBlock);
 		let position = 0;
-		for (let i = range.first; i < range.last; i++) {
+		for (let i = firstBlock; i < lastBlock; i++) {
 			const offset = offsets[i];
 			const count = counts[i];
 			blob.set(bytes.subarray(offset, offset + count), position);
 			position += count;
-			rangeCounts[i - range.first] = count;
+			rangeCounts[i - firstBlock] = count;
 		}
 		return pool.run({
 			raw: !!raw,
@@ -404,6 +427,8 @@ export async function tryStripParallelDecode(
 			predictor: plan.predictor,
 			sampleFormat: plan.sample_format,
 			littleEndian: plan.little_endian,
+			tileWidth, tileLength, blocksAcross,
+			lercAdditionalCompression,
 		}, [blob.buffer, rangeCounts.buffer], index);
 	});
 
@@ -447,6 +472,8 @@ export async function tryStripParallelDecode(
 	}
 
 	return {
+		tileWidth, tileLength,
+		tileCount: tileWidth > 0 ? counts.length : 0,
 		width, height, channels,
 		bitsPerSample: plan.bits_per_sample,
 		sampleFormat: plan.sample_format,

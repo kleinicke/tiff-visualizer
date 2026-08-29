@@ -728,11 +728,15 @@ pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
         .map_err(js_error)
 }
 
-// --- Strip-parallel decoding of predictor-3 float TIFFs ---------------------
+// --- Parallel decoding, one strip or tile ROW per unit of work -------------
 //
 // `tiff_float_strip_plan` is called once (cheap: it only parses the IFD) to
-// learn the strip layout. The caller then slices the file per worker and each
-// worker calls `decode_tiff_float_strip_range` with just its own strips.
+// learn the layout. The caller then slices the file per worker and each worker
+// calls `decode_tiff_float_strip_range` with just its own units' blocks.
+//
+// A UNIT is a strip, or a whole tile row: both are full-width bands, so a
+// worker's output drops into the image at one offset. `blocks_per_unit` says
+// how many entries of `offsets`/`counts` each unit consumes.
 
 #[wasm_bindgen]
 pub struct TiffFloatStripPlanJs {
@@ -778,7 +782,38 @@ impl TiffFloatStripPlanJs {
         self.inner.little_endian
     }
     #[wasm_bindgen(getter)]
+    pub fn tile_width(&self) -> u32 {
+        self.inner.tile_width
+    }
+    #[wasm_bindgen(getter)]
+    pub fn tile_length(&self) -> u32 {
+        self.inner.tile_length
+    }
+    /// Blocks per unit of work: 1 for strips, one per tile column for tiles.
+    #[wasm_bindgen(getter)]
+    pub fn blocks_per_unit(&self) -> u32 {
+        if self.inner.tile_width > 0 && self.inner.tile_length > 0 {
+            self.inner.blocks_across.max(1)
+        } else {
+            1
+        }
+    }
+    #[wasm_bindgen(getter)]
+    pub fn blocks_across(&self) -> u32 {
+        self.inner.blocks_across
+    }
+    #[wasm_bindgen(getter)]
+    pub fn lerc_additional_compression(&self) -> u32 {
+        self.inner.lerc_additional_compression
+    }
+    /// Units of work, NOT blocks: tile rows for a tiled file.
+    #[wasm_bindgen(getter)]
     pub fn strip_count(&self) -> u32 {
+        (self.inner.offsets.len() as u32) / self.blocks_per_unit().max(1)
+    }
+    /// Blocks in the file, which is what `offsets`/`counts` list.
+    #[wasm_bindgen(getter)]
+    pub fn block_count(&self) -> u32 {
         self.inner.offsets.len() as u32
     }
     /// Strip byte offsets as f64 (exact for any offset below 2^53, which covers
@@ -798,10 +833,12 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlanJs> {
     core::tiff_float_strip_plan(data).map(|inner| TiffFloatStripPlanJs { inner })
 }
 
-/// Decode strips `[first_strip, first_strip + counts.len())`.
+/// Decode the units `[first_strip, first_strip + counts.len() / blocks_per_unit)`.
 ///
-/// `blob` is those strips' compressed bytes concatenated in order; `counts`
-/// their individual lengths. The geometry arguments come from the plan.
+/// `blob` is those units' blocks' compressed bytes concatenated in order;
+/// `counts` their individual lengths, one entry per BLOCK. The geometry
+/// arguments come from the plan; `tile_width`/`tile_length` are zero for a
+/// stripped file, in which case a unit is one strip.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn decode_tiff_float_strip_range(
@@ -817,6 +854,10 @@ pub fn decode_tiff_float_strip_range(
     predictor: u32,
     sample_format: u32,
     little_endian: bool,
+    tile_width: u32,
+    tile_length: u32,
+    blocks_across: u32,
+    lerc_additional_compression: u32,
 ) -> Result<Vec<f32>, JsValue> {
     let plan = core::TiffFloatStripPlan {
         width,
@@ -828,6 +869,10 @@ pub fn decode_tiff_float_strip_range(
         sample_format,
         little_endian,
         rows_per_strip,
+        tile_width,
+        tile_length,
+        blocks_across,
+        lerc_additional_compression,
         offsets: Vec::new(),
         counts: Vec::new(),
     };
@@ -887,6 +932,10 @@ pub fn decode_tiff_strip_range_raw(
     predictor: u32,
     sample_format: u32,
     little_endian: bool,
+    tile_width: u32,
+    tile_length: u32,
+    blocks_across: u32,
+    lerc_additional_compression: u32,
 ) -> Result<Vec<u8>, JsValue> {
     let plan = core::TiffFloatStripPlan {
         width,
@@ -898,6 +947,10 @@ pub fn decode_tiff_strip_range_raw(
         sample_format,
         little_endian,
         rows_per_strip,
+        tile_width,
+        tile_length,
+        blocks_across,
+        lerc_additional_compression,
         offsets: Vec::new(),
         counts: Vec::new(),
     };

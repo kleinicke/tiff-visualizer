@@ -163,12 +163,12 @@ function getArrayU32FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
-function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
   const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+  const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression);
   if (ret[3]) {
     throw takeFromExternrefTable0(ret[2]);
   }
@@ -176,12 +176,12 @@ function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, c
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v3;
 }
-function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
   const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression);
   if (ret[3]) {
     throw takeFromExternrefTable0(ret[2]);
   }
@@ -1852,15 +1852,45 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
   /**
    * @returns {number}
    */
-  get compression() {
-    const ret = wasm.pngresult_height(this.__wbg_ptr);
+  get tile_width() {
+    const ret = wasm.decodedarray_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Blocks in the file, which is what `offsets`/`counts` list.
+   * @returns {number}
+   */
+  get block_count() {
+    const ret = wasm.tifffloatstripplanjs_block_count(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
    * @returns {number}
    */
+  get compression() {
+    const ret = wasm.pngresult_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Units of work, NOT blocks: tile rows for a tiled file.
+   * @returns {number}
+   */
   get strip_count() {
     const ret = wasm.tifffloatstripplanjs_strip_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get tile_length() {
+    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get blocks_across() {
+    const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -1889,6 +1919,21 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    */
   get bits_per_sample() {
     const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Blocks per unit of work: 1 for strips, one per tile column for tiles.
+   * @returns {number}
+   */
+  get blocks_per_unit() {
+    const ret = wasm.tifffloatstripplanjs_blocks_per_unit(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get lerc_additional_compression() {
+    const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2472,7 +2517,11 @@ self.onmessage = async (event) => {
         job.rowsPerStrip,
         job.predictor,
         job.sampleFormat,
-        job.littleEndian
+        job.littleEndian,
+        job.tileWidth || 0,
+        job.tileLength || 0,
+        job.blocksAcross || 1,
+        job.lercAdditionalCompression || 0
       );
       const view = job.bitsPerSample === 8 ? bytes : job.sampleFormat === 3 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4) : new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
       let rmin = Infinity;
@@ -2523,7 +2572,11 @@ self.onmessage = async (event) => {
       job.rowsPerStrip,
       job.predictor,
       job.sampleFormat,
-      job.littleEndian
+      job.littleEndian,
+      job.tileWidth || 0,
+      job.tileLength || 0,
+      job.blocksAcross || 1,
+      job.lercAdditionalCompression || 0
     );
     let min = Infinity;
     let max = -Infinity;

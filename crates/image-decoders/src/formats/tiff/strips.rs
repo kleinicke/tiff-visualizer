@@ -1298,36 +1298,91 @@ pub struct FloatStripPlan {
     /// File byte order, which is how predictor 1 and 2 samples are stored.
     /// Predictor 3 always reassembles to big-endian regardless.
     pub little_endian: bool,
+    /// Rows covered by one UNIT of work: `RowsPerStrip` for a stripped file,
+    /// `TileLength` for a tiled one.
     pub rows_per_strip: u32,
+    /// `TileWidth`/`TileLength`, both zero for a stripped file.
+    pub tile_width: u32,
+    pub tile_length: u32,
+    /// Tiles per tile row; 1 for a stripped file.
+    pub blocks_across: u32,
+    /// Tag 50674's second value, for LERC blocks.
+    pub lerc_additional_compression: u32,
+    /// Byte offset of each BLOCK (strip, or tile in row-major order).
     pub offsets: Vec<u64>,
+    /// Compressed length of each block.
     pub counts: Vec<u64>,
 }
 
 impl FloatStripPlan {
+    pub fn is_tiled(&self) -> bool {
+        self.tile_width > 0 && self.tile_length > 0
+    }
+    /// Blocks making up one unit of work: a strip is one block, a tile row is
+    /// one block per tile column. A unit is always a full-width band of the
+    /// image, which is what lets a worker return rows the caller can place
+    /// with a single offset.
+    pub fn blocks_per_unit(&self) -> usize {
+        if self.is_tiled() {
+            (self.blocks_across as usize).max(1)
+        } else {
+            1
+        }
+    }
+    /// Number of units of work — strips, or tile ROWS.
     pub fn strip_count(&self) -> usize {
-        self.offsets.len()
+        self.offsets.len() / self.blocks_per_unit().max(1)
     }
     pub fn row_bytes(&self) -> usize {
         (self.width as usize) * (self.channels as usize) * (self.bits_per_sample as usize / 8)
     }
-    /// First image row covered by `strip`.
-    pub fn first_row(&self, strip: usize) -> usize {
-        strip * self.rows_per_strip as usize
+    /// Bytes in one row of a single block: the full image width for a strip,
+    /// `TileWidth` for a tile (edge tiles are padded to that width).
+    pub fn block_row_bytes(&self) -> usize {
+        if self.is_tiled() {
+            (self.tile_width as usize)
+                * (self.channels as usize)
+                * (self.bits_per_sample as usize / 8)
+        } else {
+            self.row_bytes()
+        }
     }
-    /// Rows actually covered by `strip` (the last strip may be short).
-    pub fn rows_in(&self, strip: usize) -> usize {
-        let first = self.first_row(strip);
+    /// First image row covered by `unit`.
+    pub fn first_row(&self, unit: usize) -> usize {
+        unit * self.rows_per_strip as usize
+    }
+    /// Rows actually covered by `unit` (the last one may be short).
+    pub fn rows_in(&self, unit: usize) -> usize {
+        let first = self.first_row(unit);
         if first >= self.height as usize {
             0
         } else {
             (self.rows_per_strip as usize).min(self.height as usize - first)
         }
     }
+    pub(crate) fn codec_info(&self) -> BlockCodecInfo {
+        BlockCodecInfo {
+            bits_per_sample: self.bits_per_sample,
+            sample_format: self.sample_format,
+            little_endian: self.little_endian,
+            lerc_additional_compression: self.lerc_additional_compression,
+        }
+    }
 }
 
-/// Read the tags describing a predictor-3 float strip layout, or `None` when
-/// this file is not that shape. Same guards as
-/// `try_decode_float_predictor_strips`, which is built on top of it.
+/// Read the tags describing a byte-aligned chunky layout that can be decoded
+/// one unit at a time — a strip, or a whole tile ROW — or `None` when the file
+/// is not that shape.
+///
+/// This is what makes parallel decoding possible: every unit is a full-width
+/// band of the image, so a worker handed only that unit's compressed bytes can
+/// return rows the caller drops in at one offset. Tiles qualify a tile row at
+/// a time for exactly that reason; a single tile would not, since it covers
+/// only part of each row it touches.
+///
+/// `try_decode_float_predictor_strips` is built on top of this and applies
+/// narrower guards of its own — it predates tiles and the block-only codecs,
+/// and widening it is not needed for the single-threaded path.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn float_predictor_plan(
     data: &[u8],
@@ -1350,7 +1405,10 @@ pub(crate) fn float_predictor_plan(
     if !matches!(bits_per_sample, 8 | 16 | 32 | 64) {
         return None;
     }
-    if !matches!(compression, 1 | 5 | 8 | 32946) {
+    // Every codec `decompress_block` implements. LERC and PNG hand back typed
+    // values rather than the strip's bytes, which is why the plan carries the
+    // sample layout they need to re-serialize against.
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000 | 34925 | 34933 | 34887) {
         return None;
     }
     let sample_format = decoder
@@ -1364,24 +1422,45 @@ pub(crate) fn float_predictor_plan(
     if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 16 | 32 | 64)) {
         return None;
     }
-    if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
-        return None;
-    }
     let little_endian = tiff_is_little_endian(data)?;
-    let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
-        Ok(value) if !value.is_empty() => value,
-        _ => return None,
+    let tile_width = decoder.get_tag_u32(Tag::TileWidth).unwrap_or(0);
+    let tile_length = decoder.get_tag_u32(Tag::TileLength).unwrap_or(0);
+    let is_tiled = tile_width > 0 && tile_length > 0;
+
+    let (offsets, counts, rows_per_unit, blocks_across) = if is_tiled {
+        let offsets = match decoder.get_tag_u64_vec(Tag::TileOffsets) {
+            Ok(value) if !value.is_empty() => value,
+            _ => return None,
+        };
+        let counts = match decoder.get_tag_u64_vec(Tag::TileByteCounts) {
+            Ok(value) if value.len() == offsets.len() => value,
+            _ => return None,
+        };
+        let across = (width as u64).div_ceil(tile_width as u64) as u32;
+        let down = (height as u64).div_ceil(tile_length as u64) as u32;
+        // The tiles must be exactly the row-major grid this assumes; anything
+        // else (a missing tile, a second plane) is not this path's to guess at.
+        if across == 0 || offsets.len() as u64 != (across as u64) * (down as u64) {
+            return None;
+        }
+        (offsets, counts, tile_length as u64, across)
+    } else {
+        let offsets = match decoder.get_tag_u64_vec(Tag::StripOffsets) {
+            Ok(value) if !value.is_empty() => value,
+            _ => return None,
+        };
+        let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
+            Ok(value) if value.len() == offsets.len() => value,
+            _ => return None,
+        };
+        let rows_per_strip = decoder
+            .get_tag_u64_vec(Tag::RowsPerStrip)
+            .ok()
+            .and_then(|values| values.first().copied())
+            .unwrap_or(height as u64);
+        (offsets, counts, rows_per_strip, 1)
     };
-    let counts = match decoder.get_tag_u64_vec(Tag::StripByteCounts) {
-        Ok(value) if value.len() == offsets.len() => value,
-        _ => return None,
-    };
-    let rows_per_strip = decoder
-        .get_tag_u64_vec(Tag::RowsPerStrip)
-        .ok()
-        .and_then(|values| values.first().copied())
-        .unwrap_or(height as u64);
-    if rows_per_strip == 0 {
+    if rows_per_unit == 0 {
         return None;
     }
     Some(FloatStripPlan {
@@ -1393,7 +1472,15 @@ pub(crate) fn float_predictor_plan(
         predictor,
         sample_format,
         little_endian,
-        rows_per_strip: rows_per_strip as u32,
+        rows_per_strip: rows_per_unit as u32,
+        tile_width: if is_tiled { tile_width } else { 0 },
+        tile_length: if is_tiled { tile_length } else { 0 },
+        blocks_across,
+        lerc_additional_compression: decoder
+            .get_tag_u32_vec(Tag::Unknown(50674))
+            .ok()
+            .and_then(|values| values.get(1).copied())
+            .unwrap_or(0),
         offsets,
         counts,
     })
@@ -1409,13 +1496,31 @@ pub(crate) fn decode_float_predictor_strip(
     rows: usize,
     out: &mut [u8],
 ) -> Result<(), DecodeError> {
-    let row_bytes = plan.row_bytes();
+    decode_block_rows(block, plan, plan.width as usize, rows, out)
+}
+
+/// The same work for a block that is only `block_width` columns wide — a TILE.
+/// Predictors run along a block's own rows, not the image's, so the width has
+/// to be the block's for the differencing and the byte planes to line up.
+pub(crate) fn decode_block_rows(
+    block: &[u8],
+    plan: &FloatStripPlan,
+    block_width: usize,
+    rows: usize,
+    out: &mut [u8],
+) -> Result<(), DecodeError> {
     let bytes_per_sample = plan.bits_per_sample as usize / 8;
-    let samples_per_row = (plan.width as usize) * (plan.channels as usize);
+    let samples_per_row = block_width * (plan.channels as usize);
+    let row_bytes = samples_per_row * bytes_per_sample;
     let expected = rows * row_bytes;
 
-    let mut decompressed =
-        decompress_strip_or_tile(block, plan.compression, expected, "Strip decode")?;
+    let mut decompressed = decompress_block(
+        block,
+        plan.compression,
+        expected,
+        "Strip decode",
+        Some(&plan.codec_info()),
+    )?;
     if decompressed.len() < expected {
         return Err(DecodeError::new(
             "Strip decode: strip shorter than its declared geometry",
@@ -1462,6 +1567,116 @@ pub(crate) fn decode_float_predictor_strip(
         }
     }
     Ok(())
+}
+
+/// Decode one UNIT of work into `band`, the full-width rows it covers.
+///
+/// A strip is one block spanning the whole width, so it lands in `band`
+/// directly. A tile row is `blocks_across` blocks side by side, each padded by
+/// the encoder to the full tile size: the tile is decoded on its own (so its
+/// predictor runs along the tile's rows) and then the part that is inside the
+/// image is copied across. `band` must be exactly `rows * plan.row_bytes()`.
+pub(crate) fn decode_unit_into(
+    blocks: &[&[u8]],
+    plan: &FloatStripPlan,
+    unit: usize,
+    rows: usize,
+    band: &mut [u8],
+) -> Result<(), DecodeError> {
+    if !plan.is_tiled() {
+        let block = blocks
+            .first()
+            .ok_or_else(|| DecodeError::new("Strip range: missing strip bytes"))?;
+        return decode_float_predictor_strip(block, plan, rows, band);
+    }
+
+    let row_bytes = plan.row_bytes();
+    let tile_row_bytes = plan.block_row_bytes();
+    let bytes_per_sample = plan.bits_per_sample as usize / 8;
+    let tile_length = plan.tile_length as usize;
+    let tile_width = plan.tile_width as usize;
+    let first_row = plan.first_row(unit);
+    let mut tile = vec![0u8; tile_length * tile_row_bytes];
+
+    for (column, block) in blocks.iter().enumerate() {
+        let image_col = column * tile_width;
+        if image_col >= plan.width as usize {
+            break;
+        }
+        // An edge tile still carries a full tile's rows and columns: the
+        // encoder pads it, and the padding is dropped when copying out.
+        if block.is_empty() {
+            // A tile a sparse GeoTIFF never wrote reads as zeros, as in libtiff.
+            tile.iter_mut().for_each(|byte| *byte = 0);
+        } else {
+            decode_block_rows(block, plan, tile_width, tile_length, &mut tile)?;
+        }
+
+        let valid_cols = tile_width.min(plan.width as usize - image_col);
+        let copy_bytes = valid_cols * (plan.channels as usize) * bytes_per_sample;
+        let dst_col_offset = image_col * (plan.channels as usize) * bytes_per_sample;
+        for row in 0..rows.min(plan.height as usize - first_row) {
+            let src = &tile[row * tile_row_bytes..row * tile_row_bytes + copy_bytes];
+            let dst_start = row * row_bytes + dst_col_offset;
+            band[dst_start..dst_start + copy_bytes].copy_from_slice(src);
+        }
+    }
+    Ok(())
+}
+
+/// Decode the units `[first_unit, first_unit + units)` from `blob`, the
+/// concatenated compressed bytes of every block those units cover, and return
+/// the full-width rows they make up.
+///
+/// Shared by the two public range entry points, which differ only in what they
+/// turn the bytes into afterwards.
+pub(crate) fn decode_unit_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_unit: u32,
+    plan: &FloatStripPlan,
+) -> Result<Vec<u8>, DecodeError> {
+    let row_bytes = plan.row_bytes();
+    let blocks_per_unit = plan.blocks_per_unit();
+    let first = first_unit as usize;
+    let units = counts.len() / blocks_per_unit.max(1);
+
+    let mut rows_total = 0usize;
+    for index in 0..units {
+        rows_total += plan.rows_in(first + index);
+    }
+    let mut raster = vec![0u8; rows_total * row_bytes];
+
+    let mut in_pos = 0usize;
+    let mut out_pos = 0usize;
+    for index in 0..units {
+        let rows = plan.rows_in(first + index);
+        if rows == 0 {
+            break;
+        }
+        let mut blocks: Vec<&[u8]> = Vec::with_capacity(blocks_per_unit);
+        for block in 0..blocks_per_unit {
+            let count = counts[index * blocks_per_unit + block] as usize;
+            let end = in_pos
+                .checked_add(count)
+                .filter(|end| *end <= blob.len())
+                .ok_or_else(|| {
+                    DecodeError::new("Strip range: compressed blob is shorter than its counts")
+                })?;
+            blocks.push(&blob[in_pos..end]);
+            in_pos = end;
+        }
+        decode_unit_into(
+            &blocks,
+            plan,
+            first + index,
+            rows,
+            &mut raster[out_pos..out_pos + rows * row_bytes],
+        )?;
+        out_pos += rows * row_bytes;
+    }
+    raster.truncate(out_pos);
+    Ok(raster)
 }
 
 /// Undo TIFF predictor 2 for one row, in place, for byte-aligned sample widths.
@@ -1612,10 +1827,14 @@ pub(crate) fn try_decode_float_predictor_strips(
         None => return Ok(None),
     };
     // The plan is broader than this function: it also describes predictor 1 and
-    // 2 layouts and 16-bit floats, which the strip-parallel API handles. The
-    // reassembly below reads big-endian f32/f64, so anything else must be
-    // declined here or it would silently reinterpret the bytes.
+    // 2 layouts, 16-bit floats, TILED layouts and the block-only codecs, all of
+    // which the strip-parallel API handles and the loop below does not — it
+    // walks strips and reads big-endian f32/f64. Anything else must be declined
+    // here or it would silently reinterpret the bytes.
     if plan.predictor != 3 || !matches!(plan.bits_per_sample, 32 | 64) {
+        return Ok(None);
+    }
+    if plan.is_tiled() || !matches!(plan.compression, 1 | 5 | 8 | 32946) {
         return Ok(None);
     }
 

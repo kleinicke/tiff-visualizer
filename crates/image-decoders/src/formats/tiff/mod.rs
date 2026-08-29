@@ -883,13 +883,33 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
     let mut decoder = Decoder::new(Cursor::new(data)).ok()?;
     let (width, height) = decoder.dimensions().ok()?;
     let color_type = decoder.colortype().ok()?;
-    let channels = match color_type {
-        tiff::ColorType::Gray(_) => 1,
-        tiff::ColorType::GrayA(_) => 2,
-        tiff::ColorType::RGB(_) => 3,
-        tiff::ColorType::RGBA(_) | tiff::ColorType::CMYK(_) => 4,
+    match color_type {
+        tiff::ColorType::Gray(_)
+        | tiff::ColorType::GrayA(_)
+        | tiff::ColorType::RGB(_)
+        | tiff::ColorType::RGBA(_)
+        | tiff::ColorType::CMYK(_)
+        | tiff::ColorType::Multiband { .. } => {}
+        // Anything else (palette, YCbCr, ...) is decoded by a path that
+        // rewrites the pixels, which a per-block decode cannot reproduce.
         _ => return None,
-    };
+    }
+    // The STRIDE is SamplesPerPixel, not what the color type implies: a file
+    // with RGB plus four extra samples has a color type of RGB and seven
+    // samples per pixel, and reading three would walk the rows at the wrong
+    // stride — the whole-file decode reports seven, so this must too.
+    let channels = decoder
+        .get_tag_u64_vec(tiff::tags::Tag::SamplesPerPixel)
+        .ok()
+        .and_then(|values| values.first().copied())
+        .map(|value| value as u32)
+        .filter(|value| *value > 0)
+        .unwrap_or(match color_type {
+            tiff::ColorType::Gray(_) => 1,
+            tiff::ColorType::GrayA(_) => 2,
+            tiff::ColorType::RGB(_) => 3,
+            _ => 4,
+        });
     let bits_per_sample = decoder
         .get_tag_u64_vec(tiff::tags::Tag::BitsPerSample)
         .ok()

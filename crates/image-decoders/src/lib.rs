@@ -1155,7 +1155,14 @@ pub use decode_ppm_fast as decode_netpbm;
 // the worker boundary is therefore one file's worth, not one per worker.
 // ---------------------------------------------------------------------------
 
-/// Layout of a predictor-3 float TIFF, or `None` if the file is not that shape.
+/// Layout of a TIFF whose blocks can each be decoded on their own, or `None`
+/// if the file is not that shape.
+///
+/// A "strip" in this API is a UNIT OF WORK: one strip of a stripped file, or
+/// one whole tile ROW of a tiled one. Both are full-width bands of the image,
+/// which is what lets a worker return rows the caller places at a single
+/// offset. `offsets`/`counts` list every BLOCK — one per strip, or
+/// `blocks_across` per tile row, in row-major order.
 pub struct TiffFloatStripPlan {
     pub width: u32,
     pub height: u32,
@@ -1167,10 +1174,18 @@ pub struct TiffFloatStripPlan {
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
     pub sample_format: u32,
     pub little_endian: bool,
+    /// Image rows covered by one unit: `RowsPerStrip`, or `TileLength`.
     pub rows_per_strip: u32,
-    /// Byte offset of each strip within the file.
+    /// `TileWidth`/`TileLength`, both zero for a stripped file.
+    pub tile_width: u32,
+    pub tile_length: u32,
+    /// Tiles per tile row; 1 for a stripped file.
+    pub blocks_across: u32,
+    /// Tag 50674's second value, for LERC blocks.
+    pub lerc_additional_compression: u32,
+    /// Byte offset of each block within the file.
     pub offsets: Vec<u64>,
-    /// Compressed length of each strip.
+    /// Compressed length of each block.
     pub counts: Vec<u64>,
 }
 
@@ -1186,6 +1201,10 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         sample_format: plan.sample_format,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        blocks_across: plan.blocks_across,
+        lerc_additional_compression: plan.lerc_additional_compression,
         offsets: plan.offsets,
         counts: plan.counts,
     })
@@ -1207,7 +1226,15 @@ pub fn decode_tiff_float_strip_range(
     first_strip: u32,
     plan: &TiffFloatStripPlan,
 ) -> Result<Vec<f32>, DecodeError> {
-    let inner = formats::tiff::strips::FloatStripPlan {
+    let inner = inner_plan(plan);
+    let raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
+    Ok(formats::tiff::strips::strip_bytes_to_f32(&raster, &inner))
+}
+
+/// The internal plan carries the geometry; the public one is the wire form.
+#[cfg(feature = "tiff")]
+fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPlan {
+    formats::tiff::strips::FloatStripPlan {
         width: plan.width,
         height: plan.height,
         channels: plan.channels,
@@ -1217,45 +1244,15 @@ pub fn decode_tiff_float_strip_range(
         sample_format: plan.sample_format,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        blocks_across: plan.blocks_across,
+        lerc_additional_compression: plan.lerc_additional_compression,
+        // A range decode is told its blocks by `counts`; the plan's own block
+        // table is only needed by the caller doing the slicing.
         offsets: Vec::new(),
         counts: Vec::new(),
-    };
-    let row_bytes = inner.row_bytes();
-    let first = first_strip as usize;
-
-    let mut rows_total = 0usize;
-    for index in 0..counts.len() {
-        rows_total += inner.rows_in(first + index);
     }
-    let mut raster = vec![0u8; rows_total * row_bytes];
-
-    let mut in_pos = 0usize;
-    let mut out_pos = 0usize;
-    for (index, &count) in counts.iter().enumerate() {
-        let rows = inner.rows_in(first + index);
-        if rows == 0 {
-            break;
-        }
-        let end = in_pos
-            .checked_add(count as usize)
-            .filter(|end| *end <= blob.len())
-            .ok_or_else(|| {
-                DecodeError::new("Strip range: compressed blob is shorter than its counts")
-            })?;
-        formats::tiff::strips::decode_float_predictor_strip(
-            &blob[in_pos..end],
-            &inner,
-            rows,
-            &mut raster[out_pos..out_pos + rows * row_bytes],
-        )?;
-        in_pos = end;
-        out_pos += rows * row_bytes;
-    }
-
-    Ok(formats::tiff::strips::strip_bytes_to_f32(
-        &raster[..out_pos],
-        &inner,
-    ))
 }
 
 /// Metadata accompanying a strip-parallel decode.
@@ -1296,51 +1293,8 @@ pub fn decode_tiff_strip_range_raw(
     first_strip: u32,
     plan: &TiffFloatStripPlan,
 ) -> Result<Vec<u8>, DecodeError> {
-    let inner = formats::tiff::strips::FloatStripPlan {
-        width: plan.width,
-        height: plan.height,
-        channels: plan.channels,
-        bits_per_sample: plan.bits_per_sample,
-        compression: plan.compression,
-        predictor: plan.predictor,
-        sample_format: plan.sample_format,
-        little_endian: plan.little_endian,
-        rows_per_strip: plan.rows_per_strip,
-        offsets: Vec::new(),
-        counts: Vec::new(),
-    };
-    let row_bytes = inner.row_bytes();
-    let first = first_strip as usize;
-
-    let mut rows_total = 0usize;
-    for index in 0..counts.len() {
-        rows_total += inner.rows_in(first + index);
-    }
-    let mut raster = vec![0u8; rows_total * row_bytes];
-
-    let mut in_pos = 0usize;
-    let mut out_pos = 0usize;
-    for (index, &count) in counts.iter().enumerate() {
-        let rows = inner.rows_in(first + index);
-        if rows == 0 {
-            break;
-        }
-        let end = in_pos
-            .checked_add(count as usize)
-            .filter(|end| *end <= blob.len())
-            .ok_or_else(|| {
-                DecodeError::new("Strip range: compressed blob is shorter than its counts")
-            })?;
-        formats::tiff::strips::decode_float_predictor_strip(
-            &blob[in_pos..end],
-            &inner,
-            rows,
-            &mut raster[out_pos..out_pos + rows * row_bytes],
-        )?;
-        in_pos = end;
-        out_pos += rows * row_bytes;
-    }
-    raster.truncate(out_pos);
+    let inner = inner_plan(plan);
+    let mut raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
 
     let bytes_per_sample = (plan.bits_per_sample / 8) as usize;
     let big_endian = plan.predictor == 3 || !plan.little_endian;

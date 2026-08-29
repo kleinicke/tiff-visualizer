@@ -358,11 +358,13 @@ export class TiffProcessor {
 								predictor: parallel.predictor,
 								photometricInterpretation: parallel.photometricInterpretation,
 								planarConfiguration: 1,
-								rowsPerStrip: parallel.rowsPerStrip,
-								stripCount: parallel.stripCount,
-								tileWidth: 0,
-								tileLength: 0,
-								tileCount: 0,
+								// A tiled file decodes a tile ROW per unit, so report
+								// the real layout rather than the unit geometry.
+								rowsPerStrip: parallel.tileLength ? undefined : parallel.rowsPerStrip,
+								stripCount: parallel.tileLength ? undefined : parallel.stripCount,
+								tileWidth: parallel.tileWidth,
+								tileLength: parallel.tileLength,
+								tileCount: parallel.tileCount,
 								directDecode: true,
 								data: parallel.data,
 								rasters,
@@ -370,7 +372,7 @@ export class TiffProcessor {
 								max: parallel.max,
 								allTagsJson: parallel.allTagsJson,
 								omeXml: parallel.omeXml,
-								decodedWith: `wasm (${parallel.workers} strip workers)`,
+								decodedWith: `wasm (${parallel.workers} ${parallel.tileLength ? 'tile-row' : 'strip'} workers)`,
 								decodeTimings: parallel.timings,
 							};
 							// localBuffer is cleared after its declaration below.

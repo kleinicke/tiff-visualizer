@@ -2,10 +2,11 @@
 /**
  * One member of the shared TIFF-strip / EXR-ZIP decode pool.
  *
- * Each instance owns its own WASM module, decodes a contiguous run of strips
- * from only that run's compressed bytes, and transfers the samples back. There
- * is no shared memory and no coordination between workers: strips in a TIFF are
- * independently compressed, so a range is a complete unit of work.
+ * Each instance owns its own WASM module, decodes a contiguous run of units —
+ * strips, or whole tile rows — from only that run's compressed bytes, and
+ * transfers the samples back. There is no shared memory and no coordination
+ * between workers: blocks in a TIFF are independently compressed, so a range is
+ * a complete unit of work.
  *
  * The WASM arrives as a precompiled `WebAssembly.Module` from the orchestrator
  * (compiled once, instantiated N times) because this runs from a blob URL and
@@ -84,6 +85,10 @@ self.onmessage = async (event: MessageEvent) => {
 				job.predictor,
 				job.sampleFormat,
 				job.littleEndian,
+				job.tileWidth || 0,
+				job.tileLength || 0,
+				job.blocksAcross || 1,
+				job.lercAdditionalCompression || 0,
 			);
 			const view = job.bitsPerSample === 8
 				? bytes
@@ -128,6 +133,10 @@ self.onmessage = async (event: MessageEvent) => {
 			job.predictor,
 			job.sampleFormat,
 			job.littleEndian,
+			job.tileWidth || 0,
+			job.tileLength || 0,
+			job.blocksAcross || 1,
+			job.lercAdditionalCompression || 0,
 		);
 		// Min/max over this range only; the orchestrator combines them. Doing it
 		// here keeps the stats pass parallel and off the main thread.

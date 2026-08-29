@@ -308,14 +308,18 @@ export function decode_exr_fast(data) {
  * @param {number} predictor
  * @param {number} sample_format
  * @param {boolean} little_endian
+ * @param {number} tile_width
+ * @param {number} tile_length
+ * @param {number} blocks_across
+ * @param {number} lerc_additional_compression
  * @returns {Uint8Array}
  */
-export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression) {
     const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression);
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }
@@ -382,10 +386,12 @@ export function decode_fits_fast(data) {
 }
 
 /**
- * Decode strips `[first_strip, first_strip + counts.len())`.
+ * Decode the units `[first_strip, first_strip + counts.len() / blocks_per_unit)`.
  *
- * `blob` is those strips' compressed bytes concatenated in order; `counts`
- * their individual lengths. The geometry arguments come from the plan.
+ * `blob` is those units' blocks' compressed bytes concatenated in order;
+ * `counts` their individual lengths, one entry per BLOCK. The geometry
+ * arguments come from the plan; `tile_width`/`tile_length` are zero for a
+ * stripped file, in which case a unit is one strip.
  * @param {Uint8Array} blob
  * @param {Uint32Array} counts
  * @param {number} first_strip
@@ -398,14 +404,18 @@ export function decode_fits_fast(data) {
  * @param {number} predictor
  * @param {number} sample_format
  * @param {boolean} little_endian
+ * @param {number} tile_width
+ * @param {number} tile_length
+ * @param {number} blocks_across
+ * @param {number} lerc_additional_compression
  * @returns {Float32Array}
  */
-export function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian) {
+export function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression) {
     const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian);
+    const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, tile_width, tile_length, blocks_across, lerc_additional_compression);
     if (ret[3]) {
         throw takeFromExternrefTable0(ret[2]);
     }
@@ -2718,15 +2728,45 @@ export class TiffFloatStripPlanJs {
     /**
      * @returns {number}
      */
-    get compression() {
-        const ret = wasm.pngresult_height(this.__wbg_ptr);
+    get tile_width() {
+        const ret = wasm.decodedarray_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Blocks in the file, which is what `offsets`/`counts` list.
+     * @returns {number}
+     */
+    get block_count() {
+        const ret = wasm.tifffloatstripplanjs_block_count(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
      * @returns {number}
      */
+    get compression() {
+        const ret = wasm.pngresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Units of work, NOT blocks: tile rows for a tiled file.
+     * @returns {number}
+     */
     get strip_count() {
         const ret = wasm.tifffloatstripplanjs_strip_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get tile_length() {
+        const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get blocks_across() {
+        const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -2755,6 +2795,21 @@ export class TiffFloatStripPlanJs {
      */
     get bits_per_sample() {
         const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Blocks per unit of work: 1 for strips, one per tile column for tiles.
+     * @returns {number}
+     */
+    get blocks_per_unit() {
+        const ret = wasm.tifffloatstripplanjs_blocks_per_unit(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get lerc_additional_compression() {
+        const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
