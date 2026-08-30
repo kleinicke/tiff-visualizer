@@ -689,6 +689,42 @@ impl TiffResult {
         self.sample_format
     }
 
+    /// JavaScript carrier used for the decoded samples.
+    ///
+    /// This mirrors `DecodedArray::sample_kind`: 0 = f32, 1 = u8, and
+    /// 3 = little-endian u16 samples packed in a byte vector. TIFF keeps
+    /// signed, floating-point, and wider-than-16-bit samples on the existing
+    /// f32 path because the renderer needs their signed/range semantics.
+    pub fn sample_kind(&self) -> u32 {
+        if self.sample_format == 1 && !self.data.is_empty() {
+            if self.bits_per_sample <= 8 {
+                return 1;
+            }
+            if self.bits_per_sample <= 16 {
+                return 3;
+            }
+        }
+        0
+    }
+
+    pub fn data_len(&self) -> usize {
+        match self.sample_kind() {
+            1 => self.data.len(),
+            3 => self.data.len() / 2,
+            _ if !self.data_f32.is_empty() => self.data_f32.len(),
+            _ => {
+                let storage_bytes = match self.bits_per_sample {
+                    0 => return 0,
+                    b if b <= 8 => 1usize,
+                    b if b <= 16 => 2,
+                    b if b <= 32 => 4,
+                    _ => 8,
+                };
+                self.data.len() / storage_bytes
+            }
+        }
+    }
+
     pub fn min_value(&self) -> f64 {
         self.min_value
     }
@@ -846,6 +882,13 @@ impl TiffResult {
             return mem::take(&mut self.data_f32);
         }
         self.get_data_as_f32()
+    }
+
+    /// Move the compact unsigned carrier out without widening every sample to
+    /// f32. For `sample_kind == 3` the returned bytes are little-endian u16s;
+    /// JavaScript reinterprets the same ArrayBuffer as a `Uint16Array`.
+    pub fn take_data_as_u8(&mut self) -> Vec<u8> {
+        mem::take(&mut self.data)
     }
 }
 

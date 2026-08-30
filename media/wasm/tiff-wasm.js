@@ -2857,6 +2857,13 @@ export class TiffResult {
     /**
      * @returns {number}
      */
+    get sample_kind() {
+        const ret = wasm.tiffresult_sample_kind(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
     get strip_count() {
         const ret = wasm.tiffresult_strip_count(this.__wbg_ptr);
         return ret >>> 0;
@@ -2934,6 +2941,15 @@ export class TiffResult {
         const ret = wasm.tiffresult_get_data_as_f32(this.__wbg_ptr);
         var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * @returns {Uint8Array}
+     */
+    take_data_as_u8() {
+        const ret = wasm.tiffresult_take_data_as_u8(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
     }
     /**
@@ -3035,6 +3051,13 @@ export class TiffResult {
      */
     get channels() {
         const ret = wasm.tiffresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get data_len() {
+        const ret = wasm.tiffresult_data_len(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**

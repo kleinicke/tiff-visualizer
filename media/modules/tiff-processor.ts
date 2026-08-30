@@ -226,9 +226,27 @@ export class TiffProcessor {
 				this.omeBinaryOnly = null;
 				this.omeXml = null;
 			}
+			const speculative = pageIndex === 0
+				? await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'tiff')
+				: null;
+			const deferredToParallel = speculative?.ok && speculative.result?.deferToParallelTiff === true;
+			const bootstrapWasmResult: any = speculative?.ok && !deferredToParallel ? speculative.result : null;
+			if (deferredToParallel) {
+				PerfTrace.note('decode-tiff-bootstrap', `parallel route (${Number(speculative.result?.stripCount || 0)} strips)`);
+			}
 			let buffer: ArrayBuffer;
 			let readDuration = 0;
-			if (this._sourceBufferSrc === src && this._sourceBuffer) {
+			const speculativeSource = speculative?.sourceBuffer instanceof ArrayBuffer
+				? speculative.sourceBuffer
+				: speculative?.buffer instanceof ArrayBuffer ? speculative.buffer : null;
+			if (speculativeSource?.byteLength) {
+				// The bootstrap kept this copy before transferring its decode copy.
+				// Retain it for page changes and fallbacks exactly as the ordinary
+				// fetch path does.
+				this._sourceBuffer = speculativeSource;
+				this._sourceBufferSrc = src;
+				buffer = speculativeSource.slice(0);
+			} else if (this._sourceBufferSrc === src && this._sourceBuffer) {
 				buffer = this._sourceBuffer.slice(0);
 				PerfTrace.mark('tiff-source-cache-hit');
 			} else {
@@ -249,7 +267,7 @@ export class TiffProcessor {
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
-			PerfTrace.mark('fetch');
+			if (!speculative) { PerfTrace.mark('fetch'); }
 
 			// Check if we should use WASM decoder
 			const settings = this.settingsManager.settings;
@@ -262,15 +280,30 @@ export class TiffProcessor {
 			// WASM decoder locally would just fail again.
 			// Wait for worker startup so an early load does not take a
 			// synchronous main-thread decoder merely because boot is in flight.
-			if (this.decodeWorker && !this.decodeWorker.canDecode('tiff')) {
+			if (!bootstrapWasmResult && this.decodeWorker && !this.decodeWorker.canDecode('tiff')) {
 				await Promise.race([
 					this.decodeWorker.start(),
 					new Promise(resolve => setTimeout(resolve, 500)),
 				]);
 			}
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-			let wasmResult: any = null;
+			let wasmResult: any = bootstrapWasmResult;
 			let workerTiffFailed = false;
+			if (wasmResult) {
+				const decodedWith = wasmResult.decodedWith || 'wasm (bootstrap worker)';
+				decodeInfo = {
+					engine: decodedWith,
+					durationMs: Number(speculative?.bootstrapDecodeDurationMs || 0),
+				};
+				if (Array.isArray(wasmResult.decodeTimings)) {
+					for (const timing of wasmResult.decodeTimings) {
+						const durationMs = Number(timing?.durationMs);
+						if (Number.isFinite(durationMs)) {
+							PerfTrace.detail(String(timing.name || 'decode-worker-detail'), durationMs);
+						}
+					}
+				}
+			}
 
 			// Strip-parallel path: for large, byte-aligned, chunky strip TIFFs
 			// (predictor 1/2/3, no orientation/palette/CMYK/CFA post-processing)
@@ -283,7 +316,7 @@ export class TiffProcessor {
 			// TIFF can be 2MB and still hold 10M pixels, which is exactly the
 			// case the pool helps most. The real gates (strip count, pixel
 			// count) are applied against the plan inside tryStripParallelDecode.
-			if (pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
+			if (!wasmResult && pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
 				try {
 					const mainWasm = getWasmModuleSync() || await getWasmModule();
 					if (mainWasm) {
@@ -437,16 +470,18 @@ export class TiffProcessor {
 
 					// Per-channel rasters: the worker already deinterleaved them
 					// off-thread; the local WASM path deinterleaves here.
-					let rasters: Float32Array[];
+					let rasters: Array<Float32Array | Uint16Array | Uint8Array>;
 					if (wasmResult.rasters) {
 						rasters = wasmResult.rasters;
 					} else if (samplesPerPixel === 1) {
 						rasters = [wasmResult.data];
 					} else {
 						rasters = [];
+						const Carrier = wasmResult.data.constructor as
+							{ new(length: number): Float32Array | Uint16Array | Uint8Array };
 						// Deinterleave for compatibility with existing rendering code
 						for (let c = 0; c < samplesPerPixel; c++) {
-							const channel = new Float32Array(width * height);
+							const channel = new Carrier(width * height);
 							for (let i = 0; i < width * height; i++) {
 								channel[i] = wasmResult.data[i * samplesPerPixel + c];
 							}

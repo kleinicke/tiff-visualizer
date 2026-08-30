@@ -94,6 +94,7 @@ export class DecodeWorkerClient {
 			bundleName?: string;
 			sourcePromise?: Promise<string>;
 			wasmBytesPromise?: Promise<ArrayBuffer>;
+			getWasmBytes?: () => Promise<ArrayBuffer>;
 			wasmModulePromise?: Promise<WebAssembly.Module>;
 			workerPromise?: Promise<{
 				worker: Worker;
@@ -130,8 +131,9 @@ export class DecodeWorkerClient {
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
 		];
 		if (this._needsWasm && !this._tiffWasmBytes && !this._tiffWasmFetchPromise) {
-			if (matchingWarmup?.wasmBytesPromise) {
-				this._tiffWasmFetchPromise = matchingWarmup.wasmBytesPromise
+			const warmBytes = matchingWarmup?.wasmBytesPromise || matchingWarmup?.getWasmBytes?.();
+			if (warmBytes) {
+				this._tiffWasmFetchPromise = warmBytes
 					.then(bytes => {
 						this._tiffWasmBytes = bytes;
 						return bytes;
@@ -366,6 +368,9 @@ export class DecodeWorkerClient {
 		}
 		if (signal?.aborted) { throw new DOMException('The operation was aborted.', 'AbortError'); }
 		const decodeDuration = Number(warmup.speculativeDecodeMetrics?.durationMs || 0);
+		if (response && typeof response === 'object') {
+			response.bootstrapDecodeDurationMs = decodeDuration;
+		}
 		PerfTrace.markWithTail(`fetch(${format})`, `decode-worker(${format})`, decodeDuration);
 		PerfTrace.note(`fetch-${format}-bytes`, `${(Number(warmup.speculativeDecodeMetrics?.fileBytes || 0) / (1024 * 1024)).toFixed(1)}MB`);
 		PerfTrace.note(`decode-${format}-bootstrap`, response?.ok ? 'adopted' : 'fallback');

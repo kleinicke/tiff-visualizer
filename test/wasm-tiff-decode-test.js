@@ -32,6 +32,7 @@ function decode(mod, file) {
 		height: result.height,
 		channels: result.channels,
 		bitsPerSample: result.bits_per_sample,
+		sampleKind: result.sample_kind,
 		compression: result.compression,
 		data: Array.from(result.get_data_as_f32()),
 	};
@@ -57,6 +58,7 @@ async function main() {
 		assert.strictEqual(reference.height, 96);
 		assert.strictEqual(reference.channels, 1);
 		assert.strictEqual(reference.bitsPerSample, 8, 'bilevel should be expanded to 8-bit');
+		assert.strictEqual(reference.sampleKind, 1, 'expanded bilevel should cross WASM as compact uint8');
 		assert.strictEqual(reference.data.length, 128 * 96, 'expanded data must cover every pixel');
 		assert.ok(reference.data.some(v => v === 0) && reference.data.some(v => v === 255),
 			'bilevel image should contain both black and white pixels');
@@ -146,6 +148,7 @@ async function main() {
 		assert.strictEqual(zstd.width, 160);
 		assert.strictEqual(zstd.height, 120);
 		assert.strictEqual(zstd.bitsPerSample, 16);
+		assert.strictEqual(zstd.sampleKind, 3, 'uint16 should cross WASM as packed little-endian bytes');
 		assert.strictEqual(zstd.data.length, 160 * 120);
 		const max = zstd.data.reduce((m, v) => Math.max(m, v), 0);
 		assert.ok(max > 60000, 'ZSTD 16-bit image should span the full range');
@@ -178,6 +181,7 @@ async function main() {
 		const z = decode(mod, 'deflate_pred3_f32.tif');
 		const r = decode(mod, 'pred_ref_f32.tif');
 		assert.strictEqual(z.compression, 8, 'deflate_pred3_f32.tif compression tag');
+		assert.strictEqual(z.sampleKind, 0, 'float TIFFs must retain their Float32 carrier');
 		assert.strictEqual(z.width, r.width);
 		assert.strictEqual(z.height, r.height);
 		assert.strictEqual(z.data.length, r.data.length, 'deflate+predictor3: length');
@@ -404,6 +408,7 @@ async function main() {
 		assert.strictEqual(img.height, 48, 'gray_u32.tif: height');
 		assert.strictEqual(img.channels, 1, 'gray_u32.tif: channels');
 		assert.strictEqual(img.bitsPerSample, 32, 'gray_u32.tif: bits_per_sample');
+		assert.strictEqual(img.sampleKind, 0, 'wide uint32 must retain its Float32 carrier');
 		assert.strictEqual(img.data.length, 64 * 48, 'gray_u32.tif: data length');
 		assert.strictEqual(img.data[0], 0, 'gray_u32.tif: pixel (0,0)');
 		assert.strictEqual(img.data[1], 70000, 'gray_u32.tif: pixel (1,0) must survive intact (>65535, would wrap in a Uint16Array carrier)');
@@ -531,6 +536,7 @@ async function main() {
 		assert.strictEqual(img.height, 48, 'bigtiff_u16.tif: height');
 		assert.strictEqual(img.channels, 1, 'bigtiff_u16.tif: channels');
 		assert.strictEqual(img.bitsPerSample, 16, 'bigtiff_u16.tif: bits_per_sample');
+		assert.strictEqual(img.sampleKind, 3, 'BigTIFF uint16 should use the compact carrier too');
 		assert.strictEqual(img.data[0], 0, 'bigtiff_u16.tif: pixel (0,0)');
 		assert.strictEqual(img.data[1 * 64 + 2], 66, 'bigtiff_u16.tif: pixel (2,1)');
 		const max = img.data.reduce((m, v) => Math.max(m, v), 0);

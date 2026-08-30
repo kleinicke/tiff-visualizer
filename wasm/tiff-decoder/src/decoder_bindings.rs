@@ -344,6 +344,14 @@ impl TiffResult {
         self.inner.sample_format()
     }
     #[wasm_bindgen(getter)]
+    pub fn sample_kind(&self) -> u32 {
+        self.inner.sample_kind()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn data_len(&self) -> usize {
+        self.inner.data_len()
+    }
+    #[wasm_bindgen(getter)]
     pub fn min_value(&self) -> f64 {
         self.inner.min_value()
     }
@@ -435,6 +443,9 @@ impl TiffResult {
     }
     pub fn take_data_as_f32(&mut self) -> Vec<f32> {
         self.inner.take_data_as_f32()
+    }
+    pub fn take_data_as_u8(&mut self) -> Vec<u8> {
+        self.inner.take_data_as_u8()
     }
 }
 

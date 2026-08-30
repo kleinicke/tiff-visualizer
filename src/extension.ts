@@ -16,7 +16,7 @@ function updatePlyVisualizerContext() {
 
 export function activate(context: vscode.ExtensionContext) {
 	// Create output channel for debugging (without showing it to avoid focus stealing)
-	outputChannel = vscode.window.createOutputChannel('TIFF Visualizer Debug');
+	outputChannel = vscode.window.createOutputChannel('Image Visualizer Debug');
 	context.subscriptions.push(outputChannel);
 
 	outputChannel.appendLine('='.repeat(50));

@@ -18,9 +18,10 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
 // media/tsconfig.json) types `self` as `Window & typeof globalThis`, which
@@ -84,7 +85,9 @@ async function initTiffDecoder(moduleOrBuffer: WebAssembly.Module | ArrayBuffer 
 
 /**
  * Decode a TIFF with the Rust/WASM decoder, mirroring TiffWasmProcessor.decode
- * and additionally deinterleaving the per-channel rasters off-thread.
+ * and additionally deinterleaving the per-channel rasters off-thread. Preserve
+ * compact unsigned carriers: widening uint8/uint16 to f32 makes later feature
+ * scans and rendering rebuild the integer buffer we started with.
  */
 function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 	if (!tiffWasmReady) {
@@ -129,20 +132,30 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 	const width = result.width;
 	const height = result.height;
 	const channels = result.channels;
-	const data = typeof result.take_data_as_f32 === 'function'
-		? result.take_data_as_f32()
-		: result.get_data_as_f32();
+	const sampleKind = Number(result.sample_kind ?? 0);
+	let data: Float32Array | Uint16Array | Uint8Array;
+	if ((sampleKind === 1 || sampleKind === 3) && typeof result.take_data_as_u8 === 'function') {
+		const bytes = result.take_data_as_u8() as Uint8Array;
+		data = sampleKind === 3
+			? new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)
+			: bytes;
+	} else {
+		data = typeof result.take_data_as_f32 === 'function'
+			? result.take_data_as_f32()
+			: result.get_data_as_f32();
+	}
 	now = performance.now();
-	timings.push({ name: 'decode-wasm-to-f32', durationMs: now - phaseStart });
+	timings.push({ name: `decode-wasm-take-${sampleKind === 1 ? 'u8' : sampleKind === 3 ? 'u16' : 'f32'}`, durationMs: now - phaseStart });
 
 	phaseStart = now;
-	const rasters: Float32Array[] = [];
+	const rasters: Array<Float32Array | Uint16Array | Uint8Array> = [];
 	if (channels === 1) {
 		rasters.push(data);
 	} else {
 		const pixelCount = width * height;
+		const Carrier = data.constructor as { new(length: number): Float32Array | Uint16Array | Uint8Array };
 		for (let c = 0; c < channels; c++) {
-			const channel = new Float32Array(pixelCount);
+			const channel = new Carrier(pixelCount);
 			for (let i = 0; i < pixelCount; i++) {
 				channel[i] = data[i * channels + c];
 			}
@@ -160,6 +173,7 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 		channels,
 		bitsPerSample: result.bits_per_sample,
 		sampleFormat: result.sample_format,
+		sampleKind,
 		compression: result.compression,
 		predictor: result.predictor,
 		photometricInterpretation: result.photometric_interpretation,
@@ -273,6 +287,37 @@ async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0) {
 		const message = String((error instanceof Error ? error.message : error) || 'WASM decode failed');
 		throw new Error(message);
 	}
+}
+
+/**
+ * Let the tiny bootstrap worker decide only the route for pool-worthy TIFFs.
+ * Parsing the IFD takes a few milliseconds and prevents an early whole-image
+ * decode from preempting the much faster strip pool. Files below the shared
+ * pool thresholds continue directly into the ordinary worker decoder.
+ */
+async function decodeTiffSpeculatively(buffer: ArrayBuffer, pageIndex = 0) {
+	if (pageIndex === 0) {
+		if (tiffWasmInitPromise) {
+			await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'TIFF WASM init wait timed out')
+				.catch(error => console.warn('[DecodeWorker]', error));
+		}
+		if (tiffWasmReady && typeof tiff_float_strip_plan === 'function') {
+			const started = performance.now();
+			try {
+				const plan = tiff_float_strip_plan(new Uint8Array(buffer));
+				if (shouldUseParallelTiffPlan(plan)) {
+					return {
+						deferToParallelTiff: true,
+						width: Number(plan.width || 0),
+						height: Number(plan.height || 0),
+						stripCount: Number(plan.strip_count || 0),
+						decodeTimings: [{ name: 'decode-tiff-route-plan', durationMs: performance.now() - started }],
+					};
+				}
+			} catch { /* the normal decoder retains all compatibility fallbacks */ }
+		}
+	}
+	return decodeTiff(buffer, pageIndex);
 }
 
 /**
@@ -595,7 +640,9 @@ async function decodeCzi(buffer: ArrayBuffer, options: Record<string, any>) {
 async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	switch (format) {
 		case 'tiff':
-			return decodeTiff(buffer, Number(options.pageIndex || 0));
+			return options.preferParallelTiff
+				? decodeTiffSpeculatively(buffer, Number(options.pageIndex || 0))
+				: decodeTiff(buffer, Number(options.pageIndex || 0));
 		case 'exr':
 			return decodeExr(buffer);
 		case 'exr-zip-plan':

@@ -17,10 +17,12 @@
  * Falls back to `null` for anything it cannot handle; the caller then uses the
  * ordinary single-worker path.
  */
-/** Below this many strips the pool costs more than it saves. */
-const MIN_STRIPS = 16;
-/** Below this many pixels a single worker is already fast enough. */
-const MIN_PIXELS = 2_000_000;
+import {
+	MIN_PARALLEL_TIFF_PIXELS,
+	MIN_PARALLEL_TIFF_STRIPS,
+	shouldUseParallelTiffPlan,
+} from './tiff-parallel-policy.js';
+
 /** Cap the pool: more workers than this stops helping and costs memory. */
 const MAX_WORKERS = 8;
 
@@ -89,8 +91,8 @@ class StripDecodePool {
 
 	private async _boot(): Promise<boolean> {
 		const candidates = [
-			new URL('./stripDecodeWorker.bundle.js', import.meta.url).href,
 			new URL('../stripDecodeWorker.bundle.js', import.meta.url).href,
+			new URL('./stripDecodeWorker.bundle.js', import.meta.url).href,
 		];
 		if (!this._blobUrl) {
 			let source: string | null = null;
@@ -231,8 +233,8 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 	durationMs: number;
 } | null> {
 	const { width, height, dataY, counts, yCoordinates, compressed } = plan;
-	if (counts.length < MIN_STRIPS || counts.length !== yCoordinates.length
-		|| width * height < MIN_PIXELS) { return null; }
+	if (counts.length < MIN_PARALLEL_TIFF_STRIPS || counts.length !== yCoordinates.length
+		|| width * height < MIN_PARALLEL_TIFF_PIXELS) { return null; }
 	if (!await pool.ensure() || pool.size < 2) { return null; }
 
 	const rows = new Uint32Array(counts.length);
@@ -324,7 +326,7 @@ export async function tryStripParallelDecode(
 	const stripCount: number = plan.strip_count;
 	const width: number = plan.width;
 	const height: number = plan.height;
-	if (stripCount < MIN_STRIPS || width * height < MIN_PIXELS) { return null; }
+	if (!shouldUseParallelTiffPlan(plan)) { return null; }
 
 	const ok = await pool.ensure();
 	if (!ok || pool.size < 2) { return null; }

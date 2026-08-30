@@ -38,7 +38,7 @@ details must never be summed alongside marks.
 `webview` (`performance.now()` in the webview). `total - webview` is
 extension/webview startup, and is approximate.
 
-## 2. Discard the first open, always
+## 2. Separate cold and warm opens, always
 
 ```bash
 npm run benchmark:vscode                      # whole corpus
@@ -57,8 +57,11 @@ The first open of a session pays costs that never recur:
   the first open and 0 ms afterwards.
 
 Sequential opens in one session are therefore **not independent samples**. The
-harness discards iteration 1 and reports medians of the rest. Do the same by
-hand: a single `[Perf]` line is an anecdote.
+harness reports iteration 1 as cold and the median of iterations 2..N as warm;
+never mix cold into the warm median. A true per-file cold comparison requires a
+fresh VS Code session with `ONLY=...` for each file. When comparing extensions,
+report cold and warm for both, and restrict the corpus to files both decoders
+support. A single `[Perf]` line is an anecdote.
 
 ## 3. Check the machine before believing a number
 

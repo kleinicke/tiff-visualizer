@@ -124,6 +124,8 @@ export interface TiffDecodeResult {
     bitsPerSample: number;
     /** 1=uint, 2=int, 3=float */
     sampleFormat: number;
+	/** 0=f32, 1=u8, 3=little-endian u16 packed as bytes at the WASM boundary */
+	sampleKind: number;
     /** TIFF compression type */
     compression: number;
     /** TIFF predictor value */
@@ -140,8 +142,8 @@ export interface TiffDecodeResult {
     tileLength?: number;
     tileCount?: number;
     directDecode?: boolean;
-    /** Pixel data as floats */
-    data: Float32Array;
+    /** Pixel data in the narrowest carrier that preserves its semantics. */
+    data: Float32Array | Uint16Array | Uint8Array;
     /** Minimum value */
     min: number;
     /** Maximum value */
@@ -197,6 +199,18 @@ export class TiffWasmProcessor {
         const result = pageIndex > 0 && typeof this.wasm.decode_tiff_page === 'function'
             ? this.wasm.decode_tiff_page(uint8Array, pageIndex)
             : this.wasm.decode_tiff(uint8Array);
+		const sampleKind = Number(result.sample_kind ?? 0);
+		let data: Float32Array | Uint16Array | Uint8Array;
+		if ((sampleKind === 1 || sampleKind === 3) && typeof result.take_data_as_u8 === 'function') {
+			const bytes = result.take_data_as_u8() as Uint8Array;
+			data = sampleKind === 3
+				? new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)
+				: bytes;
+		} else {
+			data = typeof result.take_data_as_f32 === 'function'
+				? result.take_data_as_f32()
+				: new Float32Array(result.get_data_as_f32());
+		}
 
         const decodeResult: TiffDecodeResult = {
 			pageIndex,
@@ -206,6 +220,7 @@ export class TiffWasmProcessor {
             channels: result.channels,
             bitsPerSample: result.bits_per_sample,
             sampleFormat: result.sample_format,
+			sampleKind,
             compression: result.compression,
             predictor: result.predictor,
             photometricInterpretation: result.photometric_interpretation,
@@ -218,7 +233,7 @@ export class TiffWasmProcessor {
             tileLength: result.tile_length,
             tileCount: result.tile_count,
             directDecode: result.direct_decode,
-            data: new Float32Array(result.get_data_as_f32()),
+			data,
             min: result.min_value,
             max: result.max_value,
             allTagsJson: result.all_tags_json,

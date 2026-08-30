@@ -68,6 +68,18 @@ const GROUPS = {
       'l_00_l_01_f300_w1600_h1600.tif': 'predictor 3 with FLOAT16 samples, 3600x3000 - the case the first implementation rejected',
     },
   },
+  'utif-compatible': {
+    description: 'Synthetic TIFFs used for head-to-head measurements against the Marketplace preview-tiff extension. Every file is decoded correctly by both implementations.',
+    files: {
+      'preview-tiff-extensive-bench/gray16-640-uncompressed.tiff': '640x480 uint16 grayscale, uncompressed',
+      'preview-tiff-extensive-bench/gray8-2112-lzw.tif': '2112x2112 uint8 grayscale, LZW + predictor 2',
+      'preview-tiff-extensive-bench/gray8-2112-packbits.tif': '2112x2112 uint8 grayscale, PackBits',
+      'preview-tiff-extensive-bench/gray8-2112-uncompressed.tif': '2112x2112 uint8 grayscale, uncompressed',
+      'preview-tiff-extensive-bench/rgb16-640-uncompressed.tiff': '640x480 uint16 RGB, uncompressed',
+      'preview-tiff-extensive-bench/rgb8-2964-lzw.tif': '2964x2000 uint8 RGB, LZW + predictor 2',
+      'preview-tiff-extensive-bench/rgb8-640-uncompressed.tiff': '640x480 uint8 RGB, uncompressed',
+    },
+  },
   containers: {
     description: 'Real-world scientific and layered documents. These are COVERAGE, not comparison - different scenes, sizes and channel layouts. Use them to catch regressions per decoder, not to rank formats.',
     files: {
@@ -95,18 +107,39 @@ const GROUPS = {
 
 fs.mkdirSync(B, { recursive: true });
 // Drop stale links first so a removed entry does not linger in the corpus.
-for (const name of fs.readdirSync(B)) {
-  const full = path.join(B, name);
-  if (fs.lstatSync(full).isSymbolicLink()) { fs.unlinkSync(full); }
+function dropSymlinks(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    const stat = fs.lstatSync(full);
+    if (stat.isSymbolicLink()) { fs.unlinkSync(full); }
+    else if (stat.isDirectory()) { dropSymlinks(full); }
+  }
 }
+dropSymlinks(B);
 for (const spec of Object.values(GROUPS)) {
   for (const name of Object.keys(spec.files)) {
     const source = findSource(name);
-    if (source) { fs.symlinkSync(source, path.join(B, name)); }
+    if (source) {
+      const destination = path.join(B, name);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.symlinkSync(source, destination);
+    }
   }
 }
 
-const present = new Set(fs.readdirSync(B).filter(n => !n.startsWith('.') && !n.endsWith('.json') && !n.endsWith('.md')));
+function listCorpusEntries(dir, relative = '') {
+  const entries = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (!relative && (name.startsWith('.') || name.endsWith('.json') || name.endsWith('.md'))) { continue; }
+    const full = path.join(dir, name);
+    const nested = relative ? path.join(relative, name) : name;
+    const stat = fs.lstatSync(full);
+    if (stat.isDirectory()) { entries.push(...listCorpusEntries(full, nested)); }
+    else { entries.push(nested); }
+  }
+  return entries;
+}
+const present = new Set(listCorpusEntries(B));
 const manifest = { generated: new Date().toISOString().slice(0, 10), root: B, groups: {} };
 let missing = [], unlisted = new Set(present);
 

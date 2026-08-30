@@ -1160,7 +1160,8 @@ export class ImagePreview extends MediaPreview {
 		const warmDecoderUri = isLayeredDocument ? layeredDecodeWorkerUri : warmFastRawDecoder ? fastRawWorkerUri : warmGeneralDecoder ? decodeWorkerUri : null;
 		const warmDecoderBundleName = !warmDecoderUri ? null : isLayeredDocument ? 'layeredDecodeWorker.bundle.js'
 			: warmFastRawDecoder ? 'fastRawWorker.bundle.js' : 'decodeWorker.bundle.js';
-		const speculativeDecodeFormat = lower.endsWith('.ppm') ? 'ppm'
+		const speculativeDecodeFormat = isTiff ? 'tiff'
+			: lower.endsWith('.ppm') ? 'ppm'
 			: isPfm ? 'pfm'
 				: lower.endsWith('.npy') ? 'npy'
 					: isHdr ? 'hdr'
@@ -1187,16 +1188,32 @@ export class ImagePreview extends MediaPreview {
 				if (!response.ok) throw new Error('decode worker warmup failed');
 				return response.text();
 			})` : 'null'};
-			const wasmBytesPromise = ${warmGeneralDecoder ? `fetch(${JSON.stringify(wasmUri.toString())}).then(response => {
+			const wasmResourcePromise = ${warmGeneralDecoder ? `fetch(${JSON.stringify(wasmUri.toString())}).then(response => {
 				if (!response.ok) throw new Error('decoder WASM warmup failed');
-				return response.arrayBuffer();
+				return { compileResponse: response.clone(), bytesResponse: response };
 			})` : 'null'};
-			const wasmModulePromise = wasmBytesPromise ? wasmBytesPromise.then(bytes => WebAssembly.compile(bytes)) : null;
+			let wasmBytesPromise = null;
+			const getWasmBytes = wasmResourcePromise ? () => {
+				wasmBytesPromise ||= wasmResourcePromise.then(resource => resource.bytesResponse.arrayBuffer());
+				return wasmBytesPromise;
+			} : null;
+			const wasmModulePromise = wasmResourcePromise ? wasmResourcePromise.then(async resource => {
+				const fallbackResponse = resource.compileResponse.clone();
+				if (typeof WebAssembly.compileStreaming === 'function') {
+					try {
+						return await WebAssembly.compileStreaming(Promise.resolve(resource.compileResponse));
+					} catch { /* incorrect MIME or unsupported response: use bytes below */ }
+				}
+				return WebAssembly.compile(await fallbackResponse.arrayBuffer());
+			}) : null;
 			const readyWorkerPromise = sourcePromise ? Promise.all([
 				sourcePromise,
-				wasmModulePromise ? wasmModulePromise.catch(() => null) : Promise.resolve(null),
-				wasmBytesPromise
-			]).then(([source, wasmModule, wasmBytes]) => new Promise((resolve, reject) => {
+				wasmModulePromise ? wasmModulePromise.catch(() => null) : Promise.resolve(null)
+			]).then(async ([source, wasmModule]) => {
+				// A transferable compiled module is sufficient. Read and copy the
+				// 3 MB payload only on the compile fallback path.
+				const wasmBytes = !wasmModule && getWasmBytes ? await getWasmBytes() : null;
+				return new Promise((resolve, reject) => {
 				const blobUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
 				const worker = ${warmFastRawDecoder ? 'new Worker(blobUrl)' : `new Worker(blobUrl, { type: 'module' })`};
 				const timeout = setTimeout(() => {
@@ -1220,13 +1237,23 @@ export class ImagePreview extends MediaPreview {
 				const wasmBuffer = wasmModule || !wasmBytes ? null : wasmBytes.slice(0);
 				const initMessage = { type: 'init', tiffWasmModule: wasmModule, tiffWasmBuffer: wasmBuffer };
 				worker.postMessage(initMessage, wasmBuffer ? [wasmBuffer] : []);
-			})) : null;
+				});
+			}) : null;
 			const speculativeFormat = ${JSON.stringify(speculativeDecodeFormat)};
 			const speculativeDecodeMetrics = {};
 			const speculativeDecodePromise = speculativeFormat && readyWorkerPromise
 				? Promise.all([readyWorkerPromise, imageBufferPromise]).then(([adopted, buffer]) => new Promise(resolve => {
 					const id = 0;
-					const timeout = setTimeout(() => resolve({ ok: false, error: 'speculative decode timed out' }), 30000);
+					// TIFF page navigation and decoder fallback need immutable source
+					// bytes after the bootstrap transfers its decode copy to the worker.
+					// This is the same single copy processTiff normally keeps, just made
+					// before the viewer bundle has finished parsing.
+					const retainedSourceBuffer = speculativeFormat === 'tiff' ? buffer.slice(0) : null;
+					const timeout = setTimeout(() => resolve({
+						ok: false,
+						error: 'speculative decode timed out',
+						...(retainedSourceBuffer ? { sourceBuffer: retainedSourceBuffer } : {})
+					}), 30000);
 					speculativeDecodeMetrics.start = performance.now();
 					speculativeDecodeMetrics.fileBytes = buffer.byteLength;
 					adopted.worker.onmessage = event => {
@@ -1235,18 +1262,26 @@ export class ImagePreview extends MediaPreview {
 						speculativeDecodeMetrics.end = performance.now();
 						speculativeDecodeMetrics.durationMs = speculativeDecodeMetrics.end - speculativeDecodeMetrics.start;
 						adopted.worker.onmessage = null;
-						resolve(event.data);
+						resolve(retainedSourceBuffer ? { ...event.data, sourceBuffer: retainedSourceBuffer } : event.data);
 					};
 					try {
 						adopted.worker.postMessage({
 							id,
 							format: speculativeFormat,
 							buffer,
-							options: { computeStats: ${!settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false} }
+							options: {
+								computeStats: ${!settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false},
+								preferParallelTiff: speculativeFormat === 'tiff'
+							}
 						}, [buffer]);
 					} catch (error) {
 						clearTimeout(timeout);
-						resolve({ ok: false, error: String(error), buffer });
+						resolve({
+							ok: false,
+							error: String(error),
+							buffer,
+							...(retainedSourceBuffer ? { sourceBuffer: retainedSourceBuffer } : {})
+						});
 					}
 				}))
 				: null;
@@ -1274,6 +1309,7 @@ export class ImagePreview extends MediaPreview {
 				speculativeDecodeClaimed: false,
 				sourcePromise,
 				wasmBytesPromise,
+				getWasmBytes,
 				wasmModulePromise,
 				workerPromise
 			};

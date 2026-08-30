@@ -1077,6 +1077,23 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		});
 	}
 
+	/**
+	 * Run bookkeeping only after the committed frame had a paint opportunity.
+	 * Promise continuations run as microtasks inside the animation-frame callback
+	 * and can still delay that frame, so cross a task boundary as well.
+	 */
+	function scheduleAfterVisiblePaint(callback: () => void): void {
+		const generation = _loadGeneration;
+		const run = () => window.setTimeout(() => {
+			if (generation === _loadGeneration) { callback(); }
+		}, 0);
+		if (visiblePaintPromise) {
+			void visiblePaintPromise.then(run);
+		} else {
+			requestAnimationFrame(() => requestAnimationFrame(run));
+		}
+	}
+
 	function logLoadPerformance(label: string, webviewMs: string, totalMs: string | number): void {
 		// Capture phase totals immediately; PerfTrace may be reused by another
 		// navigation before the paint callback runs.
@@ -2303,19 +2320,19 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		zoomController.setCanvas(canvas);
 		zoomController.setImageLoaded();
 		mouseHandler.setImageElement(nextImageElement);
-		// The final pixels are on screen, so this is the one point where every
-		// load path — initial, collection switch, page change — has a decoded
-		// raw buffer to measure against.
-		invalidateMeasurementForNewImage();
+		// A persisted channel composite or an already-open analysis panel can
+		// affect the visible result immediately. Ordinary measurement/cache
+		// invalidation does not, so keep it out of the first-paint task.
+		const analysisNeededForCommittedFrame = compositeEnabled ||
+			channelsPanel.isVisible() || measurePanel.isVisible();
+		if (analysisNeededForCommittedFrame) {
+			invalidateMeasurementForNewImage();
+		}
 
 		// Send size information to VS Code
 		const sizeElement = nextImageElement as any;
 		const sizeWidth = canvas?.width || sizeElement.naturalWidth || sizeElement.width;
 		const sizeHeight = canvas?.height || sizeElement.naturalHeight || sizeElement.height;
-		vscode.postMessage({
-			type: 'size',
-			value: `${sizeWidth}x${sizeHeight}`,
-		});
 
 		// Put the completed frame into the DOM before removing any stale elements.
 		// replaceWith() makes collection/page changes atomic from the browser's
@@ -2377,9 +2394,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// Note: Histogram visibility is restored via restoreHistogramState message
 		// when webview becomes active (sent from ImagePreview.sendHistogramState)
 
-		// Update histogram if visible
-		updateHistogramData();
-
 		// Keep the layer stack's base in sync only when the layer system needs it.
 		// Browser-native images without raw buffers otherwise force a full-canvas readback.
 		if (shouldSyncBaseLayer()) {
@@ -2391,16 +2405,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// Restore a saved layer stack after a webview reload (once the base exists).
 		maybeRestoreLayers();
 		PerfTrace.mark('layers-restore');
-		// In a dedicated Layers window, open the panel automatically on first load
-		// and ask the extension for any images to stack on top (e.g. a collection).
-		if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown &&
-			!layeredPreviewProcessor.hasDeferredLayersPending()) {
-			_layerSurfaceShown = true;
-			layersPanel.show();
-			if (!_pendingLayerRestore) {
-				vscode.postMessage({ type: 'requestInitialLayers' });
-			}
-		}
 		if (layerManager.active && layerManager.hasCompositeStack()) {
 			recompositeLayers();
 			PerfTrace.mark('layers-recomposite');
@@ -2412,6 +2416,26 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		PerfTrace.mark('finalize');
 		if (!hasPendingDeferred) {
 			PerfTrace.end();
+			scheduleAfterVisiblePaint(() => {
+				if (!analysisNeededForCommittedFrame) {
+					invalidateMeasurementForNewImage();
+				}
+				// Status-bar dimensions, metadata/histogram refresh, and opening the
+				// dedicated layer controls do not affect the committed base frame.
+				vscode.postMessage({
+					type: 'size',
+					value: `${sizeWidth}x${sizeHeight}`,
+				});
+				updateHistogramData();
+				if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown &&
+					!layeredPreviewProcessor.hasDeferredLayersPending()) {
+					_layerSurfaceShown = true;
+					layersPanel.show();
+					if (!_pendingLayerRestore) {
+						vscode.postMessage({ type: 'requestInitialLayers' });
+					}
+				}
+			});
 		}
 	}
 

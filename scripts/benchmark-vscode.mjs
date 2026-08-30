@@ -12,11 +12,12 @@
  *   ITER=5 node scripts/benchmark-vscode.mjs              # more samples
  *   BENCH_DIR=/path/to/files node scripts/benchmark-vscode.mjs
  *
- * READING THE OUTPUT — the first iteration of each file is discarded, always.
- * Cold opens pay costs that never recur in a session (WASM compile and
- * instantiation, worker pool boot, and a per-format/per-size GPU validation
- * stall in webgl2-float-renderer). Mixing them into a median hides real changes
- * behind startup noise. Everything reported is the median of iterations 2..N.
+ * READING THE OUTPUT — cold and warm are reported separately. The cold column
+ * is iteration 1; warm columns are medians of iterations 2..N. For a true cold
+ * measurement, run one file per fresh VS Code session with ONLY=... . Cold
+ * opens pay costs that never recur in a session (WASM compile/instantiation,
+ * worker boot, and per-format/per-size GPU validation), so never mix the first
+ * open into the warm median.
  *
  * Set DETAILED_PERF_TRACING = true in media/modules/perf-trace.ts and rebuild to
  * capture the full per-phase trace as well; it is surfaced in `trace`.
@@ -46,7 +47,13 @@ async function main() {
 	const stage = path.join(tempRoot, 'files');
 	fs.mkdirSync(stage, { recursive: true });
 
-	let names = fs.readdirSync(benchDir).filter(n => !n.startsWith('.') && !/\.(json|md)$/.test(n));
+	const listFiles = (dir, relative = '') => fs.readdirSync(dir).flatMap(name => {
+		if (!relative && (name.startsWith('.') || /\.(json|md)$/.test(name))) { return []; }
+		const full = path.join(dir, name);
+		const nested = relative ? path.join(relative, name) : name;
+		return fs.statSync(full).isDirectory() ? listFiles(full, nested) : [nested];
+	});
+	let names = listFiles(benchDir);
 	if (only.length) names = names.filter(n => only.some(o => n.includes(o)));
 	if (!names.length) throw new Error(`ONLY matched nothing in ${benchDir}`);
 
@@ -55,6 +62,7 @@ async function main() {
 	const base = names.map(name => {
 		const real = fs.realpathSync(path.join(benchDir, name));
 		const dst = path.join(stage, name);
+		fs.mkdirSync(path.dirname(dst), { recursive: true });
 		try { fs.linkSync(real, dst); } catch { fs.copyFileSync(real, dst); }
 		return { id: name, file: dst, bytes: fs.statSync(real).size };
 	}).sort((a, b) => a.id.localeCompare(b.id));
@@ -114,10 +122,11 @@ async function main() {
 	}
 
 	const pad = (v, n) => String(v).padStart(n);
-	console.log('\n' + 'file'.padEnd(34) + pad('MB', 8) + pad('read', 7) + pad('decode', 8) + pad('total', 8) + '  engine');
+	console.log('\n' + 'file'.padEnd(34) + pad('MB', 8) + pad('read', 7) + pad('decode', 8)
+		+ pad('cold', 8) + pad('warm', 8) + pad('cold vis', 10) + pad('warm vis', 10) + '  engine');
 	const rows = [];
 	for (const [id, runs] of grouped) {
-		// Discard the cold first open; see the note at the top of this file.
+		// Keep the cold first open separate; warm aggregates exclude it.
 		const warm = runs.length > 1 ? runs.slice(1) : runs;
 		const bytes = base.find(f => f.id === id)?.bytes || 0;
 		const row = {
@@ -130,19 +139,25 @@ async function main() {
 			engine: warm[0].engine || '-',
 			samples: warm.length,
 			cold: runs[0].totalMs,
+			coldVisible: runs[0].visibleMs || 0,
+			warmRange: {
+				total: [Math.min(...warm.map(r => r.totalMs)), Math.max(...warm.map(r => r.totalMs))],
+				visible: [Math.min(...warm.map(r => r.visibleMs || 0)), Math.max(...warm.map(r => r.visibleMs || 0))],
+			},
 			line: warm[warm.length - 1].line,
 			trace: warm[warm.length - 1].trace || '',
 		};
 		rows.push(row);
 		console.log(id.slice(0, 33).padEnd(34) + pad(row.mb.toFixed(1), 8) + pad(row.read.toFixed(0), 7)
-			+ pad(row.decode.toFixed(0), 8) + pad(row.total.toFixed(0), 8) + '  ' + row.engine);
+			+ pad(row.decode.toFixed(0), 8) + pad(row.cold.toFixed(0), 8) + pad(row.total.toFixed(0), 8)
+			+ pad(row.coldVisible.toFixed(0), 10) + pad(row.visible.toFixed(0), 10) + '  ' + row.engine);
 	}
 	const missing = rows.filter(r => r.line === '');
 	if (missing.length) console.log(`\n${missing.length} file(s) produced no [Perf] line: ${missing.map(r => r.id).join(', ')}`);
 
 	const out = path.join(root, 'benchmark-vscode-result.json');
 	fs.writeFileSync(out, JSON.stringify({ benchDir, iterations, rows }, null, 2));
-	console.log(`\nMedians of iterations 2..${iterations} (cold first open discarded). Full detail: ${out}`);
+	console.log(`\nCold = iteration 1; warm = median of iterations 2..${iterations}. Full detail: ${out}`);
 }
 
 main().catch(error => { console.error(error); process.exit(1); });
