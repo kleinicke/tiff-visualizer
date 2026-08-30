@@ -307,8 +307,8 @@ export class TiffProcessor {
 				}
 			}
 
-			// Strip-parallel path: for large, byte-aligned, chunky strip TIFFs
-			// (predictor 1/2/3, no orientation/palette/CMYK/CFA post-processing)
+			// Strip-parallel path: for large, byte-aligned strip/tile TIFFs
+			// (predictor 1/2/3, including separate planes and orientation)
 			// the strips are independently compressed, so a pool of workers can
 			// decode disjoint ranges concurrently. Rust decides eligibility --
 			// tiff_float_strip_plan returns nothing for any other shape -- and
@@ -359,7 +359,7 @@ export class TiffProcessor {
 								compression: parallel.compression,
 								predictor: parallel.predictor,
 								photometricInterpretation: parallel.photometricInterpretation,
-								planarConfiguration: 1,
+								planarConfiguration: parallel.planarConfiguration,
 								// A tiled file decodes a tile ROW per unit, so report
 								// the real layout rather than the unit geometry.
 								rowsPerStrip: parallel.tileLength ? undefined : parallel.rowsPerStrip,

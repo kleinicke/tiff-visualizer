@@ -1068,9 +1068,6 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
     let orientation = decoder
         .get_tag_u64(tiff::tags::Tag::Orientation)
         .unwrap_or(1);
-    if orientation != 1 {
-        return None;
-    }
     if decoder.get_tag_u64_vec(tiff::tags::Tag::ColorMap).is_ok() {
         return None;
     }
@@ -1087,6 +1084,7 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
         compression,
         predictor,
         planar_configuration,
+        orientation as u32,
     )
 }
 

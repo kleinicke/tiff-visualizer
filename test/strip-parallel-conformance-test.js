@@ -5,8 +5,8 @@
  * `tiff_float_strip_plan` splits a TIFF into units of work: one strip, or one
  * whole tile ROW. This test does what media/modules/strip-parallel-decode.ts
  * does — slice the file into per-range blobs, decode each range on its own,
- * assemble — and asserts the result is identical to `decode_tiff` on the whole
- * file, sample for sample, for every eligible file in test-samples.
+ * assemble, apply orientation — and asserts the result is identical to
+ * `decode_tiff` on the whole file, sample for sample, for every eligible file.
  *
  * Both worker entry points are covered: `decode_tiff_float_strip_range` (f32
  * samples) and `decode_tiff_strip_range_raw` (native little-endian bytes in the
@@ -48,6 +48,31 @@ function splitRanges(unitCount, parts) {
 	return ranges;
 }
 
+function applyOrientation(source, width, height, channels, orientation) {
+	if (orientation === 1) { return source; }
+	const transposes = orientation >= 5 && orientation <= 8;
+	const outputWidth = transposes ? height : width;
+	const outputHeight = transposes ? width : height;
+	const output = new source.constructor(source.length);
+	for (let y = 0; y < outputHeight; y++) {
+		for (let x = 0; x < outputWidth; x++) {
+			let sx, sy;
+			switch (orientation) {
+				case 2: sx = width - 1 - x; sy = y; break;
+				case 3: sx = width - 1 - x; sy = height - 1 - y; break;
+				case 4: sx = x; sy = height - 1 - y; break;
+				case 5: sx = y; sy = x; break;
+				case 6: sx = y; sy = height - 1 - x; break;
+				case 7: sx = width - 1 - y; sy = height - 1 - x; break;
+				case 8: sx = width - 1 - y; sy = x; break;
+			}
+			const from = (sy * width + sx) * channels;
+			output.set(source.subarray(from, from + channels), (y * outputWidth + x) * channels);
+		}
+	}
+	return output;
+}
+
 async function main() {
 	if (!fs.existsSync(wasmBin)) {
 		console.log('⚠️  media/wasm/tiff-wasm.wasm not found — run `npm run build:wasm` first. Skipping.');
@@ -55,12 +80,14 @@ async function main() {
 	}
 
 	console.log('🧪 Running strip/tile-parallel conformance tests...\n');
+	const extraFiles = process.argv.slice(2)
+		.map(file => path.resolve(file))
+		.filter(file => /\.(tif|tiff)$/i.test(file) && fs.existsSync(file));
 
-	// Both builds are swept, because each pool decodes with the module that
-	// produced its plan. The core module's plan must never claim a codec that
-	// build cannot decode (every worker would then fail on the file), and the
-	// codec module has to hold the equality for the heavy codecs too.
-	const totals = { eligible: 0, tiled: 0, codecs: new Set() };
+	// Both builds are swept. The core is allowed to PLAN an extended codec so
+	// speculative routing can reserve it for the pool, but only the codec build
+	// executes those ranges. Every executable plan must equal whole-image decode.
+	const totals = { eligible: 0, tiled: 0, planar: 0, oriented: 0, codecs: new Set() };
 	for (const [label, js, bin] of [
 		['core module', wasmJs, wasmBin],
 		['codec module', codecJs, codecBin],
@@ -72,15 +99,19 @@ async function main() {
 		const mod = await import(js.replace(/\\/g, '/'));
 		await mod.default({ module_or_path: fs.readFileSync(bin) });
 		console.log(`— ${label} —`);
-		const swept = await sweep(mod);
+		const swept = await sweep(mod, label === 'core module', extraFiles);
 		totals.eligible += swept.eligible;
 		totals.tiled += swept.tiled;
+		totals.planar += swept.planar;
+		totals.oriented += swept.oriented;
 		for (const codec of swept.codecs) { totals.codecs.add(codec); }
 	}
 
 	assert.ok(totals.eligible >= 10,
 		`expected the plan to accept a decent share of the corpus, got ${totals.eligible}`);
 	assert.ok(totals.tiled >= 3, `expected tiled files to be eligible, got ${totals.tiled}`);
+	assert.ok(totals.planar >= 2, `expected planar files to be eligible, got ${totals.planar}`);
+	assert.ok(totals.oriented >= 8, `expected oriented files to be eligible, got ${totals.oriented}`);
 	// The point of the change: the block-only codecs are no longer excluded.
 	for (const compression of [50000, 34925, 34887]) {
 		assert.ok(totals.codecs.has(compression),
@@ -90,19 +121,28 @@ async function main() {
 	console.log(`\n🎉 Parallel decode matches the single-threaded decode on ${totals.eligible} files (${totals.tiled} tiled), codecs: ${[...totals.codecs].sort((a, b) => a - b).join(', ')}.\n`);
 }
 
-async function sweep(mod) {
+async function sweep(mod, coreBuild, extraFiles) {
 
-	const files = fs.readdirSync(samplesDir).filter(name => /\.(tif|tiff)$/i.test(name)).sort();
+	const files = [
+		...fs.readdirSync(samplesDir).filter(name => /\.(tif|tiff)$/i.test(name)).sort()
+			.map(name => ({ name, fullPath: path.join(samplesDir, name) })),
+		...extraFiles.map(fullPath => ({ name: path.basename(fullPath), fullPath })),
+	];
 	let eligible = 0;
 	let tiled = 0;
+	let planar = 0;
+	let oriented = 0;
 	const codecs = new Set();
 
-	for (const file of files) {
-		const bytes = new Uint8Array(fs.readFileSync(path.join(samplesDir, file)));
+	for (const entry of files) {
+		const file = entry.name;
+		const bytes = new Uint8Array(fs.readFileSync(entry.fullPath));
 
 		let plan;
 		try { plan = mod.tiff_float_strip_plan(bytes); } catch { plan = null; }
 		if (!plan) { continue; }
+		const extended = new Set([34887, 34925, 34712, 33003, 33004, 33005, 34934, 22610]);
+		if (coreBuild && extended.has(plan.compression)) { continue; }
 
 		// Ground truth: the ordinary whole-file decode.
 		let reference;
@@ -120,6 +160,8 @@ async function sweep(mod) {
 		const isTiled = plan.tile_length > 0;
 		eligible++;
 		if (isTiled) { tiled++; }
+		if (plan.planar_configuration === 2) { planar++; }
+		if (plan.orientation !== 1) { oriented++; }
 		codecs.add(plan.compression);
 
 		// Three ranges, so the split lands mid-image rather than on a boundary
@@ -152,6 +194,7 @@ async function sweep(mod) {
 					blob, rangeCounts, range.first,
 					width, height, channels, bits, plan.compression,
 					plan.rows_per_strip, plan.predictor, format, plan.little_endian,
+					plan.planar_configuration, plan.orientation,
 					plan.tile_width, plan.tile_length, plan.blocks_across,
 					plan.lerc_additional_compression,
 				];
@@ -166,18 +209,19 @@ async function sweep(mod) {
 				assembled.set(samples, range.first * plan.rows_per_strip * width * channels);
 			}
 
+			const final = applyOrientation(assembled, width, height, channels, plan.orientation);
 			const label = `${file} (${isTiled ? `tiled ${plan.tile_width}x${plan.tile_length}` : 'strips'}, compression ${plan.compression}, ${raw ? 'raw bytes' : 'f32'})`;
-			assert.strictEqual(assembled.length, reference.length, `${label}: sample count`);
+			assert.strictEqual(final.length, reference.length, `${label}: sample count`);
 			for (let i = 0; i < reference.length; i++) {
-				if (assembled[i] !== reference[i]) {
-					assert.fail(`${label}: sample ${i} is ${assembled[i]}, whole-file decode says ${reference[i]}`);
+				if (final[i] !== reference[i] && !(Number.isNaN(final[i]) && Number.isNaN(reference[i]))) {
+					assert.fail(`${label}: sample ${i} is ${final[i]}, whole-file decode says ${reference[i]}`);
 				}
 			}
 			console.log(`✅ ${label} matches the whole-file decode exactly`);
 		}
 	}
 
-	return { eligible, tiled, codecs };
+	return { eligible, tiled, planar, oriented, codecs };
 }
 
 main().catch(error => {

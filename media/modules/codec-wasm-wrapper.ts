@@ -58,6 +58,8 @@ export function externalCodecName(error: unknown): string | null {
 
 let codecModule: CodecModule | null = null;
 let codecInitPromise: Promise<CodecModule> | null = null;
+let compiledCodecModule: WebAssembly.Module | null = null;
+let codecCompilePromise: Promise<WebAssembly.Module> | null = null;
 
 /** Candidate payload URLs, in the order the other wrappers use them. */
 export function codecWasmUrls(): string[] {
@@ -66,6 +68,30 @@ export function codecWasmUrls(): string[] {
         new URL('./wasm/codec-wasm.wasm', import.meta.url).href,
         new URL('../wasm/codec-wasm.wasm', import.meta.url).href,
     ].filter((url): url is string => typeof url === 'string' && url.length > 0);
+}
+
+async function compileCodecWasm(): Promise<WebAssembly.Module> {
+    if (compiledCodecModule) { return compiledCodecModule; }
+    if (codecCompilePromise) { return codecCompilePromise; }
+    codecCompilePromise = (async () => {
+        let lastError: unknown = null;
+        for (const url of codecWasmUrls()) {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) { throw new Error(`HTTP ${response.status}`); }
+                compiledCodecModule = await WebAssembly.compile(await response.arrayBuffer());
+                return compiledCodecModule;
+            } catch (error) {
+                lastError = error;
+            }
+        }
+        const details = lastError instanceof Error ? lastError.message : String(lastError);
+        throw new Error(`Unable to load the extended codec decoder (${details})`);
+    })().catch((error: unknown): never => {
+        codecCompilePromise = null;
+        throw error;
+    });
+    return codecCompilePromise;
 }
 
 /**
@@ -78,23 +104,12 @@ export async function initCodecDecoder(): Promise<CodecModule> {
     if (codecInitPromise) { return codecInitPromise; }
 
     codecInitPromise = (async () => {
-        let lastError: unknown = null;
-        for (const url of codecWasmUrls()) {
-            try {
-                const response = await fetch(url);
-                if (!response.ok) { throw new Error(`HTTP ${response.status}`); }
-                await initCodecWasm({ module_or_path: await response.arrayBuffer() });
-                codecModule = {
-                    decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast,
-                    tiff_page_count, decode_dicom_fast, decode_czi_fast, decode_jpegxr_fast,
-                };
-                return codecModule;
-            } catch (error) {
-                lastError = error;
-            }
-        }
-        const details = lastError instanceof Error ? lastError.message : String(lastError);
-        throw new Error(`Unable to load the extended codec decoder (${details})`);
+        await initCodecWasm({ module_or_path: await compileCodecWasm() });
+        codecModule = {
+            decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast,
+            tiff_page_count, decode_dicom_fast, decode_czi_fast, decode_jpegxr_fast,
+        };
+        return codecModule;
     })();
     try {
         return await codecInitPromise;
@@ -104,8 +119,19 @@ export async function initCodecDecoder(): Promise<CodecModule> {
     }
 }
 
+/**
+ * The compiled extended module for worker-pool instantiation. Loading and
+ * compilation are shared with the main-thread fallback, so an LZMA TIFF pays
+ * for the payload once even though every strip worker gets its own instance.
+ */
+export async function codecWasmModule(): Promise<WebAssembly.Module> {
+    return compileCodecWasm();
+}
+
 /** Adopt a module the main thread already compiled (see `setCodecModule`). */
 export async function initCodecDecoderFrom(compiled: WebAssembly.Module): Promise<CodecModule> {
+    compiledCodecModule = compiled;
+    codecCompilePromise = Promise.resolve(compiled);
     if (codecModule) { return codecModule; }
     if (!codecInitPromise) {
         codecInitPromise = (async () => {

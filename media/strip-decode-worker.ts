@@ -34,6 +34,55 @@ self.onmessage = async (event: MessageEvent) => {
 	try {
 		await ready;
 		const started = performance.now();
+		if (job.kind === 'orient') {
+			const source = new Uint8Array(job.data);
+			const width = Number(job.width);
+			const height = Number(job.height);
+			const bytesPerPixel = Number(job.bytesPerPixel);
+			const orientation = Number(job.orientation);
+			const transposes = orientation >= 5 && orientation <= 8;
+			const outputWidth = transposes ? height : width;
+			const outputHeight = transposes ? width : height;
+			const output = new Uint8Array(source.byteLength);
+			for (let y = 0; y < outputHeight; y++) {
+				for (let x = 0; x < outputWidth; x++) {
+					let sx: number, sy: number;
+					switch (orientation) {
+						case 2: sx = width - 1 - x; sy = y; break;
+						case 3: sx = width - 1 - x; sy = height - 1 - y; break;
+						case 4: sx = x; sy = height - 1 - y; break;
+						case 5: sx = y; sy = x; break;
+						case 6: sx = y; sy = height - 1 - x; break;
+						case 7: sx = width - 1 - y; sy = height - 1 - x; break;
+						case 8: sx = width - 1 - y; sy = x; break;
+						default: sx = x; sy = y;
+					}
+					const from = (sy * width + sx) * bytesPerPixel;
+					const to = (y * outputWidth + x) * bytesPerPixel;
+					if (bytesPerPixel === 1) {
+						output[to] = source[from];
+					} else if (bytesPerPixel === 3) {
+						output[to] = source[from];
+						output[to + 1] = source[from + 1];
+						output[to + 2] = source[from + 2];
+					} else if (bytesPerPixel === 4) {
+						output[to] = source[from];
+						output[to + 1] = source[from + 1];
+						output[to + 2] = source[from + 2];
+						output[to + 3] = source[from + 3];
+					} else {
+						for (let byte = 0; byte < bytesPerPixel; byte++) {
+							output[to + byte] = source[from + byte];
+						}
+					}
+				}
+			}
+			(self as any).postMessage(
+				{ id: job.id, data: output.buffer, width: outputWidth, height: outputHeight, ms: performance.now() - started },
+				[output.buffer],
+			);
+			return;
+		}
 		if (job.kind === 'exr-zip') {
 			const bytes = decode_exr_zip_f32_blocks(
 				new Uint8Array(job.blob),
@@ -85,6 +134,8 @@ self.onmessage = async (event: MessageEvent) => {
 				job.predictor,
 				job.sampleFormat,
 				job.littleEndian,
+				job.planarConfiguration || 1,
+				job.orientation || 1,
 				job.tileWidth || 0,
 				job.tileLength || 0,
 				job.blocksAcross || 1,
@@ -133,6 +184,8 @@ self.onmessage = async (event: MessageEvent) => {
 			job.predictor,
 			job.sampleFormat,
 			job.littleEndian,
+			job.planarConfiguration || 1,
+			job.orientation || 1,
 			job.tileWidth || 0,
 			job.tileLength || 0,
 			job.blocksAcross || 1,

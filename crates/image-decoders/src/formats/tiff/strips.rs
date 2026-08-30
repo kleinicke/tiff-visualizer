@@ -1489,6 +1489,11 @@ pub struct FloatStripPlan {
     pub predictor: u32,
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
     pub sample_format: u32,
+    /// TIFF PlanarConfiguration: 1 = chunky, 2 = one block per channel.
+    pub planar_configuration: u32,
+    /// TIFF Orientation tag. Decoding produces the stored layout; the caller
+    /// applies this once after all independently decoded bands are assembled.
+    pub orientation: u32,
     /// File byte order, which is how predictor 1 and 2 samples are stored.
     /// Predictor 3 always reassembles to big-endian regardless.
     pub little_endian: bool,
@@ -1517,7 +1522,9 @@ impl FloatStripPlan {
     /// image, which is what lets a worker return rows the caller can place
     /// with a single offset.
     pub fn blocks_per_unit(&self) -> usize {
-        if self.is_tiled() {
+        if self.planar_configuration == 2 {
+            self.channels as usize
+        } else if self.is_tiled() {
             (self.blocks_across as usize).max(1)
         } else {
             1
@@ -1533,7 +1540,9 @@ impl FloatStripPlan {
     /// Bytes in one row of a single block: the full image width for a strip,
     /// `TileWidth` for a tile (edge tiles are padded to that width).
     pub fn block_row_bytes(&self) -> usize {
-        if self.is_tiled() {
+        if self.planar_configuration == 2 {
+            (self.width as usize) * (self.bits_per_sample as usize / 8)
+        } else if self.is_tiled() {
             (self.tile_width as usize)
                 * (self.channels as usize)
                 * (self.bits_per_sample as usize / 8)
@@ -1591,10 +1600,11 @@ pub(crate) fn float_predictor_plan(
     compression: u32,
     predictor: u32,
     planar_configuration: u32,
+    orientation: u32,
 ) -> Option<FloatStripPlan> {
     use tiff::tags::Tag;
 
-    if planar_configuration != 1 || !matches!(predictor, 1..=3) {
+    if !matches!(planar_configuration, 1 | 2) || !matches!(predictor, 1..=3) {
         return None;
     }
     // Byte-aligned widths only. Sub-byte and 9..15-bit shapes have their own
@@ -1606,16 +1616,14 @@ pub(crate) fn float_predictor_plan(
     // hand back typed values rather than the strip's bytes, which is why the
     // plan carries the sample layout they need to re-serialize against.
     //
-    // The heavy codecs are conditional because the pool decodes with whichever
-    // module produced the plan: the core module's strip workers cannot decode a
-    // JPEG 2000 tile, so a plan from the core build must not claim one. Without
-    // this the pool would accept the file and every worker would fail on it.
-    let supported = matches!(compression, 1 | 5 | 8 | 32946 | 50000 | 34933)
-        || (cfg!(feature = "codec-lzma") && compression == 34925)
-        || (cfg!(feature = "codec-lerc") && compression == 34887)
-        || (cfg!(feature = "codec-jpeg2000")
-            && matches!(compression, 34712 | 33003 | 33004 | 33005))
-        || (cfg!(feature = "codec-jpegxr") && matches!(compression, 34934 | 22610));
+    // Planning only parses the IFD, so the core build may safely advertise a
+    // layout whose codec lives in the extended module. The caller selects the
+    // matching worker module before any block is decoded.
+    let supported = matches!(
+        compression,
+        1 | 5 | 8 | 32946 | 50000 | 34933 | 34925 | 34887 | 34712 | 33003 | 33004 | 33005
+            | 34934 | 22610
+    );
     if !supported {
         return None;
     }
@@ -1635,7 +1643,12 @@ pub(crate) fn float_predictor_plan(
     let tile_length = decoder.get_tag_u32(Tag::TileLength).unwrap_or(0);
     let is_tiled = tile_width > 0 && tile_length > 0;
 
-    let (offsets, counts, rows_per_unit, blocks_across) = if is_tiled {
+    if is_tiled && planar_configuration == 2 {
+        // Separate tiled planes need both a channel and a tile-column axis.
+        // Keep that uncommon shape on the established whole-image decoder.
+        return None;
+    }
+    let (mut offsets, mut counts, rows_per_unit, blocks_across) = if is_tiled {
         let offsets = match decoder.get_tag_u64_vec(Tag::TileOffsets) {
             Ok(value) if !value.is_empty() => value,
             _ => return None,
@@ -1671,6 +1684,27 @@ pub(crate) fn float_predictor_plan(
     if rows_per_unit == 0 {
         return None;
     }
+    if planar_configuration == 2 {
+        let strips_per_plane = (height as u64).div_ceil(rows_per_unit) as usize;
+        let channel_count = channels as usize;
+        if channel_count == 0 || offsets.len() != strips_per_plane * channel_count {
+            return None;
+        }
+        // TIFF stores separate planes plane-major. Reorder only the small IFD
+        // tables to band-major so one unit contains all channel blocks for the
+        // same rows and can be assembled at a single output offset.
+        let mut band_offsets = Vec::with_capacity(offsets.len());
+        let mut band_counts = Vec::with_capacity(counts.len());
+        for strip in 0..strips_per_plane {
+            for channel in 0..channel_count {
+                let index = channel * strips_per_plane + strip;
+                band_offsets.push(offsets[index]);
+                band_counts.push(counts[index]);
+            }
+        }
+        offsets = band_offsets;
+        counts = band_counts;
+    }
     Some(FloatStripPlan {
         width,
         height,
@@ -1679,6 +1713,8 @@ pub(crate) fn float_predictor_plan(
         compression,
         predictor,
         sample_format,
+        planar_configuration,
+        orientation,
         little_endian,
         rows_per_strip: rows_per_unit as u32,
         tile_width: if is_tiled { tile_width } else { 0 },
@@ -1791,6 +1827,24 @@ pub(crate) fn decode_unit_into(
     rows: usize,
     band: &mut [u8],
 ) -> Result<(), DecodeError> {
+    if plan.planar_configuration == 2 {
+        let bytes_per_sample = plan.bits_per_sample as usize / 8;
+        let plane_row_bytes = plan.width as usize * bytes_per_sample;
+        let mut plane_plan = plan.clone();
+        plane_plan.channels = 1;
+        plane_plan.planar_configuration = 1;
+        let mut plane = vec![0u8; rows * plane_row_bytes];
+        for (channel, block) in blocks.iter().enumerate() {
+            decode_float_predictor_strip(block, &plane_plan, rows, &mut plane)?;
+            for pixel in 0..rows * plan.width as usize {
+                let source = pixel * bytes_per_sample;
+                let destination = (pixel * plan.channels as usize + channel) * bytes_per_sample;
+                band[destination..destination + bytes_per_sample]
+                    .copy_from_slice(&plane[source..source + bytes_per_sample]);
+            }
+        }
+        return Ok(());
+    }
     if !plan.is_tiled() {
         let block = blocks
             .first()
@@ -2004,6 +2058,7 @@ pub(crate) fn try_decode_float_predictor_strips(
         compression,
         predictor,
         planar_configuration,
+        1,
     ) {
         Some(plan) => plan,
         None => return Ok(None),

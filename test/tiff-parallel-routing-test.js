@@ -16,6 +16,10 @@ const root = path.join(__dirname, '..');
 	assert.strictEqual(policy.shouldUseParallelTiffPlan(eligible(16)), true, '16 strips and 2M pixels must use the pool');
 	assert.strictEqual(policy.shouldUseParallelTiffPlan({ strip_count: 100, width: 1000, height: 1000 }), false,
 		'small rasters must stay on one worker despite many strips');
+	assert.strictEqual(policy.shouldUseParallelTiffPlan({ ...eligible(100), compression: 1, sample_format: 1, bits_per_sample: 8 }), false,
+		'uncompressed uint8 rasters must avoid copy-bound pool dispatch');
+	assert.strictEqual(policy.shouldUseParallelTiffPlan({ ...eligible(100), compression: 1, sample_format: 3, bits_per_sample: 32 }), true,
+		'uncompressed float32 rasters still benefit from parallel conversion');
 
 	const worker = fs.readFileSync(path.join(root, 'media/decode-worker.ts'), 'utf8');
 	const processor = fs.readFileSync(path.join(root, 'media/modules/tiff-processor.ts'), 'utf8');

@@ -14,9 +14,10 @@
  * worth, not one copy per worker), then assembles the returned samples.
  *
  * Eligibility is decided in Rust: the plan is returned only for byte-aligned
- * chunky layouts with predictor 1/2/3, a codec the block decoder implements,
- * and no pixel post-processing pending (no orientation flip, palette, CMYK or
- * CFA), so nothing here has to re-implement those transforms.
+ * layouts with predictor 1/2/3 and a supported block codec. Separate planes
+ * are grouped into spatial bands in the plan, and orientation is applied once
+ * in a pool worker after assembly. Palette, CMYK and CFA remain on the normal
+ * whole-image path.
  *
  * Falls back to `null` for anything it cannot handle; the caller then uses the
  * ordinary single-worker path.
@@ -56,6 +57,7 @@ export interface StripParallelResult {
 	sampleFormat: number;
 	compression: number;
 	predictor: number;
+	planarConfiguration: number;
 	rowsPerStrip: number;
 	stripCount: number;
 	/** Tile geometry when the file was tiled; both zero for strips. */
@@ -85,8 +87,9 @@ class StripDecodePool {
 	get size(): number { return this._workers.length; }
 
 	/** Spawn the pool once; safe to call repeatedly. */
-	async ensure(): Promise<boolean> {
+	async ensure(compiledModule?: WebAssembly.Module): Promise<boolean> {
 		if (this._workers.length) { return true; }
+		if (compiledModule) { this._module = compiledModule; }
 		if (!this._bootPromise) {
 			this._bootPromise = this._boot().catch(error => {
 				console.warn('[StripPool] Unavailable, falling back to single-worker decode:', error);
@@ -209,6 +212,15 @@ class StripDecodePool {
 }
 
 const pool = new StripDecodePool();
+/** Extended codecs use their own instances so the core EXR/TIFF pool remains warm. */
+const codecPool = new StripDecodePool();
+
+const EXTENDED_TIFF_COMPRESSIONS = new Set([
+	34887, // LERC
+	34925, // LZMA
+	34712, 33003, 33004, 33005, // JPEG 2000 variants
+	34934, 22610, // JPEG XR variants
+]);
 
 /**
  * Start booting the pool without waiting for it.
@@ -336,8 +348,21 @@ export async function tryStripParallelDecode(
 	const height: number = plan.height;
 	if (!shouldUseParallelTiffPlan(plan)) { return null; }
 
-	const ok = await pool.ensure();
-	if (!ok || pool.size < 2) { return null; }
+	let activePool = pool;
+	if (EXTENDED_TIFF_COMPRESSIONS.has(Number(plan.compression))) {
+		try {
+			const { codecWasmModule } = await import('./codec-wasm-wrapper.js');
+			const compiled = await codecWasmModule();
+			activePool = codecPool;
+			if (!await activePool.ensure(compiled)) { return null; }
+		} catch (error) {
+			console.warn('[StripPool] Extended codec module unavailable, falling back:', error);
+			return null;
+		}
+	} else if (!await activePool.ensure()) {
+		return null;
+	}
+	if (activePool.size < 2) { return null; }
 
 	const channels: number = plan.channels;
 	const offsets: Float64Array = plan.offsets;
@@ -373,7 +398,7 @@ export async function tryStripParallelDecode(
 	// Balance by COMPRESSED BYTES rather than strip count: strips vary in cost,
 	// and an even strip split leaves workers idle (160 strips over 8 workers
 	// measured slower than over 6).
-	const workerCount = Math.min(pool.size, stripCount);
+	const workerCount = Math.min(activePool.size, stripCount);
 	let totalBytes = 0;
 	for (let i = 0; i < stripCount; i++) { totalBytes += unitBytes(i); }
 	const targetPerWorker = totalBytes / workerCount;
@@ -415,7 +440,7 @@ export async function tryStripParallelDecode(
 			position += count;
 			rangeCounts[i - firstBlock] = count;
 		}
-		return pool.run({
+		return activePool.run({
 			raw: !!raw,
 			blob: blob.buffer,
 			counts: rangeCounts.buffer,
@@ -427,6 +452,8 @@ export async function tryStripParallelDecode(
 			predictor: plan.predictor,
 			sampleFormat: plan.sample_format,
 			littleEndian: plan.little_endian,
+			planarConfiguration: plan.planar_configuration || 1,
+			orientation: plan.orientation || 1,
 			tileWidth, tileLength, blocksAcross,
 			lercAdditionalCompression,
 		}, [blob.buffer, rangeCounts.buffer], index);
@@ -436,7 +463,7 @@ export async function tryStripParallelDecode(
 	// workers finish at different times, so the copies hide behind the ranges
 	// still decoding instead of running as one serial pass at the end.
 	const total = width * height * channels;
-	const data: Float32Array | Uint16Array | Uint8Array =
+	let data: Float32Array | Uint16Array | Uint8Array =
 		raw === 'u8' ? new Uint8Array(total)
 			: raw === 'u16' ? new Uint16Array(total)
 				: new Float32Array(total);
@@ -460,25 +487,46 @@ export async function tryStripParallelDecode(
 	// Sum of the copies themselves; most of this is off the critical path now.
 	timings.push({ name: 'strip-assemble', durationMs: copyMs });
 
+	let outputWidth = width;
+	let outputHeight = height;
+	const orientation = Number(plan.orientation || 1);
+	if (orientation !== 1) {
+		const orientationStart = performance.now();
+		const Carrier = data.constructor as any;
+		const oriented = await activePool.run({
+			kind: 'orient',
+			data: data.buffer,
+			width,
+			height,
+			bytesPerPixel: channels * data.BYTES_PER_ELEMENT,
+			orientation,
+		}, [data.buffer], 0);
+		data = new Carrier(oriented.data);
+		outputWidth = oriented.width;
+		outputHeight = oriented.height;
+		timings.push({ name: 'orientation-worker', durationMs: performance.now() - orientationStart });
+	}
+
 	const meta = await metadataPromise;
 
 	// Retire the pool before returning so its expanded WASM heaps are released
 	// on this task, ahead of the caller's WebGL upload. Same reasoning as the
 	// decode worker's `retireWorker`, and the same 64MB threshold.
 	if (data.byteLength >= 64 * 1024 * 1024) {
-		pool.retire();
-		setTimeout(() => { void pool.ensure(); }, 0);
+		activePool.retire();
+		setTimeout(() => { void activePool.ensure(); }, 0);
 		timings.push({ name: 'strip-pool-retired', durationMs: 0 });
 	}
 
 	return {
 		tileWidth, tileLength,
 		tileCount: tileWidth > 0 ? counts.length : 0,
-		width, height, channels,
+		width: outputWidth, height: outputHeight, channels,
 		bitsPerSample: plan.bits_per_sample,
 		sampleFormat: plan.sample_format,
 		compression: plan.compression,
 		predictor: plan.predictor,
+		planarConfiguration: plan.planar_configuration || 1,
 		rowsPerStrip,
 		stripCount,
 		photometricInterpretation: meta?.photometric_interpretation ?? 1,

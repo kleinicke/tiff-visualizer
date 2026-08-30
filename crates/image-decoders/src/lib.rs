@@ -1229,6 +1229,10 @@ pub struct TiffFloatStripPlan {
     pub predictor: u32,
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
     pub sample_format: u32,
+    /// TIFF PlanarConfiguration: 1 = chunky, 2 = separate channel planes.
+    pub planar_configuration: u32,
+    /// TIFF Orientation tag (1-8).
+    pub orientation: u32,
     pub little_endian: bool,
     /// Image rows covered by one unit: `RowsPerStrip`, or `TileLength`.
     pub rows_per_strip: u32,
@@ -1255,6 +1259,8 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         compression: plan.compression,
         predictor: plan.predictor,
         sample_format: plan.sample_format,
+        planar_configuration: plan.planar_configuration,
+        orientation: plan.orientation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
         tile_width: plan.tile_width,
@@ -1298,6 +1304,8 @@ fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPla
         compression: plan.compression,
         predictor: plan.predictor,
         sample_format: plan.sample_format,
+        planar_configuration: plan.planar_configuration,
+        orientation: plan.orientation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
         tile_width: plan.tile_width,

@@ -28,6 +28,15 @@ export function shouldUseParallelTiffPlan(plan: any): boolean {
 	const units = Number(plan?.strip_count || 0);
 	const width = Number(plan?.width || 0);
 	const height = Number(plan?.height || 0);
+	// Raw unsigned 8/16-bit strips are memory copies, not CPU-bound decode.
+	// In the warm Node candidate benchmark on the same 4032x3024 RGB8 file, a
+	// pool was 33ms versus 8ms for the whole-image worker. Float32 is deliberately
+	// excluded: the same-file result was 38ms versus 115ms because conversion
+	// still dominates. The real VS Code route check agrees for RGB8 (81ms).
+	if (Number(plan?.compression) === 1 && Number(plan?.sample_format || 1) === 1
+		&& Number(plan?.bits_per_sample || 8) <= 16) {
+		return false;
+	}
 	const minUnits = Number(plan?.tile_length || 0) > 0
 		? MIN_PARALLEL_TIFF_TILE_ROWS
 		: MIN_PARALLEL_TIFF_STRIPS;
