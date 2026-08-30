@@ -341,13 +341,7 @@ export class AppStateManager {
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
-		//
-		// JPEG XR belongs here rather than with the scientific arrays even
-		// though it decodes through the same adapter: a .jxr is a picture
-		// someone authored, so its samples do fill the type's range. A
-		// float32 JPEG XR is scene-referred like an EXR, and the webview
-		// overrides the range from the bit depth in either case.
-		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'ico' || format === 'jxl' || format === 'jxr' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
+		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'ico' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;
@@ -371,6 +365,14 @@ export class AppStateManager {
 		// data, which rarely spans anywhere near that, would render
 		// essentially black too.
 		//
+		// JPEG XR is here for the same reason as the float scientific formats
+		// rather than with the display integers it superficially resembles:
+		// the format exists to carry high-bit-depth and scene-referred float
+		// images, and a float32 .jxr under gamma mode's [0, 1] would clip
+		// anything above white. One format type covers both its integer and
+		// its float files, and auto-normalize is the setting that is never
+		// badly wrong for either.
+		//
 		// `npy-uint` belongs here rather than with the display-image integer
 		// formats: an .npy is an array someone computed, not a picture someone
 		// authored, so its values carry no expectation of filling the type's
@@ -378,7 +380,7 @@ export class AppStateManager {
 		// might be a label map holding 0..3. The uint64 case makes it starkest
 		// — gamma mode would normalize against 2^64-1 and render everything
 		// black.)
-		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif') {
+		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'jxr') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}
