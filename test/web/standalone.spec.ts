@@ -151,9 +151,41 @@ test('fetches the JPEG XL decoder only when a .jxl is opened', async ({ page }) 
   await page
     .locator('#web-file-input')
     .setInputFiles(path.resolve('test-samples/standalone_gray16.jxl'));
-  await expect(page.locator('#web-file-summary')).toContainText('standalone_gray16.jxl');
-  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
-  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+  // The loading log names each opened file once it has decoded, so it is both
+  // the "did it load" signal and the "which file" one.
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Loading log' }).click();
+  await expect(page.locator('#web-log-output')).toContainText('standalone_gray16.jxl', { timeout: 30_000 });
   await expect(page.locator('#web-status-size')).toContainText('64x48');
   expect(jxlWasmRequests.length, 'opening a .jxl must download the JPEG XL module').toBeGreaterThan(0);
+});
+
+/**
+ * The heavy codecs — JPEG 2000, JPEG XR, LERC, LZMA, WebP — live in a second
+ * WebAssembly module fetched only when a file's own header declares one. Both
+ * halves are worth asserting through a real browser, because the whole point
+ * of the split is what does NOT happen on the common path: an ordinary LZW
+ * TIFF must not download it, and a LERC one must.
+ */
+test('fetches the codec module only for a file that needs a heavy codec', async ({ page }) => {
+  const codecRequests: string[] = [];
+  page.on('request', request => {
+    if (request.url().includes('codec-wasm.wasm')) { codecRequests.push(request.url()); }
+  });
+
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/shapes_lzw_tiled.tif'));
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+  expect(codecRequests, 'an LZW TIFF must not download the codec module').toEqual([]);
+
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/lerc_f32.tif'));
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Loading log' }).click();
+  await expect(page.locator('#web-log-output')).toContainText('lerc_f32.tif', { timeout: 30_000 });
+  await expect(page.locator('#web-status-size')).toContainText('64x48');
+  expect(codecRequests.length, 'a LERC TIFF must download the codec module').toBeGreaterThan(0);
 });

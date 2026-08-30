@@ -35,16 +35,18 @@ function pattern(x, y) {
 
 /**
  * Standalone JPEG XR, decoded by the vendored crates/jpegxr through
- * `decode_jpegxr_fast`. The integer fixtures are LOSSLESS, so their samples
+ * `decode_jpegxr_fast` in the heavy-codec module. The integer fixtures are LOSSLESS, so their samples
  * are checked against the generator's own formula rather than against another
  * decode — an independent expectation, not a snapshot. The float32 encoder is
  * lossy whatever the level, so that one gets a tolerance.
  */
 async function testJpegXr() {
-	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
-	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+	// JPEG XR lives ONLY in the heavy-codec module: a `.jxr` file is a JPEG XR
+	// codestream and nothing else, so there is no core decode to try first.
+	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
 	if (!fs.existsSync(wasmBin)) {
-		console.log('⚠️  media/wasm/tiff-wasm.wasm not found — run `npm run build:wasm` first. Skipping JPEG XR.');
+		console.log('⚠️  media/wasm/codec-wasm.wasm not found — run `npm run build:wasm:codecs` first. Skipping JPEG XR.');
 		return;
 	}
 	const wasm = await import(wasmJs.replace(/\\/g, '/'));

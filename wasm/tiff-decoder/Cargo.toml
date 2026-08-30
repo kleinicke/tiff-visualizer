@@ -12,6 +12,18 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["console_error_panic_hook"]
 
+# Build the SAME adapter a second time with the heavy codecs linked in.
+#
+# `npm run build:wasm` produces the core module from the default features;
+# `npm run build:wasm:codecs` produces media/wasm/codec-wasm.wasm from this
+# one. Two builds of one source rather than two crates: the codec module is a
+# strict superset of the core, so a file the core cannot finish decodes there
+# through the very same code, and the two can never drift.
+heavy-codecs = [
+    "scientific-image-decoders/heavy-codecs",
+    "scientific-image-decoders/jpegxr",
+]
+
 [dependencies]
 scientific-image-decoders = { path = "../../crates/image-decoders", default-features = false, features = ["all-formats"] }
 wasm-bindgen = "0.2"

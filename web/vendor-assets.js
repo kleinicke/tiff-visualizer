@@ -3,6 +3,7 @@
 window.__tiffVisualizerVendorAssets = {
 	wasm: './media/wasm/tiff-wasm.wasm',
 	jxlWasm: './media/wasm/jxl-wasm.wasm',
+	codecWasm: './media/wasm/codec-wasm.wasm',
 	geotiff: './media/geotiff.min.js',
 	pako: './media/pako.min.js',
 	upng: './media/upng.min.js',

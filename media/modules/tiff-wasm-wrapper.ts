@@ -11,7 +11,7 @@ import { parseAllTagsJson, TagEntry } from './tiff-tag-utils.js';
 // `media/wasm/` and the payload resolve to `media/wasm/wasm/…` (404).
 // Importing the module does not instantiate wasm; `init()` below does.
 import initTiffWasm, {
-    decode_czi_fast, decode_dicom_fast, decode_lif_fast, decode_nd2_fast, label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast, decode_fits_fast, decode_jpegxr_fast, decode_netcdf_fast, decode_npy_display_fast,
+    decode_czi_fast, decode_dicom_fast, decode_lif_fast, decode_nd2_fast, label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast, decode_fits_fast, decode_netcdf_fast, decode_npy_display_fast,
     decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
     demosaic, extract_exif_tags, tiff_page_count,
     compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
@@ -73,7 +73,6 @@ async function initWasm(): Promise<any> {
                 decode_tiff, decode_tiff_page, tiff_page_count, extract_exif_tags, demosaic,
                 decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_display_fast, decode_fits_fast,
                 decode_netcdf_fast, decode_dicom_fast, decode_czi_fast, decode_nd2_fast, decode_lif_fast,
-                decode_jpegxr_fast,
                 compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
                 label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast,
                 build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
@@ -189,17 +188,36 @@ export class TiffWasmProcessor {
         if (!this.wasm) {
             throw new Error('WASM not initialized. Call init() first.');
         }
+        try {
+            return this._decodeWith(this.wasm, buffer, pageIndex);
+        } catch (error) {
+            // A codec the core module does not carry — JPEG 2000, JPEG XR,
+            // LERC, LZMA, WebP. The heavy-codec module is the same adapter
+            // built with those linked in, so the identical code finishes the
+            // job. Any other failure propagates: retrying it would fetch a
+            // couple of megabytes to fail the same way.
+            const { externalCodecName, initCodecDecoder } = await import('./codec-wasm-wrapper.js');
+            if (!externalCodecName(error)) { throw error; }
+            return this._decodeWith(await initCodecDecoder(), buffer, pageIndex);
+        }
+    }
 
+    /**
+     * `wasm` selects the module. Everything here is identical for the core and
+     * the heavy-codec build — they are the same adapter — so the decode is
+     * written once and pointed at whichever one can finish the file.
+     */
+    private _decodeWith(wasm: any, buffer: ArrayBuffer, pageIndex: number): TiffDecodeResult {
         const uint8Array = new Uint8Array(buffer);
-        const pageCount = typeof this.wasm.tiff_page_count === 'function'
-            ? this.wasm.tiff_page_count(uint8Array)
+        const pageCount = typeof wasm.tiff_page_count === 'function'
+            ? wasm.tiff_page_count(uint8Array)
             : 1;
         if (pageIndex < 0 || pageIndex >= pageCount) {
             throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${pageCount})`);
         }
-        const result = pageIndex > 0 && typeof this.wasm.decode_tiff_page === 'function'
-            ? this.wasm.decode_tiff_page(uint8Array, pageIndex)
-            : this.wasm.decode_tiff(uint8Array);
+        const result = pageIndex > 0 && typeof wasm.decode_tiff_page === 'function'
+            ? wasm.decode_tiff_page(uint8Array, pageIndex)
+            : wasm.decode_tiff(uint8Array);
 		const sampleKind = Number(result.sample_kind ?? 0);
 		let data: Float32Array | Uint16Array | Uint8Array;
 		if ((sampleKind === 1 || sampleKind === 3) && typeof result.take_data_as_u8 === 'function') {

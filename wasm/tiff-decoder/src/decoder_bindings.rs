@@ -683,6 +683,10 @@ pub fn decode_npy_display_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
 /// Standalone JPEG XR (`.jxr`, `.wdp`, `.hdp`). The TIFF path decodes the same
 /// codestream under compression 34934; this reads the pixel format off the
 /// codestream itself, there being no TIFF tags to describe it.
+///
+/// Present only in the codec module: the decoder is 189 KiB and no other
+/// format in the core build needs it.
+#[cfg(feature = "heavy-codecs")]
 #[wasm_bindgen]
 pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     prepare();

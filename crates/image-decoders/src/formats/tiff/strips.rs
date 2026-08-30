@@ -220,6 +220,20 @@ pub(crate) struct BlockCodecInfo {
     pub ycbcr: bool,
 }
 
+/// The error a build WITHOUT a given heavy codec returns when a file needs it.
+///
+/// The `[external-codec:NAME]` prefix is load-bearing, not decoration: the
+/// webview matches it to decide that this file needs the separate codec
+/// module, and fetches it. Anything that changes the prefix has to change
+/// `EXTERNAL_CODEC_PATTERN` in `media/modules/codec-wasm-wrapper.ts` with it.
+#[allow(dead_code)]
+pub(crate) fn external_codec_needed(name: &str, what: &str) -> DecodeError {
+    DecodeError::new(&format!(
+        "[external-codec:{}] {} needs the {} decoder, which is not in this build",
+        name, what, name
+    ))
+}
+
 /// `decompress_strip_or_tile` plus the layout the typed codecs need. Callers
 /// that can meet a LERC or PNG block must pass `info`; the others may pass
 /// `None` and get a clear error rather than a wrong picture if such a block
@@ -310,6 +324,7 @@ pub(crate) fn decompress_block(
         // LZMA. libtiff and tifffile both write each strip/tile as a
         // standalone .xz stream (magic FD 37 7A 58 5A 00), not a bare LZMA1
         // chunk, so this is the xz entry point.
+        #[cfg(feature = "codec-lzma")]
         34925 => {
             let mut out = Vec::with_capacity(expected_len);
             lzma_rs::xz_decompress(&mut std::io::Cursor::new(block), &mut out).map_err(|e| {
@@ -317,27 +332,38 @@ pub(crate) fn decompress_block(
             })?;
             Ok(out)
         }
+        #[cfg(not(feature = "codec-lzma"))]
+        34925 => Err(external_codec_needed("LZMA", context)),
         // PNG-in-TIFF: every block is a complete PNG stream covering exactly
         // that strip or tile.
         34933 => decode_png_block(block, expected_len, context, codec_info(info, context, "PNG")?),
         // LERC, including GDAL's LERC_DEFLATE and LERC_ZSTD, which wrap the
         // same blob in a second codec named by tag 50674.
+        #[cfg(feature = "codec-lerc")]
         34887 => decode_lerc_block(block, expected_len, context, codec_info(info, context, "LERC")?),
+        #[cfg(not(feature = "codec-lerc"))]
+        34887 => Err(external_codec_needed("LERC", context)),
         // JPEG XR. 22610 is the code Hamamatsu NDPI files use.
+        #[cfg(feature = "codec-jpegxr")]
         34934 | 22610 => decode_jpegxr_block(
             block,
             expected_len,
             context,
             codec_info(info, context, "JPEG XR")?,
         ),
+        #[cfg(not(feature = "codec-jpegxr"))]
+        34934 | 22610 => Err(external_codec_needed("JPEG XR", context)),
         // JPEG 2000. 34712 is the registered code; 33003/33004/33005 are what
         // Aperio slide scanners write (YCbCr, lossy, and RGB respectively).
+        #[cfg(feature = "codec-jpeg2000")]
         34712 | 33003 | 33004 | 33005 => decode_jpeg2000_block(
             block,
             expected_len,
             context,
             codec_info(info, context, "JPEG 2000")?,
         ),
+        #[cfg(not(feature = "codec-jpeg2000"))]
+        34712 | 33003 | 33004 | 33005 => Err(external_codec_needed("JPEG 2000", context)),
         _ => Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             context, compression
@@ -398,6 +424,7 @@ fn decode_png_block(
     Ok(buffer)
 }
 
+#[cfg(feature = "codec-lerc")]
 /// Decode one LERC-compressed strip/tile.
 ///
 /// LERC is a *value* codec: it hands back numbers, with a validity mask and a
@@ -498,6 +525,7 @@ fn decode_lerc_block(
     Ok(out)
 }
 
+#[cfg(feature = "codec-jpeg2000")]
 /// Decode one JPEG 2000-compressed strip/tile.
 ///
 /// `decode_native` is deliberate: this crate's other entry point returns 8-bit
@@ -541,6 +569,7 @@ fn decode_jpeg2000_block(
     Ok(data)
 }
 
+#[cfg(feature = "codec-jpegxr")]
 /// Decode one JPEG XR-compressed strip/tile.
 ///
 /// The decoder returns rows padded to its own stride and samples in the
@@ -1539,14 +1568,21 @@ pub(crate) fn float_predictor_plan(
     if !matches!(bits_per_sample, 8 | 16 | 32 | 64) {
         return None;
     }
-    // Every codec `decompress_block` implements. LERC and PNG hand back typed
-    // values rather than the strip's bytes, which is why the plan carries the
-    // sample layout they need to re-serialize against.
-    if !matches!(
-        compression,
-        1 | 5 | 8 | 32946 | 50000 | 34925 | 34933 | 34887 | 34712 | 33003 | 33004 | 33005 | 34934
-            | 22610
-    ) {
+    // Every codec `decompress_block` implements IN THIS BUILD. LERC and PNG
+    // hand back typed values rather than the strip's bytes, which is why the
+    // plan carries the sample layout they need to re-serialize against.
+    //
+    // The heavy codecs are conditional because the pool decodes with whichever
+    // module produced the plan: the core module's strip workers cannot decode a
+    // JPEG 2000 tile, so a plan from the core build must not claim one. Without
+    // this the pool would accept the file and every worker would fail on it.
+    let supported = matches!(compression, 1 | 5 | 8 | 32946 | 50000 | 34933)
+        || (cfg!(feature = "codec-lzma") && compression == 34925)
+        || (cfg!(feature = "codec-lerc") && compression == 34887)
+        || (cfg!(feature = "codec-jpeg2000")
+            && matches!(compression, 34712 | 33003 | 33004 | 33005))
+        || (cfg!(feature = "codec-jpegxr") && matches!(compression, 34934 | 22610));
+    if !supported {
         return None;
     }
     let sample_format = decoder

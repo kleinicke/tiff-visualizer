@@ -11,6 +11,10 @@ readme = "README.md"
 
 [features]
 default = ["all-formats"]
+
+# The CORE format set: every container parser, and the codecs that are either
+# small or common enough that a file is likely to need them. This is what
+# `wasm/tiff-decoder` builds, and what every image open downloads.
 all-formats = [
     "tiff",
     "exr",
@@ -27,13 +31,44 @@ all-formats = [
     "nd2",
     "lif",
     "demosaic",
-    "jpegxr",
 ]
-tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:lzma-rs", "dep:lerc-reader", "dep:png", "dep:dicom-toolkit-jpeg2000", "dep:jpegxr-wasm"]
+
+# The HEAVY codecs, deliberately excluded from `all-formats`.
+#
+# Each is a codestream codec — compressed bytes in, raw samples out — that
+# carries no container knowledge, and each is large relative to how often a
+# real file uses one. Together they are roughly 620 KiB of WebAssembly that a
+# plain LZW or Deflate TIFF would otherwise pay for on every open. They are
+# built into the separate `wasm/codec-decoder` module instead, which the
+# webview fetches only when a file's own header declares one of them.
+#
+# Because they are codestream codecs, ONE module serves every container: the
+# same JPEG XR decoder answers for TIFF compression 34934, a CZI subblock and
+# a standalone .jxr, and the same JPEG 2000 decoder answers for TIFF 34712 and
+# DICOM transfer syntax 1.2.840.10008.1.2.4.90.
+heavy-codecs = [
+    "codec-jpeg2000",
+    "codec-jpegxr",
+    "codec-jpegls",
+    "codec-lerc",
+    "codec-lzma",
+    "codec-webp",
+]
+codec-jpeg2000 = ["dep:dicom-toolkit-jpeg2000"]
+codec-jpegxr = ["dep:jpegxr-wasm"]
+# JPEG-LS and lossless JPEG, used only by DICOM transfer syntaxes.
+codec-jpegls = ["dep:pure_jpegls", "dep:pure_jpegli"]
+codec-lerc = ["dep:lerc-reader"]
+codec-lzma = ["dep:lzma-rs"]
+codec-webp = ["tiff?/webp"]
+
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
 exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
-jpegxr = ["dep:jpegxr-wasm"]
+# Standalone `.jxr`/`.wdp`/`.hdp` files. The decoder itself is `codec-jpegxr`,
+# so this only adds the pixel-format mapping a bare file needs.
+jpegxr = ["codec-jpegxr"]
 # Deliberately NOT in `all-formats`: jxl-rs is large enough that including it
 # would grow the main WebAssembly module by more than a megabyte, which every
 # TIFF open would pay for. `wasm/jxl-decoder` builds this feature on its own.
@@ -46,14 +81,17 @@ fits = []
 netcdf = []
 # `jpeg` is not optional here: DICOM's JPEG Baseline transfer syntax is decoded
 # by the same zune-jpeg the TIFF path uses, rather than by a second JPEG crate.
-dicom = ["jpeg", "dep:dicom-toolkit-jpeg2000", "dep:pure_jpegls", "dep:pure_jpegli", "dep:flate2"]
+dicom = ["jpeg", "dep:flate2"]
 czi = ["dep:ruzstd"]
 nd2 = []
 lif = []
 demosaic = []
 
 [dependencies]
-tiff = { version = "0.11.3", features = ["webp"], optional = true }
+# The crate's own defaults (deflate, fax, jpeg, lzw) are the common codecs and
+# stay on. `webp` is NOT: image-webp is 129 KiB and TIFF compression 34927 is
+# rare, so `codec-webp` turns it on for the codec module only.
+tiff = { version = "0.11.3", features = ["deflate", "fax", "jpeg", "lzw"], default-features = false, optional = true }
 exr = { version = "1.74", default-features = false, optional = true }
 zune-inflate = { version = "0.2.54", default-features = false, features = ["zlib"], optional = true }
 png = { version = "0.17", default-features = false, optional = true }

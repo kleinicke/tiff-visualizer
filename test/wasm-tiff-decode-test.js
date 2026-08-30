@@ -28,10 +28,33 @@ const path = require('path');
 const samplesDir = path.join(__dirname, '..', 'test-samples');
 const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+const codecJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+const codecBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
 
+/** The codecs the core module does not carry, recorded per file below. */
+const externalCodecs = new Set();
+
+/**
+ * Decode through the SAME routing the webview uses: the core module first, and
+ * the heavy-codec module only when the core reports a codec it does not carry.
+ *
+ * That makes the split itself part of what this suite checks. A file the core
+ * can decode must never reach the codec module — if the core silently grew a
+ * codec, or the `[external-codec:…]` contract broke, the assertions on
+ * `externalCodecs` at the end of `main` fail.
+ */
 function decode(mod, file) {
 	const buffer = fs.readFileSync(path.join(samplesDir, file));
-	const result = mod.decode_tiff(new Uint8Array(buffer));
+	let result;
+	try {
+		result = mod.core.decode_tiff(new Uint8Array(buffer));
+	} catch (error) {
+		const codec = /\[external-codec:([^\]]+)\]/.exec(String(error?.message ?? error))?.[1];
+		if (!codec) { throw error; }
+		if (!mod.codec) { throw new Error(`${file} needs the ${codec} decoder but the codec module is not built`); }
+		externalCodecs.add(`${file}:${codec}`);
+		result = mod.codec.decode_tiff(new Uint8Array(buffer));
+	}
 	return {
 		width: result.width,
 		height: result.height,
@@ -49,8 +72,16 @@ async function main() {
 		return;
 	}
 
-	const mod = await import(wasmJs.replace(/\\/g, '/'));
-	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
+	const core = await import(wasmJs.replace(/\\/g, '/'));
+	await core.default({ module_or_path: fs.readFileSync(wasmBin) });
+	let codec = null;
+	if (fs.existsSync(codecBin)) {
+		codec = await import(codecJs.replace(/\\/g, '/'));
+		await codec.default({ module_or_path: fs.readFileSync(codecBin) });
+	} else {
+		console.log('⚠️  media/wasm/codec-wasm.wasm not found — run `npm run build:wasm:codecs`. Heavy-codec files will fail.');
+	}
+	const mod = { core, codec };
 
 	console.log('🧪 Running WASM TIFF decoder tests...\n');
 
@@ -435,7 +466,7 @@ async function main() {
 		['shapes_tiled_multi.tif', 'shapes_tiled_multi.gt.u8.bin', 'u8', 1],
 	]) {
 		const buffer = fs.readFileSync(path.join(samplesDir, file));
-		const result = mod.decode_tiff(new Uint8Array(buffer));
+		const result = mod.core.decode_tiff(new Uint8Array(buffer));
 		const data = result.get_data_as_f32();
 
 		const gtBuffer = fs.readFileSync(path.join(samplesDir, gtFile));
@@ -582,7 +613,7 @@ async function main() {
 		assert.strictEqual(img.data.length, 64 * 48 * 3, 'cmyk.tif: data length must equal width*height*3 (post-conversion)');
 
 		const buffer = fs.readFileSync(path.join(samplesDir, 'cmyk.tif'));
-		const raw = mod.decode_tiff(new Uint8Array(buffer));
+		const raw = mod.core.decode_tiff(new Uint8Array(buffer));
 		assert.strictEqual(raw.photometric_interpretation, 5,
 			'cmyk.tif: photometric_interpretation metadata must still report the true CMYK tag value (5)');
 
@@ -707,19 +738,47 @@ async function main() {
 	//     including page-local sample types and metadata.
 	{
 		const bytes = new Uint8Array(fs.readFileSync(path.join(samplesDir, 'multipage_rgb_depth_mask.tif')));
-		assert.strictEqual(mod.tiff_page_count(bytes), 3, 'multipage fixture page count');
+		assert.strictEqual(mod.core.tiff_page_count(bytes), 3, 'multipage fixture page count');
 
-		const color = mod.decode_tiff_page_fast(bytes, 0);
-		const depth = mod.decode_tiff_page_fast(bytes, 1);
-		const mask = mod.decode_tiff_page_fast(bytes, 2);
+		const color = mod.core.decode_tiff_page_fast(bytes, 0);
+		const depth = mod.core.decode_tiff_page_fast(bytes, 1);
+		const mask = mod.core.decode_tiff_page_fast(bytes, 2);
 		assert.deepStrictEqual([color.width, color.height, color.channels, color.sample_format], [48, 32, 3, 1]);
 		assert.deepStrictEqual([depth.width, depth.height, depth.channels, depth.sample_format], [48, 32, 1, 3]);
 		assert.deepStrictEqual([mask.width, mask.height, mask.channels, mask.sample_format], [48, 32, 1, 1]);
 		assert.ok(depth.get_data_as_f32().some(v => v > 0 && v < 10), 'depth page should expose float values');
 		assert.ok(mask.get_data_as_f32().every(v => v === 0 || v === 255), 'mask page should contain only its binary samples');
 		assert.ok(depth.all_tags_json.includes('depth'), 'page 2 metadata should come from page 2 IFD');
-		assert.throws(() => mod.decode_tiff_page_fast(bytes, 3), /out of range/i);
+		assert.throws(() => mod.core.decode_tiff_page_fast(bytes, 3), /out of range/i);
 		console.log('✅ Multi-page TIFF: page count, arbitrary IFD decoding, sample types, and page-local metadata');
+	}
+
+	// The split itself. Everything above decoded through the production
+	// routing, so `externalCodecs` now records exactly which files the CORE
+	// module refused and which codec each asked for. Both halves matter:
+	//
+	//  - a file listed here that should not be means the core grew a codec the
+	//    split was meant to keep out, and every image open is paying for it;
+	//  - a file MISSING from here means the core decoded something it has no
+	//    decoder for, or the `[external-codec:…]` contract broke and the
+	//    fallback silently stopped being exercised.
+	if (mod.codec) {
+		const expected = [
+			['jxr_f32.tif', 'JPEG XR'], ['jxr_rgb8.tif', 'JPEG XR'], ['jxr_u16.tif', 'JPEG XR'],
+			['jp2_aperio_rgb8.tif', 'JPEG 2000'], ['jp2_aperio_ycbcr.tif', 'JPEG 2000'],
+			['jp2_rgb8.tif', 'JPEG 2000'], ['jp2_u16.tif', 'JPEG 2000'],
+			['lerc_deflate_u16.tif', 'LERC'], ['lerc_f32.tif', 'LERC'],
+			['lerc_lossy_f32.tif', 'LERC'], ['lerc_masked_f32.tif', 'LERC'],
+			['lerc_rgb8.tif', 'LERC'], ['lerc_tiled_f32.tif', 'LERC'],
+			['lerc_u16.tif', 'LERC'], ['lerc_zstd_u16.tif', 'LERC'],
+			['lzma_pred3_f32.tif', 'LZMA'], ['lzma_tiled_pred2_u16.tif', 'LZMA'],
+			['lzma_u16.tif', 'LZMA'],
+			['webp_rgb.tif', 'WebP'],
+		].map(([file, codec]) => `${file}:${codec}`);
+		const actual = [...externalCodecs].sort();
+		assert.deepStrictEqual(actual, expected.sort(),
+			'the set of files the core module cannot decode must be exactly the heavy-codec fixtures');
+		console.log(`✅ Exactly ${actual.length} fixtures needed the codec module; every other file decoded in the core`);
 	}
 
 	console.log('\n🎉 All WASM TIFF decoder tests passed.\n');

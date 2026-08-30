@@ -289,6 +289,8 @@ export class TiffProcessor {
 			if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 			let wasmResult: any = bootstrapWasmResult;
 			let workerTiffFailed = false;
+			/** The worker refused only because the core module lacks a codec. */
+			let workerNeedsCodecModule = false;
 			if (wasmResult) {
 				const decodedWith = wasmResult.decodedWith || 'wasm (bootstrap worker)';
 				decodeInfo = {
@@ -428,14 +430,28 @@ export class TiffProcessor {
 				} else {
 					workerTiffFailed = true;
 					localBuffer = (workerResponse?.buffer && workerResponse.buffer.byteLength > 0) ? workerResponse.buffer : null;
-					console.warn('[TiffProcessor] Worker decode failed, falling back to geotiff.js:', workerResponse?.error);
+					// A codec the core module does not carry is NOT a reason to
+					// reach for geotiff.js. Its decoder registry is a strict
+					// subset of the Rust decoder's: for JPEG 2000, JPEG XR or
+					// LZMA it would fail too, and for LERC it would quietly
+					// decode through a second implementation this project does
+					// not treat as authoritative. Take the local WASM path
+					// instead — `TiffWasmProcessor.decode` retries in the
+					// heavy-codec module itself.
+					workerNeedsCodecModule = /\[external-codec:/.test(String(workerResponse?.error ?? ''));
+					console.warn(
+						workerNeedsCodecModule
+							? '[TiffProcessor] Worker decode needs the heavy-codec module:'
+							: '[TiffProcessor] Worker decode failed, falling back to geotiff.js:',
+						workerResponse?.error);
 				}
 			}
 
-			if (!wasmResult && !workerTiffFailed && !this.decodeWorker?.canDecode('tiff')) {
+			if (!wasmResult && (!workerTiffFailed || workerNeedsCodecModule) && !this.decodeWorker?.canDecode('tiff')) {
 				await this._ensureLocalWasm();
 			}
-			const useWasm = !wasmResult && !workerTiffFailed && this._wasmAvailable;
+			if (workerNeedsCodecModule) { await this._ensureLocalWasm(); }
+			const useWasm = !wasmResult && (!workerTiffFailed || workerNeedsCodecModule) && this._wasmAvailable;
 			console.log(`[TiffProcessor] Decode decision: worker=${!!wasmResult}, wasmAvailable=${this._wasmAvailable}, 24BitMode=${use24BitMode}, willUseWasm=${useWasm}`);
 
 			// Local WASM decoding when the worker isn't available
@@ -452,8 +468,13 @@ export class TiffProcessor {
 				} catch (wasmError) {
 					console.warn('[TiffProcessor] WASM decoding failed, falling back to geotiff.js:', wasmError);
 					// Disable WASM for the rest of the session — a failure can leave
-					// the module in an indeterminate state after a panic.
-					this._wasmAvailable = false;
+					// the module in an indeterminate state after a panic. A missing
+					// codec is the exception: nothing is wrong with the module, the
+					// file simply needs one this build does not have, and the next
+					// file may well decode fine.
+					if (!/\[external-codec:/.test(String((wasmError as any)?.message ?? wasmError))) {
+						this._wasmAvailable = false;
+					}
 					wasmResult = null;
 				}
 			}

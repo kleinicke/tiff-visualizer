@@ -62,7 +62,11 @@ written that way; the decoder reproduces the reconstruction its own encoder
 defines, and pixels a LERC blob marks invalid read as zero. JPEG 2000 decodes
 at its native bit depth, so a 16-bit image stays 16-bit.
 
-Not decoded: JPEG XL in TIFF (its decoder is a separate module — see JPEG XL
+JPEG 2000, JPEG XR, LERC, LZMA and WebP are decoded by a second WebAssembly
+module downloaded only when a file declares one of them — see "How the decoder
+is packaged" below.
+
+Not decoded: JPEG XL in TIFF (its decoder is a third module — see JPEG XL
 below), old-style JPEG (compression 6), and the legacy
 PixarLog, SGILog, ThunderScan, NeXT and JBIG codecs. Files using any of these
 report the codec by name rather than failing silently.
@@ -161,6 +165,23 @@ image data. These formats are worth opening here mainly when you want pixel
 inspection, the histogram, measurement, or comparison against a scientific
 image.
 
+### How the decoder is packaged
+
+Most of what the viewer decodes lives in one WebAssembly module that every
+image open downloads. Three groups of codecs do not, because they are large and
+rarely needed, and carrying them would slow down every ordinary TIFF:
+
+- **JPEG 2000, JPEG XR, LERC, LZMA, WebP**, and the DICOM JPEG-LS and lossless
+  JPEG transfer syntaxes, live in a second module fetched the first time a file
+  declares one of them. Since these are codestream codecs, that one module
+  serves every container — the same JPEG XR decoder answers for a TIFF tile, a
+  CZI subblock and a standalone `.jxr`.
+- **JPEG XL** lives in a third, for the same reason (see below).
+
+Nothing is fetched speculatively: the decoder recognises the codec while
+reading the file's header, before any pixel work, and only then downloads what
+it needs. A file that uses none of them never pays for any of it.
+
 ### JPEG XL
 
 Decoded by [jxl-rs](https://github.com/libjxl/jxl-rs) at the file's own sample
@@ -173,7 +194,7 @@ format shares, downloaded the first time you open a `.jxl` and never otherwise
 — it is large enough that carrying it in the main module would slow down every
 TIFF open to no purpose. The consequence is that JPEG XL *inside* another
 container (TIFF compression 50002, the DICOM JPEG XL transfer syntaxes) is
-still not decoded: those run inside the main module, which does not contain
+still not decoded: those run inside the other modules, which do not contain
 it.
 
 ### Layered documents

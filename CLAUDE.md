@@ -7,14 +7,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
 Prefer Rust for complete byte parsers and pixel algorithms; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. A narrowly scoped TypeScript accelerator is acceptable when measurement shows that the input bytes already match a JavaScript TypedArray and crossing WASM memory is the dominant cost. Such an accelerator must preserve the source buffer for unsupported inputs and delegate them to the authoritative Rust implementation.
 
-**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF. JPEG XL is the one decoder NOT in the main WebAssembly module: jxl-rs adds over a megabyte, so it is built separately as [`wasm/jxl-decoder`](wasm/jxl-decoder) behind the decoder crate's non-default `jxl` feature and fetched on the first `.jxl` open. Adding it to `all-formats` would put that cost on every TIFF open; embedded JPEG XL (TIFF 50002, DICOM) consequently stays undecoded until someone routes it out to that module. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
+**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF.
+
+**Three WebAssembly modules, not one.** The decoders are split by how often a real file needs them, because the alternative is every image open paying for codecs almost nobody uses:
+
+| module | built from | ~size | fetched |
+| --- | --- | --- | --- |
+| `media/wasm/tiff-wasm.wasm` | `wasm/tiff-decoder`, default features | 1.8 MB | always |
+| `media/wasm/codec-wasm.wasm` | the SAME crate, `--features heavy-codecs` | 2.7 MB | only for a file declaring JPEG 2000, JPEG XR, LERC, LZMA, WebP, or a DICOM JPEG-LS/lossless syntax |
+| `media/wasm/jxl-wasm.wasm` | `wasm/jxl-decoder`, the `jxl` feature | 1.2 MB | only on the first `.jxl` open |
+
+The codec module is a strict SUPERSET of the core — same adapter, same container parsers, more codecs — so a file the core cannot finish is re-decoded there through the very same code and the two cannot drift. Routing is by failure, not by guesswork: `decompress_block` (and the DICOM codec dispatch) reports a codec it does not carry as `[external-codec:NAME]` while reading the file's header, before any pixel work, and that error is the ONLY thing that triggers the download. Anything else propagates. Because a codestream codec carries no container knowledge, one module answers for every container: the same JPEG XR decoder serves TIFF 34934, a CZI subblock and a standalone `.jxr`.
+
+Two rules that are load-bearing rather than stylistic. `external_codec_needed` in [strips.rs](crates/image-decoders/src/formats/tiff/strips.rs) and `EXTERNAL_CODEC_PATTERN` in [codec-wasm-wrapper.ts](media/modules/codec-wasm-wrapper.ts) are one protocol — change either and change both. And `float_strip_plan_for` must not claim a codec the build cannot decode: the strip pool decodes with whichever module produced the plan, so a core-build plan naming JPEG 2000 would have every worker fail.
+
+Embedded JPEG XL (TIFF 50002, the DICOM JPEG XL syntaxes) is still undecoded: jxl-rs is in neither of the other two modules, so supporting it means routing the codestream out to `wasm/jxl-decoder` or accepting its megabyte somewhere else. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
 
 **Shared decoder crate:** all byte parsing, decoded-pixel assembly, demosaicing, and format-neutral
 statistics live in the plain-Rust [`scientific-image-decoders`](crates/image-decoders) crate. It has
 no `wasm-bindgen` types. [`wasm/tiff-decoder`](wasm/tiff-decoder) is the thin JavaScript adapter plus
 TIFF Visualizer-specific measurement and compositing kernels;
 [`wasm/jxl-decoder`](wasm/jxl-decoder) is a second, much smaller adapter that takes ONLY the `jxl`
-feature, so jxl-rs is linked into nothing else. Decoder changes happen in the shared
+feature, so jxl-rs is linked into nothing else. The heavy-codec module needs no third adapter: it is
+`wasm/tiff-decoder` built again with `--features heavy-codecs` into `pkg-codecs/`. Decoder changes happen in the shared
 crate and are picked up immediately through its local path dependency; do not recreate decoder
 modules in the adapter.
 

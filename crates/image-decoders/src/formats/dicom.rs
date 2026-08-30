@@ -844,6 +844,7 @@ fn encapsulated_frame_bytes(
     )))
 }
 
+#[cfg(feature = "codec-jpegls")]
 /// Refuse a lossless-JPEG codestream whose predictor the decoder gets wrong.
 ///
 /// `pure_jpegli` reproduces selection values 1, 2, 3, 4 and 7 exactly (checked
@@ -1021,6 +1022,21 @@ fn decode_own_codec_frame(
     let bytes_per_sample = ((info.bits_allocated / 8).max(1)) as usize;
 
     let bytes: Vec<u8> = match codec {
+        #[cfg(not(feature = "codec-jpeg2000"))]
+        CompressedCodec::Jpeg2000 => {
+            return Err(crate::formats::tiff::strips::external_codec_needed(
+                "JPEG 2000",
+                "this DICOM transfer syntax",
+            ))
+        }
+        #[cfg(not(feature = "codec-jpegls"))]
+        CompressedCodec::JpegLs | CompressedCodec::JpegLossless => {
+            return Err(crate::formats::tiff::strips::external_codec_needed(
+                "JPEG-LS",
+                "this DICOM transfer syntax",
+            ))
+        }
+        #[cfg(feature = "codec-jpeg2000")]
         CompressedCodec::Jpeg2000 => {
             let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
             let image = dicom_toolkit_jpeg2000::Image::new(&encoded, &settings)
@@ -1041,6 +1057,7 @@ fn decode_own_codec_frame(
                 )));
             }
         }
+        #[cfg(feature = "codec-jpegls")]
         CompressedCodec::JpegLs | CompressedCodec::JpegLossless => {
             if codec == CompressedCodec::JpegLossless {
                 check_lossless_jpeg_predictor(&encoded)?;

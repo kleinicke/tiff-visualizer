@@ -233,6 +233,18 @@ pub(crate) fn decode_tiff_impl(
         .get_tag_u32(tiff::tags::Tag::Compression)
         .unwrap_or(1);
 
+    // WebP-in-TIFF (50001, the code libtiff and GDAL write) is decoded by the
+    // `tiff` crate's own `webp` feature,
+    // which the core build leaves off — image-webp is 129 KiB for a codec
+    // almost no file uses. Report it exactly the way `decompress_block` reports
+    // the codecs it does not carry, so the webview routes the file to the codec
+    // module rather than surfacing the crate's own "unsupported" text, which
+    // reads like a dead end.
+    #[cfg(not(feature = "codec-webp"))]
+    if compression == 50001 {
+        return Err(super::tiff::strips::external_codec_needed("WebP", "TIFF"));
+    }
+
     // Get predictor (default to 1 = None if not found)
     let predictor = decoder.get_tag_u32(tiff::tags::Tag::Predictor).unwrap_or(1);
 

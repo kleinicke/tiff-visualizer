@@ -11,13 +11,37 @@ const { buildDicom, dcmPixelSamples } = require('./lib/decoder-cases');
 // rather than parity, so they now drive the wasm decoders directly. Broader
 // coverage lives in test/rust-scientific-conformance-test.js.
 let wasm = null;
+let codecWasm = null;
 async function initWasm() {
 	if (wasm) { return wasm; }
 	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
 	wasm = await import(wasmJs.replace(/\\/g, '/'));
 	await wasm.default({ module_or_path: fs.readFileSync(wasmBin) });
+	// The heavy-codec module, for the transfer syntaxes whose codecs the core
+	// build does not carry. `withCodecModule` below routes to it the same way
+	// the webview does.
+	const codecJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+	const codecBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
+	if (fs.existsSync(codecBin)) {
+		codecWasm = await import(codecJs.replace(/\\/g, '/'));
+		await codecWasm.default({ module_or_path: fs.readFileSync(codecBin) });
+	}
 	return wasm;
+}
+
+/**
+ * Run `decode` against the core module, and against the heavy-codec module if
+ * the core reports a codec it does not carry — the routing the webview
+ * performs, so these tests exercise it rather than assuming it.
+ */
+function withCodecModule(decode) {
+	try {
+		return decode(wasm);
+	} catch (error) {
+		if (!/\[external-codec:/.test(String(error?.message ?? error)) || !codecWasm) { throw error; }
+		return decode(codecWasm);
+	}
 }
 
 /** Mirrors the worker's `scientificResultToDecoded`. `take_data_as_f32()` is
@@ -39,9 +63,11 @@ function toDecoded(result) {
 	};
 }
 const parseFits = (buf) => toDecoded(wasm.decode_fits_fast(new Uint8Array(buf)));
-const parseDicom = (buf, frameIndex = 0) => toDecoded(wasm.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0));
+const parseDicom = (buf, frameIndex = 0) =>
+	toDecoded(withCodecModule(mod => mod.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0)));
 const parseNetCdf = (buf, options = {}) => toDecoded(wasm.decode_netcdf_fast(new Uint8Array(buf), JSON.stringify(options)));
-const parseCzi = (buf, options = {}) => toDecoded(wasm.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options)));
+const parseCzi = (buf, options = {}) =>
+	toDecoded(withCodecModule(mod => mod.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options))));
 const parseNd2 = (buf, options = {}) => toDecoded(wasm.decode_nd2_fast(new Uint8Array(buf), JSON.stringify(options)));
 const parseLif = (buf, options = {}) => toDecoded(wasm.decode_lif_fast(new Uint8Array(buf), JSON.stringify(options)));
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');

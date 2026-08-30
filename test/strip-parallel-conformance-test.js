@@ -22,6 +22,8 @@ const path = require('path');
 const samplesDir = path.join(__dirname, '..', 'test-samples');
 const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+const codecJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+const codecBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
 
 /** Mirrors `carrierFor` in strip-parallel-decode.ts. */
 function carrierFor(bitsPerSample, sampleFormat) {
@@ -51,10 +53,44 @@ async function main() {
 		console.log('⚠️  media/wasm/tiff-wasm.wasm not found — run `npm run build:wasm` first. Skipping.');
 		return;
 	}
-	const mod = await import(wasmJs.replace(/\\/g, '/'));
-	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
 
 	console.log('🧪 Running strip/tile-parallel conformance tests...\n');
+
+	// Both builds are swept, because each pool decodes with the module that
+	// produced its plan. The core module's plan must never claim a codec that
+	// build cannot decode (every worker would then fail on the file), and the
+	// codec module has to hold the equality for the heavy codecs too.
+	const totals = { eligible: 0, tiled: 0, codecs: new Set() };
+	for (const [label, js, bin] of [
+		['core module', wasmJs, wasmBin],
+		['codec module', codecJs, codecBin],
+	]) {
+		if (!fs.existsSync(bin)) {
+			console.log(`⚠️  ${path.basename(bin)} not found — skipping the ${label} sweep.`);
+			continue;
+		}
+		const mod = await import(js.replace(/\\/g, '/'));
+		await mod.default({ module_or_path: fs.readFileSync(bin) });
+		console.log(`— ${label} —`);
+		const swept = await sweep(mod);
+		totals.eligible += swept.eligible;
+		totals.tiled += swept.tiled;
+		for (const codec of swept.codecs) { totals.codecs.add(codec); }
+	}
+
+	assert.ok(totals.eligible >= 10,
+		`expected the plan to accept a decent share of the corpus, got ${totals.eligible}`);
+	assert.ok(totals.tiled >= 3, `expected tiled files to be eligible, got ${totals.tiled}`);
+	// The point of the change: the block-only codecs are no longer excluded.
+	for (const compression of [50000, 34925, 34887]) {
+		assert.ok(totals.codecs.has(compression),
+			`compression ${compression} should be eligible for parallel decode`);
+	}
+
+	console.log(`\n🎉 Parallel decode matches the single-threaded decode on ${totals.eligible} files (${totals.tiled} tiled), codecs: ${[...totals.codecs].sort((a, b) => a - b).join(', ')}.\n`);
+}
+
+async function sweep(mod) {
 
 	const files = fs.readdirSync(samplesDir).filter(name => /\.(tif|tiff)$/i.test(name)).sort();
 	let eligible = 0;
@@ -141,15 +177,7 @@ async function main() {
 		}
 	}
 
-	assert.ok(eligible >= 10, `expected the plan to accept a decent share of the corpus, got ${eligible}`);
-	assert.ok(tiled >= 3, `expected tiled files to be eligible now, got ${tiled}`);
-	// The point of the change: the block-only codecs are no longer excluded.
-	for (const compression of [50000, 34925, 34887]) {
-		assert.ok(codecs.has(compression),
-			`compression ${compression} should be eligible for parallel decode`);
-	}
-
-	console.log(`\n🎉 Parallel decode matches the single-threaded decode on ${eligible} files (${tiled} tiled), codecs: ${[...codecs].sort((a, b) => a - b).join(', ')}.\n`);
+	return { eligible, tiled, codecs };
 }
 
 main().catch(error => {

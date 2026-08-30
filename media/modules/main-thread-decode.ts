@@ -72,8 +72,44 @@ export async function decodeJxlLocal(buffer: ArrayBuffer) {
 	return decodeJxlWithWasm(wasm.decode_jxl_fast, buffer, 'main');
 }
 
+/**
+ * Run `attempt`, and if it fails only because the core module lacks a codec,
+ * run it again against the heavy-codec module.
+ *
+ * The `[external-codec:…]` check is what keeps this cheap: any other failure
+ * propagates untouched rather than downloading a couple of megabytes to fail
+ * the same way.
+ */
+async function withCodecFallback<T>(
+	format: string,
+	buffer: ArrayBuffer,
+	options: Record<string, any>,
+	attempt: () => Promise<T>,
+): Promise<T> {
+	try {
+		return await attempt();
+	} catch (error) {
+		// Imported dynamically, and with a literal specifier so esbuild can
+		// resolve it at build time: this keeps the codec module's wasm-pack
+		// glue in a chunk of its own. A static import merges it into the chunk
+		// the NumPy, PFM and NetPBM processors share, and those formats have no
+		// heavy codec to decode.
+		const { externalCodecName, initCodecDecoder } = await import('./codec-wasm-wrapper.js');
+		const { decodeNonTiffWithCodecModule } = await import('./codec-fallback.js');
+		if (!externalCodecName(error)) { throw error; }
+		const wasm = await initCodecDecoder();
+		return decodeNonTiffWithCodecModule(wasm, format, buffer, options, 'main') as T;
+	}
+}
+
+/**
+ * Standalone JPEG XR. The decoder lives ONLY in the heavy-codec module — a
+ * `.jxr` file is a JPEG XR codestream and nothing else, so there is no attempt
+ * to make first.
+ */
 export async function decodeJxrLocal(buffer: ArrayBuffer) {
-	const wasm = await requireWasm('JPEG XR');
+	const { initCodecDecoder } = await import('./codec-wasm-wrapper.js');
+	const wasm = await initCodecDecoder();
 	return decodeJpegxrWithWasm(wasm.decode_jpegxr_fast, buffer, 'main');
 }
 
@@ -88,6 +124,10 @@ export async function decodeNetcdfLocal(buffer: ArrayBuffer, options: Record<str
 }
 
 export async function decodeDicomLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
+	return withCodecFallback('dicom', buffer, options, () => decodeDicomCore(buffer, options));
+}
+
+async function decodeDicomCore(buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	const wasm = await requireWasm('DICOM');
 	return decodeDicomWithWasm(wasm.decode_dicom_fast, buffer, Number(options.frameIndex || 0), 'main');
 }
@@ -103,6 +143,8 @@ export async function decodeLifLocal(buffer: ArrayBuffer, options: Record<string
 }
 
 export async function decodeCziLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
-	const wasm = await requireWasm('CZI');
-	return decodeCziWithWasm(wasm.decode_czi_fast, buffer, options, 'main');
+	return withCodecFallback('czi', buffer, options, async () => {
+		const wasm = await requireWasm('CZI');
+		return decodeCziWithWasm(wasm.decode_czi_fast, buffer, options, 'main');
+	});
 }

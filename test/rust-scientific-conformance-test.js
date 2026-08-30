@@ -76,6 +76,21 @@ async function main() {
 	const mod = await import(wasmJs.replace(/\\/g, '/'));
 	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
 
+	// The heavy-codec module, for the DICOM transfer syntaxes whose codecs the
+	// core build does not carry. Decoding through the same routing the webview
+	// uses keeps the goldens meaningful: the samples still have to match, and
+	// the `[external-codec:…]` contract is exercised rather than assumed.
+	const codecBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
+	const codecJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+	let codecMod = null;
+	if (fs.existsSync(codecBin)) {
+		codecMod = await import(codecJs.replace(/\\/g, '/'));
+		await codecMod.default({ module_or_path: fs.readFileSync(codecBin) });
+	} else {
+		console.log('⚠️  media/wasm/codec-wasm.wasm not found — run `npm run build:wasm:codecs`. JPEG 2000/JPEG-LS DICOM will fail.');
+	}
+	const externalCodecCases = new Set();
+
 	let ImageStatsCalculator = null;
 	if (fs.existsSync(path.join(OUT, 'normalization-helper.js'))) {
 		({ ImageStatsCalculator } = await import(moduleUrl('normalization-helper.js')));
@@ -90,12 +105,23 @@ async function main() {
 	 * result exactly once, returning { rust, rustData } so every subsequent
 	 * comparison, absolute-value check, and golden check reuses the same
 	 * typed-array reference rather than re-calling the destructive method. */
+	function decodeWith(module, kase) {
+		if (kase.format === 'fits') { return module.decode_fits_fast(new Uint8Array(kase.bytes)); }
+		if (kase.format === 'netcdf') { return module.decode_netcdf_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options)); }
+		if (kase.format === 'czi') { return module.decode_czi_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options)); }
+		return module.decode_dicom_fast(new Uint8Array(kase.bytes), (kase.options.frameIndex || 0) >>> 0);
+	}
+
 	function decodeRust(kase) {
 		let rust;
-		if (kase.format === 'fits') { rust = mod.decode_fits_fast(new Uint8Array(kase.bytes)); }
-		else if (kase.format === 'netcdf') { rust = mod.decode_netcdf_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options)); }
-		else if (kase.format === 'czi') { rust = mod.decode_czi_fast(new Uint8Array(kase.bytes), JSON.stringify(kase.options)); }
-		else { rust = mod.decode_dicom_fast(new Uint8Array(kase.bytes), (kase.options.frameIndex || 0) >>> 0); }
+		try {
+			rust = decodeWith(mod, kase);
+		} catch (error) {
+			const codec = /\[external-codec:([^\]]+)\]/.exec(String(error?.message ?? error))?.[1];
+			if (!codec || !codecMod) { throw error; }
+			externalCodecCases.add(`${kase.id}:${codec}`);
+			rust = decodeWith(codecMod, kase);
+		}
 		const rustData = rust.take_data_as_f32();
 		return { rust, rustData };
 	}
@@ -169,6 +195,23 @@ async function main() {
 
 		console.log(`✅ ${kase.id} -> ${rust.width}x${rust.height} ch=${rust.channels} type=${rust.source_numeric_type}`);
 		count++;
+	}
+
+	// Which cases the CORE module could not decode, and why. Pinning the set
+	// both ways: an addition means the core grew (or lost) a codec without the
+	// split being reconsidered, and a removal means the `[external-codec:…]`
+	// routing quietly stopped being exercised.
+	if (codecMod) {
+		assert.deepStrictEqual([...externalCodecCases].sort().join('\n'), [
+			'dicom-fixture-synthetic-ct-jpeg2000-dcm:JPEG 2000',
+			'dicom-fixture-synthetic-ct-jpeglossless-dcm:JPEG-LS',
+			// Routed to the codec module and rejected THERE, for its
+			// unsupported predictor — the refusal a user needs to see survives
+			// the extra hop rather than being replaced by a codec-missing one.
+			'dicom-fixture-synthetic-ct-jpeglossless-predictor6-dcm:JPEG-LS',
+			'dicom-fixture-synthetic-ct-jpegls-dcm:JPEG-LS',
+		].join('\n'), 'exactly the JPEG 2000 / JPEG-LS DICOM fixtures should need the codec module');
+		console.log(`✅ ${externalCodecCases.size} DICOM fixtures routed to the codec module; every other case decoded in the core`);
 	}
 
 	console.log(`\n🎉 All ${count} Rust/WASM FITS/NetCDF/DICOM/CZI conformance checks passed.\n`);
