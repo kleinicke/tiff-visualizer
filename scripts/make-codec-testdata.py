@@ -84,6 +84,12 @@ def main() -> None:
         return {"level": 0}
 
     # LZMA (34925). Each block is a standalone .xz stream.
+    #
+    # The float16 file is not decoration: half floats reach the block-codec path
+    # only under a codec like this one, and that path used to reject sample
+    # format 3 at 16 bits while LZW, Deflate and ZSTD read the same image fine.
+    # Its uncompressed twin below is the reference.
+    write("lzma_f16.tif", base.astype(np.float16), compression="LZMA")
     write("lzma_u16.tif", u16, compression="LZMA")
     write("lzma_tiled_pred2_u16.tif", u16, compression="LZMA", tile=(32, 32), predictor=2)
     write("lzma_pred3_f32.tif", f32, compression="LZMA", predictor=3)
@@ -110,6 +116,7 @@ def main() -> None:
     )
 
     # Uncompressed twins for everything above.
+    write("codec_ref_f16.tif", base.astype(np.float16))
     write("codec_ref_u16.tif", u16)
     write("codec_ref_f32.tif", f32)
     write("codec_ref_rgb8.tif", rgb8, photometric="rgb")

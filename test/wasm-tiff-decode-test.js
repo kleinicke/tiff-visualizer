@@ -254,6 +254,10 @@ async function main() {
 	//     LERC_DEFLATE and LERC_ZSTD wrappers and a tiled layout.
 	for (const [file, refFile, comp, label] of [
 		['lzma_u16.tif', 'codec_ref_u16.tif', 34925, 'LZMA, uint16 strips'],
+		// Half floats reach the block-codec path only under a codec like this
+		// one. That path used to refuse sample format 3 at 16 bits, so the same
+		// image decoded fine under LZW, Deflate or ZSTD and failed here.
+		['lzma_f16.tif', 'codec_ref_f16.tif', 34925, 'LZMA, float16'],
 		['lzma_tiled_pred2_u16.tif', 'codec_ref_u16.tif', 34925, 'LZMA, tiled, horizontal predictor'],
 		['lzma_pred3_f32.tif', 'codec_ref_f32.tif', 34925, 'LZMA, float predictor, float32'],
 		['png_in_tiff_u16.tif', 'codec_ref_u16.tif', 34933, 'PNG-in-TIFF, uint16'],
@@ -771,8 +775,8 @@ async function main() {
 			['lerc_lossy_f32.tif', 'LERC'], ['lerc_masked_f32.tif', 'LERC'],
 			['lerc_rgb8.tif', 'LERC'], ['lerc_tiled_f32.tif', 'LERC'],
 			['lerc_u16.tif', 'LERC'], ['lerc_zstd_u16.tif', 'LERC'],
-			['lzma_pred3_f32.tif', 'LZMA'], ['lzma_tiled_pred2_u16.tif', 'LZMA'],
-			['lzma_u16.tif', 'LZMA'],
+			['lzma_f16.tif', 'LZMA'], ['lzma_pred3_f32.tif', 'LZMA'],
+			['lzma_tiled_pred2_u16.tif', 'LZMA'], ['lzma_u16.tif', 'LZMA'],
 			['webp_rgb.tif', 'WebP'],
 		].map(([file, codec]) => `${file}:${codec}`);
 		const actual = [...externalCodecs].sort();

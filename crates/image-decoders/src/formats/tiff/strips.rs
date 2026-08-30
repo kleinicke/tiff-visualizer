@@ -200,6 +200,13 @@ pub(crate) fn decompress_strip_or_tile(
     decompress_block(block, compression, expected_len, context, None)
 }
 
+// The typed fields are read only by the LERC/JPEG 2000/JPEG XR block
+// decoders, which the core build leaves out; the struct itself is still needed
+// by every caller of `decompress_block`.
+#[cfg_attr(
+    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    allow(dead_code)
+)]
 /// How the samples in a block are laid out, for the codecs that decode to
 /// TYPED values rather than to the file's raw bytes. LERC and PNG both hand
 /// back numbers of a known type; turning those back into a TIFF strip means
@@ -218,20 +225,6 @@ pub(crate) struct BlockCodecInfo {
     /// be converted on the way out. Only the codecs that carry colour
     /// themselves (JPEG 2000) consult this.
     pub ycbcr: bool,
-}
-
-/// The error a build WITHOUT a given heavy codec returns when a file needs it.
-///
-/// The `[external-codec:NAME]` prefix is load-bearing, not decoration: the
-/// webview matches it to decide that this file needs the separate codec
-/// module, and fetches it. Anything that changes the prefix has to change
-/// `EXTERNAL_CODEC_PATTERN` in `media/modules/codec-wasm-wrapper.ts` with it.
-#[allow(dead_code)]
-pub(crate) fn external_codec_needed(name: &str, what: &str) -> DecodeError {
-    DecodeError::new(&format!(
-        "[external-codec:{}] {} needs the {} decoder, which is not in this build",
-        name, what, name
-    ))
 }
 
 /// `decompress_strip_or_tile` plus the layout the typed codecs need. Callers
@@ -333,7 +326,7 @@ pub(crate) fn decompress_block(
             Ok(out)
         }
         #[cfg(not(feature = "codec-lzma"))]
-        34925 => Err(external_codec_needed("LZMA", context)),
+        34925 => Err(crate::formats::external_codec::needed("LZMA", context)),
         // PNG-in-TIFF: every block is a complete PNG stream covering exactly
         // that strip or tile.
         34933 => decode_png_block(block, expected_len, context, codec_info(info, context, "PNG")?),
@@ -342,7 +335,7 @@ pub(crate) fn decompress_block(
         #[cfg(feature = "codec-lerc")]
         34887 => decode_lerc_block(block, expected_len, context, codec_info(info, context, "LERC")?),
         #[cfg(not(feature = "codec-lerc"))]
-        34887 => Err(external_codec_needed("LERC", context)),
+        34887 => Err(crate::formats::external_codec::needed("LERC", context)),
         // JPEG XR. 22610 is the code Hamamatsu NDPI files use.
         #[cfg(feature = "codec-jpegxr")]
         34934 | 22610 => decode_jpegxr_block(
@@ -352,7 +345,7 @@ pub(crate) fn decompress_block(
             codec_info(info, context, "JPEG XR")?,
         ),
         #[cfg(not(feature = "codec-jpegxr"))]
-        34934 | 22610 => Err(external_codec_needed("JPEG XR", context)),
+        34934 | 22610 => Err(crate::formats::external_codec::needed("JPEG XR", context)),
         // JPEG 2000. 34712 is the registered code; 33003/33004/33005 are what
         // Aperio slide scanners write (YCbCr, lossy, and RGB respectively).
         #[cfg(feature = "codec-jpeg2000")]
@@ -363,7 +356,7 @@ pub(crate) fn decompress_block(
             codec_info(info, context, "JPEG 2000")?,
         ),
         #[cfg(not(feature = "codec-jpeg2000"))]
-        34712 | 33003 | 33004 | 33005 => Err(external_codec_needed("JPEG 2000", context)),
+        34712 | 33003 | 33004 | 33005 => Err(crate::formats::external_codec::needed("JPEG 2000", context)),
         _ => Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             context, compression
@@ -616,6 +609,10 @@ fn decode_jpegxr_block(
     Ok(data)
 }
 
+#[cfg_attr(
+    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    allow(dead_code)
+)]
 /// CCIR 601-1 / JFIF inverse transform, in place over interleaved 8-bit
 /// samples. The same coefficients the subsampled-YCbCr path uses, which is
 /// what TIFF 6.0 specifies for the default YCbCrCoefficients.
@@ -630,6 +627,10 @@ fn ycbcr_to_rgb_in_place(data: &mut [u8], channels: usize) {
     }
 }
 
+#[cfg_attr(
+    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    allow(dead_code)
+)]
 fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
     if little_endian {
         value.to_le_bytes()
@@ -638,6 +639,10 @@ fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
     }
 }
 
+#[cfg_attr(
+    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    allow(dead_code)
+)]
 fn to_file_order_4(value: u32, little_endian: bool) -> [u8; 4] {
     if little_endian {
         value.to_le_bytes()
@@ -1063,9 +1068,13 @@ pub(crate) fn try_decode_general_strips_tiles(
         .ok()
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
-    // 1 = unsigned, 2 = signed, 3 = IEEE float. Float only exists at 32/64 bits.
+    // 1 = unsigned, 2 = signed, 3 = IEEE float. Half floats are real TIFF —
+    // scientific data uses them — and every other path here already reads them
+    // (`strip_bytes_to_f32`, `float_predictor_plan`, the ZSTD path). Leaving 16
+    // out made a float16 image decode fine under LZW or ZSTD and fail under any
+    // block-only codec, which is a difference no file property justifies.
     if !matches!(sample_format, 1 | 2 | 3)
-        || (sample_format == 3 && !matches!(bits_per_sample, 32 | 64))
+        || (sample_format == 3 && !matches!(bits_per_sample, 16 | 32 | 64))
     {
         return Err(DecodeError::new(&format!(
             "{}: sample format {} at {} bits is not supported",
@@ -1081,9 +1090,9 @@ pub(crate) fn try_decode_general_strips_tiles(
             CTX
         )));
     }
-    if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 32 | 64)) {
+    if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 16 | 32 | 64)) {
         return Err(DecodeError::new(&format!(
-            "{}: the floating-point predictor is only supported on 32/64-bit float samples",
+            "{}: the floating-point predictor is only supported on 16/32/64-bit float samples",
             CTX
         )));
     }
@@ -1298,6 +1307,12 @@ pub(crate) fn try_decode_general_strips_tiles(
     // widen to the next one up; the reported `bits_per_sample` still describes
     // the source, so normalization keeps using the true type maximum.
     Ok(Some(match (sample_format, bits_per_sample) {
+        // No F16 carrier exists, and none is wanted: everything downstream
+        // reads half floats as f32 while still reporting 16 bits, which is what
+        // the tiff crate's own half-float path produces.
+        (3, 16) => {
+            DecodingResult::F32(out.into_iter().map(|v| crate::formats::half::f16_to_f32(v as u16)).collect())
+        }
         (3, 32) => DecodingResult::F32(out.into_iter().map(|v| f32::from_bits(v as u32)).collect()),
         (3, 64) => DecodingResult::F64(out.into_iter().map(f64::from_bits).collect()),
         (2, bits) => {
@@ -1897,32 +1912,6 @@ fn undo_horizontal_predictor_row(
 ///
 /// Predictor 3 leaves samples big-endian (the byte planes are MSB-first by
 /// definition); predictors 1 and 2 leave them in the file's byte order.
-/// IEEE 754 binary16 -> binary32. Written out rather than pulling in `half`,
-/// which is only an indirect dependency here.
-#[inline]
-fn half_bits_to_f32(bits: u16) -> f32 {
-    let sign = ((bits >> 15) as u32) << 31;
-    let exponent = ((bits >> 10) & 0x1f) as u32;
-    let mantissa = (bits & 0x3ff) as u32;
-    let out = match exponent {
-        // Zero and subnormals: renormalize into a binary32 exponent.
-        0 => {
-            if mantissa == 0 {
-                sign
-            } else {
-                let shift = mantissa.leading_zeros() - 21;
-                let exponent = 127 - 15 - shift;
-                let mantissa = (mantissa << (shift + 1)) & 0x3ff;
-                sign | (exponent << 23) | (mantissa << 13)
-            }
-        }
-        // Infinity and NaN.
-        31 => sign | 0x7f80_0000 | (mantissa << 13),
-        _ => sign | ((exponent + 127 - 15) << 23) | (mantissa << 13),
-    };
-    f32::from_bits(out)
-}
-
 pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f32> {
     let big_endian = plan.predictor == 3 || !plan.little_endian;
     let bytes_per_sample = plan.bits_per_sample as usize / 8;
@@ -1948,7 +1937,7 @@ pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f3
     match (bytes_per_sample, plan.sample_format) {
         (1, 2) => raster.iter().map(|v| *v as i8 as f32).collect(),
         (1, _) => raster.iter().map(|v| *v as f32).collect(),
-        (2, 3) => map!(2, |a| half_bits_to_f32(u16::from_le_bytes(a))),
+        (2, 3) => map!(2, |a| crate::formats::half::f16_to_f32(u16::from_le_bytes(a))),
         (2, 2) => map!(2, |a| i16::from_le_bytes(a) as f32),
         (2, _) => map!(2, |a| u16::from_le_bytes(a) as f32),
         (4, 3) => map!(4, f32::from_le_bytes),
@@ -2053,3 +2042,4 @@ pub(crate) fn try_decode_float_predictor_strips(
         )
     }))
 }
+

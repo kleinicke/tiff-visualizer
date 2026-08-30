@@ -8,6 +8,10 @@ pub(crate) mod exr;
 pub(crate) mod fits;
 #[cfg(feature = "hdr")]
 pub(crate) mod hdr;
+// Needed by both the TIFF strip decoders and the microscopy formats, with no
+// feature implying both; ungated so there is exactly one implementation.
+pub(crate) mod external_codec;
+pub(crate) mod half;
 #[cfg(feature = "jpegxr")]
 pub(crate) mod jpegxr;
 #[cfg(feature = "jxl")]

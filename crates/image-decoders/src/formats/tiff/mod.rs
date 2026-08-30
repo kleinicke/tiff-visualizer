@@ -242,7 +242,7 @@ pub(crate) fn decode_tiff_impl(
     // reads like a dead end.
     #[cfg(not(feature = "codec-webp"))]
     if compression == 50001 {
-        return Err(super::tiff::strips::external_codec_needed("WebP", "TIFF"));
+        return Err(crate::formats::external_codec::needed("WebP", "TIFF"));
     }
 
     // Get predictor (default to 1 = None if not found)

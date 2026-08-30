@@ -375,19 +375,12 @@ impl DecodedArray {
     /// mode, and their large RGB files showed that an unconditional pass was
     /// pure first-paint overhead. Their processors request Rust-backed stats
     /// lazily if the visualization mode changes.
-    #[cfg(any(
-        feature = "pfm",
-        feature = "netpbm",
-        feature = "npy",
-        feature = "jpegxr",
-        feature = "jxl",
-        feature = "fits",
-        feature = "netcdf",
-        feature = "dicom",
-        feature = "czi",
-        feature = "nd2",
-        feature = "lif"
-    ))]
+    // Deliberately NOT gated on a list of features. Nearly every decoder ends
+    // by calling this, the list went stale three times as formats moved
+    // between builds, and each time the symptom was a feature combination that
+    // simply did not compile. `allow(dead_code)` costs nothing here — the
+    // linker drops it from a build that has no caller.
+    #[allow(dead_code)]
     fn finalize_stats(mut self) -> Self {
         let stats = match self.sample_kind {
             1 => pipeline::stats::compute_image_range_uint(
@@ -416,12 +409,7 @@ impl DecodedArray {
         self
     }
 
-    // Unused in a narrow build that has no format calling it; see the note in
-    // `formats/scientific_common.rs`.
-    #[cfg_attr(
-        not(any(feature = "pfm", feature = "netpbm", feature = "tiff")),
-        allow(dead_code)
-    )]
+    #[allow(dead_code)]
     fn maybe_finalize_stats(self, compute_stats: bool) -> Self {
         if compute_stats {
             self.finalize_stats()

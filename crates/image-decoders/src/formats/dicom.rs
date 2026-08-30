@@ -1024,14 +1024,14 @@ fn decode_own_codec_frame(
     let bytes: Vec<u8> = match codec {
         #[cfg(not(feature = "codec-jpeg2000"))]
         CompressedCodec::Jpeg2000 => {
-            return Err(crate::formats::tiff::strips::external_codec_needed(
+            return Err(crate::formats::external_codec::needed(
                 "JPEG 2000",
                 "this DICOM transfer syntax",
             ))
         }
         #[cfg(not(feature = "codec-jpegls"))]
         CompressedCodec::JpegLs | CompressedCodec::JpegLossless => {
-            return Err(crate::formats::tiff::strips::external_codec_needed(
+            return Err(crate::formats::external_codec::needed(
                 "JPEG-LS",
                 "this DICOM transfer syntax",
             ))
