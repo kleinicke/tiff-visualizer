@@ -78,6 +78,21 @@ def orientation_tag(value: int) -> list[tuple[int, str, int, int, bool]]:
     return [(274, 'H', 1, value, False)]
 
 
+def orientation_storage(data: np.ndarray, value: int) -> np.ndarray:
+    """Store the inverse transform so an Orientation-aware viewer shows `data`."""
+    transforms = {
+        1: lambda a: a,
+        2: np.fliplr,
+        3: lambda a: np.rot90(a, 2),
+        4: np.flipud,
+        5: lambda a: np.swapaxes(a, 0, 1),
+        6: lambda a: np.rot90(a, 1),
+        7: lambda a: np.flipud(np.fliplr(np.swapaxes(a, 0, 1))),
+        8: lambda a: np.rot90(a, -1),
+    }
+    return np.ascontiguousarray(transforms[value](data))
+
+
 def geotiff_tags() -> list[tuple[int, str, int, Any, bool]]:
     return [
         (33550, 'd', 3, (0.25, 0.25, 0.0), False),
@@ -104,8 +119,8 @@ def generate_tifffile(matrix: Matrix, depth: np.ndarray, rgb: np.ndarray) -> Non
     matrix.write('depth_f32_lzma_pred3_rows32.tif', depth, compression='lzma', predictor=3, compressionargs={'level': 6}, rowsperstrip=32, **depth_common)
     matrix.write('depth_f32_deflate_pred3_big_endian.tif', depth, compression='deflate', predictor=3, byteorder='>', rowsperstrip=32, **depth_common)
     matrix.write('depth_f32_deflate_pred3_bigtiff.tif', depth, compression='deflate', predictor=3, bigtiff=True, rowsperstrip=32, **depth_common)
-    matrix.write('depth_f32_orientation_bottomright.tif', depth, compression='deflate', predictor=3, rowsperstrip=32, extratags=orientation_tag(3), **depth_common)
-    matrix.write('depth_f32_orientation_righttop.tif', depth, compression='deflate', predictor=3, rowsperstrip=32, extratags=orientation_tag(6), **depth_common)
+    matrix.write('depth_f32_orientation_bottomright.tif', orientation_storage(depth, 3), compression='deflate', predictor=3, rowsperstrip=32, extratags=orientation_tag(3), **depth_common)
+    matrix.write('depth_f32_orientation_righttop.tif', orientation_storage(depth, 6), compression='deflate', predictor=3, rowsperstrip=32, extratags=orientation_tag(6), **depth_common)
     matrix.write('depth_f32_geotiff_tags.tif', depth, compression='deflate', predictor=3, rowsperstrip=32, extratags=geotiff_tags(), **depth_common)
     matrix.write('depth_f16_deflate_pred3.tif', depth.astype(np.float16), compression='deflate', predictor=3, rowsperstrip=32, **depth_common)
     finite = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
@@ -135,8 +150,8 @@ def generate_tifffile(matrix: Matrix, depth: np.ndarray, rgb: np.ndarray) -> Non
     matrix.write('photo_rgb8_lzw_pred2_bigtiff.tif', rgb, compression='lzw', predictor=2, bigtiff=True, rowsperstrip=32, **rgb_common)
     matrix.write('photo_rgb8_planar_separate_deflate.tif', np.moveaxis(rgb, -1, 0), compression='deflate', predictor=2, planarconfig='separate', photometric='rgb', metadata=None)
     matrix.write('photo_rgb8_orientation_topleft.tif', rgb, compression='deflate', predictor=2, extratags=orientation_tag(1), **rgb_common)
-    matrix.write('photo_rgb8_orientation_topright.tif', rgb, compression='deflate', predictor=2, extratags=orientation_tag(2), **rgb_common)
-    matrix.write('photo_rgb8_orientation_leftbottom.tif', rgb, compression='deflate', predictor=2, extratags=orientation_tag(8), **rgb_common)
+    matrix.write('photo_rgb8_orientation_topright.tif', orientation_storage(rgb, 2), compression='deflate', predictor=2, extratags=orientation_tag(2), **rgb_common)
+    matrix.write('photo_rgb8_orientation_leftbottom.tif', orientation_storage(rgb, 8), compression='deflate', predictor=2, extratags=orientation_tag(8), **rgb_common)
     rgba = np.concatenate((rgb, np.full((*rgb.shape[:2], 1), 160, dtype=np.uint8)), axis=2)
     matrix.write('photo_rgba8_unassociated_alpha.tif', rgba, compression='deflate', predictor=2, photometric='rgb', extrasamples='unassalpha', metadata=None)
     matrix.write('photo_rgba8_associated_alpha.tif', rgba, compression='lzw', predictor=2, photometric='rgb', extrasamples='assocalpha', metadata=None)

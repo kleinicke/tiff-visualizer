@@ -320,8 +320,27 @@ pub(crate) fn decompress_block(
         #[cfg(feature = "codec-lzma")]
         34925 => {
             let mut out = Vec::with_capacity(expected_len);
-            lzma_rs::xz_decompress(&mut std::io::Cursor::new(block), &mut out).map_err(|e| {
-                DecodeError::new(&format!("{}: LZMA decode failed: {:?}", context, e))
+            // libtiff applies an XZ delta filter before LZMA2 when its TIFF
+            // predictor option is enabled. `lzma-rs` only understands a bare
+            // LZMA2 filter and rejected those perfectly valid streams with
+            // "Unknown filter id 3". xz4rust supports the standard XZ filter
+            // chain (including delta) and remains pure Rust/WASM-compatible.
+            // XzReader owns its std::io::Read source. A TIFF block is already
+            // bounded and in memory, so give the reader an owned buffer. Cap
+            // the declared dictionary at XZ preset 9's 64 MiB: the default
+            // reader permits a hostile stream to request roughly 3 GiB, and
+            // eagerly starts every strip with a wasteful 16 MiB allocation.
+            let xz = xz4rust::XzDecoder::in_heap_with_alloc_dict_size(
+                xz4rust::DICT_SIZE_MIN,
+                64 * 1024 * 1024,
+            );
+            let mut decoder = xz4rust::XzReader::new_with_buffer_size_and_decoder(
+                std::io::Cursor::new(block.to_vec()),
+                std::num::NonZeroUsize::new(8192).unwrap(),
+                xz,
+            );
+            decoder.read_to_end(&mut out).map_err(|e| {
+                DecodeError::new(&format!("{}: LZMA decode failed: {}", context, e))
             })?;
             Ok(out)
         }
@@ -2043,3 +2062,22 @@ pub(crate) fn try_decode_float_predictor_strips(
     }))
 }
 
+#[cfg(all(test, feature = "codec-lzma"))]
+mod tests {
+    use super::decompress_block;
+
+    #[test]
+    fn lzma_decodes_standard_xz_delta_filter_chain() {
+        // Python lzma FORMAT_XZ: Delta(dist=3) followed by LZMA2. This is the
+        // same filter chain libtiff writes for LZMA + horizontal predictor.
+        let encoded = [
+            0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4, 0x46, 0x02,
+            0x01, 0x03, 0x01, 0x02, 0x21, 0x01, 0x16, 0xf2, 0xe8, 0xcd, 0x44, 0x01, 0x00,
+            0x05, 0x4b, 0x3a, 0x2a, 0x02, 0x02, 0x02, 0x00, 0x00, 0x00, 0x96, 0x3e, 0xab,
+            0x28, 0x30, 0x07, 0xf7, 0xde, 0x00, 0x01, 0x1e, 0x06, 0xc1, 0x2f, 0xa4, 0x1d,
+            0x1f, 0xb6, 0xf3, 0x7d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a,
+        ];
+        let decoded = decompress_block(&encoded, 34925, 6, "test", None).unwrap();
+        assert_eq!(decoded, [75, 58, 42, 77, 60, 44]);
+    }
+}

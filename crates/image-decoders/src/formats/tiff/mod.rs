@@ -102,6 +102,24 @@ pub(crate) fn decode_tiff_impl(
 ) -> Result<TiffResult, DecodeError> {
     let start_time = crate::time::now_ms();
 
+    // FillOrder=2 reverses every byte of the ENCODED strip/tile, including a
+    // codec's control bytes. Reversing the decoded samples is therefore too
+    // late for PackBits (its run headers have already been misread). The tiff
+    // crate does not normalize byte-aligned FillOrder=2 inputs, so normalize
+    // the selected page's encoded blocks and its tag in a private copy, then
+    // run the ordinary decoder unchanged. CCITT already performs this exact
+    // normalization inside decode_ccitt and must not be reversed twice.
+    let raw_fill_order = raw_tag_u32(data, page_index, 266).unwrap_or(1);
+    let raw_compression = raw_tag_u32(data, page_index, 259).unwrap_or(1);
+    if raw_fill_order == 2 && !matches!(raw_compression, 2..=4) {
+        if let Some(patched) = normalize_lsb_fill_order(data, page_index) {
+            let mut result = decode_tiff_impl(&patched, compute_stats, page_index)?;
+            result.all_tags_json = extract_page_tags_json(data, page_index);
+            result.ome_xml = extract_ome_xml(data);
+            return Ok(result);
+        }
+    }
+
     // CFA (Bayer) files declare PhotometricInterpretation 32803, which the tiff
     // crate refuses in Decoder::new. Their pixels are an ordinary single-channel
     // plane, so decode against a copy that says BlackIsZero and put the real
@@ -827,6 +845,108 @@ pub(crate) fn raw_tag_u32(data: &[u8], page_index: u32, want: u16) -> Option<u32
     None
 }
 
+/// Normalize a non-CCITT FillOrder=2 page into the MSB-first representation
+/// expected by the Rust TIFF paths. Both classic TIFF and BigTIFF keep a
+/// single SHORT value inline in the IFD entry, so the tag can be patched
+/// without rebuilding the directory.
+fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
+    use tiff::tags::Tag;
+
+    let mut decoder = Decoder::new(Cursor::new(data)).ok()?.with_limits(tiff::decoder::Limits::unlimited());
+    for _ in 0..page_index {
+        decoder.next_image().ok()?;
+    }
+    let (offsets, counts) = if let (Ok(offsets), Ok(counts)) = (
+        decoder.get_tag_u64_vec(Tag::TileOffsets),
+        decoder.get_tag_u64_vec(Tag::TileByteCounts),
+    ) {
+        (offsets, counts)
+    } else {
+        (
+            decoder.get_tag_u64_vec(Tag::StripOffsets).ok()?,
+            decoder.get_tag_u64_vec(Tag::StripByteCounts).ok()?,
+        )
+    };
+    if offsets.len() != counts.len() {
+        return None;
+    }
+
+    let le = match data.get(0..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let rd16 = |b: &[u8]| {
+        if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) }
+    };
+    let rd32 = |b: &[u8]| {
+        if le {
+            u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+        } else {
+            u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+        }
+    };
+    let rd64 = |b: &[u8]| {
+        if le {
+            u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        } else {
+            u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]])
+        }
+    };
+
+    let magic = rd16(data.get(2..4)?);
+    let (mut ifd, count_bytes, entry_bytes, value_offset, next_bytes) = match magic {
+        42 => (rd32(data.get(4..8)?) as usize, 2usize, 12usize, 8usize, 4usize),
+        43 if rd16(data.get(4..6)?) == 8 => {
+            (rd64(data.get(8..16)?) as usize, 8usize, 20usize, 12usize, 8usize)
+        }
+        _ => return None,
+    };
+    for _ in 0..page_index {
+        let count = if count_bytes == 2 {
+            rd16(data.get(ifd..ifd + 2)?) as usize
+        } else {
+            usize::try_from(rd64(data.get(ifd..ifd + 8)?)).ok()?
+        };
+        let next = ifd.checked_add(count_bytes)?.checked_add(count.checked_mul(entry_bytes)?)?;
+        ifd = if next_bytes == 4 {
+            rd32(data.get(next..next + 4)?) as usize
+        } else {
+            usize::try_from(rd64(data.get(next..next + 8)?)).ok()?
+        };
+        if ifd == 0 { return None; }
+    }
+    let count = if count_bytes == 2 {
+        rd16(data.get(ifd..ifd + 2)?) as usize
+    } else {
+        usize::try_from(rd64(data.get(ifd..ifd + 8)?)).ok()?
+    };
+    let mut fill_value_at = None;
+    for index in 0..count {
+        let entry = ifd.checked_add(count_bytes)?.checked_add(index.checked_mul(entry_bytes)?)?;
+        if rd16(data.get(entry..entry + 2)?) == 266
+            && rd16(data.get(entry + 2..entry + 4)?) == 3
+        {
+            fill_value_at = Some(entry + value_offset);
+            break;
+        }
+    }
+
+    let mut patched = data.to_vec();
+    for (&offset, &count) in offsets.iter().zip(&counts) {
+        let start = usize::try_from(offset).ok()?;
+        let len = usize::try_from(count).ok()?;
+        let end = start.checked_add(len)?;
+        for byte in patched.get_mut(start..end)? {
+            *byte = byte.reverse_bits();
+        }
+    }
+    let value_at = fill_value_at?;
+    let one = if le { 1u16.to_le_bytes() } else { 1u16.to_be_bytes() };
+    patched.get_mut(value_at..value_at + 2)?.copy_from_slice(&one);
+    Some(patched)
+}
+
 pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) -> bool {
     if buf.len() < 8 {
         return false;
@@ -1005,4 +1125,53 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
         all_tags_json: extract_page_tags_json(data, 0),
         ome_xml: extract_ome_xml(data),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_tiff_impl;
+
+    #[test]
+    fn packbits_fill_order_two_reverses_encoded_bytes_before_decode() {
+        let pixels = [75u8, 58, 42, 77, 60, 44];
+        let mut encoded = vec![5u8]; // PackBits literal run of six bytes.
+        encoded.extend_from_slice(&pixels);
+        encoded.iter_mut().for_each(|byte| *byte = byte.reverse_bits());
+
+        const TAGS: u16 = 10;
+        let data_offset = 8 + 2 + TAGS as u32 * 12 + 4;
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(b"II");
+        tiff.extend_from_slice(&42u16.to_le_bytes());
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&TAGS.to_le_bytes());
+        let put = |out: &mut Vec<u8>, tag: u16, kind: u16, value: u32| {
+            out.extend_from_slice(&tag.to_le_bytes());
+            out.extend_from_slice(&kind.to_le_bytes());
+            out.extend_from_slice(&1u32.to_le_bytes());
+            if kind == 3 {
+                out.extend_from_slice(&(value as u16).to_le_bytes());
+                out.extend_from_slice(&[0, 0]);
+            } else {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+        };
+        put(&mut tiff, 256, 4, pixels.len() as u32); // ImageWidth
+        put(&mut tiff, 257, 4, 1); // ImageLength
+        put(&mut tiff, 258, 3, 8); // BitsPerSample
+        put(&mut tiff, 259, 3, 32773); // PackBits
+        put(&mut tiff, 262, 3, 1); // BlackIsZero
+        put(&mut tiff, 266, 3, 2); // FillOrder = LSB-to-MSB
+        put(&mut tiff, 273, 4, data_offset); // StripOffsets
+        put(&mut tiff, 277, 3, 1); // SamplesPerPixel
+        put(&mut tiff, 278, 4, 1); // RowsPerStrip
+        put(&mut tiff, 279, 4, encoded.len() as u32); // StripByteCounts
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(&encoded);
+
+        let decoded = decode_tiff_impl(&tiff, true, 0).unwrap();
+        assert_eq!(decoded.data, pixels);
+        assert!(decoded.all_tags_json.contains("\"name\":\"FillOrder\""));
+        assert!(decoded.all_tags_json.contains("\"value\":\"2\""));
+    }
 }

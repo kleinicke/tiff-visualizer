@@ -59,7 +59,7 @@ codec-jpegxr = ["dep:jpegxr-wasm"]
 # JPEG-LS and lossless JPEG, used only by DICOM transfer syntaxes.
 codec-jpegls = ["dep:pure_jpegls", "dep:pure_jpegli"]
 codec-lerc = ["dep:lerc-reader"]
-codec-lzma = ["dep:lzma-rs"]
+codec-lzma = ["dep:xz4rust"]
 codec-webp = ["tiff?/webp"]
 
 tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
@@ -96,7 +96,7 @@ exr = { version = "1.74", default-features = false, optional = true }
 zune-inflate = { version = "0.2.54", default-features = false, features = ["zlib"], optional = true }
 png = { version = "0.17", default-features = false, optional = true }
 ruzstd = { version = "0.8", optional = true }
-lzma-rs = { version = "0.3", optional = true }
+xz4rust = { version = "0.2.1", default-features = false, features = ["alloc", "crc64", "delta", "std"], optional = true }
 # LERC decoding only; `default-features = false` drops its ndarray dependency.
 lerc-reader = { version = "0.5", default-features = false, optional = true }
 # JPEG 2000 at NATIVE bit depth (`decode_native`). The sibling `pdfluent-jpeg2000`
