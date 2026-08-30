@@ -36,6 +36,7 @@ from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.encaps import encapsulate
 from pydicom.uid import (
     UID,
+    JPEGBaseline8Bit,
     DeflatedExplicitVRLittleEndian,
     ExplicitVRLittleEndian,
     JPEG2000Lossless,
@@ -56,7 +57,14 @@ def sample_image() -> np.ndarray:
     return (pattern * (2**BITS_STORED - 1)).astype(np.uint16)
 
 
-def base_dataset(transfer_syntax: UID) -> Dataset:
+def base_dataset(
+    transfer_syntax: UID,
+    *,
+    samples: int = 1,
+    bits: int = 16,
+    stored: int = BITS_STORED,
+    photometric: str = "MONOCHROME2",
+) -> Dataset:
     ds = Dataset()
     ds.file_meta = FileMetaDataset()
     ds.file_meta.MediaStorageSOPClassUID = UID("1.2.840.10008.5.1.4.1.1.7")
@@ -70,12 +78,14 @@ def base_dataset(transfer_syntax: UID) -> Dataset:
     ds.PatientName = "SYNTHETIC^TEST"
     ds.PatientID = "SYNTHETIC"
     ds.Rows, ds.Columns = HEIGHT, WIDTH
-    ds.SamplesPerPixel = 1
-    ds.PhotometricInterpretation = "MONOCHROME2"
-    ds.BitsAllocated = 16
-    ds.BitsStored = BITS_STORED
-    ds.HighBit = BITS_STORED - 1
+    ds.SamplesPerPixel = samples
+    ds.PhotometricInterpretation = photometric
+    ds.BitsAllocated = bits
+    ds.BitsStored = stored
+    ds.HighBit = stored - 1
     ds.PixelRepresentation = 0
+    if samples > 1:
+        ds.PlanarConfiguration = 0
     return ds
 
 
@@ -135,6 +145,51 @@ def main() -> None:
     )
     ds["PixelData"].is_undefined_length = True
     save(ds, "synthetic-ct-jpeglossless-predictor6.dcm")
+
+    # JPEG Baseline (1.2.840.10008.1.2.4.50), the one LOSSY syntax here.
+    #
+    # Its reference cannot be the source array — the encoder discards
+    # information — and it cannot be another twin either, because two baseline
+    # decoders do not agree exactly: the IDCT is specified only to a tolerance.
+    # So the reference is libjpeg's own DECODE of this very codestream, stored
+    # uncompressed, and the test compares against it with a small tolerance.
+    # That still catches every failure that matters (wrong geometry, wrong
+    # channel order, a missing colour transform, byte-order mistakes) while not
+    # asserting a bit-exactness no decoder pair provides.
+    #
+    # 4:4:4 is deliberate for the colour case: with chroma subsampling the
+    # upsampling filter is another place decoders legitimately differ, and this
+    # fixture is meant to test the DICOM plumbing rather than a JPEG library.
+    gray8 = (sample_image() >> (BITS_STORED - 8)).astype(np.uint8)
+    encoded = imagecodecs.jpeg8_encode(gray8, level=95)
+    ds = base_dataset(JPEGBaseline8Bit, bits=8, stored=8)
+    ds.PixelData = encapsulate([encoded])
+    ds["PixelData"].is_undefined_length = True
+    save(ds, "synthetic-ct-jpegbaseline.dcm")
+
+    ds = base_dataset(ExplicitVRLittleEndian, bits=8, stored=8)
+    ds.PixelData = imagecodecs.jpeg8_decode(encoded).squeeze().tobytes()
+    save(ds, "synthetic-ct-jpegbaseline-ref.dcm")
+
+    # The colour case. libjpeg converts RGB to YCbCr on the way in, so the
+    # stored photometric is YBR_FULL; a decoder that skips the inverse
+    # transform produces a recognisably wrong picture, which is the point.
+    rgb8 = np.stack([gray8, 255 - gray8, gray8 // 2], -1)
+    encoded = imagecodecs.jpeg8_encode(rgb8, level=95, subsampling="444")
+    ds = base_dataset(
+        JPEGBaseline8Bit, samples=3, bits=8, stored=8, photometric="YBR_FULL"
+    )
+    ds.PixelData = encapsulate([encoded])
+    ds["PixelData"].is_undefined_length = True
+    save(ds, "synthetic-ct-jpegbaseline-rgb.dcm")
+
+    # The twin is RGB: that is what a decoder hands back once the inverse
+    # colour transform has run.
+    ds = base_dataset(
+        ExplicitVRLittleEndian, samples=3, bits=8, stored=8, photometric="RGB"
+    )
+    ds.PixelData = imagecodecs.jpeg8_decode(encoded).tobytes()
+    save(ds, "synthetic-ct-jpegbaseline-rgb-ref.dcm")
 
     # A last check that the fixtures really do agree, so a broken generator
     # cannot quietly produce a set of files that only match each other.

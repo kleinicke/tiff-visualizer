@@ -14,28 +14,26 @@
 //! walk already satisfies both, so it is kept as-is rather than risking a
 //! rewrite against those same frozen goldens for no behavioral gain.
 //!
-//! What DID change: compressed (encapsulated) Pixel Data — JPEG Baseline and
-//! RLE Lossless — used to be rejected outright. It is now decoded via
-//! `dicom-object` (parses the encapsulated file into an `InMemDicomObject`)
-//! and `dicom-pixeldata` (the `PixelDecoder` trait decodes the JPEG/RLE
-//! fragments into raw native-form samples), see
-//! `decode_compressed_frame` below. The decoded bytes are then run back
-//! through the same [`read_sample`]/Rescale Slope-Intercept/MONOCHROME1
+//! What DID change: compressed (encapsulated) Pixel Data used to be rejected
+//! outright. Every codec below is now decoded straight from the encapsulated
+//! fragments — see `decode_own_codec_frame` — and the decoded bytes are run
+//! back through the same [`read_sample`]/Rescale Slope-Intercept/MONOCHROME1
 //! pipeline the native path uses, so behavior stays uniform between the two.
-//! `dicom-pixeldata`'s "native" feature covers JPEG (via `jpeg-decoder`,
-//! pure Rust) and RLE (via a pure-Rust PackBits-style decoder) — both build
-//! for wasm32-unknown-unknown with no C dependencies. Any other compressed
-//! transfer syntax (JPEG-LS, JPEG 2000, ...) still hits the same
-//! "Compressed or unsupported DICOM Transfer Syntax" rejection as before.
+//!
+//! None of it goes through `dicom-object`/`dicom-pixeldata`. Those decoded
+//! JPEG Baseline and RLE Lossless for a while, and they worked, but they cost
+//! roughly 400 KiB of the WebAssembly module — the DICOM data dictionary's
+//! attribute names alone are 123 KiB of string data, and the transfer-syntax
+//! registry drags in `jpeg-decoder` and `jpeg-encoder` beside the `zune-jpeg`
+//! this crate already links for TIFF. For two codecs, one of which is
+//! PackBits, that is not a trade worth making in a viewer.
 //!
 //! Held equal to the frozen goldens by `test/rust-scientific-conformance-test.js`.
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{ascii, get_slice, js_number, scaled_domain, ScientificParsed};
 use crate::DecodeError;
-use dicom_pixeldata::PixelDecoder;
 use std::collections::HashMap;
-use std::io::Cursor;
 
 /// VRs whose value length is a 4-byte field (after 2 reserved bytes) instead
 /// of the normal 2-byte field — mirrors the TS `LONG_VR` set.
@@ -60,17 +58,16 @@ struct Encoding {
     compressed: Option<CompressedCodec>,
 }
 
-/// Which decoder handles an encapsulated transfer syntax.
-///
-/// `dicom-pixeldata` carries adapters for JPEG Baseline and RLE Lossless, and
-/// nothing else that builds for WebAssembly — its JPEG 2000 and JPEG-LS
-/// adapters are C libraries behind Cargo features. The other three codecs are
-/// decoded here instead, straight from the encapsulated fragments, by
-/// pure-Rust crates.
+/// Which decoder handles an encapsulated transfer syntax. All of them read
+/// the encapsulated fragments directly; see the module note on why none of
+/// this goes through `dicom-pixeldata`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum CompressedCodec {
-    /// Handed to `dicom-object`/`dicom-pixeldata`.
-    DicomRs,
+    /// 1.2.840.10008.1.2.4.50 — decoded by the `zune-jpeg` this crate already
+    /// links for TIFF's compression 7.
+    JpegBaseline,
+    /// 1.2.840.10008.1.2.5 — PackBits per byte plane, decoded below.
+    RleLossless,
     /// 1.2.840.10008.1.2.4.90 / .91
     Jpeg2000,
     /// 1.2.840.10008.1.2.4.80 / .81
@@ -230,12 +227,12 @@ fn parse_dicom_context(data: &[u8]) -> Result<DicomContext<'_>, DecodeError> {
             "1.2.840.10008.1.2.4.50" => Encoding {
                 explicit: true,
                 little: true,
-                compressed: Some(CompressedCodec::DicomRs),
+                compressed: Some(CompressedCodec::JpegBaseline),
             },
             "1.2.840.10008.1.2.5" => Encoding {
                 explicit: true,
                 little: true,
-                compressed: Some(CompressedCodec::DicomRs),
+                compressed: Some(CompressedCodec::RleLossless),
             },
             "1.2.840.10008.1.2.4.57" | "1.2.840.10008.1.2.4.70" => Encoding {
                 explicit: true,
@@ -890,6 +887,119 @@ fn check_lossless_jpeg_predictor(encoded: &[u8]) -> Result<(), DecodeError> {
     Ok(())
 }
 
+/// Decode one PackBits-compressed RLE segment (PS3.5 Annex G.3), appending
+/// exactly `expected` bytes.
+///
+/// The control byte is read as a signed value: 0..=127 copies the next n+1
+/// bytes literally, 129..=255 repeats the next byte 257-n times, and 128 is a
+/// no-op. This is the same scheme as TIFF's compression 32773.
+fn unpack_bits(segment: &[u8], expected: usize, out: &mut Vec<u8>) -> Result<(), DecodeError> {
+    let target = out.len() + expected;
+    let mut offset = 0usize;
+    while out.len() < target {
+        let control = *segment
+            .get(offset)
+            .ok_or_else(|| DecodeError::new("DICOM RLE: segment ends mid-frame"))?;
+        offset += 1;
+        if control == 128 {
+            continue;
+        }
+        if control < 128 {
+            let count = control as usize + 1;
+            let end = offset
+                .checked_add(count)
+                .filter(|end| *end <= segment.len())
+                .ok_or_else(|| DecodeError::new("DICOM RLE: literal run overruns the segment"))?;
+            out.extend_from_slice(&segment[offset..end]);
+            offset = end;
+        } else {
+            let count = 257 - control as usize;
+            let value = *segment
+                .get(offset)
+                .ok_or_else(|| DecodeError::new("DICOM RLE: replicate run overruns the segment"))?;
+            offset += 1;
+            out.extend(std::iter::repeat(value).take(count));
+        }
+    }
+    if out.len() > target {
+        // A run may cross the plane boundary only by overrunning it, which
+        // means the segment does not describe this frame.
+        return Err(DecodeError::new("DICOM RLE: segment decodes to more bytes than the plane holds"));
+    }
+    Ok(())
+}
+
+/// Decode an RLE Lossless frame (transfer syntax 1.2.840.10008.1.2.5) into
+/// interleaved little-endian samples.
+///
+/// The frame opens with a 64-byte header: the segment count, then each
+/// segment's byte offset from the start of the frame. Every segment holds ONE
+/// byte plane of the whole image, PackBits-compressed, ordered most
+/// significant byte first within each channel (PS3.5 Annex G.2) — so a 16-bit
+/// greyscale frame is two segments, high plane then low, and an 8-bit RGB
+/// frame is three, one per channel. Reassembling them is the whole job: the
+/// bytes come out planar and have to be interleaved, and the per-sample byte
+/// order reversed, since everything downstream reads little-endian.
+fn decode_rle_lossless(
+    frame: &[u8],
+    pixels: usize,
+    samples: usize,
+    bytes_per_sample: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    if frame.len() < 64 {
+        return Err(DecodeError::new("DICOM RLE: frame is shorter than its 64-byte header"));
+    }
+    let read_u32 = |index: usize| {
+        let at = index * 4;
+        u32::from_le_bytes([frame[at], frame[at + 1], frame[at + 2], frame[at + 3]]) as usize
+    };
+    let declared = read_u32(0);
+    let expected_segments = samples
+        .checked_mul(bytes_per_sample)
+        .ok_or_else(|| DecodeError::new("DICOM RLE: segment count overflows"))?;
+    if declared != expected_segments || declared == 0 || declared > 15 {
+        return Err(DecodeError::new(&format!(
+            "DICOM RLE: frame declares {} segments, dataset needs {}",
+            declared, expected_segments
+        )));
+    }
+
+    let mut planes: Vec<Vec<u8>> = Vec::with_capacity(declared);
+    for index in 0..declared {
+        let start = read_u32(1 + index);
+        // Offsets are from the start of the frame and must land inside it; the
+        // last segment runs to the end.
+        let end = if index + 1 < declared { read_u32(2 + index) } else { frame.len() };
+        if start < 64 || end > frame.len() || start > end {
+            return Err(DecodeError::new(&format!(
+                "DICOM RLE: segment {} spans {}..{}, outside the {}-byte frame",
+                index, start, end, frame.len()
+            )));
+        }
+        let mut plane = Vec::with_capacity(pixels);
+        unpack_bits(&frame[start..end], pixels, &mut plane)?;
+        planes.push(plane);
+    }
+
+    let total = pixels
+        .checked_mul(expected_segments)
+        .ok_or_else(|| DecodeError::new("DICOM RLE: frame size overflows"))?;
+    let mut out = vec![0u8; total];
+    for channel in 0..samples {
+        for byte in 0..bytes_per_sample {
+            // Segments run most significant byte first; the output is
+            // little-endian, so byte 0 of the segment order is the LAST byte
+            // of each sample.
+            let plane = &planes[channel * bytes_per_sample + byte];
+            let position = bytes_per_sample - 1 - byte;
+            for pixel in 0..pixels {
+                out[(pixel * samples + channel) * bytes_per_sample + position] = plane[pixel];
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Decode one frame compressed with a codec this crate decodes itself —
 /// JPEG 2000, JPEG-LS or lossless JPEG. Returns the raw (pre Rescale
 /// Slope/Intercept) samples, like `decode_native_frame`.
@@ -949,7 +1059,39 @@ fn decode_own_codec_frame(
                 samples.iter().flat_map(|v| v.to_le_bytes()).collect()
             }
         }
-        CompressedCodec::DicomRs => unreachable!("handled by decode_compressed_frame"),
+        CompressedCodec::JpegBaseline => {
+            let mut decoded = crate::decode_jpeg_with_channels(&encoded, info.samples)?;
+            if decoded.width() != width || decoded.height() != height {
+                return Err(DecodeError::new(&format!(
+                    "DICOM JPEG Baseline: codestream is {}x{}, dataset says {}x{}",
+                    decoded.width(),
+                    decoded.height(),
+                    width,
+                    height
+                )));
+            }
+            if decoded.channels() != info.samples {
+                return Err(DecodeError::new(&format!(
+                    "DICOM JPEG Baseline: codestream has {} channels, dataset says {}",
+                    decoded.channels(),
+                    info.samples
+                )));
+            }
+            // Baseline JPEG is 8-bit by definition; a dataset claiming 16 Bits
+            // Allocated for one still reads samples two bytes apart, so widen.
+            let samples = decoded.take_data_as_u8();
+            if bytes_per_sample == 1 {
+                samples
+            } else {
+                samples.iter().flat_map(|v| [*v, 0]).collect()
+            }
+        }
+        CompressedCodec::RleLossless => decode_rle_lossless(
+            &encoded,
+            (width as usize) * (height as usize),
+            info.samples as usize,
+            bytes_per_sample,
+        )?,
     };
 
     let sample_count = (width as usize)
@@ -969,69 +1111,6 @@ fn decode_own_codec_frame(
         )?);
     }
     Ok(raw)
-}
-
-/// Decode one frame of compressed (encapsulated) Pixel Data — JPEG Baseline
-/// or RLE Lossless — via `dicom-object` (parsing) and `dicom-pixeldata`
-/// (codec decode). Returns the raw (pre Rescale Slope/Intercept) samples in
-/// row-major pixel*channel order, together with the photometric
-/// interpretation `dicom-pixeldata` reports for the DECODED data (e.g.
-/// YBR_FULL_422 source samples decode to plain RGB, since both JPEG and RLE
-/// adapters always normalize their output to standard/interleaved planar
-/// configuration).
-fn decode_compressed_frame(
-    data: &[u8],
-    safe_frame: u32,
-) -> Result<(Vec<f64>, String), DecodeError> {
-    let file_obj = dicom_object::from_reader(Cursor::new(data)).map_err(|e| {
-        DecodeError::new(&format!("Failed to parse compressed DICOM dataset: {}", e))
-    })?;
-    let decoded = file_obj.decode_pixel_data_frame(safe_frame).map_err(|e| {
-        DecodeError::new(&format!(
-            "Failed to decode compressed DICOM Pixel Data: {}",
-            e
-        ))
-    })?;
-
-    let rows = decoded.rows();
-    let columns = decoded.columns();
-    let samples = decoded.samples_per_pixel() as u32;
-    let bits_allocated = decoded.bits_allocated() as u32;
-    let bits_stored = decoded.bits_stored() as u32;
-    let signed = matches!(
-        decoded.pixel_representation(),
-        dicom_pixeldata::PixelRepresentation::Signed
-    );
-    let photometric = decoded.photometric_interpretation().as_str().to_string();
-    let bytes = decoded.data();
-
-    let bytes_per_sample = (bits_allocated / 8).max(1) as usize;
-    let sample_count = (rows as usize)
-        .checked_mul(columns as usize)
-        .and_then(|v| v.checked_mul(samples as usize))
-        .ok_or_else(|| DecodeError::new("DICOM: dimensions overflow"))?;
-
-    let mut raw = Vec::with_capacity(sample_count);
-    for i in 0..sample_count {
-        let p = i
-            .checked_mul(bytes_per_sample)
-            .ok_or_else(|| DecodeError::new("DICOM: offset overflow"))?;
-        // Decoded pixel data is always in standard (interleaved) planar
-        // configuration, little-endian (matches the wasm32 target's native
-        // byte order, which `dicom-pixeldata` uses internally), and never
-        // Float/Double Pixel Data (7FE0,0008/0009 cannot be encapsulated per
-        // the DICOM standard) — pixel_tag 0x7FE0,0010 always applies here.
-        raw.push(read_sample(
-            bytes,
-            0x7fe0_0010,
-            true,
-            p,
-            bits_allocated,
-            bits_stored,
-            signed,
-        )?);
-    }
-    Ok((raw, photometric))
 }
 
 /// Inflate a Deflated Explicit VR Little Endian dataset (transfer syntax
@@ -1089,16 +1168,20 @@ pub(crate) fn decode_dicom_impl(
     let safe_frame = frame_index.min(info.frames.saturating_sub(1));
 
     let (raw, photometric) = if let Some(codec) = context.encoding.compressed {
-        if codec == CompressedCodec::DicomRs {
-            decode_compressed_frame(data, safe_frame)?
+        let raw = decode_own_codec_frame(&context, &info, safe_frame, codec)?;
+        // Baseline JPEG stores colour as YCbCr and the decoder converts it, so
+        // what comes back is RGB whatever the dataset declared. Every other
+        // codec here carries no colour transform of its own, so the dataset's
+        // own photometric still describes the samples.
+        let photometric = if codec == CompressedCodec::JpegBaseline
+            && info.samples == 3
+            && info.photometric.starts_with("YBR")
+        {
+            "RGB".to_string()
         } else {
-            // These codecs carry no colour transform of their own beyond what
-            // the dataset already declares, so the photometric stays as read.
-            (
-                decode_own_codec_frame(&context, &info, safe_frame, codec)?,
-                info.photometric.clone(),
-            )
-        }
+            info.photometric.clone()
+        };
+        (raw, photometric)
     } else {
         (
             decode_native_frame(&context, &info, safe_frame)?,

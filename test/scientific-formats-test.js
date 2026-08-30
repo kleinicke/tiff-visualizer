@@ -122,11 +122,11 @@ function testCziCompressedSubblocks() {
  * and all hold identical pixels, so any difference here is a decoder bug rather
  * than a property of the file.
  *
- * JPEG 2000, JPEG-LS and lossless JPEG are decoded from the encapsulated
- * fragments by pure-Rust crates — `dicom-pixeldata`'s own adapters for the
- * first two are C libraries that do not build for WebAssembly. Deflated
- * Explicit VR is inflated before parsing, and RLE and JPEG Baseline still go
- * through dicom-pixeldata. */
+ * Every codec is decoded from the encapsulated fragments by pure-Rust code in
+ * this crate: JPEG 2000, JPEG-LS and lossless JPEG by dedicated crates, JPEG
+ * Baseline by the same zune-jpeg the TIFF path uses, and RLE Lossless by the
+ * PackBits reader in dicom.rs. Deflated Explicit VR is inflated before
+ * parsing. */
 function testDicomTransferSyntaxes() {
 	const reference = parseDicom(arrayBuffer('synthetic-ct-codec-ref.dcm'));
 	assert.deepStrictEqual([reference.width, reference.height, reference.channels], [64, 48, 1]);
@@ -150,6 +150,43 @@ function testDicomTransferSyntaxes() {
 		console.log(`  ✅ ${label} matches the uncompressed twin exactly`);
 	}
 
+	// JPEG Baseline is the one LOSSY syntax, so its reference is libjpeg's own
+	// decode of the same codestream (written uncompressed by
+	// scripts/make-dicom-testdata.py) rather than the source array or another
+	// twin. Baseline decoders agree only to an IDCT tolerance, so this asserts
+	// closeness, not equality — which still catches wrong geometry, a wrong
+	// channel order, a missing YCbCr->RGB transform, or a byte-order mistake,
+	// all of which are off by far more than a rounding step.
+	//
+	// This path used to run through dicom-pixeldata; it now uses the same
+	// zune-jpeg the TIFF decoder does, which is why it is worth a real fixture
+	// rather than only the 4x4 golden.
+	const JPEG_IDCT_TOLERANCE = 2;
+	for (const [file, reference, channels, photometric, label] of [
+		['synthetic-ct-jpegbaseline.dcm', 'synthetic-ct-jpegbaseline-ref.dcm', 1, 'MONOCHROME2', 'JPEG Baseline greyscale'],
+		['synthetic-ct-jpegbaseline-rgb.dcm', 'synthetic-ct-jpegbaseline-rgb-ref.dcm', 3, 'RGB', 'JPEG Baseline RGB (4:4:4)'],
+	]) {
+		const image = parseDicom(arrayBuffer(file));
+		const expected = parseDicom(arrayBuffer(reference));
+		assert.strictEqual(image.metadata.transferSyntax, '1.2.840.10008.1.2.4.50', `${label}: transfer syntax`);
+		assert.deepStrictEqual(
+			[image.width, image.height, image.channels],
+			[expected.width, expected.height, channels],
+			`${label}: geometry`,
+		);
+		// The decoded samples are RGB even when the file declares YBR_FULL,
+		// because the decoder applied the inverse transform; the reported
+		// photometric has to say so or the renderer would convert twice.
+		assert.strictEqual(image.metadata.photometric, photometric, `${label}: reported photometric`);
+		let worst = 0;
+		for (let i = 0; i < expected.data.length; i++) {
+			worst = Math.max(worst, Math.abs(image.data[i] - expected.data[i]));
+		}
+		assert.ok(worst <= JPEG_IDCT_TOLERANCE,
+			`${label}: worst sample error ${worst} exceeds the IDCT tolerance ${JPEG_IDCT_TOLERANCE}`);
+		console.log(`  ✅ ${label} matches libjpeg's decode (worst error ${worst})`);
+	}
+
 	// A lossless-JPEG predictor the decoder reproduces incorrectly must be
 	// REFUSED, not returned as a plausible-looking wrong image. Predictor 6 is
 	// one of the two it gets wrong; the error has to name it.
@@ -162,7 +199,7 @@ function testDicomTransferSyntaxes() {
 }
 
 /** `decode_dicom_fast` decodes JPEG Baseline Pixel Data natively now (via
- * dicom-object/dicom-pixeldata in Rust) instead of throwing the
+ * the shared zune-jpeg) instead of throwing the
  * `requires codec: jpeg-baseline` error that used to route through the
  * TS `extractDicomJpegFrame` + shared zune-jpeg fallback (both deleted).
  * This asserts the same real 96-frame fixture decodes directly. */

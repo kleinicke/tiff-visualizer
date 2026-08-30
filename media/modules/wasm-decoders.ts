@@ -254,8 +254,9 @@ export function decodeNetcdfWithWasm(
 /**
  * DICOM decoding, native and compressed alike. `decode_dicom_fast` decodes
  * JPEG Baseline and RLE Lossless Pixel Data natively (via
- * dicom-object/dicom-pixeldata in Rust); any other compressed transfer
- * syntax is rejected with a descriptive error.
+ * the same zune-jpeg the TIFF path uses, plus a PackBits reader for RLE); JPEG
+ * 2000, JPEG-LS, lossless JPEG and Deflated Explicit VR decode too. Any other
+ * compressed transfer syntax is rejected with a descriptive error.
  */
 export function decodeDicomWithWasm(
 	decodeDicomFast: (bytes: Uint8Array, frameIndex: number) => any,

@@ -535,9 +535,49 @@ impl JpegResult {
 ///   it is a decision to accept IDCT variance, not a routine refresh.
 #[cfg(feature = "jpeg")]
 pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, DecodeError> {
+    decode_jpeg_impl(data, None)
+}
+
+/// `decode_jpeg_fast`, but able to pin the output colorspace.
+///
+/// zune-jpeg's default expands a single-component (greyscale) JPEG to three
+/// RGB channels. That suits the callers that hand the result straight to a
+/// canvas, but not DICOM: a MONOCHROME2 dataset declares one sample per pixel,
+/// and three would disagree with every other tag in the file. Passing the
+/// dataset's own SamplesPerPixel keeps the decode honest to the container.
+#[cfg(feature = "jpeg")]
+pub(crate) fn decode_jpeg_with_channels(
+    data: &[u8],
+    channels: u32,
+) -> Result<JpegResult, DecodeError> {
+    let colorspace = match channels {
+        1 => zune_jpeg::zune_core::colorspace::ColorSpace::Luma,
+        3 => zune_jpeg::zune_core::colorspace::ColorSpace::RGB,
+        _ => {
+            return Err(DecodeError::new(&format!(
+                "JPEG: {} samples per pixel is not a baseline JPEG output",
+                channels
+            )))
+        }
+    };
+    decode_jpeg_impl(data, Some(colorspace))
+}
+
+#[cfg(feature = "jpeg")]
+fn decode_jpeg_impl(
+    data: &[u8],
+    colorspace: Option<zune_jpeg::zune_core::colorspace::ColorSpace>,
+) -> Result<JpegResult, DecodeError> {
     use zune_jpeg::JpegDecoder;
 
-    let mut decoder = JpegDecoder::new(Cursor::new(data));
+    let mut decoder = match colorspace {
+        Some(colorspace) => JpegDecoder::new_with_options(
+            Cursor::new(data),
+            zune_jpeg::zune_core::options::DecoderOptions::default()
+                .jpeg_set_out_colorspace(colorspace),
+        ),
+        None => JpegDecoder::new(Cursor::new(data)),
+    };
     let pixels = decoder
         .decode()
         .map_err(|e| DecodeError::new(&format!("JPEG decode failed: {:?}", e)))?;

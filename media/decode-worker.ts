@@ -669,7 +669,7 @@ async function decodeNetcdf(buffer: ArrayBuffer, options: Record<string, any>) {
 async function decodeDicom(buffer: ArrayBuffer, frameIndex: number) {
 	await requireWasm('DICOM');
 	// `decode_dicom_fast` now decodes JPEG Baseline and RLE Lossless Pixel
-	// Data natively (via dicom-object/dicom-pixeldata), so the TS-side
+	// Data natively (JPEG Baseline through the shared zune-jpeg), so the TS-side
 	// codestream extraction + shared zune-jpeg fallback that used to catch
 	// the `requires codec: jpeg-baseline` error here is gone.
 	return decodeDicomWithWasm(decode_dicom_fast, buffer, frameIndex, 'worker');

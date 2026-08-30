@@ -294,8 +294,9 @@ rules out CharLS and OpenJPEG/OpenJPH as C/C++ sources; the `openjp2` crate (a
 pure-Rust translation of OpenJPEG) is acceptable in principle but must be
 verified to build for `wasm32-unknown-unknown` before being planned around.
 
-1. ~~**DICOM RLE Lossless.**~~ Implemented — decoded through `dicom-pixeldata`'s
-   pure-Rust RLE adapter in `wasm/tiff-decoder/src/formats/dicom.rs`.
+1. ~~**DICOM RLE Lossless.**~~ Implemented — `decode_rle_lossless` in
+   `crates/image-decoders/src/formats/dicom.rs` unpacks the PackBits byte
+   planes straight from the encapsulated fragments.
 2. **JPEG Lossless and JPEG 2000 DICOM transfer syntaxes**, in the order set out
    under "DICOM transfer syntax coverage" below. JPEG-LS depends on a pure-Rust
    decoder existing at all, so it is gated on that survey rather than scheduled.
@@ -390,10 +391,10 @@ transfer syntaxes.
 Color DICOM already works for the common cases: Samples Per Pixel 1/3/4 is
 accepted, Planar Configuration 1 is de-planarized into interleaved output, and
 the channel count flows through `ScientificParsed` into the normal render
-pipeline. Compressed frames come back from `dicom-pixeldata` already normalized
-to interleaved RGB, YBR sources included. Two gaps remain, both in
-`wasm/tiff-decoder/src/formats/dicom.rs`, where `photometric` is currently only
-consulted for the MONOCHROME1 inversion:
+pipeline. Compressed frames come back interleaved, and a JPEG Baseline frame is
+reported as RGB because the decoder applied the inverse colour transform. Two
+gaps remain, both in `crates/image-decoders/src/formats/dicom.rs`, where
+`photometric` is otherwise only consulted for the MONOCHROME1 inversion:
 
 - **Native (uncompressed) `YBR_FULL` / `YBR_FULL_422`.** No color conversion is
   applied, so raw Y/Cb/Cr samples are handed to the renderer as if they were
