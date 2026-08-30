@@ -60,6 +60,16 @@ export class DecodeWorkerClient {
 	_tiffWasmFetchPromise: Promise<ArrayBuffer | null> | null;
 	_tiffWasmModule: WebAssembly.Module | null;
 	_tiffWasmCompilePromise: Promise<WebAssembly.Module | null> | null;
+	/**
+	 * The JPEG XL module, compiled HERE rather than in the worker: blob workers
+	 * cannot fetch webview-resource URLs (the same constraint documented in
+	 * strip-parallel-decode.ts). It is fetched on the first .jxl decode and
+	 * never before — the whole reason JPEG XL is a separate module — and
+	 * retained across a worker respawn so only instantiation is repaid.
+	 */
+	_jxlWasmUrls: string[];
+	_jxlModulePromise: Promise<WebAssembly.Module | null> | null;
+	_jxlModuleWorker: Worker | null;
 
 	constructor(workerBundleName = 'decodeWorker.bundle.js', needsWasm = true) {
 		this._workerBundleName = workerBundleName;
@@ -76,6 +86,9 @@ export class DecodeWorkerClient {
 		this._tiffWasmFetchPromise = null;
 		this._tiffWasmModule = null;
 		this._tiffWasmCompilePromise = null;
+		this._jxlWasmUrls = [];
+		this._jxlModulePromise = null;
+		this._jxlModuleWorker = null;
 	}
 
 	/** Begin booting the worker in the background. Never throws. */
@@ -130,6 +143,13 @@ export class DecodeWorkerClient {
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
 		];
+		// Recorded but NOT fetched: nothing reads these until a .jxl decode
+		// asks for the module in `_ensureJxlModule`.
+		this._jxlWasmUrls = [
+			(globalThis as any).__tiffVisualizerVendorAssets?.jxlWasm,
+			new URL('./wasm/jxl-wasm.wasm', import.meta.url).href,
+			new URL('../wasm/jxl-wasm.wasm', import.meta.url).href,
+		].filter(Boolean) as string[];
 		if (this._needsWasm && !this._tiffWasmBytes && !this._tiffWasmFetchPromise) {
 			const warmBytes = matchingWarmup?.wasmBytesPromise || matchingWarmup?.getWasmBytes?.();
 			if (warmBytes) {
@@ -239,6 +259,33 @@ export class DecodeWorkerClient {
 	}
 
 	/**
+	 * Compile the JPEG XL module on this thread and hand it to `worker`, once
+	 * per worker instance. Resolves even when the module cannot be loaded: the
+	 * worker then fails the decode and `decodeWithFallback` runs the decoder on
+	 * the main thread, which can fetch the payload itself.
+	 */
+	async _ensureJxlModule(worker: Worker): Promise<void> {
+		if (this._jxlModuleWorker === worker) { return; }
+		if (!this._jxlModulePromise) {
+			this._jxlModulePromise = (async () => {
+				for (const url of this._jxlWasmUrls) {
+					try {
+						const response = await fetch(url);
+						if (response.ok) { return await WebAssembly.compile(await response.arrayBuffer()); }
+					} catch { /* try the next candidate */ }
+				}
+				console.warn('[DecodeWorker] JPEG XL WASM not found for the worker; decoding on the main thread');
+				return null;
+			})();
+		}
+		const jxlModule = await this._jxlModulePromise;
+		if (jxlModule && this._worker === worker) {
+			worker.postMessage({ type: 'jxl-module', jxlModule });
+			this._jxlModuleWorker = worker;
+		}
+	}
+
+	/**
 	 * Decode off-thread. Ownership of `buffer` is transferred to the worker.
 	 * Resolves to {ok:true, result} on success or {ok:false, error, buffer?}
 	 * on failure (with the input bytes transferred back when possible).
@@ -262,8 +309,15 @@ export class DecodeWorkerClient {
 				clearTimeout(timer);
 				resolve(response);
 			});
-			try {
+			const send = () => {
 				worker.postMessage({ id, format, buffer, options }, [buffer]);
+			};
+			try {
+				if (format === 'jxl') {
+					this._ensureJxlModule(worker).then(send, send);
+				} else {
+					send();
+				}
 			} catch (error) {
 				clearTimeout(timer);
 				this._pending.delete(id);

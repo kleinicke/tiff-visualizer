@@ -3,6 +3,23 @@
 //! `scaledDomain` in `media/modules/scientific-format-parsers.ts`. Wrapped
 //! into the public `DecodedArray` by `lib.rs`.
 
+// Several helpers below serve only the container formats. A NARROW build —
+// `jxl` or `jpegxr` on their own, which is what the separate WebAssembly
+// modules in `wasm/` use — pulls this module in for its shared types and
+// leaves the rest unused. That is expected; it is not dead code to delete.
+#![cfg_attr(
+    not(any(
+        feature = "fits",
+        feature = "netcdf",
+        feature = "dicom",
+        feature = "czi",
+        feature = "nd2",
+        feature = "lif"
+    )),
+    allow(dead_code)
+)]
+
+
 use crate::DecodeError;
 
 /// Intermediate result shared by the FITS and NetCDF entry points, before

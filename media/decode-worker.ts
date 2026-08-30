@@ -19,8 +19,12 @@
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
 import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_jpegxr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count } from './wasm/tiff-wasm.js';
+// The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
+// few KB of bundle; the ~1.3 MB payload is fetched by `initJxlWasm` below,
+// which only runs when a .jxl decode is actually requested.
+import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJpegxrWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJpegxrWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
@@ -42,6 +46,17 @@ declare const UPNG: any;
 let tiffWasmReady = false;
 let tiffWasmInitPromise: Promise<void> | null = null;
 const TIFF_WASM_INIT_TIMEOUT_MS = 3000;
+
+/**
+ * JPEG XL lives in a separate module, so unlike the TIFF one it is NOT
+ * initialized when the worker starts. The main thread compiles it — blob
+ * workers cannot fetch webview-resource URLs — and sends it in a `jxl-module`
+ * message immediately before the first .jxl decode. A worker that never sees a
+ * .jxl never receives it.
+ */
+let jxlWasmModule: WebAssembly.Module | null = null;
+let jxlWasmInitPromise: Promise<void> | null = null;
+const JXL_WASM_INIT_TIMEOUT_MS = 15000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
 	return Promise.race([
@@ -81,6 +96,35 @@ async function initTiffDecoder(moduleOrBuffer: WebAssembly.Module | ArrayBuffer 
 			console.warn('[DecodeWorker] TIFF WASM init failed for', url, error);
 		}
 	}
+}
+
+/**
+ * Instantiate the JPEG XL module the main thread handed over. Failing here is
+ * not fatal: `decodeWithFallback` runs the same decoder on the main thread,
+ * where the payload can be fetched directly.
+ */
+async function requireJxlWasm(): Promise<void> {
+	if (!jxlWasmModule) {
+		throw new Error(
+			'Cannot decode JPEG XL: its WASM module was not delivered to the decode worker.');
+	}
+	if (!jxlWasmInitPromise) {
+		jxlWasmInitPromise = (async (): Promise<void> => {
+			try {
+				await withTimeout(
+					initJxlWasm({ module_or_path: jxlWasmModule }),
+					JXL_WASM_INIT_TIMEOUT_MS,
+					'JPEG XL WASM initialization timed out',
+				);
+			} catch (error) {
+				// Clear the promise so a later open retries instead of being
+				// stuck with one rejected attempt for the life of the worker.
+				jxlWasmInitPromise = null;
+				throw error;
+			}
+		})();
+	}
+	await jxlWasmInitPromise;
 }
 
 /**
@@ -602,6 +646,11 @@ async function decodeNpy(buffer: ArrayBuffer) {
 	return decodeNpyWithWasm(decode_npy_display_fast, buffer, 'worker');
 }
 
+async function decodeJxl(buffer: ArrayBuffer) {
+	await requireJxlWasm();
+	return decodeJxlWithWasm(decode_jxl_fast, buffer, 'worker');
+}
+
 async function decodeJxr(buffer: ArrayBuffer) {
 	await requireWasm('JPEG XR');
 	return decodeJpegxrWithWasm(decode_jpegxr_fast, buffer, 'worker');
@@ -662,6 +711,8 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodePng16(buffer);
 		case 'hdr':
 			return decodeHdr(buffer);
+		case 'jxl':
+			return decodeJxl(buffer);
 		case 'jxr':
 			return decodeJxr(buffer);
 		case 'fits':
@@ -717,6 +768,12 @@ let sourceCache: { key: string, buffer: ArrayBuffer } | null = null;
 
 self.onmessage = async (event: MessageEvent<any>) => {
 	const msg = event.data;
+	// Set synchronously, before this handler yields: the decode message for the
+	// .jxl that prompted it is already queued behind this one.
+	if (msg.type === 'jxl-module') {
+		jxlWasmModule = msg.jxlModule;
+		return;
+	}
 	if (msg.type === 'init') {
 		tiffWasmInitPromise = initTiffDecoder(msg.tiffWasmModule || msg.tiffWasmBuffer, msg.tiffWasmUrls);
 		await tiffWasmInitPromise;

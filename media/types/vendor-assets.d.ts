@@ -56,3 +56,13 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const compute_image_stats_u8: any;
 	export const compute_image_stats_u16: any;
 }
+
+// The JPEG XL decoder is a SEPARATE wasm-pack module (media/wasm/jxl-wasm.js),
+// built by `npm run build:wasm:jxl`. It is imported statically so esbuild
+// inlines the glue, but its ~1.3 MB payload is only fetched when `init` is
+// called — which happens on the first .jxl open and never otherwise.
+declare module '*/wasm/jxl-wasm.js' {
+    const initJxlWasm: any;
+    export default initJxlWasm;
+    export const decode_jxl_fast: any;
+}

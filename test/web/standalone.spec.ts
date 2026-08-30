@@ -126,3 +126,34 @@ test('honours explicit zoom width for a CZI canvas', async ({ page }) => {
   expect(sizing.renderedWidth).toBe(sizing.intrinsicWidth * 5);
   expect(sizing.flex).toMatch(/^0 0/);
 });
+
+/**
+ * JPEG XL is decoded by a SECOND WebAssembly module, downloaded on demand.
+ * Both halves of that are worth asserting through a real browser: that nothing
+ * fetches the ~1.3 MB payload until a `.jxl` is actually opened (otherwise the
+ * separate module buys nothing), and that once it is opened the file decodes
+ * and renders — which exercises the decode worker, the module hand-off from
+ * the main thread, and the shared scientific-array renderer together.
+ */
+test('fetches the JPEG XL decoder only when a .jxl is opened', async ({ page }) => {
+  const jxlWasmRequests: string[] = [];
+  page.on('request', request => {
+    if (request.url().includes('jxl-wasm.wasm')) { jxlWasmRequests.push(request.url()); }
+  });
+
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/orientation_tag1.tif'));
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+  expect(jxlWasmRequests, 'opening a TIFF must not download the JPEG XL module').toEqual([]);
+
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/standalone_gray16.jxl'));
+  await expect(page.locator('#web-file-summary')).toContainText('standalone_gray16.jxl');
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#web-status-size')).toContainText('64x48');
+  expect(jxlWasmRequests.length, 'opening a .jxl must download the JPEG XL module').toBeGreaterThan(0);
+});

@@ -17,7 +17,8 @@
 | PFM | No | No | No | Yes | Portable Float Map |
 | PPM / PGM / PBM | Yes | Yes | No | No | PBM is 1-bit, shown as 8-bit |
 | PNG | Yes | Yes | No | No | Palette PNGs become 8-bit RGBA |
-| JPEG / WebP / AVIF / BMP / ICO / TGA / JXL | Yes | No | No | No | Decoded as 8-bit |
+| JPEG / WebP / AVIF / BMP / ICO / TGA | Yes | No | No | No | Decoded as 8-bit |
+| JPEG XL (`.jxl`) | Yes | Yes | No | Yes | Decoded in Rust; 8/16-bit and float, greyscale or RGB(A) |
 | ORA / KRA / PSD / PSB / XCF / Affinity | Yes | PSD/PSB | No | PSD/PSB | Previews, and layer composition where supported — see [layers](./layers.md) |
 
 File extensions registered by the extension:
@@ -61,7 +62,8 @@ written that way; the decoder reproduces the reconstruction its own encoder
 defines, and pixels a LERC blob marks invalid read as zero. JPEG 2000 decodes
 at its native bit depth, so a 16-bit image stays 16-bit.
 
-Not decoded: JPEG XL in TIFF, old-style JPEG (compression 6), and the legacy
+Not decoded: JPEG XL in TIFF (its decoder is a separate module — see JPEG XL
+below), old-style JPEG (compression 6), and the legacy
 PixarLog, SGILog, ThunderScan, NeXT and JBIG codecs. Files using any of these
 report the codec by name rather than failing silently.
 
@@ -154,10 +156,25 @@ family supports both binary and ASCII variants.
 ### PNG, JPEG and the browser formats
 
 PNG carries real bit depth information, and 16-bit PNG is preserved rather than
-being crushed to 8. JPEG, WebP, AVIF, BMP, ICO, TGA and JXL are decoded as 8-bit
+being crushed to 8. JPEG, WebP, AVIF, BMP, ICO and TGA are decoded as 8-bit
 image data. These formats are worth opening here mainly when you want pixel
 inspection, the histogram, measurement, or comparison against a scientific
 image.
+
+### JPEG XL
+
+Decoded by [jxl-rs](https://github.com/libjxl/jxl-rs) at the file's own sample
+type: an 8-bit `.jxl` arrives as 8-bit, a 16-bit one as 16-bit, and a float one
+as float32 with its range intact. Greyscale and RGB are supported, with or
+without alpha; the first frame of an animation is shown.
+
+Its decoder is a **separate WebAssembly module** from the one every other
+format shares, downloaded the first time you open a `.jxl` and never otherwise
+— it is large enough that carrying it in the main module would slow down every
+TIFF open to no purpose. The consequence is that JPEG XL *inside* another
+container (TIFF compression 50002, the DICOM JPEG XL transfer syntaxes) is
+still not decoded: those run inside the main module, which does not contain
+it.
 
 ### Layered documents
 

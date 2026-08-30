@@ -18,6 +18,7 @@
  * wrapper (and its geotiff.js dependencies) into the worker bundle.
  */
 import { initWasm } from './tiff-wasm-wrapper.js';
+import { initJxlDecoder } from './jxl-wasm-wrapper.js';
 import {
 	decodeCziWithWasm,
 	decodeLifWithWasm,
@@ -25,6 +26,7 @@ import {
 	decodeDicomWithWasm,
 	decodeFitsWithWasm,
 	decodeJpegxrWithWasm,
+	decodeJxlWithWasm,
 	decodeNetcdfWithWasm,
 	decodeNpyWithWasm,
 	decodePfmWithWasm,
@@ -59,6 +61,15 @@ export async function decodePpmLocal(buffer: ArrayBuffer) {
 export async function decodeNpyLocal(buffer: ArrayBuffer) {
 	const wasm = await requireWasm('NPY');
 	return decodeNpyWithWasm(wasm.decode_npy_display_fast, buffer, 'main');
+}
+
+/**
+ * JPEG XL. This one does NOT go through `requireWasm`: its decoder is a
+ * separate module (see `jxl-wasm-wrapper.ts`), initialized on first use.
+ */
+export async function decodeJxlLocal(buffer: ArrayBuffer) {
+	const wasm = await initJxlDecoder();
+	return decodeJxlWithWasm(wasm.decode_jxl_fast, buffer, 'main');
 }
 
 export async function decodeJxrLocal(buffer: ArrayBuffer) {

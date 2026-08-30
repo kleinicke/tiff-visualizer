@@ -30,6 +30,7 @@ web-dist/
 # Rust/WASM build artifacts
 /target/
 wasm/tiff-decoder/target/
+wasm/jxl-decoder/target/
 
 # Generated bundles
 media/chunks/

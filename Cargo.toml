@@ -3,6 +3,7 @@ members = [
     "crates/image-decoders",
     "crates/jpegxr",
     "wasm/tiff-decoder",
+    "wasm/jxl-decoder",
 ]
 resolver = "2"
 

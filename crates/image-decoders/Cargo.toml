@@ -34,6 +34,10 @@ exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
 jpegxr = ["dep:jpegxr-wasm"]
+# Deliberately NOT in `all-formats`: jxl-rs is large enough that including it
+# would grow the main WebAssembly module by more than a megabyte, which every
+# TIFF open would pay for. `wasm/jxl-decoder` builds this feature on its own.
+jxl = ["dep:jxl"]
 jpeg = ["dep:zune-jpeg"]
 pfm = []
 netpbm = []
@@ -65,6 +69,7 @@ dicom-toolkit-jpeg2000 = { version = "0.5", optional = true }
 # Vendored at crates/jpegxr because the published crate decodes only through a
 # temporary file, which WebAssembly has nowhere to put. See its VENDORING.md.
 jpegxr-wasm = { path = "../jpegxr", optional = true }
+jxl = { version = "0.6", optional = true }
 pure_jpegls = { version = "2.0", optional = true }
 pure_jpegli = { version = "2.0", optional = true }
 weezl = { version = "0.1.12", optional = true }

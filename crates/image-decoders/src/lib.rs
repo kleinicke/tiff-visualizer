@@ -379,6 +379,8 @@ impl DecodedArray {
         feature = "pfm",
         feature = "netpbm",
         feature = "npy",
+        feature = "jpegxr",
+        feature = "jxl",
         feature = "fits",
         feature = "netcdf",
         feature = "dicom",
@@ -414,6 +416,12 @@ impl DecodedArray {
         self
     }
 
+    // Unused in a narrow build that has no format calling it; see the note in
+    // `formats/scientific_common.rs`.
+    #[cfg_attr(
+        not(any(feature = "pfm", feature = "netpbm", feature = "tiff")),
+        allow(dead_code)
+    )]
     fn maybe_finalize_stats(self, compute_stats: bool) -> Self {
         if compute_stats {
             self.finalize_stats()
@@ -433,6 +441,8 @@ impl DecodedArray {
 }
 
 #[cfg(any(
+    feature = "jpegxr",
+    feature = "jxl",
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
@@ -1077,6 +1087,14 @@ pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<DecodedArra
 #[cfg(feature = "jpegxr")]
 pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     Ok(formats::jpegxr::decode_jpegxr_impl(data)?.into())
+}
+
+/// Standalone JPEG XL (`.jxl`). Built only into the separate `jxl-decoder`
+/// WebAssembly module — see `formats::jxl` for why it is not part of
+/// `all-formats`.
+#[cfg(feature = "jxl")]
+pub fn decode_jxl_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jxl::decode_jxl_impl(data)?.into())
 }
 
 #[cfg(feature = "dicom")]

@@ -203,6 +203,23 @@ export function decodeNpyWithWasm(
  * 8-, 16- or 32-bit samples depending on the file's pixel format, but they all
  * arrive as f32 like FITS and friends, so the shared assembly applies.
  */
+/**
+ * Standalone JPEG XL. Unlike every other decoder here, `decodeJxlFast` comes
+ * from a DIFFERENT WebAssembly module (`wasm/jxl-decoder`, fetched on demand),
+ * but the result it returns is the same shape, so the shared assembly applies
+ * unchanged. That module's result carries only the f32 carrier — JPEG XL never
+ * produces the u8/u16 ones — so no reusable buffer is passed.
+ */
+export function decodeJxlWithWasm(
+	decodeJxlFast: (bytes: Uint8Array) => any,
+	buffer: ArrayBuffer,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeJxlFast(new Uint8Array(buffer));
+	return assembleDecoded<Float32Array>(result, 'jxl', context, startedAt);
+}
+
 export function decodeJpegxrWithWasm(
 	decodeJpegxrFast: (bytes: Uint8Array) => any,
 	buffer: ArrayBuffer,

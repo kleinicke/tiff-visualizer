@@ -10,8 +10,12 @@ pub(crate) mod fits;
 pub(crate) mod hdr;
 #[cfg(feature = "jpegxr")]
 pub(crate) mod jpegxr;
+#[cfg(feature = "jxl")]
+pub(crate) mod jxl;
 #[cfg(any(
     feature = "npy",
+    feature = "jpegxr",
+    feature = "jxl",
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
@@ -26,6 +30,8 @@ pub(crate) mod lif;
     feature = "tiff",
     feature = "exr",
     feature = "hdr",
+    feature = "jpegxr",
+    feature = "jxl",
     feature = "npy",
     feature = "fits",
     feature = "netcdf",
@@ -48,6 +54,8 @@ pub(crate) mod pfm;
 #[cfg(feature = "png")]
 pub(crate) mod png;
 #[cfg(any(
+    feature = "jpegxr",
+    feature = "jxl",
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
