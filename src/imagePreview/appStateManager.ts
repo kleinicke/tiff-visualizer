@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxr' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
 
 export interface ImageStats {
 	min: number;
@@ -341,7 +341,13 @@ export class AppStateManager {
 
 		// Rule 1: Integer formats → Gamma mode with type-specific ranges
 		// (Ranges will be set by webview based on actual bit depth)
-		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'ico' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
+		//
+		// JPEG XR belongs here rather than with the scientific arrays even
+		// though it decodes through the same adapter: a .jxr is a picture
+		// someone authored, so its samples do fill the type's range. A
+		// float32 JPEG XR is scene-referred like an EXR, and the webview
+		// overrides the range from the bit depth in either case.
+		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'ico' || format === 'jxl' || format === 'jxr' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
 			defaults.normalization.gammaMode = true;
 			defaults.normalization.autoNormalize = false;
 			defaults.normalization.min = 0;

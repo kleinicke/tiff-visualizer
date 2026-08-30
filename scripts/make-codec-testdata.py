@@ -5,6 +5,9 @@
 # ///
 """Regenerate the LZMA, PNG-in-TIFF, LERC, JPEG 2000 and JPEG XR fixtures.
 
+Also writes the standalone `.jxr` files, which are the same codestream without
+a TIFF around it.
+
 These are the TIFF codecs the Rust decoder gained after ZSTD; none of them can
 be produced by an ordinary image editor, and LERC in particular has variants
 (an extra Deflate/ZSTD wrapper, a validity mask, lossy quantization) that only
@@ -34,6 +37,7 @@ import struct
 import sys
 from pathlib import Path
 
+import imagecodecs
 import numpy as np
 import tifffile
 
@@ -132,6 +136,20 @@ def main() -> None:
     write("jxr_rgb8.tif", rgb8, compression="JPEGXR", photometric="rgb")
     jxr_float = write("jxr_f32.tif", f32, compression="JPEGXR")
     write("jxr_f32_ref.tif", tifffile.imread(jxr_float))
+
+    # Standalone JPEG XR (.jxr). Same codestream, no TIFF wrapper — the
+    # decoder has to read the pixel format off the file itself. level=1.0 is
+    # lossless for the integer formats; the float one is lossy regardless,
+    # which is why the test compares it with a tolerance.
+    for name, data in [
+        ("standalone_gray8.jxr", u8),
+        ("standalone_rgb8.jxr", rgb8),
+        ("standalone_gray16.jxr", u16),
+        ("standalone_f32.jxr", f32),
+    ]:
+        encoded = imagecodecs.jpegxr_encode(data, level=1.0)
+        (out / name).write_bytes(encoded)
+        print(f"{name:32} {len(encoded):>7} bytes")
 
     # An Aperio 33003 block holds YCbCr and says so through
     # PhotometricInterpretation 6. Nothing here writes that combination, so:

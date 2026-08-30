@@ -2,7 +2,7 @@
 
 Rust-based image decoding and GPU accelerated rendering for high-bit-depth, floating-point, scientific, and standard image files inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2 and Leica LIF.
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, JPEG XR, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2 and Leica LIF.
 Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
@@ -23,6 +23,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
 | PNG                                          |   Yes |     Yes |      No |      No | Palette PNGs become 8-bit RGBA                                                                                                                                                                                                      |
 | JPEG / WebP / AVIF / BMP / ICO / TGA / JXL   |   Yes |      No |      No |      No | Decoded as 8-bit image data                                                                                                                                                                                                         |
+| JPEG XR (`.jxr`, `.wdp`, `.hdp`)             |   Yes |     Yes |      No |     Yes | Decoded in Rust; 8/16/32-bit grey and RGB(A), including scene-referred float                                                                                                                                                        |
 | ORA / KRA / PSD / PSB / XCF / Affinity Photo |   Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; compatible PSD adjustments, Krita filter masks/layers, and XCF GIMP 3 layer effects are approximated |
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).

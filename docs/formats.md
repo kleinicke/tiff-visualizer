@@ -72,6 +72,18 @@ TIFF resolution tags and OME-XML physical pixel sizes are read automatically and
 used to pre-fill the measurement scale, so an ROI area can come out in µm²
 without you typing anything.
 
+### JPEG XR
+
+Standalone `.jxr`, `.wdp` and `.hdp` files, decoded by the same Rust codec that
+handles JPEG XR inside TIFF ([crates/jpegxr](../crates/jpegxr), a vendored
+translation of Microsoft's JXRLib). Grey and RGB(A) at 8, 16 and 32 bits are
+supported, unsigned or IEEE float, so a scene-referred float JPEG XR keeps its
+range and normalizes like an EXR rather than being flattened to 8-bit.
+
+JPEG XR's packed pixel formats — 5:6:5, 10:10:10, RGBE, the fixed-point layouts
+— are reported by name rather than guessed at; reading one as if it were plain
+samples would produce a plausible-looking wrong picture.
+
 ### EXR
 
 Half and full float, grayscale, RGB and RGBA. EXR stores rows bottom-up, so the

@@ -27,11 +27,13 @@ all-formats = [
     "nd2",
     "lif",
     "demosaic",
+    "jpegxr",
 ]
 tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:lzma-rs", "dep:lerc-reader", "dep:png", "dep:dicom-toolkit-jpeg2000", "dep:jpegxr-wasm"]
 exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []
+jpegxr = ["dep:jpegxr-wasm"]
 jpeg = ["dep:zune-jpeg"]
 pfm = []
 netpbm = []

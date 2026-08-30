@@ -18,9 +18,9 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_jpegxr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count } from './wasm/tiff-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJpegxrWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
@@ -602,6 +602,11 @@ async function decodeNpy(buffer: ArrayBuffer) {
 	return decodeNpyWithWasm(decode_npy_display_fast, buffer, 'worker');
 }
 
+async function decodeJxr(buffer: ArrayBuffer) {
+	await requireWasm('JPEG XR');
+	return decodeJpegxrWithWasm(decode_jpegxr_fast, buffer, 'worker');
+}
+
 async function decodeFits(buffer: ArrayBuffer) {
 	await requireWasm('FITS');
 	return decodeFitsWithWasm(decode_fits_fast, buffer, 'worker');
@@ -657,6 +662,8 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodePng16(buffer);
 		case 'hdr':
 			return decodeHdr(buffer);
+		case 'jxr':
+			return decodeJxr(buffer);
 		case 'fits':
 			return decodeFits(buffer);
 		case 'dicom':

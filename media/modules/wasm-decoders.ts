@@ -198,6 +198,21 @@ export function decodeNpyWithWasm(
 		result, 'npy', context, startedAt, true, buffer);
 }
 
+/**
+ * Standalone JPEG XR. Unlike the other array decoders this one can produce
+ * 8-, 16- or 32-bit samples depending on the file's pixel format, but they all
+ * arrive as f32 like FITS and friends, so the shared assembly applies.
+ */
+export function decodeJpegxrWithWasm(
+	decodeJpegxrFast: (bytes: Uint8Array) => any,
+	buffer: ArrayBuffer,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeJpegxrFast(new Uint8Array(buffer));
+	return assembleDecoded<Float32Array>(result, 'jxr', context, startedAt);
+}
+
 export function decodeFitsWithWasm(
 	decodeFitsFast: (bytes: Uint8Array) => any,
 	buffer: ArrayBuffer,

@@ -8,6 +8,8 @@ pub(crate) mod exr;
 pub(crate) mod fits;
 #[cfg(feature = "hdr")]
 pub(crate) mod hdr;
+#[cfg(feature = "jpegxr")]
+pub(crate) mod jpegxr;
 #[cfg(any(
     feature = "npy",
     feature = "fits",

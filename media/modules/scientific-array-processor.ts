@@ -9,7 +9,7 @@ import type { ScientificDecodedImage } from './types.js';
 type VsCodeApi = { postMessage: (msg: any) => any };
 
 export interface ScientificArrayProcessorConfig {
-	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif';
+	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'jxr';
 	/**
 	 * Keep the source bytes in the decode worker between requests. Worth it for
 	 * formats where one file is decoded repeatedly to show different planes, and
@@ -17,11 +17,18 @@ export interface ScientificArrayProcessorConfig {
 	 */
 	cacheSourceInWorker?: boolean;
 	formatLabel: string;
-	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif';
+	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'jxr';
 	parse: (buffer: ArrayBuffer, options?: Record<string, any>) => ScientificDecodedImage | Promise<ScientificDecodedImage>;
 }
 
-/** Shared renderer/lifecycle adapter for self-describing scientific arrays. */
+/**
+ * Shared renderer/lifecycle adapter for self-describing arrays.
+ *
+ * Most members are scientific dataset formats with plane navigation; JPEG XR
+ * is here because it is the same shape of problem — a Rust decode returning
+ * samples of whatever type the file declares — minus the navigation, which
+ * costs nothing when the decoder reports no selectors.
+ */
 export class ScientificArrayProcessor extends PfmProcessor {
 	config: ScientificArrayProcessorConfig;
 	metadata: Record<string, any> = {};

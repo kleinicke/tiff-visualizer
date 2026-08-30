@@ -24,6 +24,7 @@ import {
 	decodeNd2WithWasm,
 	decodeDicomWithWasm,
 	decodeFitsWithWasm,
+	decodeJpegxrWithWasm,
 	decodeNetcdfWithWasm,
 	decodeNpyWithWasm,
 	decodePfmWithWasm,
@@ -58,6 +59,11 @@ export async function decodePpmLocal(buffer: ArrayBuffer) {
 export async function decodeNpyLocal(buffer: ArrayBuffer) {
 	const wasm = await requireWasm('NPY');
 	return decodeNpyWithWasm(wasm.decode_npy_display_fast, buffer, 'main');
+}
+
+export async function decodeJxrLocal(buffer: ArrayBuffer) {
+	const wasm = await requireWasm('JPEG XR');
+	return decodeJpegxrWithWasm(wasm.decode_jpegxr_fast, buffer, 'main');
 }
 
 export async function decodeFitsLocal(buffer: ArrayBuffer) {

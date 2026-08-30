@@ -31,6 +31,7 @@ declare module '*/wasm/tiff-wasm.js' {
     export const extract_exif_tags: any;
     export const decode_exr_fast: any;
     export const decode_fits_fast: any;
+    export const decode_jpegxr_fast: any;
     export const decode_hdr_fast: any;
     export const decode_jpeg_fast: any;
     export const decode_netcdf_fast: any;

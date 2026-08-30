@@ -174,6 +174,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
 	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	let fitsProcessor: any = dormantProcessor();
+	let jxrProcessor: any = dormantProcessor();
 	let dicomProcessor: any = dormantProcessor();
 	let netcdfProcessor: any = dormantProcessor();
 	let cziProcessor: any = dormantProcessor();
@@ -201,7 +202,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		return processor;
 	};
 	function ensureProcessorFamily(kind: string): Promise<void> {
-		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(kind) ? 'scientific' : kind;
+		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'jxr'].includes(kind) ? 'scientific' : kind;
 		const existing = processorFamilyLoads.get(family);
 		if (existing) { return existing; }
 		const load = (async () => {
@@ -247,12 +248,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 					import('./modules/main-thread-decode.js'),
 				]);
 				fitsProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decoders.decodeFitsLocal }));
+				jxrProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'jxr', formatLabel: 'JPEG XR', formatType: 'jxr', parse: decoders.decodeJxrLocal }));
 				dicomProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) }));
 				netcdfProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNetcdfLocal(buffer, options || {}) }));
 				cziProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeCziLocal(buffer, options || {}) }));
 				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
 				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
-				scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
+				scientificProcessors = [fitsProcessor, jxrProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
 				mouseHandler.setScientificProcessors(scientificProcessors);
 				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor];
 			}
@@ -7089,7 +7091,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
 		const format = resolveFormat(resourceUri, formatHint);
-		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(format.kind)) {
+		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(format.kind)) {
 			await ensureProcessorFamily(format.kind);
 			if (gen !== _loadGeneration) { return; }
 		}
@@ -7146,6 +7148,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			handleWebImage(uri, gen);
 		} else if (format?.kind === 'jxl') {
 			handleJxl(uri, gen);
+		} else if (format?.kind === 'jxr') {
+			handleScientificArray(jxrProcessor, uri, gen);
 		} else if (format?.kind === 'fits') {
 			handleScientificArray(fitsProcessor, uri, gen);
 		} else if (format?.kind === 'dicom') {

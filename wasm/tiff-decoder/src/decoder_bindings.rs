@@ -680,6 +680,17 @@ pub fn decode_npy_display_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
         .map_err(js_error)
 }
 
+/// Standalone JPEG XR (`.jxr`, `.wdp`, `.hdp`). The TIFF path decodes the same
+/// codestream under compression 34934; this reads the pixel format off the
+/// codestream itself, there being no TIFF tags to describe it.
+#[wasm_bindgen]
+pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_jpegxr_fast(data)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
 #[wasm_bindgen]
 pub fn decode_fits_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     prepare();

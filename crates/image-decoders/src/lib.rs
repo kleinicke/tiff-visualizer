@@ -1069,6 +1069,16 @@ pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<DecodedArra
 /// the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
 /// fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
 /// working unchanged against this decoder.
+/// Decode a standalone JPEG XR file (`.jxr`, `.wdp`, `.hdp`).
+///
+/// The same codestream decoder TIFF's compression 34934 uses; this entry point
+/// exists because a bare JPEG XR file has no TIFF wrapper to describe it, so
+/// the pixel format has to be read off the codestream itself.
+#[cfg(feature = "jpegxr")]
+pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jpegxr::decode_jpegxr_impl(data)?.into())
+}
+
 #[cfg(feature = "dicom")]
 pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, DecodeError> {
     Ok(decode_dicom_impl(data, frame_index)?.into())
