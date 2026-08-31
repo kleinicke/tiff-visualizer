@@ -3,6 +3,7 @@
 ## 1.11.0 (2026-08-22)
 
 - Noticeable speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure
+- Add several additional tiff compression standards
 
 ## 1.10.0 (2026-08-22)
 
