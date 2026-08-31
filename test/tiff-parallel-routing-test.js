@@ -20,6 +20,20 @@ const root = path.join(__dirname, '..');
 		'uncompressed uint8 rasters must avoid copy-bound pool dispatch');
 	assert.strictEqual(policy.shouldUseParallelTiffPlan({ ...eligible(100), compression: 1, sample_format: 3, bits_per_sample: 32 }), true,
 		'uncompressed float32 rasters still benefit from parallel conversion');
+	const lzma = strips => ({ ...eligible(strips), width: 4032, height: 3024, channels: 1,
+		bits_per_sample: 8, compression: 34925 });
+	assert.strictEqual(policy.shouldUseParallelTiffPlan(lzma(1)), false,
+		'a single LZMA strip cannot be decoded in parallel');
+	assert.strictEqual(policy.shouldUseParallelTiffPlan(lzma(2)), true,
+		'two large LZMA strips must use two workers');
+	assert.strictEqual(policy.parallelTiffWorkerCount(lzma(2)), 2,
+		'two strips must never request idle workers');
+	assert.strictEqual(policy.parallelTiffWorkerCount(lzma(12)), 6,
+		'12 MiB of decoded LZMA output should request six workers');
+	assert.strictEqual(policy.parallelTiffWorkerCount(lzma(100)), 6,
+		'many small strips should be grouped by useful decoded work');
+	assert.strictEqual(policy.parallelTiffWorkerCount({ ...lzma(100), channels: 3 }), 8,
+		'large RGB LZMA should stop at the global eight-worker cap');
 
 	const worker = fs.readFileSync(path.join(root, 'media/decode-worker.ts'), 'utf8');
 	const processor = fs.readFileSync(path.join(root, 'media/modules/tiff-processor.ts'), 'utf8');

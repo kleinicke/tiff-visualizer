@@ -23,13 +23,15 @@
  * ordinary single-worker path.
  */
 import {
+	MAX_PARALLEL_TIFF_WORKERS,
 	MIN_PARALLEL_TIFF_PIXELS,
 	MIN_PARALLEL_TIFF_STRIPS,
+	parallelTiffWorkerCount,
 	shouldUseParallelTiffPlan,
 } from './tiff-parallel-policy.js';
 
 /** Cap the pool: more workers than this stops helping and costs memory. */
-const MAX_WORKERS = 8;
+const MAX_WORKERS = MAX_PARALLEL_TIFF_WORKERS;
 
 /**
  * Which typed array the decoded samples arrive in.
@@ -86,21 +88,34 @@ class StripDecodePool {
 
 	get size(): number { return this._workers.length; }
 
-	/** Spawn the pool once; safe to call repeatedly. */
-	async ensure(compiledModule?: WebAssembly.Module): Promise<boolean> {
-		if (this._workers.length) { return true; }
+	/** Spawn or grow the pool to the useful size; safe to call repeatedly. */
+	async ensure(compiledModule?: WebAssembly.Module, desiredWorkers = MAX_WORKERS): Promise<boolean> {
 		if (compiledModule) { this._module = compiledModule; }
+		const cores = (globalThis.navigator as any)?.hardwareConcurrency || 4;
+		// Leave a core for the UI thread and the ordinary decode worker. Two is
+		// still worthwhile for two sufficiently expensive independent strips.
+		const target = Math.max(2, Math.min(MAX_WORKERS, desiredWorkers, cores - 1));
+		if (this._workers.length >= target) { return true; }
+		if (this._bootPromise) {
+			await this._bootPromise;
+			if (this._workers.length >= target) { return true; }
+		}
 		if (!this._bootPromise) {
-			this._bootPromise = this._boot().catch(error => {
+			this._bootPromise = this._boot(target).catch(error => {
 				console.warn('[StripPool] Unavailable, falling back to single-worker decode:', error);
 				this._teardown();
 				return false;
+			});
+		} else {
+			this._bootPromise = this._spawn(this._module!, target).catch(error => {
+				console.warn('[StripPool] Could not grow worker pool:', error);
+				return this._workers.length >= 2;
 			});
 		}
 		return this._bootPromise;
 	}
 
-	private async _boot(): Promise<boolean> {
+	private async _boot(target: number): Promise<boolean> {
 		const candidates = [
 			new URL('../stripDecodeWorker.bundle.js', import.meta.url).href,
 			new URL('./stripDecodeWorker.bundle.js', import.meta.url).href,
@@ -121,7 +136,7 @@ class StripDecodePool {
 		// webview-resource URLs, the blob workers cannot. Retained across a
 		// retire/respawn cycle so only instantiation is repaid.
 		if (this._module) {
-			return this._spawn(this._module);
+			return this._spawn(this._module, target);
 		}
 		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
 			wasmModulePromise?: Promise<WebAssembly.Module>;
@@ -129,7 +144,7 @@ class StripDecodePool {
 		if (warmup?.wasmModulePromise) {
 			try {
 				this._module = await warmup.wasmModulePromise;
-				return this._spawn(this._module);
+				return this._spawn(this._module, target);
 			} catch { /* use the explicit asset below */ }
 		}
 		const wasmUrls = [
@@ -146,14 +161,11 @@ class StripDecodePool {
 		}
 		if (!compiled) { throw new Error('tiff-wasm.wasm not found for the strip pool'); }
 		this._module = compiled;
-		return this._spawn(compiled);
+		return this._spawn(compiled, target);
 	}
 
-	private async _spawn(compiled: WebAssembly.Module): Promise<boolean> {
-		const cores = (globalThis.navigator as any)?.hardwareConcurrency || 4;
-		// Leave a core for the UI thread and the ordinary decode worker.
-		const count = Math.max(2, Math.min(MAX_WORKERS, cores - 1));
-
+	private async _spawn(compiled: WebAssembly.Module, target: number): Promise<boolean> {
+		const count = Math.max(0, target - this._workers.length);
 		const booted = await Promise.all(Array.from({ length: count }, () => new Promise<PoolWorker | null>(resolve => {
 			const worker = new Worker(this._blobUrl!, { type: 'module' });
 			const timer = setTimeout(() => resolve(null), 20000);
@@ -166,7 +178,7 @@ class StripDecodePool {
 			worker.onerror = () => { clearTimeout(timer); resolve(null); };
 			worker.postMessage({ type: 'init', tiffWasmModule: compiled });
 		})));
-		this._workers = booted.filter((w): w is PoolWorker => w !== null);
+		this._workers.push(...booted.filter((w): w is PoolWorker => w !== null));
 		if (!this._workers.length) { throw new Error('no strip workers booted'); }
 		console.log(`[StripPool] Ready with ${this._workers.length} workers`);
 		return true;
@@ -347,6 +359,7 @@ export async function tryStripParallelDecode(
 	const width: number = plan.width;
 	const height: number = plan.height;
 	if (!shouldUseParallelTiffPlan(plan)) { return null; }
+	const desiredWorkers = parallelTiffWorkerCount(plan);
 
 	let activePool = pool;
 	if (EXTENDED_TIFF_COMPRESSIONS.has(Number(plan.compression))) {
@@ -354,12 +367,12 @@ export async function tryStripParallelDecode(
 			const { codecWasmModule } = await import('./codec-wasm-wrapper.js');
 			const compiled = await codecWasmModule();
 			activePool = codecPool;
-			if (!await activePool.ensure(compiled)) { return null; }
+			if (!await activePool.ensure(compiled, desiredWorkers)) { return null; }
 		} catch (error) {
 			console.warn('[StripPool] Extended codec module unavailable, falling back:', error);
 			return null;
 		}
-	} else if (!await activePool.ensure()) {
+	} else if (!await activePool.ensure(undefined, desiredWorkers)) {
 		return null;
 	}
 	if (activePool.size < 2) { return null; }
@@ -398,7 +411,7 @@ export async function tryStripParallelDecode(
 	// Balance by COMPRESSED BYTES rather than strip count: strips vary in cost,
 	// and an even strip split leaves workers idle (160 strips over 8 workers
 	// measured slower than over 6).
-	const workerCount = Math.min(activePool.size, stripCount);
+	const workerCount = Math.min(activePool.size, stripCount, desiredWorkers);
 	let totalBytes = 0;
 	for (let i = 0; i < stripCount; i++) { totalBytes += unitBytes(i); }
 	const targetPerWorker = totalBytes / workerCount;
