@@ -1,6 +1,6 @@
 # Change Log
 
-## 1.11.0 (2026-08-22)
+## 1.11.0 (2026-)
 
 - Noticeable speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure
 - Add several additional tiff compression standards
