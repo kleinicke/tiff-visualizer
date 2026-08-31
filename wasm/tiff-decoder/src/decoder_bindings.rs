@@ -801,6 +801,10 @@ impl TiffFloatStripPlanJs {
         self.inner.orientation
     }
     #[wasm_bindgen(getter)]
+    pub fn photometric_interpretation(&self) -> u32 {
+        self.inner.photometric_interpretation
+    }
+    #[wasm_bindgen(getter)]
     pub fn little_endian(&self) -> bool {
         self.inner.little_endian
     }
@@ -885,6 +889,7 @@ pub fn decode_tiff_float_strip_range(
     tile_length: u32,
     blocks_across: u32,
     lerc_additional_compression: u32,
+    photometric_interpretation: u32,
 ) -> Result<Vec<f32>, JsValue> {
     let plan = core::TiffFloatStripPlan {
         width,
@@ -896,6 +901,7 @@ pub fn decode_tiff_float_strip_range(
         sample_format,
         planar_configuration,
         orientation,
+        photometric_interpretation,
         little_endian,
         rows_per_strip,
         tile_width,
@@ -967,6 +973,7 @@ pub fn decode_tiff_strip_range_raw(
     tile_length: u32,
     blocks_across: u32,
     lerc_additional_compression: u32,
+    photometric_interpretation: u32,
 ) -> Result<Vec<u8>, JsValue> {
     let plan = core::TiffFloatStripPlan {
         width,
@@ -978,6 +985,7 @@ pub fn decode_tiff_strip_range_raw(
         sample_format,
         planar_configuration,
         orientation,
+        photometric_interpretation,
         little_endian,
         rows_per_strip,
         tile_width,

@@ -11,6 +11,7 @@ use crate::pipeline::stats::{
 };
 use crate::{demosaic, TiffResult};
 use cmyk::convert_cmyk_to_rgb;
+pub(crate) use cmyk::convert_cmyk_u8_to_rgb;
 use codecs::{
     decode_ccitt, decode_jpeg_ycbcr, decode_palette, decode_sgilog, decode_ycbcr_subsampled,
     unpack_bilevel,
@@ -1054,15 +1055,18 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
     let planar_configuration = decoder
         .get_tag_u64(tiff::tags::Tag::PlanarConfiguration)
         .unwrap_or(1) as u32;
-    // The strip-parallel path returns raw samples with no post-processing, so
-    // anything decode_tiff_impl would transform afterwards must disqualify the
-    // file here: orientation flips, CMYK->RGB, palette expansion and CFA all
-    // rewrite the pixels, and reproducing them per strip would duplicate logic
-    // that is only correct on the whole image.
+    // Palette expansion and CFA rewrite pixels using image-global metadata and
+    // stay on the whole-image path. Unsigned 8-bit chunky CMYK is safe here:
+    // each worker applies the shared authoritative CMYK conversion to its own
+    // independently decoded rows.
     let photometric = decoder
         .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
         .unwrap_or(1) as u32;
-    if photometric != 1 && photometric != 2 {
+    let parallel_cmyk = photometric == 5
+        && channels == 4
+        && bits_per_sample == 8
+        && planar_configuration == 1;
+    if photometric != 1 && photometric != 2 && !parallel_cmyk {
         return None;
     }
     let orientation = decoder
@@ -1085,6 +1089,7 @@ pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan
         predictor,
         planar_configuration,
         orientation as u32,
+        photometric,
     )
 }
 

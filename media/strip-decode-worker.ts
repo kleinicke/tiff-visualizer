@@ -13,6 +13,7 @@
  * cannot fetch webview-resource URLs itself.
  */
 import initTiffWasm, { decode_exr_zip_f32_blocks, decode_tiff_float_strip_range, decode_tiff_strip_range_raw } from './wasm/tiff-wasm.js';
+import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
 
@@ -34,55 +35,6 @@ self.onmessage = async (event: MessageEvent) => {
 	try {
 		await ready;
 		const started = performance.now();
-		if (job.kind === 'orient') {
-			const source = new Uint8Array(job.data);
-			const width = Number(job.width);
-			const height = Number(job.height);
-			const bytesPerPixel = Number(job.bytesPerPixel);
-			const orientation = Number(job.orientation);
-			const transposes = orientation >= 5 && orientation <= 8;
-			const outputWidth = transposes ? height : width;
-			const outputHeight = transposes ? width : height;
-			const output = new Uint8Array(source.byteLength);
-			for (let y = 0; y < outputHeight; y++) {
-				for (let x = 0; x < outputWidth; x++) {
-					let sx: number, sy: number;
-					switch (orientation) {
-						case 2: sx = width - 1 - x; sy = y; break;
-						case 3: sx = width - 1 - x; sy = height - 1 - y; break;
-						case 4: sx = x; sy = height - 1 - y; break;
-						case 5: sx = y; sy = x; break;
-						case 6: sx = y; sy = height - 1 - x; break;
-						case 7: sx = width - 1 - y; sy = height - 1 - x; break;
-						case 8: sx = width - 1 - y; sy = x; break;
-						default: sx = x; sy = y;
-					}
-					const from = (sy * width + sx) * bytesPerPixel;
-					const to = (y * outputWidth + x) * bytesPerPixel;
-					if (bytesPerPixel === 1) {
-						output[to] = source[from];
-					} else if (bytesPerPixel === 3) {
-						output[to] = source[from];
-						output[to + 1] = source[from + 1];
-						output[to + 2] = source[from + 2];
-					} else if (bytesPerPixel === 4) {
-						output[to] = source[from];
-						output[to + 1] = source[from + 1];
-						output[to + 2] = source[from + 2];
-						output[to + 3] = source[from + 3];
-					} else {
-						for (let byte = 0; byte < bytesPerPixel; byte++) {
-							output[to + byte] = source[from + byte];
-						}
-					}
-				}
-			}
-			(self as any).postMessage(
-				{ id: job.id, data: output.buffer, width: outputWidth, height: outputHeight, ms: performance.now() - started },
-				[output.buffer],
-			);
-			return;
-		}
 		if (job.kind === 'exr-zip') {
 			const bytes = decode_exr_zip_f32_blocks(
 				new Uint8Array(job.blob),
@@ -140,6 +92,7 @@ self.onmessage = async (event: MessageEvent) => {
 				job.tileLength || 0,
 				job.blocksAcross || 1,
 				job.lercAdditionalCompression || 0,
+				job.photometricInterpretation || 1,
 			);
 			const view = job.bitsPerSample === 8
 				? bytes
@@ -165,10 +118,10 @@ self.onmessage = async (event: MessageEvent) => {
 					}
 				}
 			}
-			(self as any).postMessage(
-				{ id: job.id, samples: view, min: rmin, max: rmax, ms: performance.now() - started },
-				[bytes.buffer],
-			);
+			const oriented = orientTiffRange(view, job.width, job.height, job.outputChannels || job.channels,
+				job.firstStrip * job.rowsPerStrip, job.orientation || 1);
+			(self as any).postMessage({ id: job.id, ...oriented, min: rmin, max: rmax, ms: performance.now() - started },
+				[oriented.samples.buffer]);
 			return;
 		}
 		const samples = decode_tiff_float_strip_range(
@@ -190,6 +143,7 @@ self.onmessage = async (event: MessageEvent) => {
 			job.tileLength || 0,
 			job.blocksAcross || 1,
 			job.lercAdditionalCompression || 0,
+			job.photometricInterpretation || 1,
 		);
 		// Min/max over this range only; the orchestrator combines them. Doing it
 		// here keeps the stats pass parallel and off the main thread.
@@ -215,10 +169,10 @@ self.onmessage = async (event: MessageEvent) => {
 				}
 			}
 		}
-		(self as any).postMessage(
-			{ id: job.id, samples, min, max, ms: performance.now() - started },
-			[samples.buffer],
-		);
+		const oriented = orientTiffRange(samples, job.width, job.height, job.outputChannels || job.channels,
+			job.firstStrip * job.rowsPerStrip, job.orientation || 1);
+		(self as any).postMessage({ id: job.id, ...oriented, min, max, ms: performance.now() - started },
+			[oriented.samples.buffer]);
 	} catch (error) {
 		(self as any).postMessage({ id: job.id, error: String((error as Error)?.message || error) });
 	}

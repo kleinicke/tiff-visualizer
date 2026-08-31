@@ -1233,6 +1233,7 @@ pub struct TiffFloatStripPlan {
     pub planar_configuration: u32,
     /// TIFF Orientation tag (1-8).
     pub orientation: u32,
+    pub photometric_interpretation: u32,
     pub little_endian: bool,
     /// Image rows covered by one unit: `RowsPerStrip`, or `TileLength`.
     pub rows_per_strip: u32,
@@ -1261,6 +1262,7 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         sample_format: plan.sample_format,
         planar_configuration: plan.planar_configuration,
         orientation: plan.orientation,
+        photometric_interpretation: plan.photometric_interpretation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
         tile_width: plan.tile_width,
@@ -1290,6 +1292,11 @@ pub fn decode_tiff_float_strip_range(
 ) -> Result<Vec<f32>, DecodeError> {
     let inner = inner_plan(plan);
     let raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
+    let raster = if plan.photometric_interpretation == 5 {
+        formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0
+    } else {
+        raster
+    };
     Ok(formats::tiff::strips::strip_bytes_to_f32(&raster, &inner))
 }
 
@@ -1306,6 +1313,7 @@ fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPla
         sample_format: plan.sample_format,
         planar_configuration: plan.planar_configuration,
         orientation: plan.orientation,
+        photometric_interpretation: plan.photometric_interpretation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
         tile_width: plan.tile_width,
@@ -1366,6 +1374,9 @@ pub fn decode_tiff_strip_range_raw(
         for sample in raster.chunks_exact_mut(bytes_per_sample) {
             sample.reverse();
         }
+    }
+    if plan.photometric_interpretation == 5 {
+        raster = formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0;
     }
     Ok(raster)
 }

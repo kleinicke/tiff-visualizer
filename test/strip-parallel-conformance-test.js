@@ -157,6 +157,7 @@ async function sweep(mod, coreBuild, extraFiles) {
 		const offsets = plan.offsets;
 		const counts = plan.counts;
 		const { width, height, channels, bits_per_sample: bits, sample_format: format } = plan;
+		const outputChannels = plan.photometric_interpretation === 5 ? 3 : channels;
 		const isTiled = plan.tile_length > 0;
 		eligible++;
 		if (isTiled) { tiled++; }
@@ -170,7 +171,7 @@ async function sweep(mod, coreBuild, extraFiles) {
 		const carrier = carrierFor(bits, format);
 
 		for (const raw of carrier ? [false, true] : [false]) {
-			const total = width * height * channels;
+			const total = width * height * outputChannels;
 			const assembled = raw
 				? (carrier === 'u8' ? new Uint8Array(total)
 					: carrier === 'u16' ? new Uint16Array(total) : new Float32Array(total))
@@ -197,6 +198,7 @@ async function sweep(mod, coreBuild, extraFiles) {
 					plan.planar_configuration, plan.orientation,
 					plan.tile_width, plan.tile_length, plan.blocks_across,
 					plan.lerc_additional_compression,
+					plan.photometric_interpretation,
 				];
 				const part = raw
 					? mod.decode_tiff_strip_range_raw(...args)
@@ -206,10 +208,10 @@ async function sweep(mod, coreBuild, extraFiles) {
 						: carrier === 'f32'
 							? new Float32Array(part.buffer, part.byteOffset, part.byteLength / 4)
 							: new Uint16Array(part.buffer, part.byteOffset, part.byteLength / 2);
-				assembled.set(samples, range.first * plan.rows_per_strip * width * channels);
+				assembled.set(samples, range.first * plan.rows_per_strip * width * outputChannels);
 			}
 
-			const final = applyOrientation(assembled, width, height, channels, plan.orientation);
+			const final = applyOrientation(assembled, width, height, outputChannels, plan.orientation);
 			const label = `${file} (${isTiled ? `tiled ${plan.tile_width}x${plan.tile_length}` : 'strips'}, compression ${plan.compression}, ${raw ? 'raw bytes' : 'f32'})`;
 			assert.strictEqual(final.length, reference.length, `${label}: sample count`);
 			for (let i = 0; i < reference.length; i++) {

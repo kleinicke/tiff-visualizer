@@ -1491,9 +1491,11 @@ pub struct FloatStripPlan {
     pub sample_format: u32,
     /// TIFF PlanarConfiguration: 1 = chunky, 2 = one block per channel.
     pub planar_configuration: u32,
-    /// TIFF Orientation tag. Decoding produces the stored layout; the caller
-    /// applies this once after all independently decoded bands are assembled.
+    /// TIFF Orientation tag. Range decoding produces stored rows; worker-side
+    /// orchestration can transform each range directly into its final band.
     pub orientation: u32,
+    /// Raw TIFF PhotometricInterpretation tag (1 gray, 2 RGB, 5 CMYK).
+    pub photometric_interpretation: u32,
     /// File byte order, which is how predictor 1 and 2 samples are stored.
     /// Predictor 3 always reassembles to big-endian regardless.
     pub little_endian: bool,
@@ -1601,6 +1603,7 @@ pub(crate) fn float_predictor_plan(
     predictor: u32,
     planar_configuration: u32,
     orientation: u32,
+    photometric_interpretation: u32,
 ) -> Option<FloatStripPlan> {
     use tiff::tags::Tag;
 
@@ -1715,6 +1718,7 @@ pub(crate) fn float_predictor_plan(
         sample_format,
         planar_configuration,
         orientation,
+        photometric_interpretation,
         little_endian,
         rows_per_strip: rows_per_unit as u32,
         tile_width: if is_tiled { tile_width } else { 0 },
@@ -2058,6 +2062,7 @@ pub(crate) fn try_decode_float_predictor_strips(
         compression,
         predictor,
         planar_configuration,
+        1,
         1,
     ) {
         Some(plan) => plan,

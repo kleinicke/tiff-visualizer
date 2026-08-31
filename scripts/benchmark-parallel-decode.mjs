@@ -25,7 +25,7 @@ if (!isMainThread) {
 				job.width, job.height, job.channels, job.bits, job.compression, job.rowsPerUnit,
 				job.predictor, job.format, job.littleEndian,
 				job.planarConfiguration, job.orientation,
-				job.tileWidth, job.tileLength, job.blocksAcross, job.lerc);
+				job.tileWidth, job.tileLength, job.blocksAcross, job.lerc, job.photometric);
 			parentPort.postMessage(
 				{ id: job.id, ms: performance.now() - started, bytes: out.byteLength, buffer: out.buffer },
 				[out.buffer],
@@ -108,6 +108,7 @@ if (!isMainThread) {
 				planarConfiguration: plan.planar_configuration, orientation: plan.orientation,
 				tileWidth: plan.tile_width, tileLength: plan.tile_length,
 				blocksAcross: plan.blocks_across, lerc: plan.lerc_additional_compression,
+				photometric: plan.photometric_interpretation,
 			}, [blob.buffer, counts.buffer]);
 		})));
 		const rowBytes = plan.width * plan.channels * (plan.bits_per_sample / 8);

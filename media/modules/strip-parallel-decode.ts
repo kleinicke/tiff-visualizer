@@ -15,9 +15,9 @@
  *
  * Eligibility is decided in Rust: the plan is returned only for byte-aligned
  * layouts with predictor 1/2/3 and a supported block codec. Separate planes
- * are grouped into spatial bands in the plan, and orientation is applied once
- * in a pool worker after assembly. Palette, CMYK and CFA remain on the normal
- * whole-image path.
+ * are grouped into spatial bands in the plan. Orientation is fused into each
+ * worker result, and common 8-bit CMYK is converted per range by the same Rust
+ * routine as the whole-image path. Palette and CFA remain on that normal path.
  *
  * Falls back to `null` for anything it cannot handle; the caller then uses the
  * ordinary single-worker path.
@@ -377,7 +377,7 @@ export async function tryStripParallelDecode(
 	}
 	if (activePool.size < 2) { return null; }
 
-	const channels: number = plan.channels;
+	const channels: number = Number(plan.photometric_interpretation) === 5 ? 3 : plan.channels;
 	const offsets: Float64Array = plan.offsets;
 	const counts: Float64Array = plan.counts;
 	const rowsPerStrip: number = plan.rows_per_strip;
@@ -458,7 +458,8 @@ export async function tryStripParallelDecode(
 			blob: blob.buffer,
 			counts: rangeCounts.buffer,
 			firstStrip: range.first,
-			width, height, channels,
+			width, height, channels: plan.channels,
+			outputChannels: channels,
 			bitsPerSample: plan.bits_per_sample,
 			compression: plan.compression,
 			rowsPerStrip,
@@ -469,13 +470,18 @@ export async function tryStripParallelDecode(
 			orientation: plan.orientation || 1,
 			tileWidth, tileLength, blocksAcross,
 			lercAdditionalCompression,
+			photometricInterpretation: plan.photometric_interpretation || 1,
 		}, [blob.buffer, rangeCounts.buffer], index);
 	});
 
 	// Copy each range in as it ARRIVES rather than after Promise.all: the
 	// workers finish at different times, so the copies hide behind the ranges
 	// still decoding instead of running as one serial pass at the end.
-	const total = width * height * channels;
+	const orientation = Number(plan.orientation || 1);
+	const transposed = orientation >= 5 && orientation <= 8;
+	const outputWidth = transposed ? height : width;
+	const outputHeight = transposed ? width : height;
+	const total = outputWidth * outputHeight * channels;
 	let data: Float32Array | Uint16Array | Uint8Array =
 		raw === 'u8' ? new Uint8Array(total)
 			: raw === 'u16' ? new Uint16Array(total)
@@ -487,7 +493,17 @@ export async function tryStripParallelDecode(
 		await Promise.all(jobs.map(async (job, index) => {
 			const part = await job;
 			const copyStart = performance.now();
-			data.set(part.samples, ranges[index].first * rowsPerStrip * width * channels);
+			if (part.transposed) {
+				const bandWidth = Number(part.bandWidth);
+				const destinationStart = Number(part.destinationStart);
+				for (let row = 0; row < outputHeight; row++) {
+					const sourceStart = row * bandWidth * channels;
+					const destination = (row * outputWidth + destinationStart) * channels;
+					data.set(part.samples.subarray(sourceStart, sourceStart + bandWidth * channels), destination);
+				}
+			} else {
+				data.set(part.samples, Number(part.destinationStart) * width * channels);
+			}
 			copyMs += performance.now() - copyStart;
 			if (part.min < min) { min = part.min; }
 			if (part.max > max) { max = part.max; }
@@ -500,25 +516,7 @@ export async function tryStripParallelDecode(
 	// Sum of the copies themselves; most of this is off the critical path now.
 	timings.push({ name: 'strip-assemble', durationMs: copyMs });
 
-	let outputWidth = width;
-	let outputHeight = height;
-	const orientation = Number(plan.orientation || 1);
-	if (orientation !== 1) {
-		const orientationStart = performance.now();
-		const Carrier = data.constructor as any;
-		const oriented = await activePool.run({
-			kind: 'orient',
-			data: data.buffer,
-			width,
-			height,
-			bytesPerPixel: channels * data.BYTES_PER_ELEMENT,
-			orientation,
-		}, [data.buffer], 0);
-		data = new Carrier(oriented.data);
-		outputWidth = oriented.width;
-		outputHeight = oriented.height;
-		timings.push({ name: 'orientation-worker', durationMs: performance.now() - orientationStart });
-	}
+	if (orientation !== 1) { timings.push({ name: 'orientation-fused', durationMs: 0 }); }
 
 	const meta = await metadataPromise;
 
