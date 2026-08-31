@@ -198,6 +198,38 @@ export function decodeNpyWithWasm(
 		result, 'npy', context, startedAt, true, buffer);
 }
 
+/**
+ * Standalone JPEG XR. Unlike the other array decoders this one can produce
+ * 8-, 16- or 32-bit samples depending on the file's pixel format, but they all
+ * arrive as f32 like FITS and friends, so the shared assembly applies.
+ */
+/**
+ * Standalone JPEG XL. Unlike every other decoder here, `decodeJxlFast` comes
+ * from a DIFFERENT WebAssembly module (`wasm/jxl-decoder`, fetched on demand),
+ * but the result it returns is the same shape, so the shared assembly applies
+ * unchanged. That module's result carries only the f32 carrier — JPEG XL never
+ * produces the u8/u16 ones — so no reusable buffer is passed.
+ */
+export function decodeJxlWithWasm(
+	decodeJxlFast: (bytes: Uint8Array) => any,
+	buffer: ArrayBuffer,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeJxlFast(new Uint8Array(buffer));
+	return assembleDecoded<Float32Array>(result, 'jxl', context, startedAt);
+}
+
+export function decodeJpegxrWithWasm(
+	decodeJpegxrFast: (bytes: Uint8Array) => any,
+	buffer: ArrayBuffer,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeJpegxrFast(new Uint8Array(buffer));
+	return assembleDecoded<Float32Array>(result, 'jxr', context, startedAt);
+}
+
 export function decodeFitsWithWasm(
 	decodeFitsFast: (bytes: Uint8Array) => any,
 	buffer: ArrayBuffer,
@@ -222,8 +254,9 @@ export function decodeNetcdfWithWasm(
 /**
  * DICOM decoding, native and compressed alike. `decode_dicom_fast` decodes
  * JPEG Baseline and RLE Lossless Pixel Data natively (via
- * dicom-object/dicom-pixeldata in Rust); any other compressed transfer
- * syntax is rejected with a descriptive error.
+ * the same zune-jpeg the TIFF path uses, plus a PackBits reader for RLE); JPEG
+ * 2000, JPEG-LS, lossless JPEG and Deflated Explicit VR decode too. Any other
+ * compressed transfer syntax is rejected with a descriptive error.
  */
 export function decodeDicomWithWasm(
 	decodeDicomFast: (bytes: Uint8Array, frameIndex: number) => any,

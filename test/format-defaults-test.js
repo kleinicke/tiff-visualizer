@@ -46,6 +46,11 @@ const AUTO_NORMALIZE = [
 	'tiff-int-signed', 'tiff-int-wide',
 	// Scientific containers: values are measurements, not display levels.
 	'fits', 'dicom', 'netcdf', 'czi',
+	// JPEG XR, and a FLOAT JPEG XL, carry scene-referred values that gamma
+	// mode's [0, 1] would clip. Their integer siblings stay in GAMMA_MODE
+	// below — the decoder reports which it produced, so the two formats do
+	// not have to share one compromise.
+	'jxr', 'jxl-float',
 ];
 
 const GAMMA_MODE = [

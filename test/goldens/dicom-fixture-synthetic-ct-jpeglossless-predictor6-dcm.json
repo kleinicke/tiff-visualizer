@@ -1,0 +1,5 @@
+{
+  "id": "dicom-fixture-synthetic-ct-jpeglossless-predictor6-dcm",
+  "format": "dicom",
+  "error": "DICOM lossless JPEG: predictor 6 is not supported (the decoder reproduces selection values 1-4 and 7 exactly, 5 and 6 incorrectly)"
+}

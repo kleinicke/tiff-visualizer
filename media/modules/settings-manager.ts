@@ -36,7 +36,6 @@ export interface ImageSettings {
   resourceUri?: string;
   src?: string;
   loadStartTime?: number;
-  jxlWasmSrc?: string;
   surfaceMode?: 'editor' | 'layers';
   extensionVersion?: string;
   vscodeVersion?: string;

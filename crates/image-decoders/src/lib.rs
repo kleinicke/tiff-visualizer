@@ -375,17 +375,12 @@ impl DecodedArray {
     /// mode, and their large RGB files showed that an unconditional pass was
     /// pure first-paint overhead. Their processors request Rust-backed stats
     /// lazily if the visualization mode changes.
-    #[cfg(any(
-        feature = "pfm",
-        feature = "netpbm",
-        feature = "npy",
-        feature = "fits",
-        feature = "netcdf",
-        feature = "dicom",
-        feature = "czi",
-        feature = "nd2",
-        feature = "lif"
-    ))]
+    // Deliberately NOT gated on a list of features. Nearly every decoder ends
+    // by calling this, the list went stale three times as formats moved
+    // between builds, and each time the symptom was a feature combination that
+    // simply did not compile. `allow(dead_code)` costs nothing here — the
+    // linker drops it from a build that has no caller.
+    #[allow(dead_code)]
     fn finalize_stats(mut self) -> Self {
         let stats = match self.sample_kind {
             1 => pipeline::stats::compute_image_range_uint(
@@ -414,6 +409,7 @@ impl DecodedArray {
         self
     }
 
+    #[allow(dead_code)]
     fn maybe_finalize_stats(self, compute_stats: bool) -> Self {
         if compute_stats {
             self.finalize_stats()
@@ -433,6 +429,8 @@ impl DecodedArray {
 }
 
 #[cfg(any(
+    feature = "jpegxr",
+    feature = "jxl",
     feature = "fits",
     feature = "netcdf",
     feature = "dicom",
@@ -525,9 +523,49 @@ impl JpegResult {
 ///   it is a decision to accept IDCT variance, not a routine refresh.
 #[cfg(feature = "jpeg")]
 pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, DecodeError> {
+    decode_jpeg_impl(data, None)
+}
+
+/// `decode_jpeg_fast`, but able to pin the output colorspace.
+///
+/// zune-jpeg's default expands a single-component (greyscale) JPEG to three
+/// RGB channels. That suits the callers that hand the result straight to a
+/// canvas, but not DICOM: a MONOCHROME2 dataset declares one sample per pixel,
+/// and three would disagree with every other tag in the file. Passing the
+/// dataset's own SamplesPerPixel keeps the decode honest to the container.
+#[cfg(feature = "jpeg")]
+pub(crate) fn decode_jpeg_with_channels(
+    data: &[u8],
+    channels: u32,
+) -> Result<JpegResult, DecodeError> {
+    let colorspace = match channels {
+        1 => zune_jpeg::zune_core::colorspace::ColorSpace::Luma,
+        3 => zune_jpeg::zune_core::colorspace::ColorSpace::RGB,
+        _ => {
+            return Err(DecodeError::new(&format!(
+                "JPEG: {} samples per pixel is not a baseline JPEG output",
+                channels
+            )))
+        }
+    };
+    decode_jpeg_impl(data, Some(colorspace))
+}
+
+#[cfg(feature = "jpeg")]
+fn decode_jpeg_impl(
+    data: &[u8],
+    colorspace: Option<zune_jpeg::zune_core::colorspace::ColorSpace>,
+) -> Result<JpegResult, DecodeError> {
     use zune_jpeg::JpegDecoder;
 
-    let mut decoder = JpegDecoder::new(Cursor::new(data));
+    let mut decoder = match colorspace {
+        Some(colorspace) => JpegDecoder::new_with_options(
+            Cursor::new(data),
+            zune_jpeg::zune_core::options::DecoderOptions::default()
+                .jpeg_set_out_colorspace(colorspace),
+        ),
+        None => JpegDecoder::new(Cursor::new(data)),
+    };
     let pixels = decoder
         .decode()
         .map_err(|e| DecodeError::new(&format!("JPEG decode failed: {:?}", e)))?;
@@ -1069,6 +1107,24 @@ pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<DecodedArra
 /// the TS parser uses, so `decode-worker.ts`'s existing JPEG-Baseline
 /// fallback (TS frame extraction + the shared `decode_jpeg_fast`) keeps
 /// working unchanged against this decoder.
+/// Decode a standalone JPEG XR file (`.jxr`, `.wdp`, `.hdp`).
+///
+/// The same codestream decoder TIFF's compression 34934 uses; this entry point
+/// exists because a bare JPEG XR file has no TIFF wrapper to describe it, so
+/// the pixel format has to be read off the codestream itself.
+#[cfg(feature = "jpegxr")]
+pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jpegxr::decode_jpegxr_impl(data)?.into())
+}
+
+/// Standalone JPEG XL (`.jxl`). Built only into the separate `jxl-decoder`
+/// WebAssembly module — see `formats::jxl` for why it is not part of
+/// `all-formats`.
+#[cfg(feature = "jxl")]
+pub fn decode_jxl_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jxl::decode_jxl_impl(data)?.into())
+}
+
 #[cfg(feature = "dicom")]
 pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, DecodeError> {
     Ok(decode_dicom_impl(data, frame_index)?.into())
@@ -1155,7 +1211,14 @@ pub use decode_ppm_fast as decode_netpbm;
 // the worker boundary is therefore one file's worth, not one per worker.
 // ---------------------------------------------------------------------------
 
-/// Layout of a predictor-3 float TIFF, or `None` if the file is not that shape.
+/// Layout of a TIFF whose blocks can each be decoded on their own, or `None`
+/// if the file is not that shape.
+///
+/// A "strip" in this API is a UNIT OF WORK: one strip of a stripped file, or
+/// one whole tile ROW of a tiled one. Both are full-width bands of the image,
+/// which is what lets a worker return rows the caller places at a single
+/// offset. `offsets`/`counts` list every BLOCK — one per strip, or
+/// `blocks_across` per tile row, in row-major order.
 pub struct TiffFloatStripPlan {
     pub width: u32,
     pub height: u32,
@@ -1166,11 +1229,24 @@ pub struct TiffFloatStripPlan {
     pub predictor: u32,
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
     pub sample_format: u32,
+    /// TIFF PlanarConfiguration: 1 = chunky, 2 = separate channel planes.
+    pub planar_configuration: u32,
+    /// TIFF Orientation tag (1-8).
+    pub orientation: u32,
+    pub photometric_interpretation: u32,
     pub little_endian: bool,
+    /// Image rows covered by one unit: `RowsPerStrip`, or `TileLength`.
     pub rows_per_strip: u32,
-    /// Byte offset of each strip within the file.
+    /// `TileWidth`/`TileLength`, both zero for a stripped file.
+    pub tile_width: u32,
+    pub tile_length: u32,
+    /// Tiles per tile row; 1 for a stripped file.
+    pub blocks_across: u32,
+    /// Tag 50674's second value, for LERC blocks.
+    pub lerc_additional_compression: u32,
+    /// Byte offset of each block within the file.
     pub offsets: Vec<u64>,
-    /// Compressed length of each strip.
+    /// Compressed length of each block.
     pub counts: Vec<u64>,
 }
 
@@ -1184,8 +1260,15 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         compression: plan.compression,
         predictor: plan.predictor,
         sample_format: plan.sample_format,
+        planar_configuration: plan.planar_configuration,
+        orientation: plan.orientation,
+        photometric_interpretation: plan.photometric_interpretation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        blocks_across: plan.blocks_across,
+        lerc_additional_compression: plan.lerc_additional_compression,
         offsets: plan.offsets,
         counts: plan.counts,
     })
@@ -1207,7 +1290,20 @@ pub fn decode_tiff_float_strip_range(
     first_strip: u32,
     plan: &TiffFloatStripPlan,
 ) -> Result<Vec<f32>, DecodeError> {
-    let inner = formats::tiff::strips::FloatStripPlan {
+    let inner = inner_plan(plan);
+    let raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
+    let raster = if plan.photometric_interpretation == 5 {
+        formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0
+    } else {
+        raster
+    };
+    Ok(formats::tiff::strips::strip_bytes_to_f32(&raster, &inner))
+}
+
+/// The internal plan carries the geometry; the public one is the wire form.
+#[cfg(feature = "tiff")]
+fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPlan {
+    formats::tiff::strips::FloatStripPlan {
         width: plan.width,
         height: plan.height,
         channels: plan.channels,
@@ -1215,47 +1311,20 @@ pub fn decode_tiff_float_strip_range(
         compression: plan.compression,
         predictor: plan.predictor,
         sample_format: plan.sample_format,
+        planar_configuration: plan.planar_configuration,
+        orientation: plan.orientation,
+        photometric_interpretation: plan.photometric_interpretation,
         little_endian: plan.little_endian,
         rows_per_strip: plan.rows_per_strip,
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        blocks_across: plan.blocks_across,
+        lerc_additional_compression: plan.lerc_additional_compression,
+        // A range decode is told its blocks by `counts`; the plan's own block
+        // table is only needed by the caller doing the slicing.
         offsets: Vec::new(),
         counts: Vec::new(),
-    };
-    let row_bytes = inner.row_bytes();
-    let first = first_strip as usize;
-
-    let mut rows_total = 0usize;
-    for index in 0..counts.len() {
-        rows_total += inner.rows_in(first + index);
     }
-    let mut raster = vec![0u8; rows_total * row_bytes];
-
-    let mut in_pos = 0usize;
-    let mut out_pos = 0usize;
-    for (index, &count) in counts.iter().enumerate() {
-        let rows = inner.rows_in(first + index);
-        if rows == 0 {
-            break;
-        }
-        let end = in_pos
-            .checked_add(count as usize)
-            .filter(|end| *end <= blob.len())
-            .ok_or_else(|| {
-                DecodeError::new("Strip range: compressed blob is shorter than its counts")
-            })?;
-        formats::tiff::strips::decode_float_predictor_strip(
-            &blob[in_pos..end],
-            &inner,
-            rows,
-            &mut raster[out_pos..out_pos + rows * row_bytes],
-        )?;
-        in_pos = end;
-        out_pos += rows * row_bytes;
-    }
-
-    Ok(formats::tiff::strips::strip_bytes_to_f32(
-        &raster[..out_pos],
-        &inner,
-    ))
 }
 
 /// Metadata accompanying a strip-parallel decode.
@@ -1296,51 +1365,8 @@ pub fn decode_tiff_strip_range_raw(
     first_strip: u32,
     plan: &TiffFloatStripPlan,
 ) -> Result<Vec<u8>, DecodeError> {
-    let inner = formats::tiff::strips::FloatStripPlan {
-        width: plan.width,
-        height: plan.height,
-        channels: plan.channels,
-        bits_per_sample: plan.bits_per_sample,
-        compression: plan.compression,
-        predictor: plan.predictor,
-        sample_format: plan.sample_format,
-        little_endian: plan.little_endian,
-        rows_per_strip: plan.rows_per_strip,
-        offsets: Vec::new(),
-        counts: Vec::new(),
-    };
-    let row_bytes = inner.row_bytes();
-    let first = first_strip as usize;
-
-    let mut rows_total = 0usize;
-    for index in 0..counts.len() {
-        rows_total += inner.rows_in(first + index);
-    }
-    let mut raster = vec![0u8; rows_total * row_bytes];
-
-    let mut in_pos = 0usize;
-    let mut out_pos = 0usize;
-    for (index, &count) in counts.iter().enumerate() {
-        let rows = inner.rows_in(first + index);
-        if rows == 0 {
-            break;
-        }
-        let end = in_pos
-            .checked_add(count as usize)
-            .filter(|end| *end <= blob.len())
-            .ok_or_else(|| {
-                DecodeError::new("Strip range: compressed blob is shorter than its counts")
-            })?;
-        formats::tiff::strips::decode_float_predictor_strip(
-            &blob[in_pos..end],
-            &inner,
-            rows,
-            &mut raster[out_pos..out_pos + rows * row_bytes],
-        )?;
-        in_pos = end;
-        out_pos += rows * row_bytes;
-    }
-    raster.truncate(out_pos);
+    let inner = inner_plan(plan);
+    let mut raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
 
     let bytes_per_sample = (plan.bits_per_sample / 8) as usize;
     let big_endian = plan.predictor == 3 || !plan.little_endian;
@@ -1348,6 +1374,9 @@ pub fn decode_tiff_strip_range_raw(
         for sample in raster.chunks_exact_mut(bytes_per_sample) {
             sample.reverse();
         }
+    }
+    if plan.photometric_interpretation == 5 {
+        raster = formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0;
     }
     Ok(raster)
 }

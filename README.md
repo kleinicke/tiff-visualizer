@@ -2,7 +2,7 @@
 
 Rust-based image decoding and GPU accelerated rendering for high-bit-depth, floating-point, scientific, and standard image files inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2 and Leica LIF.
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, JPEG XR, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2 and Leica LIF.
 Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
@@ -22,12 +22,14 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
 | PNG                                          |   Yes |     Yes |      No |      No | Palette PNGs become 8-bit RGBA                                                                                                                                                                                                      |
-| JPEG / WebP / AVIF / BMP / ICO / TGA / JXL   |   Yes |      No |      No |      No | Decoded as 8-bit image data                                                                                                                                                                                                         |
+| JPEG / WebP / AVIF / BMP / ICO / TGA         |   Yes |      No |      No |      No | Decoded as 8-bit image data                                                                                                                                                                                                         |
+| JPEG XL (`.jxl`)                             |   Yes |     Yes |      No |     Yes | Decoded in Rust at the file's own sample type: 8/16-bit and float, grey or RGB(A)                                                                                                                                                   |
+| JPEG XR (`.jxr`, `.wdp`, `.hdp`)             |   Yes |     Yes |      No |     Yes | Decoded in Rust; 8/16/32-bit grey and RGB(A), including scene-referred float                                                                                                                                                        |
 | ORA / KRA / PSD / PSB / XCF / Affinity Photo |   Yes | PSD/PSB |      No | PSD/PSB | Saved/embedded previews; ORA, Krita paint layers, common XCF rasters, and PSD cached raster/group layers can also be composed; compatible PSD adjustments, Krita filter masks/layers, and XCF GIMP 3 layer effects are approximated |
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
-NetCDF-4/HDF5, compressed CZI subblocks (JPEG, JPEG XR, Zstd), compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. DICOM decodes native, JPEG Baseline and RLE Lossless pixel data; other transfer syntaxes are not yet supported.
+NetCDF-4/HDF5, CZI subblocks compressed with JPEG or JPEG XR (Zstd-0 and Zstd-1 decode), compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. DICOM decodes native, Deflated Explicit VR, RLE Lossless, JPEG Baseline, JPEG-LS, JPEG 2000 and lossless JPEG pixel data; JPEG XL, JPEG XR and the video transfer syntaxes are not yet supported.
 
 Images above roughly 268 megapixels (for example 20480x20480) decode correctly and their pixel values, metadata and statistics remain fully available, but cannot be displayed: a browser canvas cannot exceed 2^28 pixels. Tiled rendering for images that large is planned.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
@@ -35,7 +37,7 @@ Extensionless DICOM studies can be opened with **Scientific Image Visualizer: Op
 
 ## Features
 
-- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files.
+- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files: LZW, Deflate, PackBits, Zstd, LZMA, LERC (with GDAL's LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including Aperio's slide-scanner codes), JPEG XR, WebP and CCITT fax, tiled or stripped.
 - **Scientific Image Inspection**: Inspect uint8, uint16, float16, and float32 image data in grayscale, RGB, and RGBA images.
 - **Dataset Navigation**: Browse DICOM series/slices and multi-file OME C/Z/T planes as one logical dataset while the viewer switches physical files transparently.
 - **Interactive Pixel Values**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.

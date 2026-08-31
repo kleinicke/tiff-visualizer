@@ -27,7 +27,8 @@
 //! pixels the viewer needs.
 
 use super::json_value::{push_opt, to_json_string, JsonValue};
-use super::scientific_common::{f16_to_f32, get_slice, ScientificParsed};
+use super::half::f16_to_f32;
+use super::scientific_common::{get_slice, ScientificParsed};
 use crate::DecodeError;
 use std::collections::HashMap;
 

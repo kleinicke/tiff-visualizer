@@ -1,0 +1,27 @@
+[package]
+name = "jxl-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "JPEG XL decoding for TIFF Visualizer, built as its own lazily-loaded WebAssembly module"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["console_error_panic_hook"]
+
+[dependencies]
+# `default-features = false` is the whole point of this crate: it takes the
+# `jxl` feature ONLY, so nothing else in the decoder crate is linked in here
+# and jxl-rs is linked into nothing else.
+scientific-image-decoders = { path = "../../crates/image-decoders", default-features = false, features = ["jxl"] }
+wasm-bindgen = "0.2"
+console_error_panic_hook = { version = "0.1.6", optional = true }
+
+# Disabled for the same reason as wasm/tiff-decoder: the build must not depend
+# on downloading the binaryen toolchain, and the workspace release profile
+# already optimizes the generated code.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

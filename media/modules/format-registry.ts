@@ -30,6 +30,7 @@ export type DecoderKind =
 	| 'tga'
 	| 'web-image'
 	| 'jxl'
+	| 'jxr'
 	| 'fits'
 	| 'dicom'
 	| 'netcdf'
@@ -67,6 +68,7 @@ export const FORMATS: readonly FormatEntry[] = [
 	{ kind: 'tga', label: 'TGA', extensions: ['tga'] },
 	{ kind: 'web-image', label: 'Browser image', extensions: ['webp', 'avif', 'bmp', 'ico'] },
 	{ kind: 'jxl', label: 'JPEG XL', extensions: ['jxl'] },
+	{ kind: 'jxr', label: 'JPEG XR', extensions: ['jxr', 'wdp', 'hdp'] },
 	{ kind: 'fits', label: 'FITS', extensions: ['fits', 'fit', 'fts'] },
 	{ kind: 'dicom', label: 'DICOM', extensions: ['dcm', 'dicom'] },
 	{ kind: 'netcdf', label: 'NetCDF', extensions: ['nc', 'cdf'] },

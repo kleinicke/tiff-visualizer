@@ -37,6 +37,59 @@ Used as the primary TIFF decoder, compiled to WebAssembly.
 
 ---
 
+## lerc-reader (Rust crate)
+
+Pure-Rust decoder for LERC-compressed TIFF strips and tiles (compression 34887).
+
+- **Homepage**: https://github.com/i-norden/lerc-rust
+- **License**: MIT OR Apache-2.0
+
+---
+
+## JXRLib / jpegxr-pure-rs (vendored at crates/jpegxr)
+
+Pure-Rust JPEG XR decoder, vendored from
+[jpegxr-pure-rs](https://github.com/henriksson-lab/jpegxr-pure-rs) 0.1.0, which
+is a translation of Microsoft's JXRLib. Two changes were made so it can decode
+without a filesystem; they are listed in `crates/jpegxr/VENDORING.md`.
+
+- **License**: BSD-3-Clause (New BSD), Copyright (c) 2009 Microsoft. The
+  upstream licence text ships verbatim at `crates/jpegxr/LICENSE.md`.
+
+---
+
+## dicom-toolkit-jpeg2000 (Rust crate)
+
+Pure-Rust JPEG 2000 decoder for JP2-compressed TIFF strips and tiles
+(compressions 34712 and Aperio's 33003/33004/33005), used through its
+native-bit-depth entry point.
+
+- **Homepage**: https://crates.io/crates/dicom-toolkit-jpeg2000
+- **License**: MIT OR Apache-2.0
+
+---
+
+## pure_jpegls and pure_jpegli (Rust crates)
+
+Pure-Rust JPEG-LS and lossless JPEG decoders, used for the DICOM
+1.2.840.10008.1.2.4.80/.81 and .57/.70 transfer syntaxes.
+
+- **Homepage**: https://crates.io/crates/pure_jpegls and
+  https://crates.io/crates/pure_jpegli
+- **License**: MIT OR Apache-2.0
+
+---
+
+## lzma-rs (Rust crate)
+
+Pure-Rust xz/LZMA decoder for LZMA-compressed TIFF strips and tiles
+(compression 34925).
+
+- **Homepage**: https://github.com/gendx/lzma-rs
+- **License**: MIT
+
+---
+
 ## geotiff.js
 
 Used as the fallback TIFF decoder.

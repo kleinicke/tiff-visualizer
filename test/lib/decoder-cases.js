@@ -1000,12 +1000,11 @@ const TINY_JPEG_BASELINE_4X4_RGB_HEX = 'ffd8ffe000104a46494600010100000100010000
 
 /**
  * Builds the DICOM File Meta group WITH the (0002,0000) group-length element
- * dicom-object's `FileMetaTable::read_from` requires as the very first
- * element (the hand-rolled Rust/native path in `dicom.rs` never reads this
- * group at all beyond a linear scan for Transfer Syntax UID, so `dcmPreamble`
- * above — used by every native-path case — deliberately omits it; this
- * stricter variant is only needed for the compressed cases below, which are
- * parsed by `dicom-object` end-to-end). */
+ * a strict reader expects as the very first element. `dicom.rs` never reads
+ * this group beyond a linear scan for Transfer Syntax UID — which is why
+ * `dcmPreamble` above, used by every native-path case, omits it — but the
+ * compressed cases below keep it so they are spec-complete files rather than
+ * ones only this decoder would accept. */
 function dcmPreambleWithGroupLength(transferSyntaxUID) {
 	const ts = dcmEl(0x0002, 0x0010, 'UI', dcmUid(transferSyntaxUID), { explicit: true, little: true });
 	const groupLength = dcmEl(0x0002, 0x0000, 'UL', dcmU32(ts.length, true), { explicit: true, little: true });
@@ -1015,8 +1014,8 @@ function dcmPreambleWithGroupLength(transferSyntaxUID) {
 /** Encodes encapsulated (compressed) DICOM Pixel Data: tag + VR OB +
  * undefined length (0xFFFFFFFF), an empty Basic Offset Table item, one Item
  * per fragment, and a Sequence Delimitation Item — the standard structure
- * `dicom-pixeldata`'s codec adapters (and any conformant DICOM reader)
- * expect, as opposed to the fixed-length non-encapsulated encoding `dcmEl`
+ * any conformant DICOM reader
+ * expects, as opposed to the fixed-length non-encapsulated encoding `dcmEl`
  * produces for native Pixel Data. */
 function dcmEncapsulatedPixelData(fragments, { little }) {
 	const parts = [dcmU16(0x7fe0, little), dcmU16(0x0010, little), Buffer.from('OB', 'latin1'), Buffer.alloc(2), dcmU32(0xffffffff, little)];
@@ -1031,10 +1030,9 @@ function dcmEncapsulatedPixelData(fragments, { little }) {
 
 /**
  * Builds a compressed (encapsulated Pixel Data) DICOM object: preamble +
- * `DICM` + a spec-complete File Meta group (with group length, since
- * `dicom-object` parses this end-to-end for the compressed decode path,
- * unlike the hand-rolled native-path element walk) + the tags
- * `dicom-pixeldata`'s `ImagingProperties::from_obj` requires (Rows, Columns,
+ * `DICM` + a spec-complete File Meta group (with group length, so the fixture
+ * is a file any conformant reader accepts) + the tags the decoder requires
+ * (Rows, Columns,
  * Samples Per Pixel, Bits Allocated/Stored, High Bit, Pixel Representation,
  * Photometric Interpretation) + the encapsulated Pixel Data fragments.
  */
@@ -1723,22 +1721,24 @@ function listScientificCases() {
 	cases.push({
 		id: 'dicom-unsupported-compressed-transfer-syntax',
 		format: 'dicom',
-		// JPEG 2000 Lossless (1.2.840.10008.1.2.4.90) — not in the supported
-		// syntax map (only JPEG Baseline 1.2.840.10008.1.2.4.50 is), and not
-		// resolvable via the no-preamble heuristic since a preamble is present.
-		bytes: dcmPreamble('1.2.840.10008.1.2.4.90'),
+		// JPEG XL Lossless (1.2.840.10008.1.2.4.110) — not in the supported
+		// syntax map, and not resolvable via the no-preamble heuristic since a
+		// preamble is present. This case used to use JPEG 2000 (...4.90),
+		// which now decodes; the point of the case is the rejection, so it
+		// moved to a syntax that is still unsupported.
+		bytes: dcmPreamble('1.2.840.10008.1.2.4.110'),
 		options: { frameIndex: 0 },
 		external: false,
 		expectError: true,
 		label: 'DICOM unsupported compressed transfer syntax',
 	});
 
-	// --- DICOM: JPEG Baseline now decodes natively (dicom-object/dicom-pixeldata) --
+	// --- DICOM: JPEG Baseline, decoded by the shared zune-jpeg --------------
 	// This case used to be named "...-codec-fallback-error" and assert the
 	// `requires codec: jpeg-baseline` rejection that routed decode-worker.ts's
 	// TS-extraction + shared zune-jpeg fallback (both deleted). `decode_dicom_fast`
-	// now decodes JPEG Baseline directly via dicom-object (parsing) +
-	// dicom-pixeldata (codec), so this is repurposed into a real success case —
+	// decodes JPEG Baseline straight from the encapsulated fragments, so this is
+	// repurposed into a real success case —
 	// a valid 4x4 RGB baseline JPEG codestream, properly encapsulated (Basic
 	// Offset Table + one fragment + Sequence Delimitation Item), replaces the old
 	// unparseable 4-byte SOI/EOI-only stand-in. The case id (and therefore its
@@ -1758,7 +1758,14 @@ function listScientificCases() {
 			options: { frameIndex: 0 },
 			external: false,
 			expectError: false,
-			label: 'DICOM JPEG Baseline decodes natively via dicom-object/dicom-pixeldata',
+			// NOTE: 4x4 is smaller than one 8x8 MCU, so the chroma upsampling at
+			// the edge is a place decoders legitimately disagree — this golden
+			// tracks THIS decoder's output, and libjpeg differs from it (and from
+			// the decoder used before) by up to 30. The real correctness check
+			// for this path is the `synthetic-ct-jpegbaseline*.dcm` pair in
+			// test/scientific-formats-test.js, which compares against libjpeg's
+			// own decode on a full-MCU image.
+			label: 'DICOM JPEG Baseline decodes from the encapsulated fragments',
 		});
 	}
 

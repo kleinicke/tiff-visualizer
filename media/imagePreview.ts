@@ -7,7 +7,6 @@ import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules
 import { PngProcessor } from './modules/png-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
 import { WebImageProcessor } from './modules/web-image-processor.js';
-import { JxlProcessor } from './modules/jxl-processor.js';
 import { ZoomController } from './modules/zoom-controller.js';
 import { MouseHandler } from './modules/mouse-handler.js';
 import { HistogramOverlay } from './modules/histogram-overlay.js';
@@ -172,8 +171,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	let hdrProcessor: any = dormantProcessor();
 	const tgaProcessor = new TgaProcessor(settingsManager, vscode);
 	const webImageProcessor = new WebImageProcessor(settingsManager, vscode);
-	const jxlProcessor = new JxlProcessor(settingsManager, vscode);
 	let fitsProcessor: any = dormantProcessor();
+	let jxlProcessor: any = dormantProcessor();
+	let jxrProcessor: any = dormantProcessor();
 	let dicomProcessor: any = dormantProcessor();
 	let netcdfProcessor: any = dormantProcessor();
 	let cziProcessor: any = dormantProcessor();
@@ -182,7 +182,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	let scientificProcessors: any[] = [];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
-	const allProcessors: any[] = [pngProcessor, tgaProcessor, webImageProcessor, jxlProcessor, layeredPreviewProcessor];
+	const allProcessors: any[] = [pngProcessor, tgaProcessor, webImageProcessor, layeredPreviewProcessor];
 	// Off-thread decoder. It is started by loadImageByType only for formats that
 	// need it; eagerly compiling the full WASM module made native JPEG/PNG/WebP
 	// loads compete with a decoder they never use.
@@ -201,7 +201,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		return processor;
 	};
 	function ensureProcessorFamily(kind: string): Promise<void> {
-		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(kind) ? 'scientific' : kind;
+		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'jxr', 'jxl'].includes(kind) ? 'scientific' : kind;
 		const existing = processorFamilyLoads.get(family);
 		if (existing) { return existing; }
 		const load = (async () => {
@@ -247,12 +247,14 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 					import('./modules/main-thread-decode.js'),
 				]);
 				fitsProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decoders.decodeFitsLocal }));
+				jxrProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'jxr', formatLabel: 'JPEG XR', formatType: 'jxr', parse: decoders.decodeJxrLocal }));
+				jxlProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'jxl', formatLabel: 'JPEG XL', formatType: 'jxl', formatTypeFor: domain => (domain.sampleFormat === 3 ? 'jxl-float' : 'jxl'), parse: decoders.decodeJxlLocal }));
 				dicomProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) }));
 				netcdfProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNetcdfLocal(buffer, options || {}) }));
 				cziProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeCziLocal(buffer, options || {}) }));
 				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
 				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
-				scientificProcessors = [fitsProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
+				scientificProcessors = [fitsProcessor, jxrProcessor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
 				mouseHandler.setScientificProcessors(scientificProcessors);
 				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor];
 			}
@@ -578,7 +580,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			{ processor: pngProcessor, isFloat: false, typeMax: raw => raw.maxValue || 255 },
 			{ processor: tgaProcessor, isFloat: false, typeMax: () => 255 },
 			{ processor: webImageProcessor, isFloat: false, typeMax: () => 255 },
-			{ processor: jxlProcessor, isFloat: false, typeMax: () => 255 },
 			...scientificProcessors.map(processor => ({ processor, isFloat: true, typeMax: () => processor.numericDomain?.typeMax ?? 1.0 })),
 		];
 
@@ -752,7 +753,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	mouseHandler.setHdrProcessor(hdrProcessor);
 	mouseHandler.setTgaProcessor(tgaProcessor);
 	mouseHandler.setWebImageProcessor(webImageProcessor);
-	mouseHandler.setJxlProcessor(jxlProcessor);
 	mouseHandler.setExrProcessor(exrProcessor);
 	mouseHandler.setScientificProcessors(scientificProcessors);
 	mouseHandler.setLayeredPreviewProcessor(layeredPreviewProcessor);
@@ -1945,9 +1945,11 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			if (gen !== _loadGeneration) { return; }
 			console.error('Error handling TIFF:', error);
 			const msg = String(error instanceof Error ? error.message : error);
-			if (msg.includes('50000') || msg.toLowerCase().includes('zstd')) {
-				onImageError('ZSTD compression (method 50000) is not supported. Re-save the TIFF with LZW, Deflate, or no compression.');
-			} else if (msg.toLowerCase().includes('compression')) {
+			// ZSTD itself is decoded (strips, tiles and planar layouts alike),
+			// so a failure here is about the specific file, not the codec:
+			// report what the decoder actually said instead of claiming the
+			// compression is unsupported.
+			if (msg.toLowerCase().includes('compression')) {
 				onImageError(`Unsupported TIFF compression: ${msg}`);
 			} else {
 				onImageError(`Failed to load TIFF: ${msg}`);
@@ -2276,34 +2278,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		}
 	}
 
-	async function handleJxl(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'JXL';
-		currentLoadDecodeInfo = null;
-		try {
-				const result = await jxlProcessor.processJxl(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = canvas.getContext('2d');
-			if (ctx) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!jxlProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('JXL', webviewTime, totalTime);
-			}
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling JXL:', error);
-			onImageError(`Failed to load JXL: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-
 	/**
 	 * Finalize image setup after loading
 	 */
@@ -2381,7 +2355,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			hdrProcessor._pendingRenderData ||
 			tgaProcessor._pendingRenderData ||
 			webImageProcessor._pendingRenderData ||
-			jxlProcessor._pendingRenderData ||
 			scientificProcessors.some(processor => !!processor._pendingRenderData);
 		if (!hasPendingDeferred) {
 			scheduleVisiblePaintMeasurement();
@@ -2539,7 +2512,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			case 'HDR': return lastRawToLayer(hdrProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
 			case 'TGA': return lastRawToLayer(tgaProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
 			case 'Web Image': return lastRawToLayer(webImageProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
-			case 'JXL': return lastRawToLayer(jxlProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
+			case 'JPEG XL': return lastRawToLayer(jxlProcessor._lastRaw, scientificTypeInfo(jxlProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, scientificTypeInfo(fitsProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, scientificTypeInfo(dicomProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, scientificTypeInfo(netcdfProcessor), name, uri) || baseFromCanvas(name, uri);
@@ -3701,8 +3674,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 						deferredImageData = tgaProcessor.performDeferredRender();
 					} else if (webImageProcessor._pendingRenderData) {
 						deferredImageData = webImageProcessor.performDeferredRender();
-					} else if (jxlProcessor._pendingRenderData) {
-						deferredImageData = jxlProcessor.performDeferredRender();
 					}
 
 					if (deferredImageData) {
@@ -3778,7 +3749,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 						(hdrProcessor && hdrProcessor._pendingRenderData) ||
 						(tgaProcessor && tgaProcessor._pendingRenderData) ||
 						(webImageProcessor && webImageProcessor._pendingRenderData) ||
-						(jxlProcessor && jxlProcessor._pendingRenderData) ||
 						scientificProcessors.some(processor => !!processor._pendingRenderData);
 
 					if (hasLoadedImage && !hasPendingRender && changes.changed) {
@@ -4256,7 +4226,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 								currentLoadFormat === 'NPY/NPZ' ? npyProcessor :
 									currentLoadFormat === 'HDR' ? hdrProcessor :
 										currentLoadFormat === 'TGA' ? tgaProcessor :
-											currentLoadFormat === 'JXL' ? jxlProcessor :
+											currentLoadFormat === 'JPEG XL' ? jxlProcessor :
 												currentLoadFormat === 'FITS' ? fitsProcessor :
 													currentLoadFormat === 'DICOM' ? dicomProcessor :
 														currentLoadFormat === 'NetCDF' ? netcdfProcessor :
@@ -4617,7 +4587,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		if (hdrProcessor) hdrProcessor._lastRaw = null;
 		if (tgaProcessor) tgaProcessor._lastRaw = null;
 		if (webImageProcessor) webImageProcessor._lastRaw = null;
-		if (jxlProcessor) jxlProcessor._lastRaw = null;
 		layeredPreviewProcessor.reset();
 		updateLayeredPreviewOverlay();
 		for (const processor of scientificProcessors) { processor._lastRaw = null; }
@@ -5145,24 +5114,6 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				}
 			} catch (error) {
 				console.error('Error updating Web Image with new settings:', error);
-			}
-			return;
-		}
-
-		// For JXL images, re-render with new settings
-		if (primaryImageData && jxlProcessor && jxlProcessor._lastRaw) {
-			try {
-				const newImageData = jxlProcessor.renderJxlWithSettings();
-				if (newImageData) {
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
-						primaryImageData = newImageData;
-						updateHistogramData();
-					}
-				}
-			} catch (error) {
-				console.error('Error updating JXL image with new settings:', error);
 			}
 			return;
 		}
@@ -7040,7 +6991,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			tiffProcessor._convertedFloatData = null;
 			exrProcessor.rawExrData = undefined;
 			exrProcessor._cachedStats = undefined;
-			const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, jxlProcessor, ...scientificProcessors];
+			const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, ...scientificProcessors];
 			for (const p of rawDataProcessors) { p._lastRaw = null; }
 			layeredPreviewProcessor.reset();
 			_expandedLayerDocumentUri = undefined;
@@ -7087,7 +7038,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
 		const format = resolveFormat(resourceUri, formatHint);
-		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(format.kind)) {
+		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(format.kind)) {
 			await ensureProcessorFamily(format.kind);
 			if (gen !== _loadGeneration) { return; }
 		}
@@ -7117,7 +7068,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			(format?.kind === 'npy' && lower.endsWith('.npy'));
 		if (fastRawFormat) {
 			void fastRawWorkerClient.start();
-		} else if (format && !localBinaryPgm && !['png', 'tga', 'web-image', 'jxl'].includes(format.kind)) {
+		} else if (format && !localBinaryPgm && !['png', 'tga', 'web-image'].includes(format.kind)) {
 			// Boot alongside the format's file fetch. PNG starts this itself only
 			// after its IHDR confirms that the 16-bit worker path is necessary.
 			void decodeWorkerClient.start();
@@ -7143,7 +7094,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		} else if (format?.kind === 'web-image') {
 			handleWebImage(uri, gen);
 		} else if (format?.kind === 'jxl') {
-			handleJxl(uri, gen);
+			handleScientificArray(jxlProcessor, uri, gen);
+		} else if (format?.kind === 'jxr') {
+			handleScientificArray(jxrProcessor, uri, gen);
 		} else if (format?.kind === 'fits') {
 			handleScientificArray(fitsProcessor, uri, gen);
 		} else if (format?.kind === 'dicom') {

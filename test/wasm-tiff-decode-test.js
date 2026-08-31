@@ -8,7 +8,12 @@
  *   - JPEG-in-TIFF          (compression 7, decoded to RGB)
  *   - Uncompressed bilevel  (1-bit, expanded to 8-bit grayscale)
  *   - Palette / RGBPalette  (indices expanded to RGB via the ColorMap)
- *   - ZSTD                  (compression 50000)
+ *   - ZSTD                  (compression 50000, stripped, tiled and planar)
+ *   - LZMA                  (compression 34925)
+ *   - PNG-in-TIFF           (compression 34933)
+ *   - LERC                  (compression 34887, incl. LERC_DEFLATE/LERC_ZSTD)
+ *   - JPEG 2000             (compression 34712 and Aperio's 33003/33005)
+ *   - JPEG XR               (compression 34934, decoded by the vendored crates/jpegxr)
  *
  * The CCITT-compressed images are byte-for-byte copies of an uncompressed
  * reference, so a correct decode must match the reference exactly.
@@ -23,10 +28,33 @@ const path = require('path');
 const samplesDir = path.join(__dirname, '..', 'test-samples');
 const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
+const codecJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+const codecBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
 
+/** The codecs the core module does not carry, recorded per file below. */
+const externalCodecs = new Set();
+
+/**
+ * Decode through the SAME routing the webview uses: the core module first, and
+ * the heavy-codec module only when the core reports a codec it does not carry.
+ *
+ * That makes the split itself part of what this suite checks. A file the core
+ * can decode must never reach the codec module — if the core silently grew a
+ * codec, or the `[external-codec:…]` contract broke, the assertions on
+ * `externalCodecs` at the end of `main` fail.
+ */
 function decode(mod, file) {
 	const buffer = fs.readFileSync(path.join(samplesDir, file));
-	const result = mod.decode_tiff(new Uint8Array(buffer));
+	let result;
+	try {
+		result = mod.core.decode_tiff(new Uint8Array(buffer));
+	} catch (error) {
+		const codec = /\[external-codec:([^\]]+)\]/.exec(String(error?.message ?? error))?.[1];
+		if (!codec) { throw error; }
+		if (!mod.codec) { throw new Error(`${file} needs the ${codec} decoder but the codec module is not built`); }
+		externalCodecs.add(`${file}:${codec}`);
+		result = mod.codec.decode_tiff(new Uint8Array(buffer));
+	}
 	return {
 		width: result.width,
 		height: result.height,
@@ -44,8 +72,16 @@ async function main() {
 		return;
 	}
 
-	const mod = await import(wasmJs.replace(/\\/g, '/'));
-	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
+	const core = await import(wasmJs.replace(/\\/g, '/'));
+	await core.default({ module_or_path: fs.readFileSync(wasmBin) });
+	let codec = null;
+	if (fs.existsSync(codecBin)) {
+		codec = await import(codecJs.replace(/\\/g, '/'));
+		await codec.default({ module_or_path: fs.readFileSync(codecBin) });
+	} else {
+		console.log('⚠️  media/wasm/codec-wasm.wasm not found — run `npm run build:wasm:codecs`. Heavy-codec files will fail.');
+	}
+	const mod = { core, codec };
 
 	console.log('🧪 Running WASM TIFF decoder tests...\n');
 
@@ -172,6 +208,153 @@ async function main() {
 		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
 	}
 
+	// 5c. TILED and PLANAR ZSTD. Cloud-optimized GeoTIFFs are tiled by
+	//     definition, and `decode_zstd` only understands strip layouts, so
+	//     these go through the block decoder (try_decode_general_strips_tiles),
+	//     which decompresses each tile itself. Every one must match its
+	//     uncompressed twin sample for sample.
+	//
+	//     The fixtures come from scripts/make-zstd-testdata.py: each pair is
+	//     written by tifffile from one array, so the reference is an encoder
+	//     this decoder has no part in, and the pairs were additionally
+	//     cross-checked by decoding both files with tifffile/imagecodecs.
+	//     The sparse file has one tile's TileOffsets/TileByteCounts entry
+	//     patched to zero, which is what GDAL's SPARSE_OK leaves behind and
+	//     what libtiff reads back as zeros.
+	for (const [zstdFile, refFile, label] of [
+		['zstd_tiled_u16.tif', 'zstd_ref_u16.tif', 'tiled, horizontal predictor, uint16'],
+		['zstd_tiled_rgb8.tif', 'zstd_ref_rgb8.tif', 'tiled, horizontal predictor, RGB8'],
+		['zstd_tiled_f32.tif', 'zstd_ref_f32.tif', 'tiled, float predictor, float32'],
+		['zstd_tiled_nopred_u16.tif', 'zstd_ref_u16.tif', 'tiled, no predictor, partial edge tiles'],
+		['zstd_planar_rgb8.tif', 'zstd_ref_rgb8.tif', 'planar configuration 2, RGB8'],
+		['zstd_tiled_sparse_u16.tif', 'zstd_tiled_sparse_ref_u16.tif', 'tiled with an unwritten (sparse) tile'],
+	]) {
+		const z = decode(mod, zstdFile);
+		const r = decode(mod, refFile);
+		assert.strictEqual(z.compression, 50000, `${zstdFile} compression tag`);
+		assert.strictEqual(z.width, r.width, `${label}: width`);
+		assert.strictEqual(z.height, r.height, `${label}: height`);
+		assert.strictEqual(z.channels, r.channels, `${label}: channels`);
+		assert.strictEqual(z.data.length, r.data.length, `${label}: length`);
+		assert.deepStrictEqual(z.data, r.data,
+			`ZSTD ${label} must match the uncompressed reference exactly`);
+		console.log(`✅ ZSTD ${label} matches the uncompressed reference exactly`);
+	}
+
+	// 5d. LZMA (34925), PNG-in-TIFF (34933) and LERC (34887) — the codecs the
+	//     `tiff` crate knows nothing about, so every layout of them runs
+	//     through the block decoder. LERC is the one codec geotiff.js could
+	//     decode and this decoder could not; the others tifffile/imagecodecs
+	//     writes and nothing else here covered.
+	//
+	//     Fixtures come from scripts/make-codec-testdata.py. LZMA blocks are
+	//     standalone .xz streams; PNG blocks are complete PNG images (16-bit
+	//     PNG is big-endian, so the RGB16 file exercises the swap into the
+	//     TIFF's little-endian order); the LERC files include GDAL's
+	//     LERC_DEFLATE and LERC_ZSTD wrappers and a tiled layout.
+	for (const [file, refFile, comp, label] of [
+		['lzma_u16.tif', 'codec_ref_u16.tif', 34925, 'LZMA, uint16 strips'],
+		// Half floats reach the block-codec path only under a codec like this
+		// one. That path used to refuse sample format 3 at 16 bits, so the same
+		// image decoded fine under LZW, Deflate or ZSTD and failed here.
+		['lzma_f16.tif', 'codec_ref_f16.tif', 34925, 'LZMA, float16'],
+		['lzma_tiled_pred2_u16.tif', 'codec_ref_u16.tif', 34925, 'LZMA, tiled, horizontal predictor'],
+		['lzma_pred3_f32.tif', 'codec_ref_f32.tif', 34925, 'LZMA, float predictor, float32'],
+		['png_in_tiff_u16.tif', 'codec_ref_u16.tif', 34933, 'PNG-in-TIFF, uint16'],
+		['png_in_tiff_rgb16.tif', 'codec_ref_rgb16.tif', 34933, 'PNG-in-TIFF, RGB16 (byte order swapped)'],
+		['lerc_u16.tif', 'codec_ref_u16.tif', 34887, 'LERC, lossless uint16'],
+		['lerc_f32.tif', 'codec_ref_f32.tif', 34887, 'LERC, lossless float32'],
+		['lerc_rgb8.tif', 'codec_ref_rgb8.tif', 34887, 'LERC, 3 values per pixel'],
+		['lerc_tiled_f32.tif', 'codec_ref_f32.tif', 34887, 'LERC, tiled float32'],
+		['lerc_deflate_u16.tif', 'codec_ref_u16.tif', 34887, 'LERC_DEFLATE (tag 50674 = 1)'],
+		['lerc_zstd_u16.tif', 'codec_ref_u16.tif', 34887, 'LERC_ZSTD (tag 50674 = 2)'],
+	]) {
+		const img = decode(mod, file);
+		const ref = decode(mod, refFile);
+		assert.strictEqual(img.compression, comp, `${file} compression tag`);
+		assert.strictEqual(img.width, ref.width, `${label}: width`);
+		assert.strictEqual(img.height, ref.height, `${label}: height`);
+		assert.strictEqual(img.channels, ref.channels, `${label}: channels`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`${label} must match the uncompressed reference exactly`);
+		console.log(`✅ ${label} matches the uncompressed reference exactly`);
+	}
+
+	// 5e. JPEG 2000 (34712, plus Aperio's 33003/33005), decoded at NATIVE bit
+	//     depth — the display-oriented entry point of the same crate flattens
+	//     16-bit samples to 8, which would quietly halve a scientific image —
+	//     and JPEG XR (34934), decoded by the vendored crates/jpegxr. The JPEG
+	//     XR files matter twice over: they are the only coverage of that
+	//     crate's in-memory input path, which is the whole reason it is
+	//     vendored (see crates/jpegxr/VENDORING.md).
+	for (const [file, refFile, comp, label] of [
+		['jp2_u16.tif', 'codec_ref_u16.tif', 34712, 'JPEG 2000, uint16'],
+		['jp2_rgb8.tif', 'codec_ref_rgb8.tif', 34712, 'JPEG 2000, RGB8'],
+		['jp2_aperio_rgb8.tif', 'codec_ref_rgb8.tif', 33005, 'JPEG 2000, Aperio RGB (33005)'],
+		['jxr_u16.tif', 'codec_ref_u16.tif', 34934, 'JPEG XR, uint16'],
+		['jxr_rgb8.tif', 'codec_ref_rgb8.tif', 34934, 'JPEG XR, RGB8'],
+		['jxr_f32.tif', 'jxr_f32_ref.tif', 34934, 'JPEG XR, lossy float32'],
+	]) {
+		const img = decode(mod, file);
+		const ref = decode(mod, refFile);
+		assert.strictEqual(img.compression, comp, `${file} compression tag`);
+		assert.strictEqual(img.channels, ref.channels, `${label}: channels`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`${label} must match the reference decode exactly`);
+		console.log(`✅ ${label} matches the reference decode exactly`);
+	}
+
+	// 5e-ii. Aperio's 33003 holds YCbCr and says so through
+	//     PhotometricInterpretation 6; the codestream does not convert it. The
+	//     fixture stores a known RGB image as YCbCr, so a decoder that skips
+	//     the conversion is off by far more than the +/-2 an 8-bit YCbCr round
+	//     trip costs.
+	{
+		const img = decode(mod, 'jp2_aperio_ycbcr.tif');
+		const ref = decode(mod, 'jp2_aperio_ycbcr_ref.tif');
+		assert.strictEqual(img.compression, 33003, 'jp2_aperio_ycbcr.tif compression tag');
+		assert.strictEqual(img.channels, 3, 'YCbCr must expand to three channels');
+		let worst = 0;
+		for (let i = 0; i < ref.data.length; i++) {
+			worst = Math.max(worst, Math.abs(img.data[i] - ref.data[i]));
+		}
+		assert.ok(worst <= 2,
+			`Aperio YCbCr JPEG 2000 must come back as RGB (worst channel error ${worst}, expected <= 2)`);
+		console.log(`✅ Aperio YCbCr JPEG 2000 (33003) converts to RGB (worst error ${worst})`);
+	}
+
+	// 5d-i. A PALETTE image compressed with a codec the tiff crate does not
+	//     implement. The ColorMap expansion decodes the indices through a
+	//     separate path, which used to hand the file straight to the tiff
+	//     crate and fail on the compression alone.
+	{
+		const img = decode(mod, 'palette_zstd.tif');
+		const ref = decode(mod, 'palette_codec_ref.tif');
+		assert.strictEqual(img.compression, 50000, 'palette_zstd.tif compression tag');
+		assert.strictEqual(img.channels, 3, 'palette indices must expand to RGB');
+		assert.deepStrictEqual(img.data, ref.data,
+			'a ZSTD palette image must expand exactly like its uncompressed twin');
+		console.log('✅ Palette image under a block-only codec (ZSTD) expands through the ColorMap');
+	}
+
+	// 5d-ii. The two LERC cases whose pixels are NOT the input array: a lossy
+	//     blob, where the reconstruction is the codec's to define, and a
+	//     masked blob, whose invalid pixels the codec reads back as zero.
+	//     Both references are imagecodecs' decode of the same file — Esri's
+	//     own LERC library — so these assert agreement with the reference
+	//     implementation, not merely a lossless round trip.
+	for (const [file, refFile, label] of [
+		['lerc_lossy_f32.tif', 'lerc_lossy_ref_f32.tif', 'LERC lossy (maxZError 0.01)'],
+		['lerc_masked_f32.tif', 'lerc_masked_ref_f32.tif', 'LERC with an invalid-pixel mask'],
+	]) {
+		const img = decode(mod, file);
+		const ref = decode(mod, refFile);
+		assert.strictEqual(img.compression, 34887, `${file} compression tag`);
+		assert.deepStrictEqual(img.data, ref.data,
+			`${label} must match Esri's own decoder sample for sample`);
+		console.log(`✅ ${label} matches Esri's reference decoder exactly`);
+	}
+
 	// 5b-ii. Deflate + floating-point predictor (3) across MULTIPLE strips is the
 	//     shape every common encoder emits for float TIFFs (GDAL, libtiff). It
 	//     used to fall through to the tiff crate's read_image(); the dedicated
@@ -287,7 +470,7 @@ async function main() {
 		['shapes_tiled_multi.tif', 'shapes_tiled_multi.gt.u8.bin', 'u8', 1],
 	]) {
 		const buffer = fs.readFileSync(path.join(samplesDir, file));
-		const result = mod.decode_tiff(new Uint8Array(buffer));
+		const result = mod.core.decode_tiff(new Uint8Array(buffer));
 		const data = result.get_data_as_f32();
 
 		const gtBuffer = fs.readFileSync(path.join(samplesDir, gtFile));
@@ -434,7 +617,7 @@ async function main() {
 		assert.strictEqual(img.data.length, 64 * 48 * 3, 'cmyk.tif: data length must equal width*height*3 (post-conversion)');
 
 		const buffer = fs.readFileSync(path.join(samplesDir, 'cmyk.tif'));
-		const raw = mod.decode_tiff(new Uint8Array(buffer));
+		const raw = mod.core.decode_tiff(new Uint8Array(buffer));
 		assert.strictEqual(raw.photometric_interpretation, 5,
 			'cmyk.tif: photometric_interpretation metadata must still report the true CMYK tag value (5)');
 
@@ -559,19 +742,47 @@ async function main() {
 	//     including page-local sample types and metadata.
 	{
 		const bytes = new Uint8Array(fs.readFileSync(path.join(samplesDir, 'multipage_rgb_depth_mask.tif')));
-		assert.strictEqual(mod.tiff_page_count(bytes), 3, 'multipage fixture page count');
+		assert.strictEqual(mod.core.tiff_page_count(bytes), 3, 'multipage fixture page count');
 
-		const color = mod.decode_tiff_page_fast(bytes, 0);
-		const depth = mod.decode_tiff_page_fast(bytes, 1);
-		const mask = mod.decode_tiff_page_fast(bytes, 2);
+		const color = mod.core.decode_tiff_page_fast(bytes, 0);
+		const depth = mod.core.decode_tiff_page_fast(bytes, 1);
+		const mask = mod.core.decode_tiff_page_fast(bytes, 2);
 		assert.deepStrictEqual([color.width, color.height, color.channels, color.sample_format], [48, 32, 3, 1]);
 		assert.deepStrictEqual([depth.width, depth.height, depth.channels, depth.sample_format], [48, 32, 1, 3]);
 		assert.deepStrictEqual([mask.width, mask.height, mask.channels, mask.sample_format], [48, 32, 1, 1]);
 		assert.ok(depth.get_data_as_f32().some(v => v > 0 && v < 10), 'depth page should expose float values');
 		assert.ok(mask.get_data_as_f32().every(v => v === 0 || v === 255), 'mask page should contain only its binary samples');
 		assert.ok(depth.all_tags_json.includes('depth'), 'page 2 metadata should come from page 2 IFD');
-		assert.throws(() => mod.decode_tiff_page_fast(bytes, 3), /out of range/i);
+		assert.throws(() => mod.core.decode_tiff_page_fast(bytes, 3), /out of range/i);
 		console.log('✅ Multi-page TIFF: page count, arbitrary IFD decoding, sample types, and page-local metadata');
+	}
+
+	// The split itself. Everything above decoded through the production
+	// routing, so `externalCodecs` now records exactly which files the CORE
+	// module refused and which codec each asked for. Both halves matter:
+	//
+	//  - a file listed here that should not be means the core grew a codec the
+	//    split was meant to keep out, and every image open is paying for it;
+	//  - a file MISSING from here means the core decoded something it has no
+	//    decoder for, or the `[external-codec:…]` contract broke and the
+	//    fallback silently stopped being exercised.
+	if (mod.codec) {
+		const expected = [
+			['jxr_f32.tif', 'JPEG XR'], ['jxr_rgb8.tif', 'JPEG XR'], ['jxr_u16.tif', 'JPEG XR'],
+			['jp2_aperio_rgb8.tif', 'JPEG 2000'], ['jp2_aperio_ycbcr.tif', 'JPEG 2000'],
+			['jp2_rgb8.tif', 'JPEG 2000'], ['jp2_u16.tif', 'JPEG 2000'],
+			['lerc_deflate_u16.tif', 'LERC'], ['lerc_f32.tif', 'LERC'],
+			['lerc_lossy_f32.tif', 'LERC'], ['lerc_masked_f32.tif', 'LERC'],
+			['lerc_rgb8.tif', 'LERC'], ['lerc_tiled_f32.tif', 'LERC'],
+			['lerc_u16.tif', 'LERC'], ['lerc_zstd_u16.tif', 'LERC'],
+			['lzma_f16.tif', 'LZMA'], ['lzma_pred3_f32.tif', 'LZMA'],
+			['lzma_tiled_pred2_u16.tif', 'LZMA'], ['lzma_u16.tif', 'LZMA'],
+			['webp_rgb.tif', 'WebP'],
+		].map(([file, codec]) => `${file}:${codec}`);
+		const actual = [...externalCodecs].sort();
+		assert.deepStrictEqual(actual, expected.sort(),
+			'the set of files the core module cannot decode must be exactly the heavy-codec fixtures');
+		console.log(`✅ Exactly ${actual.length} fixtures needed the codec module; every other file decoded in the core`);
 	}
 
 	console.log('\n🎉 All WASM TIFF decoder tests passed.\n');

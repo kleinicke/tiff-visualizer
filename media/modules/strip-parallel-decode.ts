@@ -1,30 +1,37 @@
 "use strict";
 /**
- * Parallel TIFF decoding across a pool of workers, one strip range each.
+ * Parallel TIFF decoding across a pool of workers, one range of units each.
  *
- * Strips in a TIFF are compressed independently, so a contiguous run of them is
- * a self-contained unit of work. `tiff_float_strip_plan` reports the layout
- * from the IFD alone; this module slices the file per worker so each one
- * receives ONLY its own strips' compressed bytes (total bytes crossing the
- * worker boundary is one file's worth, not one copy per worker), then
- * assembles the returned samples.
+ * Blocks in a TIFF are compressed independently, so a contiguous run of them is
+ * a self-contained unit of work. A UNIT here is one strip, or one whole tile
+ * ROW: both are full-width bands of the image, so a worker's output drops into
+ * the assembled image at a single offset. (A single tile would not qualify —
+ * it covers only part of each row it touches.)
+ *
+ * `tiff_float_strip_plan` reports the layout from the IFD alone; this module
+ * slices the file per worker so each one receives ONLY its own units'
+ * compressed bytes (total bytes crossing the worker boundary is one file's
+ * worth, not one copy per worker), then assembles the returned samples.
  *
  * Eligibility is decided in Rust: the plan is returned only for byte-aligned
- * chunky strip layouts with predictor 1/2/3 and no pixel post-processing
- * pending (no orientation flip, palette, CMYK or CFA), so nothing here has to
- * re-implement those transforms.
+ * layouts with predictor 1/2/3 and a supported block codec. Separate planes
+ * are grouped into spatial bands in the plan. Orientation is fused into each
+ * worker result, and common 8-bit CMYK is converted per range by the same Rust
+ * routine as the whole-image path. Palette and CFA remain on that normal path.
  *
  * Falls back to `null` for anything it cannot handle; the caller then uses the
  * ordinary single-worker path.
  */
 import {
+	MAX_PARALLEL_TIFF_WORKERS,
 	MIN_PARALLEL_TIFF_PIXELS,
 	MIN_PARALLEL_TIFF_STRIPS,
+	parallelTiffWorkerCount,
 	shouldUseParallelTiffPlan,
 } from './tiff-parallel-policy.js';
 
 /** Cap the pool: more workers than this stops helping and costs memory. */
-const MAX_WORKERS = 8;
+const MAX_WORKERS = MAX_PARALLEL_TIFF_WORKERS;
 
 /**
  * Which typed array the decoded samples arrive in.
@@ -52,8 +59,13 @@ export interface StripParallelResult {
 	sampleFormat: number;
 	compression: number;
 	predictor: number;
+	planarConfiguration: number;
 	rowsPerStrip: number;
 	stripCount: number;
+	/** Tile geometry when the file was tiled; both zero for strips. */
+	tileWidth: number;
+	tileLength: number;
+	tileCount: number;
 	photometricInterpretation: number;
 	pageCount: number;
 	allTagsJson: string;
@@ -76,20 +88,34 @@ class StripDecodePool {
 
 	get size(): number { return this._workers.length; }
 
-	/** Spawn the pool once; safe to call repeatedly. */
-	async ensure(): Promise<boolean> {
-		if (this._workers.length) { return true; }
+	/** Spawn or grow the pool to the useful size; safe to call repeatedly. */
+	async ensure(compiledModule?: WebAssembly.Module, desiredWorkers = MAX_WORKERS): Promise<boolean> {
+		if (compiledModule) { this._module = compiledModule; }
+		const cores = (globalThis.navigator as any)?.hardwareConcurrency || 4;
+		// Leave a core for the UI thread and the ordinary decode worker. Two is
+		// still worthwhile for two sufficiently expensive independent strips.
+		const target = Math.max(2, Math.min(MAX_WORKERS, desiredWorkers, cores - 1));
+		if (this._workers.length >= target) { return true; }
+		if (this._bootPromise) {
+			await this._bootPromise;
+			if (this._workers.length >= target) { return true; }
+		}
 		if (!this._bootPromise) {
-			this._bootPromise = this._boot().catch(error => {
+			this._bootPromise = this._boot(target).catch(error => {
 				console.warn('[StripPool] Unavailable, falling back to single-worker decode:', error);
 				this._teardown();
 				return false;
+			});
+		} else {
+			this._bootPromise = this._spawn(this._module!, target).catch(error => {
+				console.warn('[StripPool] Could not grow worker pool:', error);
+				return this._workers.length >= 2;
 			});
 		}
 		return this._bootPromise;
 	}
 
-	private async _boot(): Promise<boolean> {
+	private async _boot(target: number): Promise<boolean> {
 		const candidates = [
 			new URL('../stripDecodeWorker.bundle.js', import.meta.url).href,
 			new URL('./stripDecodeWorker.bundle.js', import.meta.url).href,
@@ -110,7 +136,7 @@ class StripDecodePool {
 		// webview-resource URLs, the blob workers cannot. Retained across a
 		// retire/respawn cycle so only instantiation is repaid.
 		if (this._module) {
-			return this._spawn(this._module);
+			return this._spawn(this._module, target);
 		}
 		const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup as {
 			wasmModulePromise?: Promise<WebAssembly.Module>;
@@ -118,7 +144,7 @@ class StripDecodePool {
 		if (warmup?.wasmModulePromise) {
 			try {
 				this._module = await warmup.wasmModulePromise;
-				return this._spawn(this._module);
+				return this._spawn(this._module, target);
 			} catch { /* use the explicit asset below */ }
 		}
 		const wasmUrls = [
@@ -135,14 +161,11 @@ class StripDecodePool {
 		}
 		if (!compiled) { throw new Error('tiff-wasm.wasm not found for the strip pool'); }
 		this._module = compiled;
-		return this._spawn(compiled);
+		return this._spawn(compiled, target);
 	}
 
-	private async _spawn(compiled: WebAssembly.Module): Promise<boolean> {
-		const cores = (globalThis.navigator as any)?.hardwareConcurrency || 4;
-		// Leave a core for the UI thread and the ordinary decode worker.
-		const count = Math.max(2, Math.min(MAX_WORKERS, cores - 1));
-
+	private async _spawn(compiled: WebAssembly.Module, target: number): Promise<boolean> {
+		const count = Math.max(0, target - this._workers.length);
 		const booted = await Promise.all(Array.from({ length: count }, () => new Promise<PoolWorker | null>(resolve => {
 			const worker = new Worker(this._blobUrl!, { type: 'module' });
 			const timer = setTimeout(() => resolve(null), 20000);
@@ -155,7 +178,7 @@ class StripDecodePool {
 			worker.onerror = () => { clearTimeout(timer); resolve(null); };
 			worker.postMessage({ type: 'init', tiffWasmModule: compiled });
 		})));
-		this._workers = booted.filter((w): w is PoolWorker => w !== null);
+		this._workers.push(...booted.filter((w): w is PoolWorker => w !== null));
 		if (!this._workers.length) { throw new Error('no strip workers booted'); }
 		console.log(`[StripPool] Ready with ${this._workers.length} workers`);
 		return true;
@@ -201,6 +224,15 @@ class StripDecodePool {
 }
 
 const pool = new StripDecodePool();
+/** Extended codecs use their own instances so the core EXR/TIFF pool remains warm. */
+const codecPool = new StripDecodePool();
+
+const EXTENDED_TIFF_COMPRESSIONS = new Set([
+	34887, // LERC
+	34925, // LZMA
+	34712, 33003, 33004, 33005, // JPEG 2000 variants
+	34934, 22610, // JPEG XR variants
+]);
 
 /**
  * Start booting the pool without waiting for it.
@@ -327,14 +359,40 @@ export async function tryStripParallelDecode(
 	const width: number = plan.width;
 	const height: number = plan.height;
 	if (!shouldUseParallelTiffPlan(plan)) { return null; }
+	const desiredWorkers = parallelTiffWorkerCount(plan);
 
-	const ok = await pool.ensure();
-	if (!ok || pool.size < 2) { return null; }
+	let activePool = pool;
+	if (EXTENDED_TIFF_COMPRESSIONS.has(Number(plan.compression))) {
+		try {
+			const { codecWasmModule } = await import('./codec-wasm-wrapper.js');
+			const compiled = await codecWasmModule();
+			activePool = codecPool;
+			if (!await activePool.ensure(compiled, desiredWorkers)) { return null; }
+		} catch (error) {
+			console.warn('[StripPool] Extended codec module unavailable, falling back:', error);
+			return null;
+		}
+	} else if (!await activePool.ensure(undefined, desiredWorkers)) {
+		return null;
+	}
+	if (activePool.size < 2) { return null; }
 
-	const channels: number = plan.channels;
+	const channels: number = Number(plan.photometric_interpretation) === 5 ? 3 : plan.channels;
 	const offsets: Float64Array = plan.offsets;
 	const counts: Float64Array = plan.counts;
 	const rowsPerStrip: number = plan.rows_per_strip;
+	// One entry per unit for a stripped file; one per tile for a tiled one.
+	const blocksPerUnit: number = plan.blocks_per_unit || 1;
+	const tileWidth: number = plan.tile_width || 0;
+	const tileLength: number = plan.tile_length || 0;
+	const blocksAcross: number = plan.blocks_across || 1;
+	const lercAdditionalCompression: number = plan.lerc_additional_compression || 0;
+	/** Compressed bytes of unit `i`, summed over the blocks it covers. */
+	const unitBytes = (i: number) => {
+		let total = 0;
+		for (let b = 0; b < blocksPerUnit; b++) { total += counts[i * blocksPerUnit + b]; }
+		return total;
+	};
 	const timings: { name: string, durationMs: number }[] = [
 		{ name: 'strip-plan', durationMs: performance.now() - planStart },
 	];
@@ -353,9 +411,9 @@ export async function tryStripParallelDecode(
 	// Balance by COMPRESSED BYTES rather than strip count: strips vary in cost,
 	// and an even strip split leaves workers idle (160 strips over 8 workers
 	// measured slower than over 6).
-	const workerCount = Math.min(pool.size, stripCount);
+	const workerCount = Math.min(activePool.size, stripCount, desiredWorkers);
 	let totalBytes = 0;
-	for (let i = 0; i < stripCount; i++) { totalBytes += counts[i]; }
+	for (let i = 0; i < stripCount; i++) { totalBytes += unitBytes(i); }
 	const targetPerWorker = totalBytes / workerCount;
 
 	const ranges: { first: number, last: number }[] = [];
@@ -368,7 +426,7 @@ export async function tryStripParallelDecode(
 		// Always leave at least one strip for each remaining worker.
 		const maxEnd = stripCount - (remainingWorkers - 1);
 		while (end < maxEnd && (acc < targetPerWorker || end === cursor)) {
-			acc += counts[end];
+			acc += unitBytes(end);
 			end++;
 		}
 		if (w === workerCount - 1) { end = stripCount; }
@@ -380,38 +438,51 @@ export async function tryStripParallelDecode(
 	const raw = carrierFor(plan.bits_per_sample, plan.sample_format);
 	const dispatchStart = performance.now();
 	const jobs = ranges.map((range, index) => {
+		// Blocks, not units: a tile row contributes `blocksPerUnit` of them.
+		const firstBlock = range.first * blocksPerUnit;
+		const lastBlock = range.last * blocksPerUnit;
 		let blobLength = 0;
-		for (let i = range.first; i < range.last; i++) { blobLength += counts[i]; }
+		for (let i = firstBlock; i < lastBlock; i++) { blobLength += counts[i]; }
 		const blob = new Uint8Array(blobLength);
-		const rangeCounts = new Uint32Array(range.last - range.first);
+		const rangeCounts = new Uint32Array(lastBlock - firstBlock);
 		let position = 0;
-		for (let i = range.first; i < range.last; i++) {
+		for (let i = firstBlock; i < lastBlock; i++) {
 			const offset = offsets[i];
 			const count = counts[i];
 			blob.set(bytes.subarray(offset, offset + count), position);
 			position += count;
-			rangeCounts[i - range.first] = count;
+			rangeCounts[i - firstBlock] = count;
 		}
-		return pool.run({
+		return activePool.run({
 			raw: !!raw,
 			blob: blob.buffer,
 			counts: rangeCounts.buffer,
 			firstStrip: range.first,
-			width, height, channels,
+			width, height, channels: plan.channels,
+			outputChannels: channels,
 			bitsPerSample: plan.bits_per_sample,
 			compression: plan.compression,
 			rowsPerStrip,
 			predictor: plan.predictor,
 			sampleFormat: plan.sample_format,
 			littleEndian: plan.little_endian,
+			planarConfiguration: plan.planar_configuration || 1,
+			orientation: plan.orientation || 1,
+			tileWidth, tileLength, blocksAcross,
+			lercAdditionalCompression,
+			photometricInterpretation: plan.photometric_interpretation || 1,
 		}, [blob.buffer, rangeCounts.buffer], index);
 	});
 
 	// Copy each range in as it ARRIVES rather than after Promise.all: the
 	// workers finish at different times, so the copies hide behind the ranges
 	// still decoding instead of running as one serial pass at the end.
-	const total = width * height * channels;
-	const data: Float32Array | Uint16Array | Uint8Array =
+	const orientation = Number(plan.orientation || 1);
+	const transposed = orientation >= 5 && orientation <= 8;
+	const outputWidth = transposed ? height : width;
+	const outputHeight = transposed ? width : height;
+	const total = outputWidth * outputHeight * channels;
+	let data: Float32Array | Uint16Array | Uint8Array =
 		raw === 'u8' ? new Uint8Array(total)
 			: raw === 'u16' ? new Uint16Array(total)
 				: new Float32Array(total);
@@ -422,7 +493,17 @@ export async function tryStripParallelDecode(
 		await Promise.all(jobs.map(async (job, index) => {
 			const part = await job;
 			const copyStart = performance.now();
-			data.set(part.samples, ranges[index].first * rowsPerStrip * width * channels);
+			if (part.transposed) {
+				const bandWidth = Number(part.bandWidth);
+				const destinationStart = Number(part.destinationStart);
+				for (let row = 0; row < outputHeight; row++) {
+					const sourceStart = row * bandWidth * channels;
+					const destination = (row * outputWidth + destinationStart) * channels;
+					data.set(part.samples.subarray(sourceStart, sourceStart + bandWidth * channels), destination);
+				}
+			} else {
+				data.set(part.samples, Number(part.destinationStart) * width * channels);
+			}
 			copyMs += performance.now() - copyStart;
 			if (part.min < min) { min = part.min; }
 			if (part.max > max) { max = part.max; }
@@ -435,23 +516,28 @@ export async function tryStripParallelDecode(
 	// Sum of the copies themselves; most of this is off the critical path now.
 	timings.push({ name: 'strip-assemble', durationMs: copyMs });
 
+	if (orientation !== 1) { timings.push({ name: 'orientation-fused', durationMs: 0 }); }
+
 	const meta = await metadataPromise;
 
 	// Retire the pool before returning so its expanded WASM heaps are released
 	// on this task, ahead of the caller's WebGL upload. Same reasoning as the
 	// decode worker's `retireWorker`, and the same 64MB threshold.
 	if (data.byteLength >= 64 * 1024 * 1024) {
-		pool.retire();
-		setTimeout(() => { void pool.ensure(); }, 0);
+		activePool.retire();
+		setTimeout(() => { void activePool.ensure(); }, 0);
 		timings.push({ name: 'strip-pool-retired', durationMs: 0 });
 	}
 
 	return {
-		width, height, channels,
+		tileWidth, tileLength,
+		tileCount: tileWidth > 0 ? counts.length : 0,
+		width: outputWidth, height: outputHeight, channels,
 		bitsPerSample: plan.bits_per_sample,
 		sampleFormat: plan.sample_format,
 		compression: plan.compression,
 		predictor: plan.predictor,
+		planarConfiguration: plan.planar_configuration || 1,
 		rowsPerStrip,
 		stripCount,
 		photometricInterpretation: meta?.photometric_interpretation ?? 1,

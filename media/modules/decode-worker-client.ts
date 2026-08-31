@@ -60,6 +60,17 @@ export class DecodeWorkerClient {
 	_tiffWasmFetchPromise: Promise<ArrayBuffer | null> | null;
 	_tiffWasmModule: WebAssembly.Module | null;
 	_tiffWasmCompilePromise: Promise<WebAssembly.Module | null> | null;
+	/**
+	 * The two on-demand WebAssembly modules — JPEG XL, and the heavy-codec
+	 * build — compiled HERE rather than in the worker: blob workers cannot
+	 * fetch webview-resource URLs (the same constraint documented in
+	 * strip-parallel-decode.ts). Each is fetched the first time a decode
+	 * actually needs it and never before, and retained across a worker respawn
+	 * so only instantiation is repaid.
+	 */
+	_extraWasmUrls: { jxl: string[] };
+	_extraModulePromises: { jxl: Promise<WebAssembly.Module | null> | null };
+	_extraModuleWorkers: { jxl: Worker | null };
 
 	constructor(workerBundleName = 'decodeWorker.bundle.js', needsWasm = true) {
 		this._workerBundleName = workerBundleName;
@@ -76,6 +87,9 @@ export class DecodeWorkerClient {
 		this._tiffWasmFetchPromise = null;
 		this._tiffWasmModule = null;
 		this._tiffWasmCompilePromise = null;
+		this._extraWasmUrls = { jxl: [] };
+		this._extraModulePromises = { jxl: null };
+		this._extraModuleWorkers = { jxl: null };
 	}
 
 	/** Begin booting the worker in the background. Never throws. */
@@ -130,6 +144,15 @@ export class DecodeWorkerClient {
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
 		];
+		// Recorded but NOT fetched: nothing reads these until a decode asks for
+		// one of the modules in `_ensureExtraModule`.
+		const assets = (globalThis as any).__tiffVisualizerVendorAssets;
+		const wasmCandidates = (configured: string | undefined, name: string) => [
+			configured,
+			new URL(`./wasm/${name}`, import.meta.url).href,
+			new URL(`../wasm/${name}`, import.meta.url).href,
+		].filter(Boolean) as string[];
+		this._extraWasmUrls = { jxl: wasmCandidates(assets?.jxlWasm, 'jxl-wasm.wasm') };
 		if (this._needsWasm && !this._tiffWasmBytes && !this._tiffWasmFetchPromise) {
 			const warmBytes = matchingWarmup?.wasmBytesPromise || matchingWarmup?.getWasmBytes?.();
 			if (warmBytes) {
@@ -239,6 +262,35 @@ export class DecodeWorkerClient {
 	}
 
 	/**
+	 * Compile one of the on-demand modules on this thread and hand it to
+	 * `worker`, once per worker instance. Resolves to false when the module
+	 * cannot be loaded: the worker then fails the decode and
+	 * `decodeWithFallback` runs the decoder on the main thread, which can fetch
+	 * the payload itself.
+	 */
+	async _ensureExtraModule(kind: 'jxl', worker: Worker): Promise<boolean> {
+		if (this._extraModuleWorkers[kind] === worker) { return true; }
+		if (!this._extraModulePromises[kind]) {
+			this._extraModulePromises[kind] = (async () => {
+				for (const url of this._extraWasmUrls[kind]) {
+					try {
+						const response = await fetch(url);
+						if (response.ok) { return await WebAssembly.compile(await response.arrayBuffer()); }
+					} catch { /* try the next candidate */ }
+				}
+				console.warn(`[DecodeWorker] ${kind} WASM not found for the worker; decoding on the main thread`);
+				return null;
+			})();
+		}
+		const compiled = await this._extraModulePromises[kind];
+		if (!compiled) { return false; }
+		if (this._worker !== worker) { return false; }
+		worker.postMessage({ type: 'jxl-module', jxlModule: compiled });
+		this._extraModuleWorkers[kind] = worker;
+		return true;
+	}
+
+	/**
 	 * Decode off-thread. Ownership of `buffer` is transferred to the worker.
 	 * Resolves to {ok:true, result} on success or {ok:false, error, buffer?}
 	 * on failure (with the input bytes transferred back when possible).
@@ -262,8 +314,15 @@ export class DecodeWorkerClient {
 				clearTimeout(timer);
 				resolve(response);
 			});
-			try {
+			const send = () => {
 				worker.postMessage({ id, format, buffer, options }, [buffer]);
+			};
+			try {
+				if (format === 'jxl') {
+					this._ensureExtraModule('jxl', worker).then(send, send);
+				} else {
+					send();
+				}
 			} catch (error) {
 				clearTimeout(timer);
 				this._pending.delete(id);

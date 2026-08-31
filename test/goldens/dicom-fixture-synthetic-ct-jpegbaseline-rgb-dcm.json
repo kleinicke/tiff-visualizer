@@ -1,0 +1,130 @@
+{
+  "id": "dicom-fixture-synthetic-ct-jpegbaseline-rgb-dcm",
+  "format": "dicom",
+  "width": 64,
+  "height": 48,
+  "channels": 3,
+  "metadata": {
+    "format": "DICOM",
+    "transferSyntax": "1.2.840.10008.1.2.4.50",
+    "photometric": "RGB",
+    "bitsAllocated": 8,
+    "bitsStored": 8,
+    "signed": false,
+    "frames": 1,
+    "rescaleSlope": 1,
+    "rescaleIntercept": 0,
+    "windowCenter": null,
+    "windowWidth": null,
+    "modality": "OT",
+    "frameIndex": 0
+  },
+  "numericDomain": {
+    "bitsPerSample": 8,
+    "sampleFormat": 1,
+    "typeMin": 0,
+    "typeMax": 255,
+    "sourceNumericType": "uint8"
+  },
+  "formatLabel": "",
+  "dataLength": 9216,
+  "dataDigest": "sha256:6172d865f6af6afa3e0ba149d3dbc63ff367fe352f07770ff0d2c721e9b1f9ee",
+  "samples": [
+    {
+      "i": 0,
+      "v": 130
+    },
+    {
+      "i": 400,
+      "v": 32
+    },
+    {
+      "i": 801,
+      "v": 181
+    },
+    {
+      "i": 1201,
+      "v": 128
+    },
+    {
+      "i": 1602,
+      "v": 180
+    },
+    {
+      "i": 2003,
+      "v": 106
+    },
+    {
+      "i": 2403,
+      "v": 91
+    },
+    {
+      "i": 2804,
+      "v": 5
+    },
+    {
+      "i": 3205,
+      "v": 175
+    },
+    {
+      "i": 3605,
+      "v": 68
+    },
+    {
+      "i": 4006,
+      "v": 165
+    },
+    {
+      "i": 4407,
+      "v": 97
+    },
+    {
+      "i": 4807,
+      "v": 78
+    },
+    {
+      "i": 5208,
+      "v": 238
+    },
+    {
+      "i": 5609,
+      "v": 84
+    },
+    {
+      "i": 6009,
+      "v": 119
+    },
+    {
+      "i": 6410,
+      "v": 88
+    },
+    {
+      "i": 6811,
+      "v": 101
+    },
+    {
+      "i": 7211,
+      "v": 21
+    },
+    {
+      "i": 7612,
+      "v": 241
+    },
+    {
+      "i": 8013,
+      "v": 128
+    },
+    {
+      "i": 8413,
+      "v": 101
+    },
+    {
+      "i": 8814,
+      "v": 99
+    },
+    {
+      "i": 9215,
+      "v": 65
+    }
+  ]
+}

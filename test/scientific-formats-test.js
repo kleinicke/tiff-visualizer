@@ -11,13 +11,37 @@ const { buildDicom, dcmPixelSamples } = require('./lib/decoder-cases');
 // rather than parity, so they now drive the wasm decoders directly. Broader
 // coverage lives in test/rust-scientific-conformance-test.js.
 let wasm = null;
+let codecWasm = null;
 async function initWasm() {
 	if (wasm) { return wasm; }
 	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.js');
 	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'tiff-wasm.wasm');
 	wasm = await import(wasmJs.replace(/\\/g, '/'));
 	await wasm.default({ module_or_path: fs.readFileSync(wasmBin) });
+	// The heavy-codec module, for the transfer syntaxes whose codecs the core
+	// build does not carry. `withCodecModule` below routes to it the same way
+	// the webview does.
+	const codecJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+	const codecBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
+	if (fs.existsSync(codecBin)) {
+		codecWasm = await import(codecJs.replace(/\\/g, '/'));
+		await codecWasm.default({ module_or_path: fs.readFileSync(codecBin) });
+	}
 	return wasm;
+}
+
+/**
+ * Run `decode` against the core module, and against the heavy-codec module if
+ * the core reports a codec it does not carry — the routing the webview
+ * performs, so these tests exercise it rather than assuming it.
+ */
+function withCodecModule(decode) {
+	try {
+		return decode(wasm);
+	} catch (error) {
+		if (!/\[external-codec:/.test(String(error?.message ?? error)) || !codecWasm) { throw error; }
+		return decode(codecWasm);
+	}
 }
 
 /** Mirrors the worker's `scientificResultToDecoded`. `take_data_as_f32()` is
@@ -39,9 +63,11 @@ function toDecoded(result) {
 	};
 }
 const parseFits = (buf) => toDecoded(wasm.decode_fits_fast(new Uint8Array(buf)));
-const parseDicom = (buf, frameIndex = 0) => toDecoded(wasm.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0));
+const parseDicom = (buf, frameIndex = 0) =>
+	toDecoded(withCodecModule(mod => mod.decode_dicom_fast(new Uint8Array(buf), frameIndex >>> 0)));
 const parseNetCdf = (buf, options = {}) => toDecoded(wasm.decode_netcdf_fast(new Uint8Array(buf), JSON.stringify(options)));
-const parseCzi = (buf, options = {}) => toDecoded(wasm.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options)));
+const parseCzi = (buf, options = {}) =>
+	toDecoded(withCodecModule(mod => mod.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options))));
 const parseNd2 = (buf, options = {}) => toDecoded(wasm.decode_nd2_fast(new Uint8Array(buf), JSON.stringify(options)));
 const parseLif = (buf, options = {}) => toDecoded(wasm.decode_lif_fast(new Uint8Array(buf), JSON.stringify(options)));
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');
@@ -90,8 +116,116 @@ function testDicomFrameLabels() {
 	assert.deepStrictEqual(image.metadata.frameLabels, ['Series 4', 'Series 4', 'Series 6', 'Series 6']);
 }
 
+/** Compressed CZI subblocks must decode to the same pixels as the
+ * uncompressed twin. Zstd-1 optionally applies "hi-lo byte packing" — every
+ * sample's low byte for the whole tile, then every high byte — and only the
+ * third fixture exercises that: the other two decode correctly even if the
+ * unpacking is skipped entirely. scripts/make-czi-testdata.py asserts that
+ * file really is packed before writing it. */
+function testCziCompressedSubblocks() {
+	const reference = parseCzi(arrayBuffer('synthetic-czi-none.czi'));
+	assert.deepStrictEqual([reference.width, reference.height, reference.channels], [64, 48, 1]);
+
+	for (const [file, label] of [
+		['synthetic-czi-zstd0.czi', 'Zstd-0'],
+		['synthetic-czi-zstd1.czi', 'Zstd-1'],
+		['synthetic-czi-zstd1-hilo.czi', 'Zstd-1 with hi-lo byte packing'],
+	]) {
+		const image = parseCzi(arrayBuffer(file));
+		assert.deepStrictEqual(
+			[image.width, image.height, image.channels],
+			[reference.width, reference.height, reference.channels],
+			`${label}: geometry`,
+		);
+		assert.deepStrictEqual(Array.from(image.data), Array.from(reference.data),
+			`CZI ${label} must decode to the same samples as the uncompressed twin`);
+		console.log(`  ✅ CZI ${label} matches the uncompressed twin exactly`);
+	}
+}
+
+/** Every compressed transfer syntax must decode to the SAME samples as the
+ * uncompressed twin. The fixtures are written by scripts/make-dicom-testdata.py
+ * and all hold identical pixels, so any difference here is a decoder bug rather
+ * than a property of the file.
+ *
+ * Every codec is decoded from the encapsulated fragments by pure-Rust code in
+ * this crate: JPEG 2000, JPEG-LS and lossless JPEG by dedicated crates, JPEG
+ * Baseline by the same zune-jpeg the TIFF path uses, and RLE Lossless by the
+ * PackBits reader in dicom.rs. Deflated Explicit VR is inflated before
+ * parsing. */
+function testDicomTransferSyntaxes() {
+	const reference = parseDicom(arrayBuffer('synthetic-ct-codec-ref.dcm'));
+	assert.deepStrictEqual([reference.width, reference.height, reference.channels], [64, 48, 1]);
+
+	for (const [file, syntax, label] of [
+		['synthetic-ct-deflated.dcm', '1.2.840.10008.1.2.1.99', 'Deflated Explicit VR'],
+		['synthetic-ct-jpeg2000.dcm', '1.2.840.10008.1.2.4.90', 'JPEG 2000 Lossless'],
+		['synthetic-ct-jpegls.dcm', '1.2.840.10008.1.2.4.80', 'JPEG-LS Lossless'],
+		['synthetic-ct-jpeglossless.dcm', '1.2.840.10008.1.2.4.70', 'JPEG Lossless SV1'],
+		['synthetic-ct-rle.dcm', '1.2.840.10008.1.2.5', 'RLE Lossless'],
+	]) {
+		const image = parseDicom(arrayBuffer(file));
+		assert.strictEqual(image.metadata.transferSyntax, syntax, `${label}: transfer syntax`);
+		assert.deepStrictEqual(
+			[image.width, image.height, image.channels],
+			[reference.width, reference.height, reference.channels],
+			`${label}: geometry`,
+		);
+		assert.deepStrictEqual(Array.from(image.data), Array.from(reference.data),
+			`${label} must decode to the same samples as the uncompressed twin`);
+		console.log(`  ✅ ${label} matches the uncompressed twin exactly`);
+	}
+
+	// JPEG Baseline is the one LOSSY syntax, so its reference is libjpeg's own
+	// decode of the same codestream (written uncompressed by
+	// scripts/make-dicom-testdata.py) rather than the source array or another
+	// twin. Baseline decoders agree only to an IDCT tolerance, so this asserts
+	// closeness, not equality — which still catches wrong geometry, a wrong
+	// channel order, a missing YCbCr->RGB transform, or a byte-order mistake,
+	// all of which are off by far more than a rounding step.
+	//
+	// This path used to run through dicom-pixeldata; it now uses the same
+	// zune-jpeg the TIFF decoder does, which is why it is worth a real fixture
+	// rather than only the 4x4 golden.
+	const JPEG_IDCT_TOLERANCE = 2;
+	for (const [file, reference, channels, photometric, label] of [
+		['synthetic-ct-jpegbaseline.dcm', 'synthetic-ct-jpegbaseline-ref.dcm', 1, 'MONOCHROME2', 'JPEG Baseline greyscale'],
+		['synthetic-ct-jpegbaseline-rgb.dcm', 'synthetic-ct-jpegbaseline-rgb-ref.dcm', 3, 'RGB', 'JPEG Baseline RGB (4:4:4)'],
+	]) {
+		const image = parseDicom(arrayBuffer(file));
+		const expected = parseDicom(arrayBuffer(reference));
+		assert.strictEqual(image.metadata.transferSyntax, '1.2.840.10008.1.2.4.50', `${label}: transfer syntax`);
+		assert.deepStrictEqual(
+			[image.width, image.height, image.channels],
+			[expected.width, expected.height, channels],
+			`${label}: geometry`,
+		);
+		// The decoded samples are RGB even when the file declares YBR_FULL,
+		// because the decoder applied the inverse transform; the reported
+		// photometric has to say so or the renderer would convert twice.
+		assert.strictEqual(image.metadata.photometric, photometric, `${label}: reported photometric`);
+		let worst = 0;
+		for (let i = 0; i < expected.data.length; i++) {
+			worst = Math.max(worst, Math.abs(image.data[i] - expected.data[i]));
+		}
+		assert.ok(worst <= JPEG_IDCT_TOLERANCE,
+			`${label}: worst sample error ${worst} exceeds the IDCT tolerance ${JPEG_IDCT_TOLERANCE}`);
+		console.log(`  ✅ ${label} matches libjpeg's decode (worst error ${worst})`);
+	}
+
+	// A lossless-JPEG predictor the decoder reproduces incorrectly must be
+	// REFUSED, not returned as a plausible-looking wrong image. Predictor 6 is
+	// one of the two it gets wrong; the error has to name it.
+	assert.throws(
+		() => parseDicom(arrayBuffer('synthetic-ct-jpeglossless-predictor6.dcm')),
+		/predictor 6 is not supported/,
+		'an unsupported lossless-JPEG predictor must fail loudly',
+	);
+	console.log('  ✅ Lossless JPEG with an unsupported predictor is refused, not mis-decoded');
+}
+
 /** `decode_dicom_fast` decodes JPEG Baseline Pixel Data natively now (via
- * dicom-object/dicom-pixeldata in Rust) instead of throwing the
+ * the shared zune-jpeg) instead of throwing the
  * `requires codec: jpeg-baseline` error that used to route through the
  * TS `extractDicomJpegFrame` + shared zune-jpeg fallback (both deleted).
  * This asserts the same real 96-frame fixture decodes directly. */
@@ -316,9 +450,11 @@ async function main() {
 	testFits();
 	testDicom();
 	testDicomFrameLabels();
+	testDicomTransferSyntaxes();
 	await testJpegBaselineDicom();
 	testNetCdf();
 	testCzi();
+	testCziCompressedSubblocks();
 	testNd2();
 	testLif();
 	testMpasNetCdf();

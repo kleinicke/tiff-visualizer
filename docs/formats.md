@@ -17,7 +17,8 @@
 | PFM | No | No | No | Yes | Portable Float Map |
 | PPM / PGM / PBM | Yes | Yes | No | No | PBM is 1-bit, shown as 8-bit |
 | PNG | Yes | Yes | No | No | Palette PNGs become 8-bit RGBA |
-| JPEG / WebP / AVIF / BMP / ICO / TGA / JXL | Yes | No | No | No | Decoded as 8-bit |
+| JPEG / WebP / AVIF / BMP / ICO / TGA | Yes | No | No | No | Decoded as 8-bit |
+| JPEG XL (`.jxl`) | Yes | Yes | No | Yes | Decoded in Rust; 8/16-bit and float, greyscale or RGB(A) |
 | ORA / KRA / PSD / PSB / XCF / Affinity | Yes | PSD/PSB | No | PSD/PSB | Previews, and layer composition where supported — see [layers](./layers.md) |
 
 File extensions registered by the extension:
@@ -45,10 +46,30 @@ unavailable.
 
 Decoded by a Rust/WebAssembly decoder built on
 [image-tiff](https://github.com/image-rs/image-tiff), with a JavaScript fallback
-for files it cannot yet handle. Supports LZW and Deflate compression with
-predictors, tiled and stripped layouts, multi-channel data, and bit depths of 8,
-16, 32 and 64 in unsigned, signed and floating-point sample formats. Big TIFF
-(`tf8`, `btf`) is included.
+for files it cannot yet handle. Handles horizontal and floating-point
+predictors, tiled and stripped layouts, both planar configurations,
+multi-channel data, and bit depths of 8, 16, 32 and 64 in unsigned, signed and
+floating-point sample formats. Big TIFF (`tf8`, `btf`) is included. Tiles that
+a sparse GeoTIFF never wrote read as zeros.
+
+Compression: none, LZW, Deflate, PackBits, Zstd, LZMA, LERC (including GDAL's
+LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including the
+Aperio 33003/33004/33005 codes slide scanners write), JPEG XR (34934, and the
+22610 code Hamamatsu NDPI files use), WebP, and CCITT Group 3/4 and Modified
+Huffman fax. Every one of these is decoded in pure Rust, so they
+work the same in VS Code Web as on the desktop. LERC is lossy when it was
+written that way; the decoder reproduces the reconstruction its own encoder
+defines, and pixels a LERC blob marks invalid read as zero. JPEG 2000 decodes
+at its native bit depth, so a 16-bit image stays 16-bit.
+
+JPEG 2000, JPEG XR, LERC, LZMA and WebP are decoded by a second WebAssembly
+module downloaded only when a file declares one of them — see "How the decoder
+is packaged" below.
+
+Not decoded: JPEG XL in TIFF (its decoder is a third module — see JPEG XL
+below), old-style JPEG (compression 6), and the legacy
+PixarLog, SGILog, ThunderScan, NeXT and JBIG codecs. Files using any of these
+report the codec by name rather than failing silently.
 
 Multi-page files are navigable with `[` and `]`. OME-TIFF adds semantic
 dimensions and multi-file datasets — see [datasets](./datasets.md).
@@ -56,6 +77,18 @@ dimensions and multi-file datasets — see [datasets](./datasets.md).
 TIFF resolution tags and OME-XML physical pixel sizes are read automatically and
 used to pre-fill the measurement scale, so an ROI area can come out in µm²
 without you typing anything.
+
+### JPEG XR
+
+Standalone `.jxr`, `.wdp` and `.hdp` files, decoded by the same Rust codec that
+handles JPEG XR inside TIFF ([crates/jpegxr](../crates/jpegxr), a vendored
+translation of Microsoft's JXRLib). Grey and RGB(A) at 8, 16 and 32 bits are
+supported, unsigned or IEEE float, so a scene-referred float JPEG XR keeps its
+range and normalizes like an EXR rather than being flattened to 8-bit.
+
+JPEG XR's packed pixel formats — 5:6:5, 10:10:10, RGBE, the fixed-point layouts
+— are reported by name rather than guessed at; reading one as if it were plain
+samples would produce a plausible-looking wrong picture.
 
 ### EXR
 
@@ -112,8 +145,9 @@ holds, let you pick one, then treat it as an image with extra dimensions.
   and mosaic tiles are assembled into the full frame. Arrow keys step through Z
   and `[` / `]` through channels, as for a dataset. Channel sliders are
   labelled with the dye name from the embedded metadata, and pixel scaling is
-  reported in micrometres. Only uncompressed subblocks decode; JPEG, JPEG XR
-  and Zstd subblocks report the codec they would need.
+  reported in micrometres. Uncompressed and Zstd-0/Zstd-1 subblocks decode,
+  the latter including the optional hi-lo byte packing; JPEG and JPEG XR
+  subblocks report the codec they would need.
 
 See [datasets](./datasets.md) for navigation.
 
@@ -126,10 +160,42 @@ family supports both binary and ASCII variants.
 ### PNG, JPEG and the browser formats
 
 PNG carries real bit depth information, and 16-bit PNG is preserved rather than
-being crushed to 8. JPEG, WebP, AVIF, BMP, ICO, TGA and JXL are decoded as 8-bit
+being crushed to 8. JPEG, WebP, AVIF, BMP, ICO and TGA are decoded as 8-bit
 image data. These formats are worth opening here mainly when you want pixel
 inspection, the histogram, measurement, or comparison against a scientific
 image.
+
+### How the decoder is packaged
+
+Most of what the viewer decodes lives in one WebAssembly module that every
+image open downloads. Three groups of codecs do not, because they are large and
+rarely needed, and carrying them would slow down every ordinary TIFF:
+
+- **JPEG 2000, JPEG XR, LERC, LZMA, WebP**, and the DICOM JPEG-LS and lossless
+  JPEG transfer syntaxes, live in a second module fetched the first time a file
+  declares one of them. Since these are codestream codecs, that one module
+  serves every container — the same JPEG XR decoder answers for a TIFF tile, a
+  CZI subblock and a standalone `.jxr`.
+- **JPEG XL** lives in a third, for the same reason (see below).
+
+Nothing is fetched speculatively: the decoder recognises the codec while
+reading the file's header, before any pixel work, and only then downloads what
+it needs. A file that uses none of them never pays for any of it.
+
+### JPEG XL
+
+Decoded by [jxl-rs](https://github.com/libjxl/jxl-rs) at the file's own sample
+type: an 8-bit `.jxl` arrives as 8-bit, a 16-bit one as 16-bit, and a float one
+as float32 with its range intact. Greyscale and RGB are supported, with or
+without alpha; the first frame of an animation is shown.
+
+Its decoder is a **separate WebAssembly module** from the one every other
+format shares, downloaded the first time you open a `.jxl` and never otherwise
+— it is large enough that carrying it in the main module would slow down every
+TIFF open to no purpose. The consequence is that JPEG XL *inside* another
+container (TIFF compression 50002, the DICOM JPEG XL transfer syntaxes) is
+still not decoded: those run inside the other modules, which do not contain
+it.
 
 ### Layered documents
 
@@ -147,8 +213,13 @@ one that looks plausible and is wrong.
 - NetCDF-4 / HDF5 containers (classic NetCDF only)
 - Legacy (pre-2012) ND2 files, which use a different container entirely, and
   ND2 files written with Nikon's lossless or lossy compression
-- Compressed CZI subblocks (JPEG, JPEG XR, Zstd) and multi-file CZI sets
-- DICOM compression other than JPEG Baseline
+- CZI subblocks compressed with JPEG or JPEG XR, and multi-file CZI sets.
+  Zstd-0 and Zstd-1 subblocks do decode, including Zstd-1's optional hi-lo
+  byte packing
+- DICOM JPEG XL and JPEG XR transfer syntaxes, the MPEG/HEVC video ones, and
+  lossless JPEG with predictor 5 or 6 — the pure-Rust decoder reproduces
+  selection values 1-4 and 7 exactly and those two incorrectly, so they are
+  refused rather than returned wrong (transfer syntax .70 mandates value 1)
 - Writing back to any scientific format — export targets are listed in
   [export](./export.md)
 

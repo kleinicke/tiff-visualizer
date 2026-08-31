@@ -2,16 +2,18 @@
 /**
  * One member of the shared TIFF-strip / EXR-ZIP decode pool.
  *
- * Each instance owns its own WASM module, decodes a contiguous run of strips
- * from only that run's compressed bytes, and transfers the samples back. There
- * is no shared memory and no coordination between workers: strips in a TIFF are
- * independently compressed, so a range is a complete unit of work.
+ * Each instance owns its own WASM module, decodes a contiguous run of units —
+ * strips, or whole tile rows — from only that run's compressed bytes, and
+ * transfers the samples back. There is no shared memory and no coordination
+ * between workers: blocks in a TIFF are independently compressed, so a range is
+ * a complete unit of work.
  *
  * The WASM arrives as a precompiled `WebAssembly.Module` from the orchestrator
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
 import initTiffWasm, { decode_exr_zip_f32_blocks, decode_tiff_float_strip_range, decode_tiff_strip_range_raw } from './wasm/tiff-wasm.js';
+import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
 
@@ -84,6 +86,13 @@ self.onmessage = async (event: MessageEvent) => {
 				job.predictor,
 				job.sampleFormat,
 				job.littleEndian,
+				job.planarConfiguration || 1,
+				job.orientation || 1,
+				job.tileWidth || 0,
+				job.tileLength || 0,
+				job.blocksAcross || 1,
+				job.lercAdditionalCompression || 0,
+				job.photometricInterpretation || 1,
 			);
 			const view = job.bitsPerSample === 8
 				? bytes
@@ -109,10 +118,10 @@ self.onmessage = async (event: MessageEvent) => {
 					}
 				}
 			}
-			(self as any).postMessage(
-				{ id: job.id, samples: view, min: rmin, max: rmax, ms: performance.now() - started },
-				[bytes.buffer],
-			);
+			const oriented = orientTiffRange(view, job.width, job.height, job.outputChannels || job.channels,
+				job.firstStrip * job.rowsPerStrip, job.orientation || 1);
+			(self as any).postMessage({ id: job.id, ...oriented, min: rmin, max: rmax, ms: performance.now() - started },
+				[oriented.samples.buffer]);
 			return;
 		}
 		const samples = decode_tiff_float_strip_range(
@@ -128,6 +137,13 @@ self.onmessage = async (event: MessageEvent) => {
 			job.predictor,
 			job.sampleFormat,
 			job.littleEndian,
+			job.planarConfiguration || 1,
+			job.orientation || 1,
+			job.tileWidth || 0,
+			job.tileLength || 0,
+			job.blocksAcross || 1,
+			job.lercAdditionalCompression || 0,
+			job.photometricInterpretation || 1,
 		);
 		// Min/max over this range only; the orchestrator combines them. Doing it
 		// here keeps the stats pass parallel and off the main thread.
@@ -153,10 +169,10 @@ self.onmessage = async (event: MessageEvent) => {
 				}
 			}
 		}
-		(self as any).postMessage(
-			{ id: job.id, samples, min, max, ms: performance.now() - started },
-			[samples.buffer],
-		);
+		const oriented = orientTiffRange(samples, job.width, job.height, job.outputChannels || job.channels,
+			job.firstStrip * job.rowsPerStrip, job.orientation || 1);
+		(self as any).postMessage({ id: job.id, ...oriented, min, max, ms: performance.now() - started },
+			[oriented.samples.buffer]);
 	} catch (error) {
 		(self as any).postMessage({ id: job.id, error: String((error as Error)?.message || error) });
 	}

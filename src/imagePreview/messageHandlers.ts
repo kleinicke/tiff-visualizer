@@ -143,7 +143,13 @@ class FormatInfoMessageHandler implements MessageHandler {
 			? `${channelCount}x${value.width}x${value.height}`
 			: `${value.width}x${value.height}`;
 		const sizeSuffix = size ? `, ${size}` : '';
-		let fileName = resource.path.split('/').pop() || resource.path;
+		// A preview restored without a resource, and a message carrying no
+		// resourceUri, leave nothing to name the file after. That must not turn
+		// an informational log line into a throw: this runs inside the
+		// formatInfo handler, and throwing here skips the initial-render
+		// updateSettings reply below, so the image never draws.
+		const resourcePath = resource?.path ?? '';
+		let fileName = resourcePath.split('/').pop() || resourcePath || 'image';
 		try { fileName = decodeURIComponent(fileName); } catch { /* keep encoded filename */ }
 		output.appendLine(`📂 Opened 1: ${fileName} (${dimensions}, ${value.bitsPerSample}-bit${sizeSuffix})`);
 	}

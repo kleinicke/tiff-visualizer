@@ -1137,6 +1137,10 @@ export class ImagePreview extends MediaPreview {
 		const fastRawWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'fastRawWorker.bundle.js'));
 		const layeredDecodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layeredDecodeWorker.bundle.js'));
 		const wasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'tiff-wasm.wasm'));
+		// The JPEG XL decoder is a separate module; naming it here costs nothing,
+		// and nothing fetches it until a .jxl is opened.
+		const jxlWasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'jxl-wasm.wasm'));
+		const codecWasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'codec-wasm.wasm'));
 		const geotiffUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'geotiff.min.js'));
 		const pakoUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pako.min.js'));
 		const upngUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'upng.min.js'));
@@ -1146,6 +1150,8 @@ export class ImagePreview extends MediaPreview {
 		const imagejRoiUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagejRoi.bundle.js'));
 		const vendorAssets = {
 			wasm: wasmUri.toString(),
+			jxlWasm: jxlWasmUri.toString(),
+			codecWasm: codecWasmUri.toString(),
 			geotiff: geotiffUri.toString(),
 			pako: pakoUri.toString(),
 			upng: upngUri.toString(),

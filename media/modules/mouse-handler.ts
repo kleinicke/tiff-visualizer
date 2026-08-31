@@ -20,7 +20,6 @@ export class MouseHandler {
 	hdrProcessor: any;
 	tgaProcessor: any;
 	webImageProcessor: any;
-	jxlProcessor: any;
 	scientificProcessors: any[];
 	layeredPreviewProcessor: any;
 
@@ -64,7 +63,6 @@ export class MouseHandler {
 		this.hdrProcessor = null;
 		this.tgaProcessor = null;
 		this.webImageProcessor = null;
-		this.jxlProcessor = null;
 		this.scientificProcessors = [];
 		this.layeredPreviewProcessor = null;
 
@@ -106,7 +104,6 @@ export class MouseHandler {
 	setHdrProcessor(proc: any) { this.hdrProcessor = proc; }
 	setTgaProcessor(proc: any) { this.tgaProcessor = proc; }
 	setWebImageProcessor(proc: any) { this.webImageProcessor = proc; }
-	setJxlProcessor(proc: any) { this.jxlProcessor = proc; }
 	setScientificProcessors(processors: any[]) { this.scientificProcessors = processors || []; }
 	setLayeredPreviewProcessor(processor: any) { this.layeredPreviewProcessor = processor; }
 
@@ -469,21 +466,6 @@ export class MouseHandler {
 		}
 		if (this.webImageProcessor) {
 			const v = this.webImageProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseIntColor(v);
-					if (values) {
-						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
-						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
-						return this._formatColorValues(scaled, values.length, true);
-					}
-				}
-				return v;
-			}
-		}
-		if (this.jxlProcessor) {
-			const v = this.jxlProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (v) {
 				if (showModified) {
 					const values = this._parseIntColor(v);

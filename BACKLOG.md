@@ -294,8 +294,9 @@ rules out CharLS and OpenJPEG/OpenJPH as C/C++ sources; the `openjp2` crate (a
 pure-Rust translation of OpenJPEG) is acceptable in principle but must be
 verified to build for `wasm32-unknown-unknown` before being planned around.
 
-1. ~~**DICOM RLE Lossless.**~~ Implemented — decoded through `dicom-pixeldata`'s
-   pure-Rust RLE adapter in `wasm/tiff-decoder/src/formats/dicom.rs`.
+1. ~~**DICOM RLE Lossless.**~~ Implemented — `decode_rle_lossless` in
+   `crates/image-decoders/src/formats/dicom.rs` unpacks the PackBits byte
+   planes straight from the encapsulated fragments.
 2. **JPEG Lossless and JPEG 2000 DICOM transfer syntaxes**, in the order set out
    under "DICOM transfer syntax coverage" below. JPEG-LS depends on a pure-Rust
    decoder existing at all, so it is gated on that survey rather than scheduled.
@@ -390,10 +391,10 @@ transfer syntaxes.
 Color DICOM already works for the common cases: Samples Per Pixel 1/3/4 is
 accepted, Planar Configuration 1 is de-planarized into interleaved output, and
 the channel count flows through `ScientificParsed` into the normal render
-pipeline. Compressed frames come back from `dicom-pixeldata` already normalized
-to interleaved RGB, YBR sources included. Two gaps remain, both in
-`wasm/tiff-decoder/src/formats/dicom.rs`, where `photometric` is currently only
-consulted for the MONOCHROME1 inversion:
+pipeline. Compressed frames come back interleaved, and a JPEG Baseline frame is
+reported as RGB because the decoder applied the inverse colour transform. Two
+gaps remain, both in `crates/image-decoders/src/formats/dicom.rs`, where
+`photometric` is otherwise only consulted for the MONOCHROME1 inversion:
 
 - **Native (uncompressed) `YBR_FULL` / `YBR_FULL_422`.** No color conversion is
   applied, so raw Y/Cb/Cr samples are handed to the renderer as if they were
@@ -2230,8 +2231,11 @@ collapses a WASM-plus-JS-fallback pair into one code path.
       reported 32 bits per sample, copied from the float32 entries above it.
 - [x] **Deleted the TypeScript parsers for every ported format.** A fallback is
       only worth its cost when the two paths cover *different* things — true for
-      WebGPU (hardware varies) and still true for geotiff.js (it covers TIFF
-      cases Rust does not yet). It was NOT true for the ported formats: the Rust
+      WebGPU (hardware varies), and true for geotiff.js at the time this was
+      written. It no longer is on codec coverage: geotiff.js has since been
+      measured as a strict SUBSET of the Rust decoder (see "Remove the
+      geotiff.js fallback" below), so the only difference left is tolerance of
+      malformed files. It was NOT true for the ported formats: the Rust
       is conformance-proven identical, so the TS parser only guarded "the wasm
       failed to load", a scenario already fatal for TIFF, while costing two
       parsers to keep in sync and masking Rust bugs behind a `console.warn`.
@@ -2257,10 +2261,12 @@ collapses a WASM-plus-JS-fallback pair into one code path.
       **Revisit only if** a future consumer genuinely needs the OME model; then
       expose `parse_ome_xml(xml) -> json` from the crate rather than moving the
       typed model across the boundary.
-- Retires the standing **"remove geotiff fallback"** item below, plus the
+- Retires the standing **"remove the geotiff.js fallback"** item below, plus the
   `parse-exr`, `upng` and `pako` fallbacks, once each Rust path is conformance-
-  tested against the golden corpus. Those four remain only for cases Rust does
-  not yet cover; they are no longer general fallbacks for anything ported.
+  tested against the golden corpus. They are no longer general fallbacks for
+  anything ported. For geotiff.js specifically the conformance half is now
+  done — what remains is the instrumentation step in that item, not more
+  porting.
 
 **Difficulty: 3.** Mostly volume; DICOM alone is a 3.
 
@@ -2399,7 +2405,89 @@ a JS fallback.
   resolution level. Shares the lazy-loading infra with item 3. **Difficulty: 4.**
 - **Region-of-interest statistics.** Superseded by item 7, which covers this as
   its first deliverable.
-- **Remove geotiff fallback.** Make sure the rust implementation covers all cases currently geotiff covers. Folded into item 12 phase 1, which retires the `parse-exr`, `upng` and `pako` fallbacks on the same conformance criterion.
+- **Remove the geotiff.js fallback.** The codec argument is settled — what is
+  left is a question about malformed files in the wild, and a way to answer it.
+
+  **What was measured** (re-runnable; see "Decoder coverage sweep" below).
+  geotiff.js registers exactly seven decoders: raw, LZW, JPEG, Deflate,
+  PackBits, LERC and WebP, and throws on old-style JPEG (6). The Rust decoder
+  covers all seven plus CCITT G3/G4, ZSTD, LZMA, PNG-in-TIFF, JPEG XR and
+  JPEG 2000 — a strict superset. Across 91 corpus TIFFs and a 77-file generated
+  matrix, geotiff.js decoded **nothing** the Rust path could not; the Rust path
+  decoded 19 files geotiff.js could not. So the older claim in this file that
+  geotiff.js "covers TIFF cases Rust does not yet" no longer holds for any
+  codec, layout or sample type that was tested.
+
+  **What is therefore NOT the blocker:** codec coverage, bit depths, planar or
+  tiled layouts, predictors, BigTIFF, multipage, photometric interpretations.
+
+  **What IS the blocker:** files that violate the spec. geotiff.js is laxer than
+  the `tiff` crate about malformed IFDs, wrong tag counts and truncated strips,
+  and the corpus is synthetic — every file in it was written by a conformant
+  encoder, so it cannot exercise that difference at all. Whether real users hit
+  it is unknown, and unknowable from here.
+
+  **The condition to remove it, in order:**
+  1. **Instrument first.** `TiffProcessor` reaches the fallback via a
+     `console.warn` nobody reads. Record it where it is visible instead — the
+     loading log already shows the decode engine, so a line naming the Rust
+     rejection reason belongs there, and in the extension a one-time notice is
+     reasonable too. This is the whole cost of finding out.
+  2. **Ship it for a release or two** and collect what the rejection reasons
+     actually are. Note that `[external-codec:…]` no longer reaches this path
+     at all (it routes to the codec module), so anything logged is a genuine
+     Rust refusal.
+  3. **Remove when either holds:** no report of the fallback firing on a real
+     file, OR every reason that did fire has been fixed in Rust. A reason that
+     turns out to be a permissiveness difference is a decision, not
+     automatically a fix: "the tiff crate rejects this and geotiff.js guesses"
+     may well be the better behaviour, in which case the file should get a
+     clear error rather than a silent second decoder.
+  4. **When removing**, delete in one change: `loadGeoTiff` and the `geotiff`
+     entry in `lazy-vendor-loader.ts`, the fallback block in `tiff-processor.ts`,
+     `buildTagsFromGeotiffImage` in `tiff-tag-utils.ts`, the `geotiff` dependency
+     and its `media/geotiff.min.js` copy step in `esbuild.js`, and the
+     `geotiff` vendor-asset URL in `imagePreview.ts` and `web/vendor-assets.js`.
+
+  **Already dead, removable now regardless:** `decodeTiffGeotiff` in
+  `media/decode-worker.ts`. Its `WorkerGeoTIFF` global is declared but never
+  assigned, nothing calls the function, and esbuild already strips it from
+  `decodeWorker.bundle.js` — so it is source-level clutter that reads like a
+  live path and is not one.
+
+  Still folded into item 12 phase 1, which retires the `parse-exr`, `upng` and
+  `pako` fallbacks on the same criterion — each of those needs its own version
+  of step 1, since none of them is instrumented either.
+
+- **Decoder coverage sweep — keep it re-runnable.** The comparison above came
+  from generating a TIFF matrix with `tifffile` (9 sample types x 6 codecs, plus
+  planar, tiled, RGB/RGBA, palette, CMYK, YCbCr, MINISWHITE, predictors 2 and 3,
+  BigTIFF, multipage and bilevel) and decoding every file through the core
+  module, the codec module and geotiff.js, then diffing which decoder accepted
+  what. It is worth keeping as a script rather than a one-off: it is how the
+  geotiff question gets re-answered after the decoders change, and it is what
+  found the half-float bugs below.
+
+  Two files failed **both** decoders in that sweep, and neither is an argument
+  for keeping geotiff.js:
+
+  1. `f16 + LZMA` — a **real Rust gap, since fixed**. Half floats reached the
+     block-codec path only under a codec like LZMA, and that path rejected
+     sample format 3 at 16 bits while every other path read it. Fixing it
+     exposed a second, worse bug: `half_bits_to_f32` was wrong for **subnormals**
+     (off by one in the exponent), which was live in the parallel strip pool for
+     any float16 TIFF with values below 6.1e-5. Both fixed; the conversion now
+     has one implementation in `formats::half` with an exhaustive test over all
+     65536 bit patterns. The lesson worth keeping: there were two half-float
+     converters and only one was tested.
+  2. `predictor 3 + uint16` — **not a bug**. `tifffile` refuses that combination,
+     leaving an 8-byte header stub on disk; both decoders correctly reject it.
+     Recorded only so a future sweep does not re-investigate it.
+
+  **Known limit of this method:** every file is written by a conformant encoder,
+  so the sweep says nothing about malformed input — which is exactly the
+  question the geotiff removal turns on. Widening it would mean fuzzing or a
+  corpus of real-world files, not more `tifffile` variants.
 - **Add debayering mode for grey scale images** Have a small menu, where you can select the typical debayering pattern, the offset and also allow infrared output. Then allow selecting the shown channel, rgb, just a single color channel or f.e. an infrared channel. All interactive and quick, thanks to rust. What is typical also done during debayering? Some white balancing or is this not required there?
 - **Testdata:** Keep in mind a lot of test data is currently stored at /Users/florian/Projects/cursor/test_data/testfiles.
 
@@ -2506,5 +2594,6 @@ a JS fallback.
    adding chunked remote access.
 10. **Rust-first migration, phases 0 and 1** (item 12). Splitting the crate is a
     prerequisite for anything else added to it, and porting the remaining
-    decoders is what finally retires the geotiff/parse-exr/upng fallbacks and
+    decoders is what finally retires the parse-exr/upng fallbacks (geotiff.js
+    now needs only the instrumentation step, not more porting) and
     makes the shared-core extraction in item 11 step 1 tractable.

@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxl-float' | 'jxr' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
 
 export interface ImageStats {
 	min: number;
@@ -365,6 +365,20 @@ export class AppStateManager {
 		// data, which rarely spans anywhere near that, would render
 		// essentially black too.
 		//
+		// A FLOAT JPEG XL is here for the same reason: an 8-bit .jxl is a
+		// photograph and keeps gamma mode above, but a float one carries
+		// scene-referred values that gamma mode's [0, 1] would clip. The
+		// decoder reports which it decoded, so the two get different defaults
+		// instead of one compromise.
+		//
+		// JPEG XR is here for the same reason as the float scientific formats
+		// rather than with the display integers it superficially resembles:
+		// the format exists to carry high-bit-depth and scene-referred float
+		// images, and a float32 .jxr under gamma mode's [0, 1] would clip
+		// anything above white. One format type covers both its integer and
+		// its float files, and auto-normalize is the setting that is never
+		// badly wrong for either.
+		//
 		// `npy-uint` belongs here rather than with the display-image integer
 		// formats: an .npy is an array someone computed, not a picture someone
 		// authored, so its values carry no expectation of filling the type's
@@ -372,7 +386,7 @@ export class AppStateManager {
 		// might be a label map holding 0..3. The uint64 case makes it starkest
 		// — gamma mode would normalize against 2^64-1 and render everything
 		// black.)
-		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif') {
+		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'jxr' || format === 'jxl-float') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

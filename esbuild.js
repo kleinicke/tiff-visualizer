@@ -387,16 +387,6 @@ if (isWatch) {
 }
 
 function copyMediaAssets() {
-  // JXL decoder WASM
-  const jxlWasmSrc = path.join(__dirname, 'node_modules/@jsquash/jxl/codec/dec/jxl_dec.wasm');
-  const jxlWasmDst = path.join(__dirname, 'media/wasm/jxl_dec.wasm');
-  if (fs.existsSync(jxlWasmSrc)) {
-    fs.copyFileSync(jxlWasmSrc, jxlWasmDst);
-    console.log('Copied jxl_dec.wasm');
-  } else {
-    console.warn('WARNING: jxl_dec.wasm not found at', jxlWasmSrc);
-  }
-
   // Mirror the wasm-pack output into out/media/wasm.
   //
   // The webview runs the esbuild bundles, which inline the glue, so it does
