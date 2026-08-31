@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxl-float' | 'jxr' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxl-float' | 'jxr' | 'jp2' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
 
 export interface ImageStats {
 	min: number;
@@ -379,6 +379,11 @@ export class AppStateManager {
 		// its float files, and auto-normalize is the setting that is never
 		// badly wrong for either.
 		//
+		// JPEG 2000 joins them for a concrete reason: a Sentinel-2 band is
+		// 12-bit reflectance whose real values sit in the low hundreds out of
+		// 4095, so gamma mode's normalize-against-the-type-range would render
+		// a correct decode as a nearly black image.
+		//
 		// `npy-uint` belongs here rather than with the display-image integer
 		// formats: an .npy is an array someone computed, not a picture someone
 		// authored, so its values carry no expectation of filling the type's
@@ -386,7 +391,7 @@ export class AppStateManager {
 		// might be a label map holding 0..3. The uint64 case makes it starkest
 		// — gamma mode would normalize against 2^64-1 and render everything
 		// black.)
-		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'jxr' || format === 'jxl-float') {
+		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'jxr' || format === 'jp2' || format === 'jxl-float') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

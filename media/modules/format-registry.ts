@@ -31,6 +31,7 @@ export type DecoderKind =
 	| 'web-image'
 	| 'jxl'
 	| 'jxr'
+	| 'jp2'
 	| 'fits'
 	| 'dicom'
 	| 'netcdf'
@@ -69,6 +70,9 @@ export const FORMATS: readonly FormatEntry[] = [
 	{ kind: 'web-image', label: 'Browser image', extensions: ['webp', 'avif', 'bmp', 'ico'] },
 	{ kind: 'jxl', label: 'JPEG XL', extensions: ['jxl'] },
 	{ kind: 'jxr', label: 'JPEG XR', extensions: ['jxr', 'wdp', 'hdp'] },
+	// Both spellings: the boxed JP2/JPX container and the bare codestream.
+	// `.jp2` is how every Sentinel-2 band ships inside a .SAFE product.
+	{ kind: 'jp2', label: 'JPEG 2000', extensions: ['jp2', 'jpf', 'jpx', 'j2k', 'j2c', 'jpc'] },
 	{ kind: 'fits', label: 'FITS', extensions: ['fits', 'fit', 'fts'] },
 	{ kind: 'dicom', label: 'DICOM', extensions: ['dcm', 'dicom'] },
 	{ kind: 'netcdf', label: 'NetCDF', extensions: ['nc', 'cdf'] },

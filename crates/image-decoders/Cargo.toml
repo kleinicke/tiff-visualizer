@@ -69,6 +69,10 @@ hdr = []
 # Standalone `.jxr`/`.wdp`/`.hdp` files. The decoder itself is `codec-jpegxr`,
 # so this only adds the pixel-format mapping a bare file needs.
 jpegxr = ["codec-jpegxr"]
+# Standalone `.jp2`/`.jpf`/`.jpx`/`.j2k`/`.j2c`/`.jpc` files. As with `jpegxr`,
+# the decoder itself is the heavy `codec-jpeg2000`; this only adds the mapping
+# a bare file needs. Sentinel-2 bands are the reason it exists.
+jpeg2000 = ["codec-jpeg2000"]
 # Deliberately NOT in `all-formats`: jxl-rs is large enough that including it
 # would grow the main WebAssembly module by more than a megabyte, which every
 # TIFF open would pay for. `wasm/jxl-decoder` builds this feature on its own.

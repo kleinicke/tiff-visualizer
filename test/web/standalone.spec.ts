@@ -189,3 +189,29 @@ test('fetches the codec module only for a file that needs a heavy codec', async 
   await expect(page.locator('#web-status-size')).toContainText('64x48');
   expect(codecRequests.length, 'a LERC TIFF must download the codec module').toBeGreaterThan(0);
 });
+
+/**
+ * A standalone JPEG 2000 exercises the full routing chain in one file: the
+ * registry claims `.jp2`, the decode worker answers with the
+ * `[external-codec:JPEG 2000]` marker WITHOUT attempting a decode, the main
+ * thread recognizes the marker and fetches the codec module, and the retry
+ * decodes there. Every one of those steps is a place the wiring can be wrong
+ * while each piece passes its own unit test.
+ *
+ * `standalone_gray12.jp2` is deliberately the 12-bit-in-16 fixture — the
+ * Sentinel-2 shape this support exists for.
+ */
+test('opens a standalone JPEG 2000 through the codec module', async ({ page }) => {
+  const codecRequests: string[] = [];
+  page.on('request', request => {
+    if (request.url().includes('codec-wasm.wasm')) { codecRequests.push(request.url()); }
+  });
+
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/standalone_gray12.jp2'));
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#web-status-size')).toContainText('64x48');
+  expect(codecRequests.length, 'a .jp2 must download the codec module').toBeGreaterThan(0);
+});

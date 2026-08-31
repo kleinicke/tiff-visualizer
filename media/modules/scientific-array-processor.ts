@@ -9,7 +9,7 @@ import type { ScientificDecodedImage } from './types.js';
 type VsCodeApi = { postMessage: (msg: any) => any };
 
 export interface ScientificArrayProcessorConfig {
-	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'jxr' | 'jxl';
+	workerFormat: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'jxr' | 'jp2' | 'jxl';
 	/**
 	 * Keep the source bytes in the decode worker between requests. Worth it for
 	 * formats where one file is decoded repeatedly to show different planes, and
@@ -17,7 +17,7 @@ export interface ScientificArrayProcessorConfig {
 	 */
 	cacheSourceInWorker?: boolean;
 	formatLabel: string;
-	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'jxr' | 'jxl';
+	formatType: 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'jxr' | 'jp2' | 'jxl';
 	/**
 	 * Report a different format type for some files. JPEG XL is the only user:
 	 * an 8-bit .jxl is a photograph and wants gamma mode, while a float .jxl

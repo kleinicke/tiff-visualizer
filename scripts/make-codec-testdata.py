@@ -5,8 +5,8 @@
 # ///
 """Regenerate the LZMA, PNG-in-TIFF, LERC, JPEG 2000 and JPEG XR fixtures.
 
-Also writes the standalone `.jxr` files, which are the same codestream without
-a TIFF around it.
+Also writes the standalone `.jxr` and `.jp2`/`.j2k` files, which are the same
+codestreams without a TIFF around them.
 
 These are the TIFF codecs the Rust decoder gained after ZSTD; none of them can
 be produced by an ordinary image editor, and LERC in particular has variants
@@ -155,6 +155,23 @@ def main() -> None:
         ("standalone_f32.jxr", f32),
     ]:
         encoded = imagecodecs.jpegxr_encode(data, level=1.0)
+        (out / name).write_bytes(encoded)
+        print(f"{name:32} {len(encoded):>7} bytes")
+
+    # Standalone JPEG 2000. Both spellings: the boxed JP2 container a `.jp2`
+    # holds and the bare codestream in a `.j2k`. This is what a Sentinel-2 band
+    # is, so the 12-bit-stored-in-16 case is the important one — its samples
+    # span 0..4095, and a decoder that normalized against 65535 would render it
+    # at a sixteenth brightness while still "decoding correctly".
+    u12 = (base * 4095).astype(np.uint16)
+    for name, data, kwargs in [
+        ("standalone_gray8.jp2", u8, {}),
+        ("standalone_rgb8.jp2", rgb8, {}),
+        ("standalone_gray16.jp2", u16, {}),
+        ("standalone_gray12.jp2", u12, {"bitspersample": 12}),
+        ("standalone_gray8.j2k", u8, {"codecformat": "J2K"}),
+    ]:
+        encoded = imagecodecs.jpeg2k_encode(data, level=0, **kwargs)
         (out / name).write_bytes(encoded)
         print(f"{name:32} {len(encoded):>7} bytes")
 

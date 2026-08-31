@@ -21,7 +21,7 @@
  * is what fetches the payload.
  */
 import initCodecWasm, {
-    decode_czi_fast, decode_dicom_fast, decode_jpegxr_fast, decode_tiff,
+    decode_czi_fast, decode_dicom_fast, decode_jpeg2000_fast, decode_jpegxr_fast, decode_tiff,
     decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_page_count,
 } from '../wasm/codec-wasm.js';
 
@@ -43,6 +43,7 @@ export interface CodecModule {
     decode_dicom_fast: any;
     decode_czi_fast: any;
     decode_jpegxr_fast: any;
+    decode_jpeg2000_fast: any;
 }
 
 /**
@@ -108,6 +109,7 @@ export async function initCodecDecoder(): Promise<CodecModule> {
         codecModule = {
             decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast,
             tiff_page_count, decode_dicom_fast, decode_czi_fast, decode_jpegxr_fast,
+            decode_jpeg2000_fast,
         };
         return codecModule;
     })();
@@ -139,6 +141,7 @@ export async function initCodecDecoderFrom(compiled: WebAssembly.Module): Promis
             codecModule = {
                 decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast,
                 tiff_page_count, decode_dicom_fast, decode_czi_fast, decode_jpegxr_fast,
+                decode_jpeg2000_fast,
             };
             return codecModule;
         })().catch((error: unknown): never => {

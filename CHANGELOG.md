@@ -4,6 +4,7 @@
 
 - Noticeable speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure
 - Add several additional tiff compression standards
+- Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
 
 ## 1.10.0 (2026-08-22)
 

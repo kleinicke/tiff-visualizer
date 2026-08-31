@@ -429,6 +429,7 @@ impl DecodedArray {
 }
 
 #[cfg(any(
+    feature = "jpeg2000",
     feature = "jpegxr",
     feature = "jxl",
     feature = "fits",
@@ -1115,6 +1116,19 @@ pub fn decode_netcdf_fast(data: &[u8], options_json: &str) -> Result<DecodedArra
 #[cfg(feature = "jpegxr")]
 pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     Ok(formats::jpegxr::decode_jpegxr_impl(data)?.into())
+}
+
+/// Decode a standalone JPEG 2000 file (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`,
+/// `.jpc`).
+///
+/// The same codestream decoder TIFF's compression 34712 uses. It exists
+/// separately because a bare JPEG 2000 file has no TIFF wrapper to describe
+/// it, and because its precision has to be read off the codestream: a
+/// Sentinel-2 band is 12 bits stored in 16, and normalizing it against the
+/// storage width would render it at a sixteenth brightness.
+#[cfg(feature = "jpeg2000")]
+pub fn decode_jpeg2000_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    Ok(formats::jpeg2000::decode_jpeg2000_impl(data)?.into())
 }
 
 /// Standalone JPEG XL (`.jxl`). Built only into the separate `jxl-decoder`

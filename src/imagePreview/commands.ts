@@ -8,7 +8,7 @@ import { getOutputChannel } from '../extension';
 import { scanDicomFolder } from './dicomDataset';
 import type { DatasetManifest } from './datasetTypes';
 
-const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'jxr', 'wdp', 'hdp', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'czi', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
+const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'jxr', 'wdp', 'hdp', 'jp2', 'jpf', 'jpx', 'j2k', 'j2c', 'jpc', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'czi', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
 
 /**
  * Expand a file path that may contain * and ? wildcards into a list of URIs.

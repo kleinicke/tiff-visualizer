@@ -90,6 +90,29 @@ JPEG XR's packed pixel formats — 5:6:5, 10:10:10, RGBE, the fixed-point layout
 — are reported by name rather than guessed at; reading one as if it were plain
 samples would produce a plausible-looking wrong picture.
 
+### JPEG 2000
+
+Standalone `.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c` and `.jpc` files, decoded by
+the same Rust codec that handles JPEG 2000 inside TIFF (compression 34712 and
+Aperio's 33003/33004/33005). Both spellings open: the boxed JP2/JPX container
+and the bare SOC/SIZ codestream a `.j2k` holds.
+
+This exists mostly for remote sensing. Every Sentinel-2 L1C/L2A band inside a
+`.SAFE` product is a standalone `.jp2`, and those files carry no wrapper to
+describe their samples.
+
+The decode is at NATIVE precision, and the precision is read off the
+codestream rather than from the storage width — which matters more than it
+sounds. A Sentinel-2 band is 12-bit data stored in 16-bit samples: normalizing
+it against 65535 would render a perfectly correct decode at a sixteenth
+brightness. The viewer normalizes against 4095 instead, and defaults such files
+to auto-normalize, because reflectance values occupy only the low end of even
+the 12-bit range.
+
+Signed codestreams are not supported: the decoder clamps negative samples to
+zero, so a signed image would already have lost them. They are vanishingly rare
+outside specialist medical data.
+
 ### EXR
 
 Half and full float, grayscale, RGB and RGBA. EXR stores rows bottom-up, so the

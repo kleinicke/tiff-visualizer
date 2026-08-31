@@ -26,6 +26,7 @@
  *   DICOM  JPEG 2000 (.4.90/.91), JPEG-LS (.4.80/.81), lossless JPEG (.4.57/.70)
  *   CZI    JPEG XR subblocks
  *   JXR    the standalone file, which IS a JPEG XR codestream
+ *   JP2    the standalone file, which IS a JPEG 2000 codestream
  *
  * Everything else — EXR, PNG, HDR, NumPy, NetPBM, PFM, FITS, NetCDF, ND2, LIF
  * — has no codec outside the core, so a failure there is never retried.
@@ -35,13 +36,14 @@ import type { CodecModule } from './codec-wasm-wrapper.js';
 import {
 	decodeCziWithWasm,
 	decodeDicomWithWasm,
+	decodeJpeg2000WithWasm,
 	decodeJpegxrWithWasm,
 } from './wasm-decoders.js';
 import type { DecodeContext } from './wasm-decoders.js';
 
 /** Formats whose decode can be retried in the codec module. */
 export const CODEC_FALLBACK_FORMATS: ReadonlySet<string> =
-	new Set(['tiff', 'dicom', 'czi', 'jxr']);
+	new Set(['tiff', 'dicom', 'czi', 'jxr', 'jp2']);
 
 /**
  * Decode `format` with the already-initialized codec module.
@@ -65,6 +67,8 @@ export function decodeNonTiffWithCodecModule(
 			return decodeCziWithWasm(wasm.decode_czi_fast, buffer, options || {}, context);
 		case 'jxr':
 			return decodeJpegxrWithWasm(wasm.decode_jpegxr_fast, buffer, context);
+		case 'jp2':
+			return decodeJpeg2000WithWasm(wasm.decode_jpeg2000_fast, buffer, context);
 		default:
 			throw new Error(`${format} has no codec-module decoder`);
 	}

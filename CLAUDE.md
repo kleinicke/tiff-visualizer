@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
 Prefer Rust for complete byte parsers and pixel algorithms; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. A narrowly scoped TypeScript accelerator is acceptable when measurement shows that the input bytes already match a JavaScript TypedArray and crossing WASM memory is the dominant cost. Such an accelerator must preserve the source buffer for unsupported inputs and delegate them to the authoritative Rust implementation.
 
-**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF.
+**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG 2000, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF.
 
 **Three WebAssembly modules, not one.** The decoders are split by how often a real file needs them, because the alternative is every image open paying for codecs almost nobody uses:
 
@@ -17,7 +17,7 @@ Prefer Rust for complete byte parsers and pixel algorithms; anything that touche
 | `media/wasm/codec-wasm.wasm` | the SAME crate, `--features heavy-codecs` | 2.7 MB | only for a file declaring JPEG 2000, JPEG XR, LERC, LZMA, WebP, or a DICOM JPEG-LS/lossless syntax |
 | `media/wasm/jxl-wasm.wasm` | `wasm/jxl-decoder`, the `jxl` feature | 1.2 MB | only on the first `.jxl` open |
 
-The codec module is a strict SUPERSET of the core — same adapter, same container parsers, more codecs — so a file the core cannot finish is re-decoded there through the very same code and the two cannot drift. Routing is by failure, not by guesswork: `decompress_block` (and the DICOM codec dispatch) reports a codec it does not carry as `[external-codec:NAME]` while reading the file's header, before any pixel work, and that error is the ONLY thing that triggers the download. Anything else propagates. Because a codestream codec carries no container knowledge, one module answers for every container: the same JPEG XR decoder serves TIFF 34934, a CZI subblock and a standalone `.jxr`.
+The codec module is a strict SUPERSET of the core — same adapter, same container parsers, more codecs — so a file the core cannot finish is re-decoded there through the very same code and the two cannot drift. Routing is by failure, not by guesswork: `decompress_block` (and the DICOM codec dispatch) reports a codec it does not carry as `[external-codec:NAME]` while reading the file's header, before any pixel work, and that error is the ONLY thing that triggers the download. Anything else propagates. Because a codestream codec carries no container knowledge, one module answers for every container: the same JPEG XR decoder serves TIFF 34934, a CZI subblock and a standalone `.jxr`, and the same JPEG 2000 decoder serves TIFF 34712, a DICOM `.4.90` frame and a standalone `.jp2`.
 
 Two rules that are load-bearing rather than stylistic. `external_codec_needed` in [strips.rs](crates/image-decoders/src/formats/tiff/strips.rs) and `EXTERNAL_CODEC_PATTERN` in [codec-wasm-wrapper.ts](media/modules/codec-wasm-wrapper.ts) are one protocol — change either and change both. And `float_strip_plan_for` must not claim a codec the build cannot decode: the strip pool decodes with whichever module produced the plan, so a core-build plan naming JPEG 2000 would have every worker fail.
 
@@ -140,7 +140,7 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
   - **PfmProcessor**: Portable Float Map
   - **PpmProcessor**: Portable PixMap formats (PPM/PGM/PBM)
   - **PngProcessor**: PNG with uint8/16 and float16/32 support
-  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI/ND2/LIF/JPEG XR lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
+  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI/ND2/LIF/JPEG XR/JPEG 2000 lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display

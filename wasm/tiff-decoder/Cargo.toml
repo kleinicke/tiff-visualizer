@@ -22,6 +22,7 @@ default = ["console_error_panic_hook"]
 heavy-codecs = [
     "scientific-image-decoders/heavy-codecs",
     "scientific-image-decoders/jpegxr",
+    "scientific-image-decoders/jpeg2000",
 ]
 
 [dependencies]

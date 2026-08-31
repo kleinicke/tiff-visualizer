@@ -94,6 +94,70 @@ async function testJpegXr() {
 }
 
 /**
+ * Standalone JPEG 2000, decoded by dicom-toolkit-jpeg2000 through
+ * `decode_jpeg2000_fast` in the heavy-codec module — the same codestream
+ * decoder TIFF compression 34712 uses, with no TIFF wrapper to describe the
+ * samples.
+ *
+ * Every fixture is LOSSLESS (`level=0`), so all of them are checked against the
+ * generator's own formula with zero tolerance rather than against a snapshot.
+ *
+ * `standalone_gray12.jp2` is the case that matters for remote sensing and the
+ * one a plausible-looking implementation gets wrong: a Sentinel-2 band is
+ * 12-bit precision stored in 16-bit samples, so `bits_per_sample` must report
+ * the 16-bit STORAGE width while `type_max` reports the 12-bit PRECISION.
+ * Getting type_max from the storage width instead renders a correct decode at
+ * a sixteenth brightness.
+ */
+async function testJpeg2000() {
+	const wasmJs = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.js');
+	const wasmBin = path.join(__dirname, '..', 'media', 'wasm', 'codec-wasm.wasm');
+	if (!fs.existsSync(wasmBin)) {
+		console.log('⚠️  media/wasm/codec-wasm.wasm not found — run `npm run build:wasm:codecs` first. Skipping JPEG 2000.');
+		return;
+	}
+	const wasm = await import(wasmJs.replace(/\\/g, '/'));
+	await wasm.default({ module_or_path: fs.readFileSync(wasmBin) });
+
+	for (const [file, channels, bits, numericType, scale, typeMax] of [
+		['standalone_gray8.jp2', 1, 8, 'uint8', 255, 255],
+		['standalone_rgb8.jp2', 3, 8, 'uint8', 255, 255],
+		['standalone_gray16.jp2', 1, 16, 'uint16', 65535, 65535],
+		['standalone_gray12.jp2', 1, 16, 'uint16', 4095, 4095],
+		// The bare codestream spelling, with no JP2 box structure around it.
+		['standalone_gray8.j2k', 1, 8, 'uint8', 255, 255],
+	]) {
+		const bytes = new Uint8Array(fs.readFileSync(path.join(samplesDir, file)));
+		const result = wasm.decode_jpeg2000_fast(bytes);
+		assert.strictEqual(result.width, 64, `${file} width`);
+		assert.strictEqual(result.height, 48, `${file} height`);
+		assert.strictEqual(result.channels, channels, `${file} channels`);
+		assert.strictEqual(result.bits_per_sample, bits, `${file} storage bits per sample`);
+		assert.strictEqual(result.sample_format, 1, `${file} sample format is unsigned integer`);
+		assert.strictEqual(result.source_numeric_type, numericType, `${file} numeric type`);
+		assert.strictEqual(result.type_max, typeMax,
+			`${file} type_max must be the codestream precision, not the storage width`);
+
+		const data = result.take_data_as_f32();
+		assert.strictEqual(data.length, 64 * 48 * channels, `${file} sample count`);
+		let worst = 0;
+		for (let y = 0; y < 48; y++) {
+			for (let x = 0; x < 64; x++) {
+				const expected = Math.floor(pattern(x, y) * scale);
+				worst = Math.max(worst, Math.abs(data[(y * 64 + x) * channels] - expected));
+			}
+		}
+		assert.strictEqual(worst, 0, `${file}: lossless decode must match the generator exactly`);
+		console.log(`✅ ${file} decodes to ${channels}-channel ${numericType}, type_max ${typeMax} (lossless)`);
+	}
+
+	// Neither a JP2 signature box nor an SOC/SIZ codestream.
+	assert.throws(() => wasm.decode_jpeg2000_fast(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])),
+		/Not a JPEG 2000 file/, 'a non-JPEG 2000 buffer must be rejected by signature');
+	console.log('✅ Non-JPEG 2000 bytes are rejected by signature');
+}
+
+/**
  * Standalone JPEG XL, decoded by jxl-rs through `decode_jxl_fast`. This module
  * is built SEPARATELY from tiff-wasm (see wasm/jxl-decoder), which is why this
  * loads a second module rather than reusing the one testJpegXr initialized.
@@ -160,6 +224,7 @@ async function testJpegXl() {
 async function main() {
 	console.log('🧪 Running format decoder smoke-tests (PNG, JPEG XR, JPEG XL)...\n');
 	await testJpegXr();
+	await testJpeg2000();
 	await testJpegXl();
 
 	// --- PNG via UPNG (the path the extension uses for 16-bit PNGs) ---

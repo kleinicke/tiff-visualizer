@@ -667,6 +667,15 @@ async function decodeJxr(_buffer: ArrayBuffer): Promise<never> {
 		'[external-codec:JPEG XR] a .jxr file needs the JPEG XR decoder, which is not in this build');
 }
 
+/**
+ * Standalone JPEG 2000, for the same reason as `decodeJxr` above: a `.jp2` is
+ * a JPEG 2000 codestream, whose decoder is only in the heavy-codec module.
+ */
+async function decodeJp2(_buffer: ArrayBuffer): Promise<never> {
+	throw new Error(
+		'[external-codec:JPEG 2000] a .jp2 file needs the JPEG 2000 decoder, which is not in this build');
+}
+
 async function decodeFits(buffer: ArrayBuffer) {
 	await requireWasm('FITS');
 	return decodeFitsWithWasm(decode_fits_fast, buffer, 'worker');
@@ -726,6 +735,8 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeJxl(buffer);
 		case 'jxr':
 			return decodeJxr(buffer);
+		case 'jp2':
+			return decodeJp2(buffer);
 		case 'fits':
 			return decodeFits(buffer);
 		case 'dicom':

@@ -26,6 +26,7 @@ import {
 	decodeDicomWithWasm,
 	decodeFitsWithWasm,
 	decodeJpegxrWithWasm,
+	decodeJpeg2000WithWasm,
 	decodeJxlWithWasm,
 	decodeNetcdfWithWasm,
 	decodeNpyWithWasm,
@@ -111,6 +112,17 @@ export async function decodeJxrLocal(buffer: ArrayBuffer) {
 	const { initCodecDecoder } = await import('./codec-wasm-wrapper.js');
 	const wasm = await initCodecDecoder();
 	return decodeJpegxrWithWasm(wasm.decode_jpegxr_fast, buffer, 'main');
+}
+
+/**
+ * Standalone JPEG 2000. Like `.jxr` above, the decoder lives ONLY in the
+ * heavy-codec module — a `.jp2` is a JPEG 2000 codestream and nothing else —
+ * so there is no core attempt to make first.
+ */
+export async function decodeJp2Local(buffer: ArrayBuffer) {
+	const { initCodecDecoder } = await import('./codec-wasm-wrapper.js');
+	const wasm = await initCodecDecoder();
+	return decodeJpeg2000WithWasm(wasm.decode_jpeg2000_fast, buffer, 'main');
 }
 
 export async function decodeFitsLocal(buffer: ArrayBuffer) {

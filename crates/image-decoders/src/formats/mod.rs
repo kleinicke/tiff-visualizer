@@ -12,12 +12,15 @@ pub(crate) mod hdr;
 // feature implying both; ungated so there is exactly one implementation.
 pub(crate) mod external_codec;
 pub(crate) mod half;
+#[cfg(feature = "jpeg2000")]
+pub(crate) mod jpeg2000;
 #[cfg(feature = "jpegxr")]
 pub(crate) mod jpegxr;
 #[cfg(feature = "jxl")]
 pub(crate) mod jxl;
 #[cfg(any(
     feature = "npy",
+    feature = "jpeg2000",
     feature = "jpegxr",
     feature = "jxl",
     feature = "fits",
@@ -34,6 +37,7 @@ pub(crate) mod lif;
     feature = "tiff",
     feature = "exr",
     feature = "hdr",
+    feature = "jpeg2000",
     feature = "jpegxr",
     feature = "jxl",
     feature = "npy",
@@ -58,6 +62,7 @@ pub(crate) mod pfm;
 #[cfg(feature = "png")]
 pub(crate) mod png;
 #[cfg(any(
+    feature = "jpeg2000",
     feature = "jpegxr",
     feature = "jxl",
     feature = "fits",

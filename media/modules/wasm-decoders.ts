@@ -230,6 +230,16 @@ export function decodeJpegxrWithWasm(
 	return assembleDecoded<Float32Array>(result, 'jxr', context, startedAt);
 }
 
+export function decodeJpeg2000WithWasm(
+	decodeJpeg2000Fast: (bytes: Uint8Array) => any,
+	buffer: ArrayBuffer,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeJpeg2000Fast(new Uint8Array(buffer));
+	return assembleDecoded<Float32Array>(result, 'jp2', context, startedAt);
+}
+
 export function decodeFitsWithWasm(
 	decodeFitsFast: (bytes: Uint8Array) => any,
 	buffer: ArrayBuffer,

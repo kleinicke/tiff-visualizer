@@ -300,10 +300,13 @@ verified to build for `wasm32-unknown-unknown` before being planned around.
 2. **JPEG Lossless and JPEG 2000 DICOM transfer syntaxes**, in the order set out
    under "DICOM transfer syntax coverage" below. JPEG-LS depends on a pure-Rust
    decoder existing at all, so it is gated on that survey rather than scheduled.
-3. **JPEG 2000 / HTJ2K standalone files (`.jp2`, `.j2k`, `.j2c`)**, sharing the
-   decoded-pixel path with the encapsulated DICOM frames. Preserve signedness,
-   component count, and 12/16-bit samples instead of converting through 8-bit
-   RGBA.
+3. ~~**JPEG 2000 standalone files (`.jp2`, `.j2k`, `.j2c`)**~~ Implemented —
+   `decode_jpeg2000_fast` in `crates/image-decoders/src/formats/jpeg2000.rs`,
+   sharing the codestream decoder with TIFF 34712 and the encapsulated DICOM
+   frames. Component count and 12/16-bit samples survive (a Sentinel-2 band
+   normalizes against its 12-bit precision, not the 16-bit storage width).
+   STILL OPEN: signed components, which `decode_native` clamps to zero, and
+   HTJ2K, which needs the crate's `openjph-htj2k` feature.
 4. **NIfTI (`.nii`, `.nii.gz`, and paired `.hdr`/`.img`).** Add a focused
    parser and reuse dataset axes for 3D/4D volume and time navigation. Honor
    voxel spacing, scaling, qform/sform orientation, and integer/float data

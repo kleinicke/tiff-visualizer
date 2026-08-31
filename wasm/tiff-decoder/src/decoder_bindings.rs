@@ -695,6 +695,22 @@ pub fn decode_jpegxr_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
         .map_err(js_error)
 }
 
+/// Standalone JPEG 2000 (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`). The
+/// TIFF path decodes the same codestream under compression 34712; this reads
+/// the geometry and precision off the codestream itself, there being no TIFF
+/// tags to describe them.
+///
+/// Present only in the codec module, for the same reason as JPEG XR above: no
+/// format in the core build needs the JPEG 2000 decoder.
+#[cfg(feature = "heavy-codecs")]
+#[wasm_bindgen]
+pub fn decode_jpeg2000_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_jpeg2000_fast(data)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
 #[wasm_bindgen]
 pub fn decode_fits_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
     prepare();
