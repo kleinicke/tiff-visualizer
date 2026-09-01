@@ -2395,6 +2395,95 @@ a JS fallback.
 
 ---
 
+## 13. Resolution-level (pyramid) decoding: JPEG 2000 and COG
+
+One idea, two containers. Both JPEG 2000 and Cloud-Optimized GeoTIFF already
+store the image at several resolutions; the viewer decodes the full-resolution
+one and then throws most of it away to fit a window. Decoding the level that
+matches the zoom instead is the single largest open win for large scientific
+images, and neither container needs new decoding — only choosing which level to
+ask for.
+
+They are listed together because they share a design: a "which level do I want
+for this zoom?" decision, a decode that honours it, and a rule for when to go
+back for full resolution (zoom in, pixel inspection, measurement, export). Doing
+them separately means building that twice.
+
+### 13a. JPEG 2000 resolution levels
+
+A JPEG 2000 codestream is a wavelet pyramid by construction, and
+`dicom-toolkit-jpeg2000` already exposes the level through
+`DecodeSettings::target_resolution`. Measured on a 5120x5120 uint16 lossless
+`.jp2` (native release build, `decode_native`):
+
+| decode at | time |
+| --- | --- |
+| 5120x5120 (full) | 1751 ms |
+| 2560x2560 | 468 ms |
+| 1280x1280 | 149 ms |
+| 640x640 | 44 ms |
+
+Roughly 4x per level, for a one-field change to the settings struct.
+Fit-to-window on a normal display needs about 1280 px, so a first open could be
+~40x faster than it is now.
+
+Worth knowing before starting: essentially ALL of the current cost is inside the
+codec. On that same file the header parse is 0 ms, `decode_native` is 1794 ms,
+and the u16 -> f32 conversion in `formats/jpeg2000.rs` is 8 ms. So there is no
+win available in our own code, and the two OTHER levers are worse buys:
+
+* **Off the main thread.** A `.jp2` currently decodes on the main thread
+  (`[jp2 (main)]` in the perf log), so a large one freezes the UI for its whole
+  decode. Fixing it means a second worker bundle built against the codec glue —
+  see the header comment in `media/modules/codec-fallback.ts` for why the glue
+  cannot join the existing worker bundle. Real UX win, but architectural, and it
+  does not make the decode faster.
+* **Parallelism does not apply.** The crate's tile loop is sequential with no
+  rayon, and single-tile codestreams (what most writers emit) have no tiles to
+  split. The level where JPEG 2000 is embarrassingly parallel is the code-block,
+  which the crate does not expose.
+* **A faster codec.** OpenJPEG (C) decodes the same file in ~1000 ms against our
+  1794 ms native, so the pure-Rust crate costs ~1.8x. WASM adds ~1.5x on top
+  (2801 ms in the browser). Both are real, neither is worth the disruption while
+  a 40x algorithmic win is unclaimed.
+
+**Difficulty: 2** for the decode itself, plus whatever the shared level-choosing
+policy costs.
+
+### 13b. COG overviews and SubIFDs
+
+A COG stores the same scene at halving resolutions as additional IFDs:
+
+    IFD 0  10980 x 10980   full resolution
+    IFD 1   5490 x 5490    /2   \
+    IFD 2   2745 x 2745    /4    > overviews
+    IFD 3   1373 x 1373    /8   /
+
+Two things are missing, and they are independent:
+
+1. **Overviews are mistaken for pages.** `NewSubfileType` (tag 254) bit 0 marks
+   an IFD as a reduced-resolution version of another image. Nothing reads it, so
+   `pageCount` counts overviews as pages and a COG opens as a multi-page image
+   whose later pages are blurry duplicates.
+2. **SubIFDs are invisible.** The other convention hangs the overviews off the
+   full-resolution IFD as a list of offsets in tag 330. Nothing in the codebase
+   reads tag 330 at all, so those overviews are simply not seen.
+
+Then the same payoff as 13a: pick the level from the zoom instead of always
+decoding IFD 0. For a 10980^2 Sentinel-2 band that is the difference between
+instant and multi-second.
+
+This subsumes the older "Pyramidal/tiled BigTIFF viewport loading" bullet under
+"Other ideas worth considering" below, which describes the same mechanism for
+`.svs` and large OME-TIFFs — whole-slide images are pyramidal for exactly this
+reason, so one implementation serves COG, JP2 and WSI.
+
+**Difficulty: 3** — the IFD/SubIFD classification is straightforward; deciding
+when a decode may be approximate is the part that needs care. Pixel inspection,
+measurement, statistics and export must all keep reading full resolution, or the
+viewer would quietly report values from a downsampled image. That rule is shared
+with 13a and is the real design work in both.
+
 ## Other ideas worth considering
 
 - **Physical-unit readouts everywhere.** Once voxel spacing exists (item 2), show
@@ -2405,7 +2494,8 @@ a JS fallback.
   **Difficulty: 3.**
 - **Pyramidal/tiled BigTIFF viewport loading.** Many whole-slide (`.svs`) and
   large OME-TIFFs are pyramidal — decode only the visible tiles at the right
-  resolution level. Shares the lazy-loading infra with item 3. **Difficulty: 4.**
+  resolution level. Shares the lazy-loading infra with item 3. Now covered by
+  item 13b, which is the same mechanism for COG: implement it once. **Difficulty: 4.**
 - **Region-of-interest statistics.** Superseded by item 7, which covers this as
   its first deliverable.
 - **Remove the geotiff.js fallback.** The codec argument is settled — what is

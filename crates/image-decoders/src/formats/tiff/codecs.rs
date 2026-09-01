@@ -1,5 +1,5 @@
 use super::orientation::TiffOrientation;
-use super::tags::{extract_all_tags_json, extract_ome_xml, extract_page_tags_json};
+use super::tags::{extract_all_tags_json, extract_geo_json, extract_ome_xml, extract_page_tags_json};
 use super::{finalize_decode_bytes, patch_photometric_to_grayscale};
 use crate::pipeline::stats::compute_stats_u8;
 use crate::DecodeError;
@@ -227,6 +227,7 @@ pub(crate) fn decode_jpeg_ycbcr(
         timing_pack_ms: 0.0,
         all_tags_json: extract_all_tags_json(data),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
     })
 }
 
@@ -445,6 +446,7 @@ pub(crate) fn decode_palette(
         timing_pack_ms: 0.0,
         all_tags_json: extract_page_tags_json(data, page_index),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, page_index),
     })
 }
 
@@ -627,6 +629,7 @@ pub(crate) fn decode_ccitt(
         timing_pack_ms: 0.0,
         all_tags_json: extract_all_tags_json(data),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
     })
 }
 
@@ -801,6 +804,7 @@ pub(crate) fn decode_ycbcr_subsampled(
         timing_pack_ms: 0.0,
         all_tags_json: String::new(),
         ome_xml: String::new(),
+        geo_json: String::new(),
     })
 }
 
@@ -996,6 +1000,7 @@ pub(crate) fn decode_sgilog(
         timing_pack_ms: 0.0,
         all_tags_json: String::new(),
         ome_xml: String::new(),
+        geo_json: String::new(),
     })
 }
 

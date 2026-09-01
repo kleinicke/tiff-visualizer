@@ -1,6 +1,7 @@
 "use strict";
 
 import type { SettingsManager } from './settings-manager.js';
+import { formatMapPosition, type GeoReference } from './geo-reference.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 
@@ -46,6 +47,12 @@ export class MouseHandler {
 	/** Demosaiced samples when the debayer view transform is active. */
 	debayerValueProvider: ((x: number, y: number) => number[] | null) | null;
 	physicalPixelSize: { x?: number; y?: number; xUnit?: string; yUnit?: string } | null;
+	/**
+	 * GeoTIFF georeferencing for the current image, as decoded in Rust
+	 * (`formats/tiff/geokeys.rs`). Null for the overwhelming majority of
+	 * images, which carry none.
+	 */
+	geoReference: GeoReference | null;
 
 	// DOM elements
 	container: HTMLElement;
@@ -77,6 +84,7 @@ export class MouseHandler {
 		this.decodedValueProvider = null;
 		this.debayerValueProvider = null;
 		this.physicalPixelSize = null;
+		this.geoReference = null;
 
 		// DOM elements
 		this.container = document.body;
@@ -94,6 +102,10 @@ export class MouseHandler {
 
 	setPhysicalPixelSize(spacing: { x?: number; y?: number; xUnit?: string; yUnit?: string } | null): void {
 		this.physicalPixelSize = spacing;
+	}
+
+	setGeoReference(geo: GeoReference | null): void {
+		this.geoReference = geo;
 	}
 
 	setExrProcessor(proc: any) { this.exrProcessor = proc; }
@@ -202,6 +214,11 @@ export class MouseHandler {
 		x = Math.min(Math.max(0, x), Math.max(0, naturalWidth - 1));
 		y = Math.min(Math.max(0, y), Math.max(0, naturalHeight - 1));
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
+
+		const mapPosition = formatMapPosition(this.geoReference, x, y);
+		if (mapPosition) {
+			return `${x}x${y} (${mapPosition}) ${color}`;
+		}
 
 		const spacing = this.physicalPixelSize;
 		if (spacing && Number.isFinite(spacing.x) && Number.isFinite(spacing.y)) {

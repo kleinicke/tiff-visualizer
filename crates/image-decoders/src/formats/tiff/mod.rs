@@ -1,5 +1,6 @@
 mod cmyk;
 mod codecs;
+pub(crate) mod geokeys;
 mod orientation;
 pub(crate) mod strips;
 pub(crate) mod tags;
@@ -21,7 +22,7 @@ use strips::{
     decode_zstd, try_decode_float_predictor_strips, try_decode_general_strips_tiles,
     try_decode_subbit_strips, try_decode_uncompressed_strips,
 };
-use tags::{extract_ome_xml, extract_page_tags_json};
+use tags::{extract_geo_json, extract_ome_xml, extract_page_tags_json};
 
 use crate::DecodeError;
 use std::io::Cursor;
@@ -117,6 +118,7 @@ pub(crate) fn decode_tiff_impl(
             let mut result = decode_tiff_impl(&patched, compute_stats, page_index)?;
             result.all_tags_json = extract_page_tags_json(data, page_index);
             result.ome_xml = extract_ome_xml(data);
+            result.geo_json = extract_geo_json(data, page_index);
             return Ok(result);
         }
     }
@@ -168,6 +170,7 @@ pub(crate) fn decode_tiff_impl(
                 )?;
                 result.all_tags_json = extract_page_tags_json(data, page_index);
                 result.ome_xml = extract_ome_xml(data);
+            result.geo_json = extract_geo_json(data, page_index);
                 return Ok(result);
             }
         }
@@ -381,6 +384,7 @@ pub(crate) fn decode_tiff_impl(
             )?;
             result.all_tags_json = extract_page_tags_json(data, page_index);
             result.ome_xml = extract_ome_xml(data);
+            result.geo_json = extract_geo_json(data, page_index);
             return Ok(result);
         }
     }
@@ -778,6 +782,7 @@ pub(crate) fn decode_tiff_impl(
         timing_pack_ms: pack_time,
         all_tags_json: extract_page_tags_json(data, page_index),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, page_index),
     });
 
     result
@@ -1101,6 +1106,7 @@ pub(crate) struct StripMetadata {
     pub photometric_interpretation: u32,
     pub all_tags_json: String,
     pub ome_xml: String,
+    pub geo_json: String,
 }
 
 pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeError> {
@@ -1127,6 +1133,7 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
         photometric_interpretation,
         all_tags_json: extract_page_tags_json(data, 0),
         ome_xml: extract_ome_xml(data),
+        geo_json: extract_geo_json(data, 0),
     })
 }
 

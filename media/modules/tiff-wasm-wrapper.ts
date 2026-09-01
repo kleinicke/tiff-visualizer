@@ -152,6 +152,12 @@ export interface TiffDecodeResult {
     allTagsJson: string;
 	/** OME-XML from the first IFD, present even when another page was decoded. */
 	omeXml?: string;
+	/**
+	 * GeoTIFF georeferencing as JSON — the unpacked key directory's CRS plus
+	 * the raster-to-model transform. Absent for a TIFF that carries none,
+	 * which is most of them.
+	 */
+	geoJson?: string;
 }
 
 /**
@@ -256,7 +262,8 @@ export class TiffWasmProcessor {
             min: result.min_value,
             max: result.max_value,
             allTagsJson: result.all_tags_json,
-			omeXml: result.ome_xml || undefined
+			omeXml: result.ome_xml || undefined,
+			geoJson: result.geo_json || undefined
         };
 
         return decodeResult;

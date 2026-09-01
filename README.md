@@ -38,6 +38,7 @@ Extensionless DICOM studies can be opened with **Scientific Image Visualizer: Op
 
 ## Features
 
+- **GeoTIFF awareness**: GeoKeys are unpacked into readable names (`EPSG:32631 (WGS 84 / UTM zone 31N)`), and hovering a pixel shows its position in the file's own coordinate system.
 - **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files: LZW, Deflate, PackBits, Zstd, LZMA, LERC (with GDAL's LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including Aperio's slide-scanner codes), JPEG XR, WebP and CCITT fax, tiled or stripped.
 - **Scientific Image Inspection**: Inspect uint8, uint16, float16, and float32 image data in grayscale, RGB, and RGBA images.
 - **Dataset Navigation**: Browse DICOM series/slices and multi-file OME C/Z/T planes as one logical dataset while the viewer switches physical files transparently.

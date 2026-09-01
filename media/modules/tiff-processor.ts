@@ -6,6 +6,7 @@ import { tryStripParallelDecode } from './strip-parallel-decode.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, TagEntry } from './tiff-tag-utils.js';
+import { parseGeoReference, type GeoReference } from './geo-reference.js';
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
@@ -92,6 +93,8 @@ export class TiffProcessor {
 	omeMetadata: OmeMetadata | null;
 	omeBinaryOnly: OmeBinaryOnly | null;
 	omeXml: string | null;
+	/** GeoTIFF georeferencing for the decoded page, or null for a plain TIFF. */
+	geoReference: GeoReference | null;
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -122,6 +125,7 @@ export class TiffProcessor {
 		this.omeMetadata = null;
 		this.omeBinaryOnly = null;
 		this.omeXml = null;
+		this.geoReference = null;
 	}
 
 	private _ensureLocalWasm(): Promise<boolean> {
@@ -225,6 +229,7 @@ export class TiffProcessor {
 				this.omeMetadata = null;
 				this.omeBinaryOnly = null;
 				this.omeXml = null;
+				this.geoReference = null;
 			}
 			const speculative = pageIndex === 0
 				? await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'tiff')
@@ -374,6 +379,7 @@ export class TiffProcessor {
 								max: parallel.max,
 								allTagsJson: parallel.allTagsJson,
 								omeXml: parallel.omeXml,
+								geoJson: parallel.geoJson,
 								decodedWith: `wasm (${parallel.workers} ${parallel.tileLength ? 'tile-row' : 'strip'} workers)`,
 								decodeTimings: parallel.timings,
 							};
@@ -561,6 +567,7 @@ export class TiffProcessor {
 					}
 					this._lastAllTags = parseAllTagsJson(wasmResult.allTagsJson);
 					this._setOmeXml(wasmResult.omeXml || findOmeXmlInTags(this._lastAllTags));
+					this.geoReference = parseGeoReference((wasmResult as any).geoJson);
 					this.rawTiffData.ome = this.omeMetadata;
 					this._gdalNodata = parseGdalNodata(this._lastAllTags);
 					if (this._gdalNodata !== undefined && this._lastStatistics &&

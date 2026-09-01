@@ -1484,6 +1484,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		primaryImageData = null;
 		peerImageData = null;
 		mouseHandler.setPhysicalPixelSize(null);
+		mouseHandler.setGeoReference(null);
 		disposeWebglRenderers();
 
 		// Reset each processor's initial-load flag so the reload re-sends
@@ -1918,6 +1919,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				xUnit: ome.physicalSizeXUnit,
 				yUnit: ome.physicalSizeYUnit,
 			} : null);
+			// A GeoTIFF's cursor readout is its map position, which takes
+			// precedence over the OME spacing above; the mouse handler decides.
+			mouseHandler.setGeoReference(tiffProcessor.geoReference || null);
 			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 
@@ -6686,6 +6690,10 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 					convertedFloatData: tiffProcessor._convertedFloatData,
 					pageIndex: tiffProcessor.pageIndex,
 					pageCount: tiffProcessor.pageCount,
+					// Carried through the cache so switching back to a
+					// GeoTIFF in a collection keeps its coordinate readout;
+					// the restore path below has no bytes to re-parse.
+					geoReference: tiffProcessor.geoReference,
 					formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null
 				}
 			};
@@ -6772,6 +6780,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 					x: cachedOme.physicalSizeX, y: cachedOme.physicalSizeY,
 					xUnit: cachedOme.physicalSizeXUnit, yUnit: cachedOme.physicalSizeYUnit,
 				} : null);
+				tiffProcessor.geoReference = raw.geoReference || null;
+				mouseHandler.setGeoReference(tiffProcessor.geoReference);
 				updateTiffPageOverlay();
 				tiffProcessor._lastRenderHistogram = null;
 				tiffProcessor._lastRenderUsedWebGL = false;
@@ -6970,6 +6980,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		imageElement = null;
 		primaryImageData = null;
 		mouseHandler.setPhysicalPixelSize(null);
+		mouseHandler.setGeoReference(null);
 		// Same format and (almost always) same dimensions across a plane step, so
 		// the renderers stay valid. Tearing them down here cost a full GPU
 		// re-validation per slider step.

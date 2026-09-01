@@ -2256,6 +2256,23 @@ var TiffResult = class _TiffResult {
     return ret >>> 0;
   }
   /**
+   * GeoTIFF georeferencing as JSON — the unpacked key directory's CRS plus
+   * the raster-to-model transform. Empty for a TIFF that carries none.
+   * @returns {string}
+   */
+  get geo_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.tiffresult_geo_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
    * @returns {number}
    */
   get max_value() {
@@ -2303,7 +2320,7 @@ var TiffStripMetadataJs = class _TiffStripMetadataJs {
    * @returns {number}
    */
   get page_count() {
-    const ret = wasm.histogramresult_non_finite_count(this.__wbg_ptr);
+    const ret = wasm.hdrresult_channels(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2325,7 +2342,7 @@ var TiffStripMetadataJs = class _TiffStripMetadataJs {
    * @returns {number}
    */
   get photometric_interpretation() {
-    const ret = wasm.tifffloatstripplanjs_height(this.__wbg_ptr);
+    const ret = wasm.pngresult_height(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2336,6 +2353,21 @@ var TiffStripMetadataJs = class _TiffStripMetadataJs {
     let deferred1_1;
     try {
       const ret = wasm.tiffstripmetadatajs_ome_xml(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
+   * @returns {string}
+   */
+  get geo_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.tiffstripmetadatajs_geo_json(this.__wbg_ptr);
       deferred1_0 = ret[0];
       deferred1_1 = ret[1];
       return getStringFromWasm0(ret[0], ret[1]);

@@ -431,6 +431,12 @@ impl TiffResult {
     pub fn ome_xml(&self) -> String {
         self.inner.ome_xml()
     }
+    /// GeoTIFF georeferencing as JSON — the unpacked key directory's CRS plus
+    /// the raster-to-model transform. Empty for a TIFF that carries none.
+    #[wasm_bindgen(getter)]
+    pub fn geo_json(&self) -> String {
+        self.inner.geo_json()
+    }
     #[wasm_bindgen(getter)]
     pub fn all_tags_json(&self) -> String {
         self.inner.all_tags_json()
@@ -953,6 +959,10 @@ impl TiffStripMetadataJs {
     #[wasm_bindgen(getter)]
     pub fn ome_xml(&self) -> String {
         self.inner.ome_xml.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn geo_json(&self) -> String {
+        self.inner.geo_json.clone()
     }
 }
 

@@ -112,6 +112,11 @@ pub struct TiffResult {
     // every page result so restoring directly to a later page still has the
     // dataset's C/Z/T semantics without decoding page zero first.
     ome_xml: String,
+    // GeoTIFF georeferencing (34735/34736/34737 unpacked, plus the model
+    // transform from 33550+33922 or 34264) as JSON, or empty for a TIFF that
+    // carries none. Computed per page like `ome_xml` above, because a
+    // multi-page GeoTIFF's pages can sit at different resolutions.
+    geo_json: String,
 }
 
 pub struct ExrResult {
@@ -848,6 +853,10 @@ impl TiffResult {
         self.all_tags_json.clone()
     }
 
+    pub fn geo_json(&self) -> String {
+        self.geo_json.clone()
+    }
+
     /// Get raw data as bytes (for transferring to JS)
     pub fn get_data_bytes(&self) -> Vec<u8> {
         if self.data.is_empty() && !self.data_f32.is_empty() {
@@ -1347,6 +1356,7 @@ pub struct TiffStripMetadata {
     pub photometric_interpretation: u32,
     pub all_tags_json: String,
     pub ome_xml: String,
+    pub geo_json: String,
 }
 
 #[cfg(feature = "tiff")]
@@ -1356,6 +1366,7 @@ pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadata, DecodeError
         photometric_interpretation: m.photometric_interpretation,
         all_tags_json: m.all_tags_json,
         ome_xml: m.ome_xml,
+        geo_json: m.geo_json,
     })
 }
 

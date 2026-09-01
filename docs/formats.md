@@ -90,6 +90,33 @@ JPEG XR's packed pixel formats — 5:6:5, 10:10:10, RGBE, the fixed-point layout
 — are reported by name rather than guessed at; reading one as if it were plain
 samples would produce a plausible-looking wrong picture.
 
+### GeoTIFF
+
+A GeoTIFF is an ordinary TIFF carrying a few extra tags, so these files open
+like any other TIFF — what changes is what the viewer can tell you about them.
+
+The GeoKeyDirectory (34735, with values indirected through 34736 and 34737) is
+unpacked into named keys, so the metadata panel shows
+`ProjectedCSTypeGeoKey — EPSG:32631 (WGS 84 / UTM zone 31N)` where a raw tag
+dump shows `1, 1, 1, 8, 1024, 0, 1, 1, ...`. UTM zone names are computed from
+the EPSG code, so all 120 WGS 84 zones are named; a code outside the handful
+otherwise recognized reports its bare number rather than a guess.
+
+Hovering a pixel reports its position in the raster's own coordinate system,
+next to the pixel index. Georeferencing is read from ModelPixelScale (33550)
+plus ModelTiepoint (33922), or from ModelTransformation (34264) when the raster
+is rotated — 34264 wins where a file carries both, since the scale/tiepoint
+pair cannot express rotation. GTRasterTypeGeoKey is honoured: PixelIsArea
+anchors coordinates at a pixel's corner and so reads out its centre half a
+pixel in, while PixelIsPoint is already a centre and is taken as-is.
+
+Two deliberate limits. A file with multiple tiepoints and no scale describes a
+GCP warp rather than an affine placement, and that is declined rather than
+approximated by its first point. And projected coordinates are NOT converted to
+latitude/longitude — that needs the projection maths and a datum database, and
+a wrong latitude would look entirely plausible. Rasters that are already
+geographic do read out as lon/lat, because no projection is involved.
+
 ### JPEG 2000
 
 Standalone `.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c` and `.jpc` files, decoded by

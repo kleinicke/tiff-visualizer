@@ -70,6 +70,7 @@ export interface StripParallelResult {
 	pageCount: number;
 	allTagsJson: string;
 	omeXml: string | undefined;
+	geoJson: string | undefined;
 	data: Float32Array | Uint16Array | Uint8Array;
 	min: number;
 	max: number;
@@ -544,6 +545,7 @@ export async function tryStripParallelDecode(
 		pageCount: meta?.page_count ?? 1,
 		allTagsJson: meta?.all_tags_json ?? '[]',
 		omeXml: meta?.ome_xml || undefined,
+		geoJson: meta?.geo_json || undefined,
 		data,
 		min, max,
 		workers: ranges.length,
