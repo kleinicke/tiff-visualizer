@@ -338,3 +338,32 @@ test('picks a pyramid level for the window, and says when it is approximate', as
   }
   await expect(page.locator('#web-status-size')).toContainText('1/2 overview');
 });
+
+test('reads the stored value under the cursor when region decoding is on', async ({ page }) => {
+  const hoverOverview = async () => {
+    await page
+      .locator('#web-file-input')
+      .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
+    await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+    // Pin a reduced level, so what is displayed is an average of stored pixels.
+    await page.locator('.dataset-overlay select').selectOption({ index: 1 });
+    await expect(page.locator('.dataset-overlay')).toContainText('1/2', { timeout: 30_000 });
+    const box = await page.locator('body > canvas:not(.measure-overlay)').boundingBox();
+    if (box) {
+      await page.mouse.move(box.x + box.width * 0.62, box.y + box.height * 0.38);
+      await page.mouse.move(box.x + box.width * 0.62 + 1, box.y + box.height * 0.38 + 1);
+    }
+  };
+
+  // Off: the readout says plainly that the value is not the stored one.
+  await page.goto('/');
+  await hoverOverview();
+  await expect(page.locator('#web-status-size')).toContainText('1/2 overview');
+
+  // On: the value is read out of the file for the pixel under the cursor, so
+  // there is nothing to caveat.
+  await page.goto('/?regionDecode=1');
+  await hoverOverview();
+  await expect(page.locator('#web-status-size')).toContainText(/\d+x\d+/);
+  await expect(page.locator('#web-status-size')).not.toContainText('overview');
+});

@@ -38,6 +38,8 @@ mod pipeline;
 #[cfg(any(feature = "tiff", feature = "exr", feature = "png", feature = "hdr"))]
 mod time;
 pub use pipeline::stats;
+#[cfg(feature = "tiff")]
+pub use formats::tiff::region::{TiffRegion, TiffRegionResult};
 
 #[cfg(feature = "czi")]
 use formats::czi::decode_czi_impl;
@@ -1010,6 +1012,45 @@ pub fn tiff_page_count(data: &[u8]) -> Result<u32, DecodeError> {
 #[cfg(feature = "tiff")]
 pub fn tiff_page_directory_json(data: &[u8]) -> String {
     formats::tiff::pages::page_directory_json(data)
+}
+
+/// A rectangle of one page of a TIFF, decoded on its own.
+///
+/// The cost of this follows the rectangle, not the image: only the strips or
+/// tiles the rectangle touches are read. That is what lets a viewer show a
+/// gigapixel scene at full resolution — it never decodes more than a window's
+/// worth — and what makes an exact pixel readout affordable while a reduced
+/// pyramid level is on screen.
+///
+/// Returns an error for layouts that are decoded whole (palette, YCbCr, CFA,
+/// planar, rotated, sub-byte samples); callers fall back to the page decode.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_region(
+    data: &[u8],
+    page_index: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<formats::tiff::region::TiffRegionResult, DecodeError> {
+    let plan = formats::tiff::float_strip_plan_for_page(data, page_index).ok_or_else(|| {
+        DecodeError::new("Region decode: this file's layout is decoded as a whole image")
+    })?;
+    formats::tiff::region::decode_region(
+        data,
+        &plan,
+        formats::tiff::region::TiffRegion { x, y, width, height },
+    )
+}
+
+/// Whether `decode_tiff_region` can serve this page at all, without decoding.
+/// Lets a caller decide between a region strategy and the whole-image one
+/// before committing to either.
+#[cfg(feature = "tiff")]
+pub fn tiff_region_decode_available(data: &[u8], page_index: u32) -> bool {
+    formats::tiff::float_strip_plan_for_page(data, page_index)
+        .map(|plan| formats::tiff::region::region_decode_supported(&plan))
+        .unwrap_or(false)
 }
 
 /// Decode an arbitrary zero-based TIFF page and compute min/max statistics.

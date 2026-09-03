@@ -55,6 +55,10 @@ export class MouseHandler {
 	geoReference: GeoReference | null;
 	/** Appended to every readout; see setResolutionNote. */
 	resolutionNote: string = '';
+	/** See setStoredValueResolver. */
+	storedValueResolver: ((x: number, y: number) => Promise<string | null>) | null = null;
+	/** The pixel the last exact read was started for, to drop stale answers. */
+	private _storedValuePixel: string = '';
 
 	// DOM elements
 	container: HTMLElement;
@@ -122,6 +126,20 @@ export class MouseHandler {
 		this.resolutionNote = note || '';
 	}
 
+	/**
+	 * An optional way to get the value actually STORED at a pixel, used when
+	 * the displayed image is a reduced pyramid level and the readout would
+	 * otherwise report an average of several stored pixels.
+	 *
+	 * It is asynchronous — it reads a block out of the file — so the readout is
+	 * posted twice: the approximate value immediately, so the cursor never
+	 * feels laggy, then the exact one when it arrives, if the cursor is still
+	 * on the same pixel. Set to null to go back to reporting what is displayed.
+	 */
+	setStoredValueResolver(resolver: ((x: number, y: number) => Promise<string | null>) | null): void {
+		this.storedValueResolver = resolver;
+	}
+
 	setExrProcessor(proc: any) { this.exrProcessor = proc; }
 	setNpyProcessor(proc: any) { this.npyProcessor = proc; }
 	setPfmProcessor(proc: any) { this.pfmProcessor = proc; }
@@ -172,6 +190,7 @@ export class MouseHandler {
 		const pixelInfo = this._getPixelInfo(e);
 		if (pixelInfo) {
 			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
+			this._upgradeToStoredValue(e);
 		} else {
 			this.vscode.postMessage({ type: 'pixelBlur' });
 		}
@@ -186,9 +205,34 @@ export class MouseHandler {
 		const pixelInfo = this._getPixelInfo(e);
 		if (pixelInfo) {
 			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
+			this._upgradeToStoredValue(e);
 		} else {
 			this.vscode.postMessage({ type: 'pixelBlur' });
 		}
+	}
+
+	/**
+	 * Replace an approximate readout with the stored values, once they arrive.
+	 *
+	 * Dropped if the cursor has moved on: an answer for a pixel nobody is
+	 * pointing at any more must never overwrite the current one.
+	 */
+	private _upgradeToStoredValue(e: MouseEvent): void {
+		const resolver = this.storedValueResolver;
+		// Only worth doing when the displayed value is NOT the stored one.
+		if (!resolver || !this.resolutionNote) { return; }
+		const position = this._pixelPosition(e);
+		if (!position) { return; }
+		const key = `${position.x},${position.y}`;
+		this._storedValuePixel = key;
+		void resolver(position.x, position.y).then(value => {
+			if (!value || this._storedValuePixel !== key) { return; }
+			// The caveat goes with the approximate value it described.
+			this.vscode.postMessage({
+				type: 'pixelFocus',
+				value: this._composeReadout(position.x, position.y, value, ''),
+			});
+		}).catch(() => { /* keep the approximate readout */ });
 	}
 
 	/**
@@ -205,34 +249,51 @@ export class MouseHandler {
 	 * Get pixel information at mouse position
 	 * @private
 	 */
-	_getPixelInfo(e: MouseEvent): string {
-		if (!this.imageElement) return '';
-
+	/**
+	 * The image pixel under the cursor, or null when the cursor is off the
+	 * image. Shared by the readout and by the exact-value upgrade, so the two
+	 * can never disagree about which pixel is being pointed at.
+	 */
+	_pixelPosition(e: MouseEvent): { x: number, y: number, width: number, height: number } | null {
+		if (!this.imageElement) { return null; }
 		const rect = this.imageElement.getBoundingClientRect();
 		const anyElement = this.imageElement as any;
 		const naturalWidth = anyElement.naturalWidth || anyElement.width;
 		const naturalHeight = anyElement.naturalHeight || anyElement.height;
-		// Ignore when outside the element's content box
 		if (
 			e.clientX < rect.left || e.clientX > rect.right ||
 			e.clientY < rect.top || e.clientY > rect.bottom ||
 			rect.width <= 0 || rect.height <= 0
 		) {
-			return '';
+			return null;
 		}
 		const ratioX = (e.clientX - rect.left) / rect.width;
 		const ratioY = (e.clientY - rect.top) / rect.height;
-		let x = Math.floor(ratioX * naturalWidth);
-		let y = Math.floor(ratioY * naturalHeight);
-		// Clamp to valid pixel indices
-		x = Math.min(Math.max(0, x), Math.max(0, naturalWidth - 1));
-		y = Math.min(Math.max(0, y), Math.max(0, naturalHeight - 1));
+		const x = Math.min(Math.max(0, Math.floor(ratioX * naturalWidth)), Math.max(0, naturalWidth - 1));
+		const y = Math.min(Math.max(0, Math.floor(ratioY * naturalHeight)), Math.max(0, naturalHeight - 1));
+		return { x, y, width: naturalWidth, height: naturalHeight };
+	}
+
+	_getPixelInfo(e: MouseEvent): string {
+		const position = this._pixelPosition(e);
+		if (!position) { return ''; }
+		const { x, y, width: naturalWidth, height: naturalHeight } = position;
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
-		const note = this.resolutionNote ? ` · ${this.resolutionNote}` : '';
+		return this._composeReadout(x, y, color, this.resolutionNote);
+	}
+
+	/**
+	 * Assemble a readout from its parts: position, an optional map or physical
+	 * coordinate, the value, and an optional caveat about where the value came
+	 * from. Composing rather than editing a finished string is what lets the
+	 * exact-value upgrade replace only the value.
+	 */
+	_composeReadout(x: number, y: number, value: string, note: string): string {
+		const suffix = note ? ` · ${note}` : '';
 		const mapPosition = formatMapPosition(this.geoReference, x, y);
 		if (mapPosition) {
-			return `${x}x${y} (${mapPosition}) ${color}${note}`;
+			return `${x}x${y} (${mapPosition}) ${value}${suffix}`;
 		}
 
 		const spacing = this.physicalPixelSize;
@@ -244,9 +305,9 @@ export class MouseHandler {
 			const physical = xUnit === yUnit
 				? `${physicalX.toPrecision(5)}×${physicalY.toPrecision(5)} ${xUnit}`.trim()
 				: `${physicalX.toPrecision(5)} ${xUnit} × ${physicalY.toPrecision(5)} ${yUnit}`.trim();
-			return `${x}x${y} (${physical}) ${color}${note}`;
+			return `${x}x${y} (${physical}) ${value}${suffix}`;
 		}
-		return `${x}x${y} ${color}${note}`;
+		return `${x}x${y} ${value}${suffix}`;
 	}
 
 	/**

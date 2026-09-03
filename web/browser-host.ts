@@ -24,6 +24,7 @@ interface ViewerSettings {
   colorPickerShowModified?: boolean;
   showScaleBar?: boolean;
   gpuAcceleration?: boolean;
+  experimentalRegionDecode?: boolean;
   resourceUri?: string;
   src?: string;
   [key: string]: any;
@@ -74,6 +75,9 @@ function baseSettings(): ViewerSettings {
     colorPickerShowModified: false,
     showScaleBar,
     gpuAcceleration: true,
+    // Matches the extension's default: the region path is proven against the
+    // whole-image one by tests, but not yet the default anywhere.
+    experimentalRegionDecode: new URLSearchParams(window.location.search).has('regionDecode'),
     plyVisualizerInstalled: true,
     extensionVersion: 'web-1',
     vscodeVersion: 'browser',

@@ -544,6 +544,81 @@ pub fn tiff_page_count(data: &[u8]) -> Result<u32, JsValue> {
     core::tiff_page_count(data).map_err(js_error)
 }
 
+/// One rectangle of one page, decoded on its own.
+///
+/// The cost follows the rectangle rather than the image, which is what lets a
+/// viewport of a gigapixel scene be shown at full resolution. Returns an error
+/// for layouts that are only decoded whole; the caller falls back to
+/// `decode_tiff_page`.
+#[wasm_bindgen]
+pub struct TiffRegionJs {
+    inner: core::TiffRegionResult,
+}
+
+#[wasm_bindgen]
+impl TiffRegionJs {
+    #[wasm_bindgen(getter)]
+    pub fn x(&self) -> u32 {
+        self.inner.region.x
+    }
+    #[wasm_bindgen(getter)]
+    pub fn y(&self) -> u32 {
+        self.inner.region.y
+    }
+    #[wasm_bindgen(getter)]
+    pub fn width(&self) -> u32 {
+        self.inner.region.width
+    }
+    #[wasm_bindgen(getter)]
+    pub fn height(&self) -> u32 {
+        self.inner.region.height
+    }
+    #[wasm_bindgen(getter)]
+    pub fn channels(&self) -> u32 {
+        self.inner.channels
+    }
+    #[wasm_bindgen(getter)]
+    pub fn bits_per_sample(&self) -> u32 {
+        self.inner.bits_per_sample
+    }
+    #[wasm_bindgen(getter)]
+    pub fn sample_format(&self) -> u32 {
+        self.inner.sample_format
+    }
+    /// Strips or tiles actually read. The number a caller watches to confirm
+    /// the cost is following the window and not the file.
+    #[wasm_bindgen(getter)]
+    pub fn blocks_decoded(&self) -> u32 {
+        self.inner.blocks_decoded
+    }
+    /// Moves the samples out; a second call returns an empty array, as with the
+    /// other decode results.
+    pub fn take_data_as_f32(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.inner.data_f32)
+    }
+}
+
+#[wasm_bindgen]
+pub fn decode_tiff_region(
+    data: &[u8],
+    page_index: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<TiffRegionJs, JsValue> {
+    prepare();
+    core::decode_tiff_region(data, page_index, x, y, width, height)
+        .map(|inner| TiffRegionJs { inner })
+        .map_err(js_error)
+}
+
+/// Whether a page can be served a region at a time, without decoding anything.
+#[wasm_bindgen]
+pub fn tiff_region_decode_available(data: &[u8], page_index: u32) -> bool {
+    core::tiff_region_decode_available(data, page_index)
+}
+
 /// Classify every image in a TIFF's IFD chain without decoding pixels. Used
 /// when a page directory is wanted for a file that was not decoded through
 /// this module (or before deciding which page to decode).

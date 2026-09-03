@@ -183,6 +183,30 @@ export class TiffProcessor {
 		return resolveNanColor(settings);
 	}
 
+	/**
+	 * How a pixel reads when the FILE says something about its samples: a
+	 * nodata sentinel, or a per-band scale and offset. Returns null when the
+	 * file declares neither and the caller should fall back to its own
+	 * type-based formatting.
+	 *
+	 * Shared by the ordinary readout and by the exact region read, so a value
+	 * cannot mean one thing when it comes from the displayed level and another
+	 * when it comes from the file.
+	 */
+	_formatDeclaredSamples(values: number[]): string | null {
+		// A pixel holding the nodata sentinel has no measurement to report.
+		// Printing the sentinel scaled ("-32.768") reads as a real reading; the
+		// render already draws these in the nodata/NaN colour.
+		if (this._gdalNodata !== undefined && values[0] === this._gdalNodata) {
+			return 'nodata';
+		}
+		if (!hasBandScaling(this.gdalMetadata)) { return null; }
+		return values
+			.map((value, sample) => applyBandScaling(this.gdalMetadata, sample, value))
+			.map(value => Number(value.toPrecision(6)).toString())
+			.join(' ');
+	}
+
 	_getTiffLayoutInfo(source: any): TiffLayoutInfo {
 		if (!source) { return {}; }
 		if (source.fileDirectory) {
@@ -1158,6 +1182,55 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * The value stored at one pixel of the FULL-resolution page, read directly
+	 * from the file.
+	 *
+	 * While a pyramid's reduced level is on screen, every value the viewer can
+	 * show comes from that level — an average of several stored pixels. That is
+	 * fine for finding your way around and wrong for reading a measurement off
+	 * the screen, which is why the readout says `1/8 overview` when it happens.
+	 * A rectangle read makes the true value affordable: one block, a couple of
+	 * milliseconds, however large the page is.
+	 *
+	 * `x`/`y` are in the coordinates of the level currently displayed; they are
+	 * scaled up by that level's reduction. Returns null when the file's layout
+	 * is not one that can be read a region at a time, or when anything fails —
+	 * a caveated value is better than a wrong one, and the caller keeps what it
+	 * already had.
+	 */
+	async readStoredPixel(x: number, y: number): Promise<string | null> {
+		const buffer = this._sourceBuffer;
+		if (!buffer) { return null; }
+		const current = this.pageDirectory.find(entry => entry.index === this.pageIndex);
+		const reduction = current && current.reduction > 1 ? current.reduction : 1;
+		if (reduction === 1) { return null; }
+		const page = current?.parent ?? 0;
+
+		try {
+			const wasm = getWasmModuleSync() || await getWasmModule();
+			if (!wasm || typeof wasm.decode_tiff_region !== 'function') { return null; }
+			const bytes = new Uint8Array(buffer);
+			// The centre of the block of stored pixels this display pixel
+			// stands for, rather than its corner: at 1/8 the corner is one of
+			// 64 stored values, and the middle is the least arbitrary of them.
+			const storedX = Math.floor(x * reduction + reduction / 2);
+			const storedY = Math.floor(y * reduction + reduction / 2);
+			const region = wasm.decode_tiff_region(bytes, page, storedX, storedY, 1, 1);
+			const samples = Array.from(region.take_data_as_f32() as Float32Array) as number[];
+			if (!samples.length) { return null; }
+			const declared = this._formatDeclaredSamples(samples);
+			if (declared !== null) { return declared; }
+			const sampleFormat = this.rawTiffData?.ifd?.t339;
+			return samples
+				.map(value => sampleFormat === 3 ? value.toPrecision(4) : String(value))
+				.join(' ');
+		} catch {
+			// Includes the deliberate "this layout is decoded whole" refusal.
+			return null;
+		}
+	}
+
+	/**
 	 * Fast render TIFF data with current settings.
 	 * @param image - GeoTIFF image object
 	 * @param rasters - Raster data
@@ -1199,25 +1272,15 @@ export class TiffProcessor {
 		// mean 1.234. Reporting the raw number here would put this viewer at
 		// odds with every other reader of the same file, so the readout — and
 		// only the readout — is in the file's declared units.
-		const scaled = hasBandScaling(this.gdalMetadata);
-		const physical = (sample: number, value: number) =>
-			applyBandScaling(this.gdalMetadata, sample, value);
-		// A pixel that holds the nodata sentinel has no measurement to report.
-		// Printing the sentinel scaled ("-32.768") reads as a real reading; the
-		// render already draws these in the nodata/NaN colour.
-		if (this._gdalNodata !== undefined && data[pixelIndex * (planarConfig === 2 ? 1 : samples)] === this._gdalNodata) {
-			return 'nodata';
+		const rawSamples: number[] = [];
+		if (planarConfig === 2) {
+			const planeSize = naturalWidth * naturalHeight;
+			for (let i = 0; i < samples; i++) { rawSamples.push(data[pixelIndex + i * planeSize]); }
+		} else {
+			for (let i = 0; i < samples; i++) { rawSamples.push(data[pixelIndex * samples + i]); }
 		}
-		if (scaled) {
-			const values: number[] = [];
-			if (planarConfig === 2) {
-				const planeSize = naturalWidth * naturalHeight;
-				for (let i = 0; i < samples; i++) { values.push(physical(i, data[pixelIndex + i * planeSize])); }
-			} else {
-				for (let i = 0; i < samples; i++) { values.push(physical(i, data[pixelIndex * samples + i])); }
-			}
-			return values.map(value => Number(value.toPrecision(6)).toString()).join(' ');
-		}
+		const declared = this._formatDeclaredSamples(rawSamples);
+		if (declared !== null) { return declared; }
 
 		if (samples === 1) { // Grayscale
 			const value = data[pixelIndex];

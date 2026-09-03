@@ -32,6 +32,8 @@ export interface ImageSettings {
   /** Session-wide idle scale bar visibility, owned by the extension host. */
   showScaleBar?: boolean;
   gpuAcceleration?: boolean;
+  /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
+  experimentalRegionDecode?: boolean;
   plyVisualizerInstalled?: boolean;
   resourceUri?: string;
   src?: string;

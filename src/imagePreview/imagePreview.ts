@@ -23,6 +23,8 @@ interface WebviewImageSettings extends ImageSettings {
 	nanColor: NanColorName;
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
+	/** Experimental rectangle reads; see the setting's description. */
+	experimentalRegionDecode: boolean;
 }
 
 function nativeFormatForPath(path: string): ImageFormatType | undefined {
@@ -178,7 +180,8 @@ export class ImagePreview extends MediaPreview {
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 				nanColor: this._manager.settingsManager.getNanColor(),
 				showScaleBar: this._manager.settingsManager.getShowScaleBar(),
-				gpuAcceleration: this.getGpuAccelerationEnabled()
+				gpuAcceleration: this.getGpuAccelerationEnabled(),
+				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};
 
 			// Send to webview once
@@ -196,7 +199,8 @@ export class ImagePreview extends MediaPreview {
 			}
 		}));
 		this._register(vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration('tiffVisualizer.gpuAcceleration')) {
+			if (e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
+				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')) {
 				updateSettings('configuration-changed');
 			}
 		}));
@@ -348,7 +352,8 @@ export class ImagePreview extends MediaPreview {
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
-			gpuAcceleration: this.getGpuAccelerationEnabled()
+			gpuAcceleration: this.getGpuAccelerationEnabled(),
+			experimentalRegionDecode: this.getRegionDecodeEnabled()
 		};
 
 		// Send to webview
@@ -359,6 +364,12 @@ export class ImagePreview extends MediaPreview {
 		return vscode.workspace
 			.getConfiguration('tiffVisualizer')
 			.get<boolean>('gpuAcceleration', true);
+	}
+
+	private getRegionDecodeEnabled(): boolean {
+		return vscode.workspace
+			.getConfiguration('tiffVisualizer')
+			.get<boolean>('experimentalRegionDecode', false);
 	}
 
 	public setImageSize(size: string): void {

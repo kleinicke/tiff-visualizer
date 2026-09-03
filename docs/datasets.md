@@ -94,8 +94,16 @@ file.
 
 One limit worth knowing: refinement loads a whole level, not just the part you
 are looking at. For an image whose full resolution exceeds the canvas limit,
-zooming in cannot reach the stored pixels; decoding only the visible region is
-a planned change.
+zooming in cannot reach the stored pixels.
+
+The decoder can already read a rectangle — a 1600x1000 view of a 10980x10980
+band is four tiles and about 25 ms, against a second for the whole page — but
+the viewer does not yet draw that way. The setting
+**`tiffVisualizer.experimentalRegionDecode`** turns on the first use of it: while
+a reduced level is displayed, hovering a pixel reads the value actually stored
+there out of the file, so the readout is exact and drops the `overview` caveat.
+It is off by default while the region path is being proven against the
+whole-image one.
 
 ## CZI
 

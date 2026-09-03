@@ -3,6 +3,7 @@ mod codecs;
 pub(crate) mod geokeys;
 mod orientation;
 pub(crate) mod pages;
+pub(crate) mod region;
 pub(crate) mod strips;
 pub(crate) mod tags;
 
@@ -1041,7 +1042,19 @@ pub(crate) fn patch_photometric_to_grayscale(buf: &mut [u8], page_index: u32) ->
 /// Parse just enough of `data` to describe a predictor-3 float strip layout.
 /// Used by the strip-parallel entry points in the crate root.
 pub(crate) fn float_strip_plan_for(data: &[u8]) -> Option<strips::FloatStripPlan> {
+    float_strip_plan_for_page(data, 0)
+}
+
+/// The same plan for any page in the chain. A pyramid's overviews are pages,
+/// and a region read of the level being displayed needs that level's geometry.
+pub(crate) fn float_strip_plan_for_page(
+    data: &[u8],
+    page_index: u32,
+) -> Option<strips::FloatStripPlan> {
     let mut decoder = Decoder::new(Cursor::new(data)).ok()?;
+    if page_index > 0 {
+        decoder.seek_to_image(page_index as usize).ok()?;
+    }
     let (width, height) = decoder.dimensions().ok()?;
     let color_type = decoder.colortype().ok()?;
     match color_type {

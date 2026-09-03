@@ -2478,13 +2478,39 @@ inspection, measurement, statistics and export read exactly what they always did
 
 **Still open, in order of value:**
 
-1. **Region-limited decode.** Levels are decoded whole. Inspecting a
-   40000x40000 scene at full zoom needs only the visible tiles, and the block
-   offsets to do it already exist in `TiffFloatStripPlan`. This is what makes
-   full-resolution inspection of an unopenably large image possible, and it is
-   shared with item 14 phase C. **Difficulty: 4** — the decode is the easy half;
-   the canvas becoming a window onto the image (rather than the whole image)
-   touches zoom, pan, pixel coordinates, measurement and export.
+1. **Region-limited decode. The DECODER half is done (2026-09-04); the
+   RENDERING half is not.**
+
+   `decode_tiff_region(data, page, x, y, w, h)` reads only the strips or tiles a
+   rectangle touches, through the same `decode_block_rows` the whole-image and
+   parallel paths use — `crates/image-decoders/src/formats/tiff/region.rs`,
+   exposed to JavaScript as `decode_tiff_region` /
+   `tiff_region_decode_available`. Measured:
+
+   | file | whole page | 1600x1000 viewport | one pixel |
+   | --- | --- | --- | --- |
+   | `s2_B02.tif` (10980²) | 974 ms, 121 blocks | 26 ms, 4 blocks | 4 ms, 1 block |
+   | `big_40000px_cog.tif` (40000²) | 3397 ms | 49 ms, 12 blocks | 2 ms, 1 block |
+
+   The cost follows the window, and barely moves as the image grows 16x. Equality
+   with the whole-image decode is asserted two ways: Rust unit tests per layout,
+   and `test/region-decode-test.js`, which compares every rectangle against the
+   ordinary decode for all 52 region-capable files in `test-samples`.
+
+   `media/modules/viewport-tiles.ts` holds the policy — snap outward to blocks,
+   ask for half a screen of margin, fall back to the whole page past 60% of it —
+   with `test/viewport-tiles-test.js` pinning the arithmetic. The first consumer
+   is behind `tiffVisualizer.experimentalRegionDecode`: while a reduced pyramid
+   level is displayed, hovering reads the STORED value for that pixel out of the
+   file (one block, ~2 ms) instead of reporting the overview's average.
+
+   What remains is the rendering model, and it is the larger half: today the
+   canvas IS the image, and viewport decoding needs it to be a WINDOW onto the
+   image. That touches zoom, pan, pixel coordinates, the ROI/measure overlays,
+   the histogram and export — none of which can assume `canvas.width ===
+   image.width` any more. Progressive drawing (the coarse level upsampled
+   underneath, sharp tiles replacing it as they arrive) belongs in the same
+   change. **Difficulty: 4**, essentially all of it here.
 2. **Opening below full resolution by choice. DONE (2026-09-03).** Past
    `FULL_RESOLUTION_PIXEL_BUDGET` (40 megapixels) a file opens at the level that
    matches the window — `s2_B02.tif` in ~200 ms rather than ~4 s — and zooming

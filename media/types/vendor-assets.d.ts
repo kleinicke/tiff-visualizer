@@ -49,6 +49,8 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const decode_tiff_page_fast: any;
 	export const tiff_page_count: any;
 	export const tiff_page_directory: any;
+	export const decode_tiff_region: any;
+	export const tiff_region_decode_available: any;
 	export const tiff_float_strip_plan: any;
 	export const exr_zip_f32_plan: any;
 	export const decode_exr_zip_f32_blocks: any;

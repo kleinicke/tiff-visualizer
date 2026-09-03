@@ -2007,6 +2007,98 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
   }
 };
 if (Symbol.dispose) TiffFloatStripPlanJs.prototype[Symbol.dispose] = TiffFloatStripPlanJs.prototype.free;
+var TiffRegionJsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffregionjs_free(ptr >>> 0, 1));
+var TiffRegionJs = class _TiffRegionJs {
+  static __wrap(ptr) {
+    ptr = ptr >>> 0;
+    const obj = Object.create(_TiffRegionJs.prototype);
+    obj.__wbg_ptr = ptr;
+    TiffRegionJsFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    TiffRegionJsFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_tiffregionjs_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get sample_format() {
+    const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Strips or tiles actually read. The number a caller watches to confirm
+   * the cost is following the window and not the file.
+   * @returns {number}
+   */
+  get blocks_decoded() {
+    const ret = wasm.pngresult_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get bits_per_sample() {
+    const ret = wasm.tifffloatstripplanjs_channels(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * Moves the samples out; a second call returns an empty array, as with the
+   * other decode results.
+   * @returns {Float32Array}
+   */
+  take_data_as_f32() {
+    const ret = wasm.tiffregionjs_take_data_as_f32(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get x() {
+    const ret = wasm.demosaicresult_width(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get y() {
+    const ret = wasm.demosaicresult_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get width() {
+    const ret = wasm.demosaicresult_channels(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get height() {
+    const ret = wasm.histogramresult_non_finite_count(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get channels() {
+    const ret = wasm.tifffloatstripplanjs_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+};
+if (Symbol.dispose) TiffRegionJs.prototype[Symbol.dispose] = TiffRegionJs.prototype.free;
 var TiffResultFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
 } } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffresult_free(ptr >>> 0, 1));

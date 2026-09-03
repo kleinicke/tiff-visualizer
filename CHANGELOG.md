@@ -8,6 +8,7 @@
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
 - Render multi-band GeoTIFFs correctly: a band past the colour samples is treated as alpha only when the file's `ExtraSamples` tag says so, which previously made a 2-band COG almost entirely transparent
 - Treat a pyramidal TIFF's overviews (COG, whole-slide) as resolution levels of one image rather than as extra pages, with a Level selector that names each level
+- Decode a rectangle of a large tiled TIFF instead of the whole page: a 1600x1000 view of a 10980x10980 band reads 4 tiles in 26 ms where the page takes 974 ms, and the cost barely grows with the image. Behind `tiffVisualizer.experimentalRegionDecode`, this reports the value actually stored under the cursor while a reduced pyramid level is displayed
 - Choose a pyramidal TIFF's resolution level automatically: a level sized for the window when full resolution would be slow (a 10980x10980 Sentinel-2 band opens in ~200 ms instead of ~4 s) or cannot be drawn at all, refining as you zoom in — and the pixel readout says when values come from an overview rather than from the stored pixels
 - Apply GDAL's per-band scale/offset to the pixel readout, and use band descriptions as channel names
 - Draw `GDAL_NODATA` pixels in the nodata colour and report them as `nodata` instead of as their sentinel value

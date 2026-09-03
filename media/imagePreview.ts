@@ -2044,6 +2044,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// precedence over the OME spacing above; the mouse handler decides.
 			mouseHandler.setGeoReference(tiffProcessor.geoReference || null);
 			mouseHandler.setResolutionNote(currentLevelNote());
+			// While a reduced level is displayed the readout is an average of
+			// several stored pixels. A rectangle read gets the real one for a
+			// couple of milliseconds, so offer it when the file supports it.
+			mouseHandler.setStoredValueResolver(
+				settingsManager.settings.experimentalRegionDecode
+					? (x: number, y: number) => tiffProcessor.readStoredPixel(x, y)
+					: null);
 			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 

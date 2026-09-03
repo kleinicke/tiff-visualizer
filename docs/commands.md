@@ -116,6 +116,7 @@ letters select tools — see [measurement](./measure.md).
 | Setting | Default | Description |
 | --- | --- | --- |
 | `tiffVisualizer.gpuAcceleration` | `true` | Use GPU acceleration via WebGPU or WebGL2 for supported image rendering paths. Disable this if a GPU/driver causes incorrect output or slower rendering. |
+| `tiffVisualizer.experimentalRegionDecode` | `false` | Experimental: read rectangles out of large tiled TIFFs instead of whole pages, so the cost of a view follows the window rather than the file. Currently used to report the stored value under the cursor while a reduced pyramid level is displayed. Off by default while the region path is being proven against the whole-image one. |
 
 Display settings — normalization, gamma, brightness — are deliberately *not*
 VS Code settings. They live for the lifetime of the window and reset when it
