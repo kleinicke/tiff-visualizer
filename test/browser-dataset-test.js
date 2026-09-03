@@ -13,6 +13,35 @@ const loaded = { exports: {} };
 new Function('module', 'exports', 'require', bundle.outputFiles[0].text)(loaded, loaded.exports, require);
 const { createDicomFrameDataset, createOmeDataset, findDatasetPlane } = loaded.exports;
 
+const urlBundle = buildSync({
+  entryPoints: ['src/util/remoteImageUrl.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  write: false,
+});
+const loadedUrl = { exports: {} };
+new Function('module', 'exports', 'require', urlBundle.outputFiles[0].text)(loadedUrl, loadedUrl.exports, require);
+const { normalizeRemoteImageUrl } = loadedUrl.exports;
+
+const encodedImageUrl = 'https%3A%2F%2Fdata.source.coop%2Ftge-labs%2Faef%2Fv1%2Fannual%2F2017%2F10N%2Fx1a7tdgjoh7rfvkxc-0000008192-0000000000.tiff&mode=single&bands=1&zoom=12.09&lat=35.231944&lon=-120.68416';
+assert.equal(
+  normalizeRemoteImageUrl(encodedImageUrl),
+  'https://data.source.coop/tge-labs/aef/v1/annual/2017/10N/x1a7tdgjoh7rfvkxc-0000008192-0000000000.tiff',
+  'encoded image URLs should be decoded without the source viewer state',
+);
+assert.equal(
+  normalizeRemoteImageUrl('https://example.com/image.tif?token=abc&part=1'),
+  'https://example.com/image.tif?token=abc&part=1',
+  'ordinary image URL query parameters must be preserved',
+);
+const escapedSentinelUrl = 'https%3A%2F%2Fsentinel-cogs.s3.us-west-2.amazonaws.com%2Fsentinel-s2-l2a-cogs%2F32%2FU%2FQD%2F2023%2F6%2FS2A\\_32UQD\\_20230612\\_0\\_L2A%2FB01.tif&mode=single&bands=1';
+assert.equal(
+  normalizeRemoteImageUrl(escapedSentinelUrl),
+  'https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/32/U/QD/2023/6/S2A_32UQD_20230612_0_L2A/B01.tif',
+  'Markdown-escaped underscores should not turn into path separators',
+);
+
 const dicom = createDicomFrameDataset({ name: 'volume.dcm', url: 'blob:volume' }, 3);
 assert.ok(dicom, 'multi-frame DICOM should create a browser dataset');
 assert.equal(dicom.series[0].planes.length, 3);
@@ -100,6 +129,7 @@ assert.match(imagePreviewCss, /max-height: calc\(100vh - 16px - var\(--context-m
 assert.match(host, /scientific-image-handoff-probe/, 'the browser host should wait for the 3D viewer before transferring a file');
 assert.match(host, /scientific-image-depth/, 'the browser host should hand the selected depth image to the ready 3D viewer');
 assert.match(netlify, /Cross-Origin-Opener-Policy = "same-origin-allow-popups"/, 'the deployed page must retain its 3D viewer popup connection');
+assert.match(netlify, /connect-src 'self' https: blob: data:/, 'the deployed page must permit user-selected HTTPS image hosts');
 assert.match(css, /--measure-scale-bar-bottom-inset:\s*28px/, 'the site should reserve its fixed status-bar height for the scale bar');
 assert.match(roiOverlay, /window\.innerHeight - bottomInset/, 'the shared scale bar should honor a host-provided bottom inset');
 assert.match(measurePanel, /if \(result && this\.isVisible\(\)\) \{ this\.render\(\); \}/, 'completed particle analysis should update both the green preview and its count');

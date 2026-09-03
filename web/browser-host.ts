@@ -4,6 +4,7 @@ import {
   findDatasetPlane,
   type BrowserDatasetManifest,
 } from './browser-dataset.js';
+import { normalizeRemoteImageUrl } from '../src/util/remoteImageUrl.js';
 
 type ViewerMessage = { type: string; [key: string]: any };
 
@@ -583,7 +584,7 @@ function openFiles(selected: File[]): void {
  * fail for no reason.
  */
 async function openUrl(rawUrl: string): Promise<void> {
-  const trimmed = rawUrl.trim();
+  const trimmed = normalizeRemoteImageUrl(rawUrl);
   if (!trimmed) return;
   // Accept what people actually paste: a full link, a bare host and path
   // (which every browser address bar treats as https), or a path on this host.

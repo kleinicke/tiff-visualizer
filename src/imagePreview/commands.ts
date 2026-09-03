@@ -7,6 +7,7 @@ import { ImagePreviewManager } from './imagePreviewManager';
 import { getOutputChannel } from '../extension';
 import { scanDicomFolder } from './dicomDataset';
 import type { DatasetManifest } from './datasetTypes';
+import { normalizeRemoteImageUrl } from '../util/remoteImageUrl';
 
 const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'jxr', 'wdp', 'hdp', 'jp2', 'jpf', 'jpx', 'j2k', 'j2c', 'jpc', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'czi', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
 
@@ -1235,7 +1236,7 @@ export function registerImagePreviewCommands(
 				placeHolder: 'https://sentinel-cogs.s3.us-west-2.amazonaws.com/.../B01.tif',
 				ignoreFocusOut: true,
 				validateInput: value => {
-					const trimmed = (value || '').trim();
+					const trimmed = normalizeRemoteImageUrl(value || '');
 					if (!trimmed) { return null; }
 					try {
 						const protocol = new URL(trimmed).protocol;
@@ -1247,7 +1248,7 @@ export function registerImagePreviewCommands(
 					}
 				},
 			});
-		const trimmed = (entered || '').trim();
+		const trimmed = normalizeRemoteImageUrl(entered || '');
 		if (!trimmed) { logCommand('openImageFromUrl', 'success', 'cancelled'); return; }
 
 		let parsed: URL;
