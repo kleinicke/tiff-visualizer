@@ -72,7 +72,18 @@ when the file really does hold more than one image.
 **The level is chosen for you.** Opening a file picks the level that matches
 your window, zooming in loads a finer one, and the image stays the same size on
 screen across the switch — so what you see always looks like full resolution for
-the area you are looking at. You should not have to touch the selector.
+the area you are looking at. The selector reads **Auto** while that is
+happening; picking a level from it pins that one, and choosing Auto again hands
+the decision back.
+
+Under the selector is a line saying what is actually on screen:
+
+    Loaded 1/8 · 1373x1373 of 10980x10980 · viewing 0,0 10240x5760 (49% of the
+    scene) · 0.13x detail
+
+— which level is decoded, how much of the full-resolution scene is in view, and
+how many screen pixels each stored pixel gets (1.0 means every stored pixel is
+on screen; below that the view is coarser than the file).
 
 What it chooses, and why:
 

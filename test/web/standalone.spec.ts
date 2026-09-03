@@ -46,10 +46,9 @@ test('loads an image through the public browser host', async ({ page }) => {
   await expect(page.locator('#web-log-output')).toContainText('📂 Opened 1: orientation_tag1.tif');
   await expect(page.locator('#web-log-output')).toContainText('[Perf] TIFF:');
   await expect(page.locator('#web-log-output')).toContainText(/total [\d.]+ms \| visible [\d.]+ms/);
-  // The companion line says WHAT became visible, not just how long it took.
-  await expect(page.locator('#web-log-output')).toContainText(
-    /\[Visible\] TIFF: \d+x\d+,.*orientation_tag1\.tif/
-  );
+  // No `[Visible]` line here on purpose: for a plain single-level image drawn
+  // at its declared size it would only repeat the "📂 Opened" line above. It
+  // appears when it has something to add — see the pyramid test below.
 });
 
 test('keeps separately opened images available as toolbar tabs', async ({ page }) => {
@@ -328,8 +327,9 @@ test('picks a pyramid level for the window, and says when it is approximate', as
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
 
   // Choosing a level by hand pins it, and the readout then says the values are
-  // from an overview rather than from the stored pixels.
-  await page.locator('.dataset-overlay select').selectOption({ index: 1 });
+  // from an overview rather than from the stored pixels. Index 0 is Auto, so
+  // index 2 is the first reduced level.
+  await page.locator('.dataset-overlay select').selectOption({ index: 2 });
   await expect(page.locator('.dataset-overlay')).toContainText('1/2 · 128x128', { timeout: 30_000 });
   const zoomed = await canvas.boundingBox();
   if (zoomed) {
@@ -345,8 +345,9 @@ test('reads the stored value under the cursor when region decoding is on', async
       .locator('#web-file-input')
       .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
     await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
-    // Pin a reduced level, so what is displayed is an average of stored pixels.
-    await page.locator('.dataset-overlay select').selectOption({ index: 1 });
+    // Pin a reduced level, so what is displayed is an average of stored pixels
+    // (index 0 is Auto, index 1 is full resolution).
+    await page.locator('.dataset-overlay select').selectOption({ index: 2 });
     await expect(page.locator('.dataset-overlay')).toContainText('1/2', { timeout: 30_000 });
     const box = await page.locator('body > canvas:not(.measure-overlay)').boundingBox();
     if (box) {
@@ -366,4 +367,29 @@ test('reads the stored value under the cursor when region decoding is on', async
   await hoverOverview();
   await expect(page.locator('#web-status-size')).toContainText(/\d+x\d+/);
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
+});
+
+test('offers Auto as the level, and reports what is loaded and in view', async ({ page }) => {
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+
+  // Automatic is the default, and it is visible as such rather than implied.
+  const select = page.locator('.dataset-overlay select');
+  await expect(select).toHaveValue('0');
+  await expect(page.locator('.dataset-overlay .dataset-note'))
+    .toContainText('Loaded Full · 256x256 of 256x256');
+  await expect(page.locator('.dataset-overlay .dataset-note')).toContainText('viewing');
+
+  // A level chosen by hand is pinned, and the status follows it.
+  await select.selectOption({ index: 3 });
+  await expect(page.locator('.dataset-overlay .dataset-note'))
+    .toContainText('Loaded 1/4 · 64x64 of 256x256', { timeout: 30_000 });
+  await expect(select).toHaveValue('3');
+
+  // And there is a way back: Auto re-takes the decision.
+  await select.selectOption({ index: 0 });
+  await expect(select).toHaveValue('0');
 });

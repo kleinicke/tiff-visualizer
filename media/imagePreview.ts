@@ -5,6 +5,7 @@ import type { ImageSettings, SettingsUpdateResult } from './modules/settings-man
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
 import { imagePages, isPyramidal, levelForDisplayWidth, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
+import { visibleImageRect } from './modules/viewport-tiles.js';
 import { bandDescription } from './modules/gdal-metadata.js';
 import { nanIsTransparent, nextNanColor as nextNanColor_, resolveNanColor } from './modules/nan-color.js';
 import type { TiffPageEntry } from './modules/tiff-pages.js';
@@ -1125,8 +1126,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 * extra IFDs) shows only one of its images, and until this line existed
 	 * nothing in the log said which one, or at what size — a blank-looking
 	 * result and a correct one logged identically.
+	 *
+	 * Returns null for the ordinary case where it would only restate the
+	 * `📂 Opened` line: one image, drawn at the size that line already
+	 * reported. Only a page/level selection, or a canvas whose size differs
+	 * from the file's declared size, says anything new.
 	 */
-	function formatVisibleSummary(label: string): string {
+	function formatVisibleSummary(label: string): string | null {
 		const parts: string[] = [];
 		const width = canvas?.width || (imageElement as any)?.naturalWidth || (imageElement as any)?.width;
 		const height = canvas?.height || (imageElement as any)?.naturalHeight || (imageElement as any)?.height;
@@ -1151,6 +1157,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// images are levels of one page, so say which level instead — "page 2
 		// of 4" on a COG describes something the file does not contain.
 		const directory = tiffProcessor.pageDirectory;
+		const before = parts.length;
 		if (isPyramidal(directory)) {
 			const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 			const levels = levelsForPage(directory, page);
@@ -1163,6 +1170,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		} else if (tiffProcessor.pageCount > 1) {
 			parts.push(`page ${tiffProcessor.pageIndex + 1}/${tiffProcessor.pageCount}`);
 		}
+		const selectedOneOfMany = parts.length > before;
+
+		// The declared size and the drawn size differ only when a level other
+		// than the full-resolution one was chosen, which is worth saying; when
+		// they agree, every remaining part is already in the `📂 Opened` line.
+		const declaredSize = Number(info?.width) === width && Number(info?.height) === height;
+		if (!selectedOneOfMany && declaredSize) { return null; }
 
 		const source = String(settingsManager.settings.resourceUri || settingsManager.settings.src || '');
 		const name = source ? decodeURIComponent(source.split(/[\\/]/).pop() || '') : '';
@@ -1179,17 +1193,18 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// totals: by the time a pending paint resolves, a page or collection
 		// change may already have moved the state it reads.
 		const visibleSummary = formatVisibleSummary(label);
+		const logVisible = () => { if (visibleSummary) { logToOutput(visibleSummary); } };
 		if (visibleTotalMs !== null) {
 			logToOutput(`${summary} | visible ${visibleTotalMs.toFixed(0)}ms`);
-			logToOutput(visibleSummary);
+			logVisible();
 		} else if (pendingVisible) {
 			void pendingVisible.then(ms => {
 				logToOutput(`${summary} | visible ${ms.toFixed(0)}ms`);
-				logToOutput(visibleSummary);
+				logVisible();
 			});
 		} else {
 			logToOutput(summary);
-			logToOutput(visibleSummary);
+			logVisible();
 		}
 	}
 
@@ -6365,16 +6380,25 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 						void navigateTiffToPage(pages[index]?.index ?? 0);
 					}));
 				}
+				// Automatic is the first entry and the default, so choosing a
+				// level by hand is visibly a departure from it — and, more to
+				// the point, there is a way BACK. Before this the only way to
+				// undo a manual choice was to reopen the file.
+				const current = levels.findIndex(level => level.index === tiffProcessor.pageIndex);
 				controls.push(...controlsFromSelectors('tiff', [{
 					name: 'Level',
-					size: levels.length,
-					value: Math.max(0, levels.findIndex(level => level.index === tiffProcessor.pageIndex)),
-					labels: levels.map(levelLabel),
+					size: levels.length + 1,
+					value: _levelSelectionIsManual ? Math.max(0, current) + 1 : 0,
+					labels: ['Auto', ...levels.map(levelLabel)],
 				}], (_selector, index) => {
-					const level = levels[index];
+					if (index === 0) {
+						_levelSelectionIsManual = false;
+						updateTiffPageOverlay();
+						maybeRefineTiffLevel();
+						return;
+					}
+					const level = levels[index - 1];
 					if (level) {
-						// An explicit choice outranks the zoom-driven one until
-						// the file is reopened; see _levelSelectionIsManual.
 						_levelSelectionIsManual = true;
 						void navigateTiffToPage(level.index);
 					}
@@ -6454,6 +6478,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		navOverlay.innerHTML = `
 			<div class="dataset-title"></div>
 			<div class="dataset-axis-controls"></div>
+			<div class="dataset-note" hidden></div>
 		`;
 		makeOverlayDraggable(navOverlay, 'plane');
 		document.body.appendChild(navOverlay);
@@ -6480,6 +6505,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		title: string,
 		controls: readonly NavControlSpec[],
 		loading?: boolean,
+		/** A line of read-only status under the controls; '' hides it. */
+		note?: string,
 	}) {
 		if (!navOverlay) { return; }
 		const { owner, title, loading = false } = options;
@@ -6549,6 +6576,11 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// in the title — never after the slider.
 			value.textContent = `${Number(input.value) + 1} / ${spec.size}`;
 		});
+
+		const noteEl = navOverlay.querySelector('.dataset-note') as HTMLElement;
+		const note = options.note || '';
+		if (noteEl.textContent !== note) { noteEl.textContent = note; }
+		noteEl.hidden = !note;
 
 		paintNavHints(Array.from(rows.children) as HTMLElement[]);
 		navOverlay.classList.toggle('dataset-overlay--loading', loading);
@@ -6730,7 +6762,54 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			title: ome ? 'OME-TIFF' : 'TIFF',
 			controls: tiffControls(),
 			loading,
+			note: pyramidStatusNote(),
 		});
+	}
+
+	/**
+	 * What a pyramidal file is actually showing: the level decoded, and the part
+	 * of the full-resolution image on screen.
+	 *
+	 * With the level chosen automatically, two things stop being obvious — how
+	 * much detail is loaded, and how much of the scene is in view — and both
+	 * matter for trusting what you are looking at. Reported against FULL
+	 * resolution throughout, because that is the image the reader has in mind;
+	 * the level is an implementation detail of showing it.
+	 */
+	function pyramidStatusNote(): string {
+		const directory = tiffProcessor.pageDirectory;
+		if (!isPyramidal(directory)) { return ''; }
+		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+		const levels = levelsForPage(directory, page);
+		const full = levels[0];
+		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		if (!full || !current) { return ''; }
+
+		const parts = [`Loaded ${levelLabel(current)} of ${full.width}x${full.height}`];
+
+		// The visible rectangle, in the full-resolution image's own pixels.
+		const element = imageElement as HTMLElement | null;
+		const scale = element && current.width ? element.clientWidth / current.width : 0;
+		if (scale > 0) {
+			const visible = visibleImageRect(
+				{ imageWidth: current.width, imageHeight: current.height },
+				Math.min(window.innerWidth, element!.clientWidth),
+				Math.min(window.innerHeight, element!.clientHeight),
+				scale,
+				Math.max(0, -element!.getBoundingClientRect().left),
+				Math.max(0, -element!.getBoundingClientRect().top),
+			);
+			const toFull = current.reduction;
+			const width = Math.round(visible.width * toFull);
+			const height = Math.round(visible.height * toFull);
+			const covered = (visible.width * visible.height) / (current.width * current.height);
+			parts.push(`viewing ${Math.round(visible.x * toFull)},${Math.round(visible.y * toFull)} `
+				+ `${width}x${height} (${(covered * 100).toFixed(covered < 0.1 ? 1 : 0)}% of the scene)`);
+			// Screen pixels per full-resolution pixel: 1 means every stored
+			// pixel is on screen, below 1 means the view is coarser than the file.
+			parts.push(`${(scale / toFull).toFixed(2)}x detail`);
+		}
+		return parts.join(' · ');
 	}
 	async function navigateTiffPage(delta: number): Promise<void> {
 		const total = tiffProcessor.pageCount;
@@ -6845,6 +6924,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		if (_levelRefineTimer !== null) { window.clearTimeout(_levelRefineTimer); }
 		_levelRefineTimer = window.setTimeout(() => {
 			_levelRefineTimer = null;
+			// The status line reports the visible rectangle, so it follows every
+			// zoom and pan — including the ones that need no new decode.
+			if (isPyramidal(tiffProcessor.pageDirectory)) { updateTiffPageOverlay(); }
 			maybeRefineTiffLevel();
 		}, 250);
 	}

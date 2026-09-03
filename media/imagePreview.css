@@ -410,6 +410,19 @@ body img {
 	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 }
 
+/* A line of read-only status under the controls — what resolution is loaded
+   and what part of the image is on screen. Quieter than the controls: it is
+   there to be glanced at, not operated. */
+.dataset-note {
+	margin-top: 6px;
+	padding-top: 6px;
+	border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+	color: var(--vscode-descriptionForeground, rgba(190, 190, 190, 0.8));
+	font-size: 11px;
+	line-height: 1.45;
+	white-space: nowrap;
+}
+
 .dataset-axis input[type='range'] {
 	min-width: 0;
 	accent-color: var(--vscode-focusBorder, #007acc);
