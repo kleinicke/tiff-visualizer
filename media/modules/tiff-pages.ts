@@ -32,6 +32,13 @@ export interface TiffPageEntry {
 	reduction: number;
 	/** Overviews hung off tag 330, counted but not yet selectable. */
 	subIfdCount: number;
+	/**
+	 * The smallest independently decodable unit of this level — a tile, or the
+	 * full width by RowsPerStrip. A region read costs whole blocks, so this is
+	 * what a requested rectangle snaps to.
+	 */
+	blockWidth: number;
+	blockHeight: number;
 }
 
 export function parsePageDirectory(json: string | undefined | null): TiffPageEntry[] {
@@ -51,6 +58,8 @@ export function parsePageDirectory(json: string | undefined | null): TiffPageEnt
 			parent: entry.parent === null || entry.parent === undefined ? null : Number(entry.parent),
 			reduction: Math.max(1, Number(entry.reduction) || 1),
 			subIfdCount: Number(entry.subIfdCount) || 0,
+			blockWidth: Math.max(1, Number(entry.blockWidth) || Number(entry.width) || 1),
+			blockHeight: Math.max(1, Number(entry.blockHeight) || Number(entry.height) || 1),
 		}));
 }
 
@@ -179,6 +188,27 @@ export function chooseOpenLevel(
 		if (canDisplay(level.width, level.height)) { return level; }
 	}
 	return null;
+}
+
+/**
+ * What the display side tells the decoder about the view it is opening into.
+ *
+ * Plain numbers, because the decision is made in the decode worker — where the
+ * bytes and the decoder already are — and a "can this be drawn?" predicate
+ * cannot cross that boundary. The main thread measures the limits once (it has
+ * the canvas) and sends the answers.
+ */
+export interface TiffLevelHint {
+	/** Device pixels the image will span at fit-to-window. */
+	displayWidth: number;
+	/** Largest canvas axis this browser accepts. */
+	maxAxis: number;
+	/** Largest canvas area, in pixels. */
+	maxArea: number;
+	/** Largest ImageData backing store, in bytes. */
+	maxBytes: number;
+	/** Past this many pixels, full resolution is not decoded on open. */
+	pixelBudget: number;
 }
 
 /** "Full", "1/2", "1/4" … — how a level is named in the UI and the log. */

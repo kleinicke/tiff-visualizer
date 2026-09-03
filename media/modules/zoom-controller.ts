@@ -97,7 +97,7 @@ export class ZoomController {
 			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
 		} else {
 			const oldScale = this.scale;
-			this.scale = this._clamp(newScale as number, constants.MIN_SCALE, constants.MAX_SCALE);
+			this.scale = this._clamp(newScale as number, this._minimumScale(), constants.MAX_SCALE);
 			if (this.scale >= constants.PIXELATION_THRESHOLD) {
 				this.imageElement.classList.add('pixelated');
 			} else {
@@ -207,7 +207,7 @@ export class ZoomController {
 				break;
 			}
 		}
-		this.updateScale(zoomLevels[i] || this.settingsManager.constants.MIN_SCALE);
+		this.updateScale(zoomLevels[i] || this._minimumScale());
 	}
 
 	/**
@@ -302,6 +302,28 @@ export class ZoomController {
 				});
 			}
 		}
+	}
+
+	/**
+	 * The smallest zoom this image can take.
+	 *
+	 * `MIN_SCALE` (10%) suits an image of ordinary size; on a very large one it
+	 * is above the scale that fits the window, so the reader cannot zoom out far
+	 * enough to see the whole picture — 10% of a 20000-pixel raster is still
+	 * 2000 pixels wide. Whatever the constant says, it must always be possible
+	 * to get the whole image on screen, with a little room past that.
+	 */
+	_minimumScale(): number {
+		const constants = this.settingsManager.constants;
+		if (!this.imageElement) { return constants.MIN_SCALE; }
+		const { width, height } = this._getNaturalSize(this.imageElement);
+		if (!(width > 0 && height > 0)) { return constants.MIN_SCALE; }
+		const fit = Math.min(
+			this.container.clientWidth / width,
+			this.container.clientHeight / height,
+		);
+		if (!(fit > 0)) { return constants.MIN_SCALE; }
+		return Math.min(constants.MIN_SCALE, fit / 2);
 	}
 
 	/**

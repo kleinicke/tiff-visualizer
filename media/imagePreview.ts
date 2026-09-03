@@ -5,7 +5,9 @@ import type { ImageSettings, SettingsUpdateResult } from './modules/settings-man
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
 import { imagePages, isPyramidal, levelForDisplayWidth, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
-import { visibleImageRect } from './modules/viewport-tiles.js';
+import { planRegionForView, visibleImageRect } from './modules/viewport-tiles.js';
+import { FULL_RESOLUTION_PIXEL_BUDGET } from './modules/tiff-pages.js';
+import type { Rect } from './modules/viewport-tiles.js';
 import { bandDescription } from './modules/gdal-metadata.js';
 import { nanIsTransparent, nextNanColor as nextNanColor_, resolveNanColor } from './modules/nan-color.js';
 import type { TiffPageEntry } from './modules/tiff-pages.js';
@@ -680,6 +682,11 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		roiOverlay.setShowScaleBar(settingsManager.settings.showScaleBar);
 	}
 
+	// A scroll moves the image under the patch; the patch is placed in document
+	// coordinates so it travels with it, but a pan can also expose ground the
+	// patch does not cover, which needs a new rectangle.
+	window.addEventListener('scroll', () => { scheduleLevelRefinement(); }, { passive: true });
+
 	zoomController.onScaleChanged = () => {
 		roiOverlay.scheduleRedraw();
 		// Zooming past a pyramid level's resolution is exactly when the finer
@@ -991,8 +998,21 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 * measurement overlay — live on the same container and would be deleted with
 	 * the old image, silently and only on the second image opened.
 	 */
+	/**
+	 * The display limits, named because they are sent to the decode worker as
+	 * well: it decides which pyramid level to decode, and has no canvas of its
+	 * own to ask. `canvasCanHold` still probes for the cases past these, which
+	 * differ between platforms and hosts.
+	 */
+	const CANVAS_SAFE_AXIS = 16384;
+	const CANVAS_SAFE_AREA = 16384 * 16384;
+	/** An ImageData's backing store is one typed array: 2^31-1 bytes at most. */
+	const IMAGE_DATA_MAX_BYTES = 2 ** 31 - 1;
+
 	function isOverlayChrome(element: Element): boolean {
-		return !!element.closest('.histogram-overlay') || element.classList.contains('measure-overlay');
+		return !!element.closest('.histogram-overlay')
+			|| element.classList.contains('measure-overlay')
+			|| element.classList.contains('detail-patch');
 	}
 
 	let imageElement: HTMLElement | null = null;
@@ -1914,13 +1934,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// exceed 2^31-1 bytes. Chromium will happily allocate a 40000x40000
 		// canvas and then throw IndexSizeError on `new ImageData(...)`, which
 		// is how a 1.6-gigapixel COG used to fail after a 27-second decode.
-		if (width * height * 4 > 2 ** 31 - 1) { return false; }
+		if (width * height * 4 > IMAGE_DATA_MAX_BYTES) { return false; }
 		// Fast path: anything inside the smallest limit any mainstream engine
 		// enforces is fine, and must NOT be probed — allocating a second
 		// full-size canvas to ask the question would double peak memory for
 		// every ordinary image.
-		const SAFE_AXIS = 16384;
-		const SAFE_AREA = 16384 * 16384;
+		const SAFE_AXIS = CANVAS_SAFE_AXIS;
+		const SAFE_AREA = CANVAS_SAFE_AREA;
 		if (width <= SAFE_AXIS && height <= SAFE_AXIS && width * height <= SAFE_AREA) {
 			return true;
 		}
@@ -1990,7 +2010,14 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				// Fit-to-window is the opening view, so the container width is
 				// what a level has to cover.
 				displayWidth: (container.clientWidth || window.innerWidth || 1024) * (window.devicePixelRatio || 1),
-				canDisplay: canvasCanHold,
+				// The limits, measured here because only this side has a canvas
+				// to measure with, and sent as numbers so the DECISION can be
+				// made in the decode worker — where the file is already being
+				// read, and where a file with no pyramid pays nothing for it.
+				maxAxis: CANVAS_SAFE_AXIS,
+				maxArea: CANVAS_SAFE_AREA,
+				maxBytes: IMAGE_DATA_MAX_BYTES,
+				pixelBudget: FULL_RESOLUTION_PIXEL_BUDGET,
 			} : undefined);
 			if (gen !== _loadGeneration) { return; }
 			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
@@ -6862,6 +6889,137 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		return `1/${current.reduction} overview`;
 	}
 
+	// --- Detail patch -----------------------------------------------------
+	//
+	// A pyramid level is decoded whole, so the finest level a viewer can show
+	// is the finest one that fits on a canvas. For a 40000x40000 scene that is
+	// several levels short of the stored pixels, and no amount of zooming ever
+	// reaches them.
+	//
+	// The way out is not to decode a bigger image but a smaller rectangle. The
+	// visible part of a finer level is a few tiles — 49 ms and 12 blocks for a
+	// 1600x1000 view of that same scene — so it is drawn as a PATCH laid over
+	// the coarse image, exactly covering the area on screen.
+	//
+	// Deliberately additive: the coarse level underneath stays the image as far
+	// as everything else is concerned — zoom, pan, pixel readout, statistics,
+	// histogram, measurement and export all behave exactly as before, and
+	// removing the patch removes the feature. What it buys is what the reader
+	// asked for: an overview that is always there, and full detail where they
+	// are looking.
+
+	let _detailPatch: HTMLCanvasElement | null = null;
+	/** The rectangle currently drawn, in the patch level's own pixels. */
+	let _detailPatchRegion: { level: number, rect: Rect } | null = null;
+	let _detailPatchGeneration = -1;
+	/** The load the patch belongs to; a new image invalidates it. */
+	let _detailPatchLoad = -1;
+
+	function removeDetailPatch(): void {
+		_detailPatch?.remove();
+		_detailPatch = null;
+		_detailPatchRegion = null;
+	}
+
+	/**
+	 * Decode and place the sharp patch for the current view, or take it away
+	 * when the displayed level is already the best one available.
+	 */
+	async function updateDetailPatch(): Promise<void> {
+		if (!settingsManager.settings.experimentalRegionDecode) { removeDetailPatch(); return; }
+		const element = imageElement as HTMLElement | null;
+		const directory = tiffProcessor.pageDirectory;
+		if (!element || !hasLoadedImage || _imageTransitionActive || !isPyramidal(directory)) {
+			removeDetailPatch();
+			return;
+		}
+		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+		const levels = levelsForPage(directory, page);
+		const base = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		if (!base || !levels.length) { removeDetailPatch(); return; }
+
+		// The level this zoom deserves. When it is the one already displayed,
+		// the coarse image IS the detail and a patch would only be a second
+		// copy of it.
+		const wanted = levelForDisplayWidth(directory, page, displayedImageWidthPx());
+		if (!wanted || wanted.width <= base.width) { removeDetailPatch(); return; }
+
+		// CSS pixels per pixel of the displayed level, and of the patch level.
+		const baseScale = element.clientWidth / base.width;
+		const ratio = wanted.width / base.width;
+		const rect = element.getBoundingClientRect();
+		const visibleInBase = visibleImageRect(
+			{ imageWidth: base.width, imageHeight: base.height },
+			Math.min(window.innerWidth, rect.width),
+			Math.min(window.innerHeight, rect.height),
+			baseScale,
+			Math.max(0, -rect.left),
+			Math.max(0, -rect.top),
+		);
+		// The level's OWN block size — a tile, or a band of strip rows. Snapping
+		// to it makes two nearby views ask for the same rectangle, which is what
+		// lets a small pan reuse the patch already drawn.
+		const geometry = {
+			imageWidth: wanted.width,
+			imageHeight: wanted.height,
+			blockWidth: wanted.blockWidth,
+			blockHeight: wanted.blockHeight,
+		};
+		const visibleInWanted = {
+			x: visibleInBase.x * ratio,
+			y: visibleInBase.y * ratio,
+			width: visibleInBase.width * ratio,
+			height: visibleInBase.height * ratio,
+		};
+		const plan = planRegionForView(geometry, visibleInWanted, 
+			_detailPatchRegion?.level === wanted.index ? _detailPatchRegion.rect : null);
+		if (plan.kind === 'keep') { positionDetailPatch(element, base, wanted, baseScale); return; }
+		if (plan.kind === 'whole-page') { removeDetailPatch(); return; }
+
+		const generation = ++_detailPatchGeneration;
+		_detailPatchLoad = _loadGeneration;
+		const rendered = await tiffProcessor.renderRegion(wanted.index, plan.rect);
+		// A zoom or a page change while the blocks were decoding makes this
+		// answer describe a view that no longer exists.
+		if (!rendered || generation !== _detailPatchGeneration || _loadGeneration !== _detailPatchLoad) { return; }
+
+		if (!_detailPatch) {
+			_detailPatch = document.createElement('canvas');
+			_detailPatch.className = 'detail-patch';
+			container.appendChild(_detailPatch);
+		}
+		_detailPatch.width = rendered.width;
+		_detailPatch.height = rendered.height;
+		const context = _detailPatch.getContext('2d');
+		if (!context) { removeDetailPatch(); return; }
+		context.putImageData(rendered, 0, 0);
+		_detailPatchRegion = { level: wanted.index, rect: plan.rect };
+		positionDetailPatch(element, base, wanted, baseScale);
+		logToOutput(`[Detail] ${levelLabel(wanted)} over ${plan.rect.width}x${plan.rect.height} `
+			+ `at ${plan.rect.x},${plan.rect.y}`);
+	}
+
+	/** Lay the patch exactly over the image pixels it stands for. */
+	function positionDetailPatch(
+		element: HTMLElement,
+		base: TiffPageEntry,
+		wanted: TiffPageEntry,
+		baseScale: number,
+	): void {
+		if (!_detailPatch || !_detailPatchRegion) { return; }
+		const rect = _detailPatchRegion.rect;
+		const ratio = wanted.width / base.width;
+		const elementRect = element.getBoundingClientRect();
+		// Document coordinates, so the patch scrolls with the image instead of
+		// being re-placed on every scroll event.
+		const left = elementRect.left + window.scrollX + (rect.x / ratio) * baseScale;
+		const top = elementRect.top + window.scrollY + (rect.y / ratio) * baseScale;
+		_detailPatch.style.left = `${left}px`;
+		_detailPatch.style.top = `${top}px`;
+		_detailPatch.style.width = `${(rect.width / ratio) * baseScale}px`;
+		_detailPatch.style.height = `${(rect.height / ratio) * baseScale}px`;
+	}
+
 	/** How many screen pixels the image currently spans, in device pixels. */
 	function displayedImageWidthPx(): number {
 		const element = imageElement as HTMLElement | null;
@@ -6903,13 +7061,35 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const directory = tiffProcessor.pageDirectory;
 		if (!isPyramidal(directory)) { return; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+		const levels = levelsForPage(directory, page);
 		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
 		if (!current) { return; }
 		const wanted = levelForDisplayWidth(directory, page, displayedImageWidthPx());
-		// Refine only, and only to a level the canvas can actually hold.
-		if (!wanted || wanted.width <= current.width) { return; }
-		if (!canvasCanHold(wanted.width, wanted.height)) { return; }
-		void switchToPyramidLevel(wanted, 'zoomed in, refining to');
+		if (!wanted) { return; }
+
+		if (wanted.width > current.width) {
+			// The level that covers this zoom may be one no canvas can hold — a
+			// 40000x40000 page is unreachable however far you zoom in. Take the
+			// largest one that CAN be shown instead of refusing to refine at
+			// all, which left the view stuck several levels coarser than it
+			// could have been.
+			const target = levels.find(level =>
+				level.width <= wanted.width && canvasCanHold(level.width, level.height));
+			if (target && target.width > current.width) {
+				void switchToPyramidLevel(target, 'zoomed in, refining to');
+			}
+			return;
+		}
+
+		// Zoomed out: drop to a coarser level. Keeping the fine one costs
+		// memory for detail that is no longer visible, and — because zoom is
+		// expressed against the decoded image's own width — it also puts the
+		// scale that fits the window below what the zoom control can express.
+		// The factor-of-two guard keeps a view near a level boundary from
+		// switching back and forth.
+		if (wanted.width * 2 <= current.width) {
+			void switchToPyramidLevel(wanted, 'zoomed out, dropping to');
+		}
 	}
 
 	/**
@@ -6928,6 +7108,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// zoom and pan — including the ones that need no new decode.
 			if (isPyramidal(tiffProcessor.pageDirectory)) { updateTiffPageOverlay(); }
 			maybeRefineTiffLevel();
+			void updateDetailPatch();
 		}, 250);
 	}
 
@@ -6972,6 +7153,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		resetTiffCanvasReady();
 		beginSeamlessImageTransition(false);
 
+		removeDetailPatch();
 		tiffProcessor.pageIndex = target;
 		tiffProcessor._isInitialLoad = true;
 		tiffProcessor._pendingRenderData = null;

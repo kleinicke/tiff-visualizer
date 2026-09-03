@@ -107,14 +107,20 @@ One limit worth knowing: refinement loads a whole level, not just the part you
 are looking at. For an image whose full resolution exceeds the canvas limit,
 zooming in cannot reach the stored pixels.
 
-The decoder can already read a rectangle — a 1600x1000 view of a 10980x10980
-band is four tiles and about 25 ms, against a second for the whole page — but
-the viewer does not yet draw that way. The setting
-**`tiffVisualizer.experimentalRegionDecode`** turns on the first use of it: while
-a reduced level is displayed, hovering a pixel reads the value actually stored
-there out of the file, so the readout is exact and drops the `overview` caveat.
+**`tiffVisualizer.experimentalRegionDecode`** lifts that limit for the part you
+are looking at. The decoder can read a rectangle — a 1600x1000 view of a
+10980x10980 band is four tiles and about 25 ms, against a second for the whole
+page — and with the setting on, the viewer:
+
+- draws a sharp **patch** of a finer level over the visible area, so a
+  40000x40000 scene shows its stored pixels at high zoom even though no canvas
+  could ever hold the whole level. The coarse image underneath is unchanged and
+  still the image for every other purpose;
+- reads the value actually stored under the cursor, so the readout is exact and
+  drops its `overview` caveat.
+
 It is off by default while the region path is being proven against the
-whole-image one.
+whole-image one, and it changes nothing for a file without a pyramid.
 
 ## CZI
 

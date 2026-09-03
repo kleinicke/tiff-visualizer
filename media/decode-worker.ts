@@ -18,7 +18,7 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
 // The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
 // few KB of bundle; the ~2.2 MB payload is fetched by `initJxlWasm` below only
 // for standalone JXL worker jobs. Embedded JXL takes the main-thread module
@@ -27,6 +27,7 @@ import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
+import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
 // media/tsconfig.json) types `self` as `Window & typeof globalThis`, which
@@ -135,7 +136,47 @@ async function requireJxlWasm(): Promise<void> {
  * compact unsigned carriers: widening uint8/uint16 to f32 makes later feature
  * scans and rendering rebuild the integer buffer we started with.
  */
-function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
+/**
+ * Which page to decode when the caller asked for a pyramidal file's best level
+ * rather than a specific page.
+ *
+ * Decided HERE, in the worker that already holds the bytes and the decoder,
+ * rather than on the main thread: reading the IFD chain there would mean
+ * instantiating the wasm module for files that have no pyramid at all, so every
+ * ordinary TIFF would pay for a feature only large multi-resolution ones use.
+ * Here it is one IFD walk in a worker that is about to parse the file anyway.
+ *
+ * `hint` carries the display constraints as plain numbers, because the
+ * "can this be drawn?" test involves a canvas the worker does not have.
+ */
+function chooseLevelForHint(bytes: Uint8Array, hint: TiffLevelHint | undefined): number {
+	if (!hint || typeof tiff_page_directory !== 'function') { return 0; }
+	let directory;
+	try {
+		directory = parsePageDirectory(tiff_page_directory(bytes));
+	} catch {
+		return 0;
+	}
+	// Not a pyramid: nothing to choose, and nothing has been spent but an
+	// IFD walk.
+	if (directory.length < 2) { return 0; }
+	const canDisplay = (width: number, height: number) =>
+		width <= hint.maxAxis && height <= hint.maxAxis
+		&& width * height <= hint.maxArea
+		&& width * height * 4 <= hint.maxBytes;
+	const chosen = chooseOpenLevel(directory, 0, hint.displayWidth, canDisplay, 1, hint.pixelBudget);
+	return chosen ? chosen.index : 0;
+}
+
+interface TiffLevelHint {
+	displayWidth: number;
+	maxAxis: number;
+	maxArea: number;
+	maxBytes: number;
+	pixelBudget: number;
+}
+
+function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLevelHint) {
 	if (!tiffWasmReady) {
 		throw new Error('TIFF WASM decoder not initialized');
 	}
@@ -147,6 +188,9 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 	const timings = [];
 	let phaseStart = performance.now();
 	const bytes = new Uint8Array(buffer);
+	// A level hint only applies to an unqualified open; an explicit page is a
+	// request for THAT page.
+	if (pageIndex === 0 && levelHint) { pageIndex = chooseLevelForHint(bytes, levelHint); }
 	const pageCount = typeof tiffPageCount === 'function' ? tiffPageCount(bytes) : 1;
 	if (pageIndex < 0 || pageIndex >= pageCount) {
 		throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${pageCount})`);
@@ -327,7 +371,7 @@ async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string, pageInd
 	};
 }
 
-async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0) {
+async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLevelHint) {
 	if (tiffWasmInitPromise) {
 		// WASM is preferred, but a slow or wedged initialization must never
 		// prevent the worker's GeoTIFF compatibility decoder from running.
@@ -335,7 +379,7 @@ async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0) {
 			.catch(error => console.warn('[DecodeWorker]', error));
 	}
 	try {
-		return decodeTiffWasm(buffer, pageIndex);
+		return decodeTiffWasm(buffer, pageIndex, levelHint);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'WASM decode failed');
 		throw new Error(message);
@@ -725,7 +769,7 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		case 'tiff':
 			return options.preferParallelTiff
 				? decodeTiffSpeculatively(buffer, Number(options.pageIndex || 0))
-				: decodeTiff(buffer, Number(options.pageIndex || 0));
+				: decodeTiff(buffer, Number(options.pageIndex || 0), options.levelHint);
 		case 'exr':
 			return decodeExr(buffer);
 		case 'exr-zip-plan':

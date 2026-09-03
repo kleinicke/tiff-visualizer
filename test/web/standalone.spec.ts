@@ -393,3 +393,73 @@ test('offers Auto as the level, and reports what is loaded and in view', async (
   await select.selectOption({ index: 0 });
   await expect(select).toHaveValue('0');
 });
+
+test('draws a sharp patch of a finer level over the visible area', async ({ page }) => {
+  const detail: string[] = [];
+  page.on('console', message => {
+    if (message.text().startsWith('[Detail]')) { detail.push(message.text()); }
+  });
+
+  await page.goto('/?regionDecode=1');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/cog_pyramid_detail.tif'));
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+
+  // Pin 1/4 as the overview (index 0 is Auto, 1 is Full), then zoom past what
+  // that level can show. Everything below the base level stays as it was: the
+  // patch is an addition on top, not a different way of drawing the image.
+  await page.locator('.dataset-overlay select').selectOption({ index: 3 });
+  await expect(page.locator('.dataset-note')).toContainText('Loaded 1/4 · 256x256', { timeout: 30_000 });
+  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 8 }, '*'));
+
+  const patch = page.locator('canvas.detail-patch');
+  await expect(patch).toHaveCount(1, { timeout: 30_000 });
+  expect(detail.join(' ')).toContain('Full · 1024x1024');
+
+  // The rectangle the log says was decoded, and where the patch was put.
+  const match = /over (\d+)x(\d+) at (\d+),(\d+)/.exec(detail[detail.length - 1] || '');
+  expect(match, `no decoded rectangle in ${JSON.stringify(detail)}`).not.toBeNull();
+  const [, rectWidth, rectHeight, rectX, rectY] = match!.map(Number);
+
+  const placement = await page.evaluate(() => {
+    const base = document.querySelector('body > canvas:not(.measure-overlay):not(.detail-patch)') as HTMLCanvasElement;
+    const patchEl = document.querySelector('canvas.detail-patch') as HTMLCanvasElement;
+    const baseRect = base.getBoundingClientRect();
+    const patchRect = patchEl.getBoundingClientRect();
+    return {
+      baseWidth: base.width,
+      baseCssWidth: baseRect.width,
+      offsetX: patchRect.left - baseRect.left,
+      offsetY: patchRect.top - baseRect.top,
+      cssWidth: patchRect.width,
+      patchPixels: [patchEl.width, patchEl.height],
+    };
+  });
+
+  // The patch holds exactly the pixels that were decoded.
+  expect(placement.patchPixels).toEqual([rectWidth, rectHeight]);
+
+  // And it sits exactly over them: converting its position back into
+  // full-resolution pixels must return the rectangle's own origin. A patch
+  // placed a tile out would show the right pixels in the wrong place, which is
+  // the failure this pins.
+  const fullPerBaseCss = (placement.baseWidth * 4) / placement.baseCssWidth;
+  expect(Math.round(placement.offsetX * fullPerBaseCss)).toBe(rectX);
+  expect(Math.round(placement.offsetY * fullPerBaseCss)).toBe(rectY);
+  expect(Math.round(placement.cssWidth * fullPerBaseCss)).toBe(rectWidth);
+});
+
+test('leaves an ordinary TIFF completely alone', async ({ page }) => {
+  // The dynamic behaviour belongs to multi-resolution files. A plain image must
+  // get no level control, no status line and no patch — the same viewer it was.
+  await page.goto('/?regionDecode=1');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/house.tif'));
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible();
+
+  await expect(page.locator('.dataset-overlay')).toBeHidden();
+  await expect(page.locator('canvas.detail-patch')).toHaveCount(0);
+});

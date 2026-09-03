@@ -74,6 +74,11 @@ pub struct TiffPageInfo {
     /// Overviews hung off THIS page via SubIFDs (tag 330), which are counted
     /// but not addressable. See the module comment.
     pub sub_ifd_count: u32,
+    /// The smallest independently decodable unit of this level: a tile, or the
+    /// full width by RowsPerStrip. A region read costs whole blocks, so this is
+    /// what a caller snaps a requested rectangle to.
+    pub block_width: u32,
+    pub block_height: u32,
 }
 
 /// Walk the main IFD chain and classify every image in it.
@@ -103,6 +108,16 @@ pub fn page_directory(data: &[u8]) -> Vec<TiffPageInfo> {
             .get_tag_u64_vec(Tag::Unknown(330))
             .map(|offsets| offsets.len() as u32)
             .unwrap_or(0);
+        let tile_width = decoder.get_tag_u64(Tag::TileWidth).unwrap_or(0) as u32;
+        let tile_length = decoder.get_tag_u64(Tag::TileLength).unwrap_or(0) as u32;
+        let (block_width, block_height) = if tile_width > 0 && tile_length > 0 {
+            (tile_width, tile_length)
+        } else {
+            // A strip spans the full width; RowsPerStrip defaults to the whole
+            // image, which is exactly the "one block" case a caller must know
+            // about — there is nothing smaller to read.
+            (width, decoder.get_tag_u64(Tag::RowsPerStrip).unwrap_or(height as u64) as u32)
+        };
 
         let kind = if subfile_type & SUBFILE_TRANSPARENCY_MASK != 0 {
             TiffPageKind::Mask
@@ -146,6 +161,8 @@ pub fn page_directory(data: &[u8]) -> Vec<TiffPageInfo> {
             parent,
             reduction,
             sub_ifd_count,
+            block_width,
+            block_height,
         });
 
         if !decoder.more_images() || decoder.next_image().is_err() {
@@ -170,7 +187,7 @@ pub fn page_directory_json(data: &[u8]) -> String {
             format!(
                 "{{\"index\":{},\"width\":{},\"height\":{},\"samplesPerPixel\":{},\
                  \"subfileType\":{},\"kind\":\"{}\",\"parent\":{},\"reduction\":{},\
-                 \"subIfdCount\":{}}}",
+                 \"subIfdCount\":{},\"blockWidth\":{},\"blockHeight\":{}}}",
                 page.index,
                 page.width,
                 page.height,
@@ -182,6 +199,8 @@ pub fn page_directory_json(data: &[u8]) -> String {
                     .unwrap_or_else(|| "null".to_string()),
                 page.reduction,
                 page.sub_ifd_count,
+                page.block_width,
+                page.block_height,
             )
         })
         .collect();
@@ -226,6 +245,19 @@ mod tests {
         assert!(pages[1..].iter().all(|page| page.parent == Some(0)));
         assert_eq!(pages[1].reduction, 2);
         assert_eq!(pages[2].reduction, 4);
+        // Block geometry per level, which is what a region read snaps to.
+        assert_eq!((pages[0].block_width, pages[0].block_height), (128, 128));
+    }
+
+    /// A stripped file has no tiles; its block is the full width by
+    /// RowsPerStrip, and a caller must be able to tell the difference.
+    #[test]
+    fn stripped_pages_report_strip_geometry() {
+        let data = std::fs::read("../../test-samples/deflate_pred3_f32.tif").unwrap();
+        let pages = page_directory(&data);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].block_width, pages[0].width, "a strip spans the width");
+        assert!(pages[0].block_height >= 1 && pages[0].block_height <= pages[0].height);
     }
 
     /// A genuinely multi-page file keeps every page a page. The tag drives the

@@ -133,6 +133,37 @@ def main() -> None:
         writer.write(mask, photometric="mask", compression="deflate", subfiletype=4)
     print(f"{name:32} {path.stat().st_size:>7} bytes  RGB + transparency mask")
 
+    # A pyramid big enough that a zoomed-in view covers only part of it, which
+    # is the case where the viewer draws a sharp PATCH of a finer level over the
+    # coarse one. The 256-pixel fixture above is too small for that: any view of
+    # it covers most of the image, and decoding the finer level whole is then
+    # the cheaper answer.
+    #
+    # Nearest-neighbour decimation again, so a level's pixel is exactly a stored
+    # pixel — which is what lets a test assert that the patch lands on the right
+    # pixels rather than merely that it exists.
+    size = 1024
+    y, x = np.mgrid[0:size, 0:size]
+    # High-frequency content: a misplaced patch is then obvious, where a smooth
+    # gradient would hide an error of several pixels.
+    checkerboard = (((x // 8) % 2) ^ ((y // 8) % 2)) * 200 + (x % 8) * 6
+    detail = [checkerboard.astype(np.uint8)]
+    for _ in range(2):
+        detail.append(detail[-1][::2, ::2])
+
+    name = "cog_pyramid_detail.tif"
+    path = out / name
+    with tifffile.TiffWriter(path) as writer:
+        for index, level in enumerate(detail):
+            writer.write(
+                level,
+                subfiletype=1 if index else 0,
+                photometric="minisblack",
+                tile=(TILE, TILE),
+                compression="deflate",
+            )
+    print(f"{name:32} {path.stat().st_size:>7} bytes  {len(detail)} levels {size}x{size} tiled {TILE}")
+
 
 if __name__ == "__main__":
     main()

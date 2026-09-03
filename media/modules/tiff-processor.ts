@@ -8,6 +8,7 @@ import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
 import { chooseOpenLevel, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
+import type { TiffLevelHint } from './tiff-pages.js';
 import { applyBandScaling, bandDescription, hasBandScaling, parseGdalMetadata, GdalMetadata } from './gdal-metadata.js';
 import { parseGeoReference, type GeoReference } from './geo-reference.js';
 import { SettingsManager, ImageSettings } from './settings-manager.js';
@@ -262,12 +263,13 @@ export class TiffProcessor {
 	/**
 	 * How the caller wants a pyramidal file opened. The processor cannot know
 	 * how big the window is or what this browser will put on a canvas, so the
-	 * display side supplies both and `chooseOpenLevel` applies the policy.
+	 * display side supplies both as NUMBERS — the decision is made in the decode
+	 * worker, and a predicate cannot cross that boundary.
 	 */
 	async processTiff(
 		src: string,
 		pageIndex = 0,
-		levelHint?: { displayWidth: number, canDisplay: (width: number, height: number) => boolean },
+		levelHint?: TiffLevelHint,
 	): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
 		const startTime = performance.now();
 		this._lastRenderHistogram = null;
@@ -279,6 +281,9 @@ export class TiffProcessor {
 				this.omeBinaryOnly = null;
 				this.omeXml = null;
 				this.geoReference = null;
+				// Whole-file facts: a new file has a different pyramid, or none.
+				this.pageDirectory = [];
+				this.gdalMetadata = null;
 			}
 			const speculative = pageIndex === 0
 				? await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'tiff')
@@ -323,22 +328,15 @@ export class TiffProcessor {
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
 			if (!speculative) { PerfTrace.mark('fetch'); }
 
-			// A pyramidal file holds this scene at several resolutions, and which
-			// one to decode has to be settled BEFORE decoding: a 40000x40000
-			// page cannot be decoded at all — 1.6 gigapixels overruns both the
-			// canvas ceiling and the 32-bit wasm heap — so finding out after the
-			// decode is too late. The page directory is a header read, no
-			// pixels, and this runs only when a decode is about to be issued
-			// anyway for a file large enough that the strip-plan path would
-			// load the same main-thread module moments later.
-			// The speculative bootstrap decodes page 0 before anyone asks, so a
-			// file whose full resolution cannot be DRAWN can arrive here already
-			// decoded. Its own page directory says what smaller copies exist, so
-			// the level is chosen from that rather than by parsing again.
+			const withinDisplayLimits = (width: number, height: number) => !levelHint
+				|| (width <= levelHint.maxAxis && height <= levelHint.maxAxis
+					&& width * height <= levelHint.maxArea
+					&& width * height * 4 <= levelHint.maxBytes);
 			if (levelHint && bootstrapWasmResult && pageIndex === 0
-				&& !levelHint.canDisplay(Number(bootstrapWasmResult.width), Number(bootstrapWasmResult.height))) {
+				&& !withinDisplayLimits(Number(bootstrapWasmResult.width), Number(bootstrapWasmResult.height))) {
 				const directory = parsePageDirectory(bootstrapWasmResult.pageDirectoryJson);
-				const chosen = chooseOpenLevel(directory, 0, levelHint.displayWidth, levelHint.canDisplay);
+				const chosen = chooseOpenLevel(directory, 0, levelHint.displayWidth, withinDisplayLimits,
+					1, levelHint.pixelBudget);
 				if (chosen && chosen.index !== 0) {
 					console.log(`[TiffProcessor] Bootstrap decode is not displayable; reopening at level `
 						+ `1/${chosen.reduction} (${chosen.width}x${chosen.height})`);
@@ -346,26 +344,6 @@ export class TiffProcessor {
 					pageIndex = chosen.index;
 					this.pageIndex = chosen.index;
 					bootstrapWasmResult = null;
-				}
-			}
-
-			if (levelHint && !bootstrapWasmResult && pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
-				const levelWasm = getWasmModuleSync() || await getWasmModule();
-				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-				if (levelWasm && typeof levelWasm.tiff_page_directory === 'function') {
-					let directory: TiffPageEntry[] = [];
-					try {
-						directory = parsePageDirectory(levelWasm.tiff_page_directory(new Uint8Array(buffer)));
-					} catch { /* not classifiable; decode page 0 as before */ }
-					const chosen = chooseOpenLevel(directory, 0, levelHint.displayWidth, levelHint.canDisplay);
-					if (chosen && chosen.index !== 0) {
-						console.log(`[TiffProcessor] Opening at level 1/${chosen.reduction} `
-							+ `(${chosen.width}x${chosen.height}): full resolution is either not displayable `
-							+ `or larger than is worth decoding for this window`);
-						PerfTrace.note('tiff-open-level', `1/${chosen.reduction} ${chosen.width}x${chosen.height}`);
-						pageIndex = chosen.index;
-						this.pageIndex = chosen.index;
-					}
 				}
 			}
 
@@ -421,7 +399,21 @@ export class TiffProcessor {
 			if (!wasmResult && pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
 				try {
 					const mainWasm = getWasmModuleSync() || await getWasmModule();
-					if (mainWasm) {
+					if (mainWasm && levelHint) {
+						// The plan below describes PAGE 0, so a pyramidal file
+						// whose best level is an overview must not take this
+						// path — it would decode the full-resolution page in
+						// parallel, which is the work being avoided. Deciding
+						// here costs an IFD walk (about 2 ms on a 40 MB file) on
+						// a module this branch has already loaded; a file with
+						// no pyramid falls straight through.
+						const chosen = this._chooseOpenLevel(mainWasm, buffer, levelHint);
+						if (chosen > 0) {
+							pageIndex = chosen;
+							this.pageIndex = chosen;
+						}
+					}
+					if (mainWasm && pageIndex === 0) {
 						const parallelStart = performance.now();
 						const parallel = await tryStripParallelDecode(buffer, mainWasm);
 						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
@@ -508,6 +500,16 @@ export class TiffProcessor {
 				if (workerResponse?.ok) {
 					wasmResult = workerResponse.result;
 					localBuffer = null;
+					// A level hint lets the worker pick a page; adopt what it
+					// decoded so the UI and every later navigation agree with it.
+					const decodedPage = Number(wasmResult.pageIndex);
+					if (Number.isFinite(decodedPage) && decodedPage !== pageIndex) {
+						console.log(`[TiffProcessor] Opened at level index ${decodedPage}: full resolution `
+							+ `is either not displayable or larger than is worth decoding for this window`);
+						PerfTrace.note('tiff-open-level', `page ${decodedPage}`);
+						pageIndex = decodedPage;
+						this.pageIndex = decodedPage;
+					}
 					const decodedWith = wasmResult.decodedWith || 'wasm (worker)';
 					decodeInfo = { engine: decodedWith, durationMs: performance.now() - workerStart };
 					console.log(`[TiffProcessor] Worker TIFF decode time: ${decodeInfo.durationMs.toFixed(2)}ms (${decodedWith})`);
@@ -832,9 +834,15 @@ export class TiffProcessor {
 			this.rawTiffData.ome = this.omeMetadata;
 			this._gdalNodata = parseGdalNodata(this._lastAllTags);
 			this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
-			// geotiff.js exposes no NewSubfileType walk, so this path has no
-			// page directory rather than a stale one from the previous file.
-			this.pageDirectory = [];
+			// geotiff.js exposes no NewSubfileType walk, so it cannot BUILD a page
+			// directory — but a directory describes the FILE, not the decode
+			// that produced it, and this path can be reached for one level of a
+			// file whose other levels went through Rust. Clearing it there
+			// turned the Level control into a page selector mid-session, which
+			// is exactly the confusion the classification exists to prevent.
+			// Any directory already read for this file is therefore kept; the
+			// source check at the top of processTiff clears it when the file
+			// actually changes.
 			this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
 
 			// Send format information to VS Code BEFORE rendering
@@ -1182,6 +1190,32 @@ export class TiffProcessor {
 	}
 
 	/**
+	 * The page index to open at, from a directory read through an
+	 * already-initialized module. 0 means "the file as it is" — no pyramid, or
+	 * one whose full resolution is the right thing to show.
+	 */
+	_chooseOpenLevel(wasm: any, buffer: ArrayBuffer, hint: TiffLevelHint): number {
+		if (typeof wasm?.tiff_page_directory !== 'function') { return 0; }
+		let directory: TiffPageEntry[] = [];
+		try {
+			directory = parsePageDirectory(wasm.tiff_page_directory(new Uint8Array(buffer)));
+		} catch {
+			return 0;
+		}
+		if (directory.length < 2) { return 0; }
+		const canDisplay = (width: number, height: number) =>
+			width <= hint.maxAxis && height <= hint.maxAxis
+			&& width * height <= hint.maxArea
+			&& width * height * 4 <= hint.maxBytes;
+		const chosen = chooseOpenLevel(directory, 0, hint.displayWidth, canDisplay, 1, hint.pixelBudget);
+		if (!chosen || chosen.index === 0) { return 0; }
+		console.log(`[TiffProcessor] Opening at level 1/${chosen.reduction} (${chosen.width}x${chosen.height}): `
+			+ `full resolution is either not displayable or larger than is worth decoding for this window`);
+		PerfTrace.note('tiff-open-level', `1/${chosen.reduction} ${chosen.width}x${chosen.height}`);
+		return chosen.index;
+	}
+
+	/**
 	 * The value stored at one pixel of the FULL-resolution page, read directly
 	 * from the file.
 	 *
@@ -1226,6 +1260,54 @@ export class TiffProcessor {
 				.join(' ');
 		} catch {
 			// Includes the deliberate "this layout is decoded whole" refusal.
+			return null;
+		}
+	}
+
+	/**
+	 * Decode one rectangle of one level and render it with the CURRENT display
+	 * settings, so it can be laid over the coarse image without a visible seam.
+	 *
+	 * The same normalization, gamma and statistics as the main render: a patch
+	 * that normalized itself would be a different picture of the same data,
+	 * brighter or darker than what surrounds it, which is worse than no patch.
+	 */
+	async renderRegion(
+		pageIndex: number,
+		rect: { x: number, y: number, width: number, height: number },
+	): Promise<ImageData | null> {
+		const buffer = this._sourceBuffer;
+		if (!buffer) { return null; }
+		try {
+			const wasm = getWasmModuleSync() || await getWasmModule();
+			if (!wasm || typeof wasm.decode_tiff_region !== 'function') { return null; }
+			const region = wasm.decode_tiff_region(
+				new Uint8Array(buffer), pageIndex, rect.x, rect.y, rect.width, rect.height);
+			const width = region.width as number;
+			const height = region.height as number;
+			const channels = region.channels as number;
+			const data = region.take_data_as_f32() as Float32Array;
+			if (!data.length) { return null; }
+
+			const settings = this.settingsManager.settings;
+			const bitsPerSample = this.rawTiffData?.ifd?.t258 ?? region.bits_per_sample;
+			const sampleFormat = this.rawTiffData?.ifd?.t339 ?? region.sample_format;
+			return ImageRenderer.render(
+				data, width, height, channels,
+				sampleFormat === 3,
+				// The whole image's statistics, not this rectangle's: auto-
+				// normalizing a patch to its own range would make it disagree
+				// with the image it sits on.
+				this._lastStatistics || { min: 0, max: 1 },
+				settings,
+				{
+					nanColor: this._getNanColor(settings),
+					typeMax: tiffTypeMax(sampleFormat, bitsPerSample),
+					extraSamplesAreAlpha: this._extraSamplesAreAlpha,
+					nodataValue: this._gdalNodata,
+				},
+			);
+		} catch {
 			return null;
 		}
 	}
