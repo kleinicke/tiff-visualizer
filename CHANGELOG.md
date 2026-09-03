@@ -6,6 +6,14 @@
 - Add several additional tiff compression standards
 - Read GeoTIFF georeferencing: named GeoKeys and a CRS label in the metadata panel, and map coordinates under the cursor
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
+- Render multi-band GeoTIFFs correctly: a band past the colour samples is treated as alpha only when the file's `ExtraSamples` tag says so, which previously made a 2-band COG almost entirely transparent
+- Treat a pyramidal TIFF's overviews (COG, whole-slide) as resolution levels of one image rather than as extra pages, with a Level selector that names each level
+- Open images that exceed the canvas limit at their largest usable pyramid level instead of failing, and refine to a finer level when zooming in
+- Apply GDAL's per-band scale/offset to the pixel readout, and use band descriptions as channel names
+- Draw `GDAL_NODATA` pixels in the nodata colour and report them as `nodata` instead of as their sentinel value
+- Open an image from an `https://` link — a command in the extension, a link box and `?url=` on the website
+- Log one line per load naming what became visible (size, samples, type, level)
+- Explain complex-sample TIFFs (SAR single-look-complex) instead of reporting them as a decode failure
 
 ## 1.10.0 (2026-08-22)
 

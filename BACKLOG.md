@@ -2450,7 +2450,7 @@ win available in our own code, and the two OTHER levers are worse buys:
 **Difficulty: 2** for the decode itself, plus whatever the shared level-choosing
 policy costs.
 
-### 13b. COG overviews and SubIFDs
+### 13b. COG overviews and SubIFDs — DONE, except regions and SubIFDs
 
 A COG stores the same scene at halving resolutions as additional IFDs:
 
@@ -2459,30 +2459,47 @@ A COG stores the same scene at halving resolutions as additional IFDs:
     IFD 2   2745 x 2745    /4    > overviews
     IFD 3   1373 x 1373    /8   /
 
-Two things are missing, and they are independent:
+**Shipped (2026-09-03).** `crates/image-decoders/src/formats/tiff/pages.rs`
+classifies the IFD chain by `NewSubfileType` into pages, overviews and masks and
+carries it to the webview as `page_directory_json`;
+[media/modules/tiff-pages.ts](media/modules/tiff-pages.ts) holds the display
+policy and [test/tiff-pages-test.js](test/tiff-pages-test.js) pins it. The
+overlay shows a Level selector instead of a page number, an image too large for
+a canvas opens at the largest level that fits its window (a 40000x40000 COG:
+~370 ms, where it previously failed after a 27-second decode), and zooming in
+refines to a finer level while keeping the image the same size on screen.
 
-1. **Overviews are mistaken for pages.** `NewSubfileType` (tag 254) bit 0 marks
-   an IFD as a reduced-resolution version of another image. Nothing reads it, so
-   `pageCount` counts overviews as pages and a COG opens as a multi-page image
-   whose later pages are blurry duplicates.
-2. **SubIFDs are invisible.** The other convention hangs the overviews off the
-   full-resolution IFD as a list of offsets in tag 330. Nothing in the codebase
-   reads tag 330 at all, so those overviews are simply not seen.
+The policy is deliberately conservative: **full resolution whenever it can be
+displayed at all**, because this is an inspector and a silently downsampled
+image is a worse failure than a slow one. So the level is reduced only when the
+full page cannot be drawn, or when the reader picks one — which also means the
+"quietly approximate readout" risk below has not arrived yet: at full resolution
+inspection, measurement, statistics and export read exactly what they always did.
 
-Then the same payoff as 13a: pick the level from the zoom instead of always
-decoding IFD 0. For a 10980^2 Sentinel-2 band that is the difference between
-instant and multi-second.
+**Still open, in order of value:**
+
+1. **Region-limited decode.** Levels are decoded whole. Inspecting a
+   40000x40000 scene at full zoom needs only the visible tiles, and the block
+   offsets to do it already exist in `TiffFloatStripPlan`. This is what makes
+   full-resolution inspection of an unopenably large image possible, and it is
+   shared with item 14 phase C. **Difficulty: 4** — the decode is the easy half;
+   the canvas becoming a window onto the image (rather than the whole image)
+   touches zoom, pan, pixel coordinates, measurement and export.
+2. **Opening below full resolution by choice.** A 43 MB Sentinel-2 band could
+   open at its 687x687 level instantly. That means accepting an approximate
+   first view, so it needs the rule that says which operations force a
+   full-resolution read — the design work described above — plus a visible
+   indication that the view is not full resolution.
+3. **SubIFDs (tag 330).** The other overview convention hangs the levels off the
+   full-resolution IFD. `page_directory` counts them (`subIfdCount`) but cannot
+   select them: the `tiff` crate addresses images by chain index and exposes no
+   way to make an arbitrary IFD offset the current image. GDAL's COG driver
+   writes the main chain, so this affects some microscopy and BigTIFF pyramids
+   rather than the geospatial case. **Difficulty: 3**, mostly in the crate.
 
 This subsumes the older "Pyramidal/tiled BigTIFF viewport loading" bullet under
-"Other ideas worth considering" below, which describes the same mechanism for
-`.svs` and large OME-TIFFs — whole-slide images are pyramidal for exactly this
-reason, so one implementation serves COG, JP2 and WSI.
-
-**Difficulty: 3** — the IFD/SubIFD classification is straightforward; deciding
-when a decode may be approximate is the part that needs care. Pixel inspection,
-measurement, statistics and export must all keep reading full resolution, or the
-viewer would quietly report values from a downsampled image. That rule is shared
-with 13a and is the real design work in both.
+"Other ideas worth considering" below — whole-slide images are pyramidal for
+exactly this reason, so the same level machinery serves COG, JP2 and WSI.
 
 ## 14. Opening images from a URL (and range-reading them)
 
@@ -2582,12 +2599,15 @@ this explicitly rather than by drift.
 
 ### Phases
 
-**Phase A — open a URL at all.** Accept an `https://` URL in the browser host
-(paste box, `?url=` query parameter) and via a command in the extension; fetch
-the whole file; decode exactly as today. No range reads, no new decoder work.
-Immediately useful for the many COGs under ~50 MB, and it forces out all the
-boring problems — CORS failures, redirects, content-type, progress reporting,
-cancellation, error messages — while the decode path is unchanged.
+**Phase A — open a URL at all. DONE (2026-09-03).** The browser host takes a
+link from a box on the start screen or from `?url=`, which also makes a
+shareable viewer link; the extension has **Open Image from URL...**, which
+fetches into `globalStorageUri` and opens the copy like any local file, so every
+format, decoder and control works unchanged. Whole file, no range reads. A
+cross-origin refusal reaches script without a reason, so the message covers the
+class rather than claiming to know; no proxy, per the constraint below.
+Verified against `sentinel-cogs.s3.us-west-2.amazonaws.com` (a 1830x1830 band
+opens in ~180 ms after the download) and `data.source.coop`.
 
 **Phase B — a byte source, and header-first reads.** Introduce one interface
 with two implementations (a local `ArrayBuffer`, and an HTTP range reader), then:
@@ -2644,6 +2664,32 @@ the file — do not silently route it through anything.
 **Difficulty: Phase A is 2. Phase B is 4** — mostly the byte-source abstraction
 and the decoder entry points, not the networking. **Phase C is 5** and should
 not be attempted until something actually needs it.
+
+## 15. Complex-sample TIFFs (SAR single-look-complex)
+
+`SampleFormat` 5 (complex integer) and 6 (complex float) store a real and an
+imaginary component per sample. They are what SAR single-look-complex products
+use, and `test_data/cog/slc.tif` is one: 1094x674, 32 bits, SampleFormat 5.
+Nothing decodes them today — the reader now explains the format and suggests
+converting to amplitude rather than reporting a decode failure, which is honest
+but not support.
+
+What support means, roughly in order:
+
+1. **Decode.** The `tiff` crate refuses these sample formats, so the samples
+   have to come from the existing block path (`decompress_block` already yields
+   raw bytes for every codec) and be assembled as pairs. The CFA precedent
+   (`neutralize_cfa_photometric`) shows the shape of a format-specific
+   pre-pass.
+2. **Display.** Amplitude (`sqrt(re^2 + im^2)`) is what SAR readers show by
+   default, usually on a log scale; phase (`atan2`) is the other view people
+   need. That is a display-mode control, close to the existing 24-bit and
+   debayer toggles.
+3. **Inspection.** The readout should show both components and the derived
+   magnitude/phase, since the whole point of an SLC product is the phase.
+
+**Difficulty: 3** for amplitude-only, 4 with a phase view and a display-mode
+control.
 
 ## Other ideas worth considering
 

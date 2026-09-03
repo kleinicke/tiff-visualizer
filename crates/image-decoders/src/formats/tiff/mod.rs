@@ -469,9 +469,27 @@ pub(crate) fn decode_tiff_impl(
         direct_decode = true;
         result
     } else {
-        decoder
-            .read_image()
-            .map_err(|e| DecodeError::new(&format!("Failed to decode image: {}", e)))?
+        decoder.read_image().map_err(|e| {
+            // SampleFormat 5 (complex integer) and 6 (complex float) hold two
+            // components per sample — real and imaginary — and are what SAR
+            // single-look-complex products use. The crate's message for them
+            // ("sample format [Unknown(5)] is unsupported") reads like a broken
+            // file rather than a missing feature, which sends people looking
+            // for a fault in their data.
+            let sample_format = decoder
+                .get_tag_u64(tiff::tags::Tag::SampleFormat)
+                .unwrap_or(0);
+            if sample_format == 5 || sample_format == 6 {
+                return DecodeError::new(
+                    "This TIFF holds complex samples (SampleFormat \
+                     5/6 — real and imaginary parts per pixel), as SAR \
+                     single-look-complex products do. Complex data is not \
+                     decoded yet; converting to amplitude (e.g. gdal_translate \
+                     -ot Float32 with a magnitude expression) opens correctly.",
+                );
+            }
+            DecodeError::new(&format!("Failed to decode image: {}", e))
+        })?
     };
 
     // The direct-decode paths above (`try_decode_general_strips_tiles`,
