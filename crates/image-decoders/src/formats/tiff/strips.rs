@@ -204,7 +204,12 @@ pub(crate) fn decompress_strip_or_tile(
 // decoders, which the core build leaves out; the struct itself is still needed
 // by every caller of `decompress_block`.
 #[cfg_attr(
-    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
     allow(dead_code)
 )]
 /// How the samples in a block are laid out, for the codecs that decode to
@@ -220,10 +225,12 @@ pub(crate) struct BlockCodecInfo {
     pub little_endian: bool,
     /// TIFF tag 50674 (LercParameters), second value: an extra codec applied
     /// on top of the LERC blob. 0 = none, 1 = Deflate, 2 = ZSTD.
+    #[cfg_attr(not(feature = "codec-lerc"), allow(dead_code))]
     pub lerc_additional_compression: u32,
     /// PhotometricInterpretation 6: the block's samples are YCbCr and have to
     /// be converted on the way out. Only the codecs that carry colour
     /// themselves (JPEG 2000) consult this.
+    #[cfg_attr(not(feature = "codec-jpeg2000"), allow(dead_code))]
     pub ycbcr: bool,
 }
 
@@ -260,9 +267,10 @@ pub(crate) fn decompress_block(
             let mut rest = block;
             while !rest.is_empty() && buf.len() < expected_len {
                 let mut cursor = std::io::Cursor::new(rest);
-                let mut dec = ruzstd::decoding::StreamingDecoder::new(&mut cursor).map_err(|e| {
-                    DecodeError::new(&format!("{}: ZSTD decoder init failed: {:?}", context, e))
-                })?;
+                let mut dec =
+                    ruzstd::decoding::StreamingDecoder::new(&mut cursor).map_err(|e| {
+                        DecodeError::new(&format!("{}: ZSTD decoder init failed: {:?}", context, e))
+                    })?;
                 dec.read_to_end(&mut buf).map_err(|e| {
                     DecodeError::new(&format!("{}: ZSTD decode failed: {:?}", context, e))
                 })?;
@@ -308,11 +316,21 @@ pub(crate) fn decompress_block(
         34925 => Err(crate::formats::external_codec::needed("LZMA", context)),
         // PNG-in-TIFF: every block is a complete PNG stream covering exactly
         // that strip or tile.
-        34933 => decode_png_block(block, expected_len, context, codec_info(info, context, "PNG")?),
+        34933 => decode_png_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "PNG")?,
+        ),
         // LERC, including GDAL's LERC_DEFLATE and LERC_ZSTD, which wrap the
         // same blob in a second codec named by tag 50674.
         #[cfg(feature = "codec-lerc")]
-        34887 => decode_lerc_block(block, expected_len, context, codec_info(info, context, "LERC")?),
+        34887 => decode_lerc_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "LERC")?,
+        ),
         #[cfg(not(feature = "codec-lerc"))]
         34887 => Err(crate::formats::external_codec::needed("LERC", context)),
         // JPEG XR. 22610 is the code Hamamatsu NDPI files use.
@@ -335,12 +353,79 @@ pub(crate) fn decompress_block(
             codec_info(info, context, "JPEG 2000")?,
         ),
         #[cfg(not(feature = "codec-jpeg2000"))]
-        34712 | 33003 | 33004 | 33005 => Err(crate::formats::external_codec::needed("JPEG 2000", context)),
+        34712 | 33003 | 33004 | 33005 => {
+            Err(crate::formats::external_codec::needed("JPEG 2000", context))
+        }
+        // JPEG XL in TIFF, registered as compression 50002. It lives in the
+        // separate lazy JXL module, which builds this same container parser.
+        #[cfg(feature = "jxl")]
+        50002 => decode_jxl_block(
+            block,
+            expected_len,
+            context,
+            codec_info(info, context, "JPEG XL")?,
+        ),
+        #[cfg(not(feature = "jxl"))]
+        50002 => Err(crate::formats::external_codec::needed("JPEG XL", context)),
         _ => Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             context, compression
         ))),
     }
+}
+
+#[cfg(feature = "jxl")]
+fn decode_jxl_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: &BlockCodecInfo,
+) -> Result<Vec<u8>, DecodeError> {
+    let decoded = crate::formats::jxl::decode_jxl_impl(block)?;
+    let bytes_per_sample = (info.bits_per_sample as usize).div_ceil(8);
+    if decoded.data.len().saturating_mul(bytes_per_sample) != expected_len {
+        return Err(DecodeError::new(&format!(
+            "{}: JPEG XL decoded {} samples, but the TIFF block needs {} bytes of {}-bit samples",
+            context,
+            decoded.data.len(),
+            expected_len,
+            info.bits_per_sample
+        )));
+    }
+    if decoded.sample_format != info.sample_format
+        || decoded.bits_per_sample != info.bits_per_sample
+    {
+        return Err(DecodeError::new(&format!(
+            "{}: JPEG XL is sample format {}/{}-bit, TIFF declares {}/{}-bit",
+            context,
+            decoded.sample_format,
+            decoded.bits_per_sample,
+            info.sample_format,
+            info.bits_per_sample
+        )));
+    }
+
+    let mut out = Vec::with_capacity(expected_len);
+    match (info.sample_format, info.bits_per_sample) {
+        (1, 8) => out.extend(decoded.data.iter().map(|&value| value as u8)),
+        (1, 16) => {
+            for value in decoded.data {
+                out.extend_from_slice(&to_file_order_2(value as u16, info.little_endian));
+            }
+        }
+        (3, 32) => {
+            for value in decoded.data {
+                out.extend_from_slice(&to_file_order_4(value.to_bits(), info.little_endian));
+            }
+        }
+        _ => {
+            return Err(DecodeError::new(&format!(
+                "{}: JPEG XL TIFF samples {}/{}-bit are not supported",
+                context, info.sample_format, info.bits_per_sample
+            )))
+        }
+    }
+    Ok(out)
 }
 
 /// A typed codec cannot run without knowing the sample layout; a caller that
@@ -475,14 +560,12 @@ fn decode_lerc_block(
                 }
             }
             (2, 8) => out.push((value as i8) as u8),
-            (2, 16) => out.extend_from_slice(&to_file_order_2(
-                (value as i16) as u16,
-                info.little_endian,
-            )),
-            (2, 32) => out.extend_from_slice(&to_file_order_4(
-                (value as i32) as u32,
-                info.little_endian,
-            )),
+            (2, 16) => {
+                out.extend_from_slice(&to_file_order_2((value as i16) as u16, info.little_endian))
+            }
+            (2, 32) => {
+                out.extend_from_slice(&to_file_order_4((value as i32) as u32, info.little_endian))
+            }
             (_, 8) => out.push(value as u8),
             (_, 16) => out.extend_from_slice(&to_file_order_2(value as u16, info.little_endian)),
             (_, 32) => out.extend_from_slice(&to_file_order_4(value as u32, info.little_endian)),
@@ -573,12 +656,18 @@ fn decode_jpegxr_block(
 }
 
 #[cfg_attr(
-    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
     allow(dead_code)
 )]
 /// CCIR 601-1 / JFIF inverse transform, in place over interleaved 8-bit
 /// samples. The same coefficients the subsampled-YCbCr path uses, which is
 /// what TIFF 6.0 specifies for the default YCbCrCoefficients.
+#[cfg_attr(not(feature = "codec-jpeg2000"), allow(dead_code))]
 fn ycbcr_to_rgb_in_place(data: &mut [u8], channels: usize) {
     for pixel in data.chunks_exact_mut(channels) {
         let y = pixel[0] as f32;
@@ -591,7 +680,12 @@ fn ycbcr_to_rgb_in_place(data: &mut [u8], channels: usize) {
 }
 
 #[cfg_attr(
-    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
     allow(dead_code)
 )]
 fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
@@ -603,7 +697,12 @@ fn to_file_order_2(value: u16, little_endian: bool) -> [u8; 2] {
 }
 
 #[cfg_attr(
-    not(any(feature = "codec-lerc", feature = "codec-jpeg2000", feature = "codec-jpegxr")),
+    not(any(
+        feature = "codec-lerc",
+        feature = "codec-jpeg2000",
+        feature = "codec-jpegxr",
+        feature = "jxl"
+    )),
     allow(dead_code)
 )]
 fn to_file_order_4(value: u32, little_endian: bool) -> [u8; 4] {
@@ -972,7 +1071,7 @@ pub(crate) fn try_decode_general_strips_tiles(
     // of them is claimed here, strips included.
     let block_only_codec = matches!(
         compression,
-        34887 | 34925 | 34933 | 34712 | 33003 | 33004 | 33005 | 34934 | 22610
+        34887 | 34925 | 34933 | 34712 | 33003 | 33004 | 33005 | 34934 | 22610 | 50002
     );
     let claim = planar_configuration == 2
         || (is_tiled && matches!(compression, 5 | 50000))
@@ -1005,9 +1104,7 @@ pub(crate) fn try_decode_general_strips_tiles(
             CTX, bits_per_sample
         )));
     }
-    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000)
-        && !block_only_codec
-    {
+    if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) && !block_only_codec {
         return Err(DecodeError::new(&format!(
             "{}: compression {} is not supported",
             CTX, compression
@@ -1273,9 +1370,11 @@ pub(crate) fn try_decode_general_strips_tiles(
         // No F16 carrier exists, and none is wanted: everything downstream
         // reads half floats as f32 while still reporting 16 bits, which is what
         // the tiff crate's own half-float path produces.
-        (3, 16) => {
-            DecodingResult::F32(out.into_iter().map(|v| crate::formats::half::f16_to_f32(v as u16)).collect())
-        }
+        (3, 16) => DecodingResult::F32(
+            out.into_iter()
+                .map(|v| crate::formats::half::f16_to_f32(v as u16))
+                .collect(),
+        ),
         (3, 32) => DecodingResult::F32(out.into_iter().map(|v| f32::from_bits(v as u32)).collect()),
         (3, 64) => DecodingResult::F64(out.into_iter().map(f64::from_bits).collect()),
         (2, bits) => {
@@ -1563,13 +1662,24 @@ pub(crate) fn float_predictor_plan(
     // hand back typed values rather than the strip's bytes, which is why the
     // plan carries the sample layout they need to re-serialize against.
     //
-    // Planning only parses the IFD, so the core build may safely advertise a
-    // layout whose codec lives in the extended module. The caller selects the
-    // matching worker module before any block is decoded.
+    // Planning only parses the IFD, but it must not advertise a codec that the
+    // selected parallel worker module cannot decode. Embedded JPEG XL takes
+    // the whole-container retry path through its dedicated module instead.
     let supported = matches!(
         compression,
-        1 | 5 | 8 | 32946 | 50000 | 34933 | 34925 | 34887 | 34712 | 33003 | 33004 | 33005
-            | 34934 | 22610
+        1 | 5
+            | 8
+            | 32946
+            | 50000
+            | 34933
+            | 34925
+            | 34887
+            | 34712
+            | 33003
+            | 33004
+            | 33005
+            | 34934
+            | 22610
     );
     if !supported {
         return None;
@@ -1958,7 +2068,9 @@ pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f3
     match (bytes_per_sample, plan.sample_format) {
         (1, 2) => raster.iter().map(|v| *v as i8 as f32).collect(),
         (1, _) => raster.iter().map(|v| *v as f32).collect(),
-        (2, 3) => map!(2, |a| crate::formats::half::f16_to_f32(u16::from_le_bytes(a))),
+        (2, 3) => map!(2, |a| crate::formats::half::f16_to_f32(u16::from_le_bytes(
+            a
+        ))),
         (2, 2) => map!(2, |a| i16::from_le_bytes(a) as f32),
         (2, _) => map!(2, |a| u16::from_le_bytes(a) as f32),
         (4, 3) => map!(4, f32::from_le_bytes),
@@ -2075,11 +2187,11 @@ mod tests {
         // Python lzma FORMAT_XZ: Delta(dist=3) followed by LZMA2. This is the
         // same filter chain libtiff writes for LZMA + horizontal predictor.
         let encoded = [
-            0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4, 0x46, 0x02,
-            0x01, 0x03, 0x01, 0x02, 0x21, 0x01, 0x16, 0xf2, 0xe8, 0xcd, 0x44, 0x01, 0x00,
-            0x05, 0x4b, 0x3a, 0x2a, 0x02, 0x02, 0x02, 0x00, 0x00, 0x00, 0x96, 0x3e, 0xab,
-            0x28, 0x30, 0x07, 0xf7, 0xde, 0x00, 0x01, 0x1e, 0x06, 0xc1, 0x2f, 0xa4, 0x1d,
-            0x1f, 0xb6, 0xf3, 0x7d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a,
+            0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4, 0x46, 0x02, 0x01,
+            0x03, 0x01, 0x02, 0x21, 0x01, 0x16, 0xf2, 0xe8, 0xcd, 0x44, 0x01, 0x00, 0x05, 0x4b,
+            0x3a, 0x2a, 0x02, 0x02, 0x02, 0x00, 0x00, 0x00, 0x96, 0x3e, 0xab, 0x28, 0x30, 0x07,
+            0xf7, 0xde, 0x00, 0x01, 0x1e, 0x06, 0xc1, 0x2f, 0xa4, 0x1d, 0x1f, 0xb6, 0xf3, 0x7d,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a,
         ];
         let decoded = decompress_block(&encoded, 34925, 6, "test", None).unwrap();
         assert_eq!(decoded, [75, 58, 42, 77, 60, 44]);

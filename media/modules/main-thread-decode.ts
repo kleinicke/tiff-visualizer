@@ -1,7 +1,7 @@
 "use strict";
 /**
- * Main-thread Rust/WASM decode path for the seven formats that have no
- * TypeScript parser: PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF.
+ * Main-thread Rust/WASM decode path for the formats that have no
+ * TypeScript parser: PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2, LIF and SDT.
  *
  * `DecodeWorkerClient.decodeWithFallback` runs these when the decode worker is
  * unavailable or its response is not ok. That used to be where the TypeScript
@@ -23,6 +23,7 @@ import {
 	decodeCziWithWasm,
 	decodeLifWithWasm,
 	decodeNd2WithWasm,
+	decodeSdtWithWasm,
 	decodeDicomWithWasm,
 	decodeFitsWithWasm,
 	decodeJpegxrWithWasm,
@@ -75,11 +76,11 @@ export async function decodeJxlLocal(buffer: ArrayBuffer) {
 
 /**
  * Run `attempt`, and if it fails only because the core module lacks a codec,
- * run it again against the heavy-codec module.
+ * run it again against the matching lazy codec module.
  *
  * The `[external-codec:…]` check is what keeps this cheap: any other failure
- * propagates untouched rather than downloading a couple of megabytes to fail
- * the same way.
+ * propagates untouched rather than downloading another module to fail the
+ * same way.
  */
 async function withCodecFallback<T>(
 	format: string,
@@ -97,7 +98,14 @@ async function withCodecFallback<T>(
 		// heavy codec to decode.
 		const { externalCodecName, initCodecDecoder } = await import('./codec-wasm-wrapper.js');
 		const { decodeNonTiffWithCodecModule } = await import('./codec-fallback.js');
-		if (!externalCodecName(error)) { throw error; }
+		const codec = externalCodecName(error);
+		if (!codec) { throw error; }
+		if (codec === 'JPEG XL' && format === 'dicom') {
+			const { initJxlDecoder } = await import('./jxl-wasm-wrapper.js');
+			const wasm = await initJxlDecoder();
+			return decodeDicomWithWasm(
+				wasm.decode_dicom_fast, buffer, Number(options.frameIndex || 0), 'main') as T;
+		}
 		const wasm = await initCodecDecoder();
 		return decodeNonTiffWithCodecModule(wasm, format, buffer, options, 'main') as T;
 	}
@@ -152,6 +160,11 @@ export async function decodeNd2Local(buffer: ArrayBuffer, options: Record<string
 export async function decodeLifLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	const wasm = await requireWasm('LIF');
 	return decodeLifWithWasm(wasm.decode_lif_fast, buffer, options, 'main');
+}
+
+export async function decodeSdtLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
+	const wasm = await requireWasm('SDT');
+	return decodeSdtWithWasm(wasm.decode_sdt_fast, buffer, options, 'main');
 }
 
 export async function decodeCziLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {

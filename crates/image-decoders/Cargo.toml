@@ -30,6 +30,7 @@ all-formats = [
     "czi",
     "nd2",
     "lif",
+    "sdt",
     "demosaic",
 ]
 
@@ -89,6 +90,7 @@ dicom = ["jpeg", "dep:flate2"]
 czi = ["dep:ruzstd", "dep:weezl", "jpeg"]
 nd2 = []
 lif = []
+sdt = ["dep:flate2"]
 demosaic = []
 
 [dependencies]

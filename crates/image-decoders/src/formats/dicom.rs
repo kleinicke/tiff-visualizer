@@ -74,6 +74,8 @@ enum CompressedCodec {
     JpegLs,
     /// 1.2.840.10008.1.2.4.57 / .70 (process 14, selection value 1)
     JpegLossless,
+    /// 1.2.840.10008.1.2.4.110/.111/.112
+    JpegXl,
 }
 
 struct DicomContext<'a> {
@@ -249,6 +251,13 @@ fn parse_dicom_context(data: &[u8]) -> Result<DicomContext<'_>, DecodeError> {
                 little: true,
                 compressed: Some(CompressedCodec::Jpeg2000),
             },
+            "1.2.840.10008.1.2.4.110" | "1.2.840.10008.1.2.4.111" | "1.2.840.10008.1.2.4.112" => {
+                Encoding {
+                    explicit: true,
+                    little: true,
+                    compressed: Some(CompressedCodec::JpegXl),
+                }
+            }
             _ => {
                 return Err(DecodeError::new(&format!(
                     "Compressed or unsupported DICOM Transfer Syntax: {}",
@@ -758,7 +767,11 @@ fn encapsulated_fragments(
     let mut fragments: Vec<(usize, usize)> = Vec::new();
     let mut first = true;
 
-    while offset.checked_add(8).map(|e| e <= data.len()).unwrap_or(false) {
+    while offset
+        .checked_add(8)
+        .map(|e| e <= data.len())
+        .unwrap_or(false)
+    {
         let group = read_u16(data, offset, true).unwrap_or(0);
         let element = read_u16(data, offset + 2, true).unwrap_or(0);
         let length = read_u32(data, offset + 4, true).unwrap_or(0) as usize;
@@ -789,7 +802,9 @@ fn encapsulated_fragments(
         offset = end;
     }
     if fragments.is_empty() {
-        return Err(DecodeError::new("DICOM: encapsulated Pixel Data has no fragments"));
+        return Err(DecodeError::new(
+            "DICOM: encapsulated Pixel Data has no fragments",
+        ));
     }
     Ok((offset_table, fragments))
 }
@@ -871,7 +886,10 @@ fn check_lossless_jpeg_predictor(encoded: &[u8]) -> Result<(), DecodeError> {
         if marker == 0xda {
             // SOS: length, component count, then two bytes per component.
             let components = *encoded.get(offset + 4).unwrap_or(&0) as usize;
-            let predictor = encoded.get(offset + 5 + 2 * components).copied().unwrap_or(1);
+            let predictor = encoded
+                .get(offset + 5 + 2 * components)
+                .copied()
+                .unwrap_or(1);
             if matches!(predictor, 5 | 6) {
                 return Err(DecodeError::new(&format!(
                     "DICOM lossless JPEG: predictor {} is not supported (the decoder \
@@ -881,9 +899,9 @@ fn check_lossless_jpeg_predictor(encoded: &[u8]) -> Result<(), DecodeError> {
             }
             return Ok(());
         }
-        offset = offset.checked_add(2 + length).ok_or_else(|| {
-            DecodeError::new("DICOM lossless JPEG: malformed marker segment")
-        })?;
+        offset = offset
+            .checked_add(2 + length)
+            .ok_or_else(|| DecodeError::new("DICOM lossless JPEG: malformed marker segment"))?;
     }
     Ok(())
 }
@@ -925,7 +943,9 @@ fn unpack_bits(segment: &[u8], expected: usize, out: &mut Vec<u8>) -> Result<(),
     if out.len() > target {
         // A run may cross the plane boundary only by overrunning it, which
         // means the segment does not describe this frame.
-        return Err(DecodeError::new("DICOM RLE: segment decodes to more bytes than the plane holds"));
+        return Err(DecodeError::new(
+            "DICOM RLE: segment decodes to more bytes than the plane holds",
+        ));
     }
     Ok(())
 }
@@ -948,7 +968,9 @@ fn decode_rle_lossless(
     bytes_per_sample: usize,
 ) -> Result<Vec<u8>, DecodeError> {
     if frame.len() < 64 {
-        return Err(DecodeError::new("DICOM RLE: frame is shorter than its 64-byte header"));
+        return Err(DecodeError::new(
+            "DICOM RLE: frame is shorter than its 64-byte header",
+        ));
     }
     let read_u32 = |index: usize| {
         let at = index * 4;
@@ -970,11 +992,18 @@ fn decode_rle_lossless(
         let start = read_u32(1 + index);
         // Offsets are from the start of the frame and must land inside it; the
         // last segment runs to the end.
-        let end = if index + 1 < declared { read_u32(2 + index) } else { frame.len() };
+        let end = if index + 1 < declared {
+            read_u32(2 + index)
+        } else {
+            frame.len()
+        };
         if start < 64 || end > frame.len() || start > end {
             return Err(DecodeError::new(&format!(
                 "DICOM RLE: segment {} spans {}..{}, outside the {}-byte frame",
-                index, start, end, frame.len()
+                index,
+                start,
+                end,
+                frame.len()
             )));
         }
         let mut plane = Vec::with_capacity(pixels);
@@ -1015,13 +1044,19 @@ fn decode_own_codec_frame(
     frame: u32,
     codec: CompressedCodec,
 ) -> Result<Vec<f64>, DecodeError> {
-    let encoded =
-        encapsulated_frame_bytes(context.data, context.pixel_offset, frame, info.frames)?;
+    let encoded = encapsulated_frame_bytes(context.data, context.pixel_offset, frame, info.frames)?;
     let width = info.columns;
     let height = info.rows;
     let bytes_per_sample = ((info.bits_allocated / 8).max(1)) as usize;
 
     let bytes: Vec<u8> = match codec {
+        #[cfg(not(feature = "jxl"))]
+        CompressedCodec::JpegXl => {
+            return Err(crate::formats::external_codec::needed(
+                "JPEG XL",
+                "this DICOM transfer syntax",
+            ))
+        }
         #[cfg(not(feature = "codec-jpeg2000"))]
         CompressedCodec::Jpeg2000 => {
             return Err(crate::formats::external_codec::needed(
@@ -1055,6 +1090,40 @@ fn decode_own_codec_frame(
                     "DICOM JPEG 2000: {} bytes per sample, dataset says {}",
                     raw.bytes_per_sample, bytes_per_sample
                 )));
+            }
+        }
+        #[cfg(feature = "jxl")]
+        CompressedCodec::JpegXl => {
+            let decoded = crate::formats::jxl::decode_jxl_impl(&encoded)?;
+            if decoded.width != width
+                || decoded.height != height
+                || decoded.channels != info.samples
+            {
+                return Err(DecodeError::new(&format!(
+                    "DICOM JPEG XL: codestream is {}x{}x{}, dataset says {}x{}x{}",
+                    decoded.width, decoded.height, decoded.channels, width, height, info.samples
+                )));
+            }
+            if decoded.sample_format != 1 || !matches!(info.bits_allocated, 8 | 16) {
+                return Err(DecodeError::new(&format!(
+                    "DICOM JPEG XL: unsupported sample layout {}/{}-bit (Bits Allocated {})",
+                    decoded.sample_format, decoded.bits_per_sample, info.bits_allocated
+                )));
+            }
+            if decoded.bits_per_sample > info.bits_allocated {
+                return Err(DecodeError::new(&format!(
+                    "DICOM JPEG XL: {}-bit codestream does not fit {} Bits Allocated",
+                    decoded.bits_per_sample, info.bits_allocated
+                )));
+            }
+            if bytes_per_sample == 1 {
+                decoded.data.into_iter().map(|value| value as u8).collect()
+            } else {
+                decoded
+                    .data
+                    .into_iter()
+                    .flat_map(|value| (value as u16).to_le_bytes())
+                    .collect()
             }
         }
         #[cfg(feature = "codec-jpegls")]
@@ -1143,7 +1212,11 @@ fn inflate_deflated_dataset(data: &[u8]) -> Option<Vec<u8>> {
     }
     let mut offset = 132usize;
     let mut deflated = false;
-    while offset.checked_add(8).map(|e| e <= data.len()).unwrap_or(false) {
+    while offset
+        .checked_add(8)
+        .map(|e| e <= data.len())
+        .unwrap_or(false)
+    {
         let el = dicom_element(data, offset, true, true)?;
         if el.group != 0x0002 {
             break;
@@ -1190,8 +1263,10 @@ pub(crate) fn decode_dicom_impl(
         // what comes back is RGB whatever the dataset declared. Every other
         // codec here carries no colour transform of its own, so the dataset's
         // own photometric still describes the samples.
-        let photometric = if codec == CompressedCodec::JpegBaseline
-            && info.samples == 3
+        let photometric = if matches!(
+            codec,
+            CompressedCodec::JpegBaseline | CompressedCodec::JpegXl
+        ) && info.samples == 3
             && info.photometric.starts_with("YBR")
         {
             "RGB".to_string()

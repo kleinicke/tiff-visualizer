@@ -6,13 +6,26 @@
 // left to the runtime, which resolves it against `media/wasm/` and 404s.
 //
 // Importing the glue does NOT instantiate WebAssembly — `initJxlWasm()` does,
-// and that is what fetches the ~1.3 MB payload. So the module stays unfetched
-// until someone actually opens a `.jxl`, which is the whole reason JPEG XL is
-// built as its own module rather than linked into `tiff-wasm.wasm`.
-import initJxlWasm, { decode_jxl_fast } from '../wasm/jxl-wasm.js';
+// and that is what fetches the ~2.2 MB payload. So the module stays unfetched
+// until standalone or embedded JPEG XL is encountered, which is the whole
+// reason JPEG XL is built separately rather than linked into `tiff-wasm.wasm`.
+import initJxlWasm, {
+    decode_dicom_fast, decode_jxl_fast, decode_tiff, decode_tiff_fast,
+    decode_tiff_page, decode_tiff_page_fast, tiff_page_count,
+} from '../wasm/jxl-wasm.js';
 
-let wasmModule: { decode_jxl_fast: any } | null = null;
-let wasmInitPromise: Promise<{ decode_jxl_fast: any }> | null = null;
+export interface JxlModule {
+    decode_jxl_fast: any;
+    decode_dicom_fast: any;
+    decode_tiff: any;
+    decode_tiff_fast: any;
+    decode_tiff_page: any;
+    decode_tiff_page_fast: any;
+    tiff_page_count: any;
+}
+
+let wasmModule: JxlModule | null = null;
+let wasmInitPromise: Promise<JxlModule> | null = null;
 
 /** Candidate payload URLs, in the order the tiff wrapper uses them. */
 export function jxlWasmUrls(): string[] {
@@ -29,7 +42,7 @@ export function jxlWasmUrls(): string[] {
  * one in-flight promise; a failure clears it so a later open can retry rather
  * than being stuck with a rejected promise forever.
  */
-export async function initJxlDecoder(): Promise<{ decode_jxl_fast: any }> {
+export async function initJxlDecoder(): Promise<JxlModule> {
     if (wasmModule) { return wasmModule; }
     if (wasmInitPromise) { return wasmInitPromise; }
 
@@ -40,7 +53,10 @@ export async function initJxlDecoder(): Promise<{ decode_jxl_fast: any }> {
                 const response = await fetch(url);
                 if (!response.ok) { throw new Error(`HTTP ${response.status}`); }
                 await initJxlWasm({ module_or_path: await response.arrayBuffer() });
-                wasmModule = { decode_jxl_fast };
+                wasmModule = {
+                    decode_jxl_fast, decode_dicom_fast, decode_tiff, decode_tiff_fast,
+                    decode_tiff_page, decode_tiff_page_fast, tiff_page_count,
+                };
                 return wasmModule;
             } catch (error) {
                 lastError = error;

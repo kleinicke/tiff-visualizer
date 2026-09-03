@@ -328,3 +328,15 @@ export function decodeLifWithWasm(
 	const result = decodeLifFast(new Uint8Array(buffer), JSON.stringify(options || {}));
 	return assembleDecoded<Float32Array>(result, 'lif', context, startedAt);
 }
+
+/** Becker & Hickl SDT: integrated intensity, mean-arrival, or time-bin view. */
+export function decodeSdtWithWasm(
+	decodeSdtFast: (bytes: Uint8Array, optionsJson: string) => any,
+	buffer: ArrayBuffer,
+	options: Record<string, any>,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeSdtFast(new Uint8Array(buffer), JSON.stringify(options || {}));
+	return assembleDecoded<Float32Array>(result, 'sdt', context, startedAt);
+}

@@ -600,22 +600,38 @@ pub struct ExrZipPlanJs {
 #[wasm_bindgen]
 impl ExrZipPlanJs {
     #[wasm_bindgen(getter)]
-    pub fn width(&self) -> u32 { self.inner.width }
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
     #[wasm_bindgen(getter)]
-    pub fn height(&self) -> u32 { self.inner.height }
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
     #[wasm_bindgen(getter)]
-    pub fn data_y(&self) -> i32 { self.inner.data_y }
+    pub fn data_y(&self) -> i32 {
+        self.inner.data_y
+    }
     #[wasm_bindgen(getter)]
-    pub fn channel_name(&self) -> String { self.inner.channel_name.clone() }
+    pub fn channel_name(&self) -> String {
+        self.inner.channel_name.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn counts(&self) -> Vec<u32> { self.inner.counts.clone() }
+    pub fn counts(&self) -> Vec<u32> {
+        self.inner.counts.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn y_coordinates(&self) -> Vec<i32> { self.inner.y_coordinates.clone() }
+    pub fn y_coordinates(&self) -> Vec<i32> {
+        self.inner.y_coordinates.clone()
+    }
     #[wasm_bindgen(getter)]
-    pub fn all_tags_json(&self) -> String { self.inner.all_tags_json.clone() }
+    pub fn all_tags_json(&self) -> String {
+        self.inner.all_tags_json.clone()
+    }
     /// Move the compressed payload into JavaScript without retaining a second
     /// copy in the plan object.
-    pub fn take_compressed(&mut self) -> Vec<u8> { std::mem::take(&mut self.inner.compressed) }
+    pub fn take_compressed(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.inner.compressed)
+    }
 }
 
 #[wasm_bindgen]
@@ -776,6 +792,14 @@ pub fn decode_nd2_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
 pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
     prepare();
     core::decode_lif_fast(data, options_json)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_sdt_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_sdt_fast(data, options_json)
         .map(Into::into)
         .map_err(js_error)
 }

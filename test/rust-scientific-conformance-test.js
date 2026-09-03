@@ -89,7 +89,17 @@ async function main() {
 	} else {
 		console.log('⚠️  media/wasm/codec-wasm.wasm not found — run `npm run build:wasm:codecs`. JPEG 2000/JPEG-LS DICOM will fail.');
 	}
-	const externalCodecCases = new Set();
+	const jxlBin = path.join(__dirname, '..', 'media', 'wasm', 'jxl-wasm.wasm');
+	const jxlJs = path.join(__dirname, '..', 'media', 'wasm', 'jxl-wasm.js');
+	let jxlMod = null;
+	if (fs.existsSync(jxlBin)) {
+		jxlMod = await import(jxlJs.replace(/\\/g, '/'));
+		await jxlMod.default({ module_or_path: fs.readFileSync(jxlBin) });
+	} else {
+		console.log('⚠️  media/wasm/jxl-wasm.wasm not found — run `npm run build:wasm:jxl`. JPEG XL DICOM will fail.');
+	}
+	const heavyCodecCases = new Set();
+	const jxlCodecCases = new Set();
 
 	let ImageStatsCalculator = null;
 	if (fs.existsSync(path.join(OUT, 'normalization-helper.js'))) {
@@ -118,9 +128,16 @@ async function main() {
 			rust = decodeWith(mod, kase);
 		} catch (error) {
 			const codec = /\[external-codec:([^\]]+)\]/.exec(String(error?.message ?? error))?.[1];
-			if (!codec || !codecMod) { throw error; }
-			externalCodecCases.add(`${kase.id}:${codec}`);
-			rust = decodeWith(codecMod, kase);
+			if (!codec) { throw error; }
+			if (codec === 'JPEG XL' && jxlMod) {
+				jxlCodecCases.add(`${kase.id}:${codec}`);
+				rust = decodeWith(jxlMod, kase);
+			} else if (codecMod) {
+				heavyCodecCases.add(`${kase.id}:${codec}`);
+				rust = decodeWith(codecMod, kase);
+			} else {
+				throw error;
+			}
 		}
 		const rustData = rust.take_data_as_f32();
 		return { rust, rustData };
@@ -202,7 +219,7 @@ async function main() {
 	// split being reconsidered, and a removal means the `[external-codec:…]`
 	// routing quietly stopped being exercised.
 	if (codecMod) {
-		assert.deepStrictEqual([...externalCodecCases].sort().join('\n'), [
+		assert.deepStrictEqual([...heavyCodecCases].sort().join('\n'), [
 			'dicom-fixture-synthetic-ct-jpeg2000-dcm:JPEG 2000',
 			'dicom-fixture-synthetic-ct-jpeglossless-dcm:JPEG-LS',
 			// Routed to the codec module and rejected THERE, for its
@@ -211,7 +228,13 @@ async function main() {
 			'dicom-fixture-synthetic-ct-jpeglossless-predictor6-dcm:JPEG-LS',
 			'dicom-fixture-synthetic-ct-jpegls-dcm:JPEG-LS',
 		].join('\n'), 'exactly the JPEG 2000 / JPEG-LS DICOM fixtures should need the codec module');
-		console.log(`✅ ${externalCodecCases.size} DICOM fixtures routed to the codec module; every other case decoded in the core`);
+		console.log(`✅ ${heavyCodecCases.size} DICOM fixtures routed to the heavy codec module`);
+	}
+	if (jxlMod) {
+		assert.deepStrictEqual([...jxlCodecCases].sort().join('\n'),
+			'dicom-fixture-synthetic-ct-jpegxl-dcm:JPEG XL',
+			'exactly the JPEG XL DICOM fixture should need the JXL module');
+		console.log('✅ the JPEG XL DICOM fixture routed to the dedicated JXL module');
 	}
 
 	console.log(`\n🎉 All ${count} Rust/WASM FITS/NetCDF/DICOM/CZI conformance checks passed.\n`);

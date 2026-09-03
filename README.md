@@ -2,7 +2,7 @@
 
 Rust-based image decoding and GPU accelerated rendering for high-bit-depth, floating-point, scientific, and standard image files inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, JPEG XR, JPEG 2000, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2 and Leica LIF.
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, JPEG XR, JPEG 2000, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2, Leica LIF, and Becker & Hickl SDT.
 Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
@@ -17,7 +17,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | TIFF / OME-TIFF                              |   Yes |     Yes |     Yes |     Yes | Rust/WASM decoding; multi-page and multi-file OME C/Z/T navigation                                                                                                                                                                  |
 | EXR                                          |    No |      No |     Yes |     Yes | HDR floating-point format                                                                                                                                                                                                           |
 | NPY / NPZ                                    |   Yes |     Yes |     Yes |     Yes | Also supports float64 and signed/unsigned integers up to 64 bit                                                                                                                                                                     |
-| FITS / DICOM / NetCDF / CZI / ND2 / LIF      |   Yes |     Yes |      No |     Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes, and Zeiss/Nikon/Leica microscopy stacks                                                                                                                   |
+| FITS / DICOM / NetCDF / CZI / ND2 / LIF / SDT | Yes | Yes | No | Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, microscopy stacks, and FLIM/TCSPC histograms |
 | HDR                                          |    No |      No |      No |     Yes | Radiance RGBE, decoded to float32                                                                                                                                                                                                   |
 | PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
@@ -30,7 +30,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 
 Layered-document support reports approximated or unsupported operations instead of silently hiding them. Broader layer reconstruction and professional-tool compatibility are tracked in the [backlog](BACKLOG.md#5-layered-creative-document-formats-and-professional-layer-view).
 
-NetCDF-4/HDF5, multi-file CZI sets, compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. CZI decodes uncompressed, JPEG, LZW, JPEG XR, Zstd-0 and Zstd-1 subblocks. DICOM decodes native, Deflated Explicit VR, RLE Lossless, JPEG Baseline, JPEG-LS, JPEG 2000 and lossless JPEG pixel data; JPEG XL, JPEG XR and the video transfer syntaxes are not yet supported.
+NetCDF-4/HDF5, multi-file CZI sets, compressed ND2 frames and legacy (pre-2012) ND2 files are not yet supported. CZI decodes uncompressed, JPEG, LZW, JPEG XR, Zstd-0/Zstd-1, and experimental CHUNKED (zstd/LZ4) subblocks. DICOM decodes native, Deflated Explicit VR, RLE Lossless, JPEG Baseline, JPEG-LS, JPEG 2000, JPEG XL, and lossless JPEG pixel data; JPEG XR and video transfer syntaxes are not yet supported.
 
 Images above roughly 268 megapixels (for example 20480x20480) decode correctly and their pixel values, metadata and statistics remain fully available, but cannot be displayed: a browser canvas cannot exceed 2^28 pixels. Tiled rendering for images that large is planned.
 Small synthetic files for manual checks live in `test-samples/scientific/`.
@@ -39,7 +39,7 @@ Extensionless DICOM studies can be opened with **Scientific Image Visualizer: Op
 ## Features
 
 - **GeoTIFF awareness**: GeoKeys are unpacked into readable names (`EPSG:32631 (WGS 84 / UTM zone 31N)`), and hovering a pixel shows its position in the file's own coordinate system.
-- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files: LZW, Deflate, PackBits, Zstd, LZMA, LERC (with GDAL's LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including Aperio's slide-scanner codes), JPEG XR, WebP and CCITT fax, tiled or stripped.
+- **Fast and versatile TIFF Support**: TIFF decoding in [Rust](https://github.com/image-rs/image-tiff) compiled to WebAssembly. Opens high-bit-depth, floating-point, multi-channel, and compressed TIFF files: LZW, Deflate, PackBits, Zstd, LZMA, LERC (with GDAL's LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including Aperio's slide-scanner codes), JPEG XR, JPEG XL, WebP and CCITT fax, tiled or stripped.
 - **Scientific Image Inspection**: Inspect uint8, uint16, float16, and float32 image data in grayscale, RGB, and RGBA images.
 - **Dataset Navigation**: Browse DICOM series/slices and multi-file OME C/Z/T planes as one logical dataset while the viewer switches physical files transparently.
 - **Interactive Pixel Values**: Hover over any pixel to see its exact value in the status bar. For multi-channel images, all channel values are displayed.
@@ -85,6 +85,7 @@ Float Image Visualization Options:
 - **DICOM:** Use **Scientific Image Visualizer: Open Folder as DICOM Dataset**, select an acquisition series, and navigate its slices and available time, echo, and frame dimensions. Physical files remain grouped by DICOM identity instead of being mixed into a filename-sorted collection. Multi-frame objects, including JPEG Baseline objects, expose a Frame control.
 - **Ordinary multi-page TIFF:** Navigate top-level pages even when no semantic dimension metadata is available.
 - **CZI / ND2 / LIF:** Step through Z with the arrow keys and channels with `[` / `]`, or use one slider per axis; channel sliders show the dye name from the embedded metadata. Mosaic tiles are assembled into the full frame. ND2 exposes time and stage-position axes; LIF adds an `S` slider for choosing among the image series in the file.
+- **SDT:** Explore Becker & Hickl FLIM/TCSPC histograms as integrated intensity, mean photon-arrival time in nanoseconds, or a selected raw time bin. Multi-block files expose a block selector.
 - **NetCDF:** Select a numeric variable and move through its non-spatial dimensions. Regular X/Y arrays render as rasters; MPAS `nCells` fields render on their unstructured cell polygons in an equirectangular mesh view.
 
 > **Medical-use notice:** DICOM support is provided for developer, research, and scientific visualization workflows. This extension is not a certified or cleared medical device and is not intended for diagnosis, treatment planning, clinical decision-making, or other clinical use. Do not rely on it as the sole means of viewing or interpreting medical images.

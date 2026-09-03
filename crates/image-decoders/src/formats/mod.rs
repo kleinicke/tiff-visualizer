@@ -1,6 +1,6 @@
+pub(crate) mod compression;
 #[cfg(feature = "czi")]
 pub(crate) mod czi;
-pub(crate) mod compression;
 #[cfg(feature = "dicom")]
 pub(crate) mod dicom;
 #[cfg(feature = "exr")]
@@ -17,8 +17,6 @@ pub(crate) mod half;
 pub(crate) mod jpeg2000;
 #[cfg(feature = "jpegxr")]
 pub(crate) mod jpegxr;
-#[cfg(feature = "jxl")]
-pub(crate) mod jxl;
 #[cfg(any(
     feature = "npy",
     feature = "jpeg2000",
@@ -29,9 +27,12 @@ pub(crate) mod jxl;
     feature = "dicom",
     feature = "czi",
     feature = "nd2",
-    feature = "lif"
+    feature = "lif",
+    feature = "sdt"
 ))]
 pub(crate) mod json_value;
+#[cfg(feature = "jxl")]
+pub(crate) mod jxl;
 #[cfg(feature = "lif")]
 pub(crate) mod lif;
 #[cfg(any(
@@ -47,7 +48,8 @@ pub(crate) mod lif;
     feature = "dicom",
     feature = "czi",
     feature = "nd2",
-    feature = "lif"
+    feature = "lif",
+    feature = "sdt"
 ))]
 pub(crate) mod metadata;
 #[cfg(feature = "nd2")]
@@ -71,8 +73,11 @@ pub(crate) mod png;
     feature = "dicom",
     feature = "czi",
     feature = "nd2",
-    feature = "lif"
+    feature = "lif",
+    feature = "sdt"
 ))]
 pub(crate) mod scientific_common;
+#[cfg(feature = "sdt")]
+pub(crate) mod sdt;
 #[cfg(feature = "tiff")]
 pub(crate) mod tiff;

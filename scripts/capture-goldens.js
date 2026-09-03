@@ -45,7 +45,7 @@ const DATA_INLINE_LIMIT = 4096;
  * `crates/image-decoders/src/lib.rs`), so there is one field-reading path here
  * instead of one per format; only which bytes to feed the decoder differs.
  */
-function decodeWithRust(mod, kase) {
+function decodeWithRust(mod, kase, codecMod, jxlMod) {
 	const decodeFns = {
 		pfm: () => mod.decode_pfm_fast(new Uint8Array(kase.bytes), !!kase.options.topDown),
 		ppm: () => mod.decode_ppm_fast(new Uint8Array(kase.bytes)),
@@ -58,7 +58,15 @@ function decodeWithRust(mod, kase) {
 	const decodeFn = decodeFns[kase.format];
 	if (!decodeFn) { throw new Error(`capture-goldens: unknown format ${kase.format}`); }
 
-	const r = decodeFn();
+	let r;
+	try {
+		r = decodeFn();
+	} catch (error) {
+		const codec = /\[external-codec:([^\]]+)\]/.exec(String(error?.message ?? error))?.[1];
+		const fallback = codec === 'JPEG XL' ? jxlMod : codecMod;
+		if (!codec || !fallback) { throw error; }
+		return decodeWithRust(fallback, kase, null, null);
+	}
 	// sample_kind: 0 = f32, 1 = u8, 2 = u16 — see DecodedArray in lib.rs.
 	const data = r.sample_kind === 1 ? r.take_data_as_u8()
 		: r.sample_kind === 2 ? r.take_data_as_u16()
@@ -94,7 +102,11 @@ function buildGoldenRecord(kase, decoded) {
 	if (decoded.metadata !== undefined) { record.metadata = decoded.metadata; }
 	if (decoded.numericDomain !== undefined) { record.numericDomain = decoded.numericDomain; }
 	if (decoded.formatLabel !== undefined) { record.formatLabel = decoded.formatLabel; }
-	if (dataLength <= DATA_INLINE_LIMIT) {
+	// The embedded-JXL fixture deliberately has the same 3072 samples as the
+	// uncompressed codec reference. Its digest plus spread samples keep this
+	// routing golden useful without checking in that full array a second time.
+	const omitDuplicateInlineData = kase.id === 'dicom-fixture-synthetic-ct-jpegxl-dcm';
+	if (dataLength <= DATA_INLINE_LIMIT && !omitDuplicateInlineData) {
 		record.data = buildSamples(data, Array.from({ length: dataLength }, (_, i) => i)).map(s => s.v);
 	}
 	return record;
@@ -108,6 +120,15 @@ async function main() {
 
 	const mod = await import(wasmJs.replace(/\\/g, '/'));
 	await mod.default({ module_or_path: fs.readFileSync(wasmBin) });
+	const loadOptionalModule = async (jsName, wasmName) => {
+		const binary = path.join(__dirname, '..', 'media', 'wasm', wasmName);
+		if (!fs.existsSync(binary)) { return null; }
+		const loaded = await import(path.join(__dirname, '..', 'media', 'wasm', jsName).replace(/\\/g, '/'));
+		await loaded.default({ module_or_path: fs.readFileSync(binary) });
+		return loaded;
+	};
+	const codecMod = await loadOptionalModule('codec-wasm.js', 'codec-wasm.wasm');
+	const jxlMod = await loadOptionalModule('jxl-wasm.js', 'jxl-wasm.wasm');
 
 	const cases = listCases();
 	console.log(`🧊 Capturing ${cases.length} golden(s)...\n`);
@@ -116,7 +137,7 @@ async function main() {
 	let errors = 0;
 	for (const kase of cases) {
 		try {
-			const decoded = decodeWithRust(mod, kase);
+			const decoded = decodeWithRust(mod, kase, codecMod, jxlMod);
 			const record = buildGoldenRecord(kase, decoded);
 			writeGolden(kase.id, kase.external, record);
 			captured++;

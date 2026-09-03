@@ -214,6 +214,35 @@ async function testJpegXl() {
 		console.log(`✅ ${file} decodes to ${channels}-channel ${numericType} losslessly`);
 	}
 
+	// The lazy JXL module contains the same TIFF/DICOM parsers as the core
+	// module. Container retries therefore retain tags, pages, BitsStored and
+	// every other container rule while supplying only the missing codec.
+	{
+		const result = wasm.decode_tiff(new Uint8Array(fs.readFileSync(path.join(samplesDir, 'jxl_u16.tif'))));
+		assert.strictEqual(result.compression, 50002, 'embedded TIFF compression');
+		assert.strictEqual(result.bits_per_sample, 16, 'embedded TIFF depth');
+		const bytes = result.take_data_as_u8();
+		const data = new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+		let worst = 0;
+		for (let y = 0; y < 48; y++) for (let x = 0; x < 64; x++) {
+			worst = Math.max(worst, Math.abs(data[y * 64 + x] - Math.floor(pattern(x, y) * 65535)));
+		}
+		assert.strictEqual(worst, 0, 'JPEG XL in TIFF must retain every uint16 sample');
+		console.log('✅ JPEG XL compression 50002 decodes losslessly inside TIFF');
+	}
+	{
+		const file = path.join(samplesDir, 'scientific', 'synthetic-ct-jpegxl.dcm');
+		const result = wasm.decode_dicom_fast(new Uint8Array(fs.readFileSync(file)), 0);
+		assert.strictEqual(result.bits_per_sample, 12, 'DICOM BitsStored');
+		const data = result.take_data_as_f32();
+		let worst = 0;
+		for (let y = 0; y < 48; y++) for (let x = 0; x < 64; x++) {
+			worst = Math.max(worst, Math.abs(data[y * 64 + x] - Math.floor(pattern(x, y) * 4095)));
+		}
+		assert.strictEqual(worst, 0, 'JPEG XL DICOM must retain every 12-bit sample');
+		console.log('✅ JPEG XL Lossless transfer syntax decodes losslessly inside DICOM');
+	}
+
 	// A file that is not JPEG XL must be refused by signature rather than fed
 	// to the codec.
 	assert.throws(() => wasm.decode_jxl_fast(new Uint8Array(12)),

@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildDicom, dcmPixelSamples } = require('./lib/decoder-cases');
 
-// FITS, DICOM, NetCDF, CZI, ND2 and LIF are decoded by Rust/WASM only — their
+// FITS, DICOM, NetCDF, CZI, ND2, LIF and SDT are decoded by Rust/WASM only — their
 // TypeScript parsers have all been deleted. These tests assert format
 // semantics (row order, numeric domain, mesh projection, mosaic assembly)
 // rather than parity, so they now drive the wasm decoders directly. Broader
@@ -70,6 +70,7 @@ const parseCzi = (buf, options = {}) =>
 	toDecoded(withCodecModule(mod => mod.decode_czi_fast(new Uint8Array(buf), JSON.stringify(options))));
 const parseNd2 = (buf, options = {}) => toDecoded(wasm.decode_nd2_fast(new Uint8Array(buf), JSON.stringify(options)));
 const parseLif = (buf, options = {}) => toDecoded(wasm.decode_lif_fast(new Uint8Array(buf), JSON.stringify(options)));
+const parseSdt = (buf, options = {}) => toDecoded(wasm.decode_sdt_fast(new Uint8Array(buf), JSON.stringify(options)));
 const fixtures = path.join(__dirname, '..', 'test-samples', 'scientific');
 
 function arrayBuffer(file) {
@@ -208,6 +209,18 @@ function testCziCompressedSubblocks() {
 			`CZI ${label} must decode to the same samples as the uncompressed twin`);
 		console.log(`  ✅ CZI ${label} matches the uncompressed twin exactly`);
 	}
+
+	// CHUNKED (mode 7): two independently compressed raw-LZ4 blocks.
+	const chunked = Buffer.from([
+		1, 2, 18, 7, 3, 2, 16, 6, 2, 1, 1, 0, 0xf0, 1,
+		...Array.from({ length: 16 }, (_, i) => i),
+		0x60, 16, 17, 18, 19, 20, 21,
+	]);
+	const chunkedCzi = parseCzi(compressedCzi(chunked, {
+		compression: 7, pixelType: 0, width: 22, height: 1,
+	}));
+	assert.deepStrictEqual(Array.from(chunkedCzi.data), Array.from({ length: 22 }, (_, i) => i));
+	console.log('  ✅ CZI CHUNKED LZ4 assembles independent blocks exactly');
 }
 
 function testCziJpegLzwAndJpegXr() {
@@ -239,7 +252,7 @@ function testCziJpegLzwAndJpegXr() {
 
 	// JPEG XR (mode 4) must make the core request the heavy module, where the
 	// exact same normalized pixels as standalone `.jxr` are produced.
-	const jxr = fs.readFileSync(path.join(fixtures, 'standalone_gray16.jxr'));
+	const jxr = fs.readFileSync(path.join(fixtures, '..', 'standalone_gray16.jxr'));
 	assert.throws(
 		() => wasm.decode_czi_fast(new Uint8Array(compressedCzi(jxr, {
 			compression: 4, pixelType: 1, width: 64, height: 48,
@@ -557,8 +570,27 @@ function testLif() {
 	assert.throws(() => wasm.decode_lif_fast(bad, '{}'), /LIF/i);
 }
 
+function testSdt() {
+	for (const file of ['synthetic-flim.sdt', 'synthetic-flim-zip.sdt']) {
+		const first = parseSdt(arrayBuffer(file));
+		assert.deepStrictEqual([first.width, first.height, first.channels], [5, 4, 1]);
+		assert.strictEqual(first.data[0], 28, `${file}: integrated first histogram`);
+		assert.strictEqual(first.data[19], 8 * (30 + 12) + 28, `${file}: padded data is cropped`);
+		assert.deepStrictEqual(first.metadata.selectors.map(s => s.name), ['Mode', 'T']);
+		assert.strictEqual(first.metadata.histogramBins, 8);
+		assert.ok(Math.abs(first.metadata.binWidthNanoseconds - 0.8) < 1e-6);
+
+		const bin = parseSdt(arrayBuffer(file), { indices: { Mode: 2, T: 3 } });
+		assert.strictEqual(bin.data[0], 3, `${file}: raw bin 3`);
+		assert.strictEqual(bin.data[19], 45, `${file}: last pixel raw bin 3`);
+		const mean = parseSdt(arrayBuffer(file), { indices: { Mode: 1 } });
+		assert.ok(Math.abs(mean.data[0] - 4) < 1e-6, `${file}: weighted mean arrival time`);
+	}
+	console.log('✅ SDT: integrated intensity, mean-arrival and time-bin views (raw + ZIP)');
+}
+
 async function main() {
-	console.log('Running FITS/DICOM/NetCDF/CZI/ND2/LIF parser tests...');
+	console.log('Running FITS/DICOM/NetCDF/CZI/ND2/LIF/SDT parser tests...');
 	await initWasm();
 	testFits();
 	testDicom();
@@ -571,8 +603,9 @@ async function main() {
 	testCziJpegLzwAndJpegXr();
 	testNd2();
 	testLif();
+	testSdt();
 	testMpasNetCdf();
-	console.log('FITS, DICOM, NetCDF, CZI, ND2 and LIF parser tests passed.');
+	console.log('FITS, DICOM, NetCDF, CZI, ND2, LIF and SDT parser tests passed.');
 }
 
 main().catch(error => {

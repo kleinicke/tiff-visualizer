@@ -42,6 +42,7 @@ fn compression_name(id: i32) -> String {
         4 => "JPEG XR".to_string(),
         5 => "Zstd-0".to_string(),
         6 => "Zstd-1".to_string(),
+        7 => "CHUNKED".to_string(),
         other => format!("id {}", other),
     }
 }
@@ -449,6 +450,17 @@ fn decode_czi_subblock(
                 rgb_order: decoded.interpretation == jpegxr::PixelInterpretation::Rgb,
             });
         }
+    }
+
+    if compression == 7 {
+        return Ok(DecodedCziSubblock {
+            pixels: super::compression::decode_czi_chunked(
+                payload,
+                expected,
+                pixel_type.bytes_per_channel as usize,
+            )?,
+            rgb_order: false,
+        });
     }
 
     let bytes_per_channel = pixel_type.bytes_per_channel as usize;
@@ -943,11 +955,11 @@ pub(crate) fn decode_czi_impl(
         if entry.compression == 4 {
             #[cfg(not(feature = "codec-jpegxr"))]
             return Err(super::external_codec::needed("JPEG XR", "CZI subblock"));
-        } else if !matches!(entry.compression, 0 | 1 | 2 | 5 | 6) {
+        } else if !matches!(entry.compression, 0 | 1 | 2 | 5 | 6 | 7) {
             let codec = compression_name(entry.compression);
             return Err(DecodeError::new(&format!(
                 "CZI subblocks compressed with {} are not supported; uncompressed, JPEG, \
-                 LZW and Zstd-0/Zstd-1 subblocks decode",
+                 LZW, Zstd-0/Zstd-1 and CHUNKED subblocks decode",
                 codec
             )));
         }

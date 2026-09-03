@@ -519,7 +519,7 @@ export class TiffProcessor {
 					workerNeedsCodecModule = /\[external-codec:/.test(String(workerResponse?.error ?? ''));
 					console.warn(
 						workerNeedsCodecModule
-							? '[TiffProcessor] Worker decode needs the heavy-codec module:'
+							? '[TiffProcessor] Worker decode needs an external codec module:'
 							: '[TiffProcessor] Worker decode failed, falling back to geotiff.js:',
 						workerResponse?.error);
 				}

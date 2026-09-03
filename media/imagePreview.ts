@@ -184,6 +184,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	let cziProcessor: any = dormantProcessor();
 	let nd2Processor: any = dormantProcessor();
 	let lifProcessor: any = dormantProcessor();
+	let sdtProcessor: any = dormantProcessor();
 	let scientificProcessors: any[] = [];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
@@ -206,7 +207,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		return processor;
 	};
 	function ensureProcessorFamily(kind: string): Promise<void> {
-		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'jxr', 'jp2', 'jxl'].includes(kind) ? 'scientific' : kind;
+		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt', 'jxr', 'jp2', 'jxl'].includes(kind) ? 'scientific' : kind;
 		const existing = processorFamilyLoads.get(family);
 		if (existing) { return existing; }
 		const load = (async () => {
@@ -260,9 +261,10 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				cziProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeCziLocal(buffer, options || {}) }));
 				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
 				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
-				scientificProcessors = [fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor];
+				sdtProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sdt', formatLabel: 'SDT', formatType: 'sdt', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeSdtLocal(buffer, options || {}) }));
+				scientificProcessors = [fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 				mouseHandler.setScientificProcessors(scientificProcessors);
-				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor];
+				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 			}
 		})();
 		processorFamilyLoads.set(family, load);
@@ -1314,7 +1316,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	/**
 	 * Processors whose formats expose a multi-dimensional plane selector.
 	 *
-	 * CZI, ND2 and LIF all emit the same `selectors` / `selectedIndices`
+	 * CZI, ND2, LIF and SDT all emit the same `selectors` / `selectedIndices`
 	 * metadata contract from Rust, so one overlay, one keyboard binding and one
 	 * coalescing reload serve all three; only the title differs. Adding a
 	 * fourth such format means adding it to this list and nothing else here.
@@ -2650,6 +2652,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			case 'CZI': return lastRawToLayer(cziProcessor._lastRaw, scientificTypeInfo(cziProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'ND2': return lastRawToLayer(nd2Processor._lastRaw, scientificTypeInfo(nd2Processor), name, uri) || baseFromCanvas(name, uri);
 			case 'LIF': return lastRawToLayer(lifProcessor._lastRaw, scientificTypeInfo(lifProcessor), name, uri) || baseFromCanvas(name, uri);
+			case 'SDT': return lastRawToLayer(sdtProcessor._lastRaw, scientificTypeInfo(sdtProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'Layered Document': {
 				const raw = layeredPreviewProcessor._lastRaw;
 				const activeRaw = raw ? { ...raw, data: layeredPreviewProcessor.activeData() } : null;
@@ -2716,14 +2719,15 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				const p = new npyProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = lower.endsWith('.npy') ? fastRawWorkerClient : decodeWorkerClient;
 				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
 			}
-			const isScientific = /\.(fits|fit|fts|dcm|dicom|nc|cdf|czi|nd2|lif)$/.test(lower);
+			const isScientific = /\.(fits|fit|fts|dcm|dicom|nc|cdf|czi|nd2|lif|sdt)$/.test(lower);
 			if (isScientific) { await ensureProcessorFamily('scientific'); }
 			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
 				lower.match(/\.(dcm|dicom)$/) ? dicomProcessor.config :
 				lower.match(/\.(nc|cdf)$/) ? netcdfProcessor.config :
 				lower.match(/\.czi$/) ? cziProcessor.config :
 				lower.match(/\.nd2$/) ? nd2Processor.config :
-				lower.match(/\.lif$/) ? lifProcessor.config : null;
+				lower.match(/\.lif$/) ? lifProcessor.config :
+				lower.match(/\.sdt$/) ? sdtProcessor.config : null;
 			if (scientificConfig) {
 				const p = new fitsProcessor.constructor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.process(src); return lastRawToLayer(p._lastRaw, scientificTypeInfo(p), name, resourceUri);
@@ -4371,6 +4375,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 							currentLoadFormat === 'CZI' ? cziProcessor :
 							currentLoadFormat === 'ND2' ? nd2Processor :
 							currentLoadFormat === 'LIF' ? lifProcessor :
+							currentLoadFormat === 'SDT' ? sdtProcessor :
 															currentLoadFormat === 'Layered Document' ? layeredPreviewProcessor :
 																webImageProcessor;
 			const processorUsedWebGl = (activeProcessor as any)?._lastRenderUsedWebGL === true;
@@ -5907,7 +5912,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	/**
 	 * One shared model of "things the keyboard can step" for every format.
 	 *
-	 * DICOM, NetCDF, CZI, ND2 and LIF all present the same two kinds of
+	 * DICOM, NetCDF, CZI, ND2, LIF and SDT all present the same two kinds of
 	 * control: a DROPDOWN choosing among named datasets of differing shape
 	 * (DICOM series, NetCDF variable, LIF series) and SLIDERS scrubbing
 	 * homogeneous axes (Z, T, C, stage position). They used to bind keys three
@@ -6395,7 +6400,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	// One navigation overlay for every dimensioned format
 	// ------------------------------------------------------------------
 	//
-	// DICOM, NetCDF, OME-TIFF, CZI, ND2 and LIF all present the same thing: an
+	// DICOM, NetCDF, OME-TIFF, CZI, ND2, LIF and SDT all present the same thing: an
 	// ordered list of controls that pick which plane of a multi-dimensional
 	// file is on screen. They used to have four overlays, four render
 	// functions and three key bindings between them, so the same concept
@@ -7212,7 +7217,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
 
-		// A plane change (dragging the Z/T/C/S slider of a CZI, ND2 or LIF) is
+		// A plane change (dragging a scientific dataset selector) is
 		// NOT a new image: same file, same format, same settings, usually the
 		// same dimensions. Running the full switch teardown for one made the
 		// sliders unusable — every step disposed the WebGL renderers (paying
@@ -7356,7 +7361,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const lower = resourceUri.toLowerCase();
 		const layeredFormat = layeredFormatForPath(lower);
 		const format = resolveFormat(resourceUri, formatHint);
-		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jp2', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'].includes(format.kind)) {
+		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jp2', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt'].includes(format.kind)) {
 			await ensureProcessorFamily(format.kind);
 			if (gen !== _loadGeneration) { return; }
 		}
@@ -7376,7 +7381,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// overlay is driven by a host message (a DICOM manifest) they could stay
 		// gone entirely. Only a format that can never navigate clears it, and it
 		// is cleared as soon as the format is known rather than on every load.
-		const NAVIGABLE_KINDS = ['tiff', 'dicom', 'netcdf', 'czi', 'nd2', 'lif'];
+		const NAVIGABLE_KINDS = ['tiff', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt'];
 		if (!format || !NAVIGABLE_KINDS.includes(format.kind)) {
 			hideNavOverlay();
 		}
@@ -7429,6 +7434,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			handleScientificArray(nd2Processor, uri, gen, planeOptions || planeSelection);
 		} else if (format?.kind === 'lif') {
 			handleScientificArray(lifProcessor, uri, gen, planeOptions || planeSelection);
+		} else if (format?.kind === 'sdt') {
+			handleScientificArray(sdtProcessor, uri, gen, planeOptions || planeSelection);
 		} else {
 			// Fallback to regular image loading
 			const newImage = document.createElement('img');

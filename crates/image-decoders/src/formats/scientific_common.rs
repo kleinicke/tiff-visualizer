@@ -4,8 +4,8 @@
 //! into the public `DecodedArray` by `lib.rs`.
 
 // Several helpers below serve only the container formats. A NARROW build —
-// `jxl` or `jpegxr` on their own, which is what the separate WebAssembly
-// modules in `wasm/` use — pulls this module in for its shared types and
+// `jxl`, `jpegxr`, or `sdt` on their own — pulls this module in for its shared
+// types and
 // leaves the rest unused. That is expected; it is not dead code to delete.
 #![cfg_attr(
     not(any(
@@ -18,7 +18,6 @@
     )),
     allow(dead_code)
 )]
-
 
 use crate::DecodeError;
 
@@ -103,6 +102,7 @@ pub(crate) fn get_slice<'a>(
 
 /// `Math.ceil(n / 4) * 4`, computed with checked arithmetic (no usize
 /// overflow on 32-bit wasm targets, no panics on adversarial sizes).
+#[allow(dead_code)] // absent from narrow TIFF+DICOM+JXL builds
 pub(crate) fn ceil4(n: usize) -> usize {
     n.checked_add(3).map(|v| v / 4 * 4).unwrap_or(usize::MAX)
 }

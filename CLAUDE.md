@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
 Prefer Rust for complete byte parsers and pixel algorithms; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. A narrowly scoped TypeScript accelerator is acceptable when measurement shows that the input bytes already match a JavaScript TypedArray and crossing WASM memory is the dominant cost. Such an accelerator must preserve the source buffer for unsupported inputs and delegate them to the authoritative Rust implementation.
 
-**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG 2000, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2 and LIF.
+**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG 2000, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2, LIF and SDT.
 
 **Three WebAssembly modules, not one.** The decoders are split by how often a real file needs them, because the alternative is every image open paying for codecs almost nobody uses:
 
@@ -15,13 +15,13 @@ Prefer Rust for complete byte parsers and pixel algorithms; anything that touche
 | --- | --- | --- | --- |
 | `media/wasm/tiff-wasm.wasm` | `wasm/tiff-decoder`, default features | 1.8 MB | always |
 | `media/wasm/codec-wasm.wasm` | the SAME crate, `--features heavy-codecs` | 2.7 MB | only for a file declaring JPEG 2000, JPEG XR, LERC, LZMA, WebP, or a DICOM JPEG-LS/lossless syntax |
-| `media/wasm/jxl-wasm.wasm` | `wasm/jxl-decoder`, the `jxl` feature | 1.2 MB | only on the first `.jxl` open |
+| `media/wasm/jxl-wasm.wasm` | `wasm/jxl-decoder`, JXL plus shared TIFF/DICOM parsers | 2.2 MB | only when standalone or embedded JPEG XL is declared |
 
 The codec module is a strict SUPERSET of the core — same adapter, same container parsers, more codecs — so a file the core cannot finish is re-decoded there through the very same code and the two cannot drift. Routing is by failure, not by guesswork: `decompress_block` (and the DICOM codec dispatch) reports a codec it does not carry as `[external-codec:NAME]` while reading the file's header, before any pixel work, and that error is the ONLY thing that triggers the download. Anything else propagates. Because a codestream codec carries no container knowledge, one module answers for every container: the same JPEG XR decoder serves TIFF 34934, a CZI subblock and a standalone `.jxr`, and the same JPEG 2000 decoder serves TIFF 34712, a DICOM `.4.90` frame and a standalone `.jp2`.
 
 Two rules that are load-bearing rather than stylistic. `external_codec_needed` in [strips.rs](crates/image-decoders/src/formats/tiff/strips.rs) and `EXTERNAL_CODEC_PATTERN` in [codec-wasm-wrapper.ts](media/modules/codec-wasm-wrapper.ts) are one protocol — change either and change both. And `float_strip_plan_for` must not claim a codec the build cannot decode: the strip pool decodes with whichever module produced the plan, so a core-build plan naming JPEG 2000 would have every worker fail.
 
-Embedded JPEG XL (TIFF 50002, the DICOM JPEG XL syntaxes) is still undecoded: jxl-rs is in neither of the other two modules, so supporting it means routing the codestream out to `wasm/jxl-decoder` or accepting its megabyte somewhere else. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
+Embedded JPEG XL (TIFF 50002 and DICOM `.4.110`/`.111`/`.112`) retries the complete container through `wasm/jxl-decoder`, which compiles the same TIFF and DICOM parsers alongside jxl-rs. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
 
 **Shared decoder crate:** all byte parsing, decoded-pixel assembly, demosaicing, and format-neutral
 statistics live in the plain-Rust [`scientific-image-decoders`](crates/image-decoders) crate. It has
@@ -93,7 +93,7 @@ The extension uses five primary build targets:
 1. **Extension bundle** (`out/extension.js`) - Node.js target for VS Code desktop API integration
 2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
 3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
-4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Runs pure-data decoders, including TIFF/WASM, EXR, NPY/NPZ, NetPBM, HDR, FITS, DICOM, JPEG XL, and NetCDF, off the UI thread. Bytes and typed arrays cross as zero-copy transfers; every path retains a main-thread fallback.
+4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Runs pure-data decoders, including TIFF/WASM, EXR, NPY/NPZ, NetPBM, HDR, FITS, DICOM, JPEG XL, NetCDF, CZI, ND2, LIF, and SDT, off the UI thread. Bytes and typed arrays cross as zero-copy transfers; every path retains a main-thread fallback.
 The TIFF decode also has a **worker pool** ([media/modules/strip-parallel-decode.ts](media/modules/strip-parallel-decode.ts)): eligible files are split into units of work — one strip, or one whole tile ROW, since both are full-width bands that drop into the image at a single offset — and decoded concurrently. Eligibility is decided in Rust (`tiff_float_strip_plan`), which covers byte-aligned chunky layouts, predictors 1/2/3, and every codec `decompress_block` implements. `test:strip-parallel` asserts the pool's output is identical to the single-threaded decode for every eligible file in `test-samples`; that equality is the whole contract, so do not widen the plan without running it.
 
 5. **Layer compositor worker bundle** (`media/layer-compositor-worker.ts` → `media/layerCompositorWorker.bundle.js`) - Retains raster assets off-thread, composes full-resolution editable layer stacks, produces scaled interaction previews, and reuses group/clipping/dirty-region caches. The synchronous CPU path remains the fallback and export correctness reference.
@@ -140,7 +140,7 @@ The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules fo
   - **PfmProcessor**: Portable Float Map
   - **PpmProcessor**: Portable PixMap formats (PPM/PGM/PBM)
   - **PngProcessor**: PNG with uint8/16 and float16/32 support
-  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI/ND2/LIF/JPEG XR/JPEG 2000 lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
+  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI/ND2/LIF/SDT/JPEG XR/JPEG 2000 lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
 - **ZoomController**: Pan/zoom with mouse/trackpad
 - **MouseHandler**: Pixel inspection, hover effects
 - **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
@@ -489,7 +489,7 @@ The extension handles diverse image formats with minimal processor code. Each fo
 
 - **TIFF** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)):
   - Decoded by Rust/WASM. geotiff.js remains only for TIFF cases the Rust decoder does not yet cover; it is not a general fallback. As of the LERC work its decoder registry (raw, LZW, Deflate, PackBits, JPEG, LERC, WebP-via-`createImageBitmap`) is a strict SUBSET of the Rust decoder's codecs, so it no longer covers any compression on its own
-  - Supports LZW, Deflate, PackBits, Zstd, LZMA, LERC (incl. LERC_DEFLATE/LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (incl. Aperio 33003/33004/33005), JPEG XR (34934/22610), WebP and CCITT fax, with predictors and multi-channel data. JPEG XR goes through [crates/jpegxr](crates/jpegxr), a vendored decoder patched to read from memory — the published crate decodes only through a temp file, which WebAssembly has nowhere to put; see its VENDORING.md before touching it. JPEG XL in TIFF is not decoded
+  - Supports LZW, Deflate, PackBits, Zstd, LZMA, LERC (incl. LERC_DEFLATE/LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (incl. Aperio 33003/33004/33005), JPEG XR (34934/22610), JPEG XL (50002), WebP and CCITT fax, with predictors and multi-channel data. JPEG XR goes through [crates/jpegxr](crates/jpegxr), a vendored decoder patched to read from memory — the published crate decodes only through a temp file, which WebAssembly has nowhere to put; see its VENDORING.md before touching it.
   - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
   - Sets `typeMax` based on bit depth for proper gamma mode normalization
   - Rasters are always copied into Float32Array internally (even for integer TIFFs) before interleaving — relevant when tracking how special float values (NaN, Infinity) propagate

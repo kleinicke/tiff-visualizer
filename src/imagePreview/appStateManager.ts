@@ -27,7 +27,7 @@ export interface ImageSettings {
 }
 
 // Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxl-float' | 'jxr' | 'jp2' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
+export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxl-float' | 'jxr' | 'jp2' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'sdt' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
 
 export interface ImageStats {
 	min: number;
@@ -391,7 +391,7 @@ export class AppStateManager {
 		// might be a label map holding 0..3. The uint64 case makes it starkest
 		// — gamma mode would normalize against 2^64-1 and render everything
 		// black.)
-		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'jxr' || format === 'jp2' || format === 'jxl-float') {
+		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'sdt' || format === 'jxr' || format === 'jp2' || format === 'jxl-float') {
 			defaults.normalization.gammaMode = false;
 			defaults.normalization.autoNormalize = true;
 		}

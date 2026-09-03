@@ -58,8 +58,8 @@ export interface Stats {
 
 /**
  * Result shape shared by every decoder that produces a numeric raster with a
- * numeric domain and free-form metadata: FITS, NetCDF, DICOM, CZI, and (via
- * the same Rust `DecodedArray` struct) PFM, NetPBM and NPY.
+ * numeric domain and free-form metadata: FITS, NetCDF, DICOM, CZI, ND2, LIF,
+ * SDT, and (via the same Rust `DecodedArray` struct) PFM, NetPBM and NPY.
  *
  * This used to live in `scientific-format-parsers.ts` alongside the TypeScript
  * parsers. Those parsers are all gone — decoding happens in Rust — so the

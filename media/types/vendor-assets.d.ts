@@ -15,6 +15,7 @@ declare module '*/wasm/tiff-wasm.js' {
     export const decode_czi_fast: any;
     export const decode_nd2_fast: any;
     export const decode_lif_fast: any;
+    export const decode_sdt_fast: any;
     export const decode_dicom_fast: any;
     export const label_components_fast: any;
     export const subtract_background_fast: any;
@@ -59,12 +60,18 @@ declare module '*/wasm/tiff-wasm.js' {
 
 // The JPEG XL decoder is a SEPARATE wasm-pack module (media/wasm/jxl-wasm.js),
 // built by `npm run build:wasm:jxl`. It is imported statically so esbuild
-// inlines the glue, but its ~1.3 MB payload is only fetched when `init` is
-// called — which happens on the first .jxl open and never otherwise.
+// inlines the glue, but its ~2.2 MB payload is only fetched when `init` is
+// called for standalone or TIFF/DICOM-embedded JPEG XL.
 declare module '*/wasm/jxl-wasm.js' {
     const initJxlWasm: any;
     export default initJxlWasm;
     export const decode_jxl_fast: any;
+    export const decode_dicom_fast: any;
+    export const decode_tiff: any;
+    export const decode_tiff_fast: any;
+    export const decode_tiff_page: any;
+    export const decode_tiff_page_fast: any;
+    export const tiff_page_count: any;
 }
 
 // The heavy-codec module (media/wasm/codec-wasm.js), built by

@@ -1721,12 +1721,12 @@ function listScientificCases() {
 	cases.push({
 		id: 'dicom-unsupported-compressed-transfer-syntax',
 		format: 'dicom',
-		// JPEG XL Lossless (1.2.840.10008.1.2.4.110) — not in the supported
+		// MPEG2 Main Profile / Main Level (1.2.840.10008.1.2.4.100) — not in the supported
 		// syntax map, and not resolvable via the no-preamble heuristic since a
 		// preamble is present. This case used to use JPEG 2000 (...4.90),
 		// which now decodes; the point of the case is the rejection, so it
 		// moved to a syntax that is still unsupported.
-		bytes: dcmPreamble('1.2.840.10008.1.2.4.110'),
+		bytes: dcmPreamble('1.2.840.10008.1.2.4.100'),
 		options: { frameIndex: 0 },
 		external: false,
 		expectError: true,

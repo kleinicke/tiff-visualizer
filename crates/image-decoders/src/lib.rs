@@ -63,6 +63,8 @@ use formats::npy::{decode_npy_display_impl, decode_npy_impl};
 use formats::pfm::decode_pfm_impl;
 #[cfg(feature = "png")]
 use formats::png::decode_png16_impl;
+#[cfg(feature = "sdt")]
+use formats::sdt::decode_sdt_impl;
 #[cfg(feature = "tiff")]
 use formats::tiff::{decode_tiff_impl, tags::extract_bare_ifd_tags_json};
 
@@ -446,7 +448,8 @@ impl DecodedArray {
     feature = "dicom",
     feature = "czi",
     feature = "nd2",
-    feature = "lif"
+    feature = "lif",
+    feature = "sdt"
 ))]
 impl From<formats::scientific_common::ScientificParsed> for DecodedArray {
     fn from(p: formats::scientific_common::ScientificParsed) -> Self {
@@ -1197,6 +1200,13 @@ pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
     Ok(decode_lif_impl(data, options_json)?.into())
 }
 
+/// Decode a Becker & Hickl SDT TCSPC histogram image. `options_json` selects
+/// the data block, visualization mode, and raw time bin.
+#[cfg(feature = "sdt")]
+pub fn decode_sdt_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
+    Ok(decode_sdt_impl(data, options_json)?.into())
+}
+
 // Canonical Rust names. The `*_fast` spellings above are retained because the
 // WASM adapter's public JavaScript API has used them for years.
 #[cfg(feature = "czi")]
@@ -1209,6 +1219,8 @@ pub use decode_exr_fast as decode_exr;
 pub use decode_lif_fast as decode_lif;
 #[cfg(feature = "nd2")]
 pub use decode_nd2_fast as decode_nd2;
+#[cfg(feature = "sdt")]
+pub use decode_sdt_fast as decode_sdt;
 #[cfg(feature = "exr")]
 pub fn exr_zip_f32_plan(data: &[u8]) -> Result<Option<ExrZipPlan>, DecodeError> {
     formats::exr::zip_f32_plan(data)

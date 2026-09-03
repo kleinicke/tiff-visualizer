@@ -134,7 +134,7 @@ test('honours explicit zoom width for a CZI canvas', async ({ page }) => {
 /**
  * JPEG XL is decoded by a SECOND WebAssembly module, downloaded on demand.
  * Both halves of that are worth asserting through a real browser: that nothing
- * fetches the ~1.3 MB payload until a `.jxl` is actually opened (otherwise the
+ * fetches the ~2.2 MB payload until JPEG XL is actually encountered (otherwise the
  * separate module buys nothing), and that once it is opened the file decodes
  * and renders — which exercises the decode worker, the module hand-off from
  * the main thread, and the shared scientific-array renderer together.

@@ -10,9 +10,10 @@
 | EXR | No | No | Yes | Yes | HDR floating-point |
 | NPY / NPZ | Yes | Yes | Yes | Yes | Also float64 and signed/unsigned integers up to 64 bit |
 | FITS / DICOM / NetCDF | Yes | Yes | No | Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes |
-| CZI | Yes | Yes | No | Yes | Zeiss microscopy; uncompressed/JPEG/LZW/JPEG XR/Zstd subblocks, Z/C/T plane selection, mosaic tiles |
+| CZI | Yes | Yes | No | Yes | Zeiss microscopy; uncompressed/JPEG/LZW/JPEG XR/Zstd/CHUNKED subblocks, Z/C/T plane selection, mosaic tiles |
 | ND2 | Yes | Yes | No | Yes | Nikon microscopy; modern chunk-based files, uncompressed frames, T/P/Z/C plane selection |
 | LIF | Yes | Yes | No | Yes | Leica microscopy; multi-series files, Z/T/mosaic plane selection, planar channels |
+| SDT | No | Yes | No | Yes | uint16/uint32/float64 source histograms; intensity, mean-arrival, and raw time-bin views |
 | HDR | No | No | No | Yes | Radiance RGBE, decoded to float32 |
 | PFM | No | No | No | Yes | Portable Float Map |
 | PPM / PGM / PBM | Yes | Yes | No | No | PBM is 1-bit, shown as 8-bit |
@@ -22,8 +23,9 @@
 | ORA / KRA / PSD / PSB / XCF / Affinity | Yes | PSD/PSB | No | PSD/PSB | Previews, and layer composition where supported — see [layers](./layers.md) |
 
 File extensions registered by the extension:
-`tif tiff tf2 tf8 btf exr pfm npy npz ppm pgm pbm hdr tga jxl fits fit fts dcm
-dicom nc cdf ora kra psd psb xcf afphoto af` open automatically;
+`tif tiff tf2 tf8 btf exr pfm npy npz ppm pgm pbm hdr tga jxl jxr wdp hdp
+jp2 jpf jpx j2k j2c jpc fits fit fts dcm dicom nc cdf czi nd2 lif sdt ora
+kra psd psb xcf afphoto af` open automatically;
 `png jpeg jpg bmp ico webp avif` are available via **Open With…**.
 
 ## How decoding works
@@ -55,7 +57,7 @@ a sparse GeoTIFF never wrote read as zeros.
 Compression: none, LZW, Deflate, PackBits, Zstd, LZMA, LERC (including GDAL's
 LERC_DEFLATE and LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (including the
 Aperio 33003/33004/33005 codes slide scanners write), JPEG XR (34934, and the
-22610 code Hamamatsu NDPI files use), WebP, and CCITT Group 3/4 and Modified
+22610 code Hamamatsu NDPI files use), JPEG XL (50002), WebP, and CCITT Group 3/4 and Modified
 Huffman fax. Every one of these is decoded in pure Rust, so they
 work the same in VS Code Web as on the desktop. LERC is lossy when it was
 written that way; the decoder reproduces the reconstruction its own encoder
@@ -66,8 +68,7 @@ JPEG 2000, JPEG XR, LERC, LZMA and WebP are decoded by a second WebAssembly
 module downloaded only when a file declares one of them — see "How the decoder
 is packaged" below.
 
-Not decoded: JPEG XL in TIFF (its decoder is a third module — see JPEG XL
-below), old-style JPEG (compression 6), and the legacy
+Not decoded: old-style JPEG (compression 6), and the legacy
 PixarLog, SGILog, ThunderScan, NeXT and JBIG codecs. Files using any of these
 report the codec by name rather than failing silently.
 
@@ -160,7 +161,7 @@ arrays for selection.
 This is usually the shortest path from a research script to a picture: save an
 intermediate tensor with `np.save`, click it in the Explorer.
 
-### FITS, DICOM, NetCDF, CZI, ND2 and LIF
+### FITS, DICOM, NetCDF, CZI, ND2, LIF and SDT
 
 These share a lifecycle: parse the container, list the numeric arrays it
 holds, let you pick one, then treat it as an image with extra dimensions.
@@ -195,9 +196,17 @@ holds, let you pick one, then treat it as an image with extra dimensions.
   and mosaic tiles are assembled into the full frame. Arrow keys step through Z
   and `[` / `]` through channels, as for a dataset. Channel sliders are
   labelled with the dye name from the embedded metadata, and pixel scaling is
-  reported in micrometres. Uncompressed and Zstd-0/Zstd-1 subblocks decode,
-  the latter including the optional hi-lo byte packing; JPEG and JPEG XR
-  subblocks report the codec they would need.
+  reported in micrometres. Uncompressed, JPEG, LZW, JPEG XR, Zstd-0/Zstd-1,
+  and experimental CHUNKED subblocks decode. CHUNKED supports both zstd and
+  LZ4 chunks plus the optional 16-bit hi-lo preprocessing.
+
+- **SDT** — Becker & Hickl FLIM/TCSPC measurements. Each spatial pixel stores
+  a photon-arrival histogram rather than one intensity. The `Mode` control
+  shows integrated intensity, a photon-weighted mean arrival time in
+  nanoseconds, or one raw time bin selected with `T`; multi-block files add a
+  `B` control. Uncompressed and ZIP-compressed uint16/uint32 histogram blocks
+  are supported. Mean arrival is an exploratory visualization, not a fitted
+  fluorescence lifetime.
 
 See [datasets](./datasets.md) for navigation.
 
@@ -226,7 +235,8 @@ rarely needed, and carrying them would slow down every ordinary TIFF:
   declares one of them. Since these are codestream codecs, that one module
   serves every container — the same JPEG XR decoder answers for a TIFF tile, a
   CZI subblock and a standalone `.jxr`.
-- **JPEG XL** lives in a third, for the same reason (see below).
+- **JPEG XL** lives in a third, for the same reason (see below). That module
+  also carries the shared TIFF and DICOM parsers for embedded codestreams.
 
 Nothing is fetched speculatively: the decoder recognises the codec while
 reading the file's header, before any pixel work, and only then downloads what
@@ -240,12 +250,12 @@ as float32 with its range intact. Greyscale and RGB are supported, with or
 without alpha; the first frame of an animation is shown.
 
 Its decoder is a **separate WebAssembly module** from the one every other
-format shares, downloaded the first time you open a `.jxl` and never otherwise
+format shares, downloaded the first time you open a `.jxl` or a TIFF/DICOM
+declaring JPEG XL, and never otherwise
 — it is large enough that carrying it in the main module would slow down every
-TIFF open to no purpose. The consequence is that JPEG XL *inside* another
-container (TIFF compression 50002, the DICOM JPEG XL transfer syntaxes) is
-still not decoded: those run inside the other modules, which do not contain
-it.
+TIFF open to no purpose. TIFF compression 50002 and DICOM transfer syntaxes
+`.4.110`, `.4.111`, and `.4.112` retry the complete container through this
+module, preserving page, metadata, sample-type, and Bits Stored handling.
 
 ### Layered documents
 
@@ -264,9 +274,9 @@ one that looks plausible and is wrong.
 - Legacy (pre-2012) ND2 files, which use a different container entirely, and
   ND2 files written with Nikon's lossless or lossy compression
 - Multi-file CZI sets. CZI subblocks decode when uncompressed or compressed
-  with JPEG, LZW, JPEG XR, Zstd-0 or Zstd-1, including Zstd-1's optional
-  hi-lo byte packing
-- DICOM JPEG XL and JPEG XR transfer syntaxes, the MPEG/HEVC video ones, and
+  with JPEG, LZW, JPEG XR, Zstd-0/Zstd-1, or experimental CHUNKED
+- SDT LZ4-frame-compressed blocks and non-image curve-only measurements
+- DICOM JPEG XR transfer syntaxes, the MPEG/HEVC video ones, and
   lossless JPEG with predictor 5 or 6 — the pure-Rust decoder reproduces
   selection values 1-4 and 7 exactly and those two incorrectly, so they are
   refused rather than returned wrong (transfer syntax .70 mandates value 1)

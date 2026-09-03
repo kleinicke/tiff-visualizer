@@ -13,10 +13,10 @@ crate-type = ["cdylib", "rlib"]
 default = ["console_error_panic_hook"]
 
 [dependencies]
-# `default-features = false` is the whole point of this crate: it takes the
-# `jxl` feature ONLY, so nothing else in the decoder crate is linked in here
-# and jxl-rs is linked into nothing else.
-scientific-image-decoders = { path = "../../crates/image-decoders", default-features = false, features = ["jxl"] }
+# This lazy module owns jxl-rs and also builds the shared TIFF and DICOM
+# parsers so an embedded codestream is decoded through the authoritative
+# container implementation. It remains unfetched until JPEG XL is requested.
+scientific-image-decoders = { path = "../../crates/image-decoders", default-features = false, features = ["jxl", "tiff", "dicom"] }
 wasm-bindgen = "0.2"
 console_error_panic_hook = { version = "0.1.6", optional = true }
 
