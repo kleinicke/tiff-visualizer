@@ -67,6 +67,37 @@ export function parseGdalNodata(tags: TagEntry[]): number | undefined {
 	return undefined;
 }
 
+/**
+ * Whether the samples beyond the colour samples are alpha, from ExtraSamples
+ * (TIFF tag 338). Values 1 (associated) and 2 (unassociated) are alpha; 0 is
+ * "unspecified", which is what GDAL writes for an ordinary multi-band raster.
+ *
+ * Returns undefined when the file says nothing, leaving the caller's default
+ * in place — an absent tag on a 2-sample image is genuinely ambiguous, and
+ * gray+alpha is the commoner reading outside the geospatial world.
+ *
+ * Matching follows `parseGdalNodata`: the numeric id on the Rust/WASM path,
+ * the name on the geotiff.js fallback path (which carries no ids).
+ */
+export function parseExtraSamplesAreAlpha(tags: TagEntry[]): boolean | undefined {
+	if (!Array.isArray(tags)) { return undefined; }
+	for (const tag of tags) {
+		const name = String(tag?.name || '');
+		const unknownMatch = /unknown\((\d+)\)/i.exec(name);
+		const matchesByNumber = tag?.tag === 338 ||
+			(!!unknownMatch && Number(unknownMatch[1]) === 338);
+		if (!/^extrasamples$/i.test(name) && !matchesByNumber) { continue; }
+		// The tag is a list, one entry per extra sample. Any entry claiming
+		// alpha makes the last sample alpha for display purposes.
+		const values = String(tag.value).split(/[,\s]+/)
+			.map(part => Number(part))
+			.filter(value => Number.isFinite(value));
+		if (values.length === 0) { return undefined; }
+		return values.some(value => value === 1 || value === 2);
+	}
+	return undefined;
+}
+
 function stringifyTagValue(value: any): string {
 	if (value === null || value === undefined) { return ''; }
 	if (Array.isArray(value) || ArrayBuffer.isView(value)) {

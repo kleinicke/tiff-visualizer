@@ -2185,6 +2185,24 @@ var TiffResult = class _TiffResult {
     return ret;
   }
   /**
+   * What the file's other images are — pages, pyramid overviews, or masks —
+   * as JSON. Empty for a file with no readable directory. See
+   * `formats::tiff::pages`.
+   * @returns {string}
+   */
+  get page_directory_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.tiffresult_page_directory_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
    * @returns {number}
    */
   get planar_configuration() {
@@ -2320,7 +2338,7 @@ var TiffStripMetadataJs = class _TiffStripMetadataJs {
    * @returns {number}
    */
   get page_count() {
-    const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+    const ret = wasm.exrresult_height(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2339,10 +2357,25 @@ var TiffStripMetadataJs = class _TiffStripMetadataJs {
     }
   }
   /**
+   * @returns {string}
+   */
+  get page_directory_json() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+      const ret = wasm.tiffstripmetadatajs_page_directory_json(this.__wbg_ptr);
+      deferred1_0 = ret[0];
+      deferred1_1 = ret[1];
+      return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+      wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+  }
+  /**
    * @returns {number}
    */
   get photometric_interpretation() {
-    const ret = wasm.pngresult_height(this.__wbg_ptr);
+    const ret = wasm.stabilitycurveresult_plateau_width(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**

@@ -210,6 +210,56 @@ async function main() {
 		console.log('✅ Float32 scientific carrier retains uint8 gamma range');
 	}
 
+	// ---------------------------------------------------------------------
+	// N. A second sample is alpha only when the FILE says so.
+	//
+	//    GDAL writes ExtraSamples = 0 ("unspecified") for an ordinary 2-band
+	//    raster, whose second band is data. Feeding it into alpha rendered a
+	//    real 2-band Int16 COG 82% transparent, with no error anywhere
+	//    (issue #12). `extraSamplesAreAlpha: false` says the samples are data.
+	// ---------------------------------------------------------------------
+	for (const [label, data, isFloat, options] of [
+		['uint8', new Uint8Array([100, 0, 50, 0]), false, {}],
+		['float32', new Float32Array([100, 0, 50, 0]), true, { typeMax: 255 }],
+	]) {
+		const settings = {
+			normalization: { min: 0, max: 255, autoNormalize: false, gammaMode: false },
+			gamma: { in: 1.0, out: 1.0 },
+			brightness: { offset: 0 },
+		};
+		const stats = { min: 0, max: 255 };
+
+		// Default (a genuine gray+alpha image): the zero second sample is alpha.
+		const asAlpha = ImageRenderer.render(data, 2, 1, 2, isFloat, stats, settings, { ...options });
+		assert.strictEqual(pixelAt(asAlpha, 0, 0).a, 0,
+			`${label}: without a declaration the second sample is still treated as alpha`);
+
+		// Declared as data: the same pixels must be fully opaque and visible.
+		const asData = ImageRenderer.render(data, 2, 1, 2, isFloat, stats, settings,
+			{ ...options, extraSamplesAreAlpha: false });
+		const first = pixelAt(asData, 0, 0);
+		assert.strictEqual(first.a, 255, `${label}: a data band must not make the image transparent`);
+		assert.strictEqual(first.r, 100, `${label}: the first sample still drives the gray level`);
+		assert.strictEqual(pixelAt(asData, 1, 0).a, 255);
+		console.log(`✅ ${label} 2-sample: second sample is alpha only when the file declares it`);
+	}
+
+	// The same rule at 4 samples: a 4-band multispectral raster is not RGBA.
+	{
+		const data = new Uint8Array([200, 150, 100, 0]);
+		const settings = {
+			normalization: { min: 0, max: 255, autoNormalize: false, gammaMode: false },
+			gamma: { in: 1.0, out: 1.0 },
+			brightness: { offset: 0 },
+		};
+		const asRgba = ImageRenderer.render(data, 1, 1, 4, false, { min: 0, max: 255 }, settings, {});
+		assert.strictEqual(pixelAt(asRgba, 0, 0).a, 0, '4-sample default stays RGBA');
+		const asBands = ImageRenderer.render(data, 1, 1, 4, false, { min: 0, max: 255 }, settings,
+			{ extraSamplesAreAlpha: false });
+		assert.strictEqual(pixelAt(asBands, 0, 0).a, 255, '4 declared data bands render opaque');
+		console.log('✅ 4-sample: a declared multi-band raster is not treated as RGBA');
+	}
+
 	console.log('\n🎉 All ImageRenderer channel-count tests passed.\n');
 }
 

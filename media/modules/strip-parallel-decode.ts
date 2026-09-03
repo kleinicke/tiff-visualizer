@@ -71,6 +71,7 @@ export interface StripParallelResult {
 	allTagsJson: string;
 	omeXml: string | undefined;
 	geoJson: string | undefined;
+	pageDirectoryJson: string | undefined;
 	data: Float32Array | Uint16Array | Uint8Array;
 	min: number;
 	max: number;
@@ -546,6 +547,7 @@ export async function tryStripParallelDecode(
 		allTagsJson: meta?.all_tags_json ?? '[]',
 		omeXml: meta?.ome_xml || undefined,
 		geoJson: meta?.geo_json || undefined,
+		pageDirectoryJson: meta?.page_directory_json || undefined,
 		data,
 		min, max,
 		workers: ranges.length,

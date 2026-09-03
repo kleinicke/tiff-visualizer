@@ -117,6 +117,10 @@ pub struct TiffResult {
     // carries none. Computed per page like `ome_xml` above, because a
     // multi-page GeoTIFF's pages can sit at different resolutions.
     geo_json: String,
+    // What the file's other images ARE — separate pages, pyramid overviews, or
+    // masks — as JSON. See formats::tiff::pages. Whole-file, not per-page, so
+    // every page result carries the same value.
+    page_directory_json: String,
 }
 
 pub struct ExrResult {
@@ -857,6 +861,10 @@ impl TiffResult {
         self.geo_json.clone()
     }
 
+    pub fn page_directory_json(&self) -> String {
+        self.page_directory_json.clone()
+    }
+
     /// Get raw data as bytes (for transferring to JS)
     pub fn get_data_bytes(&self) -> Vec<u8> {
         if self.data.is_empty() && !self.data_f32.is_empty() {
@@ -990,6 +998,14 @@ pub fn tiff_page_count(data: &[u8]) -> Result<u32, DecodeError> {
         count = count.saturating_add(1);
     }
     Ok(count)
+}
+
+/// Classify every image in a TIFF's main IFD chain: which are pages of their
+/// own, which are pyramid overviews of an earlier page, which are masks.
+/// Reads headers only. Returns "" for a file with no readable directory.
+#[cfg(feature = "tiff")]
+pub fn tiff_page_directory_json(data: &[u8]) -> String {
+    formats::tiff::pages::page_directory_json(data)
 }
 
 /// Decode an arbitrary zero-based TIFF page and compute min/max statistics.
@@ -1357,6 +1373,7 @@ pub struct TiffStripMetadata {
     pub all_tags_json: String,
     pub ome_xml: String,
     pub geo_json: String,
+    pub page_directory_json: String,
 }
 
 #[cfg(feature = "tiff")]
@@ -1367,6 +1384,7 @@ pub fn tiff_strip_metadata(data: &[u8]) -> Result<TiffStripMetadata, DecodeError
         all_tags_json: m.all_tags_json,
         ome_xml: m.ome_xml,
         geo_json: m.geo_json,
+        page_directory_json: m.page_directory_json,
     })
 }
 

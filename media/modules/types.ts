@@ -16,6 +16,15 @@ export interface RenderOptions {
   collectHistogram?: boolean;
   renderHistogramResult?: any;
   channels?: number;
+  /**
+   * Whether a sample beyond the colour samples is alpha (default true).
+   *
+   * Only the file knows. TIFF says so in ExtraSamples (tag 338): 1 or 2 mean
+   * alpha, 0 means "unspecified" — which is what GDAL writes for an ordinary
+   * multi-band raster. Assuming alpha there renders a 2-band Int16 COG almost
+   * entirely transparent, because its second band is data, not coverage.
+   */
+  extraSamplesAreAlpha?: boolean;
 }
 
 /**

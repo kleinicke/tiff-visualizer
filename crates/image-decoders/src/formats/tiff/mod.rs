@@ -2,6 +2,7 @@ mod cmyk;
 mod codecs;
 pub(crate) mod geokeys;
 mod orientation;
+pub(crate) mod pages;
 pub(crate) mod strips;
 pub(crate) mod tags;
 
@@ -119,6 +120,7 @@ pub(crate) fn decode_tiff_impl(
             result.all_tags_json = extract_page_tags_json(data, page_index);
             result.ome_xml = extract_ome_xml(data);
             result.geo_json = extract_geo_json(data, page_index);
+            result.page_directory_json = pages::page_directory_json(data);
             return Ok(result);
         }
     }
@@ -171,6 +173,7 @@ pub(crate) fn decode_tiff_impl(
                 result.all_tags_json = extract_page_tags_json(data, page_index);
                 result.ome_xml = extract_ome_xml(data);
             result.geo_json = extract_geo_json(data, page_index);
+            result.page_directory_json = pages::page_directory_json(data);
                 return Ok(result);
             }
         }
@@ -385,6 +388,7 @@ pub(crate) fn decode_tiff_impl(
             result.all_tags_json = extract_page_tags_json(data, page_index);
             result.ome_xml = extract_ome_xml(data);
             result.geo_json = extract_geo_json(data, page_index);
+            result.page_directory_json = pages::page_directory_json(data);
             return Ok(result);
         }
     }
@@ -783,6 +787,7 @@ pub(crate) fn decode_tiff_impl(
         all_tags_json: extract_page_tags_json(data, page_index),
         ome_xml: extract_ome_xml(data),
         geo_json: extract_geo_json(data, page_index),
+        page_directory_json: pages::page_directory_json(data),
     });
 
     result
@@ -1107,6 +1112,7 @@ pub(crate) struct StripMetadata {
     pub all_tags_json: String,
     pub ome_xml: String,
     pub geo_json: String,
+    pub page_directory_json: String,
 }
 
 pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeError> {
@@ -1134,6 +1140,7 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
         all_tags_json: extract_page_tags_json(data, 0),
         ome_xml: extract_ome_xml(data),
         geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 

@@ -586,6 +586,10 @@ export class ImageRenderer {
     static _renderFloatDirect(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, options: RenderOptions): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 }; // Magenta default
+        // A sample beyond the colour samples is alpha only when the file
+        // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
+        // the pixel loop.
+        const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
         const range = max - min;
         const invRange = range > 0 ? 1.0 / range : 0;
         const collectHistogram = options.collectHistogram === true && channels === 1;
@@ -692,10 +696,11 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
+                out[p + 3] = alphaFromExtraSample ? (Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255) : 255;
                 continue;
             } else if (channels === 2) {
-                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                 const idx = i * 2;
                 const value = data[idx];
                 const aVal = data[idx + 1];
@@ -711,7 +716,7 @@ export class ImageRenderer {
                 out[p] = intensity;
                 out[p + 1] = intensity;
                 out[p + 2] = intensity;
-                out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
+                out[p + 3] = alphaFromExtraSample ? (Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255) : 255;
                 continue;
             } else if (channels > 4) {
                 // Extra samples beyond the first 3 are display-ignored (but
@@ -762,6 +767,10 @@ export class ImageRenderer {
     static _renderFloatWithLUT(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, settings: ImageSettings, options: RenderOptions): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // A sample beyond the colour samples is alpha only when the file
+        // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
+        // the pixel loop.
+        const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
 
         // Generate 16-bit LUT for gamma/brightness
         const { min: vMin, max: vMax } = NormalizationHelper.getEffectiveVisualizationRange(settings, min, max);
@@ -888,10 +897,11 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
+                out[p + 3] = alphaFromExtraSample ? (Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255) : 255;
                 continue;
             } else if (channels === 2) {
-                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                 const idx = i * 2;
                 const value = data[idx];
                 const aVal = data[idx + 1];
@@ -908,7 +918,7 @@ export class ImageRenderer {
                 out[p] = intensity;
                 out[p + 1] = intensity;
                 out[p + 2] = intensity;
-                out[p + 3] = Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255;
+                out[p + 3] = alphaFromExtraSample ? (Number.isFinite(aVal) ? Math.round(Math.max(0, Math.min(1, aVal)) * 255) : 255) : 255;
                 continue;
             } else if (channels > 4) {
                 // Extra samples beyond the first 3 are display-ignored (but
@@ -961,6 +971,10 @@ export class ImageRenderer {
     static _renderUint16Direct(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // A sample beyond the colour samples is alpha only when the file
+        // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
+        // the pixel loop.
+        const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             // Scale 16-bit down to 8-bit for 24-bit display
@@ -1033,10 +1047,11 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = Math.round(data[idx + 3] / 257); // 65535 -> 255
+                out[p + 3] = alphaFromExtraSample ? Math.round(data[idx + 3] / 257) : 255; // 65535 -> 255
                 continue;
             } else if (channels === 2) {
-                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                 const idx = i * 2;
                 const value = data[idx], aVal = data[idx + 1];
                 const p = i * 4;
@@ -1048,7 +1063,7 @@ export class ImageRenderer {
                 out[p] = intensity;
                 out[p + 1] = intensity;
                 out[p + 2] = intensity;
-                out[p + 3] = Number.isFinite(aVal) ? Math.round(aVal / 257) : 255; // 65535 -> 255
+                out[p + 3] = alphaFromExtraSample ? (Number.isFinite(aVal) ? Math.round(aVal / 257) : 255) : 255; // 65535 -> 255
                 continue;
             } else if (channels > 4) {
                 // Extra samples beyond the first 3 are display-ignored (but
@@ -1085,6 +1100,10 @@ export class ImageRenderer {
     static _renderUint16WithLUT(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, settings: ImageSettings, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // A sample beyond the colour samples is alpha only when the file
+        // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
+        // the pixel loop.
+        const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             // Scale 16-bit down to 8-bit for 24-bit display
@@ -1161,10 +1180,11 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = Math.round(data[idx + 3] / 257); // 65535 -> 255
+                out[p + 3] = alphaFromExtraSample ? Math.round(data[idx + 3] / 257) : 255; // 65535 -> 255
                 continue;
             } else if (channels === 2) {
-                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                 const idx = i * 2;
                 const value = data[idx], aVal = data[idx + 1];
                 const p = i * 4;
@@ -1176,7 +1196,7 @@ export class ImageRenderer {
                 out[p] = intensity;
                 out[p + 1] = intensity;
                 out[p + 2] = intensity;
-                out[p + 3] = Number.isFinite(aVal) ? Math.round(aVal / 257) : 255; // 65535 -> 255
+                out[p + 3] = alphaFromExtraSample ? (Number.isFinite(aVal) ? Math.round(aVal / 257) : 255) : 255; // 65535 -> 255
                 continue;
             } else if (channels > 4) {
                 // Extra samples beyond the first 3 are display-ignored (but
@@ -1213,6 +1233,10 @@ export class ImageRenderer {
     static _renderUint8Direct(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // A sample beyond the colour samples is alpha only when the file
+        // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
+        // the pixel loop.
+        const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             const range = max - min;
@@ -1271,10 +1295,11 @@ export class ImageRenderer {
                     out[p] = rVal;
                     out[p + 1] = gVal;
                     out[p + 2] = bVal;
-                    out[p + 3] = data[idx + 3];
+                    out[p + 3] = alphaFromExtraSample ? data[idx + 3] : 255;
                     continue;
                 } else if (channels === 2) {
-                    // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                    // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                     const idx = i * 2;
                     const value = data[idx], aVal = data[idx + 1];
                     if (!Number.isFinite(value)) {
@@ -1282,7 +1307,7 @@ export class ImageRenderer {
                         continue;
                     }
                     out[p] = out[p + 1] = out[p + 2] = value;
-                    out[p + 3] = aVal;
+                    out[p + 3] = alphaFromExtraSample ? aVal : 255;
                     continue;
                 } else if (channels > 4) {
                     // Extra samples beyond the first 3 are display-ignored
@@ -1343,10 +1368,11 @@ export class ImageRenderer {
                     out[p] = r;
                     out[p + 1] = g;
                     out[p + 2] = b;
-                    out[p + 3] = data[idx + 3];
+                    out[p + 3] = alphaFromExtraSample ? data[idx + 3] : 255;
                     continue;
                 } else if (channels === 2) {
-                    // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                    // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                     const idx = i * 2;
                     const value = data[idx], aVal = data[idx + 1];
                     if (!Number.isFinite(value)) {
@@ -1359,7 +1385,7 @@ export class ImageRenderer {
                     out[p] = r;
                     out[p + 1] = g;
                     out[p + 2] = b;
-                    out[p + 3] = aVal;
+                    out[p + 3] = alphaFromExtraSample ? aVal : 255;
                     continue;
                 } else if (channels > 4) {
                     // Extra samples beyond the first 3 are display-ignored
@@ -1395,6 +1421,10 @@ export class ImageRenderer {
     static _renderUint8WithLUT(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, settings: ImageSettings, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // A sample beyond the colour samples is alpha only when the file
+        // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
+        // the pixel loop.
+        const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             const range = max - min;
@@ -1466,10 +1496,11 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = data[idx + 3];
+                out[p + 3] = alphaFromExtraSample ? data[idx + 3] : 255;
                 continue;
             } else if (channels === 2) {
-                // Gray + alpha: value = data[i*2], alpha = data[i*2+1].
+                // Two samples: value = data[i*2]. The second is alpha only
+                // when the file declares it so, else a data band, shown opaque.
                 const idx = i * 2;
                 const value = data[idx], aVal = data[idx + 1];
                 if (!Number.isFinite(value)) {
@@ -1483,7 +1514,7 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = aVal;
+                out[p + 3] = alphaFromExtraSample ? aVal : 255;
                 continue;
             } else if (channels > 4) {
                 // Extra samples beyond the first 3 are display-ignored (but

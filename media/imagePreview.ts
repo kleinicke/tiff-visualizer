@@ -4,6 +4,8 @@ import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions 
 import type { ImageSettings, SettingsUpdateResult } from './modules/settings-manager.js';
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
+import { imagePages, isPyramidal, levelForDisplayWidth, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
+import type { TiffPageEntry } from './modules/tiff-pages.js';
 import { PngProcessor } from './modules/png-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
 import { WebImageProcessor } from './modules/web-image-processor.js';
@@ -153,7 +155,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	const dormantProcessor = (): any => ({
 		_isInitialLoad: true, _pendingRenderData: null, _lastRaw: null,
 		_lastAllTags: [], metadata: {}, rawTiffData: null, rawExrData: null,
-		pageIndex: 0, pageCount: 1, omeMetadata: null, omeBinaryOnly: null,
+		pageIndex: 0, pageCount: 1, pageDirectory: [], omeMetadata: null, omeBinaryOnly: null,
 		// MouseHandler probes processors in a fixed order. A lazy family that has
 		// not been installed yet must behave like an empty processor, not merely
 		// be truthy and then throw when its pixel accessor is called.
@@ -665,7 +667,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		roiOverlay.setShowScaleBar(settingsManager.settings.showScaleBar);
 	}
 
-	zoomController.onScaleChanged = () => roiOverlay.scheduleRedraw();
+	zoomController.onScaleChanged = () => {
+		roiOverlay.scheduleRedraw();
+		// Zooming past a pyramid level's resolution is exactly when the finer
+		// level becomes worth its decode; nothing else in the session changes
+		// the answer, so this is the only trigger.
+		maybeRefineTiffLevel();
+	};
 
 	const measurePanel = new MeasurePanel({
 		manager: roiManager,
@@ -983,6 +991,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	let peerExrStats: any = null;         // Cached stats for peer EXR image
 	let peerImageUris: string[] = []; // Track peer URIs for comparison state
 	let _pendingZoomState: { scale: number | string, [key: string]: any } | null = null; // Zoom state to restore after next image load
+	/** Pyramid level switches rescale the pending zoom; see navigateTiffToPage. */
+	let _pendingLevelScaleMultiplier: number | null = null;
 	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
 	let _loadAbortController: AbortController | null = null; // Aborts the in-flight load's fetch when a newer switch supersedes it
 	let _tiffCanvasReadyPromise: Promise<void>;
@@ -1125,8 +1135,20 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		}
 
 		// TIFF is the only format here whose extra images are addressed as
-		// pages; the selector shows the same numbering.
-		if (tiffProcessor.pageCount > 1) {
+		// pages; the selector shows the same numbering. A pyramid's extra
+		// images are levels of one page, so say which level instead — "page 2
+		// of 4" on a COG describes something the file does not contain.
+		const directory = tiffProcessor.pageDirectory;
+		if (isPyramidal(directory)) {
+			const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+			const levels = levelsForPage(directory, page);
+			const position = levels.findIndex(level => level.index === tiffProcessor.pageIndex);
+			const pages = imagePages(directory);
+			if (pages.length > 1) {
+				parts.push(`page ${pages.findIndex(entry => entry.index === page) + 1}/${pages.length}`);
+			}
+			parts.push(`level ${position + 1}/${levels.length} (${levelLabel(levels[position] ?? levels[0])})`);
+		} else if (tiffProcessor.pageCount > 1) {
 			parts.push(`page ${tiffProcessor.pageIndex + 1}/${tiffProcessor.pageCount}`);
 		}
 
@@ -1860,6 +1882,12 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 */
 	function canvasCanHold(width: number, height: number): boolean {
 		if (!(width > 0 && height > 0)) { return false; }
+		// A canvas is only half the question: the pixels reach it through an
+		// ImageData, whose backing store is a single typed array and so cannot
+		// exceed 2^31-1 bytes. Chromium will happily allocate a 40000x40000
+		// canvas and then throw IndexSizeError on `new ImageData(...)`, which
+		// is how a 1.6-gigapixel COG used to fail after a 27-second decode.
+		if (width * height * 4 > 2 ** 31 - 1) { return false; }
 		// Fast path: anything inside the smallest limit any mainstream engine
 		// enforces is fine, and must NOT be probed — allocating a second
 		// full-size canvas to ask the question would double peak memory for
@@ -1919,9 +1947,25 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		currentLoadFormat = 'TIFF';
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await tiffProcessor.processTiff(src, pageIndex);
+			const result = await tiffProcessor.processTiff(src, pageIndex, {
+				// Fit-to-window is the opening view, so the container width is
+				// what a level has to cover.
+				displayWidth: (container.clientWidth || window.innerWidth || 1024) * (window.devicePixelRatio || 1),
+				canDisplay: canvasCanHold,
+			});
 			if (gen !== _loadGeneration) { return; }
 			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
+				// A pyramidal file carries smaller copies of this very scene.
+				// Showing the largest one that fits beats refusing the file —
+				// but say so, because the reader is no longer looking at full
+				// resolution.
+				const fallback = largestDisplayableLevel(pageIndex);
+				if (fallback && fallback.index !== pageIndex) {
+					logToOutput(`[Level] ${result.canvas.width}x${result.canvas.height} exceeds this browser's canvas limit; `
+						+ `showing overview ${levelLabel(fallback)}`);
+					await navigateTiffToPage(fallback.index);
+					return;
+				}
 				onImageError(tooLargeMessage(result.canvas.width, result.canvas.height));
 				return;
 			}
@@ -2392,6 +2436,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		container.classList.add('ready');
 
 		// Apply zoom: restore saved state from before the switch, or fit if none
+		if (_pendingLevelScaleMultiplier && _pendingZoomState && typeof _pendingZoomState.scale === 'number') {
+			_pendingZoomState = {
+				..._pendingZoomState,
+				scale: _pendingZoomState.scale * _pendingLevelScaleMultiplier,
+			};
+		}
+		_pendingLevelScaleMultiplier = null;
 		if (_pendingZoomState && _pendingZoomState.scale !== 'fit') {
 			zoomController.restoreState(_pendingZoomState);
 		} else {
@@ -6252,11 +6303,45 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		});
 	}
 
-	/** TIFF: OME C/Z/T, or the page index for a plain multi-page file. */
+	/** TIFF: OME C/Z/T, pyramid levels, or the page index for a multi-page file. */
 	function tiffControls(): NavControlSpec[] {
 		if (tiffProcessor.pageCount <= 1) { return []; }
 		const ome = tiffProcessor.omeMetadata;
 		if (!ome) {
+			const directory = tiffProcessor.pageDirectory;
+			// A pyramid's extra IFDs are the same scene downsampled, so they are
+			// levels of ONE image, not pages. Offering them as "page 2 of 4"
+			// invites the reader to treat a blurry duplicate as separate data.
+			if (isPyramidal(directory)) {
+				const pages = imagePages(directory);
+				const currentPage = pageOwningIfd(directory, tiffProcessor.pageIndex);
+				const levels = levelsForPage(directory, currentPage);
+				const controls: NavControlSpec[] = [];
+				if (pages.length > 1) {
+					controls.push(...controlsFromSelectors('tiff', [{
+						name: 'Page',
+						size: pages.length,
+						value: Math.max(0, pages.findIndex(page => page.index === currentPage)),
+					}], (_selector, index) => {
+						void navigateTiffToPage(pages[index]?.index ?? 0);
+					}));
+				}
+				controls.push(...controlsFromSelectors('tiff', [{
+					name: 'Level',
+					size: levels.length,
+					value: Math.max(0, levels.findIndex(level => level.index === tiffProcessor.pageIndex)),
+					labels: levels.map(levelLabel),
+				}], (_selector, index) => {
+					const level = levels[index];
+					if (level) {
+						// An explicit choice outranks the zoom-driven one until
+						// the file is reopened; see _levelSelectionIsManual.
+						_levelSelectionIsManual = true;
+						void navigateTiffToPage(level.index);
+					}
+				}));
+				return controls;
+			}
 			return controlsFromSelectors('tiff', [{
 				name: 'Page',
 				size: tiffProcessor.pageCount,
@@ -6625,7 +6710,86 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		await navigateTiffToPage(omeCoordinatesToIfd(ome, coordinates));
 	}
 
-	async function navigateTiffToPage(target: number): Promise<void> {
+	// --- Pyramid level selection ------------------------------------------
+	//
+	// A pyramidal TIFF (a COG, a whole-slide image) stores the same scene at
+	// halving resolutions. Which one to decode is a display decision, and it is
+	// made here rather than in the decoder, which has no idea how large the
+	// window is.
+	//
+	// The policy is deliberately conservative: full resolution is the default
+	// whenever it can be shown at all, because this is an inspector and a
+	// silently downsampled image is worse than a slow one. A coarser level is
+	// used only when the full page exceeds what the browser can put on a canvas
+	// — where the alternative is not a slower image but no image — or when the
+	// reader picks one. Zooming in then refines back towards full resolution,
+	// since that is the point at which the missing detail becomes visible.
+
+	/** An explicit Level choice outranks the automatic one until reopen. */
+	let _levelSelectionIsManual = false;
+	/** Set while a level switch is in flight, so zoom events do not stack up. */
+	let _levelSwitchPending = false;
+
+	/** How many screen pixels the image currently spans, in device pixels. */
+	function displayedImageWidthPx(): number {
+		const element = imageElement as HTMLElement | null;
+		const cssWidth = element?.clientWidth || canvas?.width || 0;
+		return cssWidth * (window.devicePixelRatio || 1);
+	}
+
+	/**
+	 * Switch to another level of the page being viewed, keeping the image the
+	 * same size on screen: the levels differ in pixel count, so the zoom scale
+	 * has to move the other way by the same factor.
+	 */
+	async function switchToPyramidLevel(target: TiffPageEntry, reason: string): Promise<void> {
+		if (_levelSwitchPending || target.index === tiffProcessor.pageIndex) { return; }
+		const current = tiffProcessor.pageDirectory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		const multiplier = current && target.width > 0 ? current.width / target.width : 1;
+		_levelSwitchPending = true;
+		logToOutput(`[Level] ${reason}: ${levelLabel(target)}`);
+		try {
+			await navigateTiffToPage(target.index, { scaleMultiplier: multiplier });
+		} finally {
+			_levelSwitchPending = false;
+		}
+	}
+
+	/**
+	 * Move to a finer level when the reader has zoomed past what the current
+	 * one holds. Only ever refines: zooming back out keeps the sharper data
+	 * already decoded, since dropping to a coarser level would cost a decode
+	 * to show less.
+	 */
+	function maybeRefineTiffLevel(): void {
+		if (_levelSelectionIsManual || _levelSwitchPending || !hasLoadedImage) { return; }
+		const directory = tiffProcessor.pageDirectory;
+		if (!isPyramidal(directory)) { return; }
+		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		if (!current) { return; }
+		const wanted = levelForDisplayWidth(directory, page, displayedImageWidthPx());
+		// Refine only, and only to a level the canvas can actually hold.
+		if (!wanted || wanted.width <= current.width) { return; }
+		if (!canvasCanHold(wanted.width, wanted.height)) { return; }
+		void switchToPyramidLevel(wanted, 'zoomed in, refining to');
+	}
+
+	/**
+	 * The largest level that this browser can put on a canvas, or null when
+	 * even the smallest cannot be shown. Lets a 40000x40000 COG open at its
+	 * 2500x2500 level instead of failing outright — the pyramid is there
+	 * precisely so an image too large to draw can still be looked at.
+	 */
+	function largestDisplayableLevel(pageIndex: number): TiffPageEntry | null {
+		const levels = levelsForPage(tiffProcessor.pageDirectory, pageOwningIfd(tiffProcessor.pageDirectory, pageIndex));
+		for (const level of levels) {
+			if (canvasCanHold(level.width, level.height)) { return level; }
+		}
+		return null;
+	}
+
+	async function navigateTiffToPage(target: number, options: { scaleMultiplier?: number } = {}): Promise<void> {
 		const total = tiffProcessor.pageCount;
 		if (target < 0 || target >= total) { return; }
 		if (target === tiffProcessor.pageIndex) { return; }
@@ -6636,6 +6800,12 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
 		_pendingZoomState = zoomController.getCurrentState();
+		// Zoom is expressed against the decoded image's own width, and two levels
+		// of one pyramid have different widths — so carrying the scale across a
+		// level switch unchanged would resize the image on screen. This is
+		// applied at restore time rather than here because the pending state is
+		// re-captured from the live view just before it is restored.
+		_pendingLevelScaleMultiplier = options.scaleMultiplier ?? null;
 		_loadAbortController?.abort();
 		decodeWorkerClient.cancelActiveDecodes();
 		pngDecodeWorkerClient.cancelActiveDecodes();
@@ -6759,6 +6929,10 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 					// GeoTIFF in a collection keeps its coordinate readout;
 					// the restore path below has no bytes to re-parse.
 					geoReference: tiffProcessor.geoReference,
+					// Same reason as geoReference: the restore path has no bytes
+					// to re-classify, and without this a pyramidal file comes
+					// back from the cache looking like a plain multi-page one.
+					pageDirectory: tiffProcessor.pageDirectory,
 					formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null
 				}
 			};
@@ -6839,6 +7013,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;
 				tiffProcessor.pageIndex = Number(raw.pageIndex || 0);
 				tiffProcessor.pageCount = Math.max(1, Number(raw.pageCount || 1));
+				tiffProcessor.pageDirectory = Array.isArray(raw.pageDirectory) ? raw.pageDirectory : [];
 				tiffProcessor.omeMetadata = tiffData.ome || null;
 				const cachedOme = tiffProcessor.omeMetadata;
 				mouseHandler.setPhysicalPixelSize(cachedOme ? {
@@ -6991,6 +7166,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		try { switchName = decodeURIComponent(switchName); } catch { /* keep encoded name */ }
 		PerfTrace.begin(planeChange ? `plane ${switchName}` : `switch ${switchName}`);
 		if (!planeChange) {
+			// A Level choice belongs to the file it was made for.
+			_levelSelectionIsManual = false;
 			// Caching the outgoing image is for stepping between FILES. Doing it
 			// per plane would fill the cache with planes of the file already open.
 			_restoreDecodedImageCandidate = _previousDecodedImageCache;

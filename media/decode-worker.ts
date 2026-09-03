@@ -242,6 +242,7 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0) {
 		allTagsJson: result.all_tags_json,
 		omeXml: result.ome_xml || undefined,
 		geoJson: result.geo_json || undefined,
+		pageDirectoryJson: result.page_directory_json || undefined,
 		decodedWith: 'wasm (worker)',
 		decodeTimings: timings,
 	};

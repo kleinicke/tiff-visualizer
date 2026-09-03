@@ -13,7 +13,7 @@ import { parseAllTagsJson, TagEntry } from './tiff-tag-utils.js';
 import initTiffWasm, {
     decode_czi_fast, decode_dicom_fast, decode_lif_fast, decode_nd2_fast, label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast, decode_fits_fast, decode_netcdf_fast, decode_npy_display_fast,
     decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
-    demosaic, extract_exif_tags, tiff_page_count,
+    demosaic, extract_exif_tags, tiff_page_count, tiff_page_directory,
     compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
     build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
     local_threshold_mask_fast, local_auto_threshold_mask_fast, compute_stability_curve_fast,
@@ -70,7 +70,7 @@ async function initWasm(): Promise<any> {
             // unavailable. They share this one cached module instance rather
             // than initializing a second copy.
             wasmModule = {
-                decode_tiff, decode_tiff_page, tiff_page_count, extract_exif_tags, demosaic,
+                decode_tiff, decode_tiff_page, tiff_page_count, tiff_page_directory, extract_exif_tags, demosaic,
                 decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_display_fast, decode_fits_fast,
                 decode_netcdf_fast, decode_dicom_fast, decode_czi_fast, decode_nd2_fast, decode_lif_fast,
                 compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
@@ -158,6 +158,11 @@ export interface TiffDecodeResult {
 	 * which is most of them.
 	 */
 	geoJson?: string;
+	/**
+	 * The file's IFD chain classified into pages, pyramid overviews and masks,
+	 * as JSON — see tiff-pages.ts. Absent when the directory could not be read.
+	 */
+	pageDirectoryJson?: string;
 }
 
 /**
@@ -263,7 +268,8 @@ export class TiffWasmProcessor {
             max: result.max_value,
             allTagsJson: result.all_tags_json,
 			omeXml: result.ome_xml || undefined,
-			geoJson: result.geo_json || undefined
+			geoJson: result.geo_json || undefined,
+			pageDirectoryJson: result.page_directory_json || undefined
         };
 
         return decodeResult;

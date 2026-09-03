@@ -437,6 +437,13 @@ impl TiffResult {
     pub fn geo_json(&self) -> String {
         self.inner.geo_json()
     }
+    /// What the file's other images are — pages, pyramid overviews, or masks —
+    /// as JSON. Empty for a file with no readable directory. See
+    /// `formats::tiff::pages`.
+    #[wasm_bindgen(getter)]
+    pub fn page_directory_json(&self) -> String {
+        self.inner.page_directory_json()
+    }
     #[wasm_bindgen(getter)]
     pub fn all_tags_json(&self) -> String {
         self.inner.all_tags_json()
@@ -535,6 +542,14 @@ pub fn decode_tiff(data: &[u8]) -> Result<TiffResult, JsValue> {
 #[wasm_bindgen]
 pub fn tiff_page_count(data: &[u8]) -> Result<u32, JsValue> {
     core::tiff_page_count(data).map_err(js_error)
+}
+
+/// Classify every image in a TIFF's IFD chain without decoding pixels. Used
+/// when a page directory is wanted for a file that was not decoded through
+/// this module (or before deciding which page to decode).
+#[wasm_bindgen]
+pub fn tiff_page_directory(data: &[u8]) -> String {
+    core::tiff_page_directory_json(data)
 }
 
 #[wasm_bindgen]
@@ -963,6 +978,10 @@ impl TiffStripMetadataJs {
     #[wasm_bindgen(getter)]
     pub fn geo_json(&self) -> String {
         self.inner.geo_json.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn page_directory_json(&self) -> String {
+        self.inner.page_directory_json.clone()
     }
 }
 

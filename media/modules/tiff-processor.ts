@@ -5,7 +5,8 @@ import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
 import { tryStripParallelDecode } from './strip-parallel-decode.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
-import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, TagEntry } from './tiff-tag-utils.js';
+import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
+import { chooseOpenLevel, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
 import { parseGeoReference, type GeoReference } from './geo-reference.js';
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
@@ -77,6 +78,12 @@ export class TiffProcessor {
 	_lastAllTags: TagEntry[];
 	_lastRenderUsedWebGL: boolean;
 	_gdalNodata: number | undefined;
+	_extraSamplesAreAlpha: boolean | undefined;
+	/**
+	 * Every image in the file, classified. `pageCount` counts IFDs; this says
+	 * which of them are pages and which are pyramid levels of an earlier one.
+	 */
+	pageDirectory: TiffPageEntry[];
 	_convertedFloatData: { floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null;
 	loadSignal: AbortSignal | undefined;
 	decodeWorker: DecodeWorkerClient | null;
@@ -109,6 +116,10 @@ export class TiffProcessor {
 		this._lastAllTags = []; // Every TIFF/Exif/GPS tag found in the current file, for the Metadata panel
 		this._lastRenderUsedWebGL = false; // True when the latest render drew directly to the canvas
 		this._gdalNodata = undefined; // GDAL_NODATA sentinel (tag 42113), excluded from auto-normalize stats
+		// ExtraSamples (tag 338): whether the samples past the colour samples
+		// are alpha. undefined = the file did not say.
+		this._extraSamplesAreAlpha = undefined;
+		this.pageDirectory = [];
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 		this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
@@ -219,7 +230,16 @@ export class TiffProcessor {
 	 * Process TIFF file from URL
 	 * @param src - TIFF file URL
 	 */
-	async processTiff(src: string, pageIndex = 0): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
+	/**
+	 * How the caller wants a pyramidal file opened. The processor cannot know
+	 * how big the window is or what this browser will put on a canvas, so the
+	 * display side supplies both and `chooseOpenLevel` applies the policy.
+	 */
+	async processTiff(
+		src: string,
+		pageIndex = 0,
+		levelHint?: { displayWidth: number, canDisplay: (width: number, height: number) => boolean },
+	): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
 		const startTime = performance.now();
 		this._lastRenderHistogram = null;
 		const loadSignal = this.loadSignal;
@@ -235,7 +255,7 @@ export class TiffProcessor {
 				? await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'tiff')
 				: null;
 			const deferredToParallel = speculative?.ok && speculative.result?.deferToParallelTiff === true;
-			const bootstrapWasmResult: any = speculative?.ok && !deferredToParallel ? speculative.result : null;
+			let bootstrapWasmResult: any = speculative?.ok && !deferredToParallel ? speculative.result : null;
 			if (deferredToParallel) {
 				PerfTrace.note('decode-tiff-bootstrap', `parallel route (${Number(speculative.result?.stripCount || 0)} strips)`);
 			}
@@ -273,6 +293,51 @@ export class TiffProcessor {
 			const fetchTime = performance.now() - startTime;
 			console.log(`[TiffProcessor] Fetch time: ${fetchTime.toFixed(2)}ms`);
 			if (!speculative) { PerfTrace.mark('fetch'); }
+
+			// A pyramidal file holds this scene at several resolutions, and which
+			// one to decode has to be settled BEFORE decoding: a 40000x40000
+			// page cannot be decoded at all — 1.6 gigapixels overruns both the
+			// canvas ceiling and the 32-bit wasm heap — so finding out after the
+			// decode is too late. The page directory is a header read, no
+			// pixels, and this runs only when a decode is about to be issued
+			// anyway for a file large enough that the strip-plan path would
+			// load the same main-thread module moments later.
+			// The speculative bootstrap decodes page 0 before anyone asks, so a
+			// file whose full resolution cannot be DRAWN can arrive here already
+			// decoded. Its own page directory says what smaller copies exist, so
+			// the level is chosen from that rather than by parsing again.
+			if (levelHint && bootstrapWasmResult && pageIndex === 0
+				&& !levelHint.canDisplay(Number(bootstrapWasmResult.width), Number(bootstrapWasmResult.height))) {
+				const directory = parsePageDirectory(bootstrapWasmResult.pageDirectoryJson);
+				const chosen = chooseOpenLevel(directory, 0, levelHint.displayWidth, levelHint.canDisplay);
+				if (chosen && chosen.index !== 0) {
+					console.log(`[TiffProcessor] Bootstrap decode is not displayable; reopening at level `
+						+ `1/${chosen.reduction} (${chosen.width}x${chosen.height})`);
+					PerfTrace.note('tiff-open-level', `1/${chosen.reduction} ${chosen.width}x${chosen.height}`);
+					pageIndex = chosen.index;
+					this.pageIndex = chosen.index;
+					bootstrapWasmResult = null;
+				}
+			}
+
+			if (levelHint && !bootstrapWasmResult && pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
+				const levelWasm = getWasmModuleSync() || await getWasmModule();
+				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				if (levelWasm && typeof levelWasm.tiff_page_directory === 'function') {
+					let directory: TiffPageEntry[] = [];
+					try {
+						directory = parsePageDirectory(levelWasm.tiff_page_directory(new Uint8Array(buffer)));
+					} catch { /* not classifiable; decode page 0 as before */ }
+					const chosen = chooseOpenLevel(directory, 0, levelHint.displayWidth, levelHint.canDisplay);
+					if (chosen && chosen.index !== 0) {
+						console.log(`[TiffProcessor] Full resolution is not displayable; opening at level `
+							+ `1/${chosen.reduction} (${chosen.width}x${chosen.height})`);
+						PerfTrace.note('tiff-open-level', `1/${chosen.reduction} ${chosen.width}x${chosen.height}`);
+						pageIndex = chosen.index;
+						this.pageIndex = chosen.index;
+					}
+				}
+			}
 
 			// Check if we should use WASM decoder
 			const settings = this.settingsManager.settings;
@@ -570,6 +635,8 @@ export class TiffProcessor {
 					this.geoReference = parseGeoReference((wasmResult as any).geoJson);
 					this.rawTiffData.ome = this.omeMetadata;
 					this._gdalNodata = parseGdalNodata(this._lastAllTags);
+					this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
+					this.pageDirectory = parsePageDirectory((wasmResult as any).pageDirectoryJson);
 					if (this._gdalNodata !== undefined && this._lastStatistics &&
 						(this._lastStatistics.min === this._gdalNodata || this._lastStatistics.max === this._gdalNodata)) {
 						// WASM's fast min/max scan doesn't know about GDAL_NODATA, so the
@@ -732,6 +799,10 @@ export class TiffProcessor {
 			this._setOmeXml(findOmeXmlInTags(this._lastAllTags));
 			this.rawTiffData.ome = this.omeMetadata;
 			this._gdalNodata = parseGdalNodata(this._lastAllTags);
+			this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
+			// geotiff.js exposes no NewSubfileType walk, so this path has no
+			// page directory rather than a stale one from the previous file.
+			this.pageDirectory = [];
 
 			// Send format information to VS Code BEFORE rendering
 			// This allows the extension to apply format-specific settings first
@@ -1021,7 +1092,8 @@ export class TiffProcessor {
 			nanColor: nanColor,
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
 			typeMax: typeMax,
-			collectHistogram: renderOptions.collectHistogram === true
+			collectHistogram: renderOptions.collectHistogram === true,
+			extraSamplesAreAlpha: this._extraSamplesAreAlpha
 		};
 
 		const targetCanvas = renderOptions.targetCanvas;

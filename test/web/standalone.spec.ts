@@ -219,3 +219,24 @@ test('opens a standalone JPEG 2000 through the codec module', async ({ page }) =
   await expect(page.locator('#web-status-size')).toContainText('64x48');
   expect(codecRequests.length, 'a .jp2 must download the codec module').toBeGreaterThan(0);
 });
+
+test('shows a pyramidal COG as levels of one image, not as pages', async ({ page }) => {
+  await page.goto('/');
+
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
+
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+
+  // The three IFDs are one image at three resolutions. Offering them as
+  // "Page 1 / 3" would describe something the file does not contain.
+  const overlay = page.locator('.dataset-overlay');
+  await expect(overlay).toContainText('Level');
+  await expect(overlay).not.toContainText('Page');
+  await expect(overlay.locator('select')).toHaveValue('0');
+
+  await page.getByRole('button', { name: 'More' }).click();
+  await page.getByRole('button', { name: 'Loading log' }).click();
+  await expect(page.locator('#web-log-output')).toContainText('level 1/3 (Full · 256x256)');
+});

@@ -1,4 +1,5 @@
 use super::orientation::TiffOrientation;
+use super::pages;
 use super::tags::{extract_all_tags_json, extract_geo_json, extract_ome_xml, extract_page_tags_json};
 use super::{finalize_decode_bytes, patch_photometric_to_grayscale};
 use crate::pipeline::stats::compute_stats_u8;
@@ -228,6 +229,7 @@ pub(crate) fn decode_jpeg_ycbcr(
         all_tags_json: extract_all_tags_json(data),
         ome_xml: extract_ome_xml(data),
         geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
@@ -447,6 +449,7 @@ pub(crate) fn decode_palette(
         all_tags_json: extract_page_tags_json(data, page_index),
         ome_xml: extract_ome_xml(data),
         geo_json: extract_geo_json(data, page_index),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
@@ -630,6 +633,7 @@ pub(crate) fn decode_ccitt(
         all_tags_json: extract_all_tags_json(data),
         ome_xml: extract_ome_xml(data),
         geo_json: extract_geo_json(data, 0),
+        page_directory_json: pages::page_directory_json(data),
     })
 }
 
@@ -805,6 +809,7 @@ pub(crate) fn decode_ycbcr_subsampled(
         all_tags_json: String::new(),
         ome_xml: String::new(),
         geo_json: String::new(),
+        page_directory_json: String::new(),
     })
 }
 
@@ -1001,6 +1006,7 @@ pub(crate) fn decode_sgilog(
         all_tags_json: String::new(),
         ome_xml: String::new(),
         geo_json: String::new(),
+        page_directory_json: String::new(),
     })
 }
 
