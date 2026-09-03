@@ -242,47 +242,7 @@ pub(crate) fn decompress_block(
 
     match compression {
         1 => Ok(block.to_vec()),
-        5 => {
-            let mut lzw = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
-            let mut out = vec![0u8; expected_len];
-            let mut in_pos = 0usize;
-            let mut out_pos = 0usize;
-            while out_pos < expected_len {
-                let result = lzw.decode_bytes(&block[in_pos..], &mut out[out_pos..]);
-                in_pos += result.consumed_in;
-                out_pos += result.consumed_out;
-                match result.status {
-                    Ok(weezl::LzwStatus::Ok) => {}
-                    Ok(weezl::LzwStatus::Done) => break,
-                    Ok(weezl::LzwStatus::NoProgress) => {
-                        if in_pos >= block.len() {
-                            // Input exhausted before an EOI code appeared.
-                            // Tolerate this the same way libtiff does; the
-                            // caller already validates `out` was filled to
-                            // the expected length below.
-                            break;
-                        }
-                        return Err(DecodeError::new(&format!(
-                            "{}: LZW decode stalled before end of input",
-                            context
-                        )));
-                    }
-                    Err(e) => {
-                        return Err(DecodeError::new(&format!(
-                            "{}: LZW decode failed: {}",
-                            context, e
-                        )))
-                    }
-                }
-            }
-            if out_pos < expected_len {
-                return Err(DecodeError::new(&format!(
-                    "{}: LZW stream produced {} bytes, expected {}",
-                    context, out_pos, expected_len
-                )));
-            }
-            Ok(out)
-        }
+        5 => crate::formats::compression::decode_tiff_lzw(block, expected_len, context),
         8 | 32946 => {
             let mut zd = flate2::read::ZlibDecoder::new(block);
             let mut buf = Vec::new();
@@ -593,25 +553,9 @@ fn decode_jpegxr_block(
     context: &str,
     info: &BlockCodecInfo,
 ) -> Result<Vec<u8>, DecodeError> {
-    let image = jpegxr::decode_bytes(block)
-        .map_err(|e| DecodeError::new(&format!("{}: JPEG XR decode failed: {:?}", context, e)))?;
-    let format = image.pixel_format();
-    let bytes_per_sample = (format.bits_per_sample() as usize).div_ceil(8);
-    let row_bytes = (image.width() as usize) * (format.channel_count() as usize) * bytes_per_sample;
-    let stride = image.stride();
-    let pixels = image.pixels();
-
-    let mut data = Vec::with_capacity(row_bytes * image.height() as usize);
-    for row in 0..image.height() as usize {
-        let start = row * stride;
-        let end = start
-            .checked_add(row_bytes)
-            .filter(|end| *end <= pixels.len())
-            .ok_or_else(|| {
-                DecodeError::new(&format!("{}: JPEG XR row {} is short", context, row))
-            })?;
-        data.extend_from_slice(&pixels[start..end]);
-    }
+    let decoded = crate::formats::jpegxr::decode_jpegxr_pixels(block, context)?;
+    let bytes_per_sample = (decoded.bits_per_sample as usize).div_ceil(8);
+    let mut data = decoded.pixels;
     if bytes_per_sample > 1 && !info.little_endian {
         for sample in data.chunks_exact_mut(bytes_per_sample) {
             sample.reverse();

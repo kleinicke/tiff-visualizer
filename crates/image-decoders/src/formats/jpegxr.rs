@@ -16,13 +16,35 @@ use super::json_value::{to_json_string, JsonValue};
 use super::scientific_common::ScientificParsed;
 use crate::DecodeError;
 
+/// A JPEG XR codestream decoded to tightly packed, native-endian rows.
+///
+/// The vendored decoder exposes padded rows. Containers such as TIFF and CZI
+/// need the padding removed before they can place the block in their own
+/// raster, while the standalone decoder needs the exact same normalization
+/// before converting samples to `f32`. Keeping it here prevents the three
+/// callers from acquiring subtly different stride handling.
+pub(crate) struct DecodedJpegXrPixels {
+    pub width: u32,
+    pub height: u32,
+    pub channels: u32,
+    pub bits_per_sample: u32,
+    pub sample_format: jpegxr::SampleFormat,
+    pub interpretation: jpegxr::PixelInterpretation,
+    pub color_format: jpegxr::ColorFormat,
+    pub has_alpha: bool,
+    pub pixels: Vec<u8>,
+}
+
 /// The magic every JPEG XR file starts with: "II" (the format is always
 /// little-endian) followed by 0xBC and the format version.
 pub(crate) fn is_jpegxr(data: &[u8]) -> bool {
     data.len() >= 4 && data[0] == b'I' && data[1] == b'I' && data[2] == 0xbc
 }
 
-pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, DecodeError> {
+pub(crate) fn decode_jpegxr_pixels(
+    data: &[u8],
+    context: &str,
+) -> Result<DecodedJpegXrPixels, DecodeError> {
     if !is_jpegxr(data) {
         return Err(DecodeError::new(
             "Not a JPEG XR file (expected the II 0xBC signature)",
@@ -30,13 +52,55 @@ pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, Decode
     }
 
     let image = jpegxr::decode_bytes(data)
-        .map_err(|e| DecodeError::new(&format!("JPEG XR decode failed: {:?}", e)))?;
+        .map_err(|e| DecodeError::new(&format!("{}: JPEG XR decode failed: {:?}", context, e)))?;
     let format = image.pixel_format();
-    let width = image.width();
-    let height = image.height();
     let channels = format.channel_count() as u32;
     let bits_per_sample = format.bits_per_sample() as u32;
-    let sample_format = match format.sample_format() {
+    let bytes_per_sample = (bits_per_sample as usize).div_ceil(8);
+    let row_bytes = (image.width() as usize)
+        .checked_mul(channels as usize)
+        .and_then(|v| v.checked_mul(bytes_per_sample))
+        .ok_or_else(|| DecodeError::new(&format!("{}: JPEG XR row size overflows", context)))?;
+    let mut pixels = Vec::with_capacity(
+        row_bytes
+            .checked_mul(image.height() as usize)
+            .ok_or_else(|| {
+                DecodeError::new(&format!("{}: JPEG XR image size overflows", context))
+            })?,
+    );
+    for row in 0..image.height() as usize {
+        let start = row.checked_mul(image.stride()).ok_or_else(|| {
+            DecodeError::new(&format!("{}: JPEG XR row offset overflows", context))
+        })?;
+        let end = start
+            .checked_add(row_bytes)
+            .filter(|end| *end <= image.pixels().len())
+            .ok_or_else(|| {
+                DecodeError::new(&format!("{}: JPEG XR row {} is short", context, row))
+            })?;
+        pixels.extend_from_slice(&image.pixels()[start..end]);
+    }
+
+    Ok(DecodedJpegXrPixels {
+        width: image.width(),
+        height: image.height(),
+        channels,
+        bits_per_sample,
+        sample_format: format.sample_format(),
+        interpretation: format.interpretation(),
+        color_format: format.color_format(),
+        has_alpha: format.has_alpha(),
+        pixels,
+    })
+}
+
+pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, DecodeError> {
+    let decoded = decode_jpegxr_pixels(data, "JPEG XR")?;
+    let width = decoded.width;
+    let height = decoded.height;
+    let channels = decoded.channels;
+    let bits_per_sample = decoded.bits_per_sample;
+    let sample_format = match decoded.sample_format {
         jpegxr::SampleFormat::UnsignedInteger => 1,
         jpegxr::SampleFormat::FloatingPoint => 3,
         // Unspecified/FixedPoint/Other: the samples are not plain integers or
@@ -53,9 +117,7 @@ pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, Decode
     if !matches!(bits_per_sample, 8 | 16 | 32) || channels == 0 || channels > 4 {
         return Err(DecodeError::new(&format!(
             "JPEG XR pixel format {:?} ({} channels, {} bits per sample) is not supported",
-            format.color_format(),
-            channels,
-            bits_per_sample
+            decoded.color_format, channels, bits_per_sample
         )));
     }
     if sample_format == 3 && bits_per_sample != 32 {
@@ -67,16 +129,12 @@ pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, Decode
     let bytes_per_sample = (bits_per_sample / 8) as usize;
     let samples_per_row = (width as usize) * (channels as usize);
     let row_bytes = samples_per_row * bytes_per_sample;
-    let stride = image.stride();
-    let pixels = image.pixels();
+    let pixels = decoded.pixels;
 
     let mut out = Vec::with_capacity(samples_per_row * height as usize);
     for row in 0..height as usize {
-        let start = row * stride;
-        let end = start
-            .checked_add(row_bytes)
-            .filter(|end| *end <= pixels.len())
-            .ok_or_else(|| DecodeError::new("JPEG XR: decoded rows are shorter than the image"))?;
+        let start = row * row_bytes;
+        let end = start + row_bytes;
         let row = &pixels[start..end];
         // The decoder writes samples in the machine's byte order, and every
         // target this runs on is little-endian.
@@ -114,20 +172,17 @@ pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, Decode
         ("channels".to_string(), JsonValue::Num(channels as f64)),
         (
             "colorFormat".to_string(),
-            JsonValue::Str(format!("{:?}", format.color_format())),
+            JsonValue::Str(format!("{:?}", decoded.color_format)),
         ),
         (
             "photometricInterpretation".to_string(),
-            JsonValue::Str(format!("{:?}", format.interpretation())),
+            JsonValue::Str(format!("{:?}", decoded.interpretation)),
         ),
         (
             "bitsPerSample".to_string(),
             JsonValue::Num(bits_per_sample as f64),
         ),
-        (
-            "hasAlpha".to_string(),
-            JsonValue::Bool(format.has_alpha()),
-        ),
+        ("hasAlpha".to_string(), JsonValue::Bool(decoded.has_alpha)),
     ];
 
     Ok(ScientificParsed {

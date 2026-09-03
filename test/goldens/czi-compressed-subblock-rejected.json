@@ -1,5 +1,5 @@
 {
   "id": "czi-compressed-subblock-rejected",
   "format": "czi",
-  "error": "CZI subblocks compressed with JPEG are not supported; uncompressed and Zstd-0/Zstd-1 subblocks decode"
+  "error": "CZI subblocks compressed with id 99 are not supported; uncompressed, JPEG, LZW and Zstd-0/Zstd-1 subblocks decode"
 }

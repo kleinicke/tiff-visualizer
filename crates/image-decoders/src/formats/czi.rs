@@ -10,11 +10,10 @@
 //! keyed by dimension coordinates; decoding means walking the subblock
 //! directory (falling back to a full segment scan when the directory is
 //! missing or corrupt), picking the subblocks matching the requested
-//! Z/C/T/... coordinate, and blitting them into one raster. Only uncompressed
-//! subblocks are handled; compressed variants (JPEG/LZW/JPEG XR/Zstd) report
-//! which codec the file needs rather than being decoded. Pyramid (subsampled)
-//! subblocks are skipped so the full-resolution plane is always what gets
-//! assembled.
+//! Z/C/T/... coordinate, and blitting them into one raster. Uncompressed,
+//! JPEG, LZW and both Zstd forms decode in the core module; JPEG XR routes to
+//! the lazy heavy-codec module. Pyramid (subsampled) subblocks are skipped so
+//! the full-resolution plane is always what gets assembled.
 //!
 //! `options_json` carries the small `CziDecodeOptions` shape
 //! (`{ indices?: Record<string, number> }`) as JSON, parsed with the tiny
@@ -345,20 +344,121 @@ fn czi_directory_entry(data: &[u8], offset: usize) -> Result<CziDirectoryEntry, 
 /// 0 says the encoder applied "hi-lo byte packing" — every sample's low byte
 /// written first for the WHOLE tile, then every high byte. That has to be
 /// interleaved back before the samples mean anything.
+struct DecodedCziSubblock {
+    pixels: Vec<u8>,
+    /// JPEG-family decoders normalize colour to RGB; raw CZI bytes use BGR.
+    rgb_order: bool,
+}
+
 fn decode_czi_subblock(
     payload: &[u8],
     compression: i32,
     expected: usize,
-    bytes_per_channel: usize,
-) -> Result<Vec<u8>, DecodeError> {
+    pixel_type: &PixelTypeInfo,
+    width: usize,
+    height: usize,
+) -> Result<DecodedCziSubblock, DecodeError> {
     use std::io::Read;
 
+    if compression == 1 {
+        if pixel_type.bytes_per_channel != 1 || !matches!(pixel_type.channels, 1 | 3) {
+            return Err(DecodeError::new(&format!(
+                "CZI JPEG subblocks require Gray8 or Bgr24 pixels, found {}",
+                pixel_type.name
+            )));
+        }
+        let mut image = crate::decode_jpeg_with_channels(payload, pixel_type.channels)?;
+        if image.width() as usize != width
+            || image.height() as usize != height
+            || image.channels() != pixel_type.channels
+        {
+            return Err(DecodeError::new(&format!(
+                "CZI JPEG subblock decoded as {}x{}x{}, expected {}x{}x{}",
+                image.width(),
+                image.height(),
+                image.channels(),
+                width,
+                height,
+                pixel_type.channels
+            )));
+        }
+        let pixels = image.take_data_as_u8();
+        if pixels.len() < expected {
+            return Err(DecodeError::new(&format!(
+                "CZI JPEG subblock holds {} bytes, expected {}",
+                pixels.len(),
+                expected
+            )));
+        }
+        return Ok(DecodedCziSubblock {
+            pixels,
+            rgb_order: pixel_type.channels >= 3,
+        });
+    }
+
+    if compression == 2 {
+        return Ok(DecodedCziSubblock {
+            pixels: super::compression::decode_tiff_lzw(payload, expected, "CZI subblock")?,
+            rgb_order: false,
+        });
+    }
+
+    if compression == 4 {
+        #[cfg(not(feature = "codec-jpegxr"))]
+        return Err(super::external_codec::needed("JPEG XR", "CZI subblock"));
+
+        #[cfg(feature = "codec-jpegxr")]
+        {
+            let decoded = super::jpegxr::decode_jpegxr_pixels(payload, "CZI subblock")?;
+            let expected_sample_format = if pixel_type.sample_format == 3 {
+                jpegxr::SampleFormat::FloatingPoint
+            } else if pixel_type.sample_format == 1 {
+                jpegxr::SampleFormat::UnsignedInteger
+            } else {
+                jpegxr::SampleFormat::Other(pixel_type.sample_format)
+            };
+            if decoded.width as usize != width
+                || decoded.height as usize != height
+                || decoded.channels != pixel_type.channels
+                || decoded.bits_per_sample != pixel_type.bits_per_sample
+                || decoded.sample_format != expected_sample_format
+            {
+                return Err(DecodeError::new(&format!(
+                    "CZI JPEG XR subblock decoded as {}x{}x{} {:?}/{}-bit, expected {}x{}x{} {:?}/{}-bit",
+                    decoded.width,
+                    decoded.height,
+                    decoded.channels,
+                    decoded.sample_format,
+                    decoded.bits_per_sample,
+                    width,
+                    height,
+                    pixel_type.channels,
+                    expected_sample_format,
+                    pixel_type.bits_per_sample
+                )));
+            }
+            if decoded.pixels.len() < expected {
+                return Err(DecodeError::new(&format!(
+                    "CZI JPEG XR subblock holds {} bytes, expected {}",
+                    decoded.pixels.len(),
+                    expected
+                )));
+            }
+            return Ok(DecodedCziSubblock {
+                pixels: decoded.pixels,
+                rgb_order: decoded.interpretation == jpegxr::PixelInterpretation::Rgb,
+            });
+        }
+    }
+
+    let bytes_per_channel = pixel_type.bytes_per_channel as usize;
     let (frame, hi_lo_packed) = match compression {
         5 => (payload, false),
         6 => {
             let header_size = *payload
                 .first()
-                .ok_or_else(|| DecodeError::new("CZI Zstd-1 subblock is empty"))? as usize;
+                .ok_or_else(|| DecodeError::new("CZI Zstd-1 subblock is empty"))?
+                as usize;
             if header_size == 0 || header_size > payload.len() {
                 return Err(DecodeError::new("CZI Zstd-1 header size is out of range"));
             }
@@ -396,7 +496,10 @@ fn decode_czi_subblock(
         }
         out = interleaved;
     }
-    Ok(out)
+    Ok(DecodedCziSubblock {
+        pixels: out,
+        rgb_order: false,
+    })
 }
 
 /// Read the subblock directory, falling back to a sequential segment scan.
@@ -837,11 +940,14 @@ pub(crate) fn decode_czi_impl(
     // native build produces from the loop below. Same inputs must give the
     // same answer on both targets.
     for entry in &selected {
-        if !matches!(entry.compression, 0 | 5 | 6) {
+        if entry.compression == 4 {
+            #[cfg(not(feature = "codec-jpegxr"))]
+            return Err(super::external_codec::needed("JPEG XR", "CZI subblock"));
+        } else if !matches!(entry.compression, 0 | 1 | 2 | 5 | 6) {
             let codec = compression_name(entry.compression);
             return Err(DecodeError::new(&format!(
-                "CZI subblocks compressed with {} are not supported; uncompressed and \
-                 Zstd-0/Zstd-1 subblocks decode",
+                "CZI subblocks compressed with {} are not supported; uncompressed, JPEG, \
+                 LZW and Zstd-0/Zstd-1 subblocks decode",
                 codec
             )));
         }
@@ -908,10 +1014,11 @@ pub(crate) fn decode_czi_impl(
         // uncompressed one is read straight out of the file. Either way the
         // row loop below sees `tile` starting at `tile_start`.
         let decompressed;
-        let (tile, tile_start) = if entry.compression == 0 {
-            (data, pixels_start)
+        let (tile, tile_start, tile_is_rgb) = if entry.compression == 0 {
+            (data, pixels_start, false)
         } else {
-            let data_size = i64_to_usize(i64_le(data, add(segment.data_start, 8)?)?, "subblock size")?;
+            let data_size =
+                i64_to_usize(i64_le(data, add(segment.data_start, 8)?)?, "subblock size")?;
             let end = add(pixels_start, data_size)?;
             if end > data.len() {
                 return Err(DecodeError::new("CZI subblock data is truncated"));
@@ -920,16 +1027,22 @@ pub(crate) fn decode_czi_impl(
                 &data[pixels_start..end],
                 entry.compression,
                 total_needed,
-                bytes_per_channel,
+                &pixel_type,
+                tile_width,
+                tile_height,
             )?;
-            if decompressed.len() < total_needed {
+            if decompressed.pixels.len() < total_needed {
                 return Err(DecodeError::new(&format!(
                     "CZI subblock decompressed to {} bytes, expected {}",
-                    decompressed.len(),
+                    decompressed.pixels.len(),
                     total_needed
                 )));
             }
-            (decompressed.as_slice(), 0usize)
+            (
+                decompressed.pixels.as_slice(),
+                0usize,
+                decompressed.rgb_order,
+            )
         };
 
         for row in 0..tile_height {
@@ -944,7 +1057,7 @@ pub(crate) fn decode_czi_impl(
                     let sample_offset = add(source, mul(channel, bytes_per_channel)?)?;
                     let value = read_sample(tile, entry.pixel_type, sample_offset)?;
                     // BGR(A) types are stored channel-reversed for the colour triple.
-                    let index = if pixel_type.bgr && channel < 3 {
+                    let index = if pixel_type.bgr && !tile_is_rgb && channel < 3 {
                         2 - channel
                     } else {
                         channel
@@ -1075,4 +1188,87 @@ pub(crate) fn decode_czi_impl(
         metadata_json,
         data: out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_czi_subblock, pixel_type_info};
+
+    #[test]
+    fn czi_lzw_dispatch_uses_the_shared_tiff_stream() {
+        let pixels: Vec<u8> = (0..4096).map(|i| ((i * 29 + i / 7) & 0xff) as u8).collect();
+        let encoded = weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
+            .encode(&pixels)
+            .expect("encode fixture");
+        let decoded = decode_czi_subblock(
+            &encoded,
+            2,
+            pixels.len(),
+            &pixel_type_info(0).unwrap(),
+            64,
+            64,
+        )
+        .unwrap();
+        assert_eq!(decoded.pixels, pixels);
+        assert!(!decoded.rgb_order);
+    }
+
+    #[test]
+    fn czi_jpeg_dispatch_matches_the_general_decoder() {
+        let dicom =
+            include_bytes!("../../../../test-samples/scientific/synthetic-ct-jpegbaseline-rgb.dcm");
+        let start = dicom
+            .windows(2)
+            .position(|pair| pair == [0xff, 0xd8])
+            .expect("JPEG SOI");
+        let end = dicom[start..]
+            .windows(2)
+            .position(|pair| pair == [0xff, 0xd9])
+            .map(|offset| start + offset + 2)
+            .expect("JPEG EOI");
+        let jpeg = &dicom[start..end];
+        let mut reference = crate::decode_jpeg_with_channels(jpeg, 3).unwrap();
+        let decoded =
+            decode_czi_subblock(jpeg, 1, 64 * 48 * 3, &pixel_type_info(3).unwrap(), 64, 48)
+                .unwrap();
+        assert_eq!(decoded.pixels, reference.take_data_as_u8());
+        assert!(decoded.rgb_order);
+    }
+
+    #[cfg(feature = "codec-jpegxr")]
+    #[test]
+    fn czi_jpegxr_dispatch_matches_the_general_decoder() {
+        let encoded = include_bytes!("../../../../test-samples/standalone_gray16.jxr");
+        let reference = super::super::jpegxr::decode_jpegxr_pixels(encoded, "reference").unwrap();
+        let decoded = decode_czi_subblock(
+            encoded,
+            4,
+            64 * 48 * 2,
+            &pixel_type_info(1).unwrap(),
+            64,
+            48,
+        )
+        .unwrap();
+        assert_eq!(decoded.pixels, reference.pixels);
+        assert!(!decoded.rgb_order);
+    }
+
+    #[cfg(not(feature = "codec-jpegxr"))]
+    #[test]
+    fn czi_jpegxr_dispatch_requests_the_heavy_codec() {
+        let encoded = include_bytes!("../../../../test-samples/standalone_gray16.jxr");
+        let result = decode_czi_subblock(
+            encoded,
+            4,
+            64 * 48 * 2,
+            &pixel_type_info(1).unwrap(),
+            64,
+            48,
+        );
+        let error = match result {
+            Ok(_) => panic!("core CZI decode unexpectedly carried JPEG XR"),
+            Err(error) => error,
+        };
+        assert!(error.message().starts_with("[external-codec:JPEG XR]"));
+    }
 }

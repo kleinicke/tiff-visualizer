@@ -1125,10 +1125,10 @@ function cziPatchedFixture(patchEntry) {
 	return buf;
 }
 
-/** Declares every directory entry compressed (PixelType-agnostic JPEG id),
- * which must be rejected before any pixel data is read. */
+/** Declares every directory entry with an unknown compression id, which must
+ * be rejected before any pixel data is read. */
 function cziPatchCompression(buf, entryOffset) {
-	buf.writeInt32LE(1, entryOffset + 18);
+	buf.writeInt32LE(99, entryOffset + 18);
 }
 
 /** Inflates the Y dimension's Size AND StoredSize (kept equal so the

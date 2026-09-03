@@ -351,7 +351,8 @@ function cziLargeCompressedPlane() {
 	}
 	const bytes = new Uint8Array(fs.readFileSync(file));
 	assert.throws(() => wasm.decode_czi_fast(bytes, '{}'),
-		e => /Compressed CZI is not supported/.test(String(e && e.message || e)),
+		e => /^\[external-codec:JPEG XR\] CZI subblock needs the JPEG XR decoder/.test(
+			String(e && e.message || e)),
 		'a large compressed CZI must report its codec rather than abort');
 	ok('a large compressed CZI reports its codec instead of panicking');
 }

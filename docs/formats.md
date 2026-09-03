@@ -10,7 +10,7 @@
 | EXR | No | No | Yes | Yes | HDR floating-point |
 | NPY / NPZ | Yes | Yes | Yes | Yes | Also float64 and signed/unsigned integers up to 64 bit |
 | FITS / DICOM / NetCDF | Yes | Yes | No | Yes | Numeric HDUs, DICOM series/frames, classic NetCDF variables, MPAS meshes |
-| CZI | Yes | Yes | No | Yes | Zeiss microscopy; uncompressed subblocks, Z/C/T plane selection, mosaic tiles |
+| CZI | Yes | Yes | No | Yes | Zeiss microscopy; uncompressed/JPEG/LZW/JPEG XR/Zstd subblocks, Z/C/T plane selection, mosaic tiles |
 | ND2 | Yes | Yes | No | Yes | Nikon microscopy; modern chunk-based files, uncompressed frames, T/P/Z/C plane selection |
 | LIF | Yes | Yes | No | Yes | Leica microscopy; multi-series files, Z/T/mosaic plane selection, planar channels |
 | HDR | No | No | No | Yes | Radiance RGBE, decoded to float32 |
@@ -263,9 +263,9 @@ one that looks plausible and is wrong.
 - NetCDF-4 / HDF5 containers (classic NetCDF only)
 - Legacy (pre-2012) ND2 files, which use a different container entirely, and
   ND2 files written with Nikon's lossless or lossy compression
-- CZI subblocks compressed with JPEG or JPEG XR, and multi-file CZI sets.
-  Zstd-0 and Zstd-1 subblocks do decode, including Zstd-1's optional hi-lo
-  byte packing
+- Multi-file CZI sets. CZI subblocks decode when uncompressed or compressed
+  with JPEG, LZW, JPEG XR, Zstd-0 or Zstd-1, including Zstd-1's optional
+  hi-lo byte packing
 - DICOM JPEG XL and JPEG XR transfer syntaxes, the MPEG/HEVC video ones, and
   lossless JPEG with predictor 5 or 6 — the pure-Rust decoder reproduces
   selection values 1-4 and 7 exactly and those two incorrectly, so they are

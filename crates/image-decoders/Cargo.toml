@@ -86,7 +86,7 @@ netcdf = []
 # `jpeg` is not optional here: DICOM's JPEG Baseline transfer syntax is decoded
 # by the same zune-jpeg the TIFF path uses, rather than by a second JPEG crate.
 dicom = ["jpeg", "dep:flate2"]
-czi = ["dep:ruzstd"]
+czi = ["dep:ruzstd", "dep:weezl", "jpeg"]
 nd2 = []
 lif = []
 demosaic = []

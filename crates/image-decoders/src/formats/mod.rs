@@ -1,5 +1,6 @@
 #[cfg(feature = "czi")]
 pub(crate) mod czi;
+pub(crate) mod compression;
 #[cfg(feature = "dicom")]
 pub(crate) mod dicom;
 #[cfg(feature = "exr")]

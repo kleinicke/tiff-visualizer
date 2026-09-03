@@ -77,6 +77,73 @@ function arrayBuffer(file) {
 	return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
+/** One full-resolution CZI subblock around an already-encoded codestream.
+ * This intentionally contains no metadata: the test isolates the container's
+ * compression dispatch, payload bounds and pixel-layout mapping. */
+function compressedCzi(payload, { compression, pixelType, width, height }) {
+	const segment = (id, data) => {
+		const header = Buffer.alloc(32);
+		header.write(id, 0, 'ascii');
+		header.writeBigInt64LE(BigInt(data.length), 16);
+		header.writeBigInt64LE(BigInt(data.length), 24);
+		return Buffer.concat([header, data]);
+	};
+	const directoryEntry = filePosition => {
+		const entry = Buffer.alloc(32 + 2 * 20);
+		entry.write('DV', 0, 'ascii');
+		entry.writeInt32LE(pixelType, 2);
+		entry.writeBigInt64LE(BigInt(filePosition), 6);
+		entry.writeInt32LE(compression, 18);
+		entry.writeInt32LE(2, 28);
+		for (const [index, name, size] of [[0, 'X', width], [1, 'Y', height]]) {
+			const at = 32 + index * 20;
+			entry.write(name, at, 'ascii');
+			entry.writeInt32LE(0, at + 4);
+			entry.writeInt32LE(size, at + 8);
+			entry.writeInt32LE(size, at + 16);
+		}
+		return entry;
+	};
+
+	const fileHeaderSize = 32 + 512;
+	const inline = directoryEntry(fileHeaderSize);
+	const fixed = Buffer.alloc(Math.max(256, 16 + inline.length));
+	fixed.writeBigInt64LE(BigInt(payload.length), 8);
+	inline.copy(fixed, 16);
+	const subblock = segment('ZISRAWSUBBLOCK', Buffer.concat([fixed, payload]));
+	const directoryPosition = fileHeaderSize + subblock.length;
+	const directoryFixed = Buffer.alloc(128);
+	directoryFixed.writeInt32LE(1, 0);
+	const directory = segment('ZISRAWDIRECTORY', Buffer.concat([
+		directoryFixed, directoryEntry(fileHeaderSize),
+	]));
+	const fileHeader = Buffer.alloc(512);
+	fileHeader.writeInt32LE(1, 0);
+	fileHeader.writeBigInt64LE(BigInt(directoryPosition), 0x34);
+	return Buffer.concat([segment('ZISRAWFILE', fileHeader), subblock, directory]);
+}
+
+/** A valid small TIFF-flavoured LZW stream using only clear/literal/EOI
+ * 9-bit codes. Keeping the fixture below 254 literals avoids a code-width
+ * transition, which is separately covered by the TIFF LZW matrix. */
+function literalLzw(bytes) {
+	const codes = [256, ...bytes, 257];
+	const out = [];
+	let accumulator = 0;
+	let bits = 0;
+	for (const code of codes) {
+		accumulator = accumulator * 512 + code;
+		bits += 9;
+		while (bits >= 8) {
+			bits -= 8;
+			out.push(Math.floor(accumulator / (2 ** bits)) & 0xff);
+			accumulator %= 2 ** bits;
+		}
+	}
+	if (bits) { out.push((accumulator * (2 ** (8 - bits))) & 0xff); }
+	return Buffer.from(out);
+}
+
 function testFits() {
 	const image = parseFits(arrayBuffer('synthetic-gradient.fits'));
 	assert.deepStrictEqual([image.width, image.height, image.channels], [32, 24, 1]);
@@ -141,6 +208,52 @@ function testCziCompressedSubblocks() {
 			`CZI ${label} must decode to the same samples as the uncompressed twin`);
 		console.log(`  ✅ CZI ${label} matches the uncompressed twin exactly`);
 	}
+}
+
+function testCziJpegLzwAndJpegXr() {
+	// JPEG (mode 1) reuses the core zune-jpeg decoder. Use the exact RGB
+	// codestream already embedded in the DICOM fixture, then compare the CZI
+	// result with the standalone decoder so colour order cannot drift.
+	const dicom = fs.readFileSync(path.join(fixtures, 'synthetic-ct-jpegbaseline-rgb.dcm'));
+	const jpegStart = dicom.indexOf(Buffer.from([0xff, 0xd8]));
+	const jpegEnd = dicom.indexOf(Buffer.from([0xff, 0xd9]), jpegStart) + 2;
+	assert.ok(jpegStart >= 0 && jpegEnd > jpegStart, 'DICOM JPEG fixture contains a codestream');
+	const jpeg = dicom.subarray(jpegStart, jpegEnd);
+	const jpegReferenceResult = wasm.decode_jpeg_fast(new Uint8Array(jpeg));
+	const jpegReference = jpegReferenceResult.take_data_as_u8();
+	const jpegCzi = parseCzi(compressedCzi(jpeg, {
+		compression: 1, pixelType: 3, width: 64, height: 48,
+	}));
+	assert.deepStrictEqual([jpegCzi.width, jpegCzi.height, jpegCzi.channels], [64, 48, 3]);
+	assert.deepStrictEqual(Array.from(jpegCzi.data), Array.from(jpegReference),
+		'CZI JPEG must reuse the standalone JPEG decoder without reversing RGB');
+	console.log('  ✅ CZI JPEG reuses the core JPEG decoder');
+
+	// LZW (mode 2) is the same TIFF-flavoured byte stream as TIFF compression 5.
+	const lzwPixels = Buffer.from(Array.from({ length: 64 }, (_, i) => (i * 3) & 0xff));
+	const lzwCzi = parseCzi(compressedCzi(literalLzw(lzwPixels), {
+		compression: 2, pixelType: 0, width: 8, height: 8,
+	}));
+	assert.deepStrictEqual(Array.from(lzwCzi.data), Array.from(lzwPixels));
+	console.log('  ✅ CZI LZW reuses the TIFF LZW decoder');
+
+	// JPEG XR (mode 4) must make the core request the heavy module, where the
+	// exact same normalized pixels as standalone `.jxr` are produced.
+	const jxr = fs.readFileSync(path.join(fixtures, 'standalone_gray16.jxr'));
+	assert.throws(
+		() => wasm.decode_czi_fast(new Uint8Array(compressedCzi(jxr, {
+			compression: 4, pixelType: 1, width: 64, height: 48,
+		})), '{}'),
+		/\[external-codec:JPEG XR\]/,
+		'CZI JPEG XR must request the lazy heavy-codec module',
+	);
+	assert.ok(codecWasm, 'the heavy-codec WASM is required for CZI JPEG XR coverage');
+	const jxrReference = codecWasm.decode_jpegxr_fast(new Uint8Array(jxr)).take_data_as_f32();
+	const jxrCzi = parseCzi(compressedCzi(jxr, {
+		compression: 4, pixelType: 1, width: 64, height: 48,
+	}));
+	assert.deepStrictEqual(Array.from(jxrCzi.data), Array.from(jxrReference));
+	console.log('  ✅ CZI JPEG XR routes to and reuses the general JPEG XR decoder');
 }
 
 /** Every compressed transfer syntax must decode to the SAME samples as the
@@ -455,6 +568,7 @@ async function main() {
 	testNetCdf();
 	testCzi();
 	testCziCompressedSubblocks();
+	testCziJpegLzwAndJpegXr();
 	testNd2();
 	testLif();
 	testMpasNetCdf();

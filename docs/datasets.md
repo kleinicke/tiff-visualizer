@@ -114,7 +114,7 @@ newest handle position is kept as the trailing request, so the image tracks the
 handle as fast as the machine allows and always settles on the released value.
 
 Mosaic tiles are assembled into the full frame rather than offered as a
-selectable axis. Only uncompressed subblocks decode; see
+selectable axis. Uncompressed, JPEG, LZW, JPEG XR and Zstd subblocks decode; see
 [formats](./formats.md).
 
 Pixel scaling from the CZI metadata is adopted as the measure

@@ -528,9 +528,10 @@ impl JpegResult {
 /// - Pixel-inspector readouts on lossy JPEG images can therefore differ by 1
 ///   between builds. For lossy data there is no single "correct" stored value to
 ///   be off by; quantitative work should not be reading lossy JPEG anyway.
-/// - `test/goldens/external/dicom-fixture-external-0002-dcm.json` was captured
-///   before simd128 was enabled and so fails against current builds. Re-capturing
-///   it is a decision to accept IDCT variance, not a routine refresh.
+/// - `test/goldens/external/dicom-fixture-external-0002-dcm.json` has moved
+///   when SIMD was enabled and again when DICOM JPEG Baseline was switched to
+///   this shared decoder. Re-capturing it is a decision to accept IDCT
+///   variance, not a routine refresh.
 #[cfg(feature = "jpeg")]
 pub fn decode_jpeg_fast(data: &[u8]) -> Result<JpegResult, DecodeError> {
     decode_jpeg_impl(data, None)
@@ -1172,8 +1173,8 @@ pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, 
 /// Decode a Zeiss CZI plane. `options_json` is the JSON-serialized
 /// `CziDecodeOptions` (`{ indices?: Record<string, number> }`) selecting the
 /// Z/C/T/... coordinate to assemble; unspecified axes default to their first
-/// coordinate. Compressed subblocks (JPEG/LZW/JPEG XR/Zstd) are rejected —
-/// only uncompressed subblocks decode.
+/// coordinate. JPEG, LZW and Zstd subblocks decode in the core module; JPEG XR
+/// uses the same lazy heavy-codec retry as TIFF and standalone `.jxr` files.
 #[cfg(feature = "czi")]
 pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
     Ok(decode_czi_impl(data, options_json)?.into())
