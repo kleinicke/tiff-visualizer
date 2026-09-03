@@ -69,20 +69,33 @@ a **Level** selector for them, showing each level's reduction and size
 (`Full · 10980x10980`, `1/4 · 2745x2745`), and a Page selector as well only
 when the file really does hold more than one image.
 
-Full resolution is what you get by default, whenever it can be displayed — a
-silently downsampled image would be a worse surprise than a slow one. Two things
-change that:
+**The level is chosen for you.** Opening a file picks the level that matches
+your window, zooming in loads a finer one, and the image stays the same size on
+screen across the switch — so what you see always looks like full resolution for
+the area you are looking at. You should not have to touch the selector.
 
-- **An image too large to draw.** Browsers cap how many pixels a canvas can
-  hold, so a 40000x40000 raster can never be shown whole. Such a file opens at
-  the largest level that fits your window instead of failing, and the log line
-  says which level you are looking at.
-- **Choosing one yourself.** Picking a level from the selector keeps it until
-  you reopen the file.
+What it chooses, and why:
 
-Zooming in past a level's resolution loads a finer one automatically, keeping
-the image the same size on screen. Zooming back out keeps the sharper data
-already decoded.
+- **Full resolution** whenever the image is small enough that you would not wait
+  for it (about 40 megapixels), because the values under the cursor come from
+  whatever was decoded, and a reduced level means an approximate readout.
+- **The level that matches your window** for anything larger — a 10980x10980
+  Sentinel-2 band opens in about 200 ms this way instead of four seconds, and at
+  fit-to-window it looks identical. While a reduced level is showing, the pixel
+  readout says so (`… · 1/8 overview`), so an approximate value never passes for
+  a stored one.
+- **The largest level that can be drawn at all** when even that is too big.
+  Browsers cap how many pixels a canvas can hold, so a 40000x40000 raster can
+  never be shown whole; it opens at a usable level instead of failing.
+
+Zooming back out keeps the sharper data already decoded. Picking a level from
+the selector yourself pins it — automatic refinement stops until you reopen the
+file.
+
+One limit worth knowing: refinement loads a whole level, not just the part you
+are looking at. For an image whose full resolution exceeds the canvas limit,
+zooming in cannot reach the stored pixels; decoding only the visible region is
+a planned change.
 
 ## CZI
 

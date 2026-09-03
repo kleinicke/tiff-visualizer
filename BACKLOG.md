@@ -2485,11 +2485,15 @@ inspection, measurement, statistics and export read exactly what they always did
    shared with item 14 phase C. **Difficulty: 4** — the decode is the easy half;
    the canvas becoming a window onto the image (rather than the whole image)
    touches zoom, pan, pixel coordinates, measurement and export.
-2. **Opening below full resolution by choice.** A 43 MB Sentinel-2 band could
-   open at its 687x687 level instantly. That means accepting an approximate
-   first view, so it needs the rule that says which operations force a
-   full-resolution read — the design work described above — plus a visible
-   indication that the view is not full resolution.
+2. **Opening below full resolution by choice. DONE (2026-09-03).** Past
+   `FULL_RESOLUTION_PIXEL_BUDGET` (40 megapixels) a file opens at the level that
+   matches the window — `s2_B02.tif` in ~200 ms rather than ~4 s — and zooming
+   refines from there. The approximation is stated rather than hidden: the pixel
+   readout carries `· 1/8 overview` while a reduced level is showing, and the
+   `[Visible]` log line names the level. What is still missing is the rule for
+   operations that must not be approximate at all: measurement and export read
+   whatever is decoded, so at a reduced level they inherit the overview. Region
+   reads (item 1) are what would let them force full resolution locally.
 3. **SubIFDs (tag 330).** The other overview convention hangs the levels off the
    full-resolution IFD. `page_directory` counts them (`subIfdCount`) but cannot
    select them: the `tiff` crate addresses images by chain index and exposes no

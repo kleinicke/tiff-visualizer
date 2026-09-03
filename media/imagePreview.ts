@@ -682,7 +682,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// Zooming past a pyramid level's resolution is exactly when the finer
 		// level becomes worth its decode; nothing else in the session changes
 		// the answer, so this is the only trigger.
-		maybeRefineTiffLevel();
+		scheduleLevelRefinement();
 	};
 
 	const measurePanel = new MeasurePanel({
@@ -1953,16 +1953,28 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	/**
 	 * Handle TIFF file loading
 	 */
-	async function handleTiff(src: string, gen: number = _loadGeneration, pageIndex: number = tiffProcessor.pageIndex) {
+	/**
+	 * `chooseLevel` is what separates OPENING a file from navigating within one.
+	 * On an open, a pyramidal file's level is picked from the window; once the
+	 * reader (or the zoom-driven refinement) has asked for a specific level,
+	 * re-applying that policy would immediately undo the request — a refinement
+	 * to full resolution would be answered with the window-sized level again.
+	 */
+	async function handleTiff(
+		src: string,
+		gen: number = _loadGeneration,
+		pageIndex: number = tiffProcessor.pageIndex,
+		{ chooseLevel = true }: { chooseLevel?: boolean } = {},
+	) {
 		currentLoadFormat = 'TIFF';
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await tiffProcessor.processTiff(src, pageIndex, {
+			const result = await tiffProcessor.processTiff(src, pageIndex, chooseLevel ? {
 				// Fit-to-window is the opening view, so the container width is
 				// what a level has to cover.
 				displayWidth: (container.clientWidth || window.innerWidth || 1024) * (window.devicePixelRatio || 1),
 				canDisplay: canvasCanHold,
-			});
+			} : undefined);
 			if (gen !== _loadGeneration) { return; }
 			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
 				// A pyramidal file carries smaller copies of this very scene.
@@ -2029,6 +2041,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// A GeoTIFF's cursor readout is its map position, which takes
 			// precedence over the OME spacing above; the mouse handler decides.
 			mouseHandler.setGeoReference(tiffProcessor.geoReference || null);
+			mouseHandler.setResolutionNote(currentLevelNote());
 			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 
@@ -6743,6 +6756,20 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	let _levelSelectionIsManual = false;
 	/** Set while a level switch is in flight, so zoom events do not stack up. */
 	let _levelSwitchPending = false;
+	/** Pending settle timer; see scheduleLevelRefinement. */
+	let _levelRefineTimer: number | null = null;
+
+	/**
+	 * What to say about the values under the cursor when they do not come from
+	 * the stored pixels. Empty at full resolution, which is the usual case.
+	 */
+	function currentLevelNote(): string {
+		const directory = tiffProcessor.pageDirectory;
+		if (!isPyramidal(directory)) { return ''; }
+		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		if (!current || current.reduction <= 1) { return ''; }
+		return `1/${current.reduction} overview`;
+	}
 
 	/** How many screen pixels the image currently spans, in device pixels. */
 	function displayedImageWidthPx(): number {
@@ -6776,7 +6803,12 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 * to show less.
 	 */
 	function maybeRefineTiffLevel(): void {
+		// Mid-switch the visible element is still the OUTGOING frame at the
+		// outgoing scale, so measuring it picks a level for a view that is
+		// already gone — which, evaluated on every scale event, walks the
+		// pyramid in a loop instead of settling.
 		if (_levelSelectionIsManual || _levelSwitchPending || !hasLoadedImage) { return; }
+		if (_imageTransitionActive || _collectionSwitchLoading) { return; }
 		const directory = tiffProcessor.pageDirectory;
 		if (!isPyramidal(directory)) { return; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
@@ -6787,6 +6819,22 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		if (!wanted || wanted.width <= current.width) { return; }
 		if (!canvasCanHold(wanted.width, wanted.height)) { return; }
 		void switchToPyramidLevel(wanted, 'zoomed in, refining to');
+	}
+
+	/**
+	 * Decide after the view settles rather than on every scale event.
+	 *
+	 * A zoom gesture is a burst — a pinch or a wheel produces dozens of scale
+	 * changes — and a level decode is expensive enough that acting on each one
+	 * would decode levels nobody ever sees. Waiting for the burst to end costs
+	 * a moment of softness and saves every intermediate decode.
+	 */
+	function scheduleLevelRefinement(): void {
+		if (_levelRefineTimer !== null) { window.clearTimeout(_levelRefineTimer); }
+		_levelRefineTimer = window.setTimeout(() => {
+			_levelRefineTimer = null;
+			maybeRefineTiffLevel();
+		}, 250);
 	}
 
 	/**
@@ -6842,7 +6890,8 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		primaryImageData = null;
 		updateTiffPageOverlay(true);
 		saveState();
-		await handleTiff(src, gen, target);
+		// A navigation is a request for THIS level; see handleTiff's chooseLevel.
+		await handleTiff(src, gen, target, { chooseLevel: false });
 	}
 
 	/**

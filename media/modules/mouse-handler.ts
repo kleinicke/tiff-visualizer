@@ -53,6 +53,8 @@ export class MouseHandler {
 	 * images, which carry none.
 	 */
 	geoReference: GeoReference | null;
+	/** Appended to every readout; see setResolutionNote. */
+	resolutionNote: string = '';
 
 	// DOM elements
 	container: HTMLElement;
@@ -106,6 +108,18 @@ export class MouseHandler {
 
 	setGeoReference(geo: GeoReference | null): void {
 		this.geoReference = geo;
+	}
+
+	/**
+	 * A note appended to every readout, used to say that the values come from a
+	 * reduced-resolution level of a pyramid rather than from the stored pixels.
+	 *
+	 * Reading a value off an overview is reading an average of several pixels.
+	 * That is fine for finding your way around and wrong for recording a
+	 * measurement, and the difference is invisible unless the readout says so.
+	 */
+	setResolutionNote(note: string): void {
+		this.resolutionNote = note || '';
 	}
 
 	setExrProcessor(proc: any) { this.exrProcessor = proc; }
@@ -215,9 +229,10 @@ export class MouseHandler {
 		y = Math.min(Math.max(0, y), Math.max(0, naturalHeight - 1));
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
+		const note = this.resolutionNote ? ` · ${this.resolutionNote}` : '';
 		const mapPosition = formatMapPosition(this.geoReference, x, y);
 		if (mapPosition) {
-			return `${x}x${y} (${mapPosition}) ${color}`;
+			return `${x}x${y} (${mapPosition}) ${color}${note}`;
 		}
 
 		const spacing = this.physicalPixelSize;
@@ -229,9 +244,9 @@ export class MouseHandler {
 			const physical = xUnit === yUnit
 				? `${physicalX.toPrecision(5)}×${physicalY.toPrecision(5)} ${xUnit}`.trim()
 				: `${physicalX.toPrecision(5)} ${xUnit} × ${physicalY.toPrecision(5)} ${yUnit}`.trim();
-			return `${x}x${y} (${physical}) ${color}`;
+			return `${x}x${y} (${physical}) ${color}${note}`;
 		}
-		return `${x}x${y} ${color}`;
+		return `${x}x${y} ${color}${note}`;
 	}
 
 	/**

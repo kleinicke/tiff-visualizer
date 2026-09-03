@@ -6,8 +6,9 @@
  * are:
  *
  *   - a pyramid's extra IFDs are levels of one image, not pages;
- *   - full resolution is the default whenever it can be shown, because a
- *     silently downsampled image is a worse failure than a slow one;
+ *   - full resolution is the default while it is displayable and cheap enough
+ *     that nobody waits for it, because a reduced level means an approximate
+ *     readout; past that, the window decides and the viewer says so;
  *   - a level is never chosen below the size it will be displayed at, since
  *     that would show interpolated pixels the file does not contain.
  *
@@ -90,13 +91,34 @@ async function main() {
 		console.log('✅ A file without overviews behaves as a single level');
 	}
 
-	// 6. Opening policy: full resolution whenever it can be shown at all.
+	// 6. Opening policy: full resolution when it is displayable AND cheap
+	//    enough that nobody waits for it, since a reduced level means an
+	//    approximate readout. Past the budget, the window decides.
 	{
-		const directory = parsePageDirectory(cogDirectory());
+		const directory = parsePageDirectory(cogDirectory());   // 8000x8000 = 64 MP
 		const always = () => true;
-		assert.strictEqual(chooseOpenLevel(directory, 0, 800, always).index, 0,
-			'a displayable full resolution is always preferred over a faster level');
-		console.log('✅ Opening prefers full resolution when it can be displayed');
+		const generousBudget = 100_000_000;
+		assert.strictEqual(chooseOpenLevel(directory, 0, 800, always, 1, generousBudget).index, 0,
+			'within budget, full resolution is preferred over a faster level');
+
+		// The default budget is below this file's 64 megapixels, so an
+		// 800-pixel-wide window gets the level that matches it.
+		assert.strictEqual(chooseOpenLevel(directory, 0, 800, always).width, 1000,
+			'past the budget, the level is matched to the window');
+		assert.strictEqual(chooseOpenLevel(directory, 0, 3000, always).width, 4000,
+			'a bigger window still gets enough pixels to fill it');
+		console.log('✅ Opening prefers full resolution within budget, and the window past it');
+	}
+
+	// 6b. A file below the budget never opens approximate, however small the
+	//     window — the wait it would save is not worth an approximate readout.
+	{
+		const small = parsePageDirectory(JSON.stringify([
+			{ index: 0, width: 2000, height: 2000, kind: 'image', parent: null, reduction: 1, samplesPerPixel: 1, subfileType: 0, subIfdCount: 0 },
+			{ index: 1, width: 1000, height: 1000, kind: 'overview', parent: 0, reduction: 2, samplesPerPixel: 1, subfileType: 1, subIfdCount: 0 },
+		]));
+		assert.strictEqual(chooseOpenLevel(small, 0, 200, () => true).index, 0);
+		console.log('✅ A small pyramid always opens at full resolution');
 	}
 
 	// 7. …and falls back to a screen-sized level when it cannot.
@@ -114,6 +136,8 @@ async function main() {
 		const chosen = chooseOpenLevel(huge, 0, 1280, canDisplay);
 		assert.strictEqual(chosen.width, 2500,
 			'an undisplayable image opens at a level sized for the window');
+		// Even with an unlimited budget, "cannot be drawn" still decides.
+		assert.strictEqual(chooseOpenLevel(huge, 0, 1280, canDisplay, 1, Infinity).width, 2500);
 
 		// Nothing displayable at all is reported, not guessed at.
 		assert.strictEqual(chooseOpenLevel(huge, 0, 1280, () => false), null);

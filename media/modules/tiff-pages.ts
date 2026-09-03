@@ -126,22 +126,35 @@ export function levelForDisplayWidth(
 }
 
 /**
+ * Beyond this many pixels, a full-resolution decode is slow enough to notice
+ * and is skipped in favour of a level that matches the window.
+ *
+ * The number is a judgement, not a measurement of one machine: a 120-megapixel
+ * Sentinel-2 band takes about four seconds to decode and draw, a 30-megapixel
+ * one about one. Below the threshold the wait is not worth trading real values
+ * for, above it the reader is looking at a fit-to-window view where a matched
+ * level is visually identical anyway.
+ */
+export const FULL_RESOLUTION_PIXEL_BUDGET = 40_000_000;
+
+/**
  * The level to decode when a pyramidal file is FIRST opened.
  *
- * The default is full resolution, deliberately: this is an inspector, and a
- * silently downsampled image is a worse failure than a slow one. A reduced
- * level is chosen only when full resolution cannot be shown at all — beyond
- * the browser's canvas ceiling, or beyond what the decoder can hold in memory
- * — which `canDisplay` decides for the caller.
+ * Two things are true at once, and this is where they are reconciled. At
+ * fit-to-window a level matched to the window is VISUALLY identical to full
+ * resolution, so decoding the whole 10980x10980 band to draw 900 pixels of it
+ * is waste the reader feels as a four-second wait. But the values under the
+ * cursor come from whatever was decoded, so a reduced level is an approximate
+ * readout — which is not something to do behind someone's back.
  *
- * When that happens the choice is bounded twice over: the level must be
- * displayable, and it should not be larger than the window that will show it.
- * That second bound is what makes an unopenable 40000x40000 scene open at
- * once — it lands on a level sized for the screen rather than on the largest
- * one that technically fits a canvas, and zooming in refines from there.
+ * So: full resolution whenever it is displayable AND cheap enough that nobody
+ * waits for it. Past `FULL_RESOLUTION_PIXEL_BUDGET`, or when it cannot be
+ * displayed at all, take the level that matches the window — and the caller is
+ * expected to SAY so, both in the log and in the pixel readout. Zooming in
+ * then refines back towards full resolution, which is where the missing detail
+ * would actually become visible.
  *
- * Returns null when the page has no levels at all, and the full-resolution
- * entry whenever it is displayable.
+ * Returns null when the page has no levels at all.
  */
 export function chooseOpenLevel(
 	directory: TiffPageEntry[],
@@ -149,13 +162,17 @@ export function chooseOpenLevel(
 	displayWidth: number,
 	canDisplay: (width: number, height: number) => boolean,
 	oversample = 1,
+	pixelBudget = FULL_RESOLUTION_PIXEL_BUDGET,
 ): TiffPageEntry | null {
 	const levels = levelsForPage(directory, pageIndex);
 	if (levels.length === 0) { return null; }
-	if (canDisplay(levels[0].width, levels[0].height)) { return levels[0]; }
+	const full = levels[0];
+	if (canDisplay(full.width, full.height) && full.width * full.height <= pixelBudget) {
+		return full;
+	}
 
-	const wanted = levelForDisplayWidth(directory, pageIndex, displayWidth, oversample) ?? levels[0];
-	// Walk down from the viewport-sized choice until something is displayable;
+	const wanted = levelForDisplayWidth(directory, pageIndex, displayWidth, oversample) ?? full;
+	// Walk down from the window-sized choice until something is displayable;
 	// levels descend in size, so this stops at the largest one that works.
 	const startIndex = Math.max(0, levels.indexOf(wanted));
 	for (const level of levels.slice(startIndex)) {

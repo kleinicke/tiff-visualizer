@@ -964,7 +964,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.querySelectorAll('[data-web-action="open-url"]').forEach(button => {
     button.addEventListener('click', () => {
-      // With an image already open the empty state (and its input) is hidden,
+      // In the More menu, so close it the way the other entries do.
+      moreMenu.hidden = true;
+      moreButton.setAttribute('aria-expanded', 'false');
+      // With an image already open the start screen (and its input) is hidden,
       // so ask for the link directly rather than revealing a form behind it.
       const entered = window.prompt('Open an image from a link', urlInput?.value || 'https://');
       if (entered) { void openUrl(entered); }

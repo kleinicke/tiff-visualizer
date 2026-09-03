@@ -335,8 +335,9 @@ export class TiffProcessor {
 					} catch { /* not classifiable; decode page 0 as before */ }
 					const chosen = chooseOpenLevel(directory, 0, levelHint.displayWidth, levelHint.canDisplay);
 					if (chosen && chosen.index !== 0) {
-						console.log(`[TiffProcessor] Full resolution is not displayable; opening at level `
-							+ `1/${chosen.reduction} (${chosen.width}x${chosen.height})`);
+						console.log(`[TiffProcessor] Opening at level 1/${chosen.reduction} `
+							+ `(${chosen.width}x${chosen.height}): full resolution is either not displayable `
+							+ `or larger than is worth decoding for this window`);
 						PerfTrace.note('tiff-open-level', `1/${chosen.reduction} ${chosen.width}x${chosen.height}`);
 						pageIndex = chosen.index;
 						this.pageIndex = chosen.index;

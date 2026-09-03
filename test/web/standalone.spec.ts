@@ -307,3 +307,34 @@ test('cycles how pixels with no value are drawn', async ({ page }) => {
   await cycle();
   expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
 });
+
+test('picks a pyramid level for the window, and says when it is approximate', async ({ page }) => {
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+
+  // This fixture is far below the size where a reduced level would be worth
+  // the approximate readout, so it opens at full resolution and the readout
+  // carries no overview note.
+  await expect(page.locator('.dataset-overlay')).toContainText('Full · 256x256');
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  const box = await canvas.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+    await page.mouse.move(box.x + box.width * 0.5 + 3, box.y + box.height * 0.5 + 3);
+  }
+  await expect(page.locator('#web-status-size')).not.toContainText('overview');
+
+  // Choosing a level by hand pins it, and the readout then says the values are
+  // from an overview rather than from the stored pixels.
+  await page.locator('.dataset-overlay select').selectOption({ index: 1 });
+  await expect(page.locator('.dataset-overlay')).toContainText('1/2 · 128x128', { timeout: 30_000 });
+  const zoomed = await canvas.boundingBox();
+  if (zoomed) {
+    await page.mouse.move(zoomed.x + zoomed.width * 0.4, zoomed.y + zoomed.height * 0.4);
+    await page.mouse.move(zoomed.x + zoomed.width * 0.4 + 3, zoomed.y + zoomed.height * 0.4 + 3);
+  }
+  await expect(page.locator('#web-status-size')).toContainText('1/2 overview');
+});
