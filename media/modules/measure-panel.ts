@@ -547,13 +547,8 @@ export class MeasurePanel {
 			checked => this.host.overlay.setShowLabels(checked),
 			'Off by default: only the object you point at or have selected is named, so a segmented field stays readable.',
 		));
-		display.appendChild(this.checkbox(
-			'Show scale bar', this.host.overlay.getShowScaleBar(),
-			checked => this.host.overlay.setShowScaleBar(checked),
-			'Stays on the image after this panel is closed, whenever the file declares a physical pixel size.',
-		));
 		display.appendChild(this.note(
-			'Mask and ROIs toggle from the header, or with M and O. Hold H to hide everything and look at the raw image.',
+			'Mask and ROIs toggle from the header, or with M and O. The scale bar toggles from the image right-click menu. Hold H to hide everything and look at the raw image.',
 		));
 
 		const selected = this.host.manager.selectedRois();

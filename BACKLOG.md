@@ -2484,6 +2484,167 @@ measurement, statistics and export must all keep reading full resolution, or the
 viewer would quietly report values from a downsampled image. That rule is shared
 with 13a and is the real design work in both.
 
+## 14. Opening images from a URL (and range-reading them)
+
+> Paste an `https://` link to a Sentinel-2 band and see it, without downloading
+> 43 MB first — in the extension, and on the standalone site.
+
+This is the feature that would make the browser host genuinely useful to remote
+sensing people rather than merely capable. Their data already lives at URLs: I
+found the Sentinel-2 scene used in the test corpus by querying a STAC catalogue
+and getting back an `https://` href, which is how that whole ecosystem works.
+
+Do **item 13 first**. Level selection is what makes range reading worth having,
+and range reading is what makes level selection pay off remotely; but 13 stands
+alone on local files and this does not stand alone at all.
+
+### The format was designed for exactly this
+
+A COG puts its header, IFDs and overview pyramid at the FRONT of the file, so a
+client can read a few tens of kilobytes, learn where every tile lives, and then
+fetch only the tiles it wants. That is the entire meaning of "cloud-optimized" —
+the tiling and overviews are the same ones that help locally (see item 13), and
+the header-first layout is what makes them reachable over HTTP.
+
+**Verified this works from a browser** (2026-09-02). A ranged request to the
+AWS Open Data Sentinel-2 bucket with a cross-origin `Origin` header returns:
+
+    HTTP/1.1 206 Partial Content
+    Access-Control-Allow-Origin: *
+    Accept-Ranges: bytes
+    Content-Range: bytes 0-1023/1220630
+
+So the public buckets this audience uses are directly readable from
+`images.f-kleinicke.de` with no server of ours in the middle. That is the single
+fact this whole item depends on, and it holds.
+
+### Prior art — what everyone else built
+
+Client-side, no server (what we would be joining):
+
+* **[geotiff.js](https://geotiffjs.github.io/)** — `fromUrl()` does HTTP range
+  requests and is the engine under most of the rest of this list.
+* **[OpenLayers `ol/source/GeoTIFF`](https://openlayers.org/en/latest/examples/cog.html)**
+  — COG rendering with
+  [overviews](https://openlayers.org/en/latest/examples/cog-overviews.html) and
+  [pyramids](https://openlayers.org/en/latest/examples/cog-pyramid.html) as
+  first-class concerns. The closest thing to a reference implementation of
+  level selection in a browser.
+* **[MapLibre COG Protocol](https://github.com/geomatico/maplibre-cog-protocol)**
+  — registers a `cog://` protocol; range requests, decode in the browser.
+* **[COG-Explorer](https://github.com/EOX-A/cog-explorer)** and
+  **[source-cooperative/cog-viewer](https://github.com/source-cooperative/cog-viewer)**
+  — static single-page apps that do essentially what our browser host would.
+* **georaster-layer-for-leaflet** — the Leaflet equivalent.
+
+Server-side, for contrast: **titiler** / **rio-tiler** dynamically tile a COG
+and serve PNG. Powerful, and the wrong shape for us — it needs a server, and the
+browser host deliberately has none.
+
+**Where we would differ, and why it is worth doing anyway.** Every tool above is
+a MAP viewer: it reprojects to Web Mercator, drapes the raster on a basemap, and
+optimises for panning a mosaic. None of them is an IMAGE inspector — none gives
+you the pixel's exact stored value, a histogram of the real data, NaN handling,
+per-band statistics, gamma/normalisation control, or measurement. That is our
+whole product. "Open a COG from a URL and inspect its actual values, in a
+browser tab, with nothing installed" is not currently served well by anything on
+that list.
+
+### What already exists in our stack
+
+More than expected. `TiffFloatStripPlan` in
+[crates/image-decoders/src/lib.rs](crates/image-decoders/src/lib.rs) already
+exposes, for every block in the file:
+
+    pub offsets: Vec<u64>,   // byte offset of each block
+    pub counts:  Vec<u64>,   // compressed length of each block
+
+and [strip-parallel-decode.ts](media/modules/strip-parallel-decode.ts) already
+slices the file by those ranges to hand blobs to workers
+(`compressed.slice(blobStart, blobEnd)`). **The plan-then-fetch-ranges split
+that remote reading needs is already the shape of the parallel decoder.** The
+change is where the bytes come from, not how they are addressed.
+
+What does not exist: the fetch is
+[`fetch(src)` then `.arrayBuffer()`](media/imagePreview.ts) — the whole file,
+always. For `s2_B02.tif` that is 43 MB read to display a 686x686 overview.
+
+### An honest tension: geotiff.js
+
+geotiff.js is the one component that ALREADY does remote range reads, and the
+backlog elsewhere argues for deleting it. Both can be true — its decoder codec
+set is a strict subset of ours, which is the removal argument, and none of that
+is about byte access. But we should not quietly keep it alive as a "reader"
+after removing it as a "decoder": either we implement range reading in our own
+stack (recommended — it is a few hundred lines of TypeScript over `fetch`, not a
+decoder) or we consciously keep a dependency we said we were dropping. Decide
+this explicitly rather than by drift.
+
+### Phases
+
+**Phase A — open a URL at all.** Accept an `https://` URL in the browser host
+(paste box, `?url=` query parameter) and via a command in the extension; fetch
+the whole file; decode exactly as today. No range reads, no new decoder work.
+Immediately useful for the many COGs under ~50 MB, and it forces out all the
+boring problems — CORS failures, redirects, content-type, progress reporting,
+cancellation, error messages — while the decode path is unchanged.
+
+**Phase B — a byte source, and header-first reads.** Introduce one interface
+with two implementations (a local `ArrayBuffer`, and an HTTP range reader), then:
+
+1. Fetch a header prefix (16-64 KB covers a conformant COG's IFDs and pyramid).
+2. Parse the IFDs and build the block plan from that prefix.
+3. Range-fetch only the blocks the chosen level needs, coalescing adjacent
+   ranges into single requests, and decode through the existing worker path.
+
+The Rust decoder currently takes a whole `&[u8]`, which is the one real
+obstacle. Two ways around it, and the choice is a decision below: give the plan
+functions a prefix-only entry point, or hand Rust a sparse buffer of the file's
+true length with only the fetched regions populated. The second is a smaller
+change and works precisely because a COG guarantees its IFDs sit at the front —
+but it is a guarantee, not a law, and a non-conformant file would read zeros.
+Whichever we pick, validate the layout and fall back to whole-file fetch when
+the file is not COG-shaped.
+
+**Phase C — viewport-limited decode.** Only for files too large to decode whole
+even at a reduced level. `big_40000px_cog.tif` in the corpus is the case: 40000x40000
+is 1.6 gigapixels, six times the 268 megapixel canvas ceiling, so full
+resolution can never be displayed — but its 2500x2500 level is 6.25 megapixels and
+opens instantly. Pixel inspection and measurement at full zoom then need
+region-limited reads rather than whole levels. Shared with item 13's stage 2.
+
+### Constraint that is not negotiable
+
+CLAUDE.md: *"The browser host must continue to process user files locally and
+must not upload image data to the deployment."* A CORS proxy would route the
+user's data through a server of ours and break that promise, so it is ruled out
+even though it would be the easy fix for buckets that lack CORS headers. When a
+host refuses cross-origin range reads, say so plainly and suggest downloading
+the file — do not silently route it through anything.
+
+### Decisions required
+
+1. **Website first, or extension first?** Recommended: the website. A URL is the
+   natural input there, CORS is verified working, and there is no VS Code
+   filesystem abstraction in the way. The extension can follow with the same
+   byte-source code.
+2. **Own range reader, or keep geotiff.js for byte access?** Recommended: own.
+   See the tension above; this is a decision to take deliberately.
+3. **Prefix-only plan entry point, or sparse buffer?** Recommended: sparse
+   buffer first (smaller change), with a layout validation and a whole-file
+   fallback for non-conformant files.
+4. **Authenticated sources** — requester-pays buckets, signed URLs, private STAC
+   endpoints. Recommended: explicitly out of scope for now; public URLs cover
+   the open-data case this is aimed at.
+5. **How much of a STAC story, if any?** Pasting a STAC item URL and choosing a
+   band would be a genuinely delightful shortcut for this audience, and is
+   plainly scope creep. Recommended: not now, but keep the URL input generic
+   enough that it can be added without rework.
+
+**Difficulty: Phase A is 2. Phase B is 4** — mostly the byte-source abstraction
+and the decoder entry points, not the networking. **Phase C is 5** and should
+not be attempted until something actually needs it.
+
 ## Other ideas worth considering
 
 - **Physical-unit readouts everywhere.** Once voxel spacing exists (item 2), show

@@ -2035,6 +2035,15 @@ body img {
 	cursor: crosshair;
 }
 
+.measure-scale-bar-handle {
+	position: fixed;
+	display: none;
+	z-index: 18;
+	cursor: move;
+	user-select: none;
+	touch-action: none;
+}
+
 .measure-panel {
 	position: fixed;
 	top: 20px;

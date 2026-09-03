@@ -650,6 +650,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			scheduleSaveState();
 		},
 		onHint: text => measurePanel.setHint(text),
+		onScaleBarPositionChanged: () => scheduleSaveState(),
 	});
 
 	// Adopt the session's scale-bar preference immediately.
@@ -1096,17 +1097,65 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		}
 	}
 
+	/**
+	 * Describe WHAT ended up on screen, as a companion to the [Perf] timing
+	 * line. A multi-page or pyramidal file (a COG carries its overviews as
+	 * extra IFDs) shows only one of its images, and until this line existed
+	 * nothing in the log said which one, or at what size — a blank-looking
+	 * result and a correct one logged identically.
+	 */
+	function formatVisibleSummary(label: string): string {
+		const parts: string[] = [];
+		const width = canvas?.width || (imageElement as any)?.naturalWidth || (imageElement as any)?.width;
+		const height = canvas?.height || (imageElement as any)?.naturalHeight || (imageElement as any)?.height;
+		if (width && height) { parts.push(`${width}x${height}`); }
+
+		// Only trust format info this load actually posted; on a collection or
+		// page switch the previous image's info is still in the variable until
+		// the new one is sent.
+		const info = lastFormatInfoPost?.generation === _loadGeneration ? currentFormatInfo : null;
+		const samples = Number(info?.samplesPerPixel ?? 0);
+		if (samples > 0) { parts.push(`${samples} sample${samples === 1 ? '' : 's'}`); }
+		const bits = Number(info?.bitsPerSample ?? 0);
+		if (bits > 0) {
+			// SampleFormat: 1 uint, 2 int, 3 float. Anything else is left to the
+			// bit depth alone rather than guessed at.
+			const kind = info?.sampleFormat === 3 ? 'float' : info?.sampleFormat === 2 ? 'int' : 'uint';
+			parts.push(`${kind}${bits}`);
+		}
+
+		// TIFF is the only format here whose extra images are addressed as
+		// pages; the selector shows the same numbering.
+		if (tiffProcessor.pageCount > 1) {
+			parts.push(`page ${tiffProcessor.pageIndex + 1}/${tiffProcessor.pageCount}`);
+		}
+
+		const source = String(settingsManager.settings.resourceUri || settingsManager.settings.src || '');
+		const name = source ? decodeURIComponent(source.split(/[\\/]/).pop() || '') : '';
+		const suffix = name ? ` — ${name}` : '';
+		return `[Visible] ${label}: ${parts.join(', ')}${suffix}`;
+	}
+
 	function logLoadPerformance(label: string, webviewMs: string, totalMs: string | number): void {
 		// Capture phase totals immediately; PerfTrace may be reused by another
 		// navigation before the paint callback runs.
 		const summary = formatLoadPerf(label, webviewMs, totalMs);
 		const pendingVisible = visiblePaintPromise;
+		// The visible summary is captured now for the same reason as the phase
+		// totals: by the time a pending paint resolves, a page or collection
+		// change may already have moved the state it reads.
+		const visibleSummary = formatVisibleSummary(label);
 		if (visibleTotalMs !== null) {
 			logToOutput(`${summary} | visible ${visibleTotalMs.toFixed(0)}ms`);
+			logToOutput(visibleSummary);
 		} else if (pendingVisible) {
-			void pendingVisible.then(ms => logToOutput(`${summary} | visible ${ms.toFixed(0)}ms`));
+			void pendingVisible.then(ms => {
+				logToOutput(`${summary} | visible ${ms.toFixed(0)}ms`);
+				logToOutput(visibleSummary);
+			});
 		} else {
 			logToOutput(summary);
+			logToOutput(visibleSummary);
 		}
 	}
 
@@ -1169,6 +1218,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// ROIs it had rather than an empty list.
 		if (persistedState.measureCalibration) {
 			measureCalibration = persistedState.measureCalibration;
+		}
+		if (persistedState.scaleBarPosition) {
+			roiOverlay.setScaleBarPosition(persistedState.scaleBarPosition);
 		}
 		if (Array.isArray(persistedState.measureRois) && persistedState.measureRois.length > 0) {
 			const restored = deserializeRoisFromState(persistedState.measureRois);
@@ -1285,6 +1337,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// run-length encoded, so even a few hundred objects stay small.
 			measureRois: serializeRoisForState(roiManager.list()),
 			measureCalibration,
+			scaleBarPosition: roiOverlay.getScaleBarPosition(),
 			isHistogramVisible: histogramOverlay.getVisibility(),
 			netcdfSelection,
 			planeSelection,
@@ -5333,6 +5386,18 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				measurePanel.isVisible() ? 'Close Measure Panel' : 'Measure…',
 				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMeasure' }); },
 			));
+
+			// A scale-bar command is meaningful only after the current image has
+			// supplied physical calibration (embedded metadata or Set Scale).
+			if (measureCalibration.origin !== 'none') {
+				menu.appendChild(createMenuItem(
+					roiOverlay.getShowScaleBar() ? 'Hide Scale Bar' : 'Show Scale Bar',
+					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleScaleBar' }); },
+				));
+				if (roiOverlay.hasCustomScaleBarPosition()) {
+					menu.appendChild(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
+				}
+			}
 
 			// Check if image is 8-bit uint RGB for interpretation options
 			const isRgb8BitUint = currentFormatInfo &&

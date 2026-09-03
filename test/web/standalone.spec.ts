@@ -46,6 +46,10 @@ test('loads an image through the public browser host', async ({ page }) => {
   await expect(page.locator('#web-log-output')).toContainText('📂 Opened 1: orientation_tag1.tif');
   await expect(page.locator('#web-log-output')).toContainText('[Perf] TIFF:');
   await expect(page.locator('#web-log-output')).toContainText(/total [\d.]+ms \| visible [\d.]+ms/);
+  // The companion line says WHAT became visible, not just how long it took.
+  await expect(page.locator('#web-log-output')).toContainText(
+    /\[Visible\] TIFF: \d+x\d+,.*orientation_tag1\.tif/
+  );
 });
 
 test('keeps separately opened images available as toolbar tabs', async ({ page }) => {

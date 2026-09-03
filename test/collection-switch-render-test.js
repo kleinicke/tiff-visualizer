@@ -332,8 +332,18 @@ function testNetCdfControlsUseSeamlessReloads() {
  */
 function testScaleBarIsASessionPreference() {
 	const settingsSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'imageSettings.ts'), 'utf8');
+	const panelSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'modules', 'measure-panel.ts'), 'utf8');
 	const previewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'imagePreview.ts'), 'utf8');
 	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
+
+	assert.match(webviewSource, /measureCalibration\.origin !== 'none'[\s\S]{0,500}?tiffVisualizer\.toggleScaleBar/,
+		'the scale-bar toggle must be available in the viewer menu for calibrated images');
+	assert.match(webviewSource, /scaleBarPosition: roiOverlay\.getScaleBarPosition\(\)/,
+		'a moved scale bar must persist with the webview across image switches and reloads');
+	assert.match(webviewSource, /persistedState\.scaleBarPosition[\s\S]{0,120}?roiOverlay\.setScaleBarPosition/,
+		'the persisted viewport-relative scale-bar position must be restored');
+	assert.doesNotMatch(panelSource, /'Show scale bar'/,
+		'the scale-bar toggle must not remain buried in the measurement panel');
 
 	assert.match(settingsSource, /toggleScaleBar\(\): boolean \{[\s\S]*?_fireSettingsChanged\(\);/,
 		'the host must own the scale-bar flag and announce changes to every preview');

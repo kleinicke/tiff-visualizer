@@ -43,6 +43,7 @@ let fileIndex = 0;
 let currentFormat = '';
 let copiedPosition: any = null;
 let state: any = readJson(STORAGE_STATE) || {};
+let showScaleBar = true;
 let currentSettings = baseSettings();
 let pendingImportKind: 'imagej' | 'sidecar' = 'sidecar';
 let dragDepth = 0;
@@ -70,7 +71,7 @@ function baseSettings(): ViewerSettings {
     normalizedFloatMode: false,
     nanColor: 'black',
     colorPickerShowModified: false,
-    showScaleBar: true,
+    showScaleBar,
     gpuAcceleration: true,
     plyVisualizerInstalled: true,
     extensionVersion: 'web-1',
@@ -673,7 +674,12 @@ function executeCommand(command: string): void {
     sendToViewer(directMessages[command]);
     return;
   }
-  if (command === 'tiffVisualizer.browseAndAddToCollection') {
+  if (command === 'tiffVisualizer.toggleScaleBar') {
+    showScaleBar = !showScaleBar;
+    currentSettings.showScaleBar = showScaleBar;
+    for (const settings of formatSettings.values()) { settings.showScaleBar = showScaleBar; }
+    sendToViewer({ type: 'toggleScaleBar', shown: showScaleBar });
+  } else if (command === 'tiffVisualizer.browseAndAddToCollection') {
     document.getElementById('web-file-input')?.click();
   } else if (command === 'tiffVisualizer.addLayer') {
     const input = document.getElementById('web-file-input') as HTMLInputElement | null;

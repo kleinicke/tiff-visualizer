@@ -62,6 +62,9 @@ async function setupPage(page: import('@playwright/test').Page, options: { scale
 		const canvas = document.createElement('canvas');
 		canvas.width = 200;
 		canvas.height = 150;
+		canvas.style.width = '200px';
+		canvas.style.height = '150px';
+		canvas.style.flex = 'none';
 		if (scaleToFit) { canvas.className = 'scale-to-fit'; }
 		const ctx = canvas.getContext('2d')!;
 		// Mid grey, so both the red and the green overlay tints are unambiguous.
@@ -88,7 +91,8 @@ async function setupPage(page: import('@playwright/test').Page, options: { scale
 				data: plane, isFloat: true, typeMax: 255,
 			}),
 			getScalarPlane: () => plane,
-			getCalibration: () => ({ pixelWidth: 1, pixelHeight: 1, unit: 'px', origin: 'none' }),
+			getCalibration: () => (window as any).__calibration
+				|| ({ pixelWidth: 1, pixelHeight: 1, unit: 'px', origin: 'none' }),
 			onCalibrationLine: () => { /* not exercised here */ },
 			onRoiEdited: () => { /* not exercised here */ },
 			onHint: () => { /* not exercised here */ },
@@ -97,6 +101,47 @@ async function setupPage(page: import('@playwright/test').Page, options: { scale
 		(window as any).__manager = manager;
 	});
 }
+
+test('the scale bar can be dragged outside the image and stays put while zooming', async ({ page }) => {
+	await setupPage(page);
+	await page.evaluate(() => {
+		(window as any).__calibration = {
+			pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'tags',
+		};
+		(window as any).__overlay.setShowScaleBar(true);
+	});
+	await redraw(page);
+
+	const handle = page.locator('.measure-scale-bar-handle');
+	await expect(handle).toBeVisible();
+	const initial = await handle.boundingBox();
+	expect(initial).not.toBeNull();
+
+	await page.mouse.move(initial!.x + initial!.width / 2, initial!.y + initial!.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(680, 80);
+	await page.mouse.up();
+	await redraw(page);
+
+	const moved = await handle.boundingBox();
+	const imageRect = await page.evaluate(() => {
+		const rect = ((window as any).__imageElement as HTMLElement).getBoundingClientRect();
+		return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+	});
+	expect(moved).not.toBeNull();
+	expect(moved!.x).toBeGreaterThan(imageRect.right);
+
+	await page.evaluate(() => {
+		const image = (window as any).__imageElement as HTMLCanvasElement;
+		image.style.width = '400px';
+		image.style.height = '300px';
+		(window as any).__overlay.redraw();
+	});
+	const zoomed = await handle.boundingBox();
+	expect(zoomed).not.toBeNull();
+	expect(Math.abs(zoomed!.x - moved!.x)).toBeLessThanOrEqual(1);
+	expect(Math.abs(zoomed!.y - moved!.y)).toBeLessThanOrEqual(1);
+});
 
 /** Force a synchronous redraw and wait for the frame to land. */
 async function redraw(page: import('@playwright/test').Page) {
