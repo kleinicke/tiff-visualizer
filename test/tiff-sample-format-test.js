@@ -369,19 +369,23 @@ async function main() {
 		const statsMsg = messages.find(m => m.type === 'stats');
 		assert.deepStrictEqual(statsMsg.value, { min: -5, max: 2 });
 
-		// Rendered intensities: max value (2) maps to 255, the minimum (-5) to 0,
-		// and nodata pixels clamp to 0 — their stored values stay untouched.
+		// Rendered intensities: max value (2) maps to 255, the minimum (-5) to 0.
+		// A nodata pixel is drawn in the nodata colour (black by default here),
+		// not as the very dark value its sentinel would otherwise produce; the
+		// stored value itself stays untouched.
 		const intensityAt = (i) => imageData.data[i * 4];
 		assert.strictEqual(intensityAt(2), 255, 'value 2 renders full white');
 		assert.strictEqual(intensityAt(5), 0, 'value -5 renders black');
-		assert.strictEqual(intensityAt(8), 0, 'nodata pixel clamps to black');
+		assert.strictEqual(intensityAt(8), 0, 'nodata pixel renders in the nodata colour');
 		console.log('✅ Signed int16 + nodata: stats {min:-5, max:2}, nodata excluded but pixels unaltered');
 
-		// Pixel inspection keeps plain integer formatting for signed data.
+		// Pixel inspection keeps plain integer formatting for signed data, and
+		// reports a nodata pixel as absence: printing the sentinel (-32768)
+		// reads as a measurement the file explicitly says it does not have.
 		assert.strictEqual(p.getColorAtPixel(1, 1, synthetic.width, synthetic.height), '-5');
-		assert.strictEqual(p.getColorAtPixel(0, 2, synthetic.width, synthetic.height), '-32768');
+		assert.strictEqual(p.getColorAtPixel(0, 2, synthetic.width, synthetic.height), 'nodata');
 		assert.strictEqual(p.getColorAtPixel(2, 0, synthetic.width, synthetic.height), '2');
-		console.log('✅ Signed int16: pixel inspection shows plain integers (no decimals, no wrap)');
+		console.log('✅ Signed int16: plain integers, and a nodata pixel reads as nodata');
 	}
 
 	// --- 3. Signed int16 via the WASM decoder path -------------------------

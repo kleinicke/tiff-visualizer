@@ -240,3 +240,27 @@ test('shows a pyramidal COG as levels of one image, not as pages', async ({ page
   await page.getByRole('button', { name: 'Loading log' }).click();
   await expect(page.locator('#web-log-output')).toContainText('level 1/3 (Full · 256x256)');
 });
+
+test('opens an image from a link, and from ?url=', async ({ page }) => {
+  // Served by the same host as the page, so this exercises the whole path —
+  // fetch, name, decode, display — without depending on a remote service.
+  await page.goto('/?url=' + encodeURIComponent('/icon.png'));
+
+  await expect(page.locator('body')).toHaveClass(/web-has-image/, { timeout: 30_000 });
+  await expect(page.locator('.web-image-tabs')).toContainText('icon.png');
+
+  // And through the form on the empty state.
+  await page.goto('/');
+  await page.locator('#web-url-input').fill('/og.png');
+  await page.locator('.web-url-submit').click();
+  await expect(page.locator('.web-image-tabs')).toContainText('og.png', { timeout: 30_000 });
+});
+
+test('says plainly when a link cannot be read', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#web-url-input').fill('/does-not-exist.tif');
+  await page.locator('.web-url-submit').click();
+  // A 404 is reported as what it is; a cross-origin refusal reaches script
+  // without a reason, so that case gets the generic advice instead.
+  await expect(page.locator('.web-toast-region')).toContainText('404');
+});

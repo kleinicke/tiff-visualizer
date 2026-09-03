@@ -590,6 +590,11 @@ export class ImageRenderer {
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
         const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
+        // A nodata sentinel is data the file says is absent, not a very low
+        // measurement — drawing it as a dark pixel invents coverage that does
+        // not exist. Defaulting to NaN makes the per-pixel test below false for
+        // every file that declares none, at the cost of one comparison.
+        const nodataValue = options.nodataValue ?? NaN;
         const range = max - min;
         const invRange = range > 0 ? 1.0 / range : 0;
         const collectHistogram = options.collectHistogram === true && channels === 1;
@@ -601,7 +606,7 @@ export class ImageRenderer {
             for (let i = 0; i < width * height; i++) {
                 const p = i * 4;
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
@@ -643,7 +648,7 @@ export class ImageRenderer {
 
             if (channels === 1) {
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
@@ -666,7 +671,8 @@ export class ImageRenderer {
                 const gVal = data[idx + 1];
                 const bVal = data[idx + 2];
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
@@ -682,7 +688,8 @@ export class ImageRenderer {
                 const bVal = data[idx + 2];
                 const aVal = data[idx + 3];
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
@@ -705,7 +712,7 @@ export class ImageRenderer {
                 const value = data[idx];
                 const aVal = data[idx + 1];
                 const p = i * 4;
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
@@ -727,7 +734,8 @@ export class ImageRenderer {
                 const gVal = data[idx + 1];
                 const bVal = data[idx + 2];
                 const p = i * 4;
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
@@ -771,6 +779,11 @@ export class ImageRenderer {
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
         const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
+        // A nodata sentinel is data the file says is absent, not a very low
+        // measurement — drawing it as a dark pixel invents coverage that does
+        // not exist. Defaulting to NaN makes the per-pixel test below false for
+        // every file that declares none, at the cost of one comparison.
+        const nodataValue = options.nodataValue ?? NaN;
 
         // Generate 16-bit LUT for gamma/brightness
         const { min: vMin, max: vMax } = NormalizationHelper.getEffectiveVisualizationRange(settings, min, max);
@@ -797,7 +810,7 @@ export class ImageRenderer {
             for (let i = 0; i < width * height; i++) {
                 const p = i * 4;
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
@@ -839,7 +852,7 @@ export class ImageRenderer {
 
             if (channels === 1) {
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
@@ -861,7 +874,8 @@ export class ImageRenderer {
                 const gVal = data[idx + 1];
                 const bVal = data[idx + 2];
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
@@ -880,7 +894,8 @@ export class ImageRenderer {
                 const bVal = data[idx + 2];
                 const aVal = data[idx + 3];
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
@@ -906,7 +921,7 @@ export class ImageRenderer {
                 const value = data[idx];
                 const aVal = data[idx + 1];
                 const p = i * 4;
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
@@ -929,7 +944,8 @@ export class ImageRenderer {
                 const gVal = data[idx + 1];
                 const bVal = data[idx + 2];
                 const p = i * 4;
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
@@ -975,6 +991,11 @@ export class ImageRenderer {
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
         const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
+        // A nodata sentinel is data the file says is absent, not a very low
+        // measurement — drawing it as a dark pixel invents coverage that does
+        // not exist. Defaulting to NaN makes the per-pixel test below false for
+        // every file that declares none, at the cost of one comparison.
+        const nodataValue = options.nodataValue ?? NaN;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             // Scale 16-bit down to 8-bit for 24-bit display
@@ -986,7 +1007,8 @@ export class ImageRenderer {
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                 const p = i * 4;
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1014,7 +1036,7 @@ export class ImageRenderer {
 
             if (channels === 1) {
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1023,7 +1045,8 @@ export class ImageRenderer {
             } else if (channels === 3) {
                 const idx = i * 3;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1034,7 +1057,8 @@ export class ImageRenderer {
             } else if (channels === 4) {
                 const idx = i * 4;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1055,7 +1079,7 @@ export class ImageRenderer {
                 const idx = i * 2;
                 const value = data[idx], aVal = data[idx + 1];
                 const p = i * 4;
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1072,7 +1096,8 @@ export class ImageRenderer {
                 const idx = i * channels;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                 const p = i * 4;
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1104,6 +1129,11 @@ export class ImageRenderer {
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
         const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
+        // A nodata sentinel is data the file says is absent, not a very low
+        // measurement — drawing it as a dark pixel invents coverage that does
+        // not exist. Defaulting to NaN makes the per-pixel test below false for
+        // every file that declares none, at the cost of one comparison.
+        const nodataValue = options.nodataValue ?? NaN;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             // Scale 16-bit down to 8-bit for 24-bit display
@@ -1115,7 +1145,8 @@ export class ImageRenderer {
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                 const p = i * 4;
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1147,7 +1178,7 @@ export class ImageRenderer {
 
             if (channels === 1) {
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1156,7 +1187,8 @@ export class ImageRenderer {
             } else if (channels === 3) {
                 const idx = i * 3;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1167,7 +1199,8 @@ export class ImageRenderer {
             } else if (channels === 4) {
                 const idx = i * 4;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1188,7 +1221,7 @@ export class ImageRenderer {
                 const idx = i * 2;
                 const value = data[idx], aVal = data[idx + 1];
                 const p = i * 4;
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1205,7 +1238,8 @@ export class ImageRenderer {
                 const idx = i * channels;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                 const p = i * 4;
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1237,6 +1271,11 @@ export class ImageRenderer {
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
         const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
+        // A nodata sentinel is data the file says is absent, not a very low
+        // measurement — drawing it as a dark pixel invents coverage that does
+        // not exist. Defaulting to NaN makes the per-pixel test below false for
+        // every file that declares none, at the cost of one comparison.
+        const nodataValue = options.nodataValue ?? NaN;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             const range = max - min;
@@ -1247,7 +1286,8 @@ export class ImageRenderer {
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                 const p = i * 4;
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1270,7 +1310,7 @@ export class ImageRenderer {
                 const p = i * 4;
                 if (channels === 1) {
                     const value = data[i];
-                    if (!Number.isFinite(value)) {
+                    if ((!Number.isFinite(value) || value === nodataValue)) {
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
                     }
@@ -1278,7 +1318,8 @@ export class ImageRenderer {
                 } else if (channels === 3) {
                     const idx = i * 3;
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
                     }
@@ -1288,7 +1329,8 @@ export class ImageRenderer {
                 } else if (channels === 4) {
                     const idx = i * 4;
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
                     }
@@ -1302,7 +1344,7 @@ export class ImageRenderer {
                 // when the file declares it so, else a data band, shown opaque.
                     const idx = i * 2;
                     const value = data[idx], aVal = data[idx + 1];
-                    if (!Number.isFinite(value)) {
+                    if ((!Number.isFinite(value) || value === nodataValue)) {
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
                     }
@@ -1315,7 +1357,8 @@ export class ImageRenderer {
                     // first 3 as RGB with stride `channels`, rendered opaque.
                     const idx = i * channels;
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
                     }
@@ -1335,7 +1378,7 @@ export class ImageRenderer {
 
                 if (channels === 1) {
                     const value = data[i];
-                    if (!Number.isFinite(value)) {
+                    if ((!Number.isFinite(value) || value === nodataValue)) {
                         const p = i * 4;
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
@@ -1344,7 +1387,8 @@ export class ImageRenderer {
                 } else if (channels === 3) {
                     const idx = i * 3;
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         const p = i * 4;
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
@@ -1355,7 +1399,8 @@ export class ImageRenderer {
                 } else if (channels === 4) {
                     const idx = i * 4;
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         const p = i * 4;
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
@@ -1375,7 +1420,7 @@ export class ImageRenderer {
                 // when the file declares it so, else a data band, shown opaque.
                     const idx = i * 2;
                     const value = data[idx], aVal = data[idx + 1];
-                    if (!Number.isFinite(value)) {
+                    if ((!Number.isFinite(value) || value === nodataValue)) {
                         const p = i * 4;
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
@@ -1393,7 +1438,8 @@ export class ImageRenderer {
                     // first 3 as RGB with stride `channels`, rendered opaque.
                     const idx = i * channels;
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                    if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         const p = i * 4;
                         out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                         continue;
@@ -1425,6 +1471,11 @@ export class ImageRenderer {
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
         const alphaFromExtraSample = options.extraSamplesAreAlpha !== false;
+        // A nodata sentinel is data the file says is absent, not a very low
+        // measurement — drawing it as a dark pixel invents coverage that does
+        // not exist. Defaulting to NaN makes the per-pixel test below false for
+        // every file that declares none, at the cost of one comparison.
+        const nodataValue = options.nodataValue ?? NaN;
 
         if (options.rgbAs24BitGrayscale && channels >= 3) {
             const range = max - min;
@@ -1435,7 +1486,8 @@ export class ImageRenderer {
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                 const p = i * 4;
 
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
                 }
@@ -1463,7 +1515,7 @@ export class ImageRenderer {
 
             if (channels === 1) {
                 const value = data[i];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1472,7 +1524,8 @@ export class ImageRenderer {
             } else if (channels === 3) {
                 const idx = i * 3;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1483,7 +1536,8 @@ export class ImageRenderer {
             } else if (channels === 4) {
                 const idx = i * 4;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1503,7 +1557,7 @@ export class ImageRenderer {
                 // when the file declares it so, else a data band, shown opaque.
                 const idx = i * 2;
                 const value = data[idx], aVal = data[idx + 1];
-                if (!Number.isFinite(value)) {
+                if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;
@@ -1522,7 +1576,8 @@ export class ImageRenderer {
                 // RGB with stride `channels`, rendered opaque.
                 const idx = i * channels;
                 const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
-                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)) {
+                if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
+                    || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
                     out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
                     continue;

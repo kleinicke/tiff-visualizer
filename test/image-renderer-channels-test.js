@@ -260,6 +260,39 @@ async function main() {
 		console.log('✅ 4-sample: a declared multi-band raster is not treated as RGBA');
 	}
 
+	// ---------------------------------------------------------------------
+	// N+2. A nodata sentinel is absence, not a very low measurement.
+	//
+	//      GDAL_NODATA (tag 42113) marks pixels the file says hold nothing.
+	//      Rendering the sentinel as an ordinary value draws a dark patch that
+	//      looks like real coverage — and drags nothing else with it, so it is
+	//      indistinguishable from data until someone hovers it.
+	// ---------------------------------------------------------------------
+	{
+		const nanColor = { r: 255, g: 0, b: 255 };
+		const settings = {
+			normalization: { min: -32768, max: 3000, autoNormalize: false, gammaMode: false },
+			gamma: { in: 1.0, out: 1.0 },
+			brightness: { offset: 0 },
+		};
+		const data = new Float32Array([-32768, 1500]);
+		const stats = { min: -32768, max: 3000 };
+
+		const withoutSentinel = ImageRenderer.render(data, 2, 1, 1, true, stats, settings, { nanColor, typeMax: 1 });
+		assert.notDeepStrictEqual(
+			[pixelAt(withoutSentinel, 0, 0).r, pixelAt(withoutSentinel, 0, 0).g, pixelAt(withoutSentinel, 0, 0).b],
+			[nanColor.r, nanColor.g, nanColor.b],
+			'undeclared, the sentinel is just a low value');
+
+		const withSentinel = ImageRenderer.render(data, 2, 1, 1, true, stats, settings,
+			{ nanColor, typeMax: 1, nodataValue: -32768 });
+		assert.deepStrictEqual(pixelAt(withSentinel, 0, 0), { r: 255, g: 0, b: 255, a: 255 },
+			'a declared nodata pixel is drawn in the nodata colour');
+		assert.notStrictEqual(pixelAt(withSentinel, 1, 0).r, 255,
+			'ordinary samples are untouched by the sentinel');
+		console.log('✅ nodata: a declared sentinel renders as absence, not as a dark value');
+	}
+
 	console.log('\n🎉 All ImageRenderer channel-count tests passed.\n');
 }
 

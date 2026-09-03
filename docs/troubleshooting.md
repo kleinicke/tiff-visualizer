@@ -13,12 +13,34 @@ auto-normalization.
 
 Linear float data also looks far too dark until you set gamma out to 2.2.
 
+### A multi-band GeoTIFF is mostly invisible
+
+Fixed. A TIFF's `ExtraSamples` tag says whether a sample past the colour samples
+is alpha; GDAL writes 0 ("unspecified") for an ordinary multi-band raster, and
+treating that as alpha turned a 2-band Int16 COG almost entirely transparent.
+The tag is now read, so a data band is drawn as data. A file that genuinely
+declares alpha still gets alpha.
+
 ### The image is full of fuchsia (or black) patches
 
 Those are non-finite samples — `NaN` or infinity. **Toggle NaN Color** switches
 how they are drawn. This is information, not a bug: something in the pipeline
 that produced the file wrote a non-value there. Measurement excludes these
 samples and reports how many.
+
+### Nodata areas look like real, very dark measurements
+
+They are drawn in the NaN colour now, because that is what they are: the
+`GDAL_NODATA` sentinel marks pixels the file says hold nothing. Hovering one
+reports `nodata` rather than the sentinel value, and the sentinel is excluded
+from auto-normalization.
+
+### The values disagree with GDAL, QGIS or rasterio by a constant factor
+
+GDAL stores a per-band `SCALE` and `OFFSET` in its own metadata tag; a band with
+`SCALE=0.001` stores 1234 and means 1.234. The pixel readout applies them, so it
+agrees with those tools. Rendering, normalization and export stay in the file's
+stored units — what is drawn is always what the file holds.
 
 ### A depth map looks like colourful noise
 

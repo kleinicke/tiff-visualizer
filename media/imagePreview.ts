@@ -5,6 +5,7 @@ import type { ImageSettings, SettingsUpdateResult } from './modules/settings-man
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
 import { imagePages, isPyramidal, levelForDisplayWidth, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
+import { bandDescription } from './modules/gdal-metadata.js';
 import type { TiffPageEntry } from './modules/tiff-pages.js';
 import { PngProcessor } from './modules/png-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
@@ -348,7 +349,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 
 		if ((source.channels || 1) < 2 || !source.data) { return; }
 
-		const names = ome?.channels?.map((channel: { name?: string }) => channel?.name).filter(Boolean) as string[] | undefined;
+		// OME names its channels; a GeoTIFF names its bands in GDALMetadata
+		// ("yearly rate of change" beats "Channel 1"). Either beats nothing.
+		const gdalNames = Array.from({ length: source.channels }, (_unused, index) =>
+			bandDescription(tiffProcessor.gdalMetadata, index)).filter(Boolean);
+		const omeNames = ome?.channels?.map((channel: { name?: string }) => channel?.name).filter(Boolean) as string[] | undefined;
+		const names = omeNames?.length ? omeNames
+			: (gdalNames.length === source.channels ? gdalNames : undefined);
 		channelPlanes = planesFromInterleaved(
 			source.data, source.width, source.height, source.channels, names,
 		);

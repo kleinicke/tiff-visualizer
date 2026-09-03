@@ -565,6 +565,67 @@ function openFiles(selected: File[]): void {
   switchTo(firstNewIndex);
 }
 
+/**
+ * Open an image straight from an https:// link.
+ *
+ * Everything downstream of here is unchanged: the bytes become a File and take
+ * the same path a dropped file does, so every format, every decoder and every
+ * control behaves identically. What is new is only where the bytes come from.
+ *
+ * The download is whole-file. A COG's layout would allow reading just its
+ * header and the tiles a view needs, which is the point of the format; that is
+ * a larger change (a byte-source abstraction under the decoder) and this is
+ * the step that makes remote files usable at all.
+ *
+ * The bytes go from the host to this tab and nowhere else — no server of ours
+ * sits in between, which also means a host that refuses cross-origin reads
+ * cannot be worked around from here. Say so plainly rather than appearing to
+ * fail for no reason.
+ */
+async function openUrl(rawUrl: string): Promise<void> {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return;
+  // Accept what people actually paste: a full link, a bare host and path
+  // (which every browser address bar treats as https), or a path on this host.
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith('/') || trimmed.startsWith('.')
+    ? trimmed
+    : `https://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate, window.location.href);
+  } catch {
+    showToast('That does not look like a URL.');
+    return;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    showToast('Only http:// and https:// links can be opened.');
+    return;
+  }
+
+  const name = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || 'image');
+  showToast(`Downloading ${name}…`);
+  try {
+    const response = await fetch(parsed.toString(), { mode: 'cors', redirect: 'follow' });
+    if (!response.ok) {
+      showToast(`${name}: the server answered ${response.status} ${response.statusText}.`);
+      return;
+    }
+    const blob = await response.blob();
+    if (blob.size === 0) {
+      showToast(`${name} is empty.`);
+      return;
+    }
+    openFiles([new File([blob], name, { type: blob.type || 'application/octet-stream' })]);
+  } catch (error) {
+    // A cross-origin refusal reaches script as an opaque TypeError with no
+    // detail — the browser deliberately withholds the reason — so this message
+    // has to cover the whole class rather than report what happened.
+    console.warn('[WebHost] URL open failed', error);
+    showToast(`Could not read ${name}. The host may not allow other sites to read its files; `
+      + 'downloading the file and opening it here always works.');
+  }
+}
+
 function addLayerFiles(selected: File[]): void {
   const images = selected.filter(file => file.size > 0).map(file => ({
     resourceUri: file.name,
@@ -890,6 +951,29 @@ document.addEventListener('DOMContentLoaded', () => {
       fileInput.click();
     });
   });
+  const urlForm = document.getElementById('web-url-form') as HTMLFormElement | null;
+  const urlInput = document.getElementById('web-url-input') as HTMLInputElement | null;
+  urlForm?.addEventListener('submit', event => {
+    event.preventDefault();
+    void openUrl(urlInput?.value || '');
+  });
+  document.querySelectorAll('[data-web-action="open-url"]').forEach(button => {
+    button.addEventListener('click', () => {
+      // With an image already open the empty state (and its input) is hidden,
+      // so ask for the link directly rather than revealing a form behind it.
+      const entered = window.prompt('Open an image from a link', urlInput?.value || 'https://');
+      if (entered) { void openUrl(entered); }
+    });
+  });
+
+  // ?url=… opens a link directly, which is what makes a viewer address
+  // shareable: a catalogue entry, a chat message, a bookmark.
+  const requested = new URLSearchParams(window.location.search).get('url');
+  if (requested) {
+    if (urlInput) { urlInput.value = requested; }
+    void openUrl(requested);
+  }
+
   document.querySelectorAll('[data-viewer-message]').forEach(button => {
     button.addEventListener('click', () => sendToViewer({ type: (button as HTMLElement).dataset.viewerMessage || '' }));
   });

@@ -42,6 +42,7 @@
     </div>
     <nav class="web-actions" aria-label="Image tools">
       <button type="button" data-web-action="open" data-supported-formats>Open files</button>
+      <button type="button" data-web-action="open-url" title="Open an image from an https:// link">Open URL</button>
       <button type="button" class="web-more-button" data-web-action="more" aria-expanded="false" aria-controls="web-more-menu">More</button>
     </nav>
     <div class="web-more-menu" id="web-more-menu" hidden>
@@ -77,6 +78,18 @@
       <strong>Drop images here</strong>
       <span>or click to choose files</span>
     </button>
+    <form class="web-url-form" id="web-url-form">
+      <label class="web-url-label" for="web-url-input">…or open one from a link</label>
+      <div class="web-url-row">
+        <!-- type="text", not type="url": the field accepts what the opener
+             accepts (a full link, a bare host, a path), and the browser's
+             built-in url validation would silently block those. -->
+        <input id="web-url-input" class="web-url-input" type="text" inputmode="url" spellcheck="false"
+          placeholder="https://example.com/scene.tif" aria-label="Image URL">
+        <button type="submit" class="web-url-submit">Open</button>
+      </div>
+      <p class="web-url-note">Read straight from the host into this tab. The bytes are never sent anywhere else, and the host must allow cross-origin reads.</p>
+    </form>
     <p class="web-local-note">Files stay on this device · <span class="web-format-hint" data-supported-formats tabindex="0">Supported formats</span></p>
   </main>
 

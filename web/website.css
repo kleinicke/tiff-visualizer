@@ -441,6 +441,63 @@ body.web-app {
   margin: 0;
 }
 
+/* Opening from a link sits under the drop zone: a second way in, not a
+   competing one, so it stays quieter than the drop target above it. */
+.web-url-form {
+  width: min(920px, 88vw);
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  margin-top: -8px;
+}
+
+.web-url-label {
+  color: var(--web-muted);
+  font-size: 13px;
+}
+
+.web-url-row {
+  display: flex;
+  gap: 8px;
+  width: min(560px, 88vw);
+}
+
+.web-url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--web-border);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+
+.web-url-input:focus-visible {
+  outline: 2px solid var(--web-accent);
+  outline-offset: 1px;
+}
+
+.web-url-submit {
+  padding: 8px 16px;
+  border: 1px solid var(--web-border);
+  border-radius: 8px;
+  background: var(--web-accent);
+  color: #10200b;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.web-url-note {
+  margin: 0;
+  max-width: min(560px, 88vw);
+  color: var(--web-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .web-format-hint {
   color: var(--vscode-editor-foreground);
   text-decoration: underline dotted;

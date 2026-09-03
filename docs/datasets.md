@@ -60,6 +60,30 @@ Plain multi-page TIFFs with no dimensional metadata are navigable by page with
 `[` / `]` or `PageUp` / `PageDown`, and with the arrow keys when no dataset or
 collection is loaded.
 
+## Pyramidal TIFF (COG, whole-slide)
+
+Some TIFFs store the same scene several times at halving resolutions — a
+Cloud-Optimized GeoTIFF and most whole-slide images do. Those extra images are
+**levels**, not pages: they are the same data, downsampled. The overlay offers
+a **Level** selector for them, showing each level's reduction and size
+(`Full · 10980x10980`, `1/4 · 2745x2745`), and a Page selector as well only
+when the file really does hold more than one image.
+
+Full resolution is what you get by default, whenever it can be displayed — a
+silently downsampled image would be a worse surprise than a slow one. Two things
+change that:
+
+- **An image too large to draw.** Browsers cap how many pixels a canvas can
+  hold, so a 40000x40000 raster can never be shown whole. Such a file opens at
+  the largest level that fits your window instead of failing, and the log line
+  says which level you are looking at.
+- **Choosing one yourself.** Picking a level from the selector keeps it until
+  you reopen the file.
+
+Zooming in past a level's resolution loads a finer one automatically, keeping
+the image the same size on screen. Zooming back out keeps the sharper data
+already decoded.
+
 ## CZI
 
 Zeiss microscopy stacks. The overlay gives one slider per non-spatial axis

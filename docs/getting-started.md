@@ -19,6 +19,23 @@ option. To use it:
 That split is deliberate: taking over PNG for everyone would be rude, but a
 16-bit PNG depth map is exactly the case where you want this viewer.
 
+## Opening an image from a URL
+
+**Scientific Image Visualizer: Open Image from URL...** takes an `https://`
+link and opens the image behind it. Scientific imagery increasingly lives at a
+URL — a STAC catalogue hands out `https://` hrefs to Sentinel-2 bands, for
+instance — and this saves downloading a file by hand before you can look at it.
+
+The file is fetched by the extension and kept in its own storage, so reopening,
+page changes and export do not refetch it. Nothing is written into your
+workspace.
+
+The same works in the [browser version](https://images.f-kleinicke.de): paste a
+link into the box on the start screen, or append `?url=<link>` to the address,
+which makes a viewer link you can share. The bytes travel from the host to your
+browser and nowhere else — which also means a host that refuses cross-origin
+reads cannot be worked around; download the file in that case.
+
 ## The editor
 
 The viewer fills the editor tab. There is no sidebar and no tool palette by

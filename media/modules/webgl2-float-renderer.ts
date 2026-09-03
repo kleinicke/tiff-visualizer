@@ -29,6 +29,8 @@ export interface RenderParams {
 	typeMax: number;
 	settings: any;
 	nanColor: { r: number; g: number; b: number };
+	/** GDAL_NODATA sentinel; drawn in nanColor, as the CPU path does. */
+	nodataValue?: number;
 	flipY?: boolean;
 }
 
@@ -367,7 +369,7 @@ export class WebGL2FloatRenderer {
 		PerfTrace.detail('webgl-colormap-upload', performance.now() - start);
 	}
 
-	_draw(params: { min: number; max: number; typeMin?: number; typeMax: number; settings: any; nanColor: { r: number; g: number; b: number }; channels?: number; flipY?: boolean }): void {
+	_draw(params: { min: number; max: number; typeMin?: number; typeMax: number; settings: any; nanColor: { r: number; g: number; b: number }; channels?: number; flipY?: boolean; nodataValue?: number }): void {
 		const gl = this.gl as WebGL2RenderingContext;
 		const program = this.program as WebGLProgram;
 		const settings = params.settings || {};
@@ -423,6 +425,9 @@ export class WebGL2FloatRenderer {
 		gl.uniform1i(gl.getUniformLocation(program, 'u_renderMode'), renderMode);
 		gl.uniform1i(gl.getUniformLocation(program, 'u_useColormap'), !!settings.displayColormap && settings.displayColormap !== 'none' ? 1 : 0);
 		gl.uniform1f(gl.getUniformLocation(program, 'u_rgb24ChannelDivisor'), params.typeMax > 255 ? 257.0 : 1.0);
+		const nodata = Number(params.nodataValue);
+		gl.uniform1i(gl.getUniformLocation(program, 'u_hasNodata'), Number.isFinite(nodata) ? 1 : 0);
+		gl.uniform1f(gl.getUniformLocation(program, 'u_nodata'), Number.isFinite(nodata) ? nodata : 0);
 		gl.uniform3f(
 			gl.getUniformLocation(program, 'u_nanColor'),
 			params.nanColor.r / 255,
@@ -462,6 +467,11 @@ uniform bool u_flipY;
 uniform int u_renderMode;
 uniform bool u_useColormap;
 uniform vec3 u_nanColor;
+// The file's "no measurement here" sentinel (GDAL_NODATA), or NaN when the
+// file declares none — a NaN uniform never equals a sample, so the test below
+// costs one comparison and changes nothing for files without one.
+uniform float u_nodata;
+uniform bool u_hasNodata;
 in vec2 v_texCoord;
 out vec4 outColor;
 float applyGamma(float value) {
@@ -477,7 +487,8 @@ void main() {
 		vec3 sampleRgb = u_renderMode == 2
 			? texture(u_dataFloat, texCoord).rgb
 			: vec3(texture(u_dataUint, texCoord).rgb);
-		if (isnan(sampleRgb.r) || isinf(sampleRgb.r) || isnan(sampleRgb.g) || isinf(sampleRgb.g) || isnan(sampleRgb.b) || isinf(sampleRgb.b)) {
+		if (isnan(sampleRgb.r) || isinf(sampleRgb.r) || isnan(sampleRgb.g) || isinf(sampleRgb.g) || isnan(sampleRgb.b) || isinf(sampleRgb.b)
+			|| (u_hasNodata && (sampleRgb.r == u_nodata || sampleRgb.g == u_nodata || sampleRgb.b == u_nodata))) {
 			outColor = vec4(u_nanColor, 1.0);
 			return;
 		}
@@ -493,7 +504,8 @@ void main() {
 		vec3 sampleRgb = u_renderMode == 3
 			? texture(u_dataFloat, texCoord).rgb
 			: vec3(texture(u_dataUint, texCoord).rgb);
-		if (isnan(sampleRgb.r) || isinf(sampleRgb.r) || isnan(sampleRgb.g) || isinf(sampleRgb.g) || isnan(sampleRgb.b) || isinf(sampleRgb.b)) {
+		if (isnan(sampleRgb.r) || isinf(sampleRgb.r) || isnan(sampleRgb.g) || isinf(sampleRgb.g) || isnan(sampleRgb.b) || isinf(sampleRgb.b)
+			|| (u_hasNodata && (sampleRgb.r == u_nodata || sampleRgb.g == u_nodata || sampleRgb.b == u_nodata))) {
 			outColor = vec4(u_nanColor, 1.0);
 			return;
 		}
@@ -514,6 +526,10 @@ void main() {
 			outColor = vec4(u_nanColor, 1.0);
 			return;
 		}
+	}
+	if (u_hasNodata && value == u_nodata) {
+		outColor = vec4(u_nanColor, 1.0);
+		return;
 	}
 	float normalized = applyGamma(value);
 	if (u_useColormap) {

@@ -7,6 +7,7 @@ import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
 import { chooseOpenLevel, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
+import { applyBandScaling, bandDescription, hasBandScaling, parseGdalMetadata, GdalMetadata } from './gdal-metadata.js';
 import { parseGeoReference, type GeoReference } from './geo-reference.js';
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
@@ -84,6 +85,11 @@ export class TiffProcessor {
 	 * which of them are pages and which are pyramid levels of an earlier one.
 	 */
 	pageDirectory: TiffPageEntry[];
+	/**
+	 * GDAL's per-band scale, offset, description and unit (tag 42112). Applied
+	 * to REPORTED values only; the render pipeline stays in file units.
+	 */
+	gdalMetadata: GdalMetadata | null;
 	_convertedFloatData: { floatData: Float32Array, width?: number, height?: number, min?: number, max?: number } | null;
 	loadSignal: AbortSignal | undefined;
 	decodeWorker: DecodeWorkerClient | null;
@@ -120,6 +126,7 @@ export class TiffProcessor {
 		// are alpha. undefined = the file did not say.
 		this._extraSamplesAreAlpha = undefined;
 		this.pageDirectory = [];
+		this.gdalMetadata = null;
 		this._convertedFloatData = null; // Cache converted float data for analysis
 		this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
 		this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
@@ -445,6 +452,7 @@ export class TiffProcessor {
 								allTagsJson: parallel.allTagsJson,
 								omeXml: parallel.omeXml,
 								geoJson: parallel.geoJson,
+								pageDirectoryJson: parallel.pageDirectoryJson,
 								decodedWith: `wasm (${parallel.workers} ${parallel.tileLength ? 'tile-row' : 'strip'} workers)`,
 								decodeTimings: parallel.timings,
 							};
@@ -637,6 +645,7 @@ export class TiffProcessor {
 					this._gdalNodata = parseGdalNodata(this._lastAllTags);
 					this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
 					this.pageDirectory = parsePageDirectory((wasmResult as any).pageDirectoryJson);
+					this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
 					if (this._gdalNodata !== undefined && this._lastStatistics &&
 						(this._lastStatistics.min === this._gdalNodata || this._lastStatistics.max === this._gdalNodata)) {
 						// WASM's fast min/max scan doesn't know about GDAL_NODATA, so the
@@ -803,6 +812,7 @@ export class TiffProcessor {
 			// geotiff.js exposes no NewSubfileType walk, so this path has no
 			// page directory rather than a stale one from the previous file.
 			this.pageDirectory = [];
+			this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
 
 			// Send format information to VS Code BEFORE rendering
 			// This allows the extension to apply format-specific settings first
@@ -1093,7 +1103,8 @@ export class TiffProcessor {
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
 			typeMax: typeMax,
 			collectHistogram: renderOptions.collectHistogram === true,
-			extraSamplesAreAlpha: this._extraSamplesAreAlpha
+			extraSamplesAreAlpha: this._extraSamplesAreAlpha,
+			nodataValue: this._gdalNodata
 		};
 
 		const targetCanvas = renderOptions.targetCanvas;
@@ -1120,6 +1131,10 @@ export class TiffProcessor {
 				typeMax,
 				settings,
 				nanColor,
+				// Same rule as the CPU path: a nodata sentinel is absence, not a
+				// dark measurement. Without this the GPU and CPU renderers would
+				// disagree on the same file.
+				nodataValue: this._gdalNodata,
 				channels
 			});
 			if (rendered) {
@@ -1180,6 +1195,30 @@ export class TiffProcessor {
 		const planarConfig = ifd.t284;
 		const bitsPerSample = ifd.t258;
 		const settings = this.settingsManager.settings;
+
+		// GDAL's per-band scale/offset (tag 42112) is what makes a stored 1234
+		// mean 1.234. Reporting the raw number here would put this viewer at
+		// odds with every other reader of the same file, so the readout — and
+		// only the readout — is in the file's declared units.
+		const scaled = hasBandScaling(this.gdalMetadata);
+		const physical = (sample: number, value: number) =>
+			applyBandScaling(this.gdalMetadata, sample, value);
+		// A pixel that holds the nodata sentinel has no measurement to report.
+		// Printing the sentinel scaled ("-32.768") reads as a real reading; the
+		// render already draws these in the nodata/NaN colour.
+		if (this._gdalNodata !== undefined && data[pixelIndex * (planarConfig === 2 ? 1 : samples)] === this._gdalNodata) {
+			return 'nodata';
+		}
+		if (scaled) {
+			const values: number[] = [];
+			if (planarConfig === 2) {
+				const planeSize = naturalWidth * naturalHeight;
+				for (let i = 0; i < samples; i++) { values.push(physical(i, data[pixelIndex + i * planeSize])); }
+			} else {
+				for (let i = 0; i < samples; i++) { values.push(physical(i, data[pixelIndex * samples + i])); }
+			}
+			return values.map(value => Number(value.toPrecision(6)).toString()).join(' ');
+		}
 
 		if (samples === 1) { // Grayscale
 			const value = data[pixelIndex];

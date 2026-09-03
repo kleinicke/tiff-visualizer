@@ -91,6 +91,7 @@ See [index](./index.md).
 
 | Command | ID | Keybinding |
 | --- | --- | --- |
+| Open Image from URL... | `tiffVisualizer.openImageFromUrl` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
 | Toggle Scale Bar | `tiffVisualizer.toggleScaleBar` |  |
 

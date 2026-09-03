@@ -1204,6 +1204,94 @@ export function registerImagePreviewCommands(
 		return previewManager.getPreviewFor(uri);
 	}
 
+	/**
+	 * Open an image straight from an https:// link.
+	 *
+	 * Scientific imagery increasingly lives at a URL rather than on disk — a
+	 * STAC catalogue hands out `https://` hrefs, and asking someone to download
+	 * a 40 MB band before they can look at it is the friction this removes.
+	 *
+	 * The bytes are fetched by the extension host and written into this
+	 * extension's own storage, then opened like any local file: the custom
+	 * editor, the decoders and every control work on a URI, and inventing a
+	 * second path for remote files would mean maintaining two of everything.
+	 * The copy also makes reopening, page changes and export work without
+	 * refetching.
+	 *
+	 * Whole-file, deliberately. A Cloud-Optimized GeoTIFF is laid out so a
+	 * client can read its header and only the tiles it needs; doing that means
+	 * a byte-source abstraction beneath the decoder, which is a larger change
+	 * than this one.
+	 */
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openImageFromUrl', async (presetUrl?: string) => {
+		logCommand('openImageFromUrl', 'start');
+		const entered = typeof presetUrl === 'string' && presetUrl
+			? presetUrl
+			: await vscode.window.showInputBox({
+				title: 'Open Image from URL',
+				prompt: 'https:// link to an image file',
+				placeHolder: 'https://sentinel-cogs.s3.us-west-2.amazonaws.com/.../B01.tif',
+				ignoreFocusOut: true,
+				validateInput: value => {
+					const trimmed = (value || '').trim();
+					if (!trimmed) { return null; }
+					try {
+						const protocol = new URL(trimmed).protocol;
+						return protocol === 'http:' || protocol === 'https:'
+							? null
+							: 'Only http:// and https:// links can be opened.';
+					} catch {
+						return 'That does not look like a URL.';
+					}
+				},
+			});
+		const trimmed = (entered || '').trim();
+		if (!trimmed) { logCommand('openImageFromUrl', 'success', 'cancelled'); return; }
+
+		let parsed: URL;
+		try { parsed = new URL(trimmed); } catch {
+			vscode.window.showErrorMessage('That does not look like a URL.');
+			logCommand('openImageFromUrl', 'error', 'unparsable url');
+			return;
+		}
+
+		const name = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || 'image');
+		try {
+			const target = await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: `Downloading ${name}`,
+				cancellable: true,
+			}, async (progress, token) => {
+				const controller = new AbortController();
+				token.onCancellationRequested(() => controller.abort());
+				const response = await fetch(parsed.toString(), { signal: controller.signal, redirect: 'follow' });
+				if (!response.ok) {
+					throw new Error(`the server answered ${response.status} ${response.statusText}`);
+				}
+				const bytes = new Uint8Array(await response.arrayBuffer());
+				if (bytes.byteLength === 0) { throw new Error('the file is empty'); }
+				progress.report({ message: `${(bytes.byteLength / (1024 * 1024)).toFixed(1)} MB` });
+
+				// Downloads live under the extension's storage, not the user's
+				// workspace: nothing appears in their source tree, and the folder
+				// is the one place to look when clearing them out.
+				const folder = vscode.Uri.joinPath(context.globalStorageUri, 'downloads');
+				await vscode.workspace.fs.createDirectory(folder);
+				const uri = vscode.Uri.joinPath(folder, name);
+				await vscode.workspace.fs.writeFile(uri, bytes);
+				return uri;
+			});
+
+			await openPreviewForResource(target);
+			logCommand('openImageFromUrl', 'success', `${name} from ${parsed.host}`);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			if (/abort/i.test(message)) { logCommand('openImageFromUrl', 'success', 'cancelled'); return; }
+			vscode.window.showErrorMessage(`Could not open ${name}: ${message}`);
+			logCommand('openImageFromUrl', 'error', message);
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openDicomFolder', async (resource?: vscode.Uri) => {
 		logCommand('openDicomFolder', 'start');
 		let folder = resource;

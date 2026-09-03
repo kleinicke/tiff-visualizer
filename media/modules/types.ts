@@ -25,6 +25,12 @@ export interface RenderOptions {
    * entirely transparent, because its second band is data, not coverage.
    */
   extraSamplesAreAlpha?: boolean;
+  /**
+   * The file's "this pixel holds no measurement" sentinel — GDAL_NODATA (TIFF
+   * tag 42113). Rendered like NaN, since that is what it means; already
+   * excluded from auto-normalize statistics.
+   */
+  nodataValue?: number;
 }
 
 /**
