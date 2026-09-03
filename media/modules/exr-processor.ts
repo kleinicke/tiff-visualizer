@@ -1,5 +1,6 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson } from './tiff-tag-utils.js';
@@ -80,12 +81,9 @@ export class ExrProcessor {
 	/**
 	 * Get NaN color based on settings
 	 */
-	_getNanColor(settings: ImageSettings): { r: number; g: number; b: number } {
-		if (settings.nanColor === 'fuchsia') {
-			return { r: 255, g: 0, b: 255 }; // Fuchsia
-		} else {
-			return { r: 0, g: 0, b: 0 }; // Black (default)
-		}
+	_getNanColor(settings: ImageSettings): { r: number; g: number; b: number; a: number } {
+		// One resolver for every format; see nan-color.ts.
+		return resolveNanColor(settings);
 	}
 
 

@@ -757,7 +757,12 @@ function executeCommand(command: string): void {
   } else if (command === 'tiffVisualizer.exportLayers') {
     sendToViewer({ type: 'getLayerExportCompatibility' });
   } else if (command === 'tiffVisualizer.toggleNanColor') {
-    currentSettings.nanColor = currentSettings.nanColor === 'fuchsia' ? 'black' : 'fuchsia';
+    // Same cycle as the extension: black, fuchsia, transparent. Kept as a
+    // literal list rather than importing the viewer's, since this host talks to
+    // the viewer only through settings messages.
+    const cycle = ['black', 'fuchsia', 'transparent'];
+    const index = cycle.indexOf(String(currentSettings.nanColor));
+    currentSettings.nanColor = cycle[(index + 1) % cycle.length];
     sendCurrentSettings('browser-nan-color');
   } else if (command === 'tiffVisualizer.toggleColorPickerMode') {
     currentSettings.colorPickerShowModified = !currentSettings.colorPickerShowModified;

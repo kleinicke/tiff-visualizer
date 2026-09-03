@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { NanColorName } from './imageSettings';
 import { Utils } from 'vscode-uri';
 import { BinarySizeStatusBarEntry } from '../binarySizeStatusBarEntry';
 import { MediaPreview, PreviewState } from '../mediaPreview';
@@ -19,7 +20,7 @@ import { parseOmeDatasetXml, tiffImageDescription } from './omeMetadataFile';
 
 // Extended settings for webview (includes preview-local display settings).
 interface WebviewImageSettings extends ImageSettings {
-	nanColor: 'black' | 'fuchsia';
+	nanColor: NanColorName;
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
 }

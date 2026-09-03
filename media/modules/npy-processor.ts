@@ -1,5 +1,6 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
 import { decodeNpyLocal } from './main-thread-decode.js';
 import { decodeNativeF32NpyFast } from './fast-raw-decoders.js';
@@ -366,29 +367,9 @@ export class NpyProcessor {
     /**
      * Get NaN color from settings
      */
-    _getNanColor(settings: any): { r: number, g: number, b: number } {
-        if (settings.nanColor) {
-            if (typeof settings.nanColor === 'string') {
-                if (settings.nanColor === 'fuchsia') {
-                    return { r: 255, g: 0, b: 255 };
-                }
-                if (settings.nanColor === 'black') {
-                    return { r: 0, g: 0, b: 0 };
-                }
-                // Handle explicit hex string.
-                const hex = settings.nanColor.replace('#', '');
-                if (!/^[0-9a-fA-F]{6}$/.test(hex)) {
-                    return { r: 0, g: 0, b: 0 };
-                }
-                return {
-                    r: parseInt(hex.substring(0, 2), 16),
-                    g: parseInt(hex.substring(2, 4), 16),
-                    b: parseInt(hex.substring(4, 6), 16)
-                };
-            }
-            // Handle object
-            return settings.nanColor;
-        }
-        return { r: 0, g: 0, b: 0 };
+    _getNanColor(settings: any): { r: number, g: number, b: number, a: number } {
+        // One resolver for every format, including the hex string and object
+        // forms this path has always accepted; see nan-color.ts.
+        return resolveNanColor(settings);
     }
 }

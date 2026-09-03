@@ -6,6 +6,7 @@ import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
 import { imagePages, isPyramidal, levelForDisplayWidth, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
 import { bandDescription } from './modules/gdal-metadata.js';
+import { nanIsTransparent, nextNanColor as nextNanColor_, resolveNanColor } from './modules/nan-color.js';
 import type { TiffPageEntry } from './modules/tiff-pages.js';
 import { PngProcessor } from './modules/png-processor.js';
 import { TgaProcessor } from './modules/tga-processor.js';
@@ -434,8 +435,10 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		if (!compositeEnabled || channelPlanes.length < 2) { return; }
 		const width = channelPlanes[0].width;
 		const height = channelPlanes[0].height;
-		const nanColor: [number, number, number] =
-			settingsManager.settings.nanColor === 'fuchsia' ? [255, 0, 255] : [0, 0, 0];
+		// The channel compositor writes opaque pixels, so a transparent choice
+		// falls back to black here rather than silently becoming invisible.
+		const resolved = resolveNanColor(settingsManager.settings);
+		const nanColor: [number, number, number] = [resolved.r, resolved.g, resolved.b];
 		const options = { soloIndex: channelSolo, nanColor };
 
 		// Kick off device creation once, in the background. The first composite
@@ -2538,9 +2541,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 
 	/** NaN display color from current settings. */
 	function getNanColorObj() {
-		return settingsManager.settings && settingsManager.settings.nanColor === 'fuchsia'
-			? { r: 255, g: 0, b: 255 }
-			: { r: 0, g: 0, b: 0 };
+		return resolveNanColor(settingsManager.settings);
 	}
 
 	function npyTypeInfo(dtype?: string): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
@@ -3688,6 +3689,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 				if (typeof message.settings?.showScaleBar === 'boolean') {
 					roiOverlay.setShowScaleBar(message.settings.showScaleBar);
 				}
+				// A hole over the editor background is nearly indistinguishable
+				// from a black pixel in a dark theme, which would make the
+				// transparent choice look like it did nothing. The checkerboard
+				// is the conventional way to say "there is nothing here"; it is
+				// applied only in that mode, so no other image changes
+				// appearance, and the Layers background override still wins.
+				container.toggleAttribute('data-no-value-transparent', nanIsTransparent(settingsManager.settings));
 				const updateReason = message.reason || (message.isInitialRender ? 'initial-render' : 'unspecified');
 				if (changes.changedKeys.includes('gpuAcceleration')) {
 					if (_layerCompositorSelection === 'auto') {
@@ -5526,10 +5534,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// 	vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openComparisonPanel' });
 			// }));
 
-			// Add Toggle NaN Color option
-			const currentNanColor = settingsManager.settings.nanColor || 'black';
-			const nextNanColor = currentNanColor === 'black' ? 'fuchsia' : 'black';
-			menu.appendChild(createMenuItem(`Show NaN Color as ${nextNanColor}`, () => {
+			// Cycle how pixels with no value are drawn (black/fuchsia/transparent)
+			const nextNanColor = nextNanColor_(settingsManager.settings.nanColor);
+			menu.appendChild(createMenuItem(`Show No-Value Pixels as ${nextNanColor}`, () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
 			}));
 

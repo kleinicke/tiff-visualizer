@@ -1,6 +1,7 @@
 "use strict";
 import TgaLoader from 'tga-js';
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { Stats } from './types.js';
@@ -196,7 +197,7 @@ export class TgaProcessor {
 
     _getNanColor(settings: ImageSettings): { r: number; g: number; b: number } {
         // TGA is always integer — NaN cannot occur. Kept for interface consistency.
-        return settings.nanColor === 'fuchsia' ? { r: 255, g: 0, b: 255 } : { r: 0, g: 0, b: 0 };
+        return resolveNanColor(settings);
     }
 
     _postFormatInfo(width: number, height: number, channels: number, bitDepth: number) {

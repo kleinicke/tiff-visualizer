@@ -23,8 +23,8 @@ declares alpha still gets alpha.
 
 ### The image is full of fuchsia (or black) patches
 
-Those are non-finite samples — `NaN` or infinity. **Toggle NaN Color** switches
-how they are drawn. This is information, not a bug: something in the pipeline
+Those are non-finite samples — `NaN` or infinity. **Cycle No-Value Color**
+switches how they are drawn (black, fuchsia, transparent). This is information, not a bug: something in the pipeline
 that produced the file wrote a non-value there. Measurement excludes these
 samples and reports how many.
 

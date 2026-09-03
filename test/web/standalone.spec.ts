@@ -264,3 +264,46 @@ test('says plainly when a link cannot be read', async ({ page }) => {
   // without a reason, so that case gets the generic advice instead.
   await expect(page.locator('.web-toast-region')).toContainText('404');
 });
+
+test('cycles how pixels with no value are drawn', async ({ page }) => {
+  await page.goto('/');
+  await page
+    .locator('#web-file-input')
+    .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+
+  // A pixel inside the fixture's nodata block.
+  const noValuePixel = () => page.evaluate(() => {
+    const canvas = document.querySelector('body > canvas:not(.measure-overlay)') as HTMLCanvasElement;
+    const context = canvas.getContext('2d', { willReadFrequently: true })!;
+    const data = context.getImageData(20, 20, 1, 1).data;
+    return [data[0], data[1], data[2], data[3]];
+  });
+  // A pixel with real data, used to tell "not painted yet" from "painted".
+  const dataPixel = () => page.evaluate(() => {
+    const canvas = document.querySelector('body > canvas:not(.measure-overlay)') as HTMLCanvasElement;
+    const context = canvas.getContext('2d', { willReadFrequently: true })!;
+    const data = context.getImageData(128, 128, 1, 1).data;
+    return [data[0], data[1], data[2], data[3]];
+  });
+  const cycle = async () => {
+    await page.getByRole('button', { name: 'More' }).click();
+    await page.getByRole('button', { name: 'Cycle no-value colour' }).click();
+    await page.waitForTimeout(600);
+  };
+
+  // `ready` lands before the first paint, so wait for real content rather than
+  // sampling an empty canvas.
+  await expect.poll(async () => (await dataPixel())[3], { timeout: 30_000 }).toBe(255);
+
+  expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
+  await cycle();
+  expect(await noValuePixel()).toEqual([255, 0, 255, 255]);
+  await cycle();
+  // Transparent: a hole, plus a checkerboard behind the canvas so the hole
+  // does not read as a black pixel in a dark theme.
+  expect(await noValuePixel()).toEqual([0, 0, 0, 0]);
+  await expect(page.locator('.container.image')).toHaveAttribute('data-no-value-transparent', '');
+  await cycle();
+  expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
+});

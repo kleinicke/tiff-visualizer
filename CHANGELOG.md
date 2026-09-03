@@ -11,6 +11,7 @@
 - Open images that exceed the canvas limit at their largest usable pyramid level instead of failing, and refine to a finer level when zooming in
 - Apply GDAL's per-band scale/offset to the pixel readout, and use band descriptions as channel names
 - Draw `GDAL_NODATA` pixels in the nodata colour and report them as `nodata` instead of as their sentinel value
+- Add **transparent** as a third choice for pixels with no value, alongside black and fuchsia: they become real holes, so a layer underneath shows through and an exported PNG carries a hole rather than a coloured patch (what GDAL and QGIS do with nodata). The command cycles the three.
 - Open an image from an `https://` link — a command in the extension, a link box and `?url=` on the website
 - Log one line per load naming what became visible (size, samples, type, level)
 - Explain complex-sample TIFFs (SAR single-look-complex) instead of reporting them as a decode failure

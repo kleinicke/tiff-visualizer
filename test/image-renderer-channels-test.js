@@ -293,6 +293,49 @@ async function main() {
 		console.log('✅ nodata: a declared sentinel renders as absence, not as a dark value');
 	}
 
+	// ---------------------------------------------------------------------
+	// N+3. "Transparent" draws pixels with no value as holes.
+	//
+	//      Alpha 0 is what makes a layer underneath show through and an
+	//      exported PNG carry a real hole instead of a coloured patch — the
+	//      convention GDAL and QGIS use for nodata.
+	// ---------------------------------------------------------------------
+	{
+		const settings = {
+			normalization: { min: 0, max: 255, autoNormalize: false, gammaMode: false },
+			gamma: { in: 1.0, out: 1.0 },
+			brightness: { offset: 0 },
+		};
+		const stats = { min: 0, max: 255 };
+		const hole = { r: 0, g: 0, b: 0, a: 0 };
+
+		// Non-finite samples, on the float path.
+		const floats = new Float32Array([NaN, 128]);
+		const rendered = ImageRenderer.render(floats, 2, 1, 1, true, stats, settings,
+			{ nanColor: hole, typeMax: 255 });
+		assert.strictEqual(pixelAt(rendered, 0, 0).a, 0, 'a NaN sample becomes a hole');
+		assert.strictEqual(pixelAt(rendered, 1, 0).a, 255, 'real samples stay opaque');
+
+		// A declared nodata sentinel, which means the same thing.
+		const withNodata = ImageRenderer.render(new Float32Array([-9999, 128]), 2, 1, 1, true, stats, settings,
+			{ nanColor: hole, typeMax: 255, nodataValue: -9999 });
+		assert.strictEqual(pixelAt(withNodata, 0, 0).a, 0, 'a nodata sample becomes a hole too');
+		assert.strictEqual(pixelAt(withNodata, 1, 0).a, 255);
+
+		// And on the integer and colour paths, which have their own loops.
+		const rgb = ImageRenderer.render(new Uint8Array([10, 20, 30, 40, 50, 60]), 2, 1, 3, false, stats, settings,
+			{ nanColor: hole, nodataValue: 10 });
+		assert.strictEqual(pixelAt(rgb, 0, 0).a, 0, 'an RGB pixel with a nodata sample becomes a hole');
+		assert.strictEqual(pixelAt(rgb, 1, 0).a, 255);
+
+		// The default stays opaque: only an explicit alpha makes holes.
+		const opaque = ImageRenderer.render(floats, 2, 1, 1, true, stats, settings,
+			{ nanColor: { r: 255, g: 0, b: 255 }, typeMax: 255 });
+		assert.deepStrictEqual(pixelAt(opaque, 0, 0), { r: 255, g: 0, b: 255, a: 255 },
+			'a colour choice still paints an opaque pixel');
+		console.log('✅ transparent: NaN and nodata render as holes, everything else stays opaque');
+	}
+
 	console.log('\n🎉 All ImageRenderer channel-count tests passed.\n');
 }
 

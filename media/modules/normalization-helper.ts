@@ -586,6 +586,10 @@ export class ImageRenderer {
     static _renderFloatDirect(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, options: RenderOptions): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 }; // Magenta default
+        // 'transparent' draws a pixel with no value as a hole rather than a
+        // colour, so a layer underneath shows through and an exported PNG
+        // carries a real hole. Every other choice is opaque.
+        const nanAlpha = (nanColor as { a?: number }).a === undefined ? 255 : (nanColor as { a?: number }).a as number;
         // A sample beyond the colour samples is alpha only when the file
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
@@ -610,7 +614,7 @@ export class ImageRenderer {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
-                    out[p + 3] = 255;
+                    out[p + 3] = nanAlpha;
                     if (renderHist) { renderHistNanCount++; }
                     continue;
                 }
@@ -644,7 +648,7 @@ export class ImageRenderer {
         }
 
         for (let i = 0; i < width * height; i++) {
-            let r = 0, g = 0, b = 0;
+            let r = 0, g = 0, b = 0, alpha = 255;
 
             if (channels === 1) {
                 const value = data[i];
@@ -652,6 +656,7 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    alpha = nanAlpha;
                     renderHistNanCount++;
                 } else {
                     const normalized = (value - min) * invRange;
@@ -676,6 +681,7 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    alpha = nanAlpha;
                 } else {
                     r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
                     g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
@@ -693,6 +699,7 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    alpha = nanAlpha;
                 } else {
                     r = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
                     g = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
@@ -716,7 +723,7 @@ export class ImageRenderer {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
-                    out[p + 3] = 255;
+                    out[p + 3] = nanAlpha;
                     continue;
                 }
                 const intensity = Math.round(Math.max(0, Math.min(1, (value - min) * invRange)) * 255);
@@ -739,12 +746,13 @@ export class ImageRenderer {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
+                    out[p + 3] = nanAlpha;
                 } else {
                     out[p] = Math.round(Math.max(0, Math.min(1, (rVal - min) * invRange)) * 255);
                     out[p + 1] = Math.round(Math.max(0, Math.min(1, (gVal - min) * invRange)) * 255);
                     out[p + 2] = Math.round(Math.max(0, Math.min(1, (bVal - min) * invRange)) * 255);
+                    out[p + 3] = 255;
                 }
-                out[p + 3] = 255;
                 continue;
             }
 
@@ -752,7 +760,7 @@ export class ImageRenderer {
             out[p] = r;
             out[p + 1] = g;
             out[p + 2] = b;
-            out[p + 3] = 255;
+            out[p + 3] = alpha;
         }
 
         if (renderHist) {
@@ -775,6 +783,10 @@ export class ImageRenderer {
     static _renderFloatWithLUT(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, settings: ImageSettings, options: RenderOptions): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // 'transparent' draws a pixel with no value as a hole rather than a
+        // colour, so a layer underneath shows through and an exported PNG
+        // carries a real hole. Every other choice is opaque.
+        const nanAlpha = (nanColor as { a?: number }).a === undefined ? 255 : (nanColor as { a?: number }).a as number;
         // A sample beyond the colour samples is alpha only when the file
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
@@ -814,7 +826,7 @@ export class ImageRenderer {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
-                    out[p + 3] = 255;
+                    out[p + 3] = nanAlpha;
                     if (renderHist) { renderHistNanCount++; }
                     continue;
                 }
@@ -848,7 +860,7 @@ export class ImageRenderer {
         }
 
         for (let i = 0; i < width * height; i++) {
-            let r = 0, g = 0, b = 0;
+            let r = 0, g = 0, b = 0, alpha = 255;
 
             if (channels === 1) {
                 const value = data[i];
@@ -856,6 +868,7 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    alpha = nanAlpha;
                     renderHistNanCount++;
                 } else {
                     const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
@@ -879,6 +892,7 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    alpha = nanAlpha;
                 } else {
                     const rIdx = Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)));
                     const gIdx = Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)));
@@ -899,6 +913,7 @@ export class ImageRenderer {
                     r = nanColor.r;
                     g = nanColor.g;
                     b = nanColor.b;
+                    alpha = nanAlpha;
                 } else {
                     const rIdx = Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)));
                     const gIdx = Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)));
@@ -925,7 +940,7 @@ export class ImageRenderer {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
-                    out[p + 3] = 255;
+                    out[p + 3] = nanAlpha;
                     continue;
                 }
                 const lutIdx = Math.round(Math.max(0, Math.min(65535, (value - vMin) * invVRange)));
@@ -949,6 +964,7 @@ export class ImageRenderer {
                     out[p] = nanColor.r;
                     out[p + 1] = nanColor.g;
                     out[p + 2] = nanColor.b;
+                    out[p + 3] = nanAlpha;
                 } else {
                     const rIdx = Math.round(Math.max(0, Math.min(65535, (rVal - vMin) * invVRange)));
                     const gIdx = Math.round(Math.max(0, Math.min(65535, (gVal - vMin) * invVRange)));
@@ -956,8 +972,8 @@ export class ImageRenderer {
                     out[p] = lut[rIdx];
                     out[p + 1] = lut[gIdx];
                     out[p + 2] = lut[bIdx];
+                    out[p + 3] = 255;
                 }
-                out[p + 3] = 255;
                 continue;
             }
 
@@ -965,7 +981,7 @@ export class ImageRenderer {
             out[p] = r;
             out[p + 1] = g;
             out[p + 2] = b;
-            out[p + 3] = 255;
+            out[p + 3] = alpha;
         }
 
         if (renderHist) {
@@ -987,6 +1003,10 @@ export class ImageRenderer {
     static _renderUint16Direct(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // 'transparent' draws a pixel with no value as a hole rather than a
+        // colour, so a layer underneath shows through and an exported PNG
+        // carries a real hole. Every other choice is opaque.
+        const nanAlpha = (nanColor as { a?: number }).a === undefined ? 255 : (nanColor as { a?: number }).a as number;
         // A sample beyond the colour samples is alpha only when the file
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
@@ -1009,7 +1029,7 @@ export class ImageRenderer {
 
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
 
@@ -1032,13 +1052,13 @@ export class ImageRenderer {
         const invRange = range > 0 ? 255.0 / range : 0;
 
         for (let i = 0; i < width * height; i++) {
-            let r = 0, g = 0, b = 0;
+            let r = 0, g = 0, b = 0, alpha = 255;
 
             if (channels === 1) {
                 const value = data[i];
                 if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = g = b = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
@@ -1048,7 +1068,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
@@ -1060,7 +1080,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
@@ -1080,7 +1100,7 @@ export class ImageRenderer {
                 const value = data[idx], aVal = data[idx + 1];
                 const p = i * 4;
                 if ((!Number.isFinite(value) || value === nodataValue)) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 const intensity = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
@@ -1098,7 +1118,7 @@ export class ImageRenderer {
                 const p = i * 4;
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 out[p] = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
@@ -1112,7 +1132,7 @@ export class ImageRenderer {
             out[p] = r;
             out[p + 1] = g;
             out[p + 2] = b;
-            out[p + 3] = 255;
+            out[p + 3] = alpha;
         }
 
         return new ImageData(out, width, height);
@@ -1125,6 +1145,10 @@ export class ImageRenderer {
     static _renderUint16WithLUT(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, settings: ImageSettings, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // 'transparent' draws a pixel with no value as a hole rather than a
+        // colour, so a layer underneath shows through and an exported PNG
+        // carries a real hole. Every other choice is opaque.
+        const nanAlpha = (nanColor as { a?: number }).a === undefined ? 255 : (nanColor as { a?: number }).a as number;
         // A sample beyond the colour samples is alpha only when the file
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
@@ -1147,7 +1171,7 @@ export class ImageRenderer {
 
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
 
@@ -1174,13 +1198,13 @@ export class ImageRenderer {
         const lut = NormalizationHelper.generateLut(settings, 16, 65535, normMin, normMax);
 
         for (let i = 0; i < width * height; i++) {
-            let r = 0, g = 0, b = 0;
+            let r = 0, g = 0, b = 0, alpha = 255;
 
             if (channels === 1) {
                 const value = data[i];
                 if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = g = b = lut[Math.min(65535, value)];
@@ -1190,7 +1214,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = lut[Math.min(65535, rVal)];
@@ -1202,7 +1226,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = lut[Math.min(65535, rVal)];
@@ -1222,7 +1246,7 @@ export class ImageRenderer {
                 const value = data[idx], aVal = data[idx + 1];
                 const p = i * 4;
                 if ((!Number.isFinite(value) || value === nodataValue)) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 const intensity = lut[Math.min(65535, value)];
@@ -1240,7 +1264,7 @@ export class ImageRenderer {
                 const p = i * 4;
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 out[p] = lut[Math.min(65535, rVal)];
@@ -1254,7 +1278,7 @@ export class ImageRenderer {
             out[p] = r;
             out[p + 1] = g;
             out[p + 2] = b;
-            out[p + 3] = 255;
+            out[p + 3] = alpha;
         }
 
         return new ImageData(out, width, height);
@@ -1267,6 +1291,10 @@ export class ImageRenderer {
     static _renderUint8Direct(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // 'transparent' draws a pixel with no value as a hole rather than a
+        // colour, so a layer underneath shows through and an exported PNG
+        // carries a real hole. Every other choice is opaque.
+        const nanAlpha = (nanColor as { a?: number }).a === undefined ? 255 : (nanColor as { a?: number }).a as number;
         // A sample beyond the colour samples is alpha only when the file
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
@@ -1288,7 +1316,7 @@ export class ImageRenderer {
 
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
 
@@ -1311,7 +1339,7 @@ export class ImageRenderer {
                 if (channels === 1) {
                     const value = data[i];
                     if ((!Number.isFinite(value) || value === nodataValue)) {
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     out[p] = out[p + 1] = out[p + 2] = value;
@@ -1320,7 +1348,7 @@ export class ImageRenderer {
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                     if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     out[p] = rVal;
@@ -1331,7 +1359,7 @@ export class ImageRenderer {
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                     if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     out[p] = rVal;
@@ -1345,7 +1373,7 @@ export class ImageRenderer {
                     const idx = i * 2;
                     const value = data[idx], aVal = data[idx + 1];
                     if ((!Number.isFinite(value) || value === nodataValue)) {
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     out[p] = out[p + 1] = out[p + 2] = value;
@@ -1359,7 +1387,7 @@ export class ImageRenderer {
                     const rVal = data[idx], gVal = data[idx + 1], bVal = data[idx + 2];
                     if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     out[p] = rVal;
@@ -1374,13 +1402,13 @@ export class ImageRenderer {
             const invRange = range > 0 ? 255.0 / range : 0;
 
             for (let i = 0; i < width * height; i++) {
-                let r = 0, g = 0, b = 0;
+                let r = 0, g = 0, b = 0, alpha = 255;
 
                 if (channels === 1) {
                     const value = data[i];
                     if ((!Number.isFinite(value) || value === nodataValue)) {
                         const p = i * 4;
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     r = g = b = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
@@ -1390,7 +1418,7 @@ export class ImageRenderer {
                     if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         const p = i * 4;
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
@@ -1402,7 +1430,7 @@ export class ImageRenderer {
                     if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         const p = i * 4;
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
@@ -1422,7 +1450,7 @@ export class ImageRenderer {
                     const value = data[idx], aVal = data[idx + 1];
                     if ((!Number.isFinite(value) || value === nodataValue)) {
                         const p = i * 4;
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     r = g = b = Math.round((Math.max(min, Math.min(max, value)) - min) * invRange);
@@ -1441,7 +1469,7 @@ export class ImageRenderer {
                     if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                         const p = i * 4;
-                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                        out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                         continue;
                     }
                     r = Math.round((Math.max(min, Math.min(max, rVal)) - min) * invRange);
@@ -1453,7 +1481,7 @@ export class ImageRenderer {
                 out[p] = r;
                 out[p + 1] = g;
                 out[p + 2] = b;
-                out[p + 3] = 255;
+                out[p + 3] = alpha;
             }
         }
 
@@ -1467,6 +1495,10 @@ export class ImageRenderer {
     static _renderUint8WithLUT(data: ArrayLike<number>, width: number, height: number, channels: number, min: number, max: number, settings: ImageSettings, options: RenderOptions = {}): ImageData {
         const out = new Uint8ClampedArray(width * height * 4);
         const nanColor = options.nanColor || { r: 255, g: 0, b: 255 };
+        // 'transparent' draws a pixel with no value as a hole rather than a
+        // colour, so a layer underneath shows through and an exported PNG
+        // carries a real hole. Every other choice is opaque.
+        const nanAlpha = (nanColor as { a?: number }).a === undefined ? 255 : (nanColor as { a?: number }).a as number;
         // A sample beyond the colour samples is alpha only when the file
         // says so; see `extraSamplesAreAlpha` in types.ts. Hoisted out of
         // the pixel loop.
@@ -1488,7 +1520,7 @@ export class ImageRenderer {
 
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
 
@@ -1511,13 +1543,13 @@ export class ImageRenderer {
         const lut = NormalizationHelper.generateLut(settings, 8, 255, normMin, normMax);
 
         for (let i = 0; i < width * height; i++) {
-            let r = 0, g = 0, b = 0;
+            let r = 0, g = 0, b = 0, alpha = 255;
 
             if (channels === 1) {
                 const value = data[i];
                 if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = g = b = lut[value];
@@ -1527,7 +1559,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = lut[rVal];
@@ -1539,7 +1571,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = lut[rVal];
@@ -1559,7 +1591,7 @@ export class ImageRenderer {
                 const value = data[idx], aVal = data[idx + 1];
                 if ((!Number.isFinite(value) || value === nodataValue)) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = g = b = lut[value];
@@ -1579,7 +1611,7 @@ export class ImageRenderer {
                 if (!Number.isFinite(rVal) || !Number.isFinite(gVal) || !Number.isFinite(bVal)
                     || rVal === nodataValue || gVal === nodataValue || bVal === nodataValue) {
                     const p = i * 4;
-                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = 255;
+                    out[p] = nanColor.r; out[p + 1] = nanColor.g; out[p + 2] = nanColor.b; out[p + 3] = nanAlpha;
                     continue;
                 }
                 r = lut[rVal];
@@ -1591,7 +1623,7 @@ export class ImageRenderer {
             out[p] = r;
             out[p + 1] = g;
             out[p + 2] = b;
-            out[p + 3] = 255;
+            out[p + 3] = alpha;
         }
 
         return new ImageData(out, width, height);

@@ -1,5 +1,6 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { PerfTrace } from './perf-trace.js';
@@ -201,7 +202,7 @@ export class HdrProcessor {
     }
 
     _getNanColor(settings: ImageSettings): { r: number; g: number; b: number } {
-        return settings.nanColor === 'fuchsia' ? { r: 255, g: 0, b: 255 } : { r: 0, g: 0, b: 0 };
+        return resolveNanColor(settings);
     }
 
     getColorAtPixel(x: number, y: number, naturalWidth: number, naturalHeight: number): string {

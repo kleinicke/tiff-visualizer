@@ -1,5 +1,6 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { resolveNanColor } from './nan-color.js';
 import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
 import { tryStripParallelDecode } from './strip-parallel-decode.js';
@@ -177,12 +178,9 @@ export class TiffProcessor {
 	/**
 	 * Get NaN color from settings
 	 */
-	_getNanColor(settings: any): { r: number, g: number, b: number } {
-		if (settings.nanColor === 'fuchsia') {
-			return { r: 255, g: 0, b: 255 }; // Fuchsia
-		} else {
-			return { r: 0, g: 0, b: 0 }; // Black (default)
-		}
+	_getNanColor(settings: any): { r: number, g: number, b: number, a: number } {
+		// One resolver for every format; see nan-color.ts.
+		return resolveNanColor(settings);
 	}
 
 	_getTiffLayoutInfo(source: any): TiffLayoutInfo {

@@ -27,7 +27,7 @@ See [getting-started](./getting-started.md).
 | Set Normalization Range | `tiffVisualizer.setNormalizationRange` |  |
 | Set Gamma | `tiffVisualizer.setGamma` |  |
 | Set Brightness | `tiffVisualizer.setBrightness` |  |
-| Toggle NaN Color (Black/Fuchsia) | `tiffVisualizer.toggleNanColor` |  |
+| Cycle No-Value Color (Black/Fuchsia/Transparent) | `tiffVisualizer.toggleNanColor` |  |
 | Toggle RGB as 24-bit Grayscale | `tiffVisualizer.toggleRgb24Mode` |  |
 | Apply Colormap (Pseudocolor) | `tiffVisualizer.applyColormap` |  |
 | Decode Colormap Image to Float | `tiffVisualizer.convertColormapToFloat` |  |

@@ -1,5 +1,6 @@
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
+import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
 import { decodePfmLocal } from './main-thread-decode.js';
 import { decodeNativePfmFast } from './fast-raw-decoders.js';
@@ -209,12 +210,9 @@ export class PfmProcessor {
         return '';
     }
 
-    _getNanColor(settings: any): { r: number, g: number, b: number } {
-        if (settings.nanColor === 'fuchsia') {
-            return { r: 255, g: 0, b: 255 };
-        } else {
-            return { r: 0, g: 0, b: 0 };
-        }
+    _getNanColor(settings: any): { r: number, g: number, b: number, a: number } {
+        // One resolver for every format; see nan-color.ts.
+        return resolveNanColor(settings);
     }
 
     _postFormatInfo(width: number, height: number, channels: number, formatLabel: string): void {

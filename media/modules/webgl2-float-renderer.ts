@@ -1,4 +1,5 @@
 "use strict";
+import { nanIsTransparent } from './nan-color.js';
 
 import { NormalizationHelper } from './normalization-helper.js';
 import { PerfTrace } from './perf-trace.js';
@@ -87,6 +88,12 @@ export class WebGL2FloatRenderer {
 		if (params.settings?.gpuAcceleration === false) { return false; }
 		if (this.failed) { return false; }
 		if (!ArrayBuffer.isView(params.data)) { return false; }
+		// Drawing pixels with no value as HOLES needs a canvas that can be
+		// transparent; this context is deliberately `alpha: false`, which is
+		// what lets the compositor skip blending for every ordinary image.
+		// Rather than pay that for everyone, decline and let the CPU renderer —
+		// which writes real alpha — handle the files where it was asked for.
+		if (nanIsTransparent(params.settings)) { return false; }
 		const wantsRgb24 = params.settings?.rgbAs24BitGrayscale && params.channels === 3;
 		const wantsScalar = params.channels === 1;
 		// Debayering happens on the CPU inside NormalizationHelper.render(), which

@@ -994,7 +994,9 @@ export function registerImagePreviewCommands(
 			previewManager.updateAllPreviews();
 
 			const newColor = previewManager.settingsManager.getNanColor();
-			vscode.window.showInformationMessage(`NaN color changed to: ${newColor}`);
+			vscode.window.showInformationMessage(newColor === 'transparent'
+				? 'Pixels with no value are now transparent: they show whatever is behind them, and export as holes.'
+				: `Pixels with no value are now drawn ${newColor}.`);
 			logCommand('toggleNanColor', 'success', `Changed to: ${newColor}`);
 		} catch (error) {
 			logCommand('toggleNanColor', 'error', String(error));

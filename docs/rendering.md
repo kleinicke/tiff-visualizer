@@ -74,7 +74,16 @@ Float scientific data routinely contains `NaN` (no measurement here) and
 infinities (division by zero, saturated sensor). These are never silently
 treated as zero.
 
-**Toggle NaN Color** switches non-finite pixels between black and fuchsia.
+**Cycle No-Value Color** walks how pixels with no value are drawn — black,
+fuchsia, transparent — and applies to both non-finite samples (`NaN`, infinity)
+and a declared `GDAL_NODATA` sentinel, since neither is a measurement.
+
+- **black** stays out of the way while you read the data around the holes.
+- **fuchsia** makes them unmistakable: nothing in real data is this colour.
+- **transparent** treats them as absent. The pixels get alpha 0, so a layer
+  underneath shows through and an exported PNG carries a real hole instead of a
+  coloured patch — the same convention GDAL and QGIS use for nodata. This mode
+  renders on the CPU rather than the GPU, so it is slower on very large images.
 Fuchsia is the diagnostic setting: it makes holes in your data unmistakable, and
 it is worth toggling once on any new dataset before you trust its statistics.
 Measurement excludes non-finite samples and reports how many it excluded.
