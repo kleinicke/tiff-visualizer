@@ -116,7 +116,7 @@ letters select tools — see [measurement](./measure.md).
 | Setting | Default | Description |
 | --- | --- | --- |
 | `tiffVisualizer.gpuAcceleration` | `true` | Use GPU acceleration via WebGPU or WebGL2 for supported image rendering paths. Disable this if a GPU/driver causes incorrect output or slower rendering. |
-| `tiffVisualizer.experimentalRegionDecode` | `false` | Experimental: read rectangles out of large tiled TIFFs instead of whole pages, so the cost of a view follows the window rather than the file. Currently used to report the stored value under the cursor while a reduced pyramid level is displayed. Off by default while the region path is being proven against the whole-image one. |
+| `tiffVisualizer.experimentalRegionDecode` | `false` | Experimental: use rectangle reads for images that have NO resolution pyramid, so the cost of a view follows the window rather than the file. Pyramidal images (Cloud-Optimized GeoTIFF, whole-slide) do this already whenever their level is set to Auto, and are unaffected by this setting. Nothing uses it yet for images without a pyramid: drawing those a region at a time needs the canvas to become a window onto the image, which is not implemented. |
 
 Display settings — normalization, gamma, brightness — are deliberately *not*
 VS Code settings. They live for the lifetime of the window and reset when it

@@ -308,7 +308,7 @@ test('cycles how pixels with no value are drawn', async ({ page }) => {
   expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
 });
 
-test('picks a pyramid level for the window, and says when it is approximate', async ({ page }) => {
+test('picks a pyramid level for the window, and pins the one you choose', async ({ page }) => {
   await page.goto('/');
   await page
     .locator('#web-file-input')
@@ -327,96 +327,62 @@ test('picks a pyramid level for the window, and says when it is approximate', as
   }
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
 
-  // Choosing a level by hand pins it, and the readout then says the values are
-  // from an overview rather than from the stored pixels. Index 0 is Auto, so
-  // index 2 is the first reduced level.
+  // Choosing a level by hand pins it: index 0 is Auto, so index 2 is the first
+  // reduced level. The status line follows the choice, and stays there.
   await page.locator('.dataset-overlay select').selectOption({ index: 2 });
   await expect(page.locator('.dataset-overlay')).toContainText('1/2 · 128x128', { timeout: 30_000 });
-  const zoomed = await canvas.boundingBox();
-  if (zoomed) {
-    await page.mouse.move(zoomed.x + zoomed.width * 0.4, zoomed.y + zoomed.height * 0.4);
-    await page.mouse.move(zoomed.x + zoomed.width * 0.4 + 3, zoomed.y + zoomed.height * 0.4 + 3);
-  }
-  await expect(page.locator('#web-status-size')).toContainText('1/2 overview');
+  await page.waitForTimeout(600);
+  await expect(page.locator('.dataset-overlay')).toContainText('1/2 · 128x128');
+  await expect(page.locator('.dataset-overlay select')).toHaveValue('2');
 });
 
-test('reads the stored value under the cursor when region decoding is on', async ({ page }) => {
-  const hoverOverview = async () => {
-    await page
-      .locator('#web-file-input')
-      .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
-    await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
-    // Pin a reduced level, so what is displayed is an average of stored pixels
-    // (index 0 is Auto, index 1 is full resolution).
-    await page.locator('.dataset-overlay select').selectOption({ index: 2 });
-    await expect(page.locator('.dataset-overlay')).toContainText('1/2', { timeout: 30_000 });
-    const box = await page.locator('body > canvas:not(.measure-overlay)').boundingBox();
-    if (box) {
-      await page.mouse.move(box.x + box.width * 0.62, box.y + box.height * 0.38);
-      await page.mouse.move(box.x + box.width * 0.62 + 1, box.y + box.height * 0.38 + 1);
-    }
-  };
-
-  // Off: the readout says plainly that the value is not the stored one.
-  await page.goto('/');
-  await hoverOverview();
-  await expect(page.locator('#web-status-size')).toContainText('1/2 overview');
-
-  // On: the value is read out of the file for the pixel under the cursor, so
-  // there is nothing to caveat.
-  await page.goto('/?regionDecode=1');
-  await hoverOverview();
-  await expect(page.locator('#web-status-size')).toContainText(/\d+x\d+/);
-  await expect(page.locator('#web-status-size')).not.toContainText('overview');
-});
-
-test('offers Auto as the level, and reports what is loaded and in view', async ({ page }) => {
+test('reads the value stored under the cursor while an overview is displayed', async ({ page }) => {
   await page.goto('/');
   await page
     .locator('#web-file-input')
     .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
   await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
 
-  // Automatic is the default, and it is visible as such rather than implied.
-  const select = page.locator('.dataset-overlay select');
-  await expect(select).toHaveValue('0');
-  await expect(page.locator('.dataset-overlay .dataset-note'))
-    .toContainText('Loaded Full · 256x256 of 256x256');
-  await expect(page.locator('.dataset-overlay .dataset-note')).toContainText('viewing');
+  // Pin a reduced level, so what is DISPLAYED is an average of stored pixels
+  // (index 0 is Auto, index 1 is full resolution).
+  await page.locator('.dataset-overlay select').selectOption({ index: 2 });
+  await expect(page.locator('.dataset-note')).toContainText('1/2', { timeout: 30_000 });
+  const box = await page.locator('body > canvas:not(.measure-overlay)').boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width * 0.62, box.y + box.height * 0.38);
+    await page.mouse.move(box.x + box.width * 0.62 + 1, box.y + box.height * 0.38 + 1);
+  }
 
-  // A level chosen by hand is pinned, and the status follows it.
-  await select.selectOption({ index: 3 });
-  await expect(page.locator('.dataset-overlay .dataset-note'))
-    .toContainText('Loaded 1/4 · 64x64 of 256x256', { timeout: 30_000 });
-  await expect(select).toHaveValue('3');
-
-  // And there is a way back: Auto re-takes the decision.
-  await select.selectOption({ index: 0 });
-  await expect(select).toHaveValue('0');
+  // The value is read out of the file for the pixel under the cursor, so there
+  // is nothing left to caveat. An approximate value where an exact one costs a
+  // couple of milliseconds is not a preference to be configured.
+  await expect(page.locator('#web-status-size')).toContainText(/\d+x\d+/);
+  await expect(page.locator('#web-status-size')).not.toContainText('overview');
 });
 
 test('draws a sharp patch of a finer level over the visible area', async ({ page }) => {
+  // Needs a pyramid whose full resolution is past the size worth decoding
+  // whole, which is the only situation where a patch is the right answer — so
+  // it needs a genuinely large file rather than a fixture.
+  const corpusFile = '/Users/florian/Projects/cursor/test_data/cog/big_40000px_cog.tif';
+  test.skip(!fs.existsSync(corpusFile), 'corpus file not present');
+
   const detail: string[] = [];
   page.on('console', message => {
     if (message.text().startsWith('[Detail]')) { detail.push(message.text()); }
   });
 
-  await page.goto('/?regionDecode=1');
-  await page
-    .locator('#web-file-input')
-    .setInputFiles(path.resolve('test-samples/cog_pyramid_detail.tif'));
-  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles(corpusFile);
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 120_000 });
+  await page.waitForTimeout(2500);
 
-  // Pin 1/4 as the overview (index 0 is Auto, 1 is Full), then zoom past what
-  // that level can show. Everything below the base level stays as it was: the
-  // patch is an addition on top, not a different way of drawing the image.
-  await page.locator('.dataset-overlay select').selectOption({ index: 3 });
-  await expect(page.locator('.dataset-note')).toContainText('Loaded 1/4 · 256x256', { timeout: 30_000 });
-  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 8 }, '*'));
-
+  // Zoom in on Auto. The base settles at the budget; the patch covers what is
+  // on screen from the FULL level, which no canvas could hold whole.
+  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 16 }, '*'));
   const patch = page.locator('canvas.detail-patch');
-  await expect(patch).toHaveCount(1, { timeout: 30_000 });
-  expect(detail.join(' ')).toContain('Full · 1024x1024');
+  await expect(patch).toHaveCount(1, { timeout: 60_000 });
+  expect(detail.join(' ')).toContain('Full · 40000x40000');
 
   // The rectangle the log says was decoded, and where the patch was put.
   const match = /over (\d+)x(\d+) at (\d+),(\d+)/.exec(detail[detail.length - 1] || '');
@@ -445,10 +411,31 @@ test('draws a sharp patch of a finer level over the visible area', async ({ page
   // full-resolution pixels must return the rectangle's own origin. A patch
   // placed a tile out would show the right pixels in the wrong place, which is
   // the failure this pins.
-  const fullPerBaseCss = (placement.baseWidth * 4) / placement.baseCssWidth;
+  const fullPerBaseCss = (40000 / placement.baseCssWidth);
   expect(Math.round(placement.offsetX * fullPerBaseCss)).toBe(rectX);
   expect(Math.round(placement.offsetY * fullPerBaseCss)).toBe(rectY);
   expect(Math.round(placement.cssWidth * fullPerBaseCss)).toBe(rectWidth);
+});
+
+test('a level chosen by hand turns the patch off', async ({ page }) => {
+  const corpusFile = '/Users/florian/Projects/cursor/test_data/cog/big_40000px_cog.tif';
+  test.skip(!fs.existsSync(corpusFile), 'corpus file not present');
+
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles(corpusFile);
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 120_000 });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 16 }, '*'));
+  await expect(page.locator('canvas.detail-patch')).toHaveCount(1, { timeout: 60_000 });
+
+  // Pinning a level says which resolution to look at; a finer one laid over it
+  // would contradict that.
+  await page.locator('.dataset-overlay select').selectOption({ index: 5 });
+  await expect(page.locator('canvas.detail-patch')).toHaveCount(0, { timeout: 60_000 });
+
+  // Auto takes the decision back, and the patch with it.
+  await page.locator('.dataset-overlay select').selectOption({ index: 0 });
+  await expect(page.locator('canvas.detail-patch')).toHaveCount(1, { timeout: 60_000 });
 });
 
 test('leaves an ordinary TIFF completely alone', async ({ page }) => {

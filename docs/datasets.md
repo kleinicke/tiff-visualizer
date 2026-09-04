@@ -107,24 +107,25 @@ One limit worth knowing: refinement loads a whole level, not just the part you
 are looking at. For an image whose full resolution exceeds the canvas limit,
 zooming in cannot reach the stored pixels.
 
-**`tiffVisualizer.experimentalRegionDecode`** lifts that limit for the part you
-are looking at. The decoder can read a rectangle — a 1600x1000 view of a
-10980x10980 band is four tiles and about 25 ms, against a second for the whole
-page — and with the setting on, the viewer:
+**On Auto, the viewer lifts that limit for the part you are looking at.** The
+decoder can read a rectangle — a 1600x1000 view of a 10980x10980 band is four
+tiles and about 25 ms, against a second for the whole page — so while the level
+is chosen automatically:
 
-- draws a sharp **patch** of a finer level over the visible area, so a
+- a sharp **patch** of a finer level is drawn over the visible area, and a
   40000x40000 scene shows its stored pixels at high zoom even though no canvas
-  could ever hold the whole level. The coarse image underneath is unchanged and
+  could ever hold that level whole. The coarse image underneath is unchanged and
   still the image for every other purpose;
-- stops enlarging that coarse image once it passes the size worth decoding
-  (about 40 megapixels), since the patch already shows the detail where you are
-  looking. Zooming into a 10980x10980 band then settles in about 3 seconds
-  rather than 5, holding a quarter of the pixels;
-- reads the value actually stored under the cursor, so the readout is exact and
-  drops its `overview` caveat.
+- that coarse image stops growing once it passes the size worth decoding (about
+  40 megapixels), since the patch already shows the detail where you are looking.
+  Zooming into a 10980x10980 band settles in about 3 seconds rather than 5, and
+  holds a quarter of the pixels;
+- hovering reads the value actually **stored** under the cursor rather than the
+  overview's average, so the readout is exact and drops its `overview` caveat.
 
-It is off by default while the region path is being proven against the
-whole-image one, and it changes nothing for a file without a pyramid.
+Choosing a level by hand turns all of that off: a pinned level is a statement
+about which resolution you want to look at, and laying a finer one over it would
+contradict the choice. Selecting **Auto** again brings it back.
 
 ## CZI
 

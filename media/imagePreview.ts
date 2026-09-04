@@ -2103,11 +2103,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			mouseHandler.setResolutionNote(currentLevelNote());
 			// While a reduced level is displayed the readout is an average of
 			// several stored pixels. A rectangle read gets the real one for a
-			// couple of milliseconds, so offer it when the file supports it.
-			mouseHandler.setStoredValueResolver(
-				settingsManager.settings.experimentalRegionDecode
-					? (x: number, y: number) => tiffProcessor.readStoredPixel(x, y)
-					: null);
+			// couple of milliseconds, so it is always offered — an approximate
+			// value where an exact one is affordable is not a preference.
+			mouseHandler.setStoredValueResolver((x: number, y: number) => tiffProcessor.readStoredPixel(x, y));
 			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 
@@ -6941,13 +6939,16 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 * when the displayed level is already the best one available.
 	 */
 	async function updateDetailPatch(): Promise<void> {
-		if (!settingsManager.settings.experimentalRegionDecode) { removeDetailPatch(); return; }
 		const element = imageElement as HTMLElement | null;
 		const directory = tiffProcessor.pageDirectory;
 		if (!element || !hasLoadedImage || _imageTransitionActive || !isPyramidal(directory)) {
 			removeDetailPatch();
 			return;
 		}
+		// Automatic is what asks the viewer to decide what to show; a level
+		// chosen by hand is a statement about which resolution to look at, and
+		// laying a finer one over it would contradict the choice.
+		if (_levelSelectionIsManual) { removeDetailPatch(); return; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const base = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
@@ -7079,16 +7080,16 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const levels = levelsForPage(directory, page);
 		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
 		if (!current) { return; }
-		// How far it is worth decoding a WHOLE level to follow a zoom. Without
-		// patches the decoded level is the only detail there is; with them, the
-		// base only has to be good enough for the moment before the next patch
-		// lands — and for the histogram, measurement and export, which keep
-		// reading it. See levelForZoom.
-		const budget = settingsManager.settings.experimentalRegionDecode
-			? FULL_RESOLUTION_PIXEL_BUDGET
-			: Infinity;
+		// Reaching here means the level is being chosen automatically, so a
+		// patch of the true resolution will cover what is on screen. The base
+		// therefore only has to be good enough for the moment before the next
+		// patch lands — and for the histogram, measurement and export, which
+		// keep reading it — so it stops at the same budget that governs
+		// opening rather than at whatever a canvas could hold. See
+		// levelForZoom.
 		const target = levelForZoom(
-			directory, page, tiffProcessor.pageIndex, displayedImageWidthPx(), canvasCanHold, budget);
+			directory, page, tiffProcessor.pageIndex, displayedImageWidthPx(), canvasCanHold,
+			FULL_RESOLUTION_PIXEL_BUDGET);
 		if (!target) { return; }
 		void switchToPyramidLevel(target, target.width > current.width
 			? 'zoomed in, refining to'
