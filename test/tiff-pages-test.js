@@ -36,7 +36,7 @@ async function main() {
 	);
 	const {
 		parsePageDirectory, imagePages, levelsForPage, pageOwningIfd,
-		isPyramidal, levelForDisplayWidth, chooseOpenLevel, levelLabel,
+		isPyramidal, levelForDisplayWidth, levelForZoom, chooseOpenLevel, levelLabel,
 	} = pages;
 
 	// 1. Parsing tolerates absence and rubbish rather than throwing into a load.
@@ -152,6 +152,50 @@ async function main() {
 		const canDisplay = width => width <= 2000;
 		assert.strictEqual(chooseOpenLevel(directory, 0, 3000, canDisplay).width, 2000);
 		console.log('✅ The fallback walk stops at the largest displayable level');
+	}
+
+	// 9. Following a zoom: how far it is worth decoding a whole level.
+	{
+		const directory = parsePageDirectory(cogDirectory());  // 8000 → 1000
+		const always = () => true;
+		const full = 8000 * 8000;
+
+		// Zoomed in with no patch available (no budget): take the largest level
+		// the view needs and the canvas can hold.
+		assert.strictEqual(levelForZoom(directory, 0, 3, 8000, always).width, 8000,
+			'without a budget, a zoom is followed all the way to full resolution');
+
+		// The same zoom when a patch can cover the visible area: the base stops
+		// at the budget, because decoding more has no visible effect.
+		assert.strictEqual(levelForZoom(directory, 0, 3, 8000, always, full / 4).width, 4000,
+			'with a budget, the base stops where it stops being worth decoding');
+		assert.strictEqual(levelForZoom(directory, 0, 3, 8000, always, 1), null,
+			'a budget no level fits leaves the base alone, and the patch does all the work');
+
+		// A level the canvas cannot hold is never chosen, budget or not.
+		const onlySmall = (width) => width <= 2000;
+		assert.strictEqual(levelForZoom(directory, 0, 3, 8000, onlySmall).width, 2000);
+
+		// Already at or above what the view needs: nothing to do.
+		assert.strictEqual(levelForZoom(directory, 0, 0, 8000, always), null,
+			'at full resolution there is nothing finer to take');
+		assert.strictEqual(levelForZoom(directory, 0, 1, 3500, always), null,
+			'a view the current level already covers needs no change');
+		console.log('✅ Zooming in follows the view, and stops at the budget when patches can cover it');
+	}
+
+	// 10. Zooming out drops a level, but only past a full step — a view sitting
+	//     on a boundary must not switch back and forth.
+	{
+		const directory = parsePageDirectory(cogDirectory());
+		const always = () => true;
+		assert.strictEqual(levelForZoom(directory, 0, 0, 900, always).width, 1000,
+			'zoomed far out, the coarse level is enough');
+		assert.strictEqual(levelForZoom(directory, 0, 1, 2100, always), null,
+			'just inside the level below, nothing moves');
+		assert.strictEqual(levelForZoom(directory, 0, 0, 4001, always), null,
+			'less than a full level of slack keeps what is decoded');
+		console.log('✅ Zooming out drops a level only once the view is a full step below it');
 	}
 
 	console.log('\n🎉 All TIFF pyramid-level policy tests passed.\n');

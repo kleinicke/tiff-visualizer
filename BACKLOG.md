@@ -2504,6 +2504,13 @@ inspection, measurement, statistics and export read exactly what they always did
    level is displayed, hovering reads the STORED value for that pixel out of the
    file (one block, ~2 ms) instead of reporting the overview's average.
 
+   Since then the region path also DRAWS: with the setting on, a sharp patch of
+   a finer level is laid over the visible area (`updateDetailPatch` in
+   imagePreview.ts), and the base level stops growing at the pixel budget
+   because the patch covers what is on screen. Zooming into `s2_B02.tif`
+   settles in 2957 ms rather than 5055 and holds 30 megapixels rather than 120;
+   `big_40000px_cog.tif` holds 25 rather than 400.
+
    What remains is the rendering model, and it is the larger half: today the
    canvas IS the image, and viewport decoding needs it to be a WINDOW onto the
    image. That touches zoom, pan, pixel coordinates, the ROI/measure overlays,

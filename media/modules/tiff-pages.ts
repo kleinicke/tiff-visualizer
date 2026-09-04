@@ -191,6 +191,48 @@ export function chooseOpenLevel(
 }
 
 /**
+ * The level to hold as the base for a view, given the one already held, or null
+ * to keep what is there.
+ *
+ * Both directions of a zoom, and the reasons they are not symmetrical:
+ *
+ * **Finer.** Take the largest level that covers the view, that can be drawn,
+ * and that is within `pixelBudget`. The budget is what changes when the viewer
+ * can also draw a PATCH of a finer level over the visible area: without patches
+ * the decoded level is the only detail there is, so it is worth decoding a large
+ * one; with them, a 120-megapixel decode to show 1.6 megapixels is a wait with
+ * no visible effect, and the base can stop at a level that is cheap to hold
+ * while the patch supplies what is actually on screen.
+ *
+ * **Coarser.** Only when the view has dropped at least a full level below what
+ * is held. Detail already decoded is free to keep, so the only reasons to let it
+ * go are memory and the zoom range — and a view sitting near a boundary must not
+ * switch back and forth on every small change.
+ */
+export function levelForZoom(
+	directory: TiffPageEntry[],
+	pageIndex: number,
+	currentIndex: number,
+	displayWidth: number,
+	canDisplay: (width: number, height: number) => boolean,
+	pixelBudget = Infinity,
+): TiffPageEntry | null {
+	const levels = levelsForPage(directory, pageIndex);
+	const current = levels.find(level => level.index === currentIndex);
+	const wanted = levelForDisplayWidth(directory, pageIndex, displayWidth);
+	if (!current || !wanted) { return null; }
+
+	if (wanted.width > current.width) {
+		const target = levels.find(level =>
+			level.width <= wanted.width
+			&& level.width * level.height <= pixelBudget
+			&& canDisplay(level.width, level.height));
+		return target && target.width > current.width ? target : null;
+	}
+	return wanted.width * 2 <= current.width ? wanted : null;
+}
+
+/**
  * What the display side tells the decoder about the view it is opening into.
  *
  * Plain numbers, because the decision is made in the decode worker — where the

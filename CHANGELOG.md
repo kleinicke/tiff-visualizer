@@ -8,6 +8,7 @@
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
 - Render multi-band GeoTIFFs correctly: a band past the colour samples is treated as alpha only when the file's `ExtraSamples` tag says so, which previously made a 2-band COG almost entirely transparent
 - Treat a pyramidal TIFF's overviews (COG, whole-slide) as resolution levels of one image rather than as extra pages, with a Level selector that names each level
+- Prefer the patch over a large whole-level decode when zooming in: with region decoding on, a Sentinel-2 band's zoom settles in 2957 ms rather than 5055 ms and holds 30 megapixels rather than 120, and a 40000x40000 scene holds 25 megapixels rather than 400 — while showing the same stored pixels where you are looking
 - Draw a sharp patch of a finer pyramid level over the visible area (behind `tiffVisualizer.experimentalRegionDecode`), so a 40000x40000 scene shows its stored pixels at high zoom — no canvas can hold that level whole, but the part on screen is a few tiles
 - Fix zooming out on a very large image: the 10% floor made it impossible to see the whole picture, and a pyramid now drops to a coarser level as you zoom out instead of holding the fine one
 - Fix a pyramidal file's Level control turning into a page selector after a fallback decode, and refinement stalling several levels short when the level a zoom asked for was too large to draw

@@ -4,7 +4,7 @@ import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions 
 import type { ImageSettings, SettingsUpdateResult } from './modules/settings-manager.js';
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
-import { imagePages, isPyramidal, levelForDisplayWidth, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
+import { imagePages, isPyramidal, levelForDisplayWidth, levelForZoom, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
 import { planRegionForView, visibleImageRect } from './modules/viewport-tiles.js';
 import { FULL_RESOLUTION_PIXEL_BUDGET } from './modules/tiff-pages.js';
 import type { Rect } from './modules/viewport-tiles.js';
@@ -7064,32 +7064,20 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const levels = levelsForPage(directory, page);
 		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
 		if (!current) { return; }
-		const wanted = levelForDisplayWidth(directory, page, displayedImageWidthPx());
-		if (!wanted) { return; }
-
-		if (wanted.width > current.width) {
-			// The level that covers this zoom may be one no canvas can hold — a
-			// 40000x40000 page is unreachable however far you zoom in. Take the
-			// largest one that CAN be shown instead of refusing to refine at
-			// all, which left the view stuck several levels coarser than it
-			// could have been.
-			const target = levels.find(level =>
-				level.width <= wanted.width && canvasCanHold(level.width, level.height));
-			if (target && target.width > current.width) {
-				void switchToPyramidLevel(target, 'zoomed in, refining to');
-			}
-			return;
-		}
-
-		// Zoomed out: drop to a coarser level. Keeping the fine one costs
-		// memory for detail that is no longer visible, and — because zoom is
-		// expressed against the decoded image's own width — it also puts the
-		// scale that fits the window below what the zoom control can express.
-		// The factor-of-two guard keeps a view near a level boundary from
-		// switching back and forth.
-		if (wanted.width * 2 <= current.width) {
-			void switchToPyramidLevel(wanted, 'zoomed out, dropping to');
-		}
+		// How far it is worth decoding a WHOLE level to follow a zoom. Without
+		// patches the decoded level is the only detail there is; with them, the
+		// base only has to be good enough for the moment before the next patch
+		// lands — and for the histogram, measurement and export, which keep
+		// reading it. See levelForZoom.
+		const budget = settingsManager.settings.experimentalRegionDecode
+			? FULL_RESOLUTION_PIXEL_BUDGET
+			: Infinity;
+		const target = levelForZoom(
+			directory, page, tiffProcessor.pageIndex, displayedImageWidthPx(), canvasCanHold, budget);
+		if (!target) { return; }
+		void switchToPyramidLevel(target, target.width > current.width
+			? 'zoomed in, refining to'
+			: 'zoomed out, dropping to');
 	}
 
 	/**

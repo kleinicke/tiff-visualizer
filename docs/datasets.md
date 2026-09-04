@@ -116,6 +116,10 @@ page — and with the setting on, the viewer:
   40000x40000 scene shows its stored pixels at high zoom even though no canvas
   could ever hold the whole level. The coarse image underneath is unchanged and
   still the image for every other purpose;
+- stops enlarging that coarse image once it passes the size worth decoding
+  (about 40 megapixels), since the patch already shows the detail where you are
+  looking. Zooming into a 10980x10980 band then settles in about 3 seconds
+  rather than 5, holding a quarter of the pixels;
 - reads the value actually stored under the cursor, so the readout is exact and
   drops its `overview` caveat.
 
