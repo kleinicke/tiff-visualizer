@@ -7,7 +7,7 @@ import { tryStripParallelDecode } from './strip-parallel-decode.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
-import { chooseOpenLevel, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
+import { chooseOpenLevel, chooseRemoteOpenLevel, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
 import type { TiffLevelHint } from './tiff-pages.js';
 import { applyBandScaling, bandDescription, hasBandScaling, parseGdalMetadata, GdalMetadata } from './gdal-metadata.js';
 import { parseGeoReference, type GeoReference } from './geo-reference.js';
@@ -72,7 +72,7 @@ export class TiffProcessor {
 	settingsManager: SettingsManager;
 	vscode: VsCodeApi;
 	rawTiffData: any;
-	_pendingRenderData: { image: any, rasters: any } | null;
+	_pendingRenderData: { image: any, rasters: any, progressiveRemote?: boolean } | null;
 	_isInitialLoad: boolean;
 	_lastImageData: ImageData | null;
 	_lastStatistics: Stats | null;
@@ -153,6 +153,16 @@ export class TiffProcessor {
 		this.omeBinaryOnly = null;
 		this.omeXml = null;
 		this.geoReference = null;
+	}
+
+	/** True when pixels are fetched lazily from an HTTP Range-backed COG. */
+	get isRemoteSource(): boolean {
+		return !!this._remoteTiff && !!this._remoteTiffUrl;
+	}
+
+	/** The initial remote overview is being filled block-by-block by the view. */
+	get isProgressiveRemoteBase(): boolean {
+		return !!this.rawTiffData?.progressiveRemote;
 	}
 
 	private _ensureLocalWasm(): Promise<boolean> {
@@ -943,10 +953,10 @@ export class TiffProcessor {
 		if (levelHint && pageIndex === 0 && this.pageDirectory.length > 1) {
 			const canDisplay = (width: number, height: number) =>
 				width <= levelHint.maxAxis && height <= levelHint.maxAxis
-				&& width * height <= levelHint.maxArea
-				&& width * height * 4 <= levelHint.maxBytes;
-			const chosen = chooseOpenLevel(this.pageDirectory, 0, levelHint.displayWidth,
-				canDisplay, 1, levelHint.pixelBudget);
+					&& width * height <= levelHint.maxArea
+					&& width * height * 4 <= levelHint.maxBytes;
+			const chosen = chooseRemoteOpenLevel(this.pageDirectory, 0, levelHint.displayWidth,
+				canDisplay, levelHint.pixelBudget);
 			if (chosen) { pageIndex = chosen.index; }
 		}
 		if (pageIndex < 0 || pageIndex >= this.pageCount) {
@@ -958,7 +968,15 @@ export class TiffProcessor {
 		const image = await tiff.getImage(pageIndex);
 		const firstImage = pageIndex === 0 ? image : await tiff.getImage(0);
 		this._setOmeXml(String(firstImage?.fileDirectory?.ImageDescription || ''));
-		const rasters = await this._readRemoteRasters(image, { signal: this.loadSignal });
+		const width = image.getWidth();
+		const height = image.getHeight();
+		// A very large lowest overview is not a useful atomic unit. Mount its
+		// correctly sized canvas from metadata and let the view request its stored
+		// blocks. Ordinary remote TIFFs keep the existing whole-image fast path.
+		const progressiveRemote = !!levelHint && width * height > levelHint.pixelBudget;
+		const rasters = progressiveRemote
+			? null
+			: await this._readRemoteRasters(image, { signal: this.loadSignal });
 		const decodeInfo = {
 			engine: 'geotiff.js (HTTP ranges)',
 			durationMs: performance.now() - decodeStart,
@@ -966,16 +984,14 @@ export class TiffProcessor {
 		PerfTrace.mark('decode-geotiff-ranges');
 		PerfTrace.note('tiff-byte-source', 'HTTP Range');
 
-		const width = image.getWidth();
-		const height = image.getHeight();
 		const sampleFormat = image.getSampleFormat();
 		const samplesPerPixel = image.getSamplesPerPixel();
 		const bitsPerSample = image.getBitsPerSample();
 		const ArrayCtor = pickTiffArrayCtor(sampleFormat, bitsPerSample);
-		const data = new ArrayCtor(width * height * samplesPerPixel);
-		if (samplesPerPixel === 1) {
+		const data = progressiveRemote ? new ArrayCtor(0) : new ArrayCtor(width * height * samplesPerPixel);
+		if (!progressiveRemote && samplesPerPixel === 1) {
 			data.set(rasters[0]);
-		} else {
+		} else if (!progressiveRemote) {
 			for (let i = 0; i < rasters[0].length; i++) {
 				for (let sample = 0; sample < samplesPerPixel; sample++) {
 					data[i * samplesPerPixel + sample] = rasters[sample][i];
@@ -997,6 +1013,7 @@ export class TiffProcessor {
 				pageCount: this.pageCount,
 			},
 			data,
+			progressiveRemote,
 		};
 		this._lastAllTags = buildTagsFromGeotiffImage(image);
 		this._setOmeXml(findOmeXmlInTags(this._lastAllTags));
@@ -1029,7 +1046,7 @@ export class TiffProcessor {
 		canvas.width = width;
 		canvas.height = height;
 		if (this.vscode && this._isInitialLoad) {
-			this._pendingRenderData = { image, rasters };
+			this._pendingRenderData = { image, rasters, progressiveRemote };
 			this.vscode.postMessage({
 				type: 'formatInfo',
 				value: {
@@ -1050,12 +1067,18 @@ export class TiffProcessor {
 			});
 			return {
 				canvas,
-				imageData: new ImageData(width, height),
+				// Do not allocate a second full-overview RGBA placeholder while the
+				// canvas itself is waiting for its first progressively decoded block.
+				imageData: progressiveRemote ? new ImageData(1, 1) : new ImageData(width, height),
 				tiffData: this.rawTiffData,
 				decodeInfo,
 			};
 		}
 
+		if (progressiveRemote) {
+			this._isInitialLoad = false;
+			return { canvas, imageData: new ImageData(1, 1), tiffData: this.rawTiffData, decodeInfo };
+		}
 		const imageData = await this.renderTiff(image, rasters);
 		console.log(`[TiffProcessor] HTTP-range TIFF ready in ${(performance.now() - startTime).toFixed(2)}ms`);
 		return { canvas, imageData, tiffData: this.rawTiffData, decodeInfo };
@@ -1518,9 +1541,10 @@ export class TiffProcessor {
 	private _decodeRegionRaw(
 		pageIndex: number,
 		rect: { x: number, y: number, width: number, height: number },
+		signal?: AbortSignal,
 	): Promise<any | null> {
 		if (this._remoteTiff && this._remoteTiffUrl) {
-			return this._decodeRemoteRegionRaw(pageIndex, rect);
+			return this._decodeRemoteRegionRaw(pageIndex, rect, signal);
 		}
 		const requestedBuffer = this._sourceBuffer;
 		const requestedGeneration = this._regionSourceGeneration;
@@ -1590,6 +1614,7 @@ export class TiffProcessor {
 	private async _decodeRemoteRegionRaw(
 		pageIndex: number,
 		rect: { x: number, y: number, width: number, height: number },
+		signal?: AbortSignal,
 	): Promise<any | null> {
 		try {
 			const image = await this._remoteTiff.getImage(pageIndex);
@@ -1599,7 +1624,7 @@ export class TiffProcessor {
 			const height = Math.max(1, Math.min(Math.ceil(rect.height), image.getHeight() - y));
 			const rasters = await this._readRemoteRasters(image, {
 				window: [x, y, x + width, y + height],
-				signal: this.loadSignal,
+				signal: signal || this.loadSignal,
 			});
 			const channels = rasters.length;
 			const data = new Float32Array(width * height * channels);
@@ -1631,10 +1656,11 @@ export class TiffProcessor {
 	async renderRegion(
 		pageIndex: number,
 		rect: { x: number, y: number, width: number, height: number },
+		signal?: AbortSignal,
 	): Promise<ImageData | null> {
 		if (!this._sourceBuffer && !this._remoteTiff) { return null; }
 		try {
-			const region = await this._decodeRegionRaw(pageIndex, rect);
+			const region = await this._decodeRegionRaw(pageIndex, rect, signal);
 			if (!region) { return null; }
 			const width = Number(region.width);
 			const height = Number(region.height);
@@ -1645,6 +1671,26 @@ export class TiffProcessor {
 			const settings = this.settingsManager.settings;
 			const bitsPerSample = this.rawTiffData?.ifd?.t258 ?? region.bitsPerSample;
 			const sampleFormat = this.rawTiffData?.ifd?.t339 ?? region.sampleFormat;
+			if (!this._lastStatistics && NormalizationHelper.needsStats(settings)) {
+				// Freeze a representative viewport block as the provisional range.
+				// All later tiles use it, avoiding seams without a whole-scene stats
+				// pass before the first visible pixels.
+				const scanChannels = channels === 2 ? 1 : Math.min(channels, 3);
+				let min = Infinity;
+				let max = -Infinity;
+				for (let pixel = 0; pixel < width * height; pixel++) {
+					for (let channel = 0; channel < scanChannels; channel++) {
+						const value = data[pixel * channels + channel];
+						if (!Number.isFinite(value) || value === this._gdalNodata) { continue; }
+						if (value < min) { min = value; }
+						if (value > max) { max = value; }
+					}
+				}
+				if (Number.isFinite(min) && Number.isFinite(max)) {
+					this._lastStatistics = { min, max };
+					this.vscode?.postMessage?.({ type: 'stats', value: this._lastStatistics });
+				}
+			}
 			return ImageRenderer.render(
 				data, width, height, channels,
 				sampleFormat === 3,
@@ -1815,9 +1861,14 @@ export class TiffProcessor {
 			return null;
 		}
 
-		const { image, rasters } = this._pendingRenderData;
+		const { image, rasters, progressiveRemote } = this._pendingRenderData;
 		this._pendingRenderData = null;
 		this._isInitialLoad = false;
+		if (progressiveRemote) {
+			// The view owns the block stream. The tiny placeholder exists only to
+			// complete the settings handshake; no full-size empty RGBA copy is made.
+			return renderOptions.placeholderImageData || new ImageData(1, 1);
+		}
 
 		// Now render with the correct format-specific settings
 		const imageData = await this.renderTiff(image, rasters, renderOptions);

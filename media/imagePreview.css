@@ -49,6 +49,10 @@ body img {
    different times. */
 .pyramid-scene {
 	position: relative;
+	/* Tile z-indices are meaningful only inside the scene. Without an isolated
+	   stacking context, fine tiles can paint above fixed navigation controls. */
+	isolation: isolate;
+	z-index: 0;
 	flex: none;
 	overflow: hidden;
 }
@@ -452,9 +456,8 @@ body img {
 	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 }
 
-/* A line of read-only status under the controls — what resolution is loaded
-   and what part of the image is on screen. Quieter than the controls: it is
-   there to be glanced at, not operated. */
+/* Read-only full-image and patch resolution beneath the controls. Quieter than
+   the controls: it is there to be glanced at, not operated. */
 .dataset-note {
 	margin-top: 6px;
 	padding-top: 6px;
@@ -462,7 +465,7 @@ body img {
 	color: var(--vscode-descriptionForeground, rgba(190, 190, 190, 0.8));
 	font-size: 11px;
 	line-height: 1.45;
-	white-space: nowrap;
+	white-space: pre-line;
 }
 
 .dataset-axis input[type='range'] {

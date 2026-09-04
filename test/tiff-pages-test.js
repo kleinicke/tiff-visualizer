@@ -36,7 +36,7 @@ async function main() {
 	);
 	const {
 		parsePageDirectory, imagePages, levelsForPage, pageOwningIfd,
-		isPyramidal, levelForDisplayWidth, levelForZoom, chooseOpenLevel, levelLabel,
+		isPyramidal, levelForDisplayWidth, levelForZoom, chooseOpenLevel, chooseRemoteOpenLevel, levelLabel,
 	} = pages;
 
 	// 1. Parsing tolerates absence and rubbish rather than throwing into a load.
@@ -107,6 +107,17 @@ async function main() {
 			'past the budget, the level is matched to the window');
 		assert.strictEqual(chooseOpenLevel(directory, 0, 3000, always).width, 4000,
 			'a bigger window still gets enough pixels to fill it');
+		assert.strictEqual(chooseRemoteOpenLevel(directory, 0, 3000, always).width, 1000,
+			'a large remote COG establishes a complete cheap overview before streaming detail');
+		assert.strictEqual(chooseRemoteOpenLevel(directory, 0, 3000, always, generousBudget).width, 1000,
+			'a large remote scene still starts cheaply even if its decode budget is generous');
+		const ordinaryRemote = parsePageDirectory(JSON.stringify([
+			{ index: 0, width: 7000, height: 7000, kind: 'image', parent: null, reduction: 1 },
+			{ index: 1, width: 3500, height: 3500, kind: 'overview', parent: 0, reduction: 2 },
+			{ index: 2, width: 1750, height: 1750, kind: 'overview', parent: 0, reduction: 4 },
+		]));
+		assert.strictEqual(chooseRemoteOpenLevel(ordinaryRemote, 0, 3000, always).width, 3500,
+			'a remote TIFF below 50 MP keeps the existing window-matched open policy');
 		console.log('✅ Opening prefers full resolution within budget, and the window past it');
 	}
 

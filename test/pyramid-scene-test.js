@@ -1,5 +1,6 @@
 /** Regression tests for the retained multiresolution scene. */
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 class FakeClassList {
@@ -41,6 +42,11 @@ class FakeElement {
 }
 
 async function main() {
+	const css = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.css'), 'utf8');
+	assert.match(css, /\.pyramid-scene\s*\{[^}]*isolation:\s*isolate/s,
+		'tile z-indices must not escape above fixed navigation controls');
+	console.log('✅ Pyramid detail cannot cover the fixed resolution controls');
+
 	global.document = { createElement: tag => new FakeElement(tag) };
 	const { PyramidScene } = await import(
 		path.join('..', 'out', 'media', 'modules', 'pyramid-scene.js').replace(/\\/g, '/')
@@ -57,11 +63,37 @@ async function main() {
 	assert.strictEqual(base.style.width, '100%');
 	console.log('✅ The overview and detail share one full-resolution scene transform');
 
+	const baseLevel = { index: 5, width: 5000, height: 5000, reduction: 8, blockWidth: 512, blockHeight: 512 };
+	const baseMissing = scene.missingBaseRects(baseLevel, { x: 0, y: 0, width: 1024, height: 512 });
+	assert.strictEqual(baseMissing.length, 2);
+	const baseImageData = { width: 512, height: 512, data: new Uint8ClampedArray(512 * 512 * 4) };
+	scene.commitBaseRegion(baseLevel, baseMissing[0], baseImageData);
+	assert.deepStrictEqual(scene.baseLoadedSummary(baseLevel, { x: 0, y: 0, width: 1024, height: 512 }), {
+		blocks: 1, totalBlocks: 2, pixels: 512 * 512,
+	});
+	assert.strictEqual(base.lastPut[1], baseMissing[0].x);
+	assert.strictEqual(base.lastPut[2], baseMissing[0].y);
+	console.log('✅ A remote overview can paint and report each base block independently');
+
+	const progressive = scene.missingRects(full, { x: 0, y: 0, width: 1024, height: 1024 });
+	assert.strictEqual(progressive.length, 4);
+	assert.ok(progressive.every(rect => rect.width === 512 && rect.height === 512),
+		'a streamed request is divided on independently decodable block boundaries');
+	assert.strictEqual(scene.canRetain(full, { x: 0, y: 0, width: 1024, height: 1024 }), true);
+	assert.strictEqual(scene.canRetain(full, { x: 0, y: 0, width: 1536, height: 1024 }), false,
+		'a detail viewport larger than the cache is rejected before it can evict itself');
+	console.log('✅ Remote detail can paint block-by-block within the cache budget');
+
 	const request = scene.missingRect(full, { x: 520, y: 20, width: 100, height: 100 });
 	assert.deepStrictEqual(request, { x: 512, y: 0, width: 512, height: 512 });
 	const imageData = { width: 512, height: 512, data: new Uint8ClampedArray(512 * 512 * 4) };
 	scene.commitRegion(full, request, imageData);
 	assert.strictEqual(scene.tileCount, 1);
+	assert.deepStrictEqual(scene.loadedBounds(full, { x: 500, y: 0, width: 600, height: 600 }), request,
+		'patch status describes pixels that have actually arrived');
+	assert.deepStrictEqual(scene.loadedSummary(full, { x: 500, y: 0, width: 600, height: 600 }), {
+		blocks: 1, pixels: 512 * 512, bounds: request,
+	});
 	assert.strictEqual(scene.missingRect(full, { x: 530, y: 30, width: 50, height: 50 }), null,
 		'a loaded block is retained across nearby zoom/pan requests');
 	console.log('✅ Loaded blocks are retained and reused instead of flashing back to an overview');
@@ -74,7 +106,16 @@ async function main() {
 	assert.ok(fullTile && halfTile);
 	assert.ok(Number(fullTile.style.zIndex) > Number(halfTile.style.zIndex),
 		'finer pixels always win independent of decode arrival order');
+	assert.strictEqual(scene.finestVisibleLevel([full, half], { x: 520, y: 20, width: 50, height: 50 }), full);
+	assert.strictEqual(scene.finestVisibleLevel([full, half], { x: 500, y: 20, width: 100, height: 50 }), half,
+		'the status must not claim a fine level that covers only part of the view');
 	console.log('✅ Finer retained tiles always cover coarser tiles deterministically');
+
+	assert.strictEqual(scene.retainOnlyLevel(half.index), 1);
+	assert.strictEqual(scene.tileCount, 1);
+	assert.ok(scene.element.children.includes(halfTile));
+	assert.ok(!scene.element.children.includes(fullTile));
+	console.log('✅ Transition tiles converge atomically to one selected resolution');
 
 	for (let column = 2; column < 8; column++) {
 		const rect = { x: column * 512, y: 0, width: 512, height: 512 };

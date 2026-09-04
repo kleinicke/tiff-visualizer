@@ -213,8 +213,10 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 		'physical arrow keys must be captured before focused webview controls consume them');
 	assert.match(webviewSource, /collection-prev-btn[^>]*tabindex="-1"[\s\S]*collection-next-btn[^>]*tabindex="-1"/,
 		'collection arrow controls must not enter the keyboard tab order');
-	assert.match(webviewSource, /imageCollection\.totalImages > 1 \|\| tiffProcessor\.pageCount > 1[\s\S]*?navigateTiffPage\(isRightArrow \? 1 : -1\)/,
+	assert.match(webviewSource, /const logicalTiffPages = isPyramidal\(tiffProcessor\.pageDirectory\)[\s\S]*?imagePages\(tiffProcessor\.pageDirectory\)\.length[\s\S]*?logicalTiffPages > 1[\s\S]*?navigateTiffPage\(isRightArrow \? 1 : -1\)/,
 		'physical arrow keys must navigate multi-page and OME-TIFF planes instead of panning');
+	assert.doesNotMatch(webviewSource, /imageCollection\.totalImages > 1 \|\| tiffProcessor\.pageCount > 1/,
+		'pyramid overview IFDs must not steal arrow keys from viewport scrolling');
 	// Multi-page TIFF and OME-TIFF no longer have their own buttons: they are
 	// ordinary controls in the one shared navigation overlay. The invariants
 	// those buttons carried still apply to every control in it — stay out of
@@ -225,6 +227,22 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 		'navigation dropdowns must not enter the keyboard tab order');
 	assert.match(webviewSource, /overlay\.addEventListener\('pointerdown'[\s\S]*?event\.stopPropagation\(\);/,
 		'overlay presses must not bubble into canvas click/zoom handling');
+	assert.match(webviewSource, /loading: loading \|\| _levelSwitchPending \|\| _tiffViewportLoadCount > 0/,
+		'TIFF navigation chrome must stay visibly busy during page loads and viewport tile streams');
+	assert.doesNotMatch(webviewSource, /_tiffRefinementScheduled/,
+		'a zoom debounce with no active request must not display the loading dot');
+	assert.match(webviewSource, /const requests = tiffProcessor\.isRemoteSource \? missing[\s\S]*?scene\.commitRegion\(wanted, rect, rendered\)/,
+		'remote COG blocks must be committed independently as their range requests complete');
+	assert.match(webviewSource, /scene\.missingBaseRects\(wanted, visibleInLevel\)[\s\S]*?scene\.commitBaseRegion\(wanted, rect, rendered\)/,
+		'the lowest remote overview must also be painted progressively');
+	assert.match(webviewSource, /new AbortController\(\)[\s\S]*?renderRegion\(wanted\.index, rect, requestController\.signal\)/,
+		'superseded remote viewport requests must be cancellable');
+	assert.doesNotMatch(webviewSource, /viewing \$\{Math\.round\(visible\.x\)/,
+		'pyramid status must not regress to the dense coordinate-and-coverage sentence');
+	assert.match(webviewSource, /const restoreDefaultPosition = \(\) => \{[\s\S]*?overlayPositions\.delete\(key\);[\s\S]*?overlay\.style\.removeProperty\(property\);/,
+		'floating overlays must be able to return to their stylesheet-defined home position');
+	assert.match(webviewSource, /overlay\.addEventListener\('dblclick'[\s\S]*?target\.closest\('input, select, button, a, textarea'\)[\s\S]*?restoreDefaultPosition\(\);/,
+		'double-clicking overlay chrome must restore its default position without hijacking controls');
 	assert.match(webviewSource, /function tiffControls[\s\S]*?name: 'Page'/,
 		'multi-page TIFF must contribute to the shared navigation model');
 	// A DICOM series is often sparse, so navigation must never name a plane the

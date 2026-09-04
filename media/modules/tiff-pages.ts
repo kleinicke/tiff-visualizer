@@ -145,6 +145,8 @@ export function levelForDisplayWidth(
  * level is visually identical anyway.
  */
 export const FULL_RESOLUTION_PIXEL_BUDGET = 40_000_000;
+/** Above this size the viewer uses a stable overview plus streamed viewport tiles. */
+export const LARGE_PYRAMID_SCENE_THRESHOLD = 50_000_000;
 
 /**
  * The level to decode when a pyramidal file is FIRST opened.
@@ -188,6 +190,25 @@ export function chooseOpenLevel(
 		if (canDisplay(level.width, level.height)) { return level; }
 	}
 	return null;
+}
+
+/**
+ * A range-backed COG can establish context from its cheapest complete overview
+ * and stream the window-matched blocks next. Local files keep `chooseOpenLevel`
+ * because their bytes are already resident and a second-stage read saves no IO.
+ */
+export function chooseRemoteOpenLevel(
+	directory: TiffPageEntry[],
+	pageIndex: number,
+	displayWidth: number,
+	canDisplay: (width: number, height: number) => boolean,
+	pixelBudget = FULL_RESOLUTION_PIXEL_BUDGET,
+): TiffPageEntry | null {
+	const ordinary = chooseOpenLevel(directory, pageIndex, displayWidth, canDisplay, 1, pixelBudget);
+	const levels = levelsForPage(directory, pageIndex);
+	const full = levels[0];
+	if (!full || full.width * full.height <= LARGE_PYRAMID_SCENE_THRESHOLD) { return ordinary; }
+	return [...levels].reverse().find(level => canDisplay(level.width, level.height)) || ordinary;
 }
 
 /**

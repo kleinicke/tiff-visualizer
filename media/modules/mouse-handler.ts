@@ -73,6 +73,8 @@ export class MouseHandler {
 	private _storedResolverGeneration = 0;
 	/** Exact values already read, keyed by pixel; cleared with the image. */
 	private _storedValueCache = new Map<string, string>();
+	/** Last viewport position of the pointer while it was over the image. */
+	private _pointerClient: { x: number, y: number } | null = null;
 
 	// DOM elements
 	container: HTMLElement;
@@ -226,7 +228,19 @@ export class MouseHandler {
 	 */
 	_handleMouseEnter(e: MouseEvent) {
 		if (!this.imageElement) return;
+		this._pointerClient = { x: e.clientX, y: e.clientY };
+		this._publishAtPointer(e);
+	}
+
+	/** Publish the pixel currently under a viewport-space pointer position. */
+	private _publishAtPointer(e: Pick<MouseEvent, 'clientX' | 'clientY'>): void {
+		if (!this.imageElement) { return; }
 		if (this._storedValuesOnly) {
+			if (!this._pixelPosition(e)) {
+				this._storedValuePixel = '';
+				this.vscode.postMessage({ type: 'pixelBlur' });
+				return;
+			}
 			this._upgradeToStoredValue(e);
 			return;
 		}
@@ -245,19 +259,21 @@ export class MouseHandler {
 	 */
 	_handleMouseMove(e: MouseEvent) {
 		if (!this.imageElement) return;
-		if (this._storedValuesOnly) {
-			// Do not flash an overview sample before the exact value. Keep the last
-			// stable readout while the newest full-resolution pixel is fetched.
-			this._upgradeToStoredValue(e);
-			return;
-		}
-		const pixelInfo = this._getPixelInfo(e);
-		if (pixelInfo) {
-			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
-			this._upgradeToStoredValue(e);
-		} else {
-			this.vscode.postMessage({ type: 'pixelBlur' });
-		}
+		this._pointerClient = { x: e.clientX, y: e.clientY };
+		this._publishAtPointer(e);
+	}
+
+	/**
+	 * Re-evaluate a stationary pointer after scroll, keyboard pan, or zoom.
+	 * Mouse events carry viewport coordinates, so moving the image underneath
+	 * the pointer changes the selected pixel even when the mouse itself is still.
+	 */
+	refreshAtPointer(): void {
+		if (!this._pointerClient) { return; }
+		this._publishAtPointer({
+			clientX: this._pointerClient.x,
+			clientY: this._pointerClient.y,
+		});
 	}
 
 	/**
@@ -278,7 +294,7 @@ export class MouseHandler {
 	 * Values already read are remembered, so coming back to a pixel — which
 	 * happens constantly while nudging around a feature — costs nothing.
 	 */
-	private _upgradeToStoredValue(e: MouseEvent): void {
+	private _upgradeToStoredValue(e: Pick<MouseEvent, 'clientX' | 'clientY'>): void {
 		const resolver = this.storedValueResolver;
 		// Only worth doing when the displayed value is NOT the stored one.
 		if (!resolver || (!this.resolutionNote && !this._storedValuesOnly)) { return; }
@@ -348,6 +364,8 @@ export class MouseHandler {
 	 * @private
 	 */
 	_handleMouseLeave(_e: MouseEvent) {
+		this._pointerClient = null;
+		this._storedValuePixel = '';
 		this.vscode.postMessage({
 			type: 'pixelBlur'
 		});
@@ -362,7 +380,7 @@ export class MouseHandler {
 	 * image. Shared by the readout and by the exact-value upgrade, so the two
 	 * can never disagree about which pixel is being pointed at.
 	 */
-	_pixelPosition(e: MouseEvent): { x: number, y: number, width: number, height: number } | null {
+	_pixelPosition(e: Pick<MouseEvent, 'clientX' | 'clientY'>): { x: number, y: number, width: number, height: number } | null {
 		if (!this.imageElement) { return null; }
 		const rect = this.imageElement.getBoundingClientRect();
 		const anyElement = this.imageElement as any;
@@ -384,7 +402,7 @@ export class MouseHandler {
 		return { x, y, width: naturalWidth, height: naturalHeight };
 	}
 
-	_getPixelInfo(e: MouseEvent): string {
+	_getPixelInfo(e: Pick<MouseEvent, 'clientX' | 'clientY'>): string {
 		const position = this._pixelPosition(e);
 		if (!position) { return ''; }
 		const { x, y, width: naturalWidth, height: naturalHeight } = position;

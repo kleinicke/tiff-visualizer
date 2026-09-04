@@ -421,7 +421,8 @@ test('draws a sharp patch of a finer level over the visible area', async ({ page
 
   // And the status line names it. Reporting only the base level reads as
   // "this is all you are seeing" while full-resolution pixels are on screen.
-  await expect(page.locator('.dataset-note')).toContainText('sharp here: Full · 40000x40000');
+  await expect(page.locator('.dataset-note')).toContainText('Visible detail: Full ·');
+  await expect(page.locator('.dataset-note')).toContainText(`${rectWidth}x${rectHeight} px`);
 
   // And it sits exactly over them: converting its position back into
   // full-resolution pixels must return the rectangle's own origin. A patch

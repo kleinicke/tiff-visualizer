@@ -36,6 +36,13 @@ async function main() {
 		global.window = { GeoTIFF };
 		global.navigator = { platform: 'Linux' };
 		global.document = { body: {}, createElement: () => ({}) };
+		global.ImageData = class ImageData {
+			constructor(width, height) {
+				this.width = width;
+				this.height = height;
+				this.data = new Uint8ClampedArray(width * height * 4);
+			}
+		};
 		const { TiffProcessor } = await import(
 			path.join('..', 'out', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
 		);
@@ -56,6 +63,21 @@ async function main() {
 		assert.ok(rangeRequests > 0, 'the source was requested with HTTP Range');
 		assert.ok(bytesServed < source.length, `region read transferred ${bytesServed}, full file is ${source.length}`);
 		console.log(`✅ Remote region matched local pixels using ${bytesServed} / ${source.length} bytes`);
+
+		processor.settingsManager.settings.remoteTiffUrl = url;
+		const progressive = await processor.processTiff('unused', 0, {
+			displayWidth: 100,
+			maxAxis: 10000,
+			maxArea: 100_000_000,
+			maxBytes: 400_000_000,
+			pixelBudget: 1,
+		});
+		assert.strictEqual(processor.isProgressiveRemoteBase, true);
+		assert.strictEqual(processor.rawTiffData.data.length, 0,
+			'progressive bootstrap must not materialize the selected level');
+		assert.deepStrictEqual([progressive.imageData.width, progressive.imageData.height], [1, 1],
+			'progressive bootstrap must not allocate a full-size empty RGBA placeholder');
+		console.log('✅ Oversized remote bootstrap returns metadata without decoding the whole overview');
 	} finally {
 		await new Promise(resolve => server.close(resolve));
 	}
