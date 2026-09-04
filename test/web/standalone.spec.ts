@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 
 test('serves the standalone scientific image viewer', async ({ page }) => {
@@ -462,4 +463,44 @@ test('leaves an ordinary TIFF completely alone', async ({ page }) => {
 
   await expect(page.locator('.dataset-overlay')).toBeHidden();
   await expect(page.locator('canvas.detail-patch')).toHaveCount(0);
+});
+
+/**
+ * The bug this pins: zooming into a very large pyramid chose a level the size
+ * check accepted and the renderer then refused, so the decode was paid for and
+ * the view went transparent — followed by a fallback decode that took half a
+ * minute. Both limits now come from one constant; this asserts the outcome.
+ */
+test('zooming a gigapixel pyramid never asks for more than can be drawn', async ({ page }) => {
+  const corpusFile = '/Users/florian/Projects/cursor/test_data/cog/big_40000px_cog.tif';
+  test.skip(!fs.existsSync(corpusFile), 'corpus file not present');
+
+  const problems: string[] = [];
+  page.on('console', message => {
+    const text = message.text();
+    if (/\[Canvas\].*limit|geotiff\.js \(main thread\)/.test(text)) { problems.push(text); }
+  });
+
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles(corpusFile);
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 120_000 });
+  await page.waitForTimeout(2500);
+
+  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 16 }, '*'));
+  await page.waitForTimeout(9000);
+
+  const canvas = await page.evaluate(() => {
+    const element = document.querySelector('body > canvas:not(.measure-overlay):not(.detail-patch)') as HTMLCanvasElement;
+    if (!element) { return null; }
+    const context = element.getContext('2d', { willReadFrequently: true });
+    // A WebGL-rendered canvas has no 2D context; that it exists at the chosen
+    // size is what matters here.
+    const middle = context?.getImageData(Math.floor(element.width / 2), Math.floor(element.height / 2), 1, 1).data;
+    return { width: element.width, height: element.height, alpha: middle ? middle[3] : 255 };
+  });
+
+  expect(canvas, 'an image must be on screen').not.toBeNull();
+  expect(canvas!.width * canvas!.height).toBeLessThanOrEqual(268_435_456);
+  expect(canvas!.alpha, 'the view must not be transparent').toBe(255);
+  expect(problems, 'no refused render and no main-thread geotiff.js fallback').toEqual([]);
 });

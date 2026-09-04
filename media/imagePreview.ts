@@ -1008,6 +1008,14 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	const CANVAS_SAFE_AREA = 16384 * 16384;
 	/** An ImageData's backing store is one typed array: 2^31-1 bytes at most. */
 	const IMAGE_DATA_MAX_BYTES = 2 ** 31 - 1;
+	/**
+	 * The hard ceiling on what can be DRAWN, shared by the size check and the
+	 * renderer so the two cannot disagree. Chromium refuses to back a 2D canvas
+	 * larger than 2^28 pixels, and beyond that the canvas silently becomes
+	 * unusable while the surrounding allocation takes the webview process with
+	 * it.
+	 */
+	const MAX_CANVAS_AREA = 268_435_456;
 
 	function isOverlayChrome(element: Element): boolean {
 		return !!element.closest('.histogram-overlay')
@@ -1760,14 +1768,10 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	async function renderImageDataToCanvas(imageData: ImageData, ctx: CanvasRenderingContext2D | null, shouldDraw: () => boolean = () => true) {
 		if (!ctx) return;
 		if (!shouldDraw()) return;
-		// Chromium refuses to back a 2D canvas larger than 2^28 pixels. Beyond
-		// that the canvas silently becomes unusable and the surrounding work
-		// (an ImageData plus a canvas backing store, several GB together) takes
-		// the whole webview process down with it — the renderer dies and VS
-		// Code shows its crashed-webview placeholder. Report it instead;
-		// displaying images this large needs tiled rendering, which does not
-		// exist yet.
-		const MAX_CANVAS_AREA = 268_435_456;
+		// See MAX_CANVAS_AREA. Reaching this is now a bug rather than a
+		// possibility — `canvasCanHold` applies the same ceiling, so nothing
+		// should ever ask for a larger image — but it stays as the backstop
+		// that keeps a mistake from killing the webview process.
 		const area = imageData.width * imageData.height;
 		if (area > MAX_CANVAS_AREA) {
 			const message = `Image is ${imageData.width}x${imageData.height} (${(area / 1e6).toFixed(0)} megapixels), `
@@ -1923,12 +1927,23 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 * renders as a blank grey panel with nothing logged, which looks like a
 	 * hang rather than a limit.
 	 *
-	 * The limit is probed rather than hardcoded, because it differs between
-	 * platforms and VS Code hosts: allocate the requested size and see whether
-	 * the canvas kept it. The probe canvas is discarded immediately.
+	 * Below the shared ceiling the limit is probed rather than hardcoded,
+	 * because it differs between platforms and VS Code hosts: allocate the
+	 * requested size and see whether the canvas kept it. The probe canvas is
+	 * discarded immediately.
+	 *
+	 * The ceiling itself is NOT probed, and that is the point. Chromium happily
+	 * allocates a 20000x20000 canvas, so the probe said yes — while
+	 * `renderImageDataToCanvas` refuses anything past 2^28 pixels outright,
+	 * because at that size the ImageData and the backing store together take the
+	 * webview process down. Two limits that disagree meant the level machinery
+	 * confidently chose a 400-megapixel level, the renderer declined to draw it,
+	 * and the view went transparent with the decode already paid for. Whatever
+	 * else is true, this must never claim more than the renderer will accept.
 	 */
 	function canvasCanHold(width: number, height: number): boolean {
 		if (!(width > 0 && height > 0)) { return false; }
+		if (width * height > MAX_CANVAS_AREA) { return false; }
 		// A canvas is only half the question: the pixels reach it through an
 		// ImageData, whose backing store is a single typed array and so cannot
 		// exceed 2^31-1 bytes. Chromium will happily allocate a 40000x40000
