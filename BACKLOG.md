@@ -2687,9 +2687,27 @@ the file — do not silently route it through anything.
    byte-source code.
 2. **Own range reader, or keep geotiff.js for byte access?** Recommended: own.
    See the tension above; this is a decision to take deliberately.
-3. **Prefix-only plan entry point, or sparse buffer?** Recommended: sparse
-   buffer first (smaller change), with a layout validation and a whole-file
-   fallback for non-conformant files.
+3. **Prefix-only plan entry point, or sparse buffer?** The sparse buffer was
+   recommended here, and measurement has since ruled it out. A COG a user
+   actually asked about — `data.source.coop/luddaludwig/…/AGC_final.tif` — is
+   **21.4 GB**: a BigTIFF of 463832x111320 (51.6 gigapixels), Int16, deflate,
+   512-pixel tiles, six levels down to 14494x3478. A buffer of the file's true
+   length cannot be allocated at that size, in a browser or anywhere near it.
+
+   A 1 MB range request reads that entire structure, which is the shape of the
+   answer: pass the decoder a PREFIX plus the specific block bytes, never a
+   whole-file buffer. The pieces exist —
+   `decode_tiff_float_strip_range(blob, counts, first_strip, plan)` already
+   decodes from a concatenation of block bytes, `tiff_page_directory` and
+   `tiff_float_strip_plan` read tags only (so a prefix suffices), and the plan
+   carries every block's offset and length. What is missing is a region variant
+   of the range decoder — `decode_tiff_region_blocks(blob, offsets, counts,
+   plan, rect)` — and the fetch layer that coalesces adjacent ranges.
+
+   Note the sizes this implies: the SMALLEST level of that file is 50
+   megapixels, above the whole-page budget, so even the overview has to be
+   viewed a region at a time. Range reading and viewport rendering are the same
+   feature for files of this size.
 4. **Authenticated sources** — requester-pays buckets, signed URLs, private STAC
    endpoints. Recommended: explicitly out of scope for now; public URLs cover
    the open-data case this is aimed at.

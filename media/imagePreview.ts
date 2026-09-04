@@ -2106,6 +2106,9 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// couple of milliseconds, so it is always offered — an approximate
 			// value where an exact one is affordable is not a preference.
 			mouseHandler.setStoredValueResolver((x: number, y: number) => tiffProcessor.readStoredPixel(x, y));
+			// The base under the patch has just changed size; re-place it, and
+			// decode a new one if the view has moved past what it covers.
+			void updateDetailPatch();
 			updateTiffPageOverlay();
 			currentLoadDecodeInfo = result.decodeInfo;
 
@@ -6941,10 +6944,12 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	async function updateDetailPatch(): Promise<void> {
 		const element = imageElement as HTMLElement | null;
 		const directory = tiffProcessor.pageDirectory;
-		if (!element || !hasLoadedImage || _imageTransitionActive || !isPyramidal(directory)) {
-			removeDetailPatch();
-			return;
-		}
+		// Mid-switch there is nothing to measure against — but the patch is
+		// still valid content for the same image, and taking it away here is
+		// what made zooming out lose the sharp centre a moment before the new
+		// base arrived. Leave it; the load that follows re-places it.
+		if (!element || !hasLoadedImage || _imageTransitionActive) { return; }
+		if (!isPyramidal(directory)) { removeDetailPatch(); return; }
 		// Automatic is what asks the viewer to decide what to show; a level
 		// chosen by hand is a statement about which resolution to look at, and
 		// laying a finer one over it would contradict the choice.
@@ -6958,7 +6963,25 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		// the coarse image IS the detail and a patch would only be a second
 		// copy of it.
 		const wanted = levelForDisplayWidth(directory, page, displayedImageWidthPx());
-		if (!wanted || wanted.width <= base.width) { removeDetailPatch(); return; }
+		const held = _detailPatchRegion
+			? directory.find((entry: TiffPageEntry) => entry.index === _detailPatchRegion!.level)
+			: undefined;
+
+		if (!wanted || wanted.width <= base.width) {
+			// Zoomed back out. A patch already decoded is finer than the base
+			// still under it, and throwing it away means the middle of the view
+			// visibly LOSES detail it had a moment ago — the opposite of what
+			// zooming out should do. Keep it: a sharp centre with a coarser
+			// surround is what every map viewer shows, and it costs nothing
+			// beyond the memory already spent. It goes when the base catches up
+			// with it, or when the image does.
+			if (held && held.width > base.width) {
+				positionDetailPatch(element, base, held, element.clientWidth / base.width);
+			} else {
+				removeDetailPatch();
+			}
+			return;
+		}
 
 		// CSS pixels per pixel of the displayed level, and of the patch level.
 		const baseScale = element.clientWidth / base.width;
@@ -6987,10 +7010,21 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			width: visibleInBase.width * ratio,
 			height: visibleInBase.height * ratio,
 		};
-		const plan = planRegionForView(geometry, visibleInWanted, 
+		const plan = planRegionForView(geometry, visibleInWanted,
 			_detailPatchRegion?.level === wanted.index ? _detailPatchRegion.rect : null);
 		if (plan.kind === 'keep') { positionDetailPatch(element, base, wanted, baseScale); return; }
-		if (plan.kind === 'whole-page') { removeDetailPatch(); return; }
+		if (plan.kind === 'whole-page') {
+			// The view covers most of the level, so a region read would decode
+			// nearly all of it — the base is the better answer. An existing
+			// patch is still valid data over part of the view, so it stays put
+			// rather than being thrown away for a rule about what to fetch next.
+			if (held && held.width > base.width) {
+				positionDetailPatch(element, base, held, baseScale);
+			} else {
+				removeDetailPatch();
+			}
+			return;
+		}
 
 		const generation = ++_detailPatchGeneration;
 		_detailPatchLoad = _loadGeneration;
@@ -7157,7 +7191,14 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		resetTiffCanvasReady();
 		beginSeamlessImageTransition(false);
 
-		removeDetailPatch();
+		// A patch belongs to the IMAGE, not to the level currently under it, so a
+		// level switch keeps it: coarsening the base while zooming out would
+		// otherwise take the detail out of the middle of the view. Moving to a
+		// different page is a different image, and takes the patch with it.
+		if (pageOwningIfd(tiffProcessor.pageDirectory, target)
+			!== pageOwningIfd(tiffProcessor.pageDirectory, tiffProcessor.pageIndex)) {
+			removeDetailPatch();
+		}
 		tiffProcessor.pageIndex = target;
 		tiffProcessor._isInitialLoad = true;
 		tiffProcessor._pendingRenderData = null;
