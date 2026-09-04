@@ -2101,6 +2101,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			// precedence over the OME spacing above; the mouse handler decides.
 			mouseHandler.setGeoReference(tiffProcessor.geoReference || null);
 			mouseHandler.setResolutionNote(currentLevelNote());
+			mouseHandler.setCoordinateScale(currentLevelReduction());
 			// While a reduced level is displayed the readout is an average of
 			// several stored pixels. A rectangle read gets the real one for a
 			// couple of milliseconds, so it is always offered — an approximate
@@ -6898,11 +6899,16 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	 * the stored pixels. Empty at full resolution, which is the usual case.
 	 */
 	function currentLevelNote(): string {
+		const reduction = currentLevelReduction();
+		return reduction > 1 ? `1/${reduction} overview` : '';
+	}
+
+	/** How many stored pixels each displayed pixel stands for. 1 at full size. */
+	function currentLevelReduction(): number {
 		const directory = tiffProcessor.pageDirectory;
-		if (!isPyramidal(directory)) { return ''; }
+		if (!isPyramidal(directory)) { return 1; }
 		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
-		if (!current || current.reduction <= 1) { return ''; }
-		return `1/${current.reduction} overview`;
+		return current ? Math.max(1, current.reduction) : 1;
 	}
 
 	// --- Detail patch -----------------------------------------------------
@@ -7043,10 +7049,15 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const context = _detailPatch.getContext('2d');
 		if (!context) { removeDetailPatch(); return; }
 		context.putImageData(rendered, 0, 0);
+		const levelChanged = _detailPatchRegion?.level !== wanted.index;
 		_detailPatchRegion = { level: wanted.index, rect: plan.rect };
 		positionDetailPatch(element, base, wanted, baseScale);
-		logToOutput(`[Detail] ${levelLabel(wanted)} over ${plan.rect.width}x${plan.rect.height} `
-			+ `at ${plan.rect.x},${plan.rect.y}`);
+		const line = `[Detail] ${levelLabel(wanted)} over ${plan.rect.width}x${plan.rect.height} `
+			+ `at ${plan.rect.x},${plan.rect.y}`;
+		// Panning redraws the patch constantly; only a change of LEVEL is news.
+		// The rest goes to the console, where it is available when wanted and
+		// not filling the log someone is reading.
+		if (levelChanged) { logToOutput(line); } else { console.log(line); }
 	}
 
 	/** Lay the patch exactly over the image pixels it stands for. */
@@ -7174,6 +7185,10 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const gen = ++_loadGeneration;
 		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
+		// This load starts NOW. Without this, `total` kept measuring from when
+		// the file was first opened, so a level switch minutes into a session
+		// reported two minutes.
+		extensionLoadStartTime = Date.now();
 		_pendingZoomState = zoomController.getCurrentState();
 		// Zoom is expressed against the decoded image's own width, and two levels
 		// of one pyramid have different widths — so carrying the scale across a

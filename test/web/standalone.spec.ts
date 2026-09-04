@@ -343,20 +343,32 @@ test('reads the value stored under the cursor while an overview is displayed', a
     .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
   await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
 
-  // Pin a reduced level, so what is DISPLAYED is an average of stored pixels
-  // (index 0 is Auto, index 1 is full resolution).
+  // Pin the 1/2 level, so what is DISPLAYED is a decimation of the stored
+  // pixels (index 0 is Auto, index 1 is full resolution).
   await page.locator('.dataset-overlay select').selectOption({ index: 2 });
   await expect(page.locator('.dataset-note')).toContainText('1/2', { timeout: 30_000 });
-  const box = await page.locator('body > canvas:not(.measure-overlay)').boundingBox();
-  if (box) {
-    await page.mouse.move(box.x + box.width * 0.62, box.y + box.height * 0.38);
-    await page.mouse.move(box.x + box.width * 0.62 + 1, box.y + box.height * 0.38 + 1);
-  }
 
-  // The value is read out of the file for the pixel under the cursor, so there
-  // is nothing left to caveat. An approximate value where an exact one costs a
-  // couple of milliseconds is not a preference to be configured.
-  await expect(page.locator('#web-status-size')).toContainText(/\d+x\d+/);
+  // Aim at a known pixel of that level. The fixture's overviews are [::2, ::2],
+  // so level pixel (80, 49) is the average-free copy of stored pixel (160, 98)
+  // — and the two hold different values, which is what makes this test able to
+  // tell an exact read from a displayed one.
+  const canvas = page.locator('body > canvas:not(.measure-overlay):not(.detail-patch)');
+  const box = (await canvas.boundingBox())!;
+  const at = (x: number, y: number) => ({
+    x: box.x + ((x + 0.5) / 128) * box.width,
+    y: box.y + ((y + 0.5) / 128) * box.height,
+  });
+  await page.mouse.move(at(79, 48).x, at(79, 48).y);
+  await page.mouse.move(at(80, 49).x, at(80, 49).y);
+
+  // Positions are the IMAGE's, not the level's: 128 pixels of a 1/2 level are
+  // 256 pixels of the image, and a readout that counted to 128 would be
+  // describing the machinery rather than the picture.
+  await expect(page.locator('#web-status-size')).toContainText('160x98');
+
+  // And the value settles onto the one actually stored there (804), not the
+  // level's own sample (758).
+  await expect(page.locator('#web-status-size')).toContainText('804', { timeout: 10_000 });
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
 });
 

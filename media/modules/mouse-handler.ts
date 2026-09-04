@@ -63,6 +63,14 @@ export class MouseHandler {
 	geoReference: GeoReference | null;
 	/** Appended to every readout; see setResolutionNote. */
 	resolutionNote: string = '';
+	/** See setCoordinateScale. */
+	coordinateScale: number = 1;
+	/**
+	 * Set when a stored-value read comes back empty — the file's layout cannot
+	 * be read a rectangle at a time — which is the only case where the readout
+	 * is permanently approximate and has to say so.
+	 */
+	private _storedValueUnavailable = false;
 	/** See setStoredValueResolver. */
 	storedValueResolver: ((x: number, y: number) => Promise<string | null>) | null = null;
 	/** The pixel the last exact read was started for, to drop stale answers. */
@@ -138,6 +146,21 @@ export class MouseHandler {
 	}
 
 	/**
+	 * How many stored pixels each DISPLAYED pixel stands for.
+	 *
+	 * A pyramid level is a way of showing the image, not a coordinate system:
+	 * the reader is looking at a 40000x40000 scene whichever level is decoded,
+	 * and a readout that counted to 5000 because the 1/8 level happened to be
+	 * loaded describes the machinery rather than the picture. Positions are
+	 * reported in the image's own pixels; everything else — the value lookup,
+	 * the map position, the physical size — keeps using the level's own grid,
+	 * which is what those are expressed in.
+	 */
+	setCoordinateScale(scale: number): void {
+		this.coordinateScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+	}
+
+	/**
 	 * An optional way to get the value actually STORED at a pixel, used when
 	 * the displayed image is a reduced pyramid level and the readout would
 	 * otherwise report an average of several stored pixels.
@@ -151,6 +174,7 @@ export class MouseHandler {
 		this.storedValueResolver = resolver;
 		// Values belong to the image and the level they were read from.
 		this._storedValueCache.clear();
+		this._storedValueUnavailable = false;
 	}
 
 	setExrProcessor(proc: any) { this.exrProcessor = proc; }
@@ -263,7 +287,14 @@ export class MouseHandler {
 			this._storedValueTimer = null;
 			if (this._storedValuePixel !== key) { return; }
 			void resolver(position.x, position.y).then(value => {
-				if (!value || this._storedValuePixel !== key) { return; }
+				if (this._storedValuePixel !== key) { return; }
+				if (!value) {
+					// This file cannot be read a rectangle at a time, so the
+					// displayed value is the best there is — and now it has to
+					// say so.
+					this._storedValueUnavailable = true;
+					return;
+				}
 				if (this._storedValueCache.size > 512) { this._storedValueCache.clear(); }
 				this._storedValueCache.set(key, value);
 				// The caveat goes with the approximate value it described.
@@ -320,7 +351,14 @@ export class MouseHandler {
 		const { x, y, width: naturalWidth, height: naturalHeight } = position;
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
-		return this._composeReadout(x, y, color, this.resolutionNote);
+		// The caveat is for a value that will STAY approximate. While an exact
+		// read is on its way — 90 ms at most — labelling every intermediate
+		// readout would put a warning on screen for the whole time the cursor
+		// is moving, about a number that is about to be replaced.
+		const note = (this.storedValueResolver && !this._storedValueUnavailable)
+			? ''
+			: this.resolutionNote;
+		return this._composeReadout(x, y, color, note);
 	}
 
 	/**
@@ -331,6 +369,9 @@ export class MouseHandler {
 	 */
 	_composeReadout(x: number, y: number, value: string, note: string): string {
 		const suffix = note ? ` · ${note}` : '';
+		// Positions are the image's, not the decoded level's.
+		x = Math.round(x * this.coordinateScale);
+		y = Math.round(y * this.coordinateScale);
 		const mapPosition = formatMapPosition(this.geoReference, x, y);
 		if (mapPosition) {
 			return `${x}x${y} (${mapPosition}) ${value}${suffix}`;

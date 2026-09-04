@@ -121,7 +121,13 @@ is chosen automatically:
   Zooming into a 10980x10980 band settles in about 3 seconds rather than 5, and
   holds a quarter of the pixels;
 - hovering reads the value actually **stored** under the cursor rather than the
-  overview's average, so the readout is exact and drops its `overview` caveat.
+  overview's average. The readout says so only when that is impossible — a
+  layout the decoder cannot read a rectangle at a time — since otherwise the
+  exact value arrives within a tenth of a second.
+
+Cursor positions are always in the image's own pixels, whichever level is
+loaded: a 40000x40000 scene reads to 40000 even while its 1/8 level is on
+screen.
 
 Choosing a level by hand turns all of that off: a pinned level is a statement
 about which resolution you want to look at, and laying a finer one over it would
