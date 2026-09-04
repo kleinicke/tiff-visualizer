@@ -8,6 +8,7 @@
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
 - Render multi-band GeoTIFFs correctly: a band past the colour samples is treated as alpha only when the file's `ExtraSamples` tag says so, which previously made a 2-band COG almost entirely transparent
 - Treat a pyramidal TIFF's overviews (COG, whole-slide) as resolution levels of one image rather than as extra pages, with a Level selector that names each level
+- Name the sharp patch in the status line and refresh it when the patch lands, so a view showing full-resolution pixels over its middle no longer reads as one stuck at a coarse level
 - Report cursor positions in the image's own pixels whichever pyramid level is loaded, show the `overview` caveat only when an exact read is genuinely impossible, and stop the per-load timing from measuring since the file was opened
 - Keep the sharp patch when zooming back out, so the middle of the view does not lose detail it just had, and settle the pixel readout instead of flickering between the level's average and the stored value while the cursor moves
 - Make the dynamic behaviour of a pyramidal image belong to its **Auto** level setting rather than to an experimental flag: on Auto a COG or whole-slide image patches, bounds its base level and reads exact stored values under the cursor; pinning a level by hand turns all of that off, because a pinned level is a statement about which resolution to look at

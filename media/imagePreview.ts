@@ -6831,6 +6831,17 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 
 		const parts = [`Loaded ${levelLabel(current)} of ${full.width}x${full.height}`];
 
+		// A patch is the finest thing on screen, and saying only what the BASE
+		// holds reads as "this is all you are seeing" — which is how a view
+		// showing full-resolution pixels over its middle gets reported as
+		// stuck at 1/8.
+		const patchLevel = _detailPatchRegion
+			? directory.find((entry: TiffPageEntry) => entry.index === _detailPatchRegion!.level)
+			: undefined;
+		if (patchLevel && patchLevel.width > current.width) {
+			parts.push(`sharp here: ${levelLabel(patchLevel)}`);
+		}
+
 		// The visible rectangle, in the full-resolution image's own pixels.
 		const element = imageElement as HTMLElement | null;
 		const scale = element && current.width ? element.clientWidth / current.width : 0;
@@ -6849,9 +6860,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 			const covered = (visible.width * visible.height) / (current.width * current.height);
 			parts.push(`viewing ${Math.round(visible.x * toFull)},${Math.round(visible.y * toFull)} `
 				+ `${width}x${height} (${(covered * 100).toFixed(covered < 0.1 ? 1 : 0)}% of the scene)`);
-			// Screen pixels per full-resolution pixel: 1 means every stored
-			// pixel is on screen, below 1 means the view is coarser than the file.
-			parts.push(`${(scale / toFull).toFixed(2)}x detail`);
+			// Screen pixels per stored pixel. Above 1 the image is magnified;
+			// below it, more than one stored pixel shares a screen pixel and
+			// the view is coarser than the file.
+			const perStored = scale / toFull;
+			parts.push(perStored >= 1
+				? `${perStored.toFixed(perStored < 10 ? 1 : 0)}x magnified`
+				: `1 screen px = ${(1 / perStored).toFixed(perStored > 0.1 ? 1 : 0)} stored px`);
 		}
 		return parts.join(' · ');
 	}
@@ -6938,9 +6953,13 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 	let _detailPatchLoad = -1;
 
 	function removeDetailPatch(): void {
+		const had = !!_detailPatchRegion;
 		_detailPatch?.remove();
 		_detailPatch = null;
 		_detailPatchRegion = null;
+		// The status line names the patch, so it has to be told when there is
+		// no longer one.
+		if (had) { updateTiffPageOverlay(); }
 	}
 
 	/**
@@ -7052,6 +7071,11 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 		const levelChanged = _detailPatchRegion?.level !== wanted.index;
 		_detailPatchRegion = { level: wanted.index, rect: plan.rect };
 		positionDetailPatch(element, base, wanted, baseScale);
+		// A patch arrives well after the status line that described the view was
+		// drawn, so the line has to be refreshed when it lands — otherwise it
+		// keeps reporting the base alone, and a view showing full-resolution
+		// pixels reads as one stuck at 1/8.
+		if (levelChanged) { updateTiffPageOverlay(); }
 		const line = `[Detail] ${levelLabel(wanted)} over ${plan.rect.width}x${plan.rect.height} `
 			+ `at ${plan.rect.x},${plan.rect.y}`;
 		// Panning redraws the patch constantly; only a change of LEVEL is news.

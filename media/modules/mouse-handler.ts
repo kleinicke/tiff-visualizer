@@ -3,14 +3,6 @@
 import type { SettingsManager } from './settings-manager.js';
 import { formatMapPosition, type GeoReference } from './geo-reference.js';
 
-/**
- * How long the cursor must be still before the stored value is read.
- *
- * Long enough that crossing pixels does not queue a read for each one, short
- * enough that stopping to look at a pixel feels like it answers immediately.
- */
-const STORED_VALUE_SETTLE_MS = 90;
-
 type VsCodeApi = { postMessage: (msg: any) => any };
 
 /**
@@ -75,7 +67,7 @@ export class MouseHandler {
 	storedValueResolver: ((x: number, y: number) => Promise<string | null>) | null = null;
 	/** The pixel the last exact read was started for, to drop stale answers. */
 	private _storedValuePixel: string = '';
-	private _storedValueTimer: ReturnType<typeof setTimeout> | null = null;
+	private _storedValueInFlight = false;
 	/** Exact values already read, keyed by pixel; cleared with the image. */
 	private _storedValueCache = new Map<string, string>();
 
@@ -249,20 +241,22 @@ export class MouseHandler {
 	}
 
 	/**
-	 * Replace an approximate readout with the stored value, once the cursor has
-	 * settled and the value has arrived.
+	 * Replace an approximate readout with the stored value as soon as it can be
+	 * read — which is a couple of milliseconds, one block out of the file.
 	 *
-	 * Waiting for the cursor to settle is what keeps the readout still. Reading
-	 * on every mouse move posts two different numbers for every pixel crossed —
-	 * the level's average, then the stored value a few milliseconds later — and
-	 * a hand moving across the image turns that into a flicker between two
-	 * series of numbers. While the cursor is moving the readout now shows one
-	 * value per pixel and settles onto the exact one when it stops.
+	 * No delay: the reason to wait was a caveat that used to be appended while
+	 * the exact value was on its way, and that moved the rest of the status bar
+	 * as it appeared and vanished. The caveat is gone, so the value can simply
+	 * arrive.
+	 *
+	 * What IS held back is overlap. A hand crossing an image produces a move
+	 * event every frame, and starting a read for each would queue work faster
+	 * than it finishes for no gain — every one of those answers but the last is
+	 * about a pixel nobody is pointing at. One read is in flight at a time, and
+	 * when it lands the pixel under the cursor NOW is read if it has changed.
 	 *
 	 * Values already read are remembered, so coming back to a pixel — which
-	 * happens constantly while nudging around a feature — is exact at once and
-	 * silent. The cache is small and per-load; it exists to stop repeat reads,
-	 * not to be a store.
+	 * happens constantly while nudging around a feature — costs nothing.
 	 */
 	private _upgradeToStoredValue(e: MouseEvent): void {
 		const resolver = this.storedValueResolver;
@@ -281,29 +275,49 @@ export class MouseHandler {
 			});
 			return;
 		}
+		if (this._storedValueInFlight) { return; }
+		this._readStoredValue(resolver, position.x, position.y, key);
+	}
 
-		if (this._storedValueTimer !== null) { clearTimeout(this._storedValueTimer); }
-		this._storedValueTimer = setTimeout(() => {
-			this._storedValueTimer = null;
-			if (this._storedValuePixel !== key) { return; }
-			void resolver(position.x, position.y).then(value => {
-				if (this._storedValuePixel !== key) { return; }
+	private _readStoredValue(
+		resolver: (x: number, y: number) => Promise<string | null>,
+		x: number,
+		y: number,
+		key: string,
+	): void {
+		this._storedValueInFlight = true;
+		void resolver(x, y)
+			.then(value => {
 				if (!value) {
 					// This file cannot be read a rectangle at a time, so the
-					// displayed value is the best there is — and now it has to
-					// say so.
+					// displayed value is the best there is — and now the
+					// readout has to say so.
 					this._storedValueUnavailable = true;
 					return;
 				}
 				if (this._storedValueCache.size > 512) { this._storedValueCache.clear(); }
 				this._storedValueCache.set(key, value);
-				// The caveat goes with the approximate value it described.
+				// An answer for a pixel nobody is pointing at any more must
+				// never overwrite the current readout.
+				if (this._storedValuePixel !== key) { return; }
 				this.vscode.postMessage({
 					type: 'pixelFocus',
-					value: this._composeReadout(position.x, position.y, value, ''),
+					value: this._composeReadout(x, y, value, ''),
 				});
-			}).catch(() => { /* keep the approximate readout */ });
-		}, STORED_VALUE_SETTLE_MS);
+			})
+			.catch(() => { /* keep the approximate readout */ })
+			.finally(() => {
+				this._storedValueInFlight = false;
+				// The cursor moved on while this was in flight: catch up once,
+				// rather than having skipped the pixel it is now sitting on.
+				const current = this._storedValuePixel;
+				if (current === key || this._storedValueUnavailable) { return; }
+				const [nextX, nextY] = current.split(',').map(Number);
+				if (Number.isFinite(nextX) && Number.isFinite(nextY)
+					&& !this._storedValueCache.has(current)) {
+					this._readStoredValue(resolver, nextX, nextY, current);
+				}
+			});
 	}
 
 	/**

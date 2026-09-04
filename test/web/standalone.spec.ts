@@ -419,6 +419,10 @@ test('draws a sharp patch of a finer level over the visible area', async ({ page
   // The patch holds exactly the pixels that were decoded.
   expect(placement.patchPixels).toEqual([rectWidth, rectHeight]);
 
+  // And the status line names it. Reporting only the base level reads as
+  // "this is all you are seeing" while full-resolution pixels are on screen.
+  await expect(page.locator('.dataset-note')).toContainText('sharp here: Full · 40000x40000');
+
   // And it sits exactly over them: converting its position back into
   // full-resolution pixels must return the rectangle's own origin. A patch
   // placed a tile out would show the right pixels in the wrong place, which is
