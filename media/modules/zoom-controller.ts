@@ -58,9 +58,11 @@ export class ZoomController {
 
 	_getNaturalSize(element: HTMLElement): { width: number, height: number } {
 		const anyElement = element as any;
+		const sceneWidth = Number(element.dataset?.sceneWidth);
+		const sceneHeight = Number(element.dataset?.sceneHeight);
 		return {
-			width: anyElement.naturalWidth || anyElement.width || 0,
-			height: anyElement.naturalHeight || anyElement.height || 0
+			width: sceneWidth > 0 ? sceneWidth : (anyElement.naturalWidth || anyElement.width || 0),
+			height: sceneHeight > 0 ? sceneHeight : (anyElement.naturalHeight || anyElement.height || 0)
 		};
 	}
 
@@ -92,6 +94,19 @@ export class ZoomController {
 			this.imageElement.style.width = '';
 			this.imageElement.style.height = '';
 			this.imageElement.style.margin = '';
+			// A pyramid scene is a normal element rather than a replaced img/canvas,
+			// so object-fit cannot size it. Give it the same fitted dimensions here;
+			// numeric zooms below continue to operate in full-resolution scene space.
+			if (this.imageElement.classList.contains('pyramid-scene')) {
+				const { width, height } = this._getNaturalSize(this.imageElement);
+				const fit = Math.min(
+					Math.max(1, this.container.clientWidth - 20) / width,
+					Math.max(1, this.container.clientHeight - 20) / height,
+				);
+				this.imageElement.style.width = `${width * fit}px`;
+				this.imageElement.style.height = `${height * fit}px`;
+				this.imageElement.style.margin = 'auto';
+			}
 			// Clear zoom fields but keep other state (peerImageUris, etc.)
 			const existing = this.vscode.getState() || {};
 			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });

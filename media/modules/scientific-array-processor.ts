@@ -148,10 +148,34 @@ export class ScientificArrayProcessor extends PfmProcessor {
 	renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
 		if (!this._lastRaw) { return null; }
 		const { width, height, data, channels } = this._lastRaw;
-		return this._toImageDataFloat(data, width, height, channels, {
+		return this._toImageDataFloat(data, width, height, channels, this._withNumericDomain(renderOptions));
+	}
+
+	/**
+	 * The samples always arrive in a Float32Array, so nothing downstream can
+	 * infer the type range from the carrier — `_toImageDataFloat` falls back to
+	 * [0, 1], the float default. Every render this class performs must therefore
+	 * state the decoded domain explicitly.
+	 */
+	_withNumericDomain(renderOptions: DeferredRenderOptions): DeferredRenderOptions {
+		return {
 			...renderOptions,
 			typeMin: this.numericDomain.typeMin,
 			typeMax: this.numericDomain.typeMax,
-		});
+		};
+	}
+
+	/**
+	 * The initial render is deferred until the extension has applied this
+	 * format's default settings, and the base implementation passes the
+	 * caller's options through untouched. That loses the numeric domain, which
+	 * matters for the one default that consumes it: an integer JPEG XL opens in
+	 * gamma mode, whose range IS the type range, so a uint16 image normalized
+	 * against [0, 1] rendered white above a value of 1. The formats that open
+	 * in auto-normalize took their range from the data statistics instead and
+	 * hid the same omission.
+	 */
+	performDeferredRender(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+		return super.performDeferredRender(this._withNumericDomain(renderOptions));
 	}
 }

@@ -37,6 +37,8 @@ export interface ImageSettings {
   plyVisualizerInstalled?: boolean;
   resourceUri?: string;
   src?: string;
+	/** Original HTTP(S) TIFF URL; activates the range-backed byte source. */
+	remoteTiffUrl?: string;
   loadStartTime?: number;
   surfaceMode?: 'editor' | 'layers';
   extensionVersion?: string;

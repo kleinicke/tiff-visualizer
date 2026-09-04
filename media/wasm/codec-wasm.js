@@ -208,55 +208,16 @@ function getArrayU32FromWasm0(ptr, len) {
  * @param {string} options_json
  * @returns {DecodedArray}
  */
-export function decode_sdt_fast(data, options_json) {
+export function decode_lif_fast(data, options_json) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_sdt_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_lif_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * Like `decode_tiff_float_strip_range`, but returns native little-endian
- * sample bytes so the caller can wrap them in the carrier type its pipeline
- * expects with no conversion pass.
- * @param {Uint8Array} blob
- * @param {Uint32Array} counts
- * @param {number} first_strip
- * @param {number} width
- * @param {number} height
- * @param {number} channels
- * @param {number} bits_per_sample
- * @param {number} compression
- * @param {number} rows_per_strip
- * @param {number} predictor
- * @param {number} sample_format
- * @param {boolean} little_endian
- * @param {number} planar_configuration
- * @param {number} orientation
- * @param {number} tile_width
- * @param {number} tile_length
- * @param {number} blocks_across
- * @param {number} lerc_additional_compression
- * @param {number} photometric_interpretation
- * @returns {Uint8Array}
- */
-export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
-    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
 }
 
 /**
@@ -279,10 +240,83 @@ export function tiff_strip_metadata(data) {
  * @param {Uint8Array} data
  * @returns {DecodedArray}
  */
-export function decode_npy_fast(data) {
+export function decode_ppm_display_fast(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_npy_fast(ptr0, len0);
+    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * Classify every image in a TIFF's IFD chain without decoding pixels. Used
+ * when a page directory is wanted for a file that was not decoded through
+ * this module (or before deciding which page to decode).
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function tiff_page_directory(data) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.tiff_page_directory(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_nd2_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_nd2_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrResult}
+ */
+export function decode_exr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ExrResult.__wrap(ret[0]);
+}
+
+/**
+ * Standalone JPEG XR (`.jxr`, `.wdp`, `.hdp`). The TIFF path decodes the same
+ * codestream under compression 34934; this reads the pixel format off the
+ * codestream itself, there being no TIFF tags to describe it.
+ *
+ * Present only in the codec module: the decoder is 189 KiB and no other
+ * format in the core build needs it.
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_jpegxr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_jpegxr_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -305,20 +339,133 @@ export function decode_tiff_page(data, page_index) {
 }
 
 /**
+ * Whether a page can be served a region at a time, without decoding anything.
  * @param {Uint8Array} data
- * @param {string} options_json
- * @returns {DecodedArray}
+ * @param {number} page_index
+ * @returns {boolean}
  */
-export function decode_lif_fast(data, options_json) {
+export function tiff_region_decode_available(data, page_index) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_lif_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.tiff_region_decode_available(ptr0, len0, page_index);
+    return ret !== 0;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @param {number} x
+ * @param {number} y
+ * @param {number} width
+ * @param {number} height
+ * @returns {TiffRegionJs}
+ */
+export function decode_tiff_region(data, page_index, x, y, width, height) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_region(ptr0, len0, page_index, x, y, width, height);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffRegionJs.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrZipPlanJs | undefined}
+ */
+export function exr_zip_f32_plan(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.exr_zip_f32_plan(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] === 0 ? undefined : ExrZipPlanJs.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_fits_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fits_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {Uint32Array} rows
+ * @param {number} width
+ * @returns {Uint8Array}
+ */
+export function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_exr_zip_f32_blocks(ptr0, len0, ptr1, len1, ptr2, len2, width);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_czi_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_czi_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {string} pattern
+ * @param {string} algorithm
+ * @param {number} offset_x
+ * @param {number} offset_y
+ * @param {number} black
+ * @param {number} white
+ * @param {boolean} auto_wb
+ * @param {number} gain_r
+ * @param {number} gain_g
+ * @param {number} gain_b
+ * @returns {DemosaicResult}
+ */
+export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DemosaicResult.__wrap(ret[0]);
 }
 
 /**
@@ -362,67 +509,75 @@ export function extract_exif_tags(data) {
 }
 
 /**
- * Classify every image in a TIFF's IFD chain without decoding pixels. Used
- * when a page directory is wanted for a file that was not decoded through
- * this module (or before deciding which page to decode).
  * @param {Uint8Array} data
- * @returns {string}
+ * @returns {number}
  */
-export function tiff_page_directory(data) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.tiff_page_directory(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @param {number} x
- * @param {number} y
- * @param {number} width
- * @param {number} height
- * @returns {TiffRegionJs}
- */
-export function decode_tiff_region(data, page_index, x, y, width, height) {
+export function tiff_page_count(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_region(ptr0, len0, page_index, x, y, width, height);
+    const ret = wasm.tiff_page_count(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return TiffRegionJs.__wrap(ret[0]);
+    return ret[0] >>> 0;
 }
 
 /**
- * @param {Uint8Array} blob
- * @param {Uint32Array} counts
- * @param {Uint32Array} rows
- * @param {number} width
- * @returns {Uint8Array}
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
  */
-export function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
-    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+export function decode_npy_display_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_zip_f32_blocks(ptr0, len0, ptr1, len1, ptr2, len2, width);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    const ret = wasm.decode_npy_display_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
     }
-    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v4;
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {boolean} top_down
+ * @returns {DecodedArray}
+ */
+export function decode_pfm_display_fast(data, top_down) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {boolean} top_down
+ * @returns {DecodedArray}
+ */
+export function decode_pfm_fast(data, top_down) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
 }
 
 /**
@@ -458,187 +613,6 @@ export function decode_png16_fast(data) {
 
 /**
  * @param {Uint8Array} data
- * @param {string} options_json
- * @returns {DecodedArray}
- */
-export function decode_nd2_fast(data, options_json) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_nd2_fast(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Float32Array} data
- * @param {number} width
- * @param {number} height
- * @param {string} pattern
- * @param {string} algorithm
- * @param {number} offset_x
- * @param {number} offset_y
- * @param {number} black
- * @param {number} white
- * @param {boolean} auto_wb
- * @param {number} gain_r
- * @param {number} gain_g
- * @param {number} gain_b
- * @returns {DemosaicResult}
- */
-export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
-    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DemosaicResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_fits_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_fits_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {number}
- */
-export function tiff_page_count(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_page_count(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] >>> 0;
-}
-
-/**
- * Standalone JPEG XR (`.jxr`, `.wdp`, `.hdp`). The TIFF path decodes the same
- * codestream under compression 34934; this reads the pixel format off the
- * codestream itself, there being no TIFF tags to describe it.
- *
- * Present only in the codec module: the decoder is 189 KiB and no other
- * format in the core build needs it.
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_jpegxr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpegxr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_ppm_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {boolean} top_down
- * @returns {DecodedArray}
- */
-export function decode_pfm_display_fast(data, top_down) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrZipPlanJs | undefined}
- */
-export function exr_zip_f32_plan(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.exr_zip_f32_plan(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] === 0 ? undefined : ExrZipPlanJs.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} frame_index
- * @returns {DecodedArray}
- */
-export function decode_dicom_fast(data, frame_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
  * @returns {HdrResult}
  */
 export function decode_hdr_fast(data) {
@@ -653,32 +627,6 @@ export function decode_hdr_fast(data) {
 
 /**
  * @param {Uint8Array} data
- * @returns {TiffFloatStripPlanJs | undefined}
- */
-export function tiff_float_strip_plan(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_float_strip_plan(ptr0, len0);
-    return ret === 0 ? undefined : TiffFloatStripPlanJs.__wrap(ret);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {boolean} top_down
- * @returns {DecodedArray}
- */
-export function decode_pfm_fast(data, top_down) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
  * @returns {JpegResult}
  */
 export function decode_jpeg_fast(data) {
@@ -689,61 +637,6 @@ export function decode_jpeg_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return JpegResult.__wrap(ret[0]);
-}
-
-/**
- * Whether a page can be served a region at a time, without decoding anything.
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {boolean}
- */
-export function tiff_region_decode_available(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_region_decode_available(ptr0, len0, page_index);
-    return ret !== 0;
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_npy_display_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_npy_display_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_ppm_display_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrResult}
- */
-export function decode_exr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_exr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ExrResult.__wrap(ret[0]);
 }
 
 /**
@@ -793,12 +686,40 @@ export function decode_tiff_float_strip_range(blob, counts, first_strip, width, 
  * @param {string} options_json
  * @returns {DecodedArray}
  */
-export function decode_czi_fast(data, options_json) {
+export function decode_sdt_fast(data, options_json) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_czi_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_sdt_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_npy_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_npy_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_ppm_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ppm_fast(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -818,6 +739,85 @@ export function decode_tiff_page_fast(data, page_index) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffFloatStripPlanJs | undefined}
+ */
+export function tiff_float_strip_plan(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_float_strip_plan(ptr0, len0);
+    return ret === 0 ? undefined : TiffFloatStripPlanJs.__wrap(ret);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} frame_index
+ * @returns {DecodedArray}
+ */
+export function decode_dicom_fast(data, frame_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * Like `decode_tiff_float_strip_range`, but returns native little-endian
+ * sample bytes so the caller can wrap them in the carrier type its pipeline
+ * expects with no conversion pass.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {number} bits_per_sample
+ * @param {number} compression
+ * @param {number} rows_per_strip
+ * @param {number} predictor
+ * @param {number} sample_format
+ * @param {boolean} little_endian
+ * @param {number} planar_configuration
+ * @param {number} orientation
+ * @param {number} tile_width
+ * @param {number} tile_length
+ * @param {number} blocks_across
+ * @param {number} lerc_additional_compression
+ * @param {number} photometric_interpretation
+ * @returns {Uint8Array}
+ */
+export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
 }
 
 function getArrayF64FromWasm0(ptr, len) {
@@ -3001,6 +3001,58 @@ export class TiffFloatStripPlanJs {
     }
 }
 if (Symbol.dispose) TiffFloatStripPlanJs.prototype[Symbol.dispose] = TiffFloatStripPlanJs.prototype.free;
+
+const TiffRegionDecoderFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_tiffregiondecoder_free(ptr >>> 0, 1));
+/**
+ * A TIFF source retained inside WebAssembly for repeated viewport reads.
+ *
+ * Passing `&[u8]` through wasm-bindgen copies the source into linear memory.
+ * Keeping that copy here makes the cost occur once when an image is opened,
+ * rather than once per tile (which is prohibitive for large local COGs).
+ */
+export class TiffRegionDecoder {
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        TiffRegionDecoderFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_tiffregiondecoder_free(ptr, 0);
+    }
+    /**
+     * @param {Uint8Array} data
+     */
+    constructor(data) {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.tiffregiondecoder_new(ptr0, len0);
+        this.__wbg_ptr = ret >>> 0;
+        TiffRegionDecoderFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {number} page_index
+     * @param {number} x
+     * @param {number} y
+     * @param {number} width
+     * @param {number} height
+     * @returns {TiffRegionJs}
+     */
+    decode(page_index, x, y, width, height) {
+        const ret = wasm.tiffregiondecoder_decode(this.__wbg_ptr, page_index, x, y, width, height);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return TiffRegionJs.__wrap(ret[0]);
+    }
+}
+if (Symbol.dispose) TiffRegionDecoder.prototype[Symbol.dispose] = TiffRegionDecoder.prototype.free;
 
 const TiffRegionJsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }

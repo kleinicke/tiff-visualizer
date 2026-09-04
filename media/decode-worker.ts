@@ -18,7 +18,7 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
 // The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
 // few KB of bundle; the ~2.2 MB payload is fetched by `initJxlWasm` below only
 // for standalone JXL worker jobs. Embedded JXL takes the main-thread module
@@ -384,6 +384,58 @@ async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLe
 		const message = String((error instanceof Error ? error.message : error) || 'WASM decode failed');
 		throw new Error(message);
 	}
+}
+
+/**
+ * Decode a viewport rectangle while the source stays resident in this worker.
+ * The client supplies `sourceCacheKey`, so only the first request transfers the
+ * file. The returned samples are raw and exact; display normalization remains
+ * on the main thread beside the ordinary TIFF renderer.
+ */
+async function decodeTiffRegion(buffer: ArrayBuffer, options: Record<string, any>) {
+	await requireWasm('TIFF region');
+	const rect = options.rect || {};
+	const cacheKey = options.sourceCacheKey ? String(options.sourceCacheKey) : '';
+	let decoder: TiffRegionDecoder | null = null;
+	if (cacheKey) {
+		if (tiffRegionDecoder?.key !== cacheKey) {
+			tiffRegionDecoder?.decoder.free();
+			tiffRegionDecoder = null;
+			if (!buffer.byteLength) {
+				throw new Error('TIFF region source is not cached in the decode worker');
+			}
+			tiffRegionDecoder = {
+				key: cacheKey,
+				decoder: new TiffRegionDecoder(new Uint8Array(buffer)),
+			};
+		}
+		decoder = tiffRegionDecoder.decoder;
+	}
+	const region = decoder
+		? decoder.decode(
+			Number(options.pageIndex || 0),
+			Number(rect.x || 0),
+			Number(rect.y || 0),
+			Number(rect.width || 0),
+			Number(rect.height || 0),
+		)
+		: decode_tiff_region(
+			new Uint8Array(buffer),
+			Number(options.pageIndex || 0),
+			Number(rect.x || 0),
+			Number(rect.y || 0),
+			Number(rect.width || 0),
+			Number(rect.height || 0),
+		);
+	return {
+		width: Number(region.width),
+		height: Number(region.height),
+		channels: Number(region.channels),
+		bitsPerSample: Number(region.bits_per_sample),
+		sampleFormat: Number(region.sample_format),
+		blocksDecoded: Number(region.blocks_decoded),
+		data: region.take_data_as_f32() as Float32Array,
+	};
 }
 
 /**
@@ -770,6 +822,8 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return options.preferParallelTiff
 				? decodeTiffSpeculatively(buffer, Number(options.pageIndex || 0))
 				: decodeTiff(buffer, Number(options.pageIndex || 0), options.levelHint);
+		case 'tiff-region':
+			return decodeTiffRegion(buffer, options);
 		case 'exr':
 			return decodeExr(buffer);
 		case 'exr-zip-plan':
@@ -842,6 +896,7 @@ function collectTransferables(value: any, buffers: Set<ArrayBuffer> = new Set(),
  * itself. Only one entry is kept, so a different file simply evicts it.
  */
 let sourceCache: { key: string, buffer: ArrayBuffer } | null = null;
+let tiffRegionDecoder: { key: string, decoder: TiffRegionDecoder } | null = null;
 
 self.onmessage = async (event: MessageEvent<any>) => {
 	const msg = event.data;
@@ -863,7 +918,14 @@ self.onmessage = async (event: MessageEvent<any>) => {
 	let servedFromCache = false;
 	try {
 		let source: ArrayBuffer = buffer;
-		if (cacheKey) {
+		const cachedTiffRegion = format === 'tiff-region'
+			&& !!cacheKey
+			&& tiffRegionDecoder?.key === cacheKey;
+		if (cacheKey && format !== 'tiff-region') {
+			if (tiffRegionDecoder?.key !== cacheKey) {
+				tiffRegionDecoder?.decoder.free();
+				tiffRegionDecoder = null;
+			}
 			if (!source?.byteLength && sourceCache?.key === cacheKey) {
 				source = sourceCache.buffer;
 				servedFromCache = true;
@@ -872,6 +934,13 @@ self.onmessage = async (event: MessageEvent<any>) => {
 			}
 			if (!source?.byteLength) {
 				// The caller withheld the bytes expecting a cache that is gone.
+				throw new Error('Source bytes are not cached in the decode worker');
+			}
+		} else if (cacheKey) {
+			// The WASM-owned decoder is the cache for viewport TIFFs; retaining
+			// the transferred ArrayBuffer as well would double large-file memory.
+			sourceCache = null;
+			if (!source?.byteLength && !cachedTiffRegion) {
 				throw new Error('Source bytes are not cached in the decode worker');
 			}
 		}
@@ -891,7 +960,13 @@ self.onmessage = async (event: MessageEvent<any>) => {
 		const message = String((error instanceof Error ? error.message : error) || 'decode failed');
 		// A failure involving the cache invalidates it: the caller has no bytes
 		// of its own to fall back on and must refetch.
-		if (cacheKey) { sourceCache = null; }
+		if (cacheKey) {
+			sourceCache = null;
+			if (tiffRegionDecoder?.key === cacheKey) {
+				tiffRegionDecoder.decoder.free();
+				tiffRegionDecoder = null;
+			}
+		}
 		try {
 			// Never transfer the cached buffer back — the caller did not send it,
 			// and detaching it would corrupt an entry another request may hold.

@@ -1088,6 +1088,9 @@ export class ImagePreview extends MediaPreview {
 		// The webview will report the actual format via formatInfo message
 		const lower = this.resource.path.toLowerCase();
 		const isTiff = /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
+		const remoteTiffUrl = isTiff && /^(?:https?)$/.test(this.resource.scheme)
+			? this.resource.toString()
+			: undefined;
 		const isPpm = lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm');
 		const isPng = lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
 		const isPfm = lower.endsWith('.pfm');
@@ -1135,6 +1138,7 @@ export class ImagePreview extends MediaPreview {
 			...settings,
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
+			remoteTiffUrl,
 			folder: folderUri.toString(),
 			version: version,
 			surfaceMode: this._surfaceMode, // 'layers' = dedicated Layers window
@@ -1186,7 +1190,8 @@ export class ImagePreview extends MediaPreview {
 							: null;
 		// PGM stays on its cheaper main-thread decoder, but its source can travel
 		// while the viewer and lazy NetPBM processor chunk are loading.
-		const warmSourceRead = !!warmDecoderUri || lower.endsWith('.pgm') || lower.endsWith('.pbm') || lower.endsWith('.tga');
+		const warmSourceRead = !remoteTiffUrl
+			&& (!!warmDecoderUri || lower.endsWith('.pgm') || lower.endsWith('.pbm') || lower.endsWith('.tga'));
 		const decoderWarmupScript = warmSourceRead ? /* html */`
 	<script nonce="${nonce}">
 		(function () {
@@ -1411,7 +1416,7 @@ export class ImagePreview extends MediaPreview {
 
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' ${cspSource} 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource};">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' ${cspSource} 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource} https: http:;">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>
 <body class="container image${nativeFirstPaint ? ' loading' : ''}">

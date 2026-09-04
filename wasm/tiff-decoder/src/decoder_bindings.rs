@@ -613,6 +613,40 @@ pub fn decode_tiff_region(
         .map_err(js_error)
 }
 
+/// A TIFF source retained inside WebAssembly for repeated viewport reads.
+///
+/// Passing `&[u8]` through wasm-bindgen copies the source into linear memory.
+/// Keeping that copy here makes the cost occur once when an image is opened,
+/// rather than once per tile (which is prohibitive for large local COGs).
+#[wasm_bindgen]
+pub struct TiffRegionDecoder {
+    data: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl TiffRegionDecoder {
+    #[wasm_bindgen(constructor)]
+    pub fn new(data: &[u8]) -> Self {
+        prepare();
+        Self {
+            data: data.to_vec(),
+        }
+    }
+
+    pub fn decode(
+        &self,
+        page_index: u32,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<TiffRegionJs, JsValue> {
+        core::decode_tiff_region(&self.data, page_index, x, y, width, height)
+            .map(|inner| TiffRegionJs { inner })
+            .map_err(js_error)
+    }
+}
+
 /// Whether a page can be served a region at a time, without decoding anything.
 #[wasm_bindgen]
 pub fn tiff_region_decode_available(data: &[u8], page_index: u32) -> bool {

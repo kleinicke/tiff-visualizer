@@ -255,7 +255,7 @@ export class DecodeWorkerClient {
 		// TIFF is routed to this worker only when its primary WASM decoder is
 		// available. geotiff.js now belongs exclusively to the lazy webview
 		// fallback path.
-		if (format === 'tiff') {
+		if (format === 'tiff' || format === 'tiff-region') {
 			return !!this._caps.tiff;
 		}
 		return true;

@@ -163,20 +163,18 @@ function getArrayU32FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
-function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
+function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
   const len1 = WASM_VECTOR_LEN;
-  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
-  const len2 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_exr_zip_f32_blocks(ptr0, len0, ptr1, len1, ptr2, len2, width);
+  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
   if (ret[3]) {
     throw takeFromExternrefTable0(ret[2]);
   }
-  var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-  return v4;
+  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v3;
 }
 function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
@@ -191,18 +189,20 @@ function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, c
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v3;
 }
-function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
+function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
   const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
+  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_zip_f32_blocks(ptr0, len0, ptr1, len1, ptr2, len2, width);
   if (ret[3]) {
     throw takeFromExternrefTable0(ret[2]);
   }
-  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v3;
+  var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+  return v4;
 }
 function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
@@ -2007,6 +2007,48 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
   }
 };
 if (Symbol.dispose) TiffFloatStripPlanJs.prototype[Symbol.dispose] = TiffFloatStripPlanJs.prototype.free;
+var TiffRegionDecoderFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffregiondecoder_free(ptr >>> 0, 1));
+var TiffRegionDecoder = class {
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    TiffRegionDecoderFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_tiffregiondecoder_free(ptr, 0);
+  }
+  /**
+   * @param {Uint8Array} data
+   */
+  constructor(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiffregiondecoder_new(ptr0, len0);
+    this.__wbg_ptr = ret >>> 0;
+    TiffRegionDecoderFinalization.register(this, this.__wbg_ptr, this);
+    return this;
+  }
+  /**
+   * @param {number} page_index
+   * @param {number} x
+   * @param {number} y
+   * @param {number} width
+   * @param {number} height
+   * @returns {TiffRegionJs}
+   */
+  decode(page_index, x, y, width, height) {
+    const ret = wasm.tiffregiondecoder_decode(this.__wbg_ptr, page_index, x, y, width, height);
+    if (ret[2]) {
+      throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffRegionJs.__wrap(ret[0]);
+  }
+};
+if (Symbol.dispose) TiffRegionDecoder.prototype[Symbol.dispose] = TiffRegionDecoder.prototype.free;
 var TiffRegionJsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
 } } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffregionjs_free(ptr >>> 0, 1));

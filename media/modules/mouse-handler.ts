@@ -65,9 +65,12 @@ export class MouseHandler {
 	private _storedValueUnavailable = false;
 	/** See setStoredValueResolver. */
 	storedValueResolver: ((x: number, y: number) => Promise<string | null>) | null = null;
+	/** Large pyramid scenes publish only exact full-resolution values. */
+	private _storedValuesOnly = false;
 	/** The pixel the last exact read was started for, to drop stale answers. */
 	private _storedValuePixel: string = '';
 	private _storedValueInFlight = false;
+	private _storedResolverGeneration = 0;
 	/** Exact values already read, keyed by pixel; cleared with the image. */
 	private _storedValueCache = new Map<string, string>();
 
@@ -162,11 +165,18 @@ export class MouseHandler {
 	 * feels laggy, then the exact one when it arrives, if the cursor is still
 	 * on the same pixel. Set to null to go back to reporting what is displayed.
 	 */
-	setStoredValueResolver(resolver: ((x: number, y: number) => Promise<string | null>) | null): void {
+	setStoredValueResolver(
+		resolver: ((x: number, y: number) => Promise<string | null>) | null,
+		options: { exactOnly?: boolean } = {},
+	): void {
 		this.storedValueResolver = resolver;
+		this._storedValuesOnly = !!resolver && options.exactOnly === true;
 		// Values belong to the image and the level they were read from.
 		this._storedValueCache.clear();
 		this._storedValueUnavailable = false;
+		this._storedValuePixel = '';
+		this._storedValueInFlight = false;
+		this._storedResolverGeneration++;
 	}
 
 	setExrProcessor(proc: any) { this.exrProcessor = proc; }
@@ -216,6 +226,10 @@ export class MouseHandler {
 	 */
 	_handleMouseEnter(e: MouseEvent) {
 		if (!this.imageElement) return;
+		if (this._storedValuesOnly) {
+			this._upgradeToStoredValue(e);
+			return;
+		}
 		const pixelInfo = this._getPixelInfo(e);
 		if (pixelInfo) {
 			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
@@ -231,6 +245,12 @@ export class MouseHandler {
 	 */
 	_handleMouseMove(e: MouseEvent) {
 		if (!this.imageElement) return;
+		if (this._storedValuesOnly) {
+			// Do not flash an overview sample before the exact value. Keep the last
+			// stable readout while the newest full-resolution pixel is fetched.
+			this._upgradeToStoredValue(e);
+			return;
+		}
 		const pixelInfo = this._getPixelInfo(e);
 		if (pixelInfo) {
 			this.vscode.postMessage({ type: 'pixelFocus', value: pixelInfo });
@@ -261,7 +281,7 @@ export class MouseHandler {
 	private _upgradeToStoredValue(e: MouseEvent): void {
 		const resolver = this.storedValueResolver;
 		// Only worth doing when the displayed value is NOT the stored one.
-		if (!resolver || !this.resolutionNote) { return; }
+		if (!resolver || (!this.resolutionNote && !this._storedValuesOnly)) { return; }
 		const position = this._pixelPosition(e);
 		if (!position) { return; }
 		const key = `${position.x},${position.y}`;
@@ -286,8 +306,10 @@ export class MouseHandler {
 		key: string,
 	): void {
 		this._storedValueInFlight = true;
+		const generation = this._storedResolverGeneration;
 		void resolver(x, y)
 			.then(value => {
+				if (generation !== this._storedResolverGeneration) { return; }
 				if (!value) {
 					// This file cannot be read a rectangle at a time, so the
 					// displayed value is the best there is — and now the
@@ -307,6 +329,7 @@ export class MouseHandler {
 			})
 			.catch(() => { /* keep the approximate readout */ })
 			.finally(() => {
+				if (generation !== this._storedResolverGeneration) { return; }
 				this._storedValueInFlight = false;
 				// The cursor moved on while this was in flight: catch up once,
 				// rather than having skipped the pixel it is now sitting on.
@@ -343,8 +366,10 @@ export class MouseHandler {
 		if (!this.imageElement) { return null; }
 		const rect = this.imageElement.getBoundingClientRect();
 		const anyElement = this.imageElement as any;
-		const naturalWidth = anyElement.naturalWidth || anyElement.width;
-		const naturalHeight = anyElement.naturalHeight || anyElement.height;
+		const sceneWidth = Number(this.imageElement.dataset?.sceneWidth);
+		const sceneHeight = Number(this.imageElement.dataset?.sceneHeight);
+		const naturalWidth = sceneWidth > 0 ? sceneWidth : (anyElement.naturalWidth || anyElement.width);
+		const naturalHeight = sceneHeight > 0 ? sceneHeight : (anyElement.naturalHeight || anyElement.height);
 		if (
 			e.clientX < rect.left || e.clientX > rect.right ||
 			e.clientY < rect.top || e.clientY > rect.bottom ||

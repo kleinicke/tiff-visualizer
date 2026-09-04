@@ -131,6 +131,24 @@ async function main() {
 		console.log(`✅ Blocks read follow the region: 1 for a pixel, ${whole.blocks_decoded} for the image`);
 	}
 
+	// Large local pyramids keep one compressed-source copy inside WASM. Both
+	// reads must remain exact after the caller's input buffer has been changed,
+	// proving the decoder owns and reuses its source rather than borrowing or
+	// recopying it for each viewport request.
+	{
+		const bytes = new Uint8Array(fs.readFileSync(path.join(samplesDir, 'cog_2band_pyramid.tif')));
+		const expectedA = wasm.decode_tiff_region(bytes, 0, 5, 5, 1, 1).take_data_as_f32();
+		const expectedB = wasm.decode_tiff_region(bytes, 0, 130, 130, 2, 2).take_data_as_f32();
+		const decoder = new wasm.TiffRegionDecoder(bytes);
+		bytes.fill(0);
+		const actualA = decoder.decode(0, 5, 5, 1, 1).take_data_as_f32();
+		const actualB = decoder.decode(0, 130, 130, 2, 2).take_data_as_f32();
+		assert.deepStrictEqual(Array.from(actualA), Array.from(expectedA));
+		assert.deepStrictEqual(Array.from(actualB), Array.from(expectedB));
+		decoder.free();
+		console.log('✅ Repeated local regions reuse one WASM-owned TIFF source');
+	}
+
 	// A pyramid's overviews are pages, and a region of one must work too —
 	// that is what a viewer showing a reduced level needs.
 	{

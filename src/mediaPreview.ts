@@ -45,19 +45,24 @@ export abstract class MediaPreview extends Disposable {
 			this.dispose();
 		}));
 
-		const watcher = this._register(vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(_resource, '*')));
-		this._register(watcher.onDidChange(e => {
-			if (e.toString() === this._resource.toString()) {
-				this.updateBinarySize();
-				this.render();
-			}
-		}));
+		// HTTP TIFFs are immutable-from-the-editor streaming resources. Asking
+		// VS Code's filesystem service to watch them is both meaningless and can
+		// fail when no filesystem provider is registered for the URL scheme.
+		if (!/^(?:http|https)$/.test(_resource.scheme)) {
+			const watcher = this._register(vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(_resource, '*')));
+			this._register(watcher.onDidChange(e => {
+				if (e.toString() === this._resource.toString()) {
+					this.updateBinarySize();
+					this.render();
+				}
+			}));
 
-		this._register(watcher.onDidDelete(e => {
-			if (e.toString() === this._resource.toString()) {
-				this._webviewEditor.dispose();
-			}
-		}));
+			this._register(watcher.onDidDelete(e => {
+				if (e.toString() === this._resource.toString()) {
+					this._webviewEditor.dispose();
+				}
+			}));
+		}
 	}
 
 	public override dispose() {
@@ -70,6 +75,11 @@ export abstract class MediaPreview extends Disposable {
 	}
 
 	protected async updateBinarySize() {
+		if (/^(?:http|https)$/.test(this._resource.scheme)) {
+			this._binarySize = undefined;
+			this.updateState();
+			return;
+		}
 		try {
 			const { size } = await vscode.workspace.fs.stat(this._resource);
 			this._binarySize = size;

@@ -1214,17 +1214,10 @@ export function registerImagePreviewCommands(
 	 * STAC catalogue hands out `https://` hrefs, and asking someone to download
 	 * a 40 MB band before they can look at it is the friction this removes.
 	 *
-	 * The bytes are fetched by the extension host and written into this
-	 * extension's own storage, then opened like any local file: the custom
-	 * editor, the decoders and every control work on a URI, and inventing a
-	 * second path for remote files would mean maintaining two of everything.
-	 * The copy also makes reopening, page changes and export work without
-	 * refetching.
-	 *
-	 * Whole-file, deliberately. A Cloud-Optimized GeoTIFF is laid out so a
-	 * client can read its header and only the tiles it needs; doing that means
-	 * a byte-source abstraction beneath the decoder, which is a larger change
-	 * than this one.
+	 * TIFF URLs stay remote and use the viewer's HTTP Range byte source, so a
+	 * COG transfers its directory and visible tiles rather than the complete
+	 * object. Other formats retain the download-to-extension-storage behavior:
+	 * their decoders still require a contiguous source buffer.
 	 */
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openImageFromUrl', async (presetUrl?: string) => {
 		logCommand('openImageFromUrl', 'start');
@@ -1260,6 +1253,13 @@ export function registerImagePreviewCommands(
 
 		const name = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || 'image');
 		try {
+			// TIFF has a range-backed viewer path. Open the URL itself so a COG
+			// stays on the server and only its directory/visible tiles travel.
+			if (/\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname)) {
+				await openPreviewForResource(vscode.Uri.parse(parsed.toString()));
+				logCommand('openImageFromUrl', 'success', `${name} streamed from ${parsed.host}`);
+				return;
+			}
 			const target = await vscode.window.withProgress({
 				location: vscode.ProgressLocation.Notification,
 				title: `Downloading ${name}`,

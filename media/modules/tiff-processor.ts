@@ -103,6 +103,13 @@ export class TiffProcessor {
 	pageCount: number;
 	_sourceBuffer: ArrayBuffer | null;
 	_sourceBufferSrc: string | null;
+	_remoteTiff: any = null;
+	_remoteTiffUrl: string | null = null;
+	_remoteDecodePool: any = null;
+	/** Worker-side source residency for repeated viewport/pixel region reads. */
+	_regionSourceGeneration = 0;
+	_regionWorkerPrimed = false;
+	_regionDecodeQueue: Promise<void> = Promise.resolve();
 	/** Why the Rust decoder refused the current file, if it did. */
 	_lastWasmFailure = '';
 	omeMetadata: OmeMetadata | null;
@@ -274,9 +281,19 @@ export class TiffProcessor {
 		const startTime = performance.now();
 		this._lastRenderHistogram = null;
 		const loadSignal = this.loadSignal;
+		const remoteUrl = this.settingsManager.settings.remoteTiffUrl;
+		if (remoteUrl) {
+			return this._processRemoteTiff(remoteUrl, pageIndex, levelHint, startTime);
+		}
+		this._remoteDecodePool?.destroy?.();
+		this._remoteDecodePool = null;
+		this._remoteTiff = null;
+		this._remoteTiffUrl = null;
 		let decodeInfo: { engine: string, durationMs: number } | null = null;
 		try {
 			if (this._sourceBufferSrc !== src) {
+				this._regionSourceGeneration++;
+				this._regionWorkerPrimed = false;
 				this.omeMetadata = null;
 				this.omeBinaryOnly = null;
 				this.omeXml = null;
@@ -889,6 +906,216 @@ export class TiffProcessor {
 		}
 	}
 
+	/**
+	 * Open an HTTP COG through geotiff.js's blocked Range source. Unlike the
+	 * ordinary/local path, this never materializes the complete file: directory
+	 * blocks and the selected overview are fetched independently and cached.
+	 */
+	private async _processRemoteTiff(
+		url: string,
+		pageIndex: number,
+		levelHint: TiffLevelHint | undefined,
+		startTime: number,
+	): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
+		const GeoTIFF = await loadGeoTiff();
+		if (this._remoteTiffUrl !== url || !this._remoteTiff) {
+			this._remoteDecodePool?.destroy?.();
+			this._remoteTiff = await GeoTIFF.fromUrl(url, {
+				blockSize: 64 * 1024,
+				cacheSize: 256,
+				allowFullFile: false,
+			}, this.loadSignal);
+			this._remoteTiffUrl = url;
+			// geotiff.js's browser bundle creates blob-backed decoder workers;
+			// network stays range-backed while decompression stays off the UI.
+			this._remoteDecodePool = typeof GeoTIFF.Pool === 'function'
+				? new GeoTIFF.Pool(Math.max(1, Math.min(4, navigator.hardwareConcurrency || 2)))
+				: null;
+			this._sourceBuffer = null;
+			this._sourceBufferSrc = null;
+			this._regionSourceGeneration++;
+			this._regionWorkerPrimed = false;
+			this.pageDirectory = await this._buildRemotePageDirectory(this._remoteTiff);
+		}
+
+		const tiff = this._remoteTiff;
+		this.pageCount = Math.max(1, await tiff.getImageCount());
+		if (levelHint && pageIndex === 0 && this.pageDirectory.length > 1) {
+			const canDisplay = (width: number, height: number) =>
+				width <= levelHint.maxAxis && height <= levelHint.maxAxis
+				&& width * height <= levelHint.maxArea
+				&& width * height * 4 <= levelHint.maxBytes;
+			const chosen = chooseOpenLevel(this.pageDirectory, 0, levelHint.displayWidth,
+				canDisplay, 1, levelHint.pixelBudget);
+			if (chosen) { pageIndex = chosen.index; }
+		}
+		if (pageIndex < 0 || pageIndex >= this.pageCount) {
+			throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${this.pageCount})`);
+		}
+
+		this.pageIndex = pageIndex;
+		const decodeStart = performance.now();
+		const image = await tiff.getImage(pageIndex);
+		const firstImage = pageIndex === 0 ? image : await tiff.getImage(0);
+		this._setOmeXml(String(firstImage?.fileDirectory?.ImageDescription || ''));
+		const rasters = await this._readRemoteRasters(image, { signal: this.loadSignal });
+		const decodeInfo = {
+			engine: 'geotiff.js (HTTP ranges)',
+			durationMs: performance.now() - decodeStart,
+		};
+		PerfTrace.mark('decode-geotiff-ranges');
+		PerfTrace.note('tiff-byte-source', 'HTTP Range');
+
+		const width = image.getWidth();
+		const height = image.getHeight();
+		const sampleFormat = image.getSampleFormat();
+		const samplesPerPixel = image.getSamplesPerPixel();
+		const bitsPerSample = image.getBitsPerSample();
+		const ArrayCtor = pickTiffArrayCtor(sampleFormat, bitsPerSample);
+		const data = new ArrayCtor(width * height * samplesPerPixel);
+		if (samplesPerPixel === 1) {
+			data.set(rasters[0]);
+		} else {
+			for (let i = 0; i < rasters[0].length; i++) {
+				for (let sample = 0; sample < samplesPerPixel; sample++) {
+					data[i * samplesPerPixel + sample] = rasters[sample][i];
+				}
+			}
+		}
+
+		const fileDir = image.fileDirectory || {};
+		this.rawTiffData = {
+			image,
+			rasters,
+			ifd: {
+				width, height,
+				t339: Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat,
+				t277: samplesPerPixel,
+				t284: 1,
+				t258: bitsPerSample,
+				pageIndex,
+				pageCount: this.pageCount,
+			},
+			data,
+		};
+		this._lastAllTags = buildTagsFromGeotiffImage(image);
+		this._setOmeXml(findOmeXmlInTags(this._lastAllTags));
+		this.rawTiffData.ome = this.omeMetadata;
+		this._gdalNodata = parseGdalNodata(this._lastAllTags);
+		this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
+		this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
+		// Build the affine from the FULL page. The displayed overview has a
+		// coarser pixel scale, while scene/picker coordinates are full-resolution.
+		try {
+			const origin = firstImage.getOrigin();
+			const resolution = firstImage.getResolution();
+			const keys = firstImage.getGeoKeys?.() || {};
+			const projected = Number(keys.ProjectedCSTypeGeoKey || 0);
+			const geographic = Number(keys.GeographicTypeGeoKey || 0);
+			this.geoReference = {
+				crs: projected ? `EPSG:${projected}` : geographic ? `EPSG:${geographic}` : undefined,
+				isGeographic: !projected && !!geographic,
+				pixelIsPoint: Number(keys.GTRasterTypeGeoKey || 1) === 2,
+				unit: !projected && geographic ? 'degree' : 'metre',
+				transform: [Number(resolution[0]), 0, Number(origin[0]), 0, Number(resolution[1]), Number(origin[1])],
+			};
+		} catch {
+			this.geoReference = null;
+		}
+		const layoutInfo = this._getTiffLayoutInfo(image);
+		this._logTiffLayout(layoutInfo);
+
+		const canvas = document.createElement('canvas');
+		canvas.width = width;
+		canvas.height = height;
+		if (this.vscode && this._isInitialLoad) {
+			this._pendingRenderData = { image, rasters };
+			this.vscode.postMessage({
+				type: 'formatInfo',
+				value: {
+					width, height, sampleFormat,
+					compression: fileDir.Compression || 'Unknown',
+					predictor: fileDir.Predictor,
+					photometricInterpretation: fileDir.PhotometricInterpretation,
+					planarConfig: fileDir.PlanarConfiguration,
+					samplesPerPixel, bitsPerSample,
+					...layoutInfo,
+					formatType: tiffFormatTypeFor(sampleFormat, bitsPerSample),
+					isInitialLoad: true,
+					decodedWith: decodeInfo.engine,
+					pageIndex,
+					pageCount: this.pageCount,
+					...this._omeFormatInfo(),
+				},
+			});
+			return {
+				canvas,
+				imageData: new ImageData(width, height),
+				tiffData: this.rawTiffData,
+				decodeInfo,
+			};
+		}
+
+		const imageData = await this.renderTiff(image, rasters);
+		console.log(`[TiffProcessor] HTTP-range TIFF ready in ${(performance.now() - startTime).toFixed(2)}ms`);
+		return { canvas, imageData, tiffData: this.rawTiffData, decodeInfo };
+	}
+
+	private async _buildRemotePageDirectory(tiff: any): Promise<TiffPageEntry[]> {
+		const count = Math.max(1, await tiff.getImageCount());
+		const entries: TiffPageEntry[] = [];
+		let parent: TiffPageEntry | null = null;
+		for (let index = 0; index < count; index++) {
+			const image = await tiff.getImage(index);
+			const width = Number(image.getWidth());
+			const height = Number(image.getHeight());
+			const fd = image.fileDirectory || {};
+			const subfileType = Number(fd.NewSubfileType || 0);
+			const reduced = !!(subfileType & 1)
+				|| (!!parent && width < parent.width && height < parent.height);
+			const mask = !!(subfileType & 4);
+			if (!parent || (!reduced && !mask)) {
+				parent = {
+					index, width, height,
+					samplesPerPixel: Number(image.getSamplesPerPixel()) || 1,
+					subfileType,
+					kind: 'image', parent: null, reduction: 1,
+					subIfdCount: Number(fd.SubIFDs?.length || 0),
+					blockWidth: Number(fd.TileWidth || width),
+					blockHeight: Number(fd.TileLength || fd.RowsPerStrip || height),
+				};
+				entries.push(parent);
+				continue;
+			}
+			entries.push({
+				index, width, height,
+				samplesPerPixel: Number(image.getSamplesPerPixel()) || 1,
+				subfileType,
+				kind: mask ? 'mask' : 'overview',
+				parent: parent.index,
+				reduction: Math.max(1, Math.round(parent.width / Math.max(1, width))),
+				subIfdCount: Number(fd.SubIFDs?.length || 0),
+				blockWidth: Number(fd.TileWidth || width),
+				blockHeight: Number(fd.TileLength || fd.RowsPerStrip || height),
+			});
+		}
+		return entries;
+	}
+
+	private async _readRemoteRasters(image: any, options: Record<string, any>): Promise<any> {
+		if (this._remoteDecodePool) {
+			try {
+				return await image.readRasters({ ...options, pool: this._remoteDecodePool });
+			} catch (error) {
+				if ((error as any)?.name === 'AbortError') { throw error; }
+				console.warn('[TiffProcessor] Remote decode pool unavailable; decoding fetched blocks locally:', error);
+				this._remoteDecodePool.destroy?.();
+				this._remoteDecodePool = null;
+			}
+		}
+		return image.readRasters(options);
+	}
+
 	_omeFormatInfo(): Record<string, any> {
 		const ome = this.omeMetadata;
 		if (!ome) { return {}; }
@@ -1233,33 +1460,162 @@ export class TiffProcessor {
 	 * already had.
 	 */
 	async readStoredPixel(x: number, y: number): Promise<string | null> {
-		const buffer = this._sourceBuffer;
-		if (!buffer) { return null; }
+		if (!this._sourceBuffer && !this._remoteTiff) { return null; }
 		const current = this.pageDirectory.find(entry => entry.index === this.pageIndex);
 		const reduction = current && current.reduction > 1 ? current.reduction : 1;
 		if (reduction === 1) { return null; }
 		const page = current?.parent ?? 0;
 
 		try {
-			const wasm = getWasmModuleSync() || await getWasmModule();
-			if (!wasm || typeof wasm.decode_tiff_region !== 'function') { return null; }
-			const bytes = new Uint8Array(buffer);
 			// The centre of the block of stored pixels this display pixel
 			// stands for, rather than its corner: at 1/8 the corner is one of
 			// 64 stored values, and the middle is the least arbitrary of them.
 			const storedX = Math.floor(x * reduction + reduction / 2);
 			const storedY = Math.floor(y * reduction + reduction / 2);
-			const region = wasm.decode_tiff_region(bytes, page, storedX, storedY, 1, 1);
-			const samples = Array.from(region.take_data_as_f32() as Float32Array) as number[];
+			const region = await this._decodeRegionRaw(page, {
+				x: storedX, y: storedY, width: 1, height: 1,
+			});
+			if (!region) { return null; }
+			const samples = Array.from(region.data as Float32Array) as number[];
 			if (!samples.length) { return null; }
 			const declared = this._formatDeclaredSamples(samples);
 			if (declared !== null) { return declared; }
-			const sampleFormat = this.rawTiffData?.ifd?.t339;
+			const sampleFormat = Number(region.sampleFormat ?? this.rawTiffData?.ifd?.t339);
 			return samples
 				.map(value => sampleFormat === 3 ? value.toPrecision(4) : String(value))
 				.join(' ');
 		} catch {
 			// Includes the deliberate "this layout is decoded whole" refusal.
+			return null;
+		}
+	}
+
+	/** Exact full-resolution value for a stable pyramid-scene coordinate. */
+	async readFullResolutionPixel(x: number, y: number): Promise<string | null> {
+		const current = this.pageDirectory.find(entry => entry.index === this.pageIndex);
+		const page = current?.parent ?? this.pageIndex;
+		try {
+			const region = await this._decodeRegionRaw(page, {
+				x: Math.floor(x), y: Math.floor(y), width: 1, height: 1,
+			});
+			if (!region?.data?.length) { return null; }
+			const samples = Array.from(region.data as Float32Array) as number[];
+			const declared = this._formatDeclaredSamples(samples);
+			if (declared !== null) { return declared; }
+			const sampleFormat = Number(region.sampleFormat ?? this.rawTiffData?.ifd?.t339);
+			return samples
+				.map(value => sampleFormat === 3 ? value.toPrecision(4) : String(value))
+				.join(' ');
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Serialize region work through one worker. The source is transferred once
+	 * and retained there; later tile and picker requests send only coordinates.
+	 */
+	private _decodeRegionRaw(
+		pageIndex: number,
+		rect: { x: number, y: number, width: number, height: number },
+	): Promise<any | null> {
+		if (this._remoteTiff && this._remoteTiffUrl) {
+			return this._decodeRemoteRegionRaw(pageIndex, rect);
+		}
+		const requestedBuffer = this._sourceBuffer;
+		const requestedGeneration = this._regionSourceGeneration;
+		let resolveResult: (value: any | null) => void = () => {};
+		const result = new Promise<any | null>(resolve => { resolveResult = resolve; });
+		this._regionDecodeQueue = this._regionDecodeQueue.then(async () => {
+			const buffer = requestedBuffer;
+			if (!buffer || requestedGeneration !== this._regionSourceGeneration
+				|| buffer !== this._sourceBuffer) {
+				resolveResult(null);
+				return;
+			}
+			const sourceKey = `${this._sourceBufferSrc || 'tiff'}#regions-${this._regionSourceGeneration}`;
+
+			if (this.decodeWorker && !this.decodeWorker.canDecode('tiff-region')) {
+				await Promise.race([
+					this.decodeWorker.start(),
+					new Promise(resolve => setTimeout(resolve, 750)),
+				]);
+			}
+			if (this.decodeWorker?.canDecode('tiff-region')) {
+				const request = async (includeSource: boolean) => this.decodeWorker!.decode(
+					'tiff-region',
+					includeSource ? buffer.slice(0) : new ArrayBuffer(0),
+					{ pageIndex, rect, sourceCacheKey: sourceKey },
+				);
+				let response = await request(!this._regionWorkerPrimed);
+				// A worker can have restarted, or its single source cache can have
+				// been replaced by another format between requests.
+				if (!response?.ok && this._regionWorkerPrimed) {
+					this._regionWorkerPrimed = false;
+					response = await request(true);
+				}
+				if (response?.ok) {
+					this._regionWorkerPrimed = true;
+					resolveResult(response.result);
+					return;
+				}
+			}
+
+			// Compatibility fallback for webviews where workers cannot start.
+			try {
+				const wasm = getWasmModuleSync() || await getWasmModule();
+				if (!wasm || typeof wasm.decode_tiff_region !== 'function') {
+					resolveResult(null);
+					return;
+				}
+				const region = wasm.decode_tiff_region(
+					new Uint8Array(buffer), pageIndex, rect.x, rect.y, rect.width, rect.height);
+				resolveResult({
+					width: Number(region.width),
+					height: Number(region.height),
+					channels: Number(region.channels),
+					bitsPerSample: Number(region.bits_per_sample),
+					sampleFormat: Number(region.sample_format),
+					blocksDecoded: Number(region.blocks_decoded),
+					data: region.take_data_as_f32() as Float32Array,
+				});
+			} catch {
+				resolveResult(null);
+			}
+		}).catch(() => { resolveResult(null); });
+		return result;
+	}
+
+	/** Read and decode only the remote blocks intersecting one rectangle. */
+	private async _decodeRemoteRegionRaw(
+		pageIndex: number,
+		rect: { x: number, y: number, width: number, height: number },
+	): Promise<any | null> {
+		try {
+			const image = await this._remoteTiff.getImage(pageIndex);
+			const x = Math.max(0, Math.min(Math.floor(rect.x), image.getWidth() - 1));
+			const y = Math.max(0, Math.min(Math.floor(rect.y), image.getHeight() - 1));
+			const width = Math.max(1, Math.min(Math.ceil(rect.width), image.getWidth() - x));
+			const height = Math.max(1, Math.min(Math.ceil(rect.height), image.getHeight() - y));
+			const rasters = await this._readRemoteRasters(image, {
+				window: [x, y, x + width, y + height],
+				signal: this.loadSignal,
+			});
+			const channels = rasters.length;
+			const data = new Float32Array(width * height * channels);
+			for (let pixel = 0; pixel < width * height; pixel++) {
+				for (let channel = 0; channel < channels; channel++) {
+					data[pixel * channels + channel] = Number(rasters[channel][pixel]);
+				}
+			}
+			const sampleFormat = image.getSampleFormat();
+			return {
+				width, height, channels, data,
+				bitsPerSample: Number(image.getBitsPerSample()),
+				sampleFormat: Number(Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat),
+				blocksDecoded: undefined,
+			};
+		} catch {
 			return null;
 		}
 	}
@@ -1276,22 +1632,19 @@ export class TiffProcessor {
 		pageIndex: number,
 		rect: { x: number, y: number, width: number, height: number },
 	): Promise<ImageData | null> {
-		const buffer = this._sourceBuffer;
-		if (!buffer) { return null; }
+		if (!this._sourceBuffer && !this._remoteTiff) { return null; }
 		try {
-			const wasm = getWasmModuleSync() || await getWasmModule();
-			if (!wasm || typeof wasm.decode_tiff_region !== 'function') { return null; }
-			const region = wasm.decode_tiff_region(
-				new Uint8Array(buffer), pageIndex, rect.x, rect.y, rect.width, rect.height);
-			const width = region.width as number;
-			const height = region.height as number;
-			const channels = region.channels as number;
-			const data = region.take_data_as_f32() as Float32Array;
+			const region = await this._decodeRegionRaw(pageIndex, rect);
+			if (!region) { return null; }
+			const width = Number(region.width);
+			const height = Number(region.height);
+			const channels = Number(region.channels);
+			const data = region.data as Float32Array;
 			if (!data.length) { return null; }
 
 			const settings = this.settingsManager.settings;
-			const bitsPerSample = this.rawTiffData?.ifd?.t258 ?? region.bits_per_sample;
-			const sampleFormat = this.rawTiffData?.ifd?.t339 ?? region.sample_format;
+			const bitsPerSample = this.rawTiffData?.ifd?.t258 ?? region.bitsPerSample;
+			const sampleFormat = this.rawTiffData?.ifd?.t339 ?? region.sampleFormat;
 			return ImageRenderer.render(
 				data, width, height, channels,
 				sampleFormat === 3,
