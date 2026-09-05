@@ -102,14 +102,7 @@
         "selector": [
           {
             "filenamePattern": "*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,jxr,wdp,hdp,jp2,jpf,jpx,j2k,j2c,jpc,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,czi,nd2,lif,sdt,ora,kra,psd,psb,xcf,afphoto,af}"
-          }
-        ]
-      },
-      {
-        "viewType": "tiffVisualizer.previewEditor.option",
-        "displayName": "Scientific Image Visualizer",
-        "priority": "default",
-        "selector": [
+          },
           {
             "filenamePattern": "*.{png,jpeg,jpg,bmp,ico,webp,avif}"
           }
@@ -298,25 +291,25 @@
         "command": "tiffVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",
-        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       },
       {
         "command": "tiffVisualizer.toggleMetadata",
         "key": "ctrl+m",
         "mac": "cmd+m",
-        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       },
       {
         "command": "tiffVisualizer.toggleMeasure",
         "key": "ctrl+shift+m",
         "mac": "cmd+shift+m",
-        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       },
       {
         "command": "tiffVisualizer.copyImageInfo",
         "key": "ctrl+shift+i",
         "mac": "cmd+shift+i",
-        "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/"
+        "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'"
       }
     ],
     "menus": {
@@ -343,17 +336,17 @@
       "editor/context": [
         {
           "command": "tiffVisualizer.showDocumentation",
-          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
           "group": "z_help@1"
         },
         {
           "command": "tiffVisualizer.selectForCompare",
-          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor'",
           "group": "comparison@1"
         },
         {
           "command": "tiffVisualizer.compareWithSelected",
-          "when": "activeCustomEditorId =~ /^tiffVisualizer\\.previewEditor(?:\\.option)?$/ && tiffVisualizer.hasComparisonImage",
+          "when": "activeCustomEditorId == 'tiffVisualizer.previewEditor' && tiffVisualizer.hasComparisonImage",
           "group": "comparison@1"
         }
       ]
@@ -400,7 +393,7 @@
     "test:unit": "npm run test:compositor && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:format-defaults": "node test/format-defaults-test.js",
-    "test:format-registry": "node test/format-registry-test.js",
+    "test:format-registry": "node test/format-registry-test.js && node test/git-image-resource-test.js",
     "test:format-sniffer": "node test/image-format-sniffer-test.js",
     "test:geotiff": "node test/geotiff-test.js",
     "test:main-thread-wasm-wiring": "node test/main-thread-wasm-wiring-test.js",

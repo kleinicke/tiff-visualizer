@@ -65,9 +65,9 @@ there first.
 
 ### The file opens in VS Code's built-in image viewer instead
 
-For PNG, JPEG, BMP, ICO, WebP and AVIF that is the default. **Right-click →
-Open With… → Scientific Image Visualizer**, and use **Configure default editor**
-if you want it permanently.
+All supported formats now use Scientific Image Visualizer by default, including
+PNG and JPEG. An existing editor association can override this. **Right-click →
+Open With… → Configure default editor → Scientific Image Visualizer** to update it.
 
 ### A TIFF fails to open
 

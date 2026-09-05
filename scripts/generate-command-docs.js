@@ -197,8 +197,8 @@ for (const editor of editors) {
 	lines.push(`| ${editor.displayName} (\`${editor.viewType}\`) | ${patterns} |`);
 }
 lines.push('');
-lines.push('The `.option` editor is registered for formats VS Code already previews, so');
-lines.push('it does not take them over — reach it with **Open With…**. See');
+lines.push('All supported formats use Scientific Image Visualizer by default, including');
+lines.push('PNG/JPEG and Git revision previews. See');
 lines.push('[formats](./formats.md).');
 lines.push('');
 

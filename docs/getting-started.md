@@ -8,16 +8,13 @@ Click any supported file in the Explorer. For the formats this extension owns
 outright — TIFF, EXR, NPY, FITS, DICOM, NetCDF, PFM, PPM, HDR, TGA, JXL and the
 layered document formats — the viewer opens automatically.
 
-For formats VS Code can already display (PNG, JPEG, BMP, ICO, WebP, AVIF) the
-built-in image preview stays the default and this extension is offered as an
-option. To use it:
+PNG, JPEG, BMP, ICO, WebP and AVIF use the same default editor as the
+scientific formats, including before/after previews opened from Git.
 
-- **Right-click the file → Open With… → Scientific Image Visualizer**, or
-- set it as the permanent default for that extension via **Open With… →
-  Configure default editor**.
-
-That split is deliberate: taking over PNG for everyone would be rude, but a
-16-bit PNG depth map is exactly the case where you want this viewer.
+If an existing editor association selects another viewer, use **Right-click →
+Open With… → Configure default editor → Scientific Image Visualizer**. This
+also updates associations saved under the former `tiffVisualizer.previewEditor.option`
+identifier.
 
 ## Opening an image from a URL
 

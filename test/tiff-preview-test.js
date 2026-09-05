@@ -4,10 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');
 
-// A >128 MP file with small independent strips, partial final strip, and NaN.
+// A >130 MP file with small independent strips, partial final strip, and NaN.
 // Generated a strip at a time; no full-size reference raster is allocated.
 function fixture() {
- const width = 8193, height = 15625, rows = 32;
+ const width = 8321, height = 15625, rows = 32;
  const value = (x, y) => x === 0 && y === 0 ? NaN : x - y;
  const strips = [];
  for (let y = 0; y < height; y += rows) {
@@ -41,9 +41,11 @@ async function main() {
  const wasm = await import('../media/wasm/tiff-wasm.js');
  await wasm.default({ module_or_path: fs.readFileSync(path.join(__dirname, '../media/wasm/tiff-wasm.wasm')) });
  const input = fixture();
- // Header-only routing checks: 128 MP itself stays on the normal path.
+ // Header-only routing checks: 130 MP itself stays on the normal path.
  const smaller = Buffer.from(input.bytes);
- smaller.writeUInt32LE(8192, 18);
+ smaller.writeUInt32LE(8320, 18); // exactly 130 MP
+ assert.equal(wasm.tiff_preview_reduction(smaller), 0);
+ smaller.writeUInt32LE(8192, 18); // exactly 128 MP
  assert.equal(wasm.tiff_preview_reduction(smaller), 0);
  smaller.writeUInt32LE(6400, 18); // 100 MP at the same height
  assert.equal(wasm.tiff_preview_reduction(smaller), 0);

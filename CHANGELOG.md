@@ -7,7 +7,7 @@
 - Read GeoTIFF georeferencing: named GeoKeys and a CRS label in the metadata panel, and map coordinates under the cursor
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
 - Load images from url using command
-- Allow loading of massive tiff images
+- Allow loading of massive tiff images. For images above 130 MP use lower resolution image combined with a high resolution area currently visible.
 
 ## 1.10.0 (2026-08-22)
 

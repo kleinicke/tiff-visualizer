@@ -771,7 +771,7 @@ export class ImagePreview extends MediaPreview {
 			});
 		};
 		for (const uri of uris) {
-			const dir = Utils.dirname(uri);
+			const dir = Utils.dirname(uri).with({ query: '', fragment: '' });
 			if (!isCovered(dir)) {
 				toAdd.push(dir);
 			}
@@ -810,7 +810,7 @@ export class ImagePreview extends MediaPreview {
 
 		const currentRoots = this._webviewEditor.webview.options.localResourceRoots ?? [];
 		const rootsToAdd = uris
-			.map(u => Utils.dirname(u))
+			.map(u => Utils.dirname(u).with({ query: '', fragment: '' }))
 			.filter(dir => !currentRoots.some(r => r.toString() === dir.toString()));
 		if (rootsToAdd.length > 0) {
 			this._webviewEditor.webview.options = {

@@ -87,7 +87,7 @@ used to pre-fill the measurement scale, so an ROI area can come out in µm²
 without you typing anything.
 
 Large single-page float32 grayscale TIFFs can open without stored overviews.
-For supported strip/tile layouts above 128 MP, the viewer generates a small
+For supported strip/tile layouts above 130 MP, the viewer generates a small
 nearest-sample preview while scanning finite min/max values, then loads original
 detail as you zoom in. The picker upgrades preview readouts to original pixel
 values; an overview label remains until that exact value arrives. The source

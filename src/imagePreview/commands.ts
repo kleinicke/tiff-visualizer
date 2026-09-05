@@ -1290,7 +1290,7 @@ export function registerImagePreviewCommands(
 	 */
 	async function openPreviewForResource(uri: vscode.Uri, formatHint?: string) {
 		if (formatHint) { previewManager.setResourceFormatHint(uri, formatHint); }
-		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.getViewTypeForResource(uri));
+		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.viewType);
 		// resolveCustomEditor runs asynchronously — wait briefly for the preview to register.
 		for (let i = 0; i < 60; i++) {
 			const preview = previewManager.getPreviewFor(uri);
@@ -1572,7 +1572,7 @@ export function registerImagePreviewCommands(
 			await vscode.commands.executeCommand(
 				'vscode.openWith',
 				selected,
-				ImagePreviewManager.getViewTypeForResource(selected),
+				ImagePreviewManager.viewType,
 				vscode.ViewColumn.Beside,
 			);
 			vscode.window.showInformationMessage(

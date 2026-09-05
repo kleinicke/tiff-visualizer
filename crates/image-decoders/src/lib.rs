@@ -1048,7 +1048,7 @@ pub fn decode_tiff_region(
 #[cfg(feature = "tiff")]
 pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
     let Some(plan) = formats::tiff::float_strip_plan_for(data) else { return 0; };
-    if plan.width as u64 * plan.height as u64 <= 128_000_000
+    if plan.width as u64 * plan.height as u64 <= 130_000_000
         || plan.channels != 1 || plan.sample_format != 3 || plan.bits_per_sample != 32
         || !formats::tiff::region::region_decode_supported(&plan)
         || tiff_page_count(data).ok() != Some(1) { return 0; }

@@ -27,7 +27,9 @@ export abstract class MediaPreview extends Disposable {
 			enableScripts: true,
 			enableForms: false,
 			localResourceRoots: [
-				Utils.dirname(_resource),
+				// Resource roots are folders, not revisions. VS Code strips the request
+				// query before checking access; keep it only on the actual image URI.
+				Utils.dirname(_resource).with({ query: '', fragment: '' }),
 				extensionRoot,
 				// Include workspace folders up front so adding images to a collection
 				// or as layers (and restoring a layer stack after reload) doesn't

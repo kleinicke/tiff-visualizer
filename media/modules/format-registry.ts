@@ -112,6 +112,11 @@ export function allExtensions(): string[] {
 
 /** Extension of `path` without the dot, lower-cased; '' when there is none. */
 export function extensionOf(path: string): string {
+	// URI queries carry Git revisions (or URL tokens), never file extensions.
+	// Leave plain filenames alone: '?' and '#' can be literal filename characters.
+	if (/^[a-z][a-z0-9+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) {
+		try { path = new URL(path).pathname; } catch { /* Treat malformed URIs as paths. */ }
+	}
 	const name = path.split('/').pop() || '';
 	const dot = name.lastIndexOf('.');
 	return dot <= 0 ? '' : name.slice(dot + 1).toLowerCase();

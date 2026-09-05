@@ -89,7 +89,7 @@ bounded set of detail tiles so the original image need not fit on one canvas.
 Cursor positions always use original image coordinates. An overview readout is
 labelled with its reduction; full-resolution values are reported when available.
 Single-page float32 TIFFs without stored overviews generate a preview only above
-128 megapixels; a 100 MP image keeps the normal full-resolution loading path.
+130 megapixels; a 100 MP image keeps the normal full-resolution loading path.
 The preview mode reads exact pixels on demand; see [format notes](./formats.md).
 
 ## CZI

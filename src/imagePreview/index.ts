@@ -69,16 +69,6 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 		webviewOptions: { retainContextWhenHidden: true },
 	}));
 
-	// Register the option-priority provider contributed for formats handled by
-	// VS Code's built-in image viewer. Keeping the built-in viewer as the default
-	// is important because it provides Git's old/new image diff experience;
-	// users can still select Scientific Image Visualizer from Open With.
-	const viewTypeOption = ImagePreviewManager.optionViewType;
-	disposables.push(vscode.window.registerCustomEditorProvider(viewTypeOption, previewManager, {
-		supportsMultipleEditorsPerDocument: true,
-		webviewOptions: { retainContextWhenHidden: true },
-	}));
-
 	// Restore dedicated Layers windows after a full VS Code restart. The webview
 	// reloads and rebuilds its layer stack from its persisted state.
 	disposables.push(vscode.window.registerWebviewPanelSerializer(ImagePreviewManager.layerViewType, {
