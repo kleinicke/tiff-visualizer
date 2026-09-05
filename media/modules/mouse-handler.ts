@@ -54,8 +54,6 @@ export class MouseHandler {
 	 * images, which carry none.
 	 */
 	geoReference: GeoReference | null;
-	/** Appended to every readout; see setResolutionNote. */
-	resolutionNote: string = '';
 	/** See setCoordinateScale. */
 	coordinateScale: number = 1;
 	/**
@@ -135,17 +133,6 @@ export class MouseHandler {
 		this.geoReference = geo;
 	}
 
-	/**
-	 * A note appended to every readout, used to say that the values come from a
-	 * reduced-resolution level of a pyramid rather than from the stored pixels.
-	 *
-	 * Reading a value off an overview is reading an average of several pixels.
-	 * That is fine for finding your way around and wrong for recording a
-	 * measurement, and the difference is invisible unless the readout says so.
-	 */
-	setResolutionNote(note: string): void {
-		this.resolutionNote = note || '';
-	}
 
 	/**
 	 * How many stored pixels each DISPLAYED pixel stands for.
@@ -264,7 +251,7 @@ export class MouseHandler {
 				}
 				this.vscode.postMessage({
 					type: 'pixelFocus',
-					value: this._composeReadout(position.x, position.y, immediate.value, immediate.note || ''),
+					value: this._composeReadout(position.x, position.y, immediate.value),
 				});
 				if (immediate.exact || !this._upgradeApproximateStoredValues) { return; }
 			}
@@ -333,7 +320,7 @@ export class MouseHandler {
 	private _upgradeToStoredValue(e: Pick<MouseEvent, 'clientX' | 'clientY'>): void {
 		const resolver = this.storedValueResolver;
 		// Only worth doing when the displayed value is NOT the stored one.
-		if (!resolver || (!this.resolutionNote && !this._storedValuesOnly)) { return; }
+		if (!resolver || (this.coordinateScale <= 1 && !this._storedValuesOnly)) { return; }
 		const position = this._pixelPosition(e);
 		if (!position) { return; }
 		const key = `${position.x},${position.y}`;
@@ -343,7 +330,7 @@ export class MouseHandler {
 		if (cached !== undefined) {
 			this.vscode.postMessage({
 				type: 'pixelFocus',
-				value: this._composeReadout(position.x, position.y, cached, ''),
+				value: this._composeReadout(position.x, position.y, cached),
 			});
 			return;
 		}
@@ -376,7 +363,7 @@ export class MouseHandler {
 				if (this._storedValuePixel !== key) { return; }
 				this.vscode.postMessage({
 					type: 'pixelFocus',
-					value: this._composeReadout(x, y, value, ''),
+					value: this._composeReadout(x, y, value),
 				});
 			})
 			.catch(() => { /* keep the approximate readout */ })
@@ -444,30 +431,22 @@ export class MouseHandler {
 		const { x, y, width: naturalWidth, height: naturalHeight } = position;
 		const color = this._getColorAtPixel(x, y, naturalWidth, naturalHeight);
 
-		// The caveat is for a value that will STAY approximate. While an exact
-		// read is on its way — 90 ms at most — labelling every intermediate
-		// readout would put a warning on screen for the whole time the cursor
-		// is moving, about a number that is about to be replaced.
-		const note = (this.storedValueResolver && !this._storedValueUnavailable)
-			? ''
-			: this.resolutionNote;
-		return this._composeReadout(x, y, color, note);
+		return this._composeReadout(x, y, color);
 	}
 
 	/**
 	 * Assemble a readout from its parts: position, an optional map or physical
-	 * coordinate, the value, and an optional caveat about where the value came
-	 * from. Composing rather than editing a finished string is what lets the
+	 * coordinate, the value. Composing rather than editing a finished string is what lets the
 	 * exact-value upgrade replace only the value.
 	 */
-	_composeReadout(x: number, y: number, value: string, note: string): string {
-		const suffix = note ? ` · ${note}` : '';
+	_composeReadout(x: number, y: number, value: string): string {
+		// Resolution belongs in the image overlay, never in the pixel readout.
 		// Positions are the image's, not the decoded level's.
 		x = Math.round(x * this.coordinateScale);
 		y = Math.round(y * this.coordinateScale);
 		const mapPosition = formatMapPosition(this.geoReference, x, y);
 		if (mapPosition) {
-			return `${x}x${y} (${mapPosition}) ${value}${suffix}`;
+			return `${x}x${y} (${mapPosition}) ${value}`;
 		}
 
 		const spacing = this.physicalPixelSize;
@@ -479,9 +458,9 @@ export class MouseHandler {
 			const physical = xUnit === yUnit
 				? `${physicalX.toPrecision(5)}×${physicalY.toPrecision(5)} ${xUnit}`.trim()
 				: `${physicalX.toPrecision(5)} ${xUnit} × ${physicalY.toPrecision(5)} ${yUnit}`.trim();
-			return `${x}x${y} (${physical}) ${value}${suffix}`;
+			return `${x}x${y} (${physical}) ${value}`;
 		}
-		return `${x}x${y} ${value}${suffix}`;
+		return `${x}x${y} ${value}`;
 	}
 
 	/**

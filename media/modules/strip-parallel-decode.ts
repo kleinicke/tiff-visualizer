@@ -229,6 +229,74 @@ const pool = new StripDecodePool();
 /** Extended codecs use their own instances so the core EXR/TIFF pool remains warm. */
 const codecPool = new StripDecodePool();
 
+/** Small, persistent heaps for interactive detail; never share the retiring full-raster pool. */
+const detailPool = new StripDecodePool();
+const detailPlans = new WeakMap<ArrayBuffer, { job: Record<string, any>, offsets: Float64Array, counts: Float64Array } | null>();
+let nextDetailWorker = 0;
+
+/**
+ * Decode one complete stored strip with the existing Rust strip decoder.
+ * Used only for generated previews of page zero. Cropped rectangles, tiled
+ * layouts and uncommon codecs retain the authoritative region-worker path.
+ * No source file is retained in the detail workers, only compressed strips.
+ */
+export async function tryParallelTiffDetail(
+	buffer: ArrayBuffer, wasm: any,
+	rect: { x: number, y: number, width: number, height: number },
+	signal?: AbortSignal,
+): Promise<any | null> {
+	if (signal?.aborted) { return null; }
+	if (!detailPlans.has(buffer)) {
+		let plan: any;
+		let retained: NonNullable<ReturnType<typeof detailPlans.get>> | null = null;
+		try {
+			plan = wasm.tiff_float_strip_plan(new Uint8Array(buffer));
+			if (plan && !plan.tile_width && plan.planar_configuration === 1 && plan.orientation === 1
+				&& plan.channels === 1 && plan.bits_per_sample === 32 && plan.sample_format === 3
+				&& plan.width * Math.min(plan.rows_per_strip, plan.height) <= 8_000_000
+				&& !EXTENDED_TIFF_COMPRESSIONS.has(plan.compression)) {
+				retained = {
+					offsets: plan.offsets, counts: plan.counts,
+					job: {
+						width: plan.width, height: plan.height, channels: plan.channels,
+						bitsPerSample: plan.bits_per_sample, sampleFormat: plan.sample_format,
+						compression: plan.compression, predictor: plan.predictor,
+						rowsPerStrip: plan.rows_per_strip, littleEndian: plan.little_endian,
+						photometricInterpretation: plan.photometric_interpretation,
+					},
+				};
+			}
+		} catch { /* Unsupported plan: use the region decoder. */ }
+		finally { plan?.free(); }
+		detailPlans.set(buffer, retained);
+	}
+	const plan = detailPlans.get(buffer);
+	if (!plan) { return null; }
+	const { job, offsets, counts } = plan;
+	const firstStrip = rect.y / job.rowsPerStrip;
+	if (rect.x !== 0 || rect.width !== job.width || !Number.isInteger(firstStrip)
+		|| firstStrip < 0 || firstStrip >= counts.length
+		|| rect.height !== Math.min(job.rowsPerStrip, job.height - rect.y)) { return null; }
+	const offset = offsets[firstStrip], count = counts[firstStrip];
+	if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(count) || offset < 0 || count <= 0
+		|| count > 0xffffffff || offset + count > buffer.byteLength) { return null; }
+	try {
+		if (!await detailPool.ensure(undefined, 4) || signal?.aborted) { return null; }
+		const blob = buffer.slice(offset, offset + count);
+		const rangeCounts = new Uint32Array([count]);
+		const part = await detailPool.run({ ...job, firstStrip, blob, counts: rangeCounts.buffer },
+			[blob, rangeCounts.buffer], nextDetailWorker++);
+		if (signal?.aborted) { return null; }
+		if (part.samples?.length !== rect.width * rect.height * job.channels) { return null; }
+		return { width: rect.width, height: rect.height, channels: job.channels,
+			bitsPerSample: job.bitsPerSample, sampleFormat: job.sampleFormat,
+			blocksDecoded: 1, data: part.samples };
+	} catch (error) {
+		console.warn('[DetailPool] Strip failed, using region decoder:', error);
+		return null;
+	}
+}
+
 const EXTENDED_TIFF_COMPRESSIONS = new Set([
 	34887, // LERC
 	34925, // LZMA

@@ -4,7 +4,7 @@ import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions 
 import type { ImageSettings, SettingsUpdateResult } from './modules/settings-manager.js';
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
-import { imagePages, isPyramidal, levelForDisplayWidth, levelForZoom, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
+import { scenePageDirectory, imagePages, isPyramidal, levelForDisplayWidth, levelForZoom, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
 import { planRegionForView, snapToBlocks, visibleImageRect } from './modules/viewport-tiles.js';
 import { FULL_RESOLUTION_PIXEL_BUDGET, LARGE_PYRAMID_SCENE_THRESHOLD } from './modules/tiff-pages.js';
 import type { Rect } from './modules/viewport-tiles.js';
@@ -1649,7 +1649,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		peerImageData = null;
 		mouseHandler.setPhysicalPixelSize(null);
 		mouseHandler.setGeoReference(null);
-		mouseHandler.setResolutionNote('');
+
 		mouseHandler.setCoordinateScale(1);
 		mouseHandler.setStoredValueResolver(null);
 		disposeWebglRenderers();
@@ -7004,7 +7004,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function tiffResolutionStatus(): { preview: string, detail: string, description: string } | undefined {
 		const description = pyramidStatusNote();
 		if (!description) { return undefined; }
-		const directory: TiffPageEntry[] = tiffProcessor.pageDirectory;
+		const directory: TiffPageEntry[] = scenePageDirectory(tiffProcessor.pageDirectory);
 		const current = directory.find(entry => entry.index === tiffProcessor.pageIndex);
 		if (!current || current.reduction <= 1) { return undefined; }
 		const patch = _pyramidScene ? _pyramidPatchRegion : _detailPatchRegion;
@@ -7022,7 +7022,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	/** One-line whole-scene and visible-detail information for a pyramid. */
 	function pyramidStatusNote(): string {
-		const directory = tiffProcessor.pageDirectory;
+		const directory = scenePageDirectory(tiffProcessor.pageDirectory);
 		const pyramid = isPyramidal(directory);
 		if (!pyramid && !_pyramidScene && !tiffProcessor.isProgressiveRemoteBase) { return ''; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
@@ -7123,15 +7123,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let _levelSwitchPending = false;
 	/** Pending settle timer; see scheduleLevelRefinement. */
 	let _levelRefineTimer: number | null = null;
+	let _levelRefineRequestedAt = 0;
 
-	/**
-	 * What to say about the values under the cursor when they do not come from
-	 * the stored pixels. Empty at full resolution, which is the usual case.
-	 */
-	function currentLevelNote(): string {
-		const reduction = currentLevelReduction();
-		return reduction > 1 ? `1/${reduction} overview` : '';
-	}
 
 	/** How many stored pixels each displayed pixel stands for. 1 at full size. */
 	function currentLevelReduction(): number {
@@ -7172,7 +7165,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	function configureTiffMouseReadout(): void {
 		if (_pyramidScene) {
-			mouseHandler.setResolutionNote('');
+
 			mouseHandler.setCoordinateScale(1);
 			mouseHandler.setStoredValueResolver(
 				(x: number, y: number) => tiffProcessor.readFullResolutionPixel(x, y),
@@ -7188,7 +7181,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			);
 			return;
 		}
-		mouseHandler.setResolutionNote(currentLevelNote());
+
 		mouseHandler.setCoordinateScale(currentLevelReduction());
 		mouseHandler.setStoredValueResolver((x: number, y: number) => tiffProcessor.readStoredPixel(x, y));
 	}
@@ -7347,7 +7340,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const scene = _pyramidScene;
 		if (!scene || !hasLoadedImage || _imageTransitionActive) { return; }
 		if (_pyramidTileLoadPending) { _pyramidTileLoadQueued = true; return; }
-		const directory = tiffProcessor.pageDirectory;
+		const directory = scenePageDirectory(tiffProcessor.pageDirectory);
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const base = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
@@ -7392,7 +7385,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// At fit/low zoom this would be a near-whole-level decode merely to
 		// replace an already-good overview. Region work begins only when the
 		// viewport makes it substantially cheaper than the page.
-		if (!streamingBase && (visibleInLevel.width * visibleInLevel.height) / (wanted.width * wanted.height) >= 0.6) {
+		if (!streamingBase && wanted.sourceIndex === undefined && (visibleInLevel.width * visibleInLevel.height) / (wanted.width * wanted.height) >= 0.6) {
 			// Loading most of a finer page would defeat the bounded-view design.
 			// Settle uniformly on the base rather than leaving old fine islands.
 			_pyramidPatchRegion = null;
@@ -7429,11 +7422,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			const alreadyLoaded = scene.loadedBounds(wanted, visibleInLevel);
 			if (alreadyLoaded) { _pyramidPatchRegion = { level: wanted.index, rect: alreadyLoaded }; }
 		}
-		// HTTP COGs benefit from one request per independently stored block: the
-		// first response paints immediately. A local TIFF is already resident and
-		// reparsing it per block is needless overhead, so retain its single-region
-		// decode and split only when committing the returned pixels.
-		const requests = tiffProcessor.isRemoteSource ? missing : [{
+		// Generated previews stream independent strips center-first, like remote
+		// COG blocks. Each result can paint while the next strips decode.
+		const streamBlocks = tiffProcessor.isRemoteSource || (tiffProcessor.hasGeneratedPreview
+			&& wanted.blockWidth === wanted.width && wanted.blockWidth * wanted.blockHeight <= 8_000_000);
+		const requests = streamBlocks ? missing : [{
 			x: Math.min(...missing.map(rect => rect.x)),
 			y: Math.min(...missing.map(rect => rect.y)),
 			width: Math.max(...missing.map(rect => rect.x + rect.width)) - Math.min(...missing.map(rect => rect.x)),
@@ -7447,9 +7440,23 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		_pyramidViewportAbortController = requestController;
 		beginTiffViewportLoad();
 		try {
+			const refinementStarted = _levelRefineRequestedAt || performance.now();
+			let firstPaintMs = 0;
 			let nextRequest = 0;
 			const paintRect = async (rect: Rect): Promise<void> => {
-				const rendered = await tiffProcessor.renderRegion(wanted.index, rect, requestController.signal);
+				let rendered: ImageData | null;
+				if (wanted.sourceIndex !== undefined) {
+					const source = directory.find(level => level.index === wanted.sourceIndex)!;
+					const factor = wanted.reduction;
+					const sourceRect = { x: rect.x * factor, y: rect.y * factor,
+						width: Math.min(rect.width * factor, source.width - rect.x * factor),
+						height: Math.min(rect.height * factor, source.height - rect.y * factor) };
+					const original = await tiffProcessor.renderRegion(source.index, sourceRect, requestController.signal);
+					rendered = original && !requestController.signal.aborted
+						? resizeDetailForDisplay(original, rect.width, rect.height) : null;
+				} else {
+					rendered = await tiffProcessor.renderRegion(wanted.index, rect, requestController.signal);
+				}
 				// A block remains useful after a pan because its scene position is
 				// absolute. A different image, however, must never receive it.
 				if (scene !== _pyramidScene || load !== _loadGeneration || requestController.signal.aborted) { return; }
@@ -7461,6 +7468,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						const loaded = scene.loadedBounds(wanted, visibleInLevel);
 						if (loaded) { _pyramidPatchRegion = { level: wanted.index, rect: loaded }; }
 					}
+					if (!firstPaintMs) { firstPaintMs = performance.now() - refinementStarted; }
 					mouseHandler.refreshAtPointer();
 					updateTiffPageOverlay();
 					console.log(`[Tiles] painted ${levelLabel(wanted)} ${rect.width}x${rect.height} at ${rect.x},${rect.y}`);
@@ -7479,8 +7487,15 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			};
 			// Match the remote decoder pool: enough parallel ranges to fill the
 			// connection without waiting for every block before the first paint.
-			const streams = Math.min(requests.length, tiffProcessor.isRemoteSource ? 4 : 1);
+			const streams = Math.min(requests.length, streamBlocks ? 4 : 1);
 			await Promise.all(Array.from({ length: streams }, () => paintNext()));
+			if (firstPaintMs && !requestController.signal.aborted) {
+				requestAnimationFrame(() => setTimeout(() => {
+					if (scene === _pyramidScene && view === _pyramidViewGeneration) {
+						logToOutput(`[Refine] first commit ${firstPaintMs.toFixed(0)}ms | visible ${(performance.now() - refinementStarted).toFixed(0)}ms | ${requests.length} regions`);
+					}
+				}, 0));
+			}
 
 			// Convergence is valid only for the SAME viewport that initiated this
 			// stream. An old request completing during a zoom must not remove the
@@ -7501,6 +7516,26 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			}
 			endTiffViewportLoad();
 		}
+	}
+
+	/** Bound retained display pixels while keeping original samples in the picker cache. */
+	function resizeDetailForDisplay(original: ImageData, width: number, height: number): ImageData | null {
+		const source = document.createElement('canvas');
+		source.width = original.width;
+		source.height = original.height;
+		const target = document.createElement('canvas');
+		target.width = width;
+		target.height = height;
+		const from = source.getContext('2d');
+		const to = target.getContext('2d');
+		if (!from || !to) { return null; }
+		from.putImageData(original, 0, 0);
+		to.imageSmoothingEnabled = true;
+		to.imageSmoothingQuality = 'high';
+		to.drawImage(source, 0, 0, width, height);
+		const result = to.getImageData(0, 0, width, height);
+		source.width = source.height = target.width = target.height = 0;
+		return result;
 	}
 
 	/** Lay the patch exactly over the image pixels it stands for. */
@@ -7593,6 +7628,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * a moment of softness and saves every intermediate decode.
 	 */
 	function scheduleLevelRefinement(): void {
+		_levelRefineRequestedAt = performance.now();
 		if (_levelRefineTimer !== null) { window.clearTimeout(_levelRefineTimer); }
 		_levelRefineTimer = window.setTimeout(() => {
 			_levelRefineTimer = null;
@@ -7601,7 +7637,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isPyramidal(tiffProcessor.pageDirectory)) { updateTiffPageOverlay(); }
 			maybeRefineTiffLevel();
 			void updateDetailPatch();
-		}, 250);
+		}, _pyramidScene ? 80 : 250);
 	}
 
 	/**
@@ -8076,7 +8112,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		primaryImageData = null;
 		mouseHandler.setPhysicalPixelSize(null);
 		mouseHandler.setGeoReference(null);
-		mouseHandler.setResolutionNote('');
+
 		mouseHandler.setCoordinateScale(1);
 		mouseHandler.setStoredValueResolver(null);
 		// Same format and (almost always) same dimensions across a plane step, so

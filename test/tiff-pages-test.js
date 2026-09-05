@@ -39,6 +39,26 @@ async function main() {
 		isPyramidal, levelForDisplayWidth, levelForZoom, chooseOpenLevel, chooseRemoteOpenLevel, levelLabel,
 	} = pages;
 
+	// Generated detail levels are display-only and preserve strip boundaries.
+	{
+		const full = { index: 0, width: 20480, height: 20480, samplesPerPixel: 1,
+			kind: 'image', parent: null, reduction: 1, blockWidth: 20480, blockHeight: 64 };
+		const base = { ...full, index: 1, kind: 'overview', parent: 0, generated: true,
+			reduction: 8, width: 2560, height: 2560 };
+		const native = [full, base];
+		const detail = pages.scenePageDirectory(native);
+		assert.equal(native.length, 2, 'never add synthetic IFDs to the decoder directory');
+		for (const [zoom, reduction] of [[0.1, 8], [0.2, 4], [0.4, 2], [1, 1]]) {
+			const level = levelForDisplayWidth(detail, 0, full.width * zoom);
+			assert.equal(level.reduction, reduction);
+			if (reduction === 2 || reduction === 4) {
+				assert.equal(level.sourceIndex, 0);
+				assert.equal(level.blockHeight * reduction, full.blockHeight);
+			}
+		}
+		assert.deepEqual(pages.scenePageDirectory([full]), [full]);
+	}
+
 	// 1. Parsing tolerates absence and rubbish rather than throwing into a load.
 	{
 		assert.deepStrictEqual(parsePageDirectory(''), []);

@@ -138,6 +138,10 @@ async function main() {
 			visible: median(warm.map(r => r.visibleMs || 0)),
 			engine: warm[0].engine || '-',
 			samples: warm.length,
+			refinement: process.env.TIFF_PERF_REFINE === '1' ? {
+				cold: runs[0].refinement,
+				warm: warm.map(run => run.refinement || null),
+			} : undefined,
 			cold: runs[0].totalMs,
 			coldVisible: runs[0].visibleMs || 0,
 			warmRange: {

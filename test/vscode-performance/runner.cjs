@@ -35,6 +35,7 @@ function filesUnder(directory, result = []) {
 function scrape(logRoot) {
 	const perf = [];
 	const trace = [];
+	const refine = [];
 	for (const file of filesUnder(logRoot)) {
 		let text;
 		try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
@@ -50,9 +51,10 @@ function scrape(logRoot) {
 				visibleMs: Number(m[7] || 0),
 			});
 		}
+		for (const m of text.matchAll(/\[Refine\] first commit (\d+)ms \| visible (\d+)ms \| (\d+) regions/g)) refine.push({ firstCommitMs: +m[1], visibleMs: +m[2], regions: +m[3] });
 		for (const m of text.matchAll(TRACE_LINE)) trace.push(m[1]);
 	}
-	return { perf, trace };
+	return { perf, trace, refine };
 }
 
 async function waitForNextPerformanceLine(logRoot, previousCount, timeoutMs = 120000) {
@@ -94,7 +96,19 @@ async function run() {
 			// as a miss so the rest of the corpus still produces numbers.
 			perf = { line: '', format: 'NO-PERF-LINE', fetchMs: 0, decodeMs: 0, engine: '', loadMs: 0, totalMs: 0, visibleMs: 0 };
 		}
-		results.push({ id: input.id, file: input.file, wallMs: performance.now() - started, ...perf, trace });
+		let refinement;
+		if (process.env.TIFF_PERF_REFINE === '1' && perf.line) {
+			const count = scrape(logRoot).refine.length;
+			for (let step = 0; step < Number(process.env.TIFF_PERF_REFINE_STEPS || 6); step++) await vscode.commands.executeCommand('tiffVisualizer.zoomIn');
+			const deadline = Date.now() + 30000;
+			while (Date.now() < deadline) {
+				const entries = scrape(logRoot).refine;
+				if (entries.length > count) { refinement = entries.at(-1); break; }
+				await new Promise(resolve => setTimeout(resolve, 50));
+			}
+			console.log('REFINEMENT', JSON.stringify(refinement || 'timeout'));
+		}
+		results.push({ refinement, id: input.id, file: input.file, wallMs: performance.now() - started, ...perf, trace });
 		await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
 		// Let the closed editor release its webview before the next open.
 		await new Promise(resolve => setTimeout(resolve, 250));

@@ -44,14 +44,40 @@ test('opens a large scalar TIFF, picks original values, and streams zoomed detai
       expect(match).toBeTruthy();
       const px = Number(match[1]), py = Number(match[2]);
       const rasters = await image.readRasters({ window: [px, py, px + 1, py + 1] });
-      expect(match[3]).toBe(Number(rasters[0][0]).toPrecision(4));
+      // Resolution text is gone; wait for the actual original-value upgrade.
+      await expect.poll(async () => {
+        const current = (await status.innerText()).match(/(\d+)x(\d+)\s+([^\s]+)/);
+        return current?.[3];
+      }).toBe(Number(rasters[0][0]).toPrecision(4));
     };
     await checkPicker();
+    for (const [scale, detail] of [['0.2', '1/4'], ['0.5', '1/2']]) {
+      await page.locator('#web-status-zoom').click();
+      await page.locator('#web-control-popover select[name="scale"]').selectOption(scale);
+      await page.locator('#web-control-popover button[type="submit"]').click();
+      await expect(page.locator('[data-resolution="detail"]')).toHaveText(detail, { timeout: 30_000 });
+      await expect(page.locator('.nav-overlay')).not.toHaveClass(/dataset-overlay--loading/, { timeout: 30_000 });
+      await expect(scene.locator('.pyramid-tile').first()).toBeVisible();
+      const tiles = await scene.locator('.pyramid-tile').evaluateAll(elements =>
+        elements.map(el => ({ width: (el as HTMLCanvasElement).width, height: (el as HTMLCanvasElement).height })));
+      expect(tiles.every(tile => tile.width === image.getWidth() / Number(detail.slice(2)))).toBe(true);
+      expect(tiles.reduce((sum, tile) => sum + tile.width * tile.height, 0)).toBeLessThanOrEqual(32_000_000);
+      await checkPicker();
+    }
     await page.locator('#web-status-zoom').click();
     await page.locator('#web-control-popover select[name="scale"]').selectOption('1');
     await page.locator('#web-control-popover button[type="submit"]').click();
     await expect(scene.locator('.pyramid-tile').first()).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-resolution="detail"]')).toHaveText('1:1');
+    await checkPicker();
+    // A new gesture while strips are in flight must converge on the latest zoom.
+    for (const scale of ['2', '0.5', '1']) {
+      await page.locator('#web-status-zoom').click();
+      await page.locator('#web-control-popover select[name="scale"]').selectOption(scale);
+      await page.locator('#web-control-popover button[type="submit"]').click();
+    }
+    await expect(page.locator('[data-resolution="detail"]')).toHaveText('1:1');
+    await expect(page.locator('.nav-overlay')).not.toHaveClass(/dataset-overlay--loading/);
     await checkPicker();
   } finally { await source.close(); }
 });

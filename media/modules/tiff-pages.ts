@@ -21,6 +21,8 @@ export type TiffPageKind = 'image' | 'overview' | 'mask';
 export interface TiffPageEntry {
 	/** In-memory overview; never pass this entry to a TIFF page decoder. */
 	generated?: boolean;
+	/** Display-only detail, synthesized from this real source page. */
+	sourceIndex?: number;
 	/** Index in the IFD chain — what `decode_tiff_page` takes. */
 	index: number;
 	width: number;
@@ -281,4 +283,21 @@ export interface TiffLevelHint {
 export function levelLabel(level: TiffPageEntry): string {
 	const scale = level.reduction <= 1 ? 'Full' : `1/${level.reduction}`;
 	return `${scale} · ${level.width}x${level.height}`;
+}
+
+/** Intermediate display tiles for generated previews; never decode these as TIFF IFDs. */
+export function scenePageDirectory(directory: TiffPageEntry[]): TiffPageEntry[] {
+	const base = directory.find(level => level.generated);
+	const full = base && directory.find(level => level.index === base.parent);
+	if (!base || !full || full.blockWidth !== full.width) { return directory; }
+	const extra: TiffPageEntry[] = [];
+	for (let reduction = 2; reduction < base.reduction; reduction *= 2) {
+		// Strip boundaries must align with the generated display grid.
+		if (full.blockHeight % reduction !== 0) { continue; }
+		extra.push({ ...full, index: -reduction, parent: full.index, kind: 'overview',
+			generated: true, sourceIndex: full.index, reduction,
+			width: Math.ceil(full.width / reduction), height: Math.ceil(full.height / reduction),
+			blockWidth: Math.ceil(full.width / reduction), blockHeight: full.blockHeight / reduction });
+	}
+	return [...directory, ...extra];
 }

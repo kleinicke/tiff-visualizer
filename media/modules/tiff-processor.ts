@@ -3,7 +3,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { resolveNanColor } from './nan-color.js';
 import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
-import { tryStripParallelDecode } from './strip-parallel-decode.js';
+import { tryStripParallelDecode, tryParallelTiffDetail } from './strip-parallel-decode.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
@@ -328,7 +328,7 @@ export class TiffProcessor {
 			return {
 				value,
 				exact: reduction === 1,
-				note: reduction > 1 ? `1/${reduction} overview` : '',
+
 			};
 		}
 		// Whole-decoded local TIFF levels already have their native samples in
@@ -345,7 +345,7 @@ export class TiffProcessor {
 					return {
 						value,
 						exact: reduction === 1,
-						note: reduction > 1 ? `1/${reduction} overview` : '',
+
 					};
 				}
 			}
@@ -1681,7 +1681,7 @@ export class TiffProcessor {
 	 * While a pyramid's reduced level is on screen, every value the viewer can
 	 * show comes from that level — an average of several stored pixels. That is
 	 * fine for finding your way around and wrong for reading a measurement off
-	 * the screen, which is why the readout says `1/8 overview` when it happens.
+	 * the screen; the image overlay reports the display resolution.
 	 * A rectangle read makes the true value affordable: one block, a couple of
 	 * milliseconds, however large the page is.
 	 *
@@ -1763,10 +1763,10 @@ export class TiffProcessor {
 	}
 
 	/**
-	 * Serialize region work through one worker. The source is transferred once
-	 * and retained there; later tile and picker requests send only coordinates.
+	 * Generated-preview strips use the bounded detail pool. Other region work
+	 * is serialized through one worker, retaining its source for later requests.
 	 */
-	private _decodeRegionRaw(
+	private async _decodeRegionRaw(
 		pageIndex: number,
 		rect: { x: number, y: number, width: number, height: number },
 		signal?: AbortSignal,
@@ -1776,11 +1776,18 @@ export class TiffProcessor {
 		}
 		const requestedBuffer = this._sourceBuffer;
 		const requestedGeneration = this._regionSourceGeneration;
+		if (requestedBuffer && pageIndex === 0 && this.hasGeneratedPreview && !signal?.aborted) {
+			const wasm = getWasmModuleSync() || await getWasmModule();
+			const parallel = await tryParallelTiffDetail(requestedBuffer, wasm, rect, signal);
+			if (signal?.aborted || requestedGeneration !== this._regionSourceGeneration
+				|| requestedBuffer !== this._sourceBuffer) { return null; }
+			if (parallel) { return parallel; }
+		}
 		let resolveResult: (value: any | null) => void = () => {};
 		const result = new Promise<any | null>(resolve => { resolveResult = resolve; });
 		this._regionDecodeQueue = this._regionDecodeQueue.then(async () => {
 			const buffer = requestedBuffer;
-			if (!buffer || requestedGeneration !== this._regionSourceGeneration
+			if (signal?.aborted || !buffer || requestedGeneration !== this._regionSourceGeneration
 				|| buffer !== this._sourceBuffer) {
 				resolveResult(null);
 				return;
@@ -1792,6 +1799,10 @@ export class TiffProcessor {
 					this.decodeWorker.start(),
 					new Promise(resolve => setTimeout(resolve, 750)),
 				]);
+			}
+			if (signal?.aborted || requestedGeneration !== this._regionSourceGeneration) {
+				resolveResult(null);
+				return;
 			}
 			if (this.decodeWorker?.canDecode('tiff-region')) {
 				const request = async (includeSource: boolean) => this.decodeWorker!.decode(

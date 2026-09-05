@@ -231,7 +231,7 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 		'TIFF navigation chrome must stay visibly busy during page loads and viewport tile streams');
 	assert.doesNotMatch(webviewSource, /_tiffRefinementScheduled/,
 		'a zoom debounce with no active request must not display the loading dot');
-	assert.match(webviewSource, /const requests = tiffProcessor\.isRemoteSource \? missing[\s\S]*?scene\.commitRegion\(wanted, rect, rendered\)/,
+	assert.match(webviewSource, /const streamBlocks = tiffProcessor\.isRemoteSource[\s\S]*?const requests = streamBlocks \? missing[\s\S]*?scene\.commitRegion\(wanted, rect, rendered\)/,
 		'remote COG blocks must be committed independently as their range requests complete');
 	assert.match(webviewSource, /scene\.missingBaseRects\(wanted, visibleInLevel\)[\s\S]*?scene\.commitBaseRegion\(wanted, rect, rendered\)/,
 		'the lowest remote overview must also be painted progressively');

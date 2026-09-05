@@ -54,7 +54,7 @@ async function main() {
 	messages.length = 0;
 	residentValues.set('20800,20000', { value: '240', exact: false, note: '1/32 overview' });
 	handler._handleMouseMove({ clientX: 52, clientY: 50 });
-	assert.strictEqual(messages[0].value, '20800x20000 240 · 1/32 overview',
+	assert.strictEqual(messages[0].value, '20800x20000 240',
 		'a resident overview value should be visible without waiting for IO');
 	await new Promise(resolve => setTimeout(resolve, 0));
 	assert.strictEqual(messages.length, 1, 'the resident overview value remains stable');
@@ -87,7 +87,7 @@ async function main() {
 	});
 	messages.length = 0;
 	handler._handleMouseMove({ clientX: 50, clientY: 50 });
-	assert.strictEqual(messages[0].value, '20000x20000 120 · 1/8 overview');
+	assert.strictEqual(messages[0].value, '20000x20000 120');
 	await new Promise(resolve => setTimeout(resolve, 0));
 	assert.strictEqual(messages[messages.length - 1].value, '20000x20000 123.5');
 	console.log('✅ Generated-preview picker upgrades to the exact original pixel');
