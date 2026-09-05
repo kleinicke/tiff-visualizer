@@ -315,40 +315,40 @@ test('cycles how pixels with no value are drawn', async ({ page }) => {
     .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
   await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
 
+  const pixelAt = (x: number, y: number) => page.evaluate(({ x, y }) => {
+    const canvas = document.querySelector('body > canvas:not(.measure-overlay)') as HTMLCanvasElement | null;
+    if (!canvas) return null;
+    // The viewer can switch between WebGL and 2D canvases as settings change.
+    // Copy the rendered pixel to a separate 2D canvas to preserve RGBA in either case.
+    const sample = document.createElement('canvas');
+    sample.width = sample.height = 1;
+    const context = sample.getContext('2d', { willReadFrequently: true })!;
+    context.drawImage(canvas, x, y, 1, 1, 0, 0, 1, 1);
+    return Array.from(context.getImageData(0, 0, 1, 1).data);
+  }, { x, y });
   // A pixel inside the fixture's nodata block.
-  const noValuePixel = () => page.evaluate(() => {
-    const canvas = document.querySelector('body > canvas:not(.measure-overlay)') as HTMLCanvasElement;
-    const context = canvas.getContext('2d', { willReadFrequently: true })!;
-    const data = context.getImageData(20, 20, 1, 1).data;
-    return [data[0], data[1], data[2], data[3]];
-  });
+  const noValuePixel = () => pixelAt(20, 20);
   // A pixel with real data, used to tell "not painted yet" from "painted".
-  const dataPixel = () => page.evaluate(() => {
-    const canvas = document.querySelector('body > canvas:not(.measure-overlay)') as HTMLCanvasElement;
-    const context = canvas.getContext('2d', { willReadFrequently: true })!;
-    const data = context.getImageData(128, 128, 1, 1).data;
-    return [data[0], data[1], data[2], data[3]];
-  });
+  const dataPixel = () => pixelAt(128, 128);
   const cycle = async () => {
     await page.getByRole('button', { name: 'More' }).click();
     await page.getByRole('button', { name: 'Cycle no-value colour' }).click();
-    await page.waitForTimeout(600);
   };
 
   // `ready` lands before the first paint, so wait for real content rather than
   // sampling an empty canvas.
-  await expect.poll(async () => (await dataPixel())[3], { timeout: 30_000 }).toBe(255);
+  await expect.poll(async () => (await dataPixel())?.[3], { timeout: 30_000 }).toBe(255);
 
-  expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
+  await expect.poll(noValuePixel).toEqual([0, 0, 0, 255]);
   await cycle();
-  expect(await noValuePixel()).toEqual([255, 0, 255, 255]);
+  await expect.poll(noValuePixel).toEqual([255, 0, 255, 255]);
   await cycle();
   // Transparent: a hole, plus a checkerboard behind the canvas so the hole
   // does not read as a black pixel in a dark theme.
-  expect(await noValuePixel()).toEqual([0, 0, 0, 0]);
+  await expect.poll(noValuePixel).toEqual([0, 0, 0, 0]);
   await expect(page.locator('.container.image')).toHaveAttribute('data-no-value-transparent', '');
   await cycle();
-  expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
+  await expect.poll(noValuePixel).toEqual([0, 0, 0, 255]);
 });
 
 test('chooses COG resolution automatically and keeps band selection', async ({ page }) => {
@@ -372,9 +372,15 @@ test('chooses COG resolution automatically and keeps band selection', async ({ p
 
   await expect(page.locator('.dataset-resolution')).toBeHidden();
   await expect(page.locator('.dataset-axis-label')).not.toContainText(['Level']);
-  await expect(page.locator('.dataset-overlay select')).toHaveCount(1);
-  await page.locator('.dataset-overlay select').selectOption('1');
-  await expect(page.locator('.dataset-overlay select')).toHaveValue('1');
+  await expect(page.locator('.dataset-overlay select')).toHaveCount(2);
+  await page.locator('.dataset-overlay select').nth(1).selectOption('1');
+  await expect(page.locator('.dataset-overlay select').nth(1)).toHaveValue('1');
+  await page.locator('.dataset-overlay select').nth(0).selectOption('1');
+  await expect(page.locator('.dataset-overlay select')).toHaveCount(4);
+  await page.locator('.dataset-overlay select').nth(1).selectOption('1');
+  await expect(page.locator('.dataset-overlay select').nth(1)).toHaveValue('1');
+  await page.locator('.dataset-overlay select').nth(0).selectOption('0');
+  await expect(page.locator('.dataset-overlay select')).toHaveCount(2);
 
 });
 
@@ -479,7 +485,7 @@ test('zooming a gigapixel pyramid never asks for more than can be drawn', async 
   await page.waitForTimeout(9000);
 
   const canvas = await page.evaluate(() => {
-    const element = document.querySelector('body > canvas:not(.measure-overlay):not(.detail-patch)') as HTMLCanvasElement;
+    const element = document.querySelector('.pyramid-base, body > canvas:not(.measure-overlay):not(.detail-patch)') as HTMLCanvasElement;
     if (!element) { return null; }
     const context = element.getContext('2d', { willReadFrequently: true });
     // A WebGL-rendered canvas has no 2D context; that it exists at the chosen

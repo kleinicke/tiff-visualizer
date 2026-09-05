@@ -1,4 +1,5 @@
 "use strict";
+import { RequestScheduler } from './request-scheduler.js';
 
 /** HTTP orchestration only. TIFF byte interpretation lives in the Rust core. */
 type Slice = { offset: number, length: number };
@@ -17,8 +18,7 @@ export class TiffRangeSource {
 	private readonly cache = new Map<string, { promise: Promise<ArrayBuffer>, size: number }>();
 	private bytes = 0;
 	private size: number | null = null;
-	private readonly lanes: Promise<void>[] = Array.from({ length: 16 }, () => Promise.resolve());
-	private nextLane = 0;
+	private readonly scheduler = new RequestScheduler(16);
 	constructor(private readonly url: string, private loadSignal?: AbortSignal) {}
 	get fileSize(): number | null { return this.size; }
 	setLoadSignal(signal?: AbortSignal): void {
@@ -26,11 +26,8 @@ export class TiffRangeSource {
 		this.loadSignal = signal;
 	}
 
-	private request(offset: number, length: number, signal?: AbortSignal): Promise<ArrayBuffer> {
-		const lane = this.nextLane++ % this.lanes.length;
-		const result = this.lanes[lane].then(() => this.networkRequest(offset, length, signal));
-		this.lanes[lane] = result.then(() => {}, () => {});
-		return result;
+	private request(offset: number, length: number, signal?: AbortSignal, priority = 0): Promise<ArrayBuffer> {
+		return this.scheduler.run(() => this.networkRequest(offset, length, signal), signal, priority);
 	}
 
 	private async networkRequest(offset: number, length: number, signal?: AbortSignal): Promise<ArrayBuffer> {
@@ -68,7 +65,7 @@ export class TiffRangeSource {
 		}
 		// Shared header/index reads belong to the image load, not a single viewport.
 		// A cancelled pan must not poison an index request needed by the next pan.
-		const promise = this.request(offset, length, this.loadSignal).catch(error => {
+		const promise = this.request(offset, length, this.loadSignal, 1).catch(error => {
 			if (this.cache.get(key)?.promise === promise) { this.cache.delete(key); this.bytes -= length; }
 			throw error;
 		});

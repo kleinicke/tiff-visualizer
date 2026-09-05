@@ -13,8 +13,8 @@ Range requests bypass the browser HTTP cache and use a bounded 16 MiB memory
 cache for directory/index chunks. Tile downloads run with up to 16 concurrent
 requests, reduced for larger blocks; decompression still uses up to four workers.
 Retained original sample planes support both redraws and the color picker.
-Scalar tiles can use the existing GPU renderer. Colormaps and unsupported GPU
-settings keep the existing CPU rendering path to preserve display behavior.
+Supported scalar tiles use the existing GPU renderer and are copied into the
+persistent overview or retained 2D detail canvases. Colormaps use the CPU path.
 Local TIFF loading and its 130 MP preview threshold are unchanged.
 
 ## Measurement, September 2026
@@ -58,3 +58,31 @@ reports tile completion, so setup alone must not be presented as image load time
 Servers must support HTTP byte ranges and browser CORS access. This change
 cannot make a TIFF with no useful overviews cheap to decode at a distant zoom;
 the compressed source blocks still determine how much data must be fetched.
+
+## Navigation and redraw
+
+Range requests use a shared queue rather than fixed request lanes. A free slot
+takes useful work immediately, queued cancelled requests are removed, and
+index/header reads have priority. Viewport changes can start their replacement
+stream before obsolete decoding finishes. Tile selection remains center-first.
+
+The complete loaded overview stays in its own canvas, under the bounded detail
+cache. Panning moves these canvases together, so already-loaded coarse pixels
+remain available while new detail is fetched. The experimental viewport-sized
+GPU scene was removed after a navigation regression: it stopped painting the
+persistent overview, making coarse coverage depend on the new renderer. Faster
+normalization changes did not justify that regression or the added texture cache.
+
+A browser regression uses a synthetic COG with a 50 MP lowest overview, waits
+for that overview, then blocks every new image request. It zooms and pans across
+several positions, checks actual screenshot pixels for visible image content,
+and verifies that the underlying overview remains populated throughout.
+
+Scientific multiband TIFFs retain Single band and RGB bands views. Red, green,
+and blue can each select any declared data band; original samples remain
+available for picking. Band and display changes redraw from cached samples;
+cache misses can still require reads. Invalid vendor ExtraSamples values keep
+the legacy interpretation instead of falsely declaring a scientific band stack.
+
+Local TIFF loading, generated intermediate resolutions, and the 130 MP preview
+threshold are unchanged. Local detail uses the previous region-rendering path.

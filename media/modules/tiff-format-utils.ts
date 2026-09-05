@@ -16,10 +16,11 @@ export function tiffTypeMax(sampleFormat: number | number[], bitsPerSample: numb
 	return Math.pow(2, bitsPerSample) - 1;
 }
 
-export function tiffFormatTypeFor(sampleFormat: number | number[], bitsPerSample?: number): 'tiff-float' | 'tiff-int-signed' | 'tiff-int-wide' | 'tiff-int' {
+export function tiffFormatTypeFor(sampleFormat: number | number[], bitsPerSample?: number): 'tiff-float' | 'tiff-int-signed' | 'tiff-int-wide' | 'tiff-uint16' | 'tiff-int' {
 	const format = primarySampleFormat(sampleFormat);
 	if (format === 3) { return 'tiff-float'; }
 	if (format === 2) { return 'tiff-int-signed'; }
+	if (bitsPerSample === 16) { return 'tiff-uint16'; }
 	if ((bitsPerSample || 0) > 16) { return 'tiff-int-wide'; }
 	return 'tiff-int';
 }

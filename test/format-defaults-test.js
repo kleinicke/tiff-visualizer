@@ -43,7 +43,7 @@ const AUTO_NORMALIZE = [
 	'npy-float', 'npy-uint',
 	// Signed and wide-unsigned TIFFs: gamma mode's unsigned [0, typeMax]
 	// assumption does not hold for either.
-	'tiff-int-signed', 'tiff-int-wide',
+	'tiff-int-signed', 'tiff-int-wide', 'tiff-uint16',
 	// Scientific containers: values are measurements, not display levels.
 	'fits', 'dicom', 'netcdf', 'czi',
 	// JPEG XR, and a FLOAT JPEG XL, carry scene-referred values that gamma

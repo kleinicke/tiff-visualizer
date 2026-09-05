@@ -688,11 +688,15 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		_pyramidViewGeneration++;
 		_pyramidViewportAbortController?.abort();
 		_pyramidViewportAbortController = null;
+		// The next viewport may start without waiting for obsolete decode jobs.
+		_pyramidTileLoadPending = false;
+		_pyramidTileLoadQueued = false;
 	}
 
 	// A scroll moves the image under the patch; the patch is placed in document
 	// coordinates so it travels with it, but a pan can also expose ground the
 	// patch does not cover, which needs a new rectangle.
+	window.addEventListener('resize', () => { invalidatePyramidViewport(); scheduleLevelRefinement(); });
 	window.addEventListener('scroll', () => {
 		invalidatePyramidViewport();
 		mouseHandler.refreshAtPointer();
@@ -5086,8 +5090,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					void updatePyramidSceneTiles();
 					return;
 				}
-				// Detail canvases contain the old display transform. Keep the stable
-				// scene/base, but repopulate viewport tiles with the new settings.
+				// Rebuild detail for changed display settings; the overview remains the background.
 				_pyramidScene?.clearTiles();
 				// If only parameters changed (gamma/brightness/normalization), use optimized path
 				if (changes.parametersOnly) {
@@ -5722,7 +5725,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			}));
 
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
-			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
+			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide', 'tiff-uint16', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
 			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
 				menu.appendChild(createSeparator());
 				menu.appendChild(createMenuItem('Open as Point Cloud', () => {
@@ -6534,16 +6537,29 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (count < 2) { return []; }
 		const labels = Array.from({ length: count }, (_unused, index) =>
 			bandDescription(tiffProcessor.gdalMetadata, index) || `Band ${index + 1}`);
-		return controlsFromSelectors('tiff', [{
-			name: 'Band',
-			size: count,
-			value: Math.min(count - 1, Math.max(0, tiffProcessor.displayBand)),
-			labels,
-		}], (_selector, index) => { void selectTiffBand(index); });
+		const rgb = tiffProcessor.displayRgbBands;
+		const mode = controlsFromSelectors('tiff-mode', [{ name: 'View', size: 2, value: rgb ? 1 : 0, labels: ['Single band', 'RGB bands'] }],
+			(_selector, index) => {
+				if (index === 0) void selectTiffBand(tiffProcessor.displayBand);
+				else if (tiffProcessor.setDisplayRgbBands([0, 1, Math.min(2, count - 1)])) void refreshTiffBandView();
+			});
+		const selectors = rgb
+			? ['Red', 'Green', 'Blue'].map((name, i) => ({ name, size: count, value: rgb[i], labels }))
+			: [{ name: 'Band', size: count, value: Math.min(count - 1, Math.max(0, tiffProcessor.displayBand)), labels }];
+		return [...mode, ...controlsFromSelectors('tiff', selectors, (selector, index) => {
+			if (!rgb) { void selectTiffBand(index); return; }
+			const next: [number, number, number] = [rgb[0], rgb[1], rgb[2]];
+			next[['Red', 'Green', 'Blue'].indexOf(selector.name)] = index;
+			if (tiffProcessor.setDisplayRgbBands(next)) void refreshTiffBandView();
+		})];
 	}
 
 	async function selectTiffBand(index: number): Promise<void> {
 		if (!tiffProcessor.setDisplayBand(index)) { return; }
+		await refreshTiffBandView();
+	}
+
+	async function refreshTiffBandView(): Promise<void> {
 		invalidatePyramidViewport();
 		_detailPatchGeneration++;
 		removeDetailPatch();
@@ -7513,11 +7529,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		} finally {
 			if (_pyramidViewportAbortController === requestController) {
 				_pyramidViewportAbortController = null;
-			}
-			_pyramidTileLoadPending = false;
-			if (_pyramidTileLoadQueued) {
-				_pyramidTileLoadQueued = false;
-				void updatePyramidSceneTiles();
+				_pyramidTileLoadPending = false;
+				if (_pyramidTileLoadQueued) {
+					_pyramidTileLoadQueued = false;
+					void updatePyramidSceneTiles();
+				}
 			}
 			endTiffViewportLoad();
 		}
@@ -7813,6 +7829,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					pageIndex: tiffProcessor.pageIndex,
 					pageCount: tiffProcessor.pageCount,
 					displayBand: tiffProcessor.displayBand,
+					displayRgbBands: tiffProcessor.displayRgbBands,
 					// Carried through the cache so switching back to a
 					// GeoTIFF in a collection keeps its coordinate readout;
 					// the restore path below has no bytes to re-parse.
@@ -7898,6 +7915,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				currentLoadDecodeInfo = { engine: 'decoded-cache', durationMs: 0 };
 				tiffProcessor.rawTiffData = tiffData;
 				tiffProcessor.displayBand = Math.max(0, Number(raw.displayBand || 0));
+				tiffProcessor.displayRgbBands = raw.displayRgbBands || null;
 				tiffProcessor._lastStatistics = raw.lastStatistics || null;
 				tiffProcessor._lastStatisticsRgb24Mode = raw.lastStatisticsRgb24Mode === true;
 				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;

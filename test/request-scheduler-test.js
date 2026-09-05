@@ -1,0 +1,21 @@
+const assert = require('node:assert/strict');
+(async () => {
+ const { RequestScheduler } = await import('../out/media/modules/request-scheduler.js');
+ const queue = new RequestScheduler(2), started = [], release = [];
+ const work = id => () => new Promise(resolve => { started.push(id); release[id] = resolve; });
+ const first = queue.run(work(0)), second = queue.run(work(1));
+ const controller = new AbortController();
+ const cancelled = queue.run(work(2), controller.signal).catch(error => error.name);
+ const third = queue.run(work(3));
+ const metadata = queue.run(work(4), undefined, 1);
+ controller.abort();
+ assert.equal(await cancelled, 'AbortError');
+ await Promise.resolve();
+ assert.deepEqual(started, [0,1]);
+ release[1](); await second; await new Promise(setImmediate);
+ assert.deepEqual(started, [0,1,4], 'metadata starts in the free slot while request zero remains slow');
+ release[4](); await metadata; await new Promise(setImmediate);
+ assert.deepEqual(started, [0,1,4,3], 'cancelled work never starts and no lane stalls useful work');
+ release[0](); release[3](); await Promise.all([first,third]);
+ console.log('✅ Shared request slots, metadata priority and immediate queued cancellation');
+})().catch(error => { console.error(error); process.exitCode = 1; });

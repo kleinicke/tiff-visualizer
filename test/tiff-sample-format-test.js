@@ -247,9 +247,13 @@ async function main() {
 	const { TiffProcessor, tiffTypeMax, tiffFormatTypeFor, tiffNeedsFloatCarrier } = await import(
 		path.join('..', 'out', 'media', 'modules', 'tiff-processor.js').replace(/\\/g, '/')
 	);
-	const { parseGdalNodata } = await import(
+	const { parseGdalNodata, parseExtraSamplesAreAlpha } = await import(
 		path.join('..', 'out', 'media', 'modules', 'tiff-tag-utils.js').replace(/\\/g, '/')
 	);
+	assert.strictEqual(parseExtraSamplesAreAlpha([{ name: 'ExtraSamples', value: '999' }]), undefined);
+	assert.strictEqual(parseExtraSamplesAreAlpha([{ name: 'ExtraSamples', value: '0' }]), false);
+	assert.strictEqual(parseExtraSamplesAreAlpha([{ name: 'ExtraSamples', value: '2' }]), true);
+
 
 	// --- Helper contracts -------------------------------------------------
 	assert.strictEqual(tiffTypeMax(1, 8), 255);
@@ -269,8 +273,8 @@ async function main() {
 	// full-range typeMax of 2^32-1, and a Float32Array carrier requirement
 	// (tiffNeedsFloatCarrier) alongside signed int and float.
 	assert.strictEqual(tiffTypeMax(1, 32), 4294967295);
-	assert.strictEqual(tiffFormatTypeFor(1, 8), 'tiff-int', '<=16-bit unsigned stays tiff-int regardless of bitsPerSample param');
-	assert.strictEqual(tiffFormatTypeFor(1, 16), 'tiff-int', '16-bit unsigned is not "wide"');
+	assert.strictEqual(tiffFormatTypeFor(1, 8), 'tiff-int', '8-bit unsigned keeps the ordinary TIFF settings');
+	assert.strictEqual(tiffFormatTypeFor(1, 16), 'tiff-uint16', 'uint16 has independent auto-normalization defaults');
 	assert.strictEqual(tiffFormatTypeFor(1, 32), 'tiff-int-wide');
 	assert.strictEqual(tiffFormatTypeFor(1), 'tiff-int', 'bitsPerSample omitted defaults to the non-wide bucket');
 	assert.strictEqual(tiffFormatTypeFor(2, 32), 'tiff-int-signed', 'signed always wins over wide, regardless of bit depth');

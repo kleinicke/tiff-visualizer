@@ -44,7 +44,31 @@ test('streams the massive remote COG through lazy indices and bounded requests',
   await expect(page.locator('.pyramid-scene')).toBeVisible({ timeout: 60_000 });
   await expect.poll(() => messages.some(text => text.startsWith('[Refine]')), { timeout: 60_000 }).toBe(true);
   expect(messages.some(text => text.includes('[RemoteTIFF] Lazy directory'))).toBe(true);
+  await expect(page.locator('.pyramid-base')).toBeVisible();
+  await expect(page.locator('.pyramid-gpu')).toHaveCount(0);
   expect(messages.filter(text => /pool unavailable|using existing directory reader|render failure/.test(text))).toEqual([]);
   await expect(page.locator('.nav-overlay')).not.toHaveClass(/dataset-overlay--loading/);
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
+});
+
+test('RGB band mapping preserves original samples', async ({ page }) => {
+  const bundle = buildSync({ stdin: { contents: `export { TiffProcessor } from './media/modules/tiff-processor';`, resolveDir: process.cwd() }, bundle: true,
+    write: false, format: 'iife', globalName: 'TileTest', platform: 'browser', target: 'chrome100', logLevel: 'silent' }).outputFiles[0].text;
+  await page.addScriptTag({ content: bundle });
+  const result = await page.evaluate(async () => {
+    const { TiffProcessor } = (window as any).TileTest;
+    const settings = { gpuAcceleration: true, normalization: { autoNormalize: false, gammaMode: false, min: 0, max: 255 }, gamma: { in: 1, out: 1 }, brightness: { offset: 0 }, displayColormap: 'none', nanColor: 'black' };
+    const processor = new TiffProcessor({ settings }, null);
+    processor._sourceBuffer = new ArrayBuffer(1);
+    const width = 8, height = 8, data = Float32Array.from({length: width*height*5}, (_,i) => i%5*40 + Math.floor(i/5)%31);
+    processor.rawTiffData = { ifd: { t258: 8, t339: 1, t277: 5, t262: 1 }, data };
+    processor._extraSamplesAreAlpha = false;
+    processor._decodeRegionRaw = async () => ({ width,height,channels:5,sampleFormat:1,bitsPerSample:8,data });
+    const selected = processor.setDisplayRgbBands([4,1,3]);
+    const rect = { x:0,y:0,width,height }, cpu = await processor.renderRegion(0,rect);
+    const first=Array.from(cpu.data.slice(0,4));
+    processor.setDisplayBand(2);
+    return {selected,first,scalarAgain:processor.displayRgbBands===null,source:Array.from(data.slice(0,5))};
+  });
+  expect(result).toEqual({selected:true,first:[160,40,120,255],scalarAgain:true,source:[0,40,80,120,160]});
 });

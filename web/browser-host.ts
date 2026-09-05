@@ -49,7 +49,7 @@ const STORAGE_URL_HISTORY = 'scientific-image-visualizer.url-history';
 const POINT_CLOUD_URL = 'https://3d.f-kleinicke.de/';
 const POINT_CLOUD_ORIGIN = new URL(POINT_CLOUD_URL).origin;
 const POINT_CLOUD_FORMATS = new Set([
-  'tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide',
+  'tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide', 'tiff-uint16',
   'pfm', 'npy', 'npy-float', 'npy-uint', 'png',
 ]);
 const SUPPORTED_FORMATS_TOOLTIP = 'TIFF/OME-TIFF, EXR, PFM, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM/PGM/PBM, FITS, DICOM, classic NetCDF, CZI, ND2, LIF, ORA, KRA, PSD/PSB, XCF, and Affinity Photo';

@@ -93,7 +93,9 @@ export function parseExtraSamplesAreAlpha(tags: TagEntry[]): boolean | undefined
 			.map(part => Number(part))
 			.filter(value => Number.isFinite(value));
 		if (values.length === 0) { return undefined; }
-		return values.some(value => value === 1 || value === 2);
+		if (values.some(value => value === 1 || value === 2)) { return true; }
+		// Unknown vendor values do not declare independent scientific bands.
+		return values.every(value => value === 0) ? false : undefined;
 	}
 	return undefined;
 }

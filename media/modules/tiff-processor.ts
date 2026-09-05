@@ -105,6 +105,7 @@ export class TiffProcessor {
 	_extraSamplesAreAlpha: boolean | undefined;
 	/** Zero-based data band shown for non-colour, multi-sample TIFFs. */
 	displayBand: number;
+	displayRgbBands: [number, number, number] | null = null;
 	/**
 	 * Every image in the file, classified. `pageCount` counts IFDs; this says
 	 * which of them are pages and which are pyramid levels of an earlier one.
@@ -164,6 +165,7 @@ export class TiffProcessor {
 		// are alpha. undefined = the file did not say.
 		this._extraSamplesAreAlpha = undefined;
 		this.displayBand = 0;
+		this.displayRgbBands = null;
 		this.pageDirectory = [];
 		this.gdalMetadata = null;
 		this._convertedFloatData = null; // Cache converted float data for analysis
@@ -221,12 +223,22 @@ export class TiffProcessor {
 		const count = this.selectableBandCount;
 		if (count < 2 || !Number.isFinite(index)) { return false; }
 		const next = Math.min(count - 1, Math.max(0, Math.floor(index)));
-		if (next === this.displayBand) { return false; }
+		if (next === this.displayBand && !this.displayRgbBands) { return false; }
+		this.displayRgbBands = null;
 		this.displayBand = next;
 		// Auto-normalization is per displayed band. Keeping the previous band's
 		// range would make the switch misleading even though the pixels are right.
 		this._lastStatistics = null;
 		this._lastRenderHistogram = null;
+		return true;
+	}
+
+	setDisplayRgbBands(bands: [number, number, number]): boolean {
+		const count = this.selectableBandCount;
+		if (count < 2 || bands.some(band => !Number.isInteger(band) || band < 0 || band >= count)) return false;
+		if (this.displayRgbBands?.every((band, index) => band === bands[index])) return false;
+		this.displayRgbBands = [...bands];
+		this._lastStatistics = null; this._lastRenderHistogram = null;
 		return true;
 	}
 
@@ -494,6 +506,7 @@ export class TiffProcessor {
 		try {
 			if (this._sourceBufferSrc !== src) {
 				this.displayBand = 0;
+				this.displayRgbBands = null;
 				this._clearRegionSampleCache();
 				this._regionSourceGeneration++;
 				this._regionWorkerPrimed = false;
@@ -1127,6 +1140,7 @@ export class TiffProcessor {
 		const GeoTIFF = await loadGeoTiff();
 		if (this._remoteTiffUrl !== url || !this._remoteTiff) {
 			this.displayBand = 0;
+			this.displayRgbBands = null;
 			this._clearRegionSampleCache();
 			this._remoteDecodePool?.destroy?.();
 			await this._remoteTiff?.close?.();
@@ -1379,7 +1393,9 @@ export class TiffProcessor {
 		// Rasters are already planar. Selecting a scientific band is therefore a
 		// zero-copy view of one decoded plane; the original multi-band buffer stays
 		// intact for the picker, measurement tools, and another band switch.
-		const rastersCopy = bandCount > 1 && rasters?.[selectedBand]
+		const rastersCopy = bandCount > 1 && this.displayRgbBands
+			? this.displayRgbBands.map(band => rasters[band])
+			: bandCount > 1 && rasters?.[selectedBand]
 			? [rasters[selectedBand]]
 			: rasters;
 		const renderSampleFormat = bandCount > 1 && Array.isArray(sampleFormat)
@@ -1904,7 +1920,7 @@ export class TiffProcessor {
 	}
 
 	async renderRegionCanvas(pageIndex: number, rect: { x: number, y: number, width: number, height: number }, signal?: AbortSignal): Promise<ImageData | HTMLCanvasElement | null> {
-		return this._renderRegion(pageIndex, rect, signal, true);
+		return this._renderRegion(pageIndex, rect, signal, true) as Promise<ImageData | HTMLCanvasElement | null>;
 	}
 
 	private async _renderRegion(
@@ -1938,10 +1954,11 @@ export class TiffProcessor {
 				// Region decoders return an interleaved Float32 carrier. Extract only
 				// the selected plane for display, while the all-band native planes stay
 				// resident in the picker cache above.
-				renderChannels = 1;
-				renderData = new Float32Array(width * height);
-				for (let pixel = 0; pixel < renderData.length; pixel++) {
-					renderData[pixel] = data[pixel * channels + selectedBand];
+				const bands = this.displayRgbBands || [selectedBand];
+				renderChannels = bands.length;
+				renderData = new Float32Array(width * height * renderChannels);
+				for (let pixel = 0; pixel < width * height; pixel++) {
+					for (let c = 0; c < renderChannels; c++) renderData[pixel * renderChannels + c] = data[pixel * channels + bands[c]];
 				}
 			}
 			if (!this._lastStatistics && NormalizationHelper.needsStats(settings)) {
