@@ -103,6 +103,8 @@ async function main() {
 			'extensionless files are treated as DICOM instances');
 		assert.strictEqual(resolveFormat('/x/a.png', 'dicom').kind, 'dicom',
 			'an explicit format hint overrides the extension');
+		assert.strictEqual(resolveFormat('/x/download', 'psd').layeredFormat, 'psd',
+			'a concrete signature hint retains the correct layered-document parser');
 		console.log('✅ resolution handles case, compound names, hints and the extensionless-DICOM rule');
 		count++;
 	}

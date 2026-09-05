@@ -31,7 +31,19 @@ export class ZoomController {
 		this.vscode = vscode;
 
 		// Initialize state from VS Code
-		const initialState = vscode.getState() || { scale: 'fit', offsetX: 0, offsetY: 0 };
+		// The host stores unrelated state in the same object (for example the web
+		// build records its version before an image is opened). A truthy object is
+		// therefore not evidence that zoom was ever saved. Missing zoom fields must
+		// still mean "fit"; otherwise ordinary replaced elements happen to fit via
+		// CSS while a tiled scene, which has no intrinsic layout size, collapses to
+		// 0x0 and can never start its viewport requests.
+		const storedState = vscode.getState() || {};
+		const initialState = {
+			...storedState,
+			scale: storedState.scale ?? 'fit',
+			offsetX: Number.isFinite(storedState.offsetX) ? storedState.offsetX : 0,
+			offsetY: Number.isFinite(storedState.offsetY) ? storedState.offsetY : 0,
+		};
 		this.scale = initialState.scale;
 		this.initialState = initialState;
 

@@ -996,10 +996,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// Both delegate to modules/format-registry.ts, the single place that maps a
 	// file extension to a decoder.
 	const isTiffExtension = (lower: string): boolean => isTiffPath(lower);
-	const remoteTiffUrlFor = (resourceUri: string): string | undefined => {
+	const remoteTiffUrlFor = (resourceUri: string, formatHint?: string): string | undefined => {
 		try {
 			const parsed = new URL(resourceUri);
-			return /^(?:http|https):$/.test(parsed.protocol) && isTiffExtension(parsed.pathname.toLowerCase())
+			const hintedTiff = resolveFormat('', formatHint)?.kind === 'tiff';
+			return /^(?:http|https):$/.test(parsed.protocol)
+				&& (hintedTiff || isTiffExtension(parsed.pathname.toLowerCase()))
 				? resourceUri : undefined;
 		} catch { return undefined; }
 	};
@@ -1583,7 +1585,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Load image based on file extension
 		const src = settings.src ?? '';
 		beginDirectLoadTrace('open', resourceUri);
-		loadImageByType(src, resourceUri, _loadGeneration);
+		loadImageByType(src, resourceUri, _loadGeneration, settings.formatHint);
 
 		// Restore comparison state if we have peer images
 		if (peerImageUris.length > 0) {
@@ -1697,7 +1699,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Load image based on file extension
 		const reloadSrc = settings.src ?? '';
 		beginDirectLoadTrace('reload', resourceUri);
-		loadImageByType(reloadSrc, resourceUri, _loadGeneration);
+		loadImageByType(reloadSrc, resourceUri, _loadGeneration, settings.formatHint);
 	}
 
 	/**
@@ -2158,6 +2160,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 			hasLoadedImage = true;
 			signalTiffCanvasReady();
+			// The TIFF directory has already given us the scene/page geometry and
+			// block layout. Publish that UI now, before the per-format settings
+			// handshake and first pixel decode complete. On a remote image this can
+			// be several network round trips earlier than first paint.
+			if (tiffProcessor._pendingRenderData) { updateTiffPageOverlay(true); }
 			if (!tiffProcessor._pendingRenderData) {
 				installPyramidSceneIfNeeded();
 				configureTiffMouseReadout();
@@ -4122,7 +4129,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					}
 					_pendingZoomState = message.zoomState || liveZoom;
 				}
-				switchToNewImage(message.uri, message.resourceUri);
+				switchToNewImage(message.uri, message.resourceUri, {
+					formatHint: message.formatHint,
+				});
 				break;
 
 			case 'switchToDatasetPlane':
@@ -6653,7 +6662,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// also makes "is this the lone control?" — which decides whether the
 		// arrows or the brackets apply — count only real ones.
 		const controls = options.controls.filter(control => control.size > 1);
-		if (!controls.length) {
+		const note = options.note || '';
+		if (!controls.length && !note) {
 			// Hide when this format owns the overlay, and also when NOBODY does:
 			// a switch releases ownership without hiding (so the controls stay up
 			// through the decode), and the incoming format is then the one that
@@ -6716,7 +6726,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		});
 
 		const noteEl = navOverlay.querySelector('.dataset-note') as HTMLElement;
-		const note = options.note || '';
 		if (noteEl.textContent !== note) { noteEl.textContent = note; }
 		noteEl.hidden = !note;
 
@@ -6917,7 +6926,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/** One-line whole-scene and visible-detail information for a pyramid. */
 	function pyramidStatusNote(): string {
 		const directory = tiffProcessor.pageDirectory;
-		if (!isPyramidal(directory)) { return ''; }
+		const pyramid = isPyramidal(directory);
+		if (!pyramid && !_pyramidScene && !tiffProcessor.isProgressiveRemoteBase) { return ''; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const full = levels[0];
@@ -6927,14 +6937,22 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Keep the overview first, followed by only the detail facts needed to
 		// understand what has actually arrived under the viewport.
 		const overviewResolution = current.reduction <= 1 ? 'Full' : `1/${current.reduction}`;
-		const parts = [`Scene overview: ${overviewResolution}`];
+		const parts = [pyramid
+			? `Scene overview: ${overviewResolution}`
+			: `Resolution: ${overviewResolution}`];
+		if (!_pyramidScene && tiffProcessor.isProgressiveRemoteBase) {
+			const columns = Math.ceil(current.width / Math.max(1, current.blockWidth));
+			const rows = Math.ceil(current.height / Math.max(1, current.blockHeight));
+			parts[0] += ` · 0/${columns * rows} tiles loaded`;
+		}
 
 		if (_pyramidScene) {
 			if (tiffProcessor.isProgressiveRemoteBase) {
 				const baseProgress = _pyramidScene.baseLoadedSummary(current, {
 					x: 0, y: 0, width: current.width, height: current.height,
 				});
-				if (baseProgress.totalBlocks > 0 && baseProgress.blocks < baseProgress.totalBlocks) {
+				if (baseProgress.totalBlocks > 0
+					&& (!pyramid || baseProgress.blocks < baseProgress.totalBlocks)) {
 					parts[0] += ` · ${baseProgress.blocks}/${baseProgress.totalBlocks} tiles loaded`;
 				}
 			}
@@ -7021,19 +7039,26 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return current ? Math.max(1, current.reduction) : 1;
 	}
 
-	function largePyramidLevels(): TiffPageEntry[] {
+	function streamedSceneLevels(): TiffPageEntry[] {
 		const directory = tiffProcessor.pageDirectory;
-		if (_levelSelectionIsManual || !isPyramidal(directory)) { return []; }
+		if (_levelSelectionIsManual) { return []; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const full = levels[0];
-		return full && full.width * full.height > LARGE_PYRAMID_SCENE_THRESHOLD ? levels : [];
+		if (!full) { return []; }
+		// A metadata-only remote base must always acquire a scene that can ask
+		// for its blocks—even if the TIFF has no reduced overview IFDs. Without
+		// this path a large, single-level tiled TIFF remains a blank canvas.
+		if (tiffProcessor.isProgressiveRemoteBase) { return levels; }
+		return isPyramidal(directory) && full.width * full.height > LARGE_PYRAMID_SCENE_THRESHOLD
+			? levels
+			: [];
 	}
 
-	/** Wrap only oversized pyramids; ordinary TIFF and every non-TIFF path stay unchanged. */
+	/** Wrap oversized pyramids and metadata-only remote bases in a tiled scene. */
 	function installPyramidSceneIfNeeded(): void {
 		if (!canvas || _pyramidScene) { return; }
-		const levels = largePyramidLevels();
+		const levels = streamedSceneLevels();
 		if (!levels.length) { return; }
 		removeDetailPatch();
 		const parent = canvas.parentNode;
@@ -7675,9 +7700,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function cacheCurrentDecodedImage() {
 		const resourceUri = settingsManager.settings.resourceUri;
 		if (!resourceUri || !hasLoadedImage) { return; }
-		const lower = resourceUri.toLowerCase();
+		const resolvedKind = resolveFormat(resourceUri, settingsManager.settings.formatHint)?.kind;
 		let entry: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
-		if (isTiffExtension(lower) && tiffProcessor.rawTiffData) {
+		if (resolvedKind === 'tiff' && tiffProcessor.rawTiffData) {
 			entry = {
 				resourceUri,
 				cacheKey: `${resourceUri}#tiff-page=${tiffProcessor.pageIndex}`,
@@ -7700,19 +7725,19 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null
 				}
 			};
-		} else if (lower.endsWith('.exr') && exrProcessor.rawExrData) {
+		} else if (resolvedKind === 'exr' && exrProcessor.rawExrData) {
 			entry = { resourceUri, cacheKey: resourceUri, format: 'exr', raw: exrProcessor.rawExrData };
-		} else if ((lower.endsWith('.npy') || lower.endsWith('.npz')) && npyProcessor._lastRaw) {
+		} else if (resolvedKind === 'npy' && npyProcessor._lastRaw) {
 			entry = { resourceUri, cacheKey: resourceUri, format: 'npy', raw: npyProcessor._lastRaw };
-		} else if (lower.endsWith('.pfm') && pfmProcessor._lastRaw) {
+		} else if (resolvedKind === 'pfm' && pfmProcessor._lastRaw) {
 			entry = { resourceUri, cacheKey: resourceUri, format: 'pfm', raw: pfmProcessor._lastRaw };
-		} else if ((lower.endsWith('.ppm') || lower.endsWith('.pgm') || lower.endsWith('.pbm')) && ppmProcessor._lastRaw) {
+		} else if (resolvedKind === 'netpbm' && ppmProcessor._lastRaw) {
 			entry = { resourceUri, cacheKey: resourceUri, format: 'ppm', raw: ppmProcessor._lastRaw };
-		} else if (lower.endsWith('.png') && pngProcessor._lastRaw && pngProcessor._lastRaw.bitDepth > 8) {
+		} else if (resolvedKind === 'png' && pngProcessor._lastRaw && pngProcessor._lastRaw.bitDepth > 8) {
 			entry = { resourceUri, cacheKey: resourceUri, format: 'png', raw: pngProcessor._lastRaw };
-		} else if (lower.endsWith('.hdr') && hdrProcessor._lastRaw) {
+		} else if (resolvedKind === 'hdr' && hdrProcessor._lastRaw) {
 			entry = { resourceUri, cacheKey: resourceUri, format: 'hdr', raw: hdrProcessor._lastRaw };
-		} else if (dicomProcessor._lastRaw && (datasetManifest?.kind === 'dicom' || lower.endsWith('.dcm') || lower.endsWith('.dicom'))) {
+		} else if (dicomProcessor._lastRaw && (datasetManifest?.kind === 'dicom' || resolvedKind === 'dicom')) {
 			entry = {
 				resourceUri,
 				cacheKey: `${resourceUri}#dicom-frame=${Number(dicomProcessor.metadata.frameIndex || 0)}`,
@@ -7753,11 +7778,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		});
 	}
 
-	function tryRestoreDecodedImageFromCache(resourceUri: string, formatHint?: 'dicom' | 'tiff', pageIndex = 0, frameIndex = 0): boolean {
+	function tryRestoreDecodedImageFromCache(resourceUri: string, formatHint?: string, pageIndex = 0, frameIndex = 0): boolean {
 		const cache = _restoreDecodedImageCandidate;
-		const requestedKey = formatHint === 'tiff' || isTiffExtension(resourceUri.toLowerCase())
+		const requestedKind = resolveFormat(resourceUri, formatHint)?.kind;
+		const requestedKey = requestedKind === 'tiff'
 			? `${resourceUri}#tiff-page=${pageIndex}`
-			: formatHint === 'dicom' || datasetManifest?.kind === 'dicom' || /\.(dcm|dicom)$/i.test(resourceUri)
+			: requestedKind === 'dicom' || datasetManifest?.kind === 'dicom'
 				? `${resourceUri}#dicom-frame=${frameIndex}`
 				: resourceUri;
 		if (!cache || cache.cacheKey !== requestedKey) { return false; }
@@ -7906,7 +7932,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
-	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange?: boolean } = {}) {
+	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: string, pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange?: boolean } = {}) {
 		// Every switch gets a new generation so any in-flight load from a
 		// previous rapid press can detect it is stale and bail out.
 		const gen = ++_loadGeneration;
@@ -7965,7 +7991,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
 		settingsManager.settings.src = uri;
-		settingsManager.settings.remoteTiffUrl = remoteTiffUrlFor(resourceUri);
+		settingsManager.settings.formatHint = options.formatHint;
+		settingsManager.settings.remoteTiffUrl = remoteTiffUrlFor(resourceUri, options.formatHint);
 		if (!planeChange) {
 			// Let the incoming image claim (or clear) the navigation controls,
 			// while they stay on screen until it does.
@@ -8043,7 +8070,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/**
 	 * Load image by type (wrapper function)
 	 */
-	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange = false) {
+	async function loadImageByType(uri: string, resourceUri: string, gen: number, formatHint?: string, pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange = false) {
 		// Yield only while replacing an existing frame (or changing a plane).
 		// That lets the loading badge paint and coalesces rapid navigation, but a
 		// direct first open has neither an outgoing frame nor queued navigation.
@@ -8062,8 +8089,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (gen !== _loadGeneration) { return; }
 		PerfTrace.mark(shouldYieldForLoadingUi ? 'paint-yield' : 'load-start');
 		const lower = resourceUri.toLowerCase();
-		const layeredFormat = layeredFormatForPath(lower);
 		const format = resolveFormat(resourceUri, formatHint);
+		const layeredFormat = (format?.kind === 'layered' ? format.layeredFormat : null)
+			|| layeredFormatForPath(lower);
 		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jp2', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt'].includes(format.kind)) {
 			await ensureProcessorFamily(format.kind);
 			if (gen !== _loadGeneration) { return; }

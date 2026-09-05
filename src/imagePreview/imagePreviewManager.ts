@@ -48,6 +48,8 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	}
 
 	private readonly _previews = new Set<IImagePreview>();
+	/** Content-derived hints for resources whose URL/path is misleading. */
+	private readonly _resourceFormatHints = new Map<string, string>();
 	private _activePreview: IImagePreview | undefined;
 	private readonly _settingsManager = new ImageSettingsManager();
 	private readonly _appStateManager = new AppStateManager();
@@ -106,6 +108,14 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 
 	public get settingsManager(): ImageSettingsManager {
 		return this._settingsManager;
+	}
+
+	public setResourceFormatHint(uri: vscode.Uri, formatHint: string): void {
+		this._resourceFormatHints.set(uri.toString(), formatHint);
+	}
+
+	public getResourceFormatHint(uri: vscode.Uri): string | undefined {
+		return this._resourceFormatHints.get(uri.toString());
 	}
 
 	public get appStateManager(): AppStateManager {

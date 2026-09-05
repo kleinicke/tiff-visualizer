@@ -6,6 +6,11 @@ import {
 } from './browser-dataset.js';
 import { normalizeRemoteImageUrl } from '../src/util/remoteImageUrl.js';
 import { normalizeUrlHistory, rememberUrl, UrlHistoryCursor } from '../src/util/urlHistory.js';
+import {
+  IMAGE_HEADER_PROBE_BYTES,
+  sniffImageFormat,
+  sniffRemoteImageFormat,
+} from '../src/util/imageFormatSniffer.js';
 
 type ViewerMessage = { type: string; [key: string]: any };
 
@@ -16,6 +21,8 @@ interface BrowserFileEntry {
   url: string;
   resourceUri: string;
   ownsObjectUrl: boolean;
+  /** Content-derived registry hint; valid even when the name is misleading. */
+  formatHint?: string;
 }
 
 interface ViewerSettings {
@@ -586,12 +593,13 @@ function switchTo(index: number, preserveDataset = false, resetView = false): vo
     zoomState: resetView ? { scale: 'fit', x: 0, y: 0 } : undefined,
     loadStartTime: Date.now(),
     collection: collectionState(),
+    formatHint: entry.formatHint,
   });
   updateCollectionOverlay();
   syncStatusBar();
 }
 
-function openFiles(selected: File[]): void {
+async function openFiles(selected: File[]): Promise<void> {
   const nextFiles = selected.filter(file => file.size > 0);
   if (nextFiles.length === 0) {
     showToast('No readable files were selected.');
@@ -599,14 +607,21 @@ function openFiles(selected: File[]): void {
   }
   if (currentDataset) sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
   const firstNewIndex = files.length;
-  files.push(...nextFiles.map(file => ({
-    file,
-    name: file.name,
-    size: file.size,
-    url: URL.createObjectURL(file),
-    resourceUri: file.name,
-    ownsObjectUrl: true,
-  })));
+  const detected = await Promise.all(nextFiles.map(async file => {
+    try {
+      const prefix = new Uint8Array(await file.slice(0, IMAGE_HEADER_PROBE_BYTES).arrayBuffer());
+      return sniffImageFormat(prefix)?.hint;
+    } catch { return undefined; }
+  }));
+  files.push(...nextFiles.map((file, index) => ({
+      file,
+      name: file.name,
+      size: file.size,
+      url: URL.createObjectURL(file),
+      resourceUri: file.name,
+      ownsObjectUrl: true,
+      formatHint: detected[index],
+    })));
   currentDataset = null;
   currentDatasetCoordinates = {};
   currentFormatInfo = null;
@@ -657,7 +672,19 @@ async function openUrl(rawUrl: string): Promise<void> {
   const visibleInput = document.getElementById('web-url-input') as HTMLInputElement | null;
   if (visibleInput) { visibleInput.value = canonicalUrl; }
 
-  if (/\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname)) {
+  let detected: Awaited<ReturnType<typeof sniffRemoteImageFormat>> = null;
+  const probeController = new AbortController();
+  const probeTimeout = window.setTimeout(() => probeController.abort(), 5_000);
+  try {
+    detected = await sniffRemoteImageFormat(canonicalUrl, probeController.signal);
+  } catch (error) {
+    console.info('[WebHost] Header probe unavailable; using URL suffix', error);
+  } finally {
+    window.clearTimeout(probeTimeout);
+  }
+
+  const suffixSaysTiff = /\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname);
+  if (detected?.hint === 'tiff' || (!detected && suffixSaysTiff)) {
     if (currentDataset) sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
     const firstNewIndex = files.length;
     files.push({
@@ -666,6 +693,7 @@ async function openUrl(rawUrl: string): Promise<void> {
       url: canonicalUrl,
       resourceUri: canonicalUrl,
       ownsObjectUrl: false,
+      formatHint: detected?.hint || 'tiff',
     });
     currentDataset = null;
     currentDatasetCoordinates = {};
@@ -690,7 +718,7 @@ async function openUrl(rawUrl: string): Promise<void> {
       showToast(`${name} is empty.`);
       return;
     }
-    openFiles([new File([blob], name, { type: blob.type || 'application/octet-stream' })]);
+    await openFiles([new File([blob], name, { type: blob.type || 'application/octet-stream' })]);
   } catch (error) {
     // A cross-origin refusal reaches script as an opaque TypeError with no
     // detail — the browser deliberately withholds the reason — so this message

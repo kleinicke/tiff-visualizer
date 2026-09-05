@@ -26,9 +26,16 @@ link and opens the image behind it. Scientific imagery increasingly lives at a
 URL — a STAC catalogue hands out `https://` hrefs to Sentinel-2 bands, for
 instance — and this saves downloading a file by hand before you can look at it.
 
-The file is fetched by the extension and kept in its own storage, so reopening,
-page changes and export do not refetch it. Nothing is written into your
-workspace.
+The viewer reads a small prefix of the response and identifies supported
+formats from their binary signature. The URL may therefore have no extension,
+use a download endpoint, or even have a misleading suffix. A detected TIFF
+still stays remote and range-backed; other detected formats use their normal
+decoder. If the host blocks the probe or the format has no distinctive header,
+the filename and browser-native fallback remain in effect.
+
+TIFF stays at its original URL and is read in ranges so large tiled files can
+stream only the required blocks. Other formats are fetched into the extension's
+own storage. Nothing is written into your workspace.
 
 The same works in the [browser version](https://images.f-kleinicke.de): paste a
 link into the box on the start screen, or append `?url=<link>` to the address,

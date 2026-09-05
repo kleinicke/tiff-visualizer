@@ -9,6 +9,12 @@ import { scanDicomFolder } from './dicomDataset';
 import type { DatasetManifest } from './datasetTypes';
 import { normalizeRemoteImageUrl } from '../util/remoteImageUrl';
 import { normalizeUrlHistory, rememberUrl, UrlHistoryCursor } from '../util/urlHistory';
+import {
+	filenameForDetectedFormat,
+	IMAGE_HEADER_PROBE_BYTES,
+	sniffImageFormat,
+	sniffRemoteImageFormat,
+} from '../util/imageFormatSniffer';
 
 const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'jxr', 'wdp', 'hdp', 'jp2', 'jpf', 'jpx', 'j2k', 'j2c', 'jpc', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'czi', 'nd2', 'lif', 'sdt', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
 const URL_HISTORY_STORAGE_KEY = 'tiffVisualizer.urlHistory';
@@ -1282,7 +1288,8 @@ export function registerImagePreviewCommands(
 	 * Opens an image in the TIFF Visualizer custom editor and returns its preview
 	 * once registered. Used to bootstrap a collection when no preview is open yet.
 	 */
-	async function openPreviewForResource(uri: vscode.Uri) {
+	async function openPreviewForResource(uri: vscode.Uri, formatHint?: string) {
+		if (formatHint) { previewManager.setResourceFormatHint(uri, formatHint); }
 		await vscode.commands.executeCommand('vscode.openWith', uri, ImagePreviewManager.getViewTypeForResource(uri));
 		// resolveCustomEditor runs asynchronously — wait briefly for the preview to register.
 		for (let i = 0; i < 60; i++) {
@@ -1333,12 +1340,28 @@ export function registerImagePreviewCommands(
 		let name = encodedName;
 		try { name = decodeURIComponent(encodedName); } catch { /* retain the server's spelling */ }
 		try {
+			// A path is metadata supplied by a server, not proof of a file format.
+			// Probe only a few leading KiB and cap the wait: distinctive content wins,
+			// while an unavailable/ambiguous header falls back to the existing suffix
+			// and native-browser behaviour.
+			let detected: Awaited<ReturnType<typeof sniffRemoteImageFormat>> = null;
+			const probeController = new AbortController();
+			const probeTimeout = setTimeout(() => probeController.abort(), 5_000);
+			try {
+				detected = await sniffRemoteImageFormat(parsed.toString(), probeController.signal);
+			} catch (error) {
+				getOutputChannel().appendLine(`[URL] Header probe unavailable; using the URL suffix (${String(error)})`);
+			} finally {
+				clearTimeout(probeTimeout);
+			}
 			// TIFF has a range-backed viewer path. Open the URL itself so a COG
 			// stays on the server and only its directory/visible tiles travel.
-			if (/\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname)) {
-				const preview = await openPreviewForResource(vscode.Uri.parse(parsed.toString()));
+			const suffixSaysTiff = /\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname);
+			if (detected?.hint === 'tiff' || (!detected && suffixSaysTiff)) {
+				const preview = await openPreviewForResource(vscode.Uri.parse(parsed.toString()), detected?.hint || 'tiff');
 				preview?.resetZoom();
-				logCommand('openImageFromUrl', 'success', `${name} streamed from ${parsed.host}`);
+				logCommand('openImageFromUrl', 'success', `${name} streamed from ${parsed.host}`
+					+ (detected ? ` · detected ${detected.label}` : ''));
 				return;
 			}
 			const target = await vscode.window.withProgress({
@@ -1354,6 +1377,10 @@ export function registerImagePreviewCommands(
 				}
 				const bytes = new Uint8Array(await response.arrayBuffer());
 				if (bytes.byteLength === 0) { throw new Error('the file is empty'); }
+				// If Range/CORS/latency made the cheap probe inconclusive, the bytes
+				// are available now anyway. Re-identify before choosing a stored name
+				// and decoder so an extensionless file still opens correctly.
+				detected ||= sniffImageFormat(bytes.subarray(0, IMAGE_HEADER_PROBE_BYTES));
 				progress.report({ message: `${(bytes.byteLength / (1024 * 1024)).toFixed(1)} MB` });
 
 				// Downloads live under the extension's storage, not the user's
@@ -1361,14 +1388,16 @@ export function registerImagePreviewCommands(
 				// is the one place to look when clearing them out.
 				const folder = vscode.Uri.joinPath(context.globalStorageUri, 'downloads');
 				await vscode.workspace.fs.createDirectory(folder);
-				const uri = vscode.Uri.joinPath(folder, name);
+				const storedName = detected ? filenameForDetectedFormat(name, detected) : name;
+				const uri = vscode.Uri.joinPath(folder, storedName);
 				await vscode.workspace.fs.writeFile(uri, bytes);
 				return uri;
 			});
 
-			const preview = await openPreviewForResource(target);
+			const preview = await openPreviewForResource(target, detected?.hint);
 			preview?.resetZoom();
-			logCommand('openImageFromUrl', 'success', `${name} from ${parsed.host}`);
+			logCommand('openImageFromUrl', 'success', `${name} from ${parsed.host}`
+				+ (detected ? ` · detected ${detected.label}` : ''));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			if (/abort/i.test(message)) { logCommand('openImageFromUrl', 'success', 'cancelled'); return; }

@@ -114,8 +114,11 @@ const css = fs.readFileSync('web/website.css', 'utf8');
 const host = fs.readFileSync('web/browser-host.ts', 'utf8');
 const netlify = fs.readFileSync('netlify.toml', 'utf8');
 const imagePreview = fs.readFileSync('media/imagePreview.ts', 'utf8');
+const extensionPreview = fs.readFileSync('src/imagePreview/imagePreview.ts', 'utf8');
 const imagePreviewCss = fs.readFileSync('media/imagePreview.css', 'utf8');
 const commands = fs.readFileSync('src/imagePreview/commands.ts', 'utf8');
+const zoomController = fs.readFileSync('media/modules/zoom-controller.ts', 'utf8');
+const webVendorAssets = fs.readFileSync('web/vendor-assets.js', 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const roiOverlay = fs.readFileSync('media/modules/measure/roi-overlay.ts', 'utf8');
 const measurePanel = fs.readFileSync('media/modules/measure-panel.ts', 'utf8');
@@ -151,6 +154,12 @@ const urlHistoryKeys = packageJson.contributes.keybindings.filter(binding =>
 assert.deepEqual(urlHistoryKeys.map(binding => binding.key), ['up', 'down'],
   'the hidden extension URL history should be traversable with Up and Down');
 assert.match(host, /resourceUri: canonicalUrl/, 'remote TIFFs should retain their HTTP URL for range-backed decoding');
+assert.match(host, /detected\?\.hint === 'tiff'/,
+  'remote TIFF routing should follow its header even when the URL has no TIFF suffix');
+assert.match(host, /formatHint: entry\.formatHint/,
+  'content-derived browser hints must reach the shared decoder router');
+assert.match(commands, /sniffRemoteImageFormat\(parsed\.toString\(\), probeController\.signal\)/,
+  'the extension URL command should identify content before choosing streaming or download');
 assert.match(host, /switchTo\(firstNewIndex, false, true\)/, 'new images should explicitly start fitted to the whole scene');
 assert.match(host, /className = 'web-image-tab-select'/, 'each open image should receive a selectable tab');
 assert.match(host, /closeImageAt\(index, true\)/, 'image tabs should be individually closable');
@@ -164,6 +173,18 @@ assert.match(host, /formatOpenedImageLine\(message\.value\)/, 'the website log s
 assert.match(host, /if \(loadingLogArmed\) appendLoadingLog\(message\.value\)/, 'the welcome-image timing should stay out of the user loading log');
 assert.match(imagePreview, /case 'switchToImage':[\s\S]*?extensionLoadStartTime = Number\(message\.loadStartTime\)/, 'switched images should use their own total-time clock');
 assert.match(imagePreview, /if \(_pendingZoomState\) \{\s*zoomController\.restoreState\(_pendingZoomState\)/, 'an explicit fit state must not fall back to a persisted numeric zoom');
+assert.match(zoomController, /scale: storedState\.scale \?\? 'fit'/,
+  'host state without zoom fields must still fit a tiled scene instead of collapsing it');
+assert.match(imagePreview, /if \(tiffProcessor\.isProgressiveRemoteBase\) \{ return levels; \}/,
+  'a metadata-only single-level remote TIFF must install the visible-tile scene');
+assert.match(imagePreview, /if \(tiffProcessor\._pendingRenderData\) \{ updateTiffPageOverlay\(true\); \}/,
+  'TIFF metadata should expose its loading UI before deferred pixel rendering');
+assert.match(extensionPreview, /workers:\s*\{[\s\S]*?'decodeWorker\.bundle\.js': decodeWorkerUri\.toString\(\)/,
+  'code-split webview modules should receive the canonical worker URL');
+assert.match(extensionPreview, /const nativeFormat = isTiff \? undefined : nativeFormatForPath\(lower\)/,
+  'a TIFF identified behind a JPEG-like URL must not enter native JPEG bootstrap');
+assert.match(webVendorAssets, /workers:\s*\{[\s\S]*?'decodeWorker\.bundle\.js': '\.\/media\/decodeWorker\.bundle\.js'/,
+  'the standalone build should try its canonical worker URL before chunk-relative fallbacks');
 assert.match(imagePreview, /resetVisibleTiming\(\);\s*initialLoadStartTime = performance\.now\(\);/, 'switched images should produce full per-format performance summaries');
 assert.match(host, /type: 'showContextMenu'/, 'the Options status action should open the shared image menu');
 assert.match(host, /getBoundingClientRect\(\)[\s\S]*?type: 'showContextMenu', x: anchor\.left, y: anchor\.top/, 'the shared image menu should originate at the Options button');

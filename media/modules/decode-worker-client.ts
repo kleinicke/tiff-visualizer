@@ -136,17 +136,19 @@ export class DecodeWorkerClient {
 				return;
 			} catch { /* fall through to ordinary startup */ }
 		}
+		const assets = (globalThis as any).__tiffVisualizerVendorAssets;
 		const candidates = [
+			assets?.workers?.[this._workerBundleName],
 			new URL(`./${this._workerBundleName}`, import.meta.url).href,
 			new URL(`../${this._workerBundleName}`, import.meta.url).href,
-		];
+		].filter(Boolean) as string[];
 		const tiffWasmUrls = [
+			assets?.wasm,
 			new URL('./wasm/tiff-wasm.wasm', import.meta.url).href,
 			new URL('../wasm/tiff-wasm.wasm', import.meta.url).href,
-		];
+		].filter(Boolean) as string[];
 		// Recorded but NOT fetched: nothing reads these until a decode asks for
 		// one of the modules in `_ensureExtraModule`.
-		const assets = (globalThis as any).__tiffVisualizerVendorAssets;
 		const wasmCandidates = (configured: string | undefined, name: string) => [
 			configured,
 			new URL(`./wasm/${name}`, import.meta.url).href,

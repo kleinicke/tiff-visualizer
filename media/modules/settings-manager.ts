@@ -39,6 +39,8 @@ export interface ImageSettings {
   src?: string;
 	/** Original HTTP(S) TIFF URL; activates the range-backed byte source. */
 	remoteTiffUrl?: string;
+	/** Content-derived registry hint; overrides a missing or misleading suffix. */
+	formatHint?: string;
   loadStartTime?: number;
   surfaceMode?: 'editor' | 'layers';
   extensionVersion?: string;

@@ -1906,15 +1906,17 @@ export class TiffProcessor {
 		if (this._convertedFloatData) {
 			const pixelIndex = y * naturalWidth + x;
 			const floatValue = this._convertedFloatData.floatData[pixelIndex];
-			return floatValue.toPrecision(6);
+			return floatValue === undefined ? '' : floatValue.toPrecision(6);
 		}
 
-		if (!this.rawTiffData) {
+		if (!this.rawTiffData || !Number.isFinite(x) || !Number.isFinite(y)
+			|| x < 0 || y < 0 || x >= naturalWidth || y >= naturalHeight) {
 			return '';
 		}
 
 		const ifd = this.rawTiffData.ifd;
 		const data = this.rawTiffData.data;
+		if (!ifd || !data?.length) { return ''; }
 		const pixelIndex = y * naturalWidth + x;
 		const format = ifd.t339; // SampleFormat
 		const samples = ifd.t277;
@@ -1933,6 +1935,7 @@ export class TiffProcessor {
 		} else {
 			for (let i = 0; i < samples; i++) { rawSamples.push(data[pixelIndex * samples + i]); }
 		}
+		if (rawSamples.some(value => value === undefined)) { return ''; }
 		const declared = this._formatDeclaredSamples(rawSamples);
 		if (declared !== null) { return declared; }
 

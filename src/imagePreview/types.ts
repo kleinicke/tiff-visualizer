@@ -30,6 +30,8 @@ export interface IImagePreviewManager {
 	setTempBrightness(offset: number): void;
 	setComparisonBase(uri: vscode.Uri | undefined): void;
 	getComparisonBase(): vscode.Uri | undefined;
+	setResourceFormatHint(uri: vscode.Uri, formatHint: string): void;
+	getResourceFormatHint(uri: vscode.Uri): string | undefined;
 	updateAllPreviews(): void;
 	refreshActiveMode(): void;
 }

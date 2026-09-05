@@ -86,6 +86,8 @@ async function main() {
 		assert.strictEqual(processor.isProgressiveRemoteBase, true);
 		assert.strictEqual(processor.rawTiffData.data.length, 0,
 			'progressive bootstrap must not materialize the selected level');
+		assert.strictEqual(processor.getColorAtPixel(0, 0, 512, 512), '',
+			'an unpainted progressive tile must not make cursor inspection throw');
 		assert.deepStrictEqual([progressive.imageData.width, progressive.imageData.height], [1, 1],
 			'progressive bootstrap must not allocate a full-size empty RGBA placeholder');
 		console.log('✅ Oversized remote bootstrap returns metadata without decoding the whole overview');

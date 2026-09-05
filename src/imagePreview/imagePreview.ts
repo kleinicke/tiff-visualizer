@@ -1087,7 +1087,10 @@ export class ImagePreview extends MediaPreview {
 		// Note: We do NOT call setImageFormat() here to avoid premature format switching
 		// The webview will report the actual format via formatInfo message
 		const lower = this.resource.path.toLowerCase();
-		const isTiff = /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
+		const formatHint = this._manager.getResourceFormatHint(this.resource);
+		const isTiff = formatHint
+			? /^(?:tiff|tif|tf2|tf8|btf)$/i.test(formatHint)
+			: /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
 		const remoteTiffUrl = isTiff && /^(?:https?)$/.test(this.resource.scheme)
 			? this.resource.toString()
 			: undefined;
@@ -1103,7 +1106,10 @@ export class ImagePreview extends MediaPreview {
 		const isScientificArray = /\.(?:fits|fit|fts|dcm|dicom|nc|cdf|czi)$/.test(lower);
 		const isLayeredDocument = /\.(?:ora|kra|psd|psb|xcf|afphoto|af)$/.test(lower);
 		this._isTiff = isTiff || isPpm || isPng || isPfm || isNpy || isExr || isHdr || isTga || isWebImage || isJxl || isScientificArray || isLayeredDocument;
-		const nativeFormat = nativeFormatForPath(lower);
+		// A content-identified TIFF whose URL happens to end in .jpg must never
+		// take the browser's native-JPEG bootstrap. The TIFF hint has higher
+		// authority than the path throughout the complete startup pipeline.
+		const nativeFormat = isTiff ? undefined : nativeFormatForPath(lower);
 		const targetImageSettings = nativeFormat
 			? this._manager.appStateManager.getSettingsForFormat(nativeFormat)
 			: this._manager.appStateManager.imageSettings;
@@ -1139,6 +1145,7 @@ export class ImagePreview extends MediaPreview {
 			resourceUri: this.resource.toString(),
 			src: uri.toString(),
 			remoteTiffUrl,
+			formatHint,
 			folder: folderUri.toString(),
 			version: version,
 			surfaceMode: this._surfaceMode, // 'layers' = dedicated Layers window
@@ -1166,6 +1173,11 @@ export class ImagePreview extends MediaPreview {
 		const imagejRoiUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagejRoi.bundle.js'));
 		const vendorAssets = {
 			wasm: wasmUri.toString(),
+			workers: {
+				'decodeWorker.bundle.js': decodeWorkerUri.toString(),
+				'fastRawWorker.bundle.js': fastRawWorkerUri.toString(),
+				'layeredDecodeWorker.bundle.js': layeredDecodeWorkerUri.toString(),
+			},
 			jxlWasm: jxlWasmUri.toString(),
 			codecWasm: codecWasmUri.toString(),
 			geotiff: geotiffUri.toString(),

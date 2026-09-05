@@ -131,7 +131,13 @@ export function extensionOf(path: string): string {
  */
 export function resolveFormat(path: string, formatHint?: string): FormatEntry | null {
 	if (formatHint) {
-		const hinted = FORMATS.find(entry => entry.kind === formatHint);
+		const normalizedHint = formatHint.replace(/^\./, '').toLowerCase();
+		// Header sniffing uses a concrete canonical extension as its hint. That is
+		// important for the layered formats, which share one decoder kind but need
+		// distinct document parsers. Existing dataset messages continue to pass a
+		// kind (`tiff` or `dicom`) and remain valid.
+		const hinted = BY_EXTENSION.get(normalizedHint)
+			|| FORMATS.find(entry => entry.kind === normalizedHint);
 		if (hinted) { return hinted; }
 	}
 	const extension = extensionOf(path);

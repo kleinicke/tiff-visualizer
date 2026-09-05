@@ -52,6 +52,38 @@ test('loads an image through the public browser host', async ({ page }) => {
   // appears when it has something to add — see the pyramid test below.
 });
 
+test('routes a misleading filename from its image header', async ({ page }) => {
+  await page.goto('/');
+  const source = fs.readFileSync(path.resolve('test-samples/house.tif'));
+
+  await page.locator('#web-file-input').setInputFiles({
+    name: 'actually-a-tiff.jpg',
+    mimeType: 'image/jpeg',
+    buffer: source,
+  });
+
+  const decoded = page.locator('body > canvas.scale-to-fit');
+  await expect(decoded).toBeVisible({ timeout: 30_000 });
+  await expect(decoded).toHaveJSProperty('width', 512);
+  await expect(decoded).toHaveJSProperty('height', 512);
+});
+
+test('opens a DICOM image with no filename extension', async ({ page }) => {
+  await page.goto('/');
+  const source = fs.readFileSync(path.resolve('test-samples/scientific/synthetic-ct.dcm'));
+
+  await page.locator('#web-file-input').setInputFiles({
+    name: 'IM00001',
+    mimeType: 'application/octet-stream',
+    buffer: source,
+  });
+
+  const decoded = page.locator('body > canvas.scale-to-fit');
+  await expect(decoded).toBeVisible({ timeout: 30_000 });
+  await expect(decoded).toHaveJSProperty('width', 32);
+  await expect(decoded).toHaveJSProperty('height', 24);
+});
+
 test('keeps separately opened images available as toolbar tabs', async ({ page }) => {
   await page.goto('/');
   const input = page.locator('#web-file-input');

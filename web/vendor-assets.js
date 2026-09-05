@@ -2,6 +2,11 @@
 
 window.__tiffVisualizerVendorAssets = {
 	wasm: './media/wasm/tiff-wasm.wasm',
+	workers: {
+		'decodeWorker.bundle.js': './media/decodeWorker.bundle.js',
+		'fastRawWorker.bundle.js': './media/fastRawWorker.bundle.js',
+		'layeredDecodeWorker.bundle.js': './media/layeredDecodeWorker.bundle.js',
+	},
 	jxlWasm: './media/wasm/jxl-wasm.wasm',
 	codecWasm: './media/wasm/codec-wasm.wasm',
 	geotiff: './media/geotiff.min.js',
