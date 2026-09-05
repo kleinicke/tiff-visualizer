@@ -192,6 +192,10 @@ export class TiffProcessor {
 		return !!this.rawTiffData?.progressiveRemote;
 	}
 
+	get hasGeneratedPreview(): boolean {
+		return this.pageDirectory.some(entry => entry.generated === true);
+	}
+
 	/**
 	 * Number of independently viewable data bands in the current TIFF.
 	 * RGB/RGBA and genuine gray+alpha images are colour layouts, not band
@@ -626,7 +630,7 @@ export class TiffProcessor {
 							this.pageIndex = chosen;
 						}
 					}
-					if (mainWasm && pageIndex === 0) {
+					if (mainWasm && pageIndex === 0 && !(mainWasm.tiff_preview_reduction?.(new Uint8Array(buffer)) > 0)) {
 						const parallelStart = performance.now();
 						const parallel = await tryStripParallelDecode(buffer, mainWasm);
 						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }

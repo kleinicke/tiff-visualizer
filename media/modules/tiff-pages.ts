@@ -19,6 +19,8 @@
 export type TiffPageKind = 'image' | 'overview' | 'mask';
 
 export interface TiffPageEntry {
+	/** In-memory overview; never pass this entry to a TIFF page decoder. */
+	generated?: boolean;
 	/** Index in the IFD chain — what `decode_tiff_page` takes. */
 	index: number;
 	width: number;
@@ -50,6 +52,7 @@ export function parsePageDirectory(json: string | undefined | null): TiffPageEnt
 		.filter((entry): entry is Record<string, any> => !!entry && typeof entry === 'object')
 		.map(entry => ({
 			index: Number(entry.index) || 0,
+			...(entry.generated === true ? { generated: true } : {}),
 			width: Number(entry.width) || 0,
 			height: Number(entry.height) || 0,
 			samplesPerPixel: Number(entry.samplesPerPixel) || 1,

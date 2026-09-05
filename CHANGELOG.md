@@ -6,27 +6,8 @@
 - Add several additional tiff compression standards
 - Read GeoTIFF georeferencing: named GeoKeys and a CRS label in the metadata panel, and map coordinates under the cursor
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
-- Render multi-band GeoTIFFs correctly: a band past the colour samples is treated as alpha only when the file's `ExtraSamples` tag says so, which previously made a 2-band COG almost entirely transparent
-- Treat a pyramidal TIFF's overviews (COG, whole-slide) as resolution levels of one image rather than as extra pages, with a Level selector that names each level
-- Name the sharp patch in the status line and refresh it when the patch lands, so a view showing full-resolution pixels over its middle no longer reads as one stuck at a coarse level
-- Report cursor positions in the image's own pixels whichever pyramid level is loaded, show the `overview` caveat only when an exact read is genuinely impossible, and stop the per-load timing from measuring since the file was opened
-- Keep the sharp patch when zooming back out, so the middle of the view does not lose detail it just had, and settle the pixel readout instead of flickering between the level's average and the stored value while the cursor moves
-- Make the dynamic behaviour of a pyramidal image belong to its **Auto** level setting rather than to an experimental flag: on Auto a COG or whole-slide image patches, bounds its base level and reads exact stored values under the cursor; pinning a level by hand turns all of that off, because a pinned level is a statement about which resolution to look at
-- Prefer the patch over a large whole-level decode when zooming in: with region decoding on, a Sentinel-2 band's zoom settles in 2957 ms rather than 5055 ms and holds 30 megapixels rather than 120, and a 40000x40000 scene holds 25 megapixels rather than 400 — while showing the same stored pixels where you are looking
-- Draw a sharp patch of a finer pyramid level over the visible area, so a 40000x40000 scene shows its stored pixels at high zoom — no canvas can hold that level whole, but the part on screen is a few tiles
-- Fix zooming into a very large pyramid choosing a level the renderer then refused to draw, which left the view transparent after paying for the decode: the size check and the renderer now share one ceiling
-- Fix zooming out on a very large image: the 10% floor made it impossible to see the whole picture, and a pyramid now drops to a coarser level as you zoom out instead of holding the fine one
-- Fix a pyramidal file's Level control turning into a page selector after a fallback decode, and refinement stalling several levels short when the level a zoom asked for was too large to draw
-- Decode a rectangle of a large tiled TIFF instead of the whole page: a 1600x1000 view of a 10980x10980 band reads 4 tiles in 26 ms where the page takes 974 ms, and the cost barely grows with the image
-- Offer **Auto** in the level selector of a pyramidal TIFF, with a status line under it saying which level is loaded, how much of the scene is in view, and how much detail that gives — so the automatic choice is visible, and a manual one can be handed back
-- Choose a pyramidal TIFF's resolution level automatically: a level sized for the window when full resolution would be slow (a 10980x10980 Sentinel-2 band opens in ~200 ms instead of ~4 s) or cannot be drawn at all, refining as you zoom in — and the pixel readout says when values come from an overview rather than from the stored pixels
-- Apply GDAL's per-band scale/offset to the pixel readout, and use band descriptions as channel names
-- Draw `GDAL_NODATA` pixels in the nodata colour and report them as `nodata` instead of as their sentinel value
-- Add **transparent** as a third choice for pixels with no value, alongside black and fuchsia: they become real holes, so a layer underneath shows through and an exported PNG carries a hole rather than a coloured patch (what GDAL and QGIS do with nodata). The command cycles the three.
-- Open an image from an `https://` link — a command in the extension, a link box and `?url=` on the website
-- Log one line per load naming what became visible (size, samples, type, level), but only when it says something the "Opened" line did not — a page or level selection, or a drawn size below the file's own
-- Fix the first render of a JPEG XL, JPEG XR, JPEG 2000, FITS, DICOM, NetCDF, CZI, ND2, LIF or SDT image normalizing against [0, 1] instead of the decoded type range: a 16-bit JPEG XL opened almost entirely white and only corrected itself after a settings change
-- Explain complex-sample TIFFs (SAR single-look-complex) instead of reporting them as a decode failure
+- Load images from url using command
+- Allow loading of massive tiff images
 
 ## 1.10.0 (2026-08-22)
 

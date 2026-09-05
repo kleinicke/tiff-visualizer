@@ -14,7 +14,7 @@ import initTiffWasm, {
 	decode_czi_fast, decode_dicom_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast, decode_fits_fast, decode_netcdf_fast, decode_npy_display_fast,
     decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
     demosaic, extract_exif_tags, tiff_page_count, tiff_page_directory,
-    decode_tiff_region, tiff_region_decode_available,
+    decode_tiff_region, tiff_region_decode_available, decode_tiff_preview, tiff_preview_reduction,
     compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
     build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
     local_threshold_mask_fast, local_auto_threshold_mask_fast, compute_stability_curve_fast,
@@ -73,7 +73,7 @@ async function initWasm(): Promise<any> {
             wasmModule = {
                 decode_tiff, decode_tiff_page, tiff_page_count, tiff_page_directory, extract_exif_tags, demosaic,
                 // Rectangle reads: the cost of a view follows the window, not the file.
-                decode_tiff_region, tiff_region_decode_available,
+                decode_tiff_region, tiff_region_decode_available, decode_tiff_preview, tiff_preview_reduction,
                 decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_display_fast, decode_fits_fast,
 				decode_netcdf_fast, decode_dicom_fast, decode_czi_fast, decode_nd2_fast, decode_lif_fast, decode_sdt_fast,
                 compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
@@ -228,13 +228,15 @@ export class TiffWasmProcessor {
      */
     private _decodeWith(wasm: any, buffer: ArrayBuffer, pageIndex: number): TiffDecodeResult {
         const uint8Array = new Uint8Array(buffer);
-        const pageCount = typeof wasm.tiff_page_count === 'function'
+        const generatedPreview = (pageIndex === 0 || pageIndex === 1) && wasm.tiff_preview_reduction?.(uint8Array) > 0;
+        const pageCount = generatedPreview ? 2 : typeof wasm.tiff_page_count === 'function'
             ? wasm.tiff_page_count(uint8Array)
             : 1;
         if (pageIndex < 0 || pageIndex >= pageCount) {
             throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${pageCount})`);
         }
-        const result = pageIndex > 0 && typeof wasm.decode_tiff_page === 'function'
+        if (generatedPreview) { pageIndex = 1; }
+        const result = generatedPreview ? wasm.decode_tiff_preview(uint8Array) : pageIndex > 0 && typeof wasm.decode_tiff_page === 'function'
             ? wasm.decode_tiff_page(uint8Array, pageIndex)
             : wasm.decode_tiff(uint8Array);
 		const sampleKind = Number(result.sample_kind ?? 0);

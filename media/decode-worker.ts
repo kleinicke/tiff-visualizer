@@ -18,7 +18,7 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
 // The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
 // few KB of bundle; the ~2.2 MB payload is fetched by `initJxlWasm` below only
 // for standalone JXL worker jobs. Embedded JXL takes the main-thread module
@@ -191,11 +191,13 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLeve
 	// A level hint only applies to an unqualified open; an explicit page is a
 	// request for THAT page.
 	if (pageIndex === 0 && levelHint) { pageIndex = chooseLevelForHint(bytes, levelHint); }
-	const pageCount = typeof tiffPageCount === 'function' ? tiffPageCount(bytes) : 1;
+	const generatedPreview = (pageIndex === 0 || pageIndex === 1) && tiff_preview_reduction(bytes) > 0;
+	const pageCount = generatedPreview ? 2 : (typeof tiffPageCount === 'function' ? tiffPageCount(bytes) : 1);
 	if (pageIndex < 0 || pageIndex >= pageCount) {
 		throw new Error(`TIFF page index ${pageIndex} is out of range (page count: ${pageCount})`);
 	}
-	const result = pageIndex > 0 && typeof tiffPageFast === 'function'
+	if (generatedPreview) { pageIndex = 1; }
+	const result = generatedPreview ? decode_tiff_preview(bytes) : pageIndex > 0 && typeof tiffPageFast === 'function'
 		? tiffPageFast(bytes, pageIndex)
 		: pageIndex > 0 && typeof tiffPage === 'function'
 			? tiffPage(bytes, pageIndex)
@@ -289,7 +291,7 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLeve
 		omeXml: result.ome_xml || undefined,
 		geoJson: result.geo_json || undefined,
 		pageDirectoryJson: result.page_directory_json || undefined,
-		decodedWith: 'wasm (worker)',
+		decodedWith: generatedPreview ? 'wasm (bounded preview)' : 'wasm (worker)',
 		decodeTimings: timings,
 	};
 }
@@ -454,7 +456,7 @@ async function decodeTiffSpeculatively(buffer: ArrayBuffer, pageIndex = 0) {
 			const started = performance.now();
 			try {
 				const plan = tiff_float_strip_plan(new Uint8Array(buffer));
-				if (shouldUseParallelTiffPlan(plan)) {
+				if (shouldUseParallelTiffPlan(plan) || tiff_preview_reduction(new Uint8Array(buffer)) > 0) {
 					return {
 						deferToParallelTiff: true,
 						width: Number(plan.width || 0),

@@ -675,6 +675,17 @@ pub fn extract_exif_tags(data: &[u8]) -> String {
 }
 
 #[wasm_bindgen]
+pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
+    core::tiff_preview_reduction(data)
+}
+
+#[wasm_bindgen]
+pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, JsValue> {
+    prepare();
+    core::decode_tiff_preview(data).map(|inner| TiffResult { inner }).map_err(js_error)
+}
+
+#[wasm_bindgen]
 pub fn decode_tiff_fast(data: &[u8]) -> Result<TiffResult, JsValue> {
     prepare();
     core::decode_tiff_fast(data)

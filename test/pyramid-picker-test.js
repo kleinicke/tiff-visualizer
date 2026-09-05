@@ -73,6 +73,24 @@ async function main() {
 	left = -20;
 	handler.refreshAtPointer();
 	assert.strictEqual(messages.length, 0, 'scroll does not resurrect a picker after the pointer left the image');
+	// A generated preview has no stored overview to inspect: upgrade on demand
+	// and retain original full-resolution scene coordinates throughout.
+	left = 0;
+	handler.setStoredValueResolver(async (x, y) => {
+		assert.strictEqual(x, 20000);
+		assert.strictEqual(y, 20000);
+		return '123.5';
+	}, {
+		exactOnly: true,
+		upgradeApproximate: true,
+		immediateResolver: () => ({ value: '120', exact: false, note: '1/8 overview' }),
+	});
+	messages.length = 0;
+	handler._handleMouseMove({ clientX: 50, clientY: 50 });
+	assert.strictEqual(messages[0].value, '20000x20000 120 · 1/8 overview');
+	await new Promise(resolve => setTimeout(resolve, 0));
+	assert.strictEqual(messages[messages.length - 1].value, '20000x20000 123.5');
+	console.log('✅ Generated-preview picker upgrades to the exact original pixel');
 	console.log('✅ Pyramid picker is immediate from resident tiles and hover performs no IO');
 }
 

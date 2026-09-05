@@ -6558,7 +6558,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	function tiffControls(): NavControlSpec[] {
 		const bandControls = tiffBandControls();
-		if (tiffProcessor.pageCount <= 1) { return bandControls; }
+		if (tiffProcessor.pageCount <= 1 || tiffProcessor.hasGeneratedPreview) { return bandControls; }
 		const ome = tiffProcessor.omeMetadata;
 		if (!ome) {
 			const directory = tiffProcessor.pageDirectory;
@@ -7017,7 +7017,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Keep the overview first, followed by only the detail facts needed to
 		// understand what has actually arrived under the viewport.
 		const overviewResolution = current.reduction <= 1 ? 'Full' : `1/${current.reduction}`;
-		const parts = [pyramid
+		const parts = [current.generated ? `Generated preview: ${overviewResolution}` : pyramid
 			? `Scene overview: ${overviewResolution}`
 			: `Resolution: ${overviewResolution}`];
 		if (!_pyramidScene && tiffProcessor.isProgressiveRemoteBase) {
@@ -7130,6 +7130,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// for its blocks—even if the TIFF has no reduced overview IFDs. Without
 		// this path a large, single-level tiled TIFF remains a blank canvas.
 		if (tiffProcessor.isProgressiveRemoteBase) { return levels; }
+		if (tiffProcessor.hasGeneratedPreview) { return levels; }
 		return isPyramidal(directory) && full.width * full.height > LARGE_PYRAMID_SCENE_THRESHOLD
 			? levels
 			: [];
@@ -7156,10 +7157,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				(x: number, y: number) => tiffProcessor.readFullResolutionPixel(x, y),
 				{
 					exactOnly: true,
-					// Cursor motion is inspection, not a tile-loading signal. Report
-					// the finest resident sample immediately; viewport streaming is
-					// solely responsible for bringing finer samples into memory.
-					upgradeApproximate: false,
+					// Stored pyramids report resident samples. Generated previews also
+					// request an original block on hover so decimation never replaces
+					// the exact scalar readout; later positions reuse that block.
+					upgradeApproximate: tiffProcessor.hasGeneratedPreview,
 					immediateResolver: (x: number, y: number) =>
 						tiffProcessor.readCachedScenePixel(x, y),
 				},
@@ -7643,6 +7644,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	async function navigateTiffToPage(target: number, options: { scaleMultiplier?: number } = {}): Promise<void> {
+		if (tiffProcessor.hasGeneratedPreview) { return; }
 		const total = tiffProcessor.pageCount;
 		if (target < 0 || target >= total) { return; }
 		if (target === tiffProcessor.pageIndex) { return; }
