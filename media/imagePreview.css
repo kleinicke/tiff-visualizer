@@ -366,6 +366,29 @@ body img {
 	text-align: center;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	cursor: pointer;
+}
+
+/* A click on the title reduces the floating navigator to unobtrusive chrome.
+   Its position and loading state remain intact, so expanding it is lossless. */
+.dataset-overlay--collapsed {
+	min-width: 0;
+	gap: 0;
+	padding: 5px 12px;
+}
+
+.dataset-overlay--collapsed .dataset-axis-controls,
+.dataset-overlay--collapsed .dataset-note {
+	display: none !important;
+}
+
+.dataset-overlay--dragging .dataset-title { cursor: grabbing; }
+
+.nav-overlay .dataset-title-label::before { content: '▾ '; }
+.nav-overlay.dataset-overlay--collapsed .dataset-title-label::before { content: '▸ '; }
+.nav-overlay .dataset-title:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder, #007fd4);
+	outline-offset: 2px;
 }
 
 .dataset-overlay button {
@@ -538,16 +561,20 @@ body img {
 	cursor: pointer;
 }
 
-.dataset-overlay--loading .dataset-title::before {
+.dataset-title::before {
 	content: '';
 	display: inline-block;
 	width: 6px;
 	height: 6px;
-	/* -12px = -(6px width + 6px gap): zero net advance. */
-	margin-left: -12px;
+	/* Always reserve the dot's slot before the disclosure arrow. */
 	margin-right: 6px;
 	border-radius: 50%;
 	background: var(--vscode-textLink-foreground, #3794ff);
+	visibility: hidden;
+}
+
+.dataset-overlay--loading .dataset-title::before {
+	visibility: visible;
 	animation: raw-badge-pulse 1.2s ease-in-out infinite;
 }
 

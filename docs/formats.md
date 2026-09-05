@@ -75,6 +75,13 @@ report the codec by name rather than failing silently.
 Multi-page files are navigable with `[` and `]`. OME-TIFF adds semantic
 dimensions and multi-file datasets — see [datasets](./datasets.md).
 
+Scientific TIFFs with multiple data bands show a **Band** selector alongside
+the page or resolution controls. GDAL band names appear when available, and
+auto-normalization adjusts to the selected band. RGB and grayscale-with-alpha
+images retain their usual colour display. Click the navigator title to collapse
+it to a compact header; click again to expand. Dragging still moves the panel,
+and the focused title also responds to Enter or Space.
+
 TIFF resolution tags and OME-XML physical pixel sizes are read automatically and
 used to pre-fill the measurement scale, so an ROI area can come out in µm²
 without you typing anything.

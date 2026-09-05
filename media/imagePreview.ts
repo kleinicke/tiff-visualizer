@@ -6154,7 +6154,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * screen when the window shrinks.
 	 */
 	const overlayPositions = new Map<string, { x: number, y: number }>();
-	function makeOverlayDraggable(overlay: HTMLElement, key: string) {
+	function makeOverlayDraggable(overlay: HTMLElement, key: string, onTitleClick?: () => void) {
+		let titleClickTimer: number | null = null;
 		const clamp = (x: number, y: number) => {
 			const rect = overlay.getBoundingClientRect();
 			const maxX = Math.max(0, window.innerWidth - rect.width);
@@ -6200,6 +6201,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// keep their native double-click behaviour and never move the panel.
 			if (target.closest('input, select, button, a, textarea')) { return; }
 			event.preventDefault();
+			if (titleClickTimer !== null) {
+				window.clearTimeout(titleClickTimer);
+				titleClickTimer = null;
+			}
 			restoreDefaultPosition();
 		});
 		overlay.addEventListener('pointerdown', event => {
@@ -6208,21 +6213,42 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// Never hijack a control the user meant to operate.
 			if (target.closest('input, select, button, a, textarea')) { return; }
 			if (event.button !== 0) { return; }
+			const titleClick = !!target.closest('.dataset-title');
 			// Measure BEFORE neutralizing the transform so the grab point is
 			// taken from the box the user actually sees, then re-anchor to that
 			// same box so the first move does not teleport the overlay.
 			const rect = overlay.getBoundingClientRect();
 			const grabX = event.clientX - rect.left;
 			const grabY = event.clientY - rect.top;
-			place(rect.left, rect.top);
+			const startX = event.clientX;
+			const startY = event.clientY;
+			let moved = false;
+			let anchored = false;
 			overlay.setPointerCapture(event.pointerId);
-			overlay.classList.add('dataset-overlay--dragging');
-			const move = (e: PointerEvent) => place(e.clientX - grabX, e.clientY - grabY);
-			const up = () => {
+			const move = (e: PointerEvent) => {
+				if (!moved && Math.hypot(e.clientX - startX, e.clientY - startY) < 4) { return; }
+				moved = true;
+				if (!anchored) {
+					place(rect.left, rect.top);
+					overlay.classList.add('dataset-overlay--dragging');
+					anchored = true;
+				}
+				place(e.clientX - grabX, e.clientY - grabY);
+			};
+			const up = (endEvent: PointerEvent) => {
 				overlay.classList.remove('dataset-overlay--dragging');
 				overlay.removeEventListener('pointermove', move);
 				overlay.removeEventListener('pointerup', up);
 				overlay.removeEventListener('pointercancel', up);
+				if (endEvent.type === 'pointerup' && !moved && titleClick && onTitleClick) {
+					// Wait briefly so a double-click can retain its established meaning:
+					// reset the panel position without also changing its compact state.
+					if (titleClickTimer !== null) { window.clearTimeout(titleClickTimer); }
+					titleClickTimer = window.setTimeout(() => {
+						titleClickTimer = null;
+						onTitleClick();
+					}, 250);
+				}
 			};
 			overlay.addEventListener('pointermove', move);
 			overlay.addEventListener('pointerup', up);
@@ -6502,8 +6528,37 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	/** TIFF: OME C/Z/T, pyramid levels, or the page index for a multi-page file. */
+	function tiffBandControls(): NavControlSpec[] {
+		const count = tiffProcessor.selectableBandCount;
+		if (count < 2) { return []; }
+		const labels = Array.from({ length: count }, (_unused, index) =>
+			bandDescription(tiffProcessor.gdalMetadata, index) || `Band ${index + 1}`);
+		return controlsFromSelectors('tiff', [{
+			name: 'Band',
+			size: count,
+			value: Math.min(count - 1, Math.max(0, tiffProcessor.displayBand)),
+			labels,
+		}], (_selector, index) => { void selectTiffBand(index); });
+	}
+
+	async function selectTiffBand(index: number): Promise<void> {
+		if (!tiffProcessor.setDisplayBand(index)) { return; }
+		invalidatePyramidViewport();
+		_detailPatchGeneration++;
+		removeDetailPatch();
+		// An explicit band choice is a scalar view. If the optional channel
+		// compositor was active, leaving it in charge of the canvas would make the
+		// dropdown appear to do nothing.
+		compositeEnabled = false;
+		channelSolo = null;
+		await updateImageWithNewSettings(null);
+		channelsPanel.render();
+		updateTiffPageOverlay();
+	}
+
 	function tiffControls(): NavControlSpec[] {
-		if (tiffProcessor.pageCount <= 1) { return []; }
+		const bandControls = tiffBandControls();
+		if (tiffProcessor.pageCount <= 1) { return bandControls; }
 		const ome = tiffProcessor.omeMetadata;
 		if (!ome) {
 			const directory = tiffProcessor.pageDirectory;
@@ -6550,13 +6605,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						void navigateTiffToPage(level.index, { scaleMultiplier });
 					}
 				}));
-				return controls;
+				return [...controls, ...bandControls];
 			}
-			return controlsFromSelectors('tiff', [{
+			return [...controlsFromSelectors('tiff', [{
 				name: 'Page',
 				size: tiffProcessor.pageCount,
 				value: tiffProcessor.pageIndex,
-			}], (_selector, index) => { void navigateTiffToPage(index); });
+			}], (_selector, index) => { void navigateTiffToPage(index); }), ...bandControls];
 		}
 		const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
 		const current: Record<OmeAxis, number> = { C: coordinates.c, Z: coordinates.z, T: coordinates.t };
@@ -6569,9 +6624,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			value: current[axis],
 			labels: axis === 'C' && named ? channelNames : undefined,
 		}));
-		return controlsFromSelectors('ome', selectors, (selector, index) => {
+		return [...controlsFromSelectors('ome', selectors, (selector, index) => {
 			void navigateOmeAxis(selector.name as OmeAxis, index);
-		});
+		}), ...bandControls];
 	}
 
 	// ------------------------------------------------------------------
@@ -6602,6 +6657,18 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	let navOverlay: HTMLElement | null = null;
+	let navOverlayCollapsed = false;
+
+	function applyNavOverlayCollapsedState() {
+		if (!navOverlay) { return; }
+		navOverlay.classList.toggle('dataset-overlay--collapsed', navOverlayCollapsed);
+		const title = navOverlay.querySelector('.dataset-title') as HTMLElement | null;
+		if (title) {
+			title.setAttribute('aria-expanded', String(!navOverlayCollapsed));
+			title.title = navOverlayCollapsed ? 'Click to expand' : 'Click to collapse';
+		}
+	}
+
 	/**
 	 * Which format currently owns the shared overlay.
 	 *
@@ -6623,11 +6690,23 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		navOverlay.className = 'dataset-overlay nav-overlay';
 		navOverlay.style.display = 'none';
 		navOverlay.innerHTML = `
-			<div class="dataset-title"></div>
+			<div class="dataset-title" role="button" tabindex="0" aria-expanded="true"><span class="dataset-title-label"></span></div>
 			<div class="dataset-axis-controls"></div>
 			<div class="dataset-note" hidden></div>
 		`;
-		makeOverlayDraggable(navOverlay, 'plane');
+		const toggleCollapsed = () => {
+			navOverlayCollapsed = !navOverlayCollapsed;
+			applyNavOverlayCollapsedState();
+		};
+		makeOverlayDraggable(navOverlay, 'plane', toggleCollapsed);
+		navOverlay.querySelector('.dataset-title')!.addEventListener('keydown', (event: KeyboardEvent) => {
+			if (event.key === 'Enter' || event.key === ' ') {
+				event.preventDefault();
+				event.stopPropagation();
+				toggleCollapsed();
+			}
+		});
+		applyNavOverlayCollapsedState();
 		document.body.appendChild(navOverlay);
 	}
 
@@ -6682,7 +6761,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			go: spec.go,
 		}));
 
-		const titleEl = navOverlay.querySelector('.dataset-title') as HTMLElement;
+		const titleEl = navOverlay.querySelector('.dataset-title-label') as HTMLElement;
 		if (titleEl.textContent !== title) { titleEl.textContent = title; }
 		const rows = navOverlay.querySelector('.dataset-axis-controls') as HTMLElement;
 
@@ -6731,6 +6810,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 		paintNavHints(Array.from(rows.children) as HTMLElement[]);
 		navOverlay.classList.toggle('dataset-overlay--loading', loading);
+		applyNavOverlayCollapsedState();
 		navOverlay.style.display = 'flex';
 	}
 
@@ -7714,6 +7794,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					convertedFloatData: tiffProcessor._convertedFloatData,
 					pageIndex: tiffProcessor.pageIndex,
 					pageCount: tiffProcessor.pageCount,
+					displayBand: tiffProcessor.displayBand,
 					// Carried through the cache so switching back to a
 					// GeoTIFF in a collection keeps its coordinate readout;
 					// the restore path below has no bytes to re-parse.
@@ -7798,6 +7879,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				currentLoadFormat = 'TIFF';
 				currentLoadDecodeInfo = { engine: 'decoded-cache', durationMs: 0 };
 				tiffProcessor.rawTiffData = tiffData;
+				tiffProcessor.displayBand = Math.max(0, Number(raw.displayBand || 0));
 				tiffProcessor._lastStatistics = raw.lastStatistics || null;
 				tiffProcessor._lastStatisticsRgb24Mode = raw.lastStatisticsRgb24Mode === true;
 				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;

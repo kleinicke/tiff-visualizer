@@ -137,6 +137,10 @@ assert.match(html, /data-web-command="tiffVisualizer\.openAsPointCloud"/, 'suppo
 assert.match(html, /<footer[^>]*web-status-bar[\s\S]*?data-status-action="options"[\s\S]*?data-status-action="layers"/, 'Options should be the first website status-bar action');
 assert.match(html, /data-supported-formats/, 'the file-opening surface should expose its supported formats');
 assert.match(html, /data-web-action="loading-log"/, 'the quiet More menu should expose the loading log');
+assert.match(html, /<nav class="web-actions"[^>]*>[\s\S]*data-web-action="open-url"[\s\S]*<\/nav>/,
+	'the URL opener should remain directly visible in the top toolbar');
+assert.doesNotMatch(html, /<div class="web-more-menu"[^>]*>[\s\S]*data-web-action="open-url"[\s\S]*<\/div>/,
+	'the visible URL opener should not be duplicated in More');
 assert.match(html, /id="web-url-dialog-input"[\s\S]*?Use ↑\/↓/, 'URL history should remain available while an image is open');
 assert.doesNotMatch(host, /window\.prompt\('Open an image from a link'/, 'opening another URL should use the history-aware dialog');
 assert.match(html, /id="web-image-tabs-shell"[^>]*hidden/, 'the toolbar should reserve its free space for open image tabs');

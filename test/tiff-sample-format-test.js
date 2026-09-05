@@ -519,6 +519,40 @@ async function main() {
 		console.log('✅ Wide uint32 (WASM path): Float32 data reused as-is, no 16-bit wrap');
 	}
 
+	// Independent scientific bands must render their own pixels and ranges.
+	{
+		const p = makeProcessor(TiffProcessor, autoNormalizeSettings);
+		const rasters = [new Float32Array([0, 10, 20]), new Float32Array([300, 200, 100])];
+		const image = { getWidth: () => 3, getHeight: () => 1,
+			getSampleFormat: () => 2, getBitsPerSample: () => 16 };
+		p.rawTiffData = { ifd: { t277: 2, t262: 1, t258: 16, t339: 2 }, image, rasters };
+		p._extraSamplesAreAlpha = false;
+		assert.strictEqual(p.selectableBandCount, 2);
+		const first = await p.renderTiffWithSettings(image, rasters);
+		assert.strictEqual(first.data[0], 0);
+		assert.strictEqual(first.data[8], 255);
+		assert.ok(p.setDisplayBand(1));
+		const second = await p.renderTiffWithSettings(image, rasters);
+		assert.strictEqual(second.data[0], 255);
+		assert.strictEqual(second.data[8], 0);
+		assert.strictEqual(p._lastStatistics.min, 100);
+		assert.strictEqual(p._lastStatistics.max, 300);
+		assert.strictEqual(p.rawTiffData.rasters, rasters);
+		p._sourceBuffer = new ArrayBuffer(1);
+		p._decodeRegionRaw = async () => ({ width: 3, height: 1, channels: 2,
+			data: new Float32Array([0, 300, 10, 200, 20, 100]) });
+		const region = await p.renderRegion(0, { x: 0, y: 0, width: 3, height: 1 });
+		assert.deepStrictEqual(region.data, second.data, 'detail tiles must match the selected overview band');
+		assert.strictEqual(p.setDisplayBand(NaN), false);
+		p._extraSamplesAreAlpha = true;
+		assert.strictEqual(p.selectableBandCount, 0, 'gray+alpha is not a band stack');
+		p._extraSamplesAreAlpha = false;
+		p.rawTiffData.ifd.t262 = 2;
+		p.rawTiffData.ifd.t277 = 3;
+		assert.strictEqual(p.selectableBandCount, 0, 'RGB keeps its colour view');
+		console.log('✅ Scientific band selection: pixels, per-band ranges, detail tiles, and colour exclusions');
+	}
+
 	console.log('\n🎉 All TIFF sample-format tests passed.\n');
 }
 

@@ -102,6 +102,8 @@ export class TiffProcessor {
 	_lastRenderUsedWebGL: boolean;
 	_gdalNodata: number | undefined;
 	_extraSamplesAreAlpha: boolean | undefined;
+	/** Zero-based data band shown for non-colour, multi-sample TIFFs. */
+	displayBand: number;
 	/**
 	 * Every image in the file, classified. `pageCount` counts IFDs; this says
 	 * which of them are pages and which are pyramid levels of an earlier one.
@@ -158,6 +160,7 @@ export class TiffProcessor {
 		// ExtraSamples (tag 338): whether the samples past the colour samples
 		// are alpha. undefined = the file did not say.
 		this._extraSamplesAreAlpha = undefined;
+		this.displayBand = 0;
 		this.pageDirectory = [];
 		this.gdalMetadata = null;
 		this._convertedFloatData = null; // Cache converted float data for analysis
@@ -187,6 +190,37 @@ export class TiffProcessor {
 	/** The initial remote overview is being filled block-by-block by the view. */
 	get isProgressiveRemoteBase(): boolean {
 		return !!this.rawTiffData?.progressiveRemote;
+	}
+
+	/**
+	 * Number of independently viewable data bands in the current TIFF.
+	 * RGB/RGBA and genuine gray+alpha images are colour layouts, not band
+	 * stacks. TIFF/GDAL writes ExtraSamples=0 for additional data samples;
+	 * named GDAL samples are also strong evidence when that tag is absent.
+	 */
+	get selectableBandCount(): number {
+		const ifd = this.rawTiffData?.ifd;
+		const samples = Math.max(1, Number(ifd?.t277 || 1));
+		if (samples < 2) { return 0; }
+		const photometric = Number(ifd?.t262);
+		const grayscale = photometric === 0 || photometric === 1;
+		const hasNamedExtraBand = !!this.gdalMetadata?.bands.some(band => band.sample > 0);
+		if (!grayscale || this._extraSamplesAreAlpha === true) { return 0; }
+		return this._extraSamplesAreAlpha === false || hasNamedExtraBand ? samples : 0;
+	}
+
+	/** Select a data band without modifying or discarding decoded samples. */
+	setDisplayBand(index: number): boolean {
+		const count = this.selectableBandCount;
+		if (count < 2 || !Number.isFinite(index)) { return false; }
+		const next = Math.min(count - 1, Math.max(0, Math.floor(index)));
+		if (next === this.displayBand) { return false; }
+		this.displayBand = next;
+		// Auto-normalization is per displayed band. Keeping the previous band's
+		// range would make the switch misleading even though the pixels are right.
+		this._lastStatistics = null;
+		this._lastRenderHistogram = null;
+		return true;
 	}
 
 	private _clearRegionSampleCache(): void {
@@ -452,6 +486,7 @@ export class TiffProcessor {
 		let decodeInfo: { engine: string, durationMs: number } | null = null;
 		try {
 			if (this._sourceBufferSrc !== src) {
+				this.displayBand = 0;
 				this._clearRegionSampleCache();
 				this._regionSourceGeneration++;
 				this._regionWorkerPrimed = false;
@@ -832,6 +867,7 @@ export class TiffProcessor {
 							t277: samplesPerPixel,
 							t284: 1, // Planar config (chunky)
 							t258: bitsPerSample,
+							t262: photometricInterpretation,
 							pageIndex: this.pageIndex,
 							pageCount: this.pageCount
 						},
@@ -849,6 +885,7 @@ export class TiffProcessor {
 					this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
 					this.pageDirectory = parsePageDirectory((wasmResult as any).pageDirectoryJson);
 					this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
+					if (this.selectableBandCount > 1) { this._lastStatistics = null; }
 					if (this._gdalNodata !== undefined && this._lastStatistics &&
 						(this._lastStatistics.min === this._gdalNodata || this._lastStatistics.max === this._gdalNodata)) {
 						// WASM's fast min/max scan doesn't know about GDAL_NODATA, so the
@@ -1002,6 +1039,7 @@ export class TiffProcessor {
 					t277: samplesPerPixel, // SamplesPerPixel
 					t284: 1, // PlanarConfiguration (chunky)
 					t258: bitsPerSample, // BitsPerSample
+					t262: photometricInterpretation,
 					pageIndex: this.pageIndex,
 					pageCount: this.pageCount
 				},
@@ -1022,6 +1060,7 @@ export class TiffProcessor {
 			// source check at the top of processTiff clears it when the file
 			// actually changes.
 			this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
+			if (this.selectableBandCount > 1) { this._lastStatistics = null; }
 
 			// Send format information to VS Code BEFORE rendering
 			// This allows the extension to apply format-specific settings first
@@ -1080,6 +1119,7 @@ export class TiffProcessor {
 	): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
 		const GeoTIFF = await loadGeoTiff();
 		if (this._remoteTiffUrl !== url || !this._remoteTiff) {
+			this.displayBand = 0;
 			this._clearRegionSampleCache();
 			this._remoteDecodePool?.destroy?.();
 			this._remoteTiff = await GeoTIFF.fromUrl(url, {
@@ -1161,6 +1201,7 @@ export class TiffProcessor {
 				t277: samplesPerPixel,
 				t284: 1,
 				t258: bitsPerSample,
+				t262: fileDir.PhotometricInterpretation,
 				pageIndex,
 				pageCount: this.pageCount,
 			},
@@ -1173,6 +1214,7 @@ export class TiffProcessor {
 		this._gdalNodata = parseGdalNodata(this._lastAllTags);
 		this._extraSamplesAreAlpha = parseExtraSamplesAreAlpha(this._lastAllTags);
 		this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
+		if (this.selectableBandCount > 1) { this._lastStatistics = null; }
 		// Build the affine from the FULL page. The displayed overview has a
 		// coarser pixel scale, while scene/picker coordinates are full-resolution.
 		try {
@@ -1320,22 +1362,33 @@ export class TiffProcessor {
 		this._lastRenderHistogram = null;
 		this._lastRenderUsedWebGL = false;
 		const settings = this.settingsManager.settings;
-		const rastersCopy = rasters;
-		PerfTrace.mark('raster-copy-skipped');
-
 		const width = image.getWidth();
 		const height = image.getHeight();
 		const sampleFormat = image.getSampleFormat();
 		const bitsPerSample = image.getBitsPerSample();
+		const bandCount = this.selectableBandCount;
+		const selectedBand = bandCount > 1
+			? Math.min(bandCount - 1, Math.max(0, this.displayBand))
+			: 0;
+		// Rasters are already planar. Selecting a scientific band is therefore a
+		// zero-copy view of one decoded plane; the original multi-band buffer stays
+		// intact for the picker, measurement tools, and another band switch.
+		const rastersCopy = bandCount > 1 && rasters?.[selectedBand]
+			? [rasters[selectedBand]]
+			: rasters;
+		const renderSampleFormat = bandCount > 1 && Array.isArray(sampleFormat)
+			? (sampleFormat[selectedBand] ?? sampleFormat[0])
+			: sampleFormat;
+		PerfTrace.mark('raster-copy-skipped');
 		const channels = rastersCopy.length;
 
-		const showNorm = Array.isArray(sampleFormat) ? sampleFormat.includes(3) : sampleFormat === 3;
+		const showNorm = Array.isArray(renderSampleFormat) ? renderSampleFormat.includes(3) : renderSampleFormat === 3;
 		// Signed integer samples and wide (>16-bit) unsigned integer samples are
 		// both carried in a Float32Array (see tiffNeedsFloatCarrier/pickTiffArrayCtor)
 		// — an unsigned Uint16/Uint8 carrier can't represent negative values, and
 		// there's no unsigned carrier wider than Uint16Array in use here — so they
 		// route through the same float rendering path as true IEEE float data.
-		let isFloat = showNorm || tiffNeedsFloatCarrier(sampleFormat, bitsPerSample);
+		let isFloat = showNorm || tiffNeedsFloatCarrier(renderSampleFormat, bitsPerSample);
 
 		// Integer samples can still arrive in a Float32Array carrier — geotiff.js
 		// hands back floats, and signed/wide integers need one (see
@@ -1488,7 +1541,7 @@ export class TiffProcessor {
 
 		let interleavedData: Float32Array | Uint16Array | Uint8Array;
 		const len = width * height;
-		const storedData = this.rawTiffData?.data;
+		const storedData = bandCount > 1 ? rastersCopy[0] : this.rawTiffData?.data;
 		// Unsigned integer carriers use Uint16Array for any bit depth above 8 (not
 		// just exactly 16) so 9-15 bit samples (e.g. 12-bit) don't truncate — see
 		// pickTiffArrayCtor.
@@ -1530,13 +1583,13 @@ export class TiffProcessor {
 		// array alone would make ImageRenderer assume 65535 for any Uint16Array,
 		// but a 12-bit image's full range is 4095 (and signed data rides in a
 		// Float32Array with an integer typeMax).
-		const typeMax = tiffTypeMax(sampleFormat, bitsPerSample);
+		const typeMax = tiffTypeMax(renderSampleFormat, bitsPerSample);
 		const options: RenderOptions = {
 			nanColor: nanColor,
 			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
 			typeMax: typeMax,
 			collectHistogram: renderOptions.collectHistogram === true,
-			extraSamplesAreAlpha: this._extraSamplesAreAlpha,
+			extraSamplesAreAlpha: bandCount > 1 ? false : this._extraSamplesAreAlpha,
 			nodataValue: this._gdalNodata
 		};
 
@@ -1844,16 +1897,32 @@ export class TiffProcessor {
 			const settings = this.settingsManager.settings;
 			const bitsPerSample = this.rawTiffData?.ifd?.t258 ?? region.bitsPerSample;
 			const sampleFormat = this.rawTiffData?.ifd?.t339 ?? region.sampleFormat;
+			const bandCount = this.selectableBandCount;
+			const selectedBand = bandCount > 1
+				? Math.min(channels - 1, Math.max(0, this.displayBand))
+				: 0;
+			let renderChannels = channels;
+			let renderData = data;
+			if (bandCount > 1 && channels > 1) {
+				// Region decoders return an interleaved Float32 carrier. Extract only
+				// the selected plane for display, while the all-band native planes stay
+				// resident in the picker cache above.
+				renderChannels = 1;
+				renderData = new Float32Array(width * height);
+				for (let pixel = 0; pixel < renderData.length; pixel++) {
+					renderData[pixel] = data[pixel * channels + selectedBand];
+				}
+			}
 			if (!this._lastStatistics && NormalizationHelper.needsStats(settings)) {
 				// Freeze a representative viewport block as the provisional range.
 				// All later tiles use it, avoiding seams without a whole-scene stats
 				// pass before the first visible pixels.
-				const scanChannels = channels === 2 ? 1 : Math.min(channels, 3);
+				const scanChannels = renderChannels === 2 ? 1 : Math.min(renderChannels, 3);
 				let min = Infinity;
 				let max = -Infinity;
 				for (let pixel = 0; pixel < width * height; pixel++) {
 					for (let channel = 0; channel < scanChannels; channel++) {
-						const value = data[pixel * channels + channel];
+						const value = renderData[pixel * renderChannels + channel];
 						if (!Number.isFinite(value) || value === this._gdalNodata) { continue; }
 						if (value < min) { min = value; }
 						if (value > max) { max = value; }
@@ -1865,8 +1934,8 @@ export class TiffProcessor {
 				}
 			}
 			return ImageRenderer.render(
-				data, width, height, channels,
-				sampleFormat === 3,
+				renderData, width, height, renderChannels,
+				sampleFormat === 3 || (bandCount > 1 && tiffNeedsFloatCarrier(sampleFormat, bitsPerSample)),
 				// The whole image's statistics, not this rectangle's: auto-
 				// normalizing a patch to its own range would make it disagree
 				// with the image it sits on.
@@ -1875,7 +1944,7 @@ export class TiffProcessor {
 				{
 					nanColor: this._getNanColor(settings),
 					typeMax: tiffTypeMax(sampleFormat, bitsPerSample),
-					extraSamplesAreAlpha: this._extraSamplesAreAlpha,
+					extraSamplesAreAlpha: bandCount > 1 ? false : this._extraSamplesAreAlpha,
 					nodataValue: this._gdalNodata,
 				},
 			);
