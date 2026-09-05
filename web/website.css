@@ -359,6 +359,36 @@ body.web-app {
 .web-log-actions button:hover,
 .web-log-actions button:focus-visible { background: rgba(127, 171, 104, 0.14); }
 
+.web-url-dialog {
+  width: min(620px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 18px;
+  border: 1px solid var(--web-border);
+  border-radius: 12px;
+  background: var(--web-panel);
+  color: var(--vscode-editor-foreground);
+  box-shadow: 0 22px 65px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(20px);
+}
+
+.web-url-dialog::backdrop { background: rgba(0, 0, 0, 0.48); }
+.web-url-dialog form { display: grid; gap: 10px; }
+.web-url-dialog strong { font-size: 15px; }
+.web-url-dialog label { color: var(--web-muted); font-size: 11px; }
+.web-url-dialog input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 7px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font: inherit;
+}
+.web-url-dialog p { margin: 0; color: var(--web-muted); font-size: 11px; }
+.web-url-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.web-url-dialog-actions button { padding: 8px 12px; }
+
 .web-empty-state {
   position: fixed;
   inset: 0;

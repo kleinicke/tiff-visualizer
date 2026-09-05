@@ -5,12 +5,17 @@ import {
   type BrowserDatasetManifest,
 } from './browser-dataset.js';
 import { normalizeRemoteImageUrl } from '../src/util/remoteImageUrl.js';
+import { normalizeUrlHistory, rememberUrl, UrlHistoryCursor } from '../src/util/urlHistory.js';
 
 type ViewerMessage = { type: string; [key: string]: any };
 
 interface BrowserFileEntry {
-  file: File;
+  name: string;
+  size: number | null;
+  file?: File;
   url: string;
+  resourceUri: string;
+  ownsObjectUrl: boolean;
 }
 
 interface ViewerSettings {
@@ -32,6 +37,7 @@ interface ViewerSettings {
 
 const STORAGE_STATE = 'scientific-image-visualizer.webview-state';
 const STORAGE_THEME = 'scientific-image-visualizer.theme';
+const STORAGE_URL_HISTORY = 'scientific-image-visualizer.url-history';
 const POINT_CLOUD_URL = 'https://3d.f-kleinicke.de/';
 const POINT_CLOUD_ORIGIN = new URL(POINT_CLOUD_URL).origin;
 const POINT_CLOUD_FORMATS = new Set([
@@ -41,6 +47,8 @@ const POINT_CLOUD_FORMATS = new Set([
 const SUPPORTED_FORMATS_TOOLTIP = 'TIFF/OME-TIFF, EXR, PFM, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, TGA, BMP, ICO, PPM/PGM/PBM, FITS, DICOM, classic NetCDF, CZI, ND2, LIF, ORA, KRA, PSD/PSB, XCF, and Affinity Photo';
 const formatSettings = new Map<string, ViewerSettings>();
 let files: BrowserFileEntry[] = [];
+let urlHistory = normalizeUrlHistory(readJson(STORAGE_URL_HISTORY));
+const urlHistoryCursor = new UrlHistoryCursor(urlHistory);
 let fileIndex = 0;
 let currentFormat = '';
 let copiedPosition: any = null;
@@ -107,6 +115,27 @@ function readJson(key: string): any {
   }
 }
 
+function saveUrlHistory(url: string): void {
+  urlHistory = rememberUrl(urlHistory, url);
+  urlHistoryCursor.setHistory(urlHistory);
+  try { localStorage.setItem(STORAGE_URL_HISTORY, JSON.stringify(urlHistory)); } catch { /* storage unavailable */ }
+}
+
+function installUrlHistoryNavigation(input: HTMLInputElement): void {
+  input.addEventListener('keydown', event => {
+    const value = event.key === 'ArrowUp'
+      ? urlHistoryCursor.previous(input.value)
+      : event.key === 'ArrowDown'
+        ? urlHistoryCursor.next()
+        : null;
+    if (value === null) { return; }
+    event.preventDefault();
+    input.value = value;
+    input.setSelectionRange(value.length, value.length);
+  });
+  input.addEventListener('input', () => urlHistoryCursor.reset());
+}
+
 function sendToViewer(message: ViewerMessage): void {
   window.postMessage(message, window.location.origin);
 }
@@ -163,7 +192,8 @@ function formatOpenedImageLine(value: any): string | null {
     ? `${channels}x${width}x${height}`
     : `${width}x${height}`;
   const bitDepth = Number.isFinite(bits) ? `${bits}-bit` : 'unknown bit depth';
-  return `📂 Opened 1: ${entry.file.name} (${dimensions}, ${bitDepth}, ${formatLogBytes(entry.file.size)})`;
+  const sourceSize = entry.size === null ? 'remote' : formatLogBytes(entry.size);
+  return `📂 Opened 1: ${entry.name} (${dimensions}, ${bitDepth}, ${sourceSize})`;
 }
 
 function formatNumber(value: number): string {
@@ -208,7 +238,10 @@ function syncStatusBar(): void {
   const layers = document.getElementById('web-status-layers');
   const pointCloud = document.querySelector('[data-web-point-cloud]') as HTMLButtonElement | null;
   if (size) size.textContent = currentPixel || currentSize || '—';
-  if (bytes) bytes.textContent = files[fileIndex] ? formatBytes(files[fileIndex].file.size) : '—';
+  if (bytes) {
+    const entry = files[fileIndex];
+    bytes.textContent = entry ? (entry.size === null ? 'Remote' : formatBytes(entry.size)) : '—';
+  }
   if (zoom) zoom.textContent = currentZoom === 'fit' ? 'Whole Image' : `${Math.round(currentZoom * 100)}%`;
   if (normalization) normalization.textContent = normalizationLabel();
   if (gamma) {
@@ -250,7 +283,12 @@ async function openCurrentAsPointCloud(): Promise<void> {
   const handoffId = typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const dataPromise = entry.file.arrayBuffer();
+  const dataPromise = entry.file
+    ? entry.file.arrayBuffer()
+    : fetch(entry.url, { mode: 'cors', redirect: 'follow' }).then(async response => {
+      if (!response.ok) throw new Error(`the server answered ${response.status} ${response.statusText}`);
+      return response.arrayBuffer();
+    });
   let settled = false;
 
   const finish = () => {
@@ -270,7 +308,7 @@ async function openCurrentAsPointCloud(): Promise<void> {
       target.postMessage({
         type: 'scientific-image-depth',
         id: handoffId,
-        fileName: entry.file.name,
+        fileName: entry.name,
         data,
       }, POINT_CLOUD_ORIGIN, [data]);
     } catch (error) {
@@ -297,7 +335,7 @@ async function openCurrentAsPointCloud(): Promise<void> {
 
 function sendCurrentSettings(reason: string): void {
   if (files[fileIndex]) {
-    currentSettings.resourceUri = files[fileIndex].file.name;
+    currentSettings.resourceUri = files[fileIndex].resourceUri;
     currentSettings.src = files[fileIndex].url;
   }
   formatSettings.set(currentFormat, structuredClone(currentSettings));
@@ -473,8 +511,8 @@ function renderImageTabs(): void {
     select.type = 'button';
     select.className = 'web-image-tab-select';
     select.dataset.imageIndex = String(index);
-    select.textContent = entry.file.name;
-    select.title = `${entry.file.name} · ${formatBytes(entry.file.size)}`;
+    select.textContent = entry.name;
+    select.title = entry.size === null ? `${entry.name} · remote` : `${entry.name} · ${formatBytes(entry.size)}`;
     select.setAttribute('role', 'tab');
     select.setAttribute('aria-selected', String(index === fileIndex));
     select.tabIndex = index === fileIndex ? 0 : -1;
@@ -488,7 +526,7 @@ function renderImageTabs(): void {
     close.className = 'web-image-tab-close';
     close.dataset.closeImageIndex = String(index);
     close.textContent = '×';
-    close.setAttribute('aria-label', `Close ${entry.file.name}`);
+    close.setAttribute('aria-label', `Close ${entry.name}`);
     close.addEventListener('click', () => closeImageAt(index, true));
     wrapper.appendChild(close);
     tabList.appendChild(wrapper);
@@ -501,7 +539,7 @@ function closeImageAt(index: number, restoreFocus = false): void {
   if (index < 0 || index >= files.length) return;
   const closingActiveImage = index === fileIndex;
   const [removed] = files.splice(index, 1);
-  URL.revokeObjectURL(removed.url);
+  if (removed.ownsObjectUrl) { URL.revokeObjectURL(removed.url); }
   if (files.length === 0) {
     fileIndex = 0;
     currentDataset = null;
@@ -530,7 +568,7 @@ function closeImageAt(index: number, restoreFocus = false): void {
   }
 }
 
-function switchTo(index: number, preserveDataset = false): void {
+function switchTo(index: number, preserveDataset = false, resetView = false): void {
   if (files.length === 0) return;
   fileIndex = (index + files.length) % files.length;
   const entry = files[fileIndex];
@@ -544,7 +582,8 @@ function switchTo(index: number, preserveDataset = false): void {
   sendToViewer({
     type: 'switchToImage',
     uri: entry.url,
-    resourceUri: entry.file.name,
+    resourceUri: entry.resourceUri,
+    zoomState: resetView ? { scale: 'fit', x: 0, y: 0 } : undefined,
     loadStartTime: Date.now(),
     collection: collectionState(),
   });
@@ -560,27 +599,30 @@ function openFiles(selected: File[]): void {
   }
   if (currentDataset) sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
   const firstNewIndex = files.length;
-  files.push(...nextFiles.map(file => ({ file, url: URL.createObjectURL(file) })));
+  files.push(...nextFiles.map(file => ({
+    file,
+    name: file.name,
+    size: file.size,
+    url: URL.createObjectURL(file),
+    resourceUri: file.name,
+    ownsObjectUrl: true,
+  })));
   currentDataset = null;
   currentDatasetCoordinates = {};
   currentFormatInfo = null;
   currentStats = null;
   currentSize = '';
   currentPixel = '';
-  switchTo(firstNewIndex);
+  switchTo(firstNewIndex, false, true);
 }
 
 /**
  * Open an image straight from an https:// link.
  *
- * Everything downstream of here is unchanged: the bytes become a File and take
- * the same path a dropped file does, so every format, every decoder and every
- * control behaves identically. What is new is only where the bytes come from.
- *
- * The download is whole-file. A COG's layout would allow reading just its
- * header and the tiles a view needs, which is the point of the format; that is
- * a larger change (a byte-source abstraction under the decoder) and this is
- * the step that makes remote files usable at all.
+ * TIFF stays as a remote URL so the shared range-backed path can read metadata,
+ * an overview, and then only visible detail tiles. Decoders for other formats
+ * still need one contiguous buffer, so those URLs become a File and follow the
+ * same path as a dropped local image.
  *
  * The bytes go from the host to this tab and nowhere else — no server of ours
  * sits in between, which also means a host that refuses cross-origin reads
@@ -607,10 +649,38 @@ async function openUrl(rawUrl: string): Promise<void> {
     return;
   }
 
-  const name = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || 'image');
+  const encodedName = parsed.pathname.split('/').filter(Boolean).pop() || 'image';
+  let name = encodedName;
+  try { name = decodeURIComponent(encodedName); } catch { /* retain the server's spelling */ }
+  const canonicalUrl = parsed.toString();
+  saveUrlHistory(canonicalUrl);
+  const visibleInput = document.getElementById('web-url-input') as HTMLInputElement | null;
+  if (visibleInput) { visibleInput.value = canonicalUrl; }
+
+  if (/\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname)) {
+    if (currentDataset) sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
+    const firstNewIndex = files.length;
+    files.push({
+      name,
+      size: null,
+      url: canonicalUrl,
+      resourceUri: canonicalUrl,
+      ownsObjectUrl: false,
+    });
+    currentDataset = null;
+    currentDatasetCoordinates = {};
+    currentFormatInfo = null;
+    currentStats = null;
+    currentSize = '';
+    currentPixel = '';
+    showToast(`Opening ${name}…`);
+    switchTo(firstNewIndex, false, true);
+    return;
+  }
+
   showToast(`Downloading ${name}…`);
   try {
-    const response = await fetch(parsed.toString(), { mode: 'cors', redirect: 'follow' });
+    const response = await fetch(canonicalUrl, { mode: 'cors', redirect: 'follow' });
     if (!response.ok) {
       showToast(`${name}: the server answered ${response.status} ${response.statusText}.`);
       return;
@@ -649,7 +719,7 @@ function setDataset(manifest: BrowserDatasetManifest, seriesIndex = 0, coordinat
 function registerDicomFrames(frameCountValue: unknown, frameLabelsValue?: unknown): void {
   const entry = files[fileIndex];
   if (!entry) return;
-  const manifest = createDicomFrameDataset({ name: entry.file.name, url: entry.url }, frameCountValue, frameLabelsValue);
+  const manifest = createDicomFrameDataset({ name: entry.name, url: entry.url }, frameCountValue, frameLabelsValue);
   if (manifest) setDataset(manifest, 0, { frame: 0 });
 }
 
@@ -663,8 +733,8 @@ function registerOmeDataset(description: any): void {
   const current = files[fileIndex];
   const result = createOmeDataset(
     description,
-    files.map(entry => ({ name: entry.file.name, url: entry.url })),
-    current ? { name: current.file.name, url: current.url } : undefined,
+    files.map(entry => ({ name: entry.name, url: entry.url })),
+    current ? { name: current.name, url: current.url } : undefined,
   );
   if (!result) {
     showToast('The referenced OME-TIFF files were not selected. Open all members of the fileset together.');
@@ -680,7 +750,7 @@ function navigateDataset(seriesIndexValue: unknown, coordinatesValue: unknown): 
   const { plane, seriesIndex, coordinates } = selected;
   currentDatasetSeries = seriesIndex;
   currentDatasetCoordinates = coordinates;
-  const matchingIndex = files.findIndex(entry => entry.file.name === plane.resourceUri);
+  const matchingIndex = files.findIndex(entry => entry.name === plane.resourceUri);
   if (matchingIndex >= 0) fileIndex = matchingIndex;
   sendToViewer({
     type: 'switchToDatasetPlane',
@@ -712,7 +782,7 @@ function handleFormatInfo(message: ViewerMessage): void {
   }
   currentSettings = structuredClone(formatSettings.get(format) || defaultsForFormat(format));
   if (files[fileIndex]) {
-    currentSettings.resourceUri = files[fileIndex].file.name;
+    currentSettings.resourceUri = files[fileIndex].resourceUri;
     currentSettings.src = files[fileIndex].url;
   }
   if (message.value?.isInitialLoad) {
@@ -862,7 +932,7 @@ function handleViewerMessage(message: ViewerMessage): void {
     case 'resolveLayerUris': {
       const map: Record<string, string> = {};
       for (const resourceUri of Array.isArray(message.resourceUris) ? message.resourceUris : []) {
-        const entry = files.find(candidate => candidate.file.name === resourceUri || resourceUri.endsWith(`/${candidate.file.name}`));
+        const entry = files.find(candidate => candidate.name === resourceUri || resourceUri.endsWith(`/${candidate.name}`));
         if (entry) map[resourceUri] = entry.url;
       }
       sendToViewer({ type: 'layerUrisResolved', map });
@@ -897,7 +967,7 @@ function handleViewerMessage(message: ViewerMessage): void {
       downloadBytes(String(message.fileName || 'export.bin'), Uint8Array.from(message.bytes || []));
       break;
     case 'measureSaveSidecar':
-      downloadBytes(`${files[fileIndex]?.file.name || 'image'}.rois.json`, new TextEncoder().encode(String(message.content || '')), 'application/json');
+      downloadBytes(`${files[fileIndex]?.name || 'image'}.rois.json`, new TextEncoder().encode(String(message.content || '')), 'application/json');
       break;
     case 'measureRequestImport': {
       pendingImportKind = message.kind === 'imagej' ? 'imagej' : 'sidecar';
@@ -963,19 +1033,34 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   const urlForm = document.getElementById('web-url-form') as HTMLFormElement | null;
   const urlInput = document.getElementById('web-url-input') as HTMLInputElement | null;
+  const urlDialog = document.getElementById('web-url-dialog') as HTMLDialogElement | null;
+  const urlDialogForm = document.getElementById('web-url-dialog-form') as HTMLFormElement | null;
+  const urlDialogInput = document.getElementById('web-url-dialog-input') as HTMLInputElement | null;
+  if (urlInput) { installUrlHistoryNavigation(urlInput); }
+  if (urlDialogInput) { installUrlHistoryNavigation(urlDialogInput); }
   urlForm?.addEventListener('submit', event => {
     event.preventDefault();
     void openUrl(urlInput?.value || '');
   });
+  urlDialogForm?.addEventListener('submit', event => {
+    event.preventDefault();
+    const entered = urlDialogInput?.value || '';
+    if (!entered.trim()) { return; }
+    urlDialog?.close();
+    void openUrl(entered);
+  });
+  document.querySelector('[data-web-action="close-url-dialog"]')?.addEventListener('click', () => urlDialog?.close());
   document.querySelectorAll('[data-web-action="open-url"]').forEach(button => {
     button.addEventListener('click', () => {
       // In the More menu, so close it the way the other entries do.
       moreMenu.hidden = true;
       moreButton.setAttribute('aria-expanded', 'false');
-      // With an image already open the start screen (and its input) is hidden,
-      // so ask for the link directly rather than revealing a form behind it.
-      const entered = window.prompt('Open an image from a link', urlInput?.value || 'https://');
-      if (entered) { void openUrl(entered); }
+      if (!urlDialog || !urlDialogInput) { return; }
+      urlHistoryCursor.reset();
+      urlDialogInput.value = urlInput?.value || urlHistory[urlHistory.length - 1] || '';
+      urlDialog.showModal();
+      urlDialogInput.focus();
+      urlDialogInput.setSelectionRange(urlDialogInput.value.length, urlDialogInput.value.length);
     });
   });
 

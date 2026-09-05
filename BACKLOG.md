@@ -2720,6 +2720,33 @@ the file — do not silently route it through anything.
 and the decoder entry points, not the networking. **Phase C is 5** and should
 not be attempted until something actually needs it.
 
+### Post-streaming robustness and UX ideas
+
+These are incremental follow-ups, not blockers for the current COG streaming
+architecture:
+
+- **Recognize extensionless TIFF URLs.** When a URL path does not end in a
+  known TIFF extension, use `Content-Type` plus a small range read of the TIFF /
+  BigTIFF signature before choosing between range-backed streaming and a
+  whole-file download. This matters for signed object-store and API URLs whose
+  path does not expose the filename. **Difficulty: 2.**
+- **URL-history privacy controls.** Add **Clear URL History** and optionally a
+  one-off/private mode that does not retain the submitted URL. Make it clear
+  that exact URLs are stored locally because query strings can contain signed
+  credentials. **Difficulty: 1.**
+- **Adaptive tile budgets.** Tune cache size and request concurrency from
+  available device memory, connection characteristics, decode time, and recent
+  eviction pressure instead of relying only on fixed defaults. Preserve hard
+  upper bounds and prefer visible work on constrained devices. **Difficulty: 3.**
+- **Visible failed-tile recovery.** Retry transient range failures with bounded
+  exponential backoff, retain the best available coarser tile underneath, and
+  expose a subtle retry/error marker rather than leaving an unexplained blank
+  region. Permanent HTTP failures should not loop. **Difficulty: 2.**
+- **Direction-aware edge prefetch.** After every currently visible request has
+  been scheduled, prefetch at most a small one-tile ring in the current pan
+  direction. Prefetch must be lower priority, cancellable immediately, and
+  unable to create a resolution backlog during rapid zooming. **Difficulty: 2.**
+
 ## 15. Complex-sample TIFFs (SAR single-look-complex)
 
 `SampleFormat` 5 (complex integer) and 6 (complex float) store a real and an

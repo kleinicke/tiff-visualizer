@@ -8,8 +8,90 @@ import { getOutputChannel } from '../extension';
 import { scanDicomFolder } from './dicomDataset';
 import type { DatasetManifest } from './datasetTypes';
 import { normalizeRemoteImageUrl } from '../util/remoteImageUrl';
+import { normalizeUrlHistory, rememberUrl, UrlHistoryCursor } from '../util/urlHistory';
 
 const IMAGE_EXTENSIONS = ['tif', 'tiff', 'exr', 'pfm', 'npy', 'npz', 'ppm', 'pgm', 'pbm', 'png', 'jpg', 'jpeg', 'hdr', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl', 'jxr', 'wdp', 'hdp', 'jp2', 'jpf', 'jpx', 'j2k', 'j2c', 'jpc', 'fits', 'fit', 'fts', 'dcm', 'dicom', 'nc', 'cdf', 'czi', 'nd2', 'lif', 'sdt', 'ora', 'kra', 'psd', 'psb', 'xcf', 'afphoto', 'af'];
+const URL_HISTORY_STORAGE_KEY = 'tiffVisualizer.urlHistory';
+const URL_INPUT_CONTEXT = 'tiffVisualizer.urlInputActive';
+const URL_HISTORY_PREVIOUS_COMMAND = 'tiffVisualizer.urlHistoryPrevious';
+const URL_HISTORY_NEXT_COMMAND = 'tiffVisualizer.urlHistoryNext';
+
+interface ActiveUrlHistoryInput {
+	input: vscode.InputBox;
+	cursor: UrlHistoryCursor;
+	applyingHistory: boolean;
+}
+
+let activeUrlHistoryInput: ActiveUrlHistoryInput | null = null;
+
+function moveUrlHistory(direction: 'previous' | 'next'): void {
+	const active = activeUrlHistoryInput;
+	if (!active) { return; }
+	const value = direction === 'previous'
+		? active.cursor.previous(active.input.value)
+		: active.cursor.next();
+	if (value === null) { return; }
+	active.applyingHistory = true;
+	active.input.value = value;
+	active.input.valueSelection = [value.length, value.length];
+	queueMicrotask(() => {
+		if (activeUrlHistoryInput === active) { active.applyingHistory = false; }
+	});
+}
+
+/**
+ * A single URL field with shell-style history. Saved URLs are deliberately not
+ * rendered as choices: Up/Down only replace the field's text, and Enter always
+ * submits that exact visible text.
+ */
+async function showUrlInputWithHistory(context: vscode.ExtensionContext): Promise<string | undefined> {
+	const history = normalizeUrlHistory(context.globalState.get(URL_HISTORY_STORAGE_KEY));
+	activeUrlHistoryInput?.input.hide();
+	const input = vscode.window.createInputBox();
+	input.title = 'Open Image from URL';
+	input.placeholder = 'Type an http:// or https:// image URL · ↑/↓ recalls history';
+	input.ignoreFocusOut = true;
+	const previousButton: vscode.QuickInputButton = {
+		iconPath: new vscode.ThemeIcon('chevron-up'),
+		tooltip: 'Previous URL (↑)',
+	};
+	const nextButton: vscode.QuickInputButton = {
+		iconPath: new vscode.ThemeIcon('chevron-down'),
+		tooltip: 'Next URL (↓)',
+	};
+	input.buttons = [previousButton, nextButton];
+	const active: ActiveUrlHistoryInput = {
+		input,
+		cursor: new UrlHistoryCursor(history),
+		applyingHistory: false,
+	};
+	activeUrlHistoryInput = active;
+	await vscode.commands.executeCommand('setContext', URL_INPUT_CONTEXT, true);
+
+	return new Promise(resolve => {
+		let settled = false;
+		const finish = (value?: string) => {
+			if (settled) { return; }
+			settled = true;
+			if (activeUrlHistoryInput === active) {
+				activeUrlHistoryInput = null;
+				void vscode.commands.executeCommand('setContext', URL_INPUT_CONTEXT, false);
+			}
+			resolve(value);
+			input.hide();
+			input.dispose();
+		};
+		input.onDidChangeValue(() => {
+			if (!active.applyingHistory) { active.cursor.reset(); }
+		});
+		input.onDidTriggerButton(button => {
+			moveUrlHistory(button === previousButton ? 'previous' : 'next');
+		});
+		input.onDidAccept(() => finish(input.value.trim() || undefined));
+		input.onDidHide(() => finish());
+		input.show();
+	});
+}
 
 /**
  * Expand a file path that may contain * and ? wildcards into a list of URIs.
@@ -391,6 +473,10 @@ export function registerImagePreviewCommands(
 	binarySizeStatusBarEntry: BinarySizeStatusBarEntry
 ): vscode.Disposable {
 	const disposables: vscode.Disposable[] = [];
+	disposables.push(
+		vscode.commands.registerCommand(URL_HISTORY_PREVIOUS_COMMAND, () => moveUrlHistory('previous')),
+		vscode.commands.registerCommand(URL_HISTORY_NEXT_COMMAND, () => moveUrlHistory('next')),
+	);
 
 	// Copy image information to clipboard (triggered by keyboard shortcut)
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.copyImageInfo', async () => {
@@ -1223,24 +1309,7 @@ export function registerImagePreviewCommands(
 		logCommand('openImageFromUrl', 'start');
 		const entered = typeof presetUrl === 'string' && presetUrl
 			? presetUrl
-			: await vscode.window.showInputBox({
-				title: 'Open Image from URL',
-				prompt: 'https:// link to an image file',
-				placeHolder: 'https://sentinel-cogs.s3.us-west-2.amazonaws.com/.../B01.tif',
-				ignoreFocusOut: true,
-				validateInput: value => {
-					const trimmed = normalizeRemoteImageUrl(value || '');
-					if (!trimmed) { return null; }
-					try {
-						const protocol = new URL(trimmed).protocol;
-						return protocol === 'http:' || protocol === 'https:'
-							? null
-							: 'Only http:// and https:// links can be opened.';
-					} catch {
-						return 'That does not look like a URL.';
-					}
-				},
-			});
+			: await showUrlInputWithHistory(context);
 		const trimmed = normalizeRemoteImageUrl(entered || '');
 		if (!trimmed) { logCommand('openImageFromUrl', 'success', 'cancelled'); return; }
 
@@ -1250,13 +1319,25 @@ export function registerImagePreviewCommands(
 			logCommand('openImageFromUrl', 'error', 'unparsable url');
 			return;
 		}
+		if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+			vscode.window.showErrorMessage('Only http:// and https:// links can be opened.');
+			logCommand('openImageFromUrl', 'error', `unsupported protocol ${parsed.protocol}`);
+			return;
+		}
+		await context.globalState.update(
+			URL_HISTORY_STORAGE_KEY,
+			rememberUrl(normalizeUrlHistory(context.globalState.get(URL_HISTORY_STORAGE_KEY)), parsed.toString()),
+		);
 
-		const name = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || 'image');
+		const encodedName = parsed.pathname.split('/').filter(Boolean).pop() || 'image';
+		let name = encodedName;
+		try { name = decodeURIComponent(encodedName); } catch { /* retain the server's spelling */ }
 		try {
 			// TIFF has a range-backed viewer path. Open the URL itself so a COG
 			// stays on the server and only its directory/visible tiles travel.
 			if (/\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname)) {
-				await openPreviewForResource(vscode.Uri.parse(parsed.toString()));
+				const preview = await openPreviewForResource(vscode.Uri.parse(parsed.toString()));
+				preview?.resetZoom();
 				logCommand('openImageFromUrl', 'success', `${name} streamed from ${parsed.host}`);
 				return;
 			}
@@ -1285,7 +1366,8 @@ export function registerImagePreviewCommands(
 				return uri;
 			});
 
-			await openPreviewForResource(target);
+			const preview = await openPreviewForResource(target);
+			preview?.resetZoom();
 			logCommand('openImageFromUrl', 'success', `${name} from ${parsed.host}`);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

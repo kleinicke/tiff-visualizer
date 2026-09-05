@@ -2564,7 +2564,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		container.classList.remove('error');
 		container.classList.add('ready');
 
-		// Apply zoom: restore saved state from before the switch, or fit if none
+		// Apply zoom: restore saved state from before the switch, or use the
+		// controller's initial state if this was the first load. An explicit fit
+		// state must go through restoreState(); applyInitialZoom() intentionally
+		// reapplies persisted state and could otherwise resurrect an old numeric
+		// zoom on a newly opened image.
 		if (_pendingLevelScaleMultiplier && _pendingZoomState && typeof _pendingZoomState.scale === 'number') {
 			_pendingZoomState = {
 				..._pendingZoomState,
@@ -2572,7 +2576,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			};
 		}
 		_pendingLevelScaleMultiplier = null;
-		if (_pendingZoomState && _pendingZoomState.scale !== 'fit') {
+		if (_pendingZoomState) {
 			zoomController.restoreState(_pendingZoomState);
 		} else {
 			zoomController.applyInitialZoom();
@@ -4100,7 +4104,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				// Prefer zoom state injected by the extension (set before the webview
 				// reloaded, so it's always accurate). Fall back to live state on the
 				// first switch in a rapid in-session burst.
-				if (_pendingZoomState === null) {
+				if (message.zoomState?.scale === 'fit') {
+					// Opening a newly supplied image is a fresh view. This explicit reset
+					// wins even if another switch had already captured an outgoing zoom.
+					_pendingZoomState = { scale: 'fit', x: 0, y: 0 };
+				} else if (_pendingZoomState === null) {
 					const liveZoom = zoomController.getCurrentState();
 					// After a webview reload the page hasn't scrolled yet so x/y are 0,
 					// but vscode.getState() still holds the offsets saved before unload.
@@ -6906,13 +6914,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (currentLoadFormat === 'TIFF') { updateTiffPageOverlay(); }
 	}
 
-	function displayScaleLabel(scale: number): string {
-		if (!(scale > 0)) { return ''; }
-		const digits = scale >= 10 ? 0 : scale >= 1 ? 1 : 2;
-		return `${scale.toFixed(digits).replace(/\.0$/, '')}× display`;
-	}
-
-	/** Concise whole-scene and visible-detail information for a pyramid. */
+	/** One-line whole-scene and visible-detail information for a pyramid. */
 	function pyramidStatusNote(): string {
 		const directory = tiffProcessor.pageDirectory;
 		if (!isPyramidal(directory)) { return ''; }
@@ -6922,11 +6924,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
 		if (!full || !current) { return ''; }
 
-		// Keep the panel decision-oriented. The old line combined base, scene,
-		// viewport coordinates, coverage percentage and magnification into one
-		// sentence; all the reader normally needs is the complete-image fallback
-		// and the sharper patch currently laid over it.
-		const parts = [`Scene overview: ${levelLabel(current)}`];
+		// Keep the overview first, followed by only the detail facts needed to
+		// understand what has actually arrived under the viewport.
+		const overviewResolution = current.reduction <= 1 ? 'Full' : `1/${current.reduction}`;
+		const parts = [`Scene overview: ${overviewResolution}`];
 
 		if (_pyramidScene) {
 			if (tiffProcessor.isProgressiveRemoteBase) {
@@ -6942,15 +6943,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				? levels.find(level => level.index === patch.level)
 				: undefined;
 			if (patch && patchLevel) {
-				const patchScale = _pyramidScene.sceneScale() * Math.max(1, patchLevel.reduction);
-				const scaleText = displayScaleLabel(patchScale);
 				const loaded = _pyramidScene.loadedSummary(patchLevel, patch.rect);
-				const bounds = loaded.bounds || patch.rect;
-				parts.push(`Visible detail: ${levelLabel(patchLevel)} · ${loaded.blocks} tile${loaded.blocks === 1 ? '' : 's'}`
-					+ ` · ${bounds.width}x${bounds.height} source-pixel coverage`
-					+ (scaleText ? ` · ${scaleText}` : ''));
+				const resolution = patchLevel.reduction <= 1 ? 'Full' : `1/${patchLevel.reduction}`;
+				parts[0] += ` · Resolution: ${resolution}, ${loaded.blocks} tile${loaded.blocks === 1 ? '' : 's'},`
+					+ ` each ${Math.max(1, patchLevel.blockWidth)}x${Math.max(1, patchLevel.blockHeight)}px`;
 			}
-			return parts.join('\n');
+			return parts[0];
 		}
 
 		// A patch is the finest thing on screen, and saying only what the BASE
@@ -6961,14 +6959,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			? directory.find((entry: TiffPageEntry) => entry.index === _detailPatchRegion!.level)
 			: undefined;
 		if (patchLevel && patchLevel.width > current.width) {
-			const element = imageElement as HTMLElement | null;
-			const baseScale = element && current.width ? element.clientWidth / current.width : 0;
-			const patchScale = baseScale / Math.max(1, patchLevel.width / current.width);
-			const scaleText = displayScaleLabel(patchScale);
-			parts.push(`Visible detail: ${levelLabel(patchLevel)} · ${_detailPatchRegion!.rect.width}x${_detailPatchRegion!.rect.height} source pixels`
-				+ (scaleText ? ` · ${scaleText}` : ''));
+			const resolution = patchLevel.reduction <= 1 ? 'Full' : `1/${patchLevel.reduction}`;
+			const rect = _detailPatchRegion!.rect;
+			parts[0] += ` · Resolution: ${resolution}, 1 tile, each ${rect.width}x${rect.height}px`;
 		}
-		return parts.join('\n');
+		return parts[0];
 	}
 	async function navigateTiffPage(delta: number): Promise<void> {
 		const total = tiffProcessor.pageCount;
@@ -7054,7 +7049,15 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			mouseHandler.setCoordinateScale(1);
 			mouseHandler.setStoredValueResolver(
 				(x: number, y: number) => tiffProcessor.readFullResolutionPixel(x, y),
-				{ exactOnly: true },
+				{
+					exactOnly: true,
+					// Cursor motion is inspection, not a tile-loading signal. Report
+					// the finest resident sample immediately; viewport streaming is
+					// solely responsible for bringing finer samples into memory.
+					upgradeApproximate: false,
+					immediateResolver: (x: number, y: number) =>
+						tiffProcessor.readCachedScenePixel(x, y),
+				},
 			);
 			return;
 		}
@@ -7377,6 +7380,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						const loaded = scene.loadedBounds(wanted, visibleInLevel);
 						if (loaded) { _pyramidPatchRegion = { level: wanted.index, rect: loaded }; }
 					}
+					mouseHandler.refreshAtPointer();
 					updateTiffPageOverlay();
 					console.log(`[Tiles] painted ${levelLabel(wanted)} ${rect.width}x${rect.height} at ${rect.x},${rect.y}`);
 				}

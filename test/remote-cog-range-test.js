@@ -60,6 +60,17 @@ async function main() {
 		const expectedRegion = wasm.decode_tiff_region(source, 0, 200, 200, 8, 8);
 		const expected = expectedRegion.take_data_as_f32();
 		assert.deepStrictEqual(Array.from(actual.data), Array.from(expected), 'range and local decoders must return identical samples');
+		processor._cacheRegionSamples(0, 200, 200, actual);
+		const cachedRegion = Array.from(processor._regionSampleCache.values())[0];
+		assert.ok(cachedRegion.planes?.length,
+			'remote samples should remain in their compact native planar arrays');
+		assert.strictEqual(cachedRegion.data, undefined,
+			'the picker cache must not retain the expanded Float32 render carrier too');
+		assert.strictEqual(
+			processor._readCachedPagePixel(0, 200, 200),
+			Array.from(expected.slice(0, actual.channels)).join(' '),
+			'the resident native tile should provide the pixel value synchronously',
+		);
 		assert.ok(rangeRequests > 0, 'the source was requested with HTTP Range');
 		assert.ok(bytesServed < source.length, `region read transferred ${bytesServed}, full file is ${source.length}`);
 		console.log(`✅ Remote region matched local pixels using ${bytesServed} / ${source.length} bytes`);
@@ -78,6 +89,27 @@ async function main() {
 		assert.deepStrictEqual([progressive.imageData.width, progressive.imageData.height], [1, 1],
 			'progressive bootstrap must not allocate a full-size empty RGBA placeholder');
 		console.log('✅ Oversized remote bootstrap returns metadata without decoding the whole overview');
+
+		// A zoom transition may retain old and new detail concurrently, but the
+		// overview remains visible around both. Detail eviction must therefore not
+		// leave those lower-resolution areas without an immediate picker value.
+		processor._clearRegionSampleCache();
+		processor.pageIndex = 5;
+		processor._regionSampleCacheMaxBytes = 16;
+		const samples = values => ({
+			width: 2, height: 1, channels: 1, sampleFormat: 2,
+			data: new Float32Array(values),
+		});
+		processor._cacheRegionSamples(5, 0, 0, samples([31, 32]));
+		processor._cacheRegionSamples(0, 0, 0, samples([1, 2]));
+		processor._cacheRegionSamples(0, 2, 0, samples([3, 4]));
+		assert.strictEqual(processor._readCachedPagePixel(5, 0, 0), '31',
+			'the visible overview value must survive detail-cache pressure');
+		assert.strictEqual(processor._readCachedPagePixel(0, 0, 0), null,
+			'older detail is evicted before the still-visible overview');
+		assert.strictEqual(processor._readCachedPagePixel(0, 2, 0), '3',
+			'the newest detail tile remains immediately pickable');
+		console.log('✅ Picker cache retains the visible overview before stale detail');
 	} finally {
 		await new Promise(resolve => server.close(resolve));
 	}

@@ -24,12 +24,40 @@ const loadedUrl = { exports: {} };
 new Function('module', 'exports', 'require', urlBundle.outputFiles[0].text)(loadedUrl, loadedUrl.exports, require);
 const { normalizeRemoteImageUrl } = loadedUrl.exports;
 
+const historyBundle = buildSync({
+  entryPoints: ['src/util/urlHistory.ts'],
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  write: false,
+});
+const loadedHistory = { exports: {} };
+new Function('module', 'exports', 'require', historyBundle.outputFiles[0].text)(loadedHistory, loadedHistory.exports, require);
+const { normalizeUrlHistory, rememberUrl, UrlHistoryCursor } = loadedHistory.exports;
+
 const encodedImageUrl = 'https%3A%2F%2Fdata.source.coop%2Ftge-labs%2Faef%2Fv1%2Fannual%2F2017%2F10N%2Fx1a7tdgjoh7rfvkxc-0000008192-0000000000.tiff&mode=single&bands=1&zoom=12.09&lat=35.231944&lon=-120.68416';
 assert.equal(
   normalizeRemoteImageUrl(encodedImageUrl),
   'https://data.source.coop/tge-labs/aef/v1/annual/2017/10N/x1a7tdgjoh7rfvkxc-0000008192-0000000000.tiff',
   'encoded image URLs should be decoded without the source viewer state',
 );
+
+assert.deepEqual(
+  normalizeUrlHistory(['https://a.test/one.tif', 12, '', 'https://a.test/two.tif', 'https://a.test/one.tif']),
+  ['https://a.test/two.tif', 'https://a.test/one.tif'],
+  'URL history should discard invalid rows and move duplicates to the newest position',
+);
+assert.deepEqual(
+  rememberUrl(['https://a.test/one.tif', 'https://a.test/two.tif'], 'https://a.test/three.tif', 2),
+  ['https://a.test/two.tif', 'https://a.test/three.tif'],
+  'URL history should retain only its newest configured entries',
+);
+const historyCursor = new UrlHistoryCursor(['one', 'two']);
+assert.equal(historyCursor.previous('unfinished'), 'two');
+assert.equal(historyCursor.previous('ignored while traversing'), 'one');
+assert.equal(historyCursor.next(), 'two');
+assert.equal(historyCursor.next(), 'unfinished', 'Down past the newest URL should restore the original draft');
+assert.equal(historyCursor.next(), null);
 assert.equal(
   normalizeRemoteImageUrl('https://example.com/image.tif?token=abc&part=1'),
   'https://example.com/image.tif?token=abc&part=1',
@@ -87,6 +115,8 @@ const host = fs.readFileSync('web/browser-host.ts', 'utf8');
 const netlify = fs.readFileSync('netlify.toml', 'utf8');
 const imagePreview = fs.readFileSync('media/imagePreview.ts', 'utf8');
 const imagePreviewCss = fs.readFileSync('media/imagePreview.css', 'utf8');
+const commands = fs.readFileSync('src/imagePreview/commands.ts', 'utf8');
+const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const roiOverlay = fs.readFileSync('media/modules/measure/roi-overlay.ts', 'utf8');
 const measurePanel = fs.readFileSync('media/modules/measure-panel.ts', 'utf8');
 assert.match(html, /class="web-drop-zone"/, 'the empty state should be centered on a large drop target');
@@ -104,10 +134,24 @@ assert.match(html, /data-web-command="tiffVisualizer\.openAsPointCloud"/, 'suppo
 assert.match(html, /<footer[^>]*web-status-bar[\s\S]*?data-status-action="options"[\s\S]*?data-status-action="layers"/, 'Options should be the first website status-bar action');
 assert.match(html, /data-supported-formats/, 'the file-opening surface should expose its supported formats');
 assert.match(html, /data-web-action="loading-log"/, 'the quiet More menu should expose the loading log');
+assert.match(html, /id="web-url-dialog-input"[\s\S]*?Use ↑\/↓/, 'URL history should remain available while an image is open');
+assert.doesNotMatch(host, /window\.prompt\('Open an image from a link'/, 'opening another URL should use the history-aware dialog');
 assert.match(html, /id="web-image-tabs-shell"[^>]*hidden/, 'the toolbar should reserve its free space for open image tabs');
 assert.match(html, /id="web-image-tabs-previous"[\s\S]*?id="web-image-tabs"[^>]*role="tablist"[\s\S]*?id="web-image-tabs-next"/, 'overflowing image tabs should have scroll controls on both sides');
 assert.doesNotMatch(html, /id="web-file-summary"/, 'the current filename should not be repeated below the website title');
 assert.match(host, /files\.push\(\.\.\.nextFiles/, 'opening more files should add tabs instead of replacing the current collection');
+assert.match(host, /new UrlHistoryCursor\(urlHistory\)/, 'the website URL field should retain draft-preserving history navigation');
+assert.match(commands, /createInputBox\(\)/, 'the extension URL prompt should be one text field');
+assert.doesNotMatch(commands, /createQuickPick<UrlQuickPickItem>/,
+  'saved extension URLs must not be rendered as a selectable list');
+assert.match(commands, /onDidAccept\(\(\) => finish\(input\.value\.trim\(\)/,
+  'the extension must submit only the URL visibly present in its input field');
+const urlHistoryKeys = packageJson.contributes.keybindings.filter(binding =>
+  binding.command === 'tiffVisualizer.urlHistoryPrevious' || binding.command === 'tiffVisualizer.urlHistoryNext');
+assert.deepEqual(urlHistoryKeys.map(binding => binding.key), ['up', 'down'],
+  'the hidden extension URL history should be traversable with Up and Down');
+assert.match(host, /resourceUri: canonicalUrl/, 'remote TIFFs should retain their HTTP URL for range-backed decoding');
+assert.match(host, /switchTo\(firstNewIndex, false, true\)/, 'new images should explicitly start fitted to the whole scene');
 assert.match(host, /className = 'web-image-tab-select'/, 'each open image should receive a selectable tab');
 assert.match(host, /closeImageAt\(index, true\)/, 'image tabs should be individually closable');
 assert.doesNotMatch(host, /if \(files\.length > 1\) \{[\s\S]*?className = 'web-image-tab-close'/, 'the final image tab should retain its close button');
@@ -119,6 +163,7 @@ assert.match(host, /type: 'switchToImage',[\s\S]*?loadStartTime: Date\.now\(\)/,
 assert.match(host, /formatOpenedImageLine\(message\.value\)/, 'the website log should pair timings with file attributes');
 assert.match(host, /if \(loadingLogArmed\) appendLoadingLog\(message\.value\)/, 'the welcome-image timing should stay out of the user loading log');
 assert.match(imagePreview, /case 'switchToImage':[\s\S]*?extensionLoadStartTime = Number\(message\.loadStartTime\)/, 'switched images should use their own total-time clock');
+assert.match(imagePreview, /if \(_pendingZoomState\) \{\s*zoomController\.restoreState\(_pendingZoomState\)/, 'an explicit fit state must not fall back to a persisted numeric zoom');
 assert.match(imagePreview, /resetVisibleTiming\(\);\s*initialLoadStartTime = performance\.now\(\);/, 'switched images should produce full per-format performance summaries');
 assert.match(host, /type: 'showContextMenu'/, 'the Options status action should open the shared image menu');
 assert.match(host, /getBoundingClientRect\(\)[\s\S]*?type: 'showContextMenu', x: anchor\.left, y: anchor\.top/, 'the shared image menu should originate at the Options button');

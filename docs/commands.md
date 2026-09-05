@@ -107,6 +107,9 @@ they do not shadow your normal editor bindings.
 | `ctrl` + `shift` + `m` / `cmd` + `shift` + `m (macOS)` | Measure |
 | `ctrl` + `shift` + `i` / `cmd` + `shift` + `i (macOS)` | Copy Image Information to Clipboard |
 
+In **Open Image from URL**, `↑` / `↓` recall saved URLs in the input field;
+the saved URLs are not displayed as a separate list.
+
 Inside the image, `←` / `→` step through a dataset, collection or multi-page
 TIFF, and `[` / `]` step through TIFF pages. Inside the measure panel, single
 letters select tools — see [measurement](./measure.md).

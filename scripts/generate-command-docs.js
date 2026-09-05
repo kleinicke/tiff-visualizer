@@ -155,8 +155,14 @@ lines.push('| Keybinding | Command |');
 lines.push('| --- | --- |');
 for (const binding of keybindings) {
 	const cmd = byId.get(binding.command);
-	lines.push(`| ${keysByCommand.get(binding.command)} | ${cmd ? cmd.title : binding.command} |`);
+	// Internal, context-scoped input handlers are implementation details rather
+	// than Command Palette actions; document their behavior below instead of
+	// exposing raw command IDs as if they were public commands.
+	if (cmd) { lines.push(`| ${keysByCommand.get(binding.command)} | ${cmd.title} |`); }
 }
+lines.push('');
+lines.push('In **Open Image from URL**, `↑` / `↓` recall saved URLs in the input field;');
+lines.push('the saved URLs are not displayed as a separate list.');
 lines.push('');
 lines.push('Inside the image, `←` / `→` step through a dataset, collection or multi-page');
 lines.push('TIFF, and `[` / `]` step through TIFF pages. Inside the measure panel, single');

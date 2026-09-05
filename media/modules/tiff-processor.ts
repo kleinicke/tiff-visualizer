@@ -7,7 +7,7 @@ import { tryStripParallelDecode } from './strip-parallel-decode.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
-import { chooseOpenLevel, chooseRemoteOpenLevel, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
+import { chooseOpenLevel, chooseRemoteOpenLevel, levelsForPage, pageOwningIfd, parsePageDirectory, TiffPageEntry } from './tiff-pages.js';
 import type { TiffLevelHint } from './tiff-pages.js';
 import { applyBandScaling, bandDescription, hasBandScaling, parseGdalMetadata, GdalMetadata } from './gdal-metadata.js';
 import { parseGeoReference, type GeoReference } from './geo-reference.js';
@@ -33,6 +33,26 @@ interface TiffLayoutInfo {
 	tileCount?: number;
 	directDecode?: boolean;
 }
+
+interface CachedRegionSamples {
+	pageIndex: number;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	channels: number;
+	sampleFormat: number;
+	/** Interleaved float carrier used by the local WASM decoder. */
+	data?: Float32Array;
+	/** Native planar arrays returned by geotiff.js for remote COG regions. */
+	planes?: ArrayLike<number>[];
+	bytes: number;
+}
+
+// A 50 MP single-band uint16 overview is ~96 MiB. The pyramid scene can retain
+// another 32 MP of visible detail, which is ~61 MiB in the same source format.
+// This fits both while remaining bounded for multi-band or exceptional scenes.
+const REGION_SAMPLE_CACHE_MAX_BYTES = 160 * 1024 * 1024;
 
 /**
  * Typed array used to carry interleaved TIFF pixel data. See
@@ -110,6 +130,10 @@ export class TiffProcessor {
 	_regionSourceGeneration = 0;
 	_regionWorkerPrimed = false;
 	_regionDecodeQueue: Promise<void> = Promise.resolve();
+	/** Raw values for recently rendered regions, used by the exact color picker. */
+	private _regionSampleCache = new Map<string, CachedRegionSamples>();
+	private _regionSampleCacheBytes = 0;
+	private _regionSampleCacheMaxBytes = REGION_SAMPLE_CACHE_MAX_BYTES;
 	/** Why the Rust decoder refused the current file, if it did. */
 	_lastWasmFailure = '';
 	omeMetadata: OmeMetadata | null;
@@ -163,6 +187,132 @@ export class TiffProcessor {
 	/** The initial remote overview is being filled block-by-block by the view. */
 	get isProgressiveRemoteBase(): boolean {
 		return !!this.rawTiffData?.progressiveRemote;
+	}
+
+	private _clearRegionSampleCache(): void {
+		this._regionSampleCache.clear();
+		this._regionSampleCacheBytes = 0;
+	}
+
+	private _cacheRegionSamples(pageIndex: number, x: number, y: number, region: any): void {
+		const data = region?.data;
+		const width = Number(region?.width);
+		const height = Number(region?.height);
+		const channels = Number(region?.channels);
+		if (!(data instanceof Float32Array) || !(width > 0) || !(height > 0) || !(channels > 0)) { return; }
+		const sourceRasters = Array.from(region?.sourceRasters || []) as ArrayLike<number>[];
+		const nativePlanes = sourceRasters.length === channels
+			&& sourceRasters.every(plane => ArrayBuffer.isView(plane));
+		const planes = nativePlanes ? sourceRasters : undefined;
+		const bytes = planes
+			? planes.reduce((total, plane) => total + (plane as ArrayBufferView).byteLength, 0)
+			: data.byteLength;
+		if (!(bytes > 0) || bytes > this._regionSampleCacheMaxBytes) { return; }
+		const key = `${pageIndex}:${x}:${y}:${width}:${height}`;
+		const previous = this._regionSampleCache.get(key);
+		if (previous) { this._regionSampleCacheBytes -= previous.bytes; }
+		this._regionSampleCache.delete(key);
+		this._regionSampleCache.set(key, {
+			pageIndex, x, y, width, height, channels,
+			sampleFormat: Number(region.sampleFormat),
+			data: planes ? undefined : data,
+			planes,
+			bytes,
+		});
+		this._regionSampleCacheBytes += bytes;
+		while (this._regionSampleCacheBytes > this._regionSampleCacheMaxBytes) {
+			// The base canvas remains visible around finer tiles throughout a zoom
+			// transition, so its raw samples must have the same lifetime. Evict old
+			// detail first; only evict base samples if the base itself exceeds the
+			// hard cache budget.
+			const oldest = [...this._regionSampleCache.entries()]
+				.find(([, cached]) => cached.pageIndex !== this.pageIndex)
+				|| this._regionSampleCache.entries().next().value as [string, CachedRegionSamples] | undefined;
+			if (!oldest) { break; }
+			this._regionSampleCache.delete(oldest[0]);
+			this._regionSampleCacheBytes -= oldest[1].bytes;
+		}
+	}
+
+	private _readCachedPagePixel(pageIndex: number, x: number, y: number): string | null {
+		const storedX = Math.floor(x);
+		const storedY = Math.floor(y);
+		let match: { key: string, region: CachedRegionSamples } | null = null;
+		for (const [key, region] of this._regionSampleCache) {
+			if (region.pageIndex !== pageIndex || storedX < region.x || storedY < region.y
+				|| storedX >= region.x + region.width || storedY >= region.y + region.height) { continue; }
+			match = { key, region };
+		}
+		if (!match) { return null; }
+		// Reading is use: keep a tile under the cursor at the MRU end.
+		this._regionSampleCache.delete(match.key);
+		this._regionSampleCache.set(match.key, match.region);
+		const localX = storedX - match.region.x;
+		const localY = storedY - match.region.y;
+		const pixelOffset = localY * match.region.width + localX;
+		const samples: number[] = [];
+		for (let channel = 0; channel < match.region.channels; channel++) {
+			const value = match.region.planes
+				? match.region.planes[channel]?.[pixelOffset]
+				: match.region.data?.[pixelOffset * match.region.channels + channel];
+			samples.push(Number(value));
+		}
+		const declared = this._formatDeclaredSamples(samples);
+		if (declared !== null) { return declared; }
+		return samples
+			.map(value => match!.region.sampleFormat === 3 ? value.toPrecision(4) : String(value))
+			.join(' ');
+	}
+
+	/** Return an exact stored value synchronously when its rendered full tile is resident. */
+	readCachedFullResolutionPixel(x: number, y: number): string | null {
+		const current = this.pageDirectory.find(entry => entry.index === this.pageIndex);
+		const pageIndex = current?.parent ?? this.pageIndex;
+		return this._readCachedPagePixel(pageIndex, x, y);
+	}
+
+	/**
+	 * Best already-rendered value at a full-scene coordinate, finest level first.
+	 * This never performs IO: cursor motion reports the finest source sample that
+	 * viewport streaming has already made resident.
+	 */
+	readCachedScenePixel(x: number, y: number): { value: string, exact: boolean, note?: string } | null {
+		const page = pageOwningIfd(this.pageDirectory, this.pageIndex);
+		const levels = levelsForPage(this.pageDirectory, page);
+		for (const level of levels) {
+			const reduction = Math.max(1, level.reduction);
+			const value = this._readCachedPagePixel(
+				level.index,
+				Math.floor(x / reduction),
+				Math.floor(y / reduction),
+			);
+			if (value === null) { continue; }
+			return {
+				value,
+				exact: reduction === 1,
+				note: reduction > 1 ? `1/${reduction} overview` : '',
+			};
+		}
+		// Whole-decoded local TIFF levels already have their native samples in
+		// rawTiffData. Preserve the old picker's zero-IO path for those images.
+		const current = this.pageDirectory.find(entry => entry.index === this.pageIndex);
+		const raw = this.rawTiffData?.data;
+		if (current && raw?.length) {
+			const reduction = Math.max(1, current.reduction);
+			const levelX = Math.floor(x / reduction);
+			const levelY = Math.floor(y / reduction);
+			if (levelX >= 0 && levelY >= 0 && levelX < current.width && levelY < current.height) {
+				const value = this.getColorAtPixel(levelX, levelY, current.width, current.height);
+				if (value) {
+					return {
+						value,
+						exact: reduction === 1,
+						note: reduction > 1 ? `1/${reduction} overview` : '',
+					};
+				}
+			}
+		}
+		return null;
 	}
 
 	private _ensureLocalWasm(): Promise<boolean> {
@@ -302,6 +452,7 @@ export class TiffProcessor {
 		let decodeInfo: { engine: string, durationMs: number } | null = null;
 		try {
 			if (this._sourceBufferSrc !== src) {
+				this._clearRegionSampleCache();
 				this._regionSourceGeneration++;
 				this._regionWorkerPrimed = false;
 				this.omeMetadata = null;
@@ -929,6 +1080,7 @@ export class TiffProcessor {
 	): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData, tiffData: any, decodeInfo: { engine: string, durationMs: number } }> {
 		const GeoTIFF = await loadGeoTiff();
 		if (this._remoteTiffUrl !== url || !this._remoteTiff) {
+			this._clearRegionSampleCache();
 			this._remoteDecodePool?.destroy?.();
 			this._remoteTiff = await GeoTIFF.fromUrl(url, {
 				blockSize: 64 * 1024,
@@ -1517,11 +1669,30 @@ export class TiffProcessor {
 	async readFullResolutionPixel(x: number, y: number): Promise<string | null> {
 		const current = this.pageDirectory.find(entry => entry.index === this.pageIndex);
 		const page = current?.parent ?? this.pageIndex;
+		const storedX = Math.floor(x);
+		const storedY = Math.floor(y);
+		const cached = this.readCachedFullResolutionPixel(storedX, storedY);
+		if (cached !== null) { return cached; }
 		try {
-			const region = await this._decodeRegionRaw(page, {
-				x: Math.floor(x), y: Math.floor(y), width: 1, height: 1,
-			});
+			// TIFF decoders pay for an entire stored block even when asked for one
+			// pixel. Keep that work: one first read can then serve every following
+			// mouse position in the same tile synchronously. Very wide strips stay
+			// on the 1x1 path so inspection cannot allocate an enormous band.
+			const full = this.pageDirectory.find(entry => entry.index === page);
+			const blockWidth = Math.max(1, Number(full?.blockWidth || 1));
+			const blockHeight = Math.max(1, Number(full?.blockHeight || 1));
+			const cacheWholeBlock = blockWidth * blockHeight * Math.max(1, Number(full?.samplesPerPixel || 1)) <= 2_000_000;
+			const rect = cacheWholeBlock ? {
+				x: Math.floor(storedX / blockWidth) * blockWidth,
+				y: Math.floor(storedY / blockHeight) * blockHeight,
+				width: Math.min(blockWidth, Math.max(1, Number(full?.width || storedX + 1) - Math.floor(storedX / blockWidth) * blockWidth)),
+				height: Math.min(blockHeight, Math.max(1, Number(full?.height || storedY + 1) - Math.floor(storedY / blockHeight) * blockHeight)),
+			} : { x: storedX, y: storedY, width: 1, height: 1 };
+			const region = await this._decodeRegionRaw(page, rect);
 			if (!region?.data?.length) { return null; }
+			this._cacheRegionSamples(page, rect.x, rect.y, region);
+			const retained = this.readCachedFullResolutionPixel(storedX, storedY);
+			if (retained !== null) { return retained; }
 			const samples = Array.from(region.data as Float32Array) as number[];
 			const declared = this._formatDeclaredSamples(samples);
 			if (declared !== null) { return declared; }
@@ -1636,6 +1807,7 @@ export class TiffProcessor {
 			const sampleFormat = image.getSampleFormat();
 			return {
 				width, height, channels, data,
+				sourceRasters: rasters,
 				bitsPerSample: Number(image.getBitsPerSample()),
 				sampleFormat: Number(Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat),
 				blocksDecoded: undefined,
@@ -1667,6 +1839,7 @@ export class TiffProcessor {
 			const channels = Number(region.channels);
 			const data = region.data as Float32Array;
 			if (!data.length) { return null; }
+			this._cacheRegionSamples(pageIndex, Math.floor(rect.x), Math.floor(rect.y), region);
 
 			const settings = this.settingsManager.settings;
 			const bitsPerSample = this.rawTiffData?.ifd?.t258 ?? region.bitsPerSample;

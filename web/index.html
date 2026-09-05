@@ -72,6 +72,20 @@
     </div>
   </aside>
 
+  <dialog class="web-url-dialog" id="web-url-dialog" aria-labelledby="web-url-dialog-title">
+    <form id="web-url-dialog-form">
+      <strong id="web-url-dialog-title">Open image from URL</strong>
+      <label for="web-url-dialog-input">Image URL</label>
+      <input id="web-url-dialog-input" type="text" inputmode="url" spellcheck="false"
+        placeholder="https://example.com/scene.tif" aria-describedby="web-url-dialog-note">
+      <p id="web-url-dialog-note">Use ↑/↓ to recall previously entered URLs.</p>
+      <div class="web-url-dialog-actions">
+        <button type="button" data-web-action="close-url-dialog">Cancel</button>
+        <button type="submit">Open</button>
+      </div>
+    </form>
+  </dialog>
+
   <main class="web-empty-state" id="web-empty-state">
     <button type="button" class="web-drop-zone" data-web-action="open" data-supported-formats>
       <span class="web-drop-symbol" aria-hidden="true">↓</span>
@@ -88,7 +102,7 @@
           placeholder="https://example.com/scene.tif" aria-label="Image URL">
         <button type="submit" class="web-url-submit">Open</button>
       </div>
-      <p class="web-url-note">Read straight from the host into this tab. The bytes are never sent anywhere else, and the host must allow cross-origin reads.</p>
+      <p class="web-url-note">Read straight from the host into this tab. TIFF detail streams as needed. Use ↑/↓ for URL history.</p>
     </form>
     <p class="web-local-note">Files stay on this device · <span class="web-format-hint" data-supported-formats tabindex="0">Supported formats</span></p>
   </main>

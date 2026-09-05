@@ -4,6 +4,7 @@ import type { SettingsManager } from './settings-manager.js';
 import { formatMapPosition, type GeoReference } from './geo-reference.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
+type ImmediateStoredValue = { value: string, exact: boolean, note?: string };
 
 /**
  * Mouse Handler Module
@@ -65,8 +66,12 @@ export class MouseHandler {
 	private _storedValueUnavailable = false;
 	/** See setStoredValueResolver. */
 	storedValueResolver: ((x: number, y: number) => Promise<string | null>) | null = null;
-	/** Large pyramid scenes publish only exact full-resolution values. */
+	/** Best value already resident in a rendered tile, with no async hop. */
+	private _immediateStoredValueResolver: ((x: number, y: number) => ImmediateStoredValue | null) | null = null;
+	/** Large pyramid scenes publish values supplied by resident source tiles. */
 	private _storedValuesOnly = false;
+	/** Whether an approximate resident value should trigger an asynchronous exact read. */
+	private _upgradeApproximateStoredValues = true;
 	/** The pixel the last exact read was started for, to drop stale answers. */
 	private _storedValuePixel: string = '';
 	private _storedValueInFlight = false;
@@ -163,16 +168,23 @@ export class MouseHandler {
 	 * otherwise report an average of several stored pixels.
 	 *
 	 * It is asynchronous — it reads a block out of the file — so the readout is
-	 * posted twice: the approximate value immediately, so the cursor never
-	 * feels laggy, then the exact one when it arrives, if the cursor is still
-	 * on the same pixel. Set to null to go back to reporting what is displayed.
+	 * posted twice by default: the approximate value immediately, so the cursor
+	 * never feels laggy, then the exact one when it arrives, if the cursor is
+	 * still on the same pixel. Streamed scenes can disable that upgrade so mouse
+	 * motion never initiates tile IO. Set to null to report what is displayed.
 	 */
 	setStoredValueResolver(
 		resolver: ((x: number, y: number) => Promise<string | null>) | null,
-		options: { exactOnly?: boolean } = {},
+		options: {
+			exactOnly?: boolean,
+			immediateResolver?: (x: number, y: number) => ImmediateStoredValue | null,
+			upgradeApproximate?: boolean,
+		} = {},
 	): void {
 		this.storedValueResolver = resolver;
+		this._immediateStoredValueResolver = resolver ? options.immediateResolver || null : null;
 		this._storedValuesOnly = !!resolver && options.exactOnly === true;
+		this._upgradeApproximateStoredValues = !resolver || options.upgradeApproximate !== false;
 		// Values belong to the image and the level they were read from.
 		this._storedValueCache.clear();
 		this._storedValueUnavailable = false;
@@ -236,11 +248,35 @@ export class MouseHandler {
 	private _publishAtPointer(e: Pick<MouseEvent, 'clientX' | 'clientY'>): void {
 		if (!this.imageElement) { return; }
 		if (this._storedValuesOnly) {
-			if (!this._pixelPosition(e)) {
+			const position = this._pixelPosition(e);
+			if (!position) {
 				this._storedValuePixel = '';
 				this.vscode.postMessage({ type: 'pixelBlur' });
 				return;
 			}
+			const key = `${position.x},${position.y}`;
+			this._storedValuePixel = key;
+			const immediate = this._immediateStoredValueResolver?.(position.x, position.y);
+			if (immediate) {
+				if (immediate.exact) {
+					if (this._storedValueCache.size > 512) { this._storedValueCache.clear(); }
+					this._storedValueCache.set(key, immediate.value);
+				}
+				this.vscode.postMessage({
+					type: 'pixelFocus',
+					value: this._composeReadout(position.x, position.y, immediate.value, immediate.note || ''),
+				});
+				if (immediate.exact || !this._upgradeApproximateStoredValues) { return; }
+			}
+			if (!this._upgradeApproximateStoredValues) {
+				// Large streamed scenes must never turn mouse movement into hidden
+				// full-resolution IO. A missing value means that the tile underneath
+				// the pointer has not painted yet; clear the old readout until it does.
+				this.vscode.postMessage({ type: 'pixelBlur' });
+				return;
+			}
+			// A visible overview value makes the picker responsive; upgrade it in
+			// place only if the pointer remains on this exact scene pixel.
 			this._upgradeToStoredValue(e);
 			return;
 		}

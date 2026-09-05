@@ -285,6 +285,16 @@
     ],
     "keybindings": [
       {
+        "command": "tiffVisualizer.urlHistoryPrevious",
+        "key": "up",
+        "when": "tiffVisualizer.urlInputActive && inQuickOpen"
+      },
+      {
+        "command": "tiffVisualizer.urlHistoryNext",
+        "key": "down",
+        "when": "tiffVisualizer.urlInputActive && inQuickOpen"
+      },
+      {
         "command": "tiffVisualizer.toggleHistogram",
         "key": "ctrl+h",
         "mac": "cmd+h",

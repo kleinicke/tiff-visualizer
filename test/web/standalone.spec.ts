@@ -379,59 +379,25 @@ test('draws a sharp patch of a finer level over the visible area', async ({ page
   const corpusFile = '/Users/florian/Projects/cursor/test_data/cog/big_40000px_cog.tif';
   test.skip(!fs.existsSync(corpusFile), 'corpus file not present');
 
-  const detail: string[] = [];
-  page.on('console', message => {
-    if (message.text().startsWith('[Detail]')) { detail.push(message.text()); }
-  });
+	await page.goto('/');
+	await page.locator('#web-file-input').setInputFiles(corpusFile);
+	await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 120_000 });
+	await page.waitForTimeout(2500);
 
-  await page.goto('/');
-  await page.locator('#web-file-input').setInputFiles(corpusFile);
-  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 120_000 });
-  await page.waitForTimeout(2500);
+	// Zoom in on Auto. The base settles at the budget; retained FULL-resolution
+	// tiles cover the visible area without allocating a scene-sized canvas.
+	await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 16 }, '*'));
+	const tiles = page.locator('.pyramid-scene > canvas.pyramid-tile');
+	await expect.poll(() => tiles.count(), { timeout: 60_000 }).toBeGreaterThan(0);
 
-  // Zoom in on Auto. The base settles at the budget; the patch covers what is
-  // on screen from the FULL level, which no canvas could hold whole.
-  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 16 }, '*'));
-  const patch = page.locator('canvas.detail-patch');
-  await expect(patch).toHaveCount(1, { timeout: 60_000 });
-  expect(detail.join(' ')).toContain('Full · 40000x40000');
-
-  // The rectangle the log says was decoded, and where the patch was put.
-  const match = /over (\d+)x(\d+) at (\d+),(\d+)/.exec(detail[detail.length - 1] || '');
-  expect(match, `no decoded rectangle in ${JSON.stringify(detail)}`).not.toBeNull();
-  const [, rectWidth, rectHeight, rectX, rectY] = match!.map(Number);
-
-  const placement = await page.evaluate(() => {
-    const base = document.querySelector('body > canvas:not(.measure-overlay):not(.detail-patch)') as HTMLCanvasElement;
-    const patchEl = document.querySelector('canvas.detail-patch') as HTMLCanvasElement;
-    const baseRect = base.getBoundingClientRect();
-    const patchRect = patchEl.getBoundingClientRect();
-    return {
-      baseWidth: base.width,
-      baseCssWidth: baseRect.width,
-      offsetX: patchRect.left - baseRect.left,
-      offsetY: patchRect.top - baseRect.top,
-      cssWidth: patchRect.width,
-      patchPixels: [patchEl.width, patchEl.height],
-    };
-  });
-
-  // The patch holds exactly the pixels that were decoded.
-  expect(placement.patchPixels).toEqual([rectWidth, rectHeight]);
-
-  // And the status line names it. Reporting only the base level reads as
-  // "this is all you are seeing" while full-resolution pixels are on screen.
-  await expect(page.locator('.dataset-note')).toContainText('Visible detail: Full ·');
-  await expect(page.locator('.dataset-note')).toContainText(`${rectWidth}x${rectHeight} px`);
-
-  // And it sits exactly over them: converting its position back into
-  // full-resolution pixels must return the rectangle's own origin. A patch
-  // placed a tile out would show the right pixels in the wrong place, which is
-  // the failure this pins.
-  const fullPerBaseCss = (40000 / placement.baseCssWidth);
-  expect(Math.round(placement.offsetX * fullPerBaseCss)).toBe(rectX);
-  expect(Math.round(placement.offsetY * fullPerBaseCss)).toBe(rectY);
-  expect(Math.round(placement.cssWidth * fullPerBaseCss)).toBe(rectWidth);
+	// And the compact, single-line status names the sharper resolution and its
+	// resident tiles without repeating the full scene dimensions.
+	const note = page.locator('.dataset-note');
+	await expect(note).toContainText('Resolution: Full,');
+	await expect(note).toContainText(/\d+ tiles?, each \d+x\d+px/);
+	const noteText = await note.innerText();
+	expect(noteText).toMatch(/^Scene overview: 1\/\d+ · Resolution:/);
+	expect(noteText).not.toContain('\n');
 });
 
 test('a level chosen by hand turns the patch off', async ({ page }) => {
