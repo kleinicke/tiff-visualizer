@@ -137,13 +137,20 @@ export async function readResponsePrefix(response: Response, limit = IMAGE_HEADE
 	return prefix;
 }
 
+export class ImageHeaderHttpError extends Error {
+	constructor(readonly status: number, readonly statusText: string) {
+		super(`header probe returned ${status} ${statusText}`);
+		this.name = 'ImageHeaderHttpError';
+	}
+}
+
 export async function sniffRemoteImageFormat(url: string, signal?: AbortSignal): Promise<DetectedImageFormat | null> {
 	const response = await fetch(url, {
 		signal,
 		redirect: 'follow',
 		headers: { Range: `bytes=0-${IMAGE_HEADER_PROBE_BYTES - 1}`, Accept: '*/*' },
 	});
-	if (!response.ok) { throw new Error(`header probe returned ${response.status} ${response.statusText}`); }
+	if (!response.ok) { throw new ImageHeaderHttpError(response.status, response.statusText); }
 	return sniffImageFormat(await readResponsePrefix(response));
 }
 

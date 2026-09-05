@@ -8,6 +8,7 @@ import { normalizeRemoteImageUrl } from '../src/util/remoteImageUrl.js';
 import { normalizeUrlHistory, rememberUrl, UrlHistoryCursor } from '../src/util/urlHistory.js';
 import {
   IMAGE_HEADER_PROBE_BYTES,
+  ImageHeaderHttpError,
   sniffImageFormat,
   sniffRemoteImageFormat,
 } from '../src/util/imageFormatSniffer.js';
@@ -678,6 +679,12 @@ async function openUrl(rawUrl: string): Promise<void> {
   try {
     detected = await sniffRemoteImageFormat(canonicalUrl, probeController.signal);
   } catch (error) {
+    // A rejected range can still be readable through the normal loader.
+    // Other HTTP failures must reach the user before TIFF routing loses the status.
+    if (error instanceof ImageHeaderHttpError && error.status !== 416) {
+      showToast(`${name}: the server answered ${error.status} ${error.statusText}.`);
+      return;
+    }
     console.info('[WebHost] Header probe unavailable; using URL suffix', error);
   } finally {
     window.clearTimeout(probeTimeout);

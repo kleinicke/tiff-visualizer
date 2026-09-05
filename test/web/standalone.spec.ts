@@ -296,6 +296,16 @@ test('says plainly when a link cannot be read', async ({ page }) => {
   // A 404 is reported as what it is; a cross-origin refusal reaches script
   // without a reason, so that case gets the generic advice instead.
   await expect(page.locator('.web-toast-region')).toContainText('404');
+  await expect(page.getByRole('tab', { name: 'does-not-exist.tif', exact: true })).toHaveCount(0);
+});
+
+test('reports an HTTP refusal before opening a TIFF tab', async ({ page }) => {
+  await page.route('**/forbidden.tif', route => route.fulfill({ status: 403, body: 'Forbidden' }));
+  await page.goto('/');
+  await page.locator('#web-url-input').fill('/forbidden.tif');
+  await page.locator('.web-url-submit').click();
+  await expect(page.locator('.web-toast-region')).toContainText('403');
+  await expect(page.getByRole('tab', { name: 'forbidden.tif', exact: true })).toHaveCount(0);
 });
 
 test('cycles how pixels with no value are drawn', async ({ page }) => {
