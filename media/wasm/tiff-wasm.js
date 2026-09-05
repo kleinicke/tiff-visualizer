@@ -433,6 +433,35 @@ export function tiff_page_directory(data) {
 }
 
 /**
+ * @param {Uint8Array} header
+ * @param {Uint8Array} data
+ * @param {number} offset
+ * @returns {string}
+ */
+export function remote_tiff_ifd(header, data, offset) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passArray8ToWasm0(header, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.remote_tiff_ifd(ptr0, len0, ptr1, len1, offset);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * @param {Uint8Array} data
  * @returns {DecodedArray}
  */
@@ -462,6 +491,28 @@ export function tiff_strip_metadata(data) {
     return TiffStripMetadataJs.__wrap(ret[0]);
 }
 
+function getArrayF64FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
+}
+/**
+ * @param {Uint8Array} data
+ * @param {number} item_bytes
+ * @param {boolean} little
+ * @returns {Float64Array}
+ */
+export function remote_tiff_index_values(data, item_bytes, little) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.remote_tiff_index_values(ptr0, len0, item_bytes, little);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v2;
+}
+
 /**
  * @param {Uint8Array} data
  * @returns {JpegResult}
@@ -474,6 +525,31 @@ export function decode_jpeg_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return JpegResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} header
+ * @returns {string}
+ */
+export function remote_tiff_header(header) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(header, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.remote_tiff_header(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -804,10 +880,6 @@ export function decode_tiff(data) {
     return TiffResult.__wrap(ret[0]);
 }
 
-function getArrayF64FromWasm0(ptr, len) {
-    ptr = ptr >>> 0;
-    return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
-}
 /**
  * Min/max/mean/std over a uint8 raster, ported from
  * `ImageStatsCalculator.calculateIntegerStats`. `rgb_as_24bit` packs the

@@ -1,3 +1,4 @@
+pub(crate) mod remote;
 mod cmyk;
 mod codecs;
 pub(crate) mod geokeys;

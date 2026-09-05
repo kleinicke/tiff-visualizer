@@ -4,6 +4,7 @@ import { resolveNanColor } from './nan-color.js';
 import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
 import { tryStripParallelDecode, tryParallelTiffDetail } from './strip-parallel-decode.js';
+import { openRemoteTiff } from './remote-tiff-source.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import { parseAllTagsJson, buildTagsFromGeotiffImage, parseGdalNodata, parseExtraSamplesAreAlpha, TagEntry } from './tiff-tag-utils.js';
@@ -119,6 +120,8 @@ export class TiffProcessor {
 	decodeWorker: DecodeWorkerClient | null;
 	_wasmProcessor: TiffWasmProcessor;
 	_webglRenderer: WebGL2FloatRenderer;
+	private _regionWebglRenderer = new WebGL2FloatRenderer();
+	private _regionGpuCanvas: HTMLCanvasElement | null = null;
 	_wasmAvailable: boolean;
 	_wasmInitPromise: Promise<boolean> | null;
 	pageIndex: number;
@@ -418,7 +421,7 @@ export class TiffProcessor {
 		if (source.fileDirectory) {
 			const fd = source.fileDirectory;
 			const byteCounts = (Array.isArray(fd.StripByteCounts) || ArrayBuffer.isView(fd.StripByteCounts)) ? fd.StripByteCounts : [];
-			const tileCounts = (Array.isArray(fd.TileByteCounts) || ArrayBuffer.isView(fd.TileByteCounts)) ? fd.TileByteCounts : [];
+			const tileCounts = fd.TileByteCounts || [];
 			let stripByteCountTotal = 0;
 			let stripByteCountMax = 0;
 			for (const value of byteCounts) {
@@ -428,7 +431,7 @@ export class TiffProcessor {
 			}
 			return {
 				rowsPerStrip: fd.RowsPerStrip,
-				stripCount: byteCounts.length || undefined,
+				stripCount: fd.StripByteCounts?.length || undefined,
 				stripByteCountTotal: byteCounts.length ? stripByteCountTotal : undefined,
 				stripByteCountMax: byteCounts.length ? stripByteCountMax : undefined,
 				tileWidth: fd.TileWidth,
@@ -1126,11 +1129,9 @@ export class TiffProcessor {
 			this.displayBand = 0;
 			this._clearRegionSampleCache();
 			this._remoteDecodePool?.destroy?.();
-			this._remoteTiff = await GeoTIFF.fromUrl(url, {
-				blockSize: 64 * 1024,
-				cacheSize: 256,
-				allowFullFile: false,
-			}, this.loadSignal);
+			await this._remoteTiff?.close?.();
+			this._lastStatistics = null;
+			this._remoteTiff = await openRemoteTiff(url, GeoTIFF, getWasmModuleSync() || await getWasmModule(), this.loadSignal);
 			this._remoteTiffUrl = url;
 			// geotiff.js's browser bundle creates blob-backed decoder workers;
 			// network stays range-backed while decompression stays off the UI.
@@ -1145,6 +1146,7 @@ export class TiffProcessor {
 		}
 
 		const tiff = this._remoteTiff;
+		tiff.setLoadSignal?.(this.loadSignal);
 		this.pageCount = Math.max(1, await tiff.getImageCount());
 		if (levelHint && pageIndex === 0 && this.pageDirectory.length > 1) {
 			const canDisplay = (width: number, height: number) =>
@@ -1772,7 +1774,9 @@ export class TiffProcessor {
 		signal?: AbortSignal,
 	): Promise<any | null> {
 		if (this._remoteTiff && this._remoteTiffUrl) {
-			return this._decodeRemoteRegionRaw(pageIndex, rect, signal);
+			const source = this._remoteTiff;
+			const result = await this._decodeRemoteRegionRaw(pageIndex, rect, signal);
+			return source === this._remoteTiff && !signal?.aborted ? result : null;
 		}
 		const requestedBuffer = this._sourceBuffer;
 		const requestedGeneration = this._regionSourceGeneration;
@@ -1861,7 +1865,9 @@ export class TiffProcessor {
 			const y = Math.max(0, Math.min(Math.floor(rect.y), image.getHeight() - 1));
 			const width = Math.max(1, Math.min(Math.ceil(rect.width), image.getWidth() - x));
 			const height = Math.max(1, Math.min(Math.ceil(rect.height), image.getHeight() - y));
-			const rasters = await this._readRemoteRasters(image, {
+			if (signal?.aborted) { return null; }
+			const retained = this._regionSampleCache.get(`${pageIndex}:${x}:${y}:${width}:${height}`);
+			const rasters = retained?.planes || await this._readRemoteRasters(image, {
 				window: [x, y, x + width, y + height],
 				signal: signal || this.loadSignal,
 			});
@@ -1893,15 +1899,25 @@ export class TiffProcessor {
 	 * that normalized itself would be a different picture of the same data,
 	 * brighter or darker than what surrounds it, which is worse than no patch.
 	 */
-	async renderRegion(
+	async renderRegion(pageIndex: number, rect: { x: number, y: number, width: number, height: number }, signal?: AbortSignal): Promise<ImageData | null> {
+		return this._renderRegion(pageIndex, rect, signal, false) as Promise<ImageData | null>;
+	}
+
+	async renderRegionCanvas(pageIndex: number, rect: { x: number, y: number, width: number, height: number }, signal?: AbortSignal): Promise<ImageData | HTMLCanvasElement | null> {
+		return this._renderRegion(pageIndex, rect, signal, true);
+	}
+
+	private async _renderRegion(
 		pageIndex: number,
 		rect: { x: number, y: number, width: number, height: number },
-		signal?: AbortSignal,
-	): Promise<ImageData | null> {
+		signal: AbortSignal | undefined,
+		preferCanvas: boolean,
+	): Promise<ImageData | HTMLCanvasElement | null> {
 		if (!this._sourceBuffer && !this._remoteTiff) { return null; }
 		try {
+			const generation = this._regionSourceGeneration;
 			const region = await this._decodeRegionRaw(pageIndex, rect, signal);
-			if (!region) { return null; }
+			if (!region || signal?.aborted || generation !== this._regionSourceGeneration) { return null; }
 			const width = Number(region.width);
 			const height = Number(region.height);
 			const channels = Number(region.channels);
@@ -1946,6 +1962,30 @@ export class TiffProcessor {
 				if (Number.isFinite(min) && Number.isFinite(max)) {
 					this._lastStatistics = { min, max };
 					this.vscode?.postMessage?.({ type: 'stats', value: this._lastStatistics });
+				}
+			}
+			if (signal?.aborted) { return null; }
+			// Reuse one GPU context/program, then snapshot into a 2D tile before
+			// the next async job can reuse it. Original picker samples are untouched.
+			const gpuParams = { data: renderData, width, height, channels: renderChannels,
+				isFloat: true, settings, typeMax: tiffTypeMax(sampleFormat, bitsPerSample),
+				min: this._lastStatistics?.min ?? 0, max: this._lastStatistics?.max ?? 1,
+				nanColor: this._getNanColor(settings), nodataValue: this._gdalNodata };
+			// The CPU colormap works on quantized grayscale bytes; preserve that
+			// exact mapping until the shared GPU colormap has the same contract.
+			if (preferCanvas && renderChannels === 1
+				&& (!settings.displayColormap || settings.displayColormap === 'none')
+				&& this._regionWebglRenderer.canRender(gpuParams)) {
+				this._regionGpuCanvas ||= document.createElement('canvas');
+				if (this._regionWebglRenderer.render(this._regionGpuCanvas, gpuParams)) {
+					const tile = document.createElement('canvas');
+					tile.width = width; tile.height = height;
+					const context = tile.getContext('2d');
+					if (context) {
+						context.drawImage(this._regionGpuCanvas, 0, 0);
+						tile.dataset.renderBackend = 'webgl';
+						return tile;
+					}
 				}
 			}
 			return ImageRenderer.render(

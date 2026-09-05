@@ -1,3 +1,4 @@
+import { remoteTileConcurrency } from './modules/remote-tiff-source.js';
 "use strict";
 
 import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions } from './modules/settings-manager.js';
@@ -7444,7 +7445,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			let firstPaintMs = 0;
 			let nextRequest = 0;
 			const paintRect = async (rect: Rect): Promise<void> => {
-				let rendered: ImageData | null;
+				let rendered: ImageData | HTMLCanvasElement | null;
 				if (wanted.sourceIndex !== undefined) {
 					const source = directory.find(level => level.index === wanted.sourceIndex)!;
 					const factor = wanted.reduction;
@@ -7455,7 +7456,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					rendered = original && !requestController.signal.aborted
 						? resizeDetailForDisplay(original, rect.width, rect.height) : null;
 				} else {
-					rendered = await tiffProcessor.renderRegion(wanted.index, rect, requestController.signal);
+					rendered = tiffProcessor.isRemoteSource
+						? await tiffProcessor.renderRegionCanvas(wanted.index, rect, requestController.signal)
+						: await tiffProcessor.renderRegion(wanted.index, rect, requestController.signal);
 				}
 				// A block remains useful after a pan because its scene position is
 				// absolute. A different image, however, must never receive it.
@@ -7487,7 +7490,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			};
 			// Match the remote decoder pool: enough parallel ranges to fill the
 			// connection without waiting for every block before the first paint.
-			const streams = Math.min(requests.length, streamBlocks ? 4 : 1);
+			const streams = Math.min(requests.length, tiffProcessor.isRemoteSource
+				? remoteTileConcurrency(wanted.blockWidth, wanted.blockHeight, wanted.samplesPerPixel)
+				: streamBlocks ? 4 : 1);
 			await Promise.all(Array.from({ length: streams }, () => paintNext()));
 			if (firstPaintMs && !requestController.signal.aborted) {
 				requestAnimationFrame(() => setTimeout(() => {

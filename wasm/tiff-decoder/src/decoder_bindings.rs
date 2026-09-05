@@ -1187,3 +1187,19 @@ pub fn decode_tiff_strip_range_raw(
     core::decode_tiff_strip_range_raw(blob, counts, first_strip, &plan)
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
+
+#[wasm_bindgen]
+pub fn remote_tiff_header(header: &[u8]) -> Result<String, JsValue> {
+    core::remote_tiff_header(header).map_err(js_error)
+}
+#[wasm_bindgen]
+pub fn remote_tiff_ifd(header: &[u8], data: &[u8], offset: f64) -> Result<String, JsValue> {
+    if !offset.is_finite() || offset < 0.0 || offset.fract() != 0.0 || offset > 9007199254740991.0 {
+        return Err(JsValue::from_str("Invalid TIFF directory offset"));
+    }
+    core::remote_tiff_ifd(header, data, offset as u64).map_err(js_error)
+}
+#[wasm_bindgen]
+pub fn remote_tiff_index_values(data: &[u8], item_bytes: usize, little: bool) -> Result<Vec<f64>, JsValue> {
+    core::remote_tiff_index_values(data, item_bytes, little).map_err(js_error)
+}

@@ -49,6 +49,9 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const decode_tiff_page_fast: any;
 	export const tiff_page_count: any;
 	export const tiff_page_directory: any;
+	export const remote_tiff_header: any;
+	export const remote_tiff_ifd: any;
+	export const remote_tiff_index_values: any;
 	export const decode_tiff_region: any;
 	export const decode_tiff_preview: any;
 	export const tiff_preview_reduction: any;
@@ -96,6 +99,9 @@ declare module '*/wasm/codec-wasm.js' {
     export const decode_tiff_page_fast: any;
     export const tiff_page_count: any;
     export const tiff_page_directory: any;
+	export const remote_tiff_header: any;
+	export const remote_tiff_ifd: any;
+	export const remote_tiff_index_values: any;
     export const decode_dicom_fast: any;
     export const decode_jpeg2000_fast: any;
     export const decode_czi_fast: any;

@@ -159,6 +159,10 @@ export function flattenObjectToTags(obj: any, group: string): TagEntry[] {
 			out.push({ tag: null, name: prefix, group, value: stringifyTagValue(value) });
 			return;
 		}
+		if ((value as any)?.lazyTiffIndex) {
+			out.push({ tag: null, name: prefix, group, value: `${(value as any).length} entries (loaded on demand)` });
+			return;
+		}
 		if (typeof value === 'object') {
 			for (const [key, v] of Object.entries(value)) {
 				walk(prefix ? `${prefix}.${key}` : key, v);

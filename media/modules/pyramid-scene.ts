@@ -78,10 +78,11 @@ export class PyramidScene {
 	}
 
 	/** Paint one overview block into its fixed backing canvas as soon as it arrives. */
-	commitBaseRegion(level: TiffPageEntry, rect: Rect, imageData: ImageData): void {
+	commitBaseRegion(level: TiffPageEntry, rect: Rect, imageData: ImageData | HTMLCanvasElement): void {
 		const context = this._baseCanvas.getContext('2d');
 		if (!context) { return; }
-		context.putImageData(imageData, rect.x, rect.y);
+		if ('data' in imageData) { context.putImageData(imageData, rect.x, rect.y); }
+		else { context.drawImage(imageData, rect.x, rect.y); }
 		for (const address of this._addresses(level, rect)) {
 			this._baseBlocks.add(this._baseKey(address.column, address.row));
 		}
@@ -251,7 +252,7 @@ export class PyramidScene {
 	}
 
 	/** Add a decoded region as independently retained block tiles. */
-	commitRegion(level: TiffPageEntry, rect: Rect, imageData: ImageData): void {
+	commitRegion(level: TiffPageEntry, rect: Rect, imageData: ImageData | HTMLCanvasElement): void {
 		const blockWidth = Math.max(1, level.blockWidth);
 		const blockHeight = Math.max(1, level.blockHeight);
 		for (const address of this._addresses(level, rect)) {
@@ -273,7 +274,8 @@ export class PyramidScene {
 			canvas.height = height;
 			const context = canvas.getContext('2d');
 			if (!context) { continue; }
-			context.putImageData(imageData, -sourceX, -sourceY);
+			if ('data' in imageData) { context.putImageData(imageData, -sourceX, -sourceY); }
+			else { context.drawImage(imageData, -sourceX, -sourceY); }
 			const reduction = Math.max(1, level.reduction);
 			canvas.style.left = `${(x * reduction / this.fullWidth) * 100}%`;
 			canvas.style.top = `${(y * reduction / this.fullHeight) * 100}%`;

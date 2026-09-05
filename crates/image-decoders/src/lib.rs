@@ -1549,3 +1549,6 @@ pub fn decode_tiff_strip_range_raw(
     }
     Ok(raster)
 }
+
+#[cfg(feature = "tiff")]
+pub use formats::tiff::remote::{header_json as remote_tiff_header, ifd_json as remote_tiff_ifd, index_values as remote_tiff_index_values};

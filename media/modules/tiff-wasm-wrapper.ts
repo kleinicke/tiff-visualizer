@@ -15,6 +15,7 @@ import initTiffWasm, {
     decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
     demosaic, extract_exif_tags, tiff_page_count, tiff_page_directory,
     decode_tiff_region, tiff_region_decode_available, decode_tiff_preview, tiff_preview_reduction,
+    remote_tiff_header, remote_tiff_ifd, remote_tiff_index_values,
     compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
     build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
     local_threshold_mask_fast, local_auto_threshold_mask_fast, compute_stability_curve_fast,
@@ -74,6 +75,7 @@ async function initWasm(): Promise<any> {
                 decode_tiff, decode_tiff_page, tiff_page_count, tiff_page_directory, extract_exif_tags, demosaic,
                 // Rectangle reads: the cost of a view follows the window, not the file.
                 decode_tiff_region, tiff_region_decode_available, decode_tiff_preview, tiff_preview_reduction,
+    remote_tiff_header, remote_tiff_ifd, remote_tiff_index_values,
                 decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_display_fast, decode_fits_fast,
 				decode_netcdf_fast, decode_dicom_fast, decode_czi_fast, decode_nd2_fast, decode_lif_fast, decode_sdt_fast,
                 compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,

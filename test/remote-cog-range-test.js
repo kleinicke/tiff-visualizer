@@ -61,6 +61,10 @@ async function main() {
 		const expected = expectedRegion.take_data_as_f32();
 		assert.deepStrictEqual(Array.from(actual.data), Array.from(expected), 'range and local decoders must return identical samples');
 		processor._cacheRegionSamples(0, 200, 200, actual);
+		const beforeRepeat = rangeRequests;
+		const repeated = await processor._decodeRemoteRegionRaw(0, { x: 200, y: 200, width: 8, height: 8 });
+		assert.deepStrictEqual(Array.from(repeated.data), Array.from(actual.data));
+		assert.strictEqual(rangeRequests, beforeRepeat, 'retained tiles re-render without a second HTTP fetch');
 		const cachedRegion = Array.from(processor._regionSampleCache.values())[0];
 		assert.ok(cachedRegion.planes?.length,
 			'remote samples should remain in their compact native planar arrays');
