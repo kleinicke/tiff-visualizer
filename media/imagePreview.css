@@ -391,6 +391,37 @@ body img {
 	outline-offset: 2px;
 }
 
+.dataset-resolution:not([hidden]) {
+	display: grid;
+	grid-template-columns: 13ch 12ch;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground, #aaa);
+}
+
+.dataset-resolution b {
+	font-weight: 500;
+	color: var(--vscode-editor-foreground, #ccc);
+}
+
+/* Reserve detail space even before finer pixels arrive; loading never recentres it. */
+.dataset-detail--empty { visibility: hidden; }
+.dataset-axis-controls:empty { display: none; }
+.dataset-overlay--resolution {
+	grid-template-columns: max-content max-content;
+	min-width: 0;
+	align-items: center;
+	column-gap: 12px;
+}
+.dataset-overlay--resolution .dataset-axis-controls,
+.dataset-overlay--resolution .dataset-note { grid-column: 1 / -1; }
+.dataset-overlay--readonly .dataset-title-label::before { content: none; }
+.dataset-overlay--readonly .dataset-title { cursor: grab; }
+
 .dataset-overlay button {
 	width: 22px;
 	height: 22px;

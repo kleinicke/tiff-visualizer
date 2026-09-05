@@ -6568,7 +6568,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isPyramidal(directory)) {
 				const pages = imagePages(directory);
 				const currentPage = pageOwningIfd(directory, tiffProcessor.pageIndex);
-				const levels = levelsForPage(directory, currentPage);
 				const controls: NavControlSpec[] = [];
 				if (pages.length > 1) {
 					controls.push(...controlsFromSelectors('tiff', [{
@@ -6579,32 +6578,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						void navigateTiffToPage(pages[index]?.index ?? 0);
 					}));
 				}
-				// Automatic is the first entry and the default, so choosing a
-				// level by hand is visibly a departure from it — and, more to
-				// the point, there is a way BACK. Before this the only way to
-				// undo a manual choice was to reopen the file.
-				const current = levels.findIndex(level => level.index === tiffProcessor.pageIndex);
-				controls.push(...controlsFromSelectors('tiff', [{
-					name: 'Level',
-					size: levels.length + 1,
-					value: _levelSelectionIsManual ? Math.max(0, current) + 1 : 0,
-					labels: ['Auto', ...levels.map(levelLabel)],
-				}], (_selector, index) => {
-					if (index === 0) {
-						void returnToAutomaticPyramid();
-						return;
-					}
-					const level = levels[index - 1];
-					if (level) {
-						const selectedFromScene = !!_pyramidScene;
-						const currentLevel = levels.find(item => item.index === tiffProcessor.pageIndex);
-						_levelSelectionIsManual = true;
-						const scaleMultiplier = selectedFromScene
-							? levels[0].width / level.width
-							: (currentLevel ? currentLevel.width / level.width : 1);
-						void navigateTiffToPage(level.index, { scaleMultiplier });
-					}
-				}));
 				return [...controls, ...bandControls];
 			}
 			return [...controlsFromSelectors('tiff', [{
@@ -6664,6 +6637,15 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		navOverlay.classList.toggle('dataset-overlay--collapsed', navOverlayCollapsed);
 		const title = navOverlay.querySelector('.dataset-title') as HTMLElement | null;
 		if (title) {
+			const readonly = navOverlay.classList.contains('dataset-overlay--readonly');
+			title.tabIndex = readonly ? -1 : 0;
+			if (readonly) {
+				title.removeAttribute('role');
+				title.removeAttribute('aria-expanded');
+				title.title = 'Drag to move';
+				return;
+			}
+			title.setAttribute('role', 'button');
 			title.setAttribute('aria-expanded', String(!navOverlayCollapsed));
 			title.title = navOverlayCollapsed ? 'Click to expand' : 'Click to collapse';
 		}
@@ -6691,10 +6673,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		navOverlay.style.display = 'none';
 		navOverlay.innerHTML = `
 			<div class="dataset-title" role="button" tabindex="0" aria-expanded="true"><span class="dataset-title-label"></span></div>
+			<div class="dataset-resolution" hidden><span>Preview <b data-resolution="preview"></b></span><span class="dataset-detail">Detail <b data-resolution="detail"></b></span></div>
 			<div class="dataset-axis-controls"></div>
 			<div class="dataset-note" hidden></div>
 		`;
 		const toggleCollapsed = () => {
+			if (navOverlay?.classList.contains('dataset-overlay--readonly')) { return; }
 			navOverlayCollapsed = !navOverlayCollapsed;
 			applyNavOverlayCollapsedState();
 		};
@@ -6733,6 +6717,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		loading?: boolean,
 		/** A line of read-only status under the controls; '' hides it. */
 		note?: string,
+		resolution?: { preview: string, detail: string, description: string },
 	}) {
 		if (!navOverlay) { return; }
 		const { owner, title, loading = false } = options;
@@ -6742,7 +6727,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// arrows or the brackets apply — count only real ones.
 		const controls = options.controls.filter(control => control.size > 1);
 		const note = options.note || '';
-		if (!controls.length && !note) {
+		if (!controls.length && !note && !options.resolution) {
 			// Hide when this format owns the overlay, and also when NOBODY does:
 			// a switch releases ownership without hiding (so the controls stay up
 			// through the decode), and the incoming format is then the one that
@@ -6753,6 +6738,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			return;
 		}
 		navOwner = owner;
+		navOverlay.classList.toggle('dataset-overlay--readonly', controls.length === 0 && !note);
 		navControls = controls.map(spec => ({
 			label: spec.label,
 			size: spec.size,
@@ -6760,6 +6746,17 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			isChoice: !!spec.labels && spec.size > 1,
 			go: spec.go,
 		}));
+
+		const resolution = navOverlay.querySelector('.dataset-resolution') as HTMLElement;
+		resolution.hidden = !options.resolution;
+		navOverlay.classList.toggle('dataset-overlay--resolution', !!options.resolution);
+		if (options.resolution) {
+			resolution.querySelector('[data-resolution="preview"]')!.textContent = options.resolution.preview;
+			resolution.querySelector('[data-resolution="detail"]')!.textContent = options.resolution.detail || '—';
+			resolution.querySelector('.dataset-detail')!.classList.toggle('dataset-detail--empty', !options.resolution.detail);
+			resolution.title = options.resolution.description;
+			resolution.setAttribute('aria-label', `Automatic resolution. Preview ${options.resolution.preview}. ${options.resolution.detail ? `Loaded detail ${options.resolution.detail}.` : ''} ${options.resolution.description}`);
+		}
 
 		const titleEl = navOverlay.querySelector('.dataset-title-label') as HTMLElement;
 		if (titleEl.textContent !== title) { titleEl.textContent = title; }
@@ -6811,7 +6808,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		paintNavHints(Array.from(rows.children) as HTMLElement[]);
 		navOverlay.classList.toggle('dataset-overlay--loading', loading);
 		applyNavOverlayCollapsedState();
-		navOverlay.style.display = 'flex';
+		navOverlay.style.display = options.resolution ? 'grid' : 'flex';
 	}
 
 	/**
@@ -6989,7 +6986,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			title: ome ? 'OME-TIFF' : 'TIFF',
 			controls: tiffControls(),
 			loading: loading || _levelSwitchPending || _tiffViewportLoadCount > 0,
-			note: pyramidStatusNote(),
+			resolution: tiffResolutionStatus(),
 		});
 	}
 
@@ -7001,6 +6998,26 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function endTiffViewportLoad(): void {
 		_tiffViewportLoadCount = Math.max(0, _tiffViewportLoadCount - 1);
 		if (currentLoadFormat === 'TIFF') { updateTiffPageOverlay(); }
+	}
+
+	/** A stable read-only scale strip; details describe pixels already painted. */
+	function tiffResolutionStatus(): { preview: string, detail: string, description: string } | undefined {
+		const description = pyramidStatusNote();
+		if (!description) { return undefined; }
+		const directory: TiffPageEntry[] = tiffProcessor.pageDirectory;
+		const current = directory.find(entry => entry.index === tiffProcessor.pageIndex);
+		if (!current || current.reduction <= 1) { return undefined; }
+		const patch = _pyramidScene ? _pyramidPatchRegion : _detailPatchRegion;
+		const level = patch && directory.find(entry => entry.index === patch.level);
+		const hasDetail = level && level.reduction < current.reduction
+			&& (!_pyramidScene || _pyramidScene.loadedSummary(level, patch!.rect).blocks > 0);
+		const scale = (reduction: number) => reduction <= 1 ? '1:1' : `1/${reduction}`;
+		const full = directory.find(entry => entry.index === pageOwningIfd(directory, current.index));
+		return {
+			preview: scale(current.reduction),
+			detail: hasDetail ? scale(level.reduction) : '',
+			description: `${description}. Original: ${full?.width ?? current.width} × ${full?.height ?? current.height}px. Resolution adjusts automatically as you zoom.`,
+		};
 	}
 
 	/** One-line whole-scene and visible-detail information for a pyramid. */
@@ -7064,6 +7081,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return parts[0];
 	}
 	async function navigateTiffPage(delta: number): Promise<void> {
+		if (isPyramidal(tiffProcessor.pageDirectory)) {
+			const pages = imagePages(tiffProcessor.pageDirectory);
+			if (pages.length <= 1) { return; }
+			const current = pages.findIndex(page => page.index === pageOwningIfd(tiffProcessor.pageDirectory, tiffProcessor.pageIndex));
+			await navigateTiffToPage(pages[(current + delta + pages.length) % pages.length].index);
+			return;
+		}
 		const total = tiffProcessor.pageCount;
 		if (total <= 1) { return; }
 		const target = (tiffProcessor.pageIndex + delta + total) % total;
@@ -7091,12 +7115,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// whenever it can be shown at all, because this is an inspector and a
 	// silently downsampled image is worse than a slow one. A coarser level is
 	// used only when the full page exceeds what the browser can put on a canvas
-	// — where the alternative is not a slower image but no image — or when the
-	// reader picks one. Zooming in then refines back towards full resolution,
+	// or when a full decode exceeds the opening pixel budget. Zooming in
+	// then refines back towards full resolution,
 	// since that is the point at which the missing detail becomes visible.
 
-	/** An explicit Level choice outranks the automatic one until reopen. */
-	let _levelSelectionIsManual = false;
 	/** Set while a level switch is in flight, so zoom events do not stack up. */
 	let _levelSwitchPending = false;
 	/** Pending settle timer; see scheduleLevelRefinement. */
@@ -7121,7 +7143,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	function streamedSceneLevels(): TiffPageEntry[] {
 		const directory = tiffProcessor.pageDirectory;
-		if (_levelSelectionIsManual) { return []; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const full = levels[0];
@@ -7172,48 +7193,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		mouseHandler.setStoredValueResolver((x: number, y: number) => tiffProcessor.readStoredPixel(x, y));
 	}
 
-	/** Leave a manual level without changing the visible scale or centre. */
-	async function returnToAutomaticPyramid(): Promise<void> {
-		const directory = tiffProcessor.pageDirectory;
-		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
-		const levels = levelsForPage(directory, page);
-		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
-		const full = levels[0];
-		_levelSelectionIsManual = false;
-		if (!current || !full || full.width * full.height <= LARGE_PYRAMID_SCENE_THRESHOLD) {
-			updateTiffPageOverlay();
-			maybeRefineTiffLevel();
-			return;
-		}
-
-		const desired = levelForDisplayWidth(directory, page, displayedImageWidthPx()) || full;
-		const start = Math.max(0, levels.indexOf(desired));
-		const target = levels.slice(start).find(level =>
-			level.width * level.height <= FULL_RESOLUTION_PIXEL_BUDGET
-			&& canvasCanHold(level.width, level.height)) || levels[levels.length - 1];
-		if (target && target.index !== current.index) {
-			// The incoming element represents FULL scene pixels, not target-level
-			// pixels, so convert the old scale directly into scene scale.
-			await navigateTiffToPage(target.index, { scaleMultiplier: current.width / full.width });
-			return;
-		}
-
-		const state = zoomController.getCurrentState();
-		installPyramidSceneIfNeeded();
-		if (_pyramidScene && canvas) {
-			zoomController.setImageElement(_pyramidScene.element);
-			zoomController.setCanvas(canvas);
-			mouseHandler.setImageElement(_pyramidScene.element);
-			configureTiffMouseReadout();
-			mouseHandler.addMouseListeners(_pyramidScene.element);
-			zoomController.restoreState(typeof state.scale === 'number'
-				? { ...state, scale: state.scale * current.width / full.width }
-				: state);
-		}
-		updateTiffPageOverlay();
-		void updateDetailPatch();
-	}
-
 	// --- Detail patch -----------------------------------------------------
 	//
 	// Small pyramids retain the legacy single-patch path below. Oversized
@@ -7257,10 +7236,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// base arrived. Leave it; the load that follows re-places it.
 		if (!element || !hasLoadedImage || _imageTransitionActive) { return; }
 		if (!isPyramidal(directory)) { removeDetailPatch(); return; }
-		// Automatic is what asks the viewer to decide what to show; a level
-		// chosen by hand is a statement about which resolution to look at, and
-		// laying a finer one over it would contradict the choice.
-		if (_levelSelectionIsManual) { removeDetailPatch(); return; }
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const base = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
@@ -7370,7 +7345,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/** Fill an oversized pyramid scene with retained, block-aligned detail. */
 	async function updatePyramidSceneTiles(): Promise<void> {
 		const scene = _pyramidScene;
-		if (!scene || !hasLoadedImage || _imageTransitionActive || _levelSelectionIsManual) { return; }
+		if (!scene || !hasLoadedImage || _imageTransitionActive) { return; }
 		if (_pyramidTileLoadPending) { _pyramidTileLoadQueued = true; return; }
 		const directory = tiffProcessor.pageDirectory;
 		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
@@ -7585,7 +7560,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// outgoing scale, so measuring it picks a level for a view that is
 		// already gone — which, evaluated on every scale event, walks the
 		// pyramid in a loop instead of settling.
-		if (_pyramidScene || _levelSelectionIsManual || _levelSwitchPending || !hasLoadedImage) { return; }
+		if (_pyramidScene || _levelSwitchPending || !hasLoadedImage) { return; }
 		if (_imageTransitionActive || _collectionSwitchLoading) { return; }
 		const directory = tiffProcessor.pageDirectory;
 		if (!isPyramidal(directory)) { return; }
@@ -8041,7 +8016,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		PerfTrace.begin(planeChange ? `plane ${switchName}` : `switch ${switchName}`);
 		if (!planeChange) {
 			// A Level choice belongs to the file it was made for.
-			_levelSelectionIsManual = false;
 			// Caching the outgoing image is for stepping between FILES. Doing it
 			// per plane would fill the cache with planes of the file already open.
 			_restoreDecodedImageCandidate = _previousDecodedImageCache;

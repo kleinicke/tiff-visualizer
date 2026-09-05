@@ -264,7 +264,8 @@ test('shows a pyramidal COG as levels of one image, not as pages', async ({ page
   // The three IFDs are one image at three resolutions. Offering them as
   // "Page 1 / 3" would describe something the file does not contain.
   const overlay = page.locator('.dataset-overlay');
-  await expect(overlay).toContainText('Level');
+  await expect(overlay.locator('.dataset-resolution')).toBeHidden();
+  await expect(overlay.locator('.dataset-axis-label')).not.toContainText(['Level']);
   await expect(overlay).not.toContainText('Page');
   await expect(overlay.locator('select')).toHaveValue('0');
 
@@ -340,7 +341,7 @@ test('cycles how pixels with no value are drawn', async ({ page }) => {
   expect(await noValuePixel()).toEqual([0, 0, 0, 255]);
 });
 
-test('picks a pyramid level for the window, and pins the one you choose', async ({ page }) => {
+test('chooses COG resolution automatically and keeps band selection', async ({ page }) => {
   await page.goto('/');
   await page
     .locator('#web-file-input')
@@ -350,7 +351,7 @@ test('picks a pyramid level for the window, and pins the one you choose', async 
   // This fixture is far below the size where a reduced level would be worth
   // the approximate readout, so it opens at full resolution and the readout
   // carries no overview note.
-  await expect(page.locator('.dataset-overlay')).toContainText('Full · 256x256');
+  await expect(page.locator('.dataset-resolution')).toBeHidden();
   const canvas = page.locator('body > canvas:not(.measure-overlay)');
   const box = await canvas.boundingBox();
   if (box) {
@@ -359,48 +360,29 @@ test('picks a pyramid level for the window, and pins the one you choose', async 
   }
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
 
-  // Choosing a level by hand pins it: index 0 is Auto, so index 2 is the first
-  // reduced level. The status line follows the choice, and stays there.
-  await page.locator('.dataset-overlay select').selectOption({ index: 2 });
-  await expect(page.locator('.dataset-overlay')).toContainText('1/2 · 128x128', { timeout: 30_000 });
-  await page.waitForTimeout(600);
-  await expect(page.locator('.dataset-overlay')).toContainText('1/2 · 128x128');
-  await expect(page.locator('.dataset-overlay select')).toHaveValue('2');
+  await expect(page.locator('.dataset-resolution')).toBeHidden();
+  await expect(page.locator('.dataset-axis-label')).not.toContainText(['Level']);
+  await expect(page.locator('.dataset-overlay select')).toHaveCount(1);
+  await page.locator('.dataset-overlay select').selectOption('1');
+  await expect(page.locator('.dataset-overlay select')).toHaveValue('1');
+
 });
 
-test('reads the value stored under the cursor while an overview is displayed', async ({ page }) => {
+test('reads original COG pixels with automatic resolution', async ({ page }) => {
   await page.goto('/');
   await page
     .locator('#web-file-input')
     .setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
   await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
 
-  // Pin the 1/2 level, so what is DISPLAYED is a decimation of the stored
-  // pixels (index 0 is Auto, index 1 is full resolution).
-  await page.locator('.dataset-overlay select').selectOption({ index: 2 });
-  await expect(page.locator('.dataset-note')).toContainText('1/2', { timeout: 30_000 });
-
-  // Aim at a known pixel of that level. The fixture's overviews are [::2, ::2],
-  // so level pixel (80, 49) is the average-free copy of stored pixel (160, 98)
-  // — and the two hold different values, which is what makes this test able to
-  // tell an exact read from a displayed one.
   const canvas = page.locator('body > canvas:not(.measure-overlay):not(.detail-patch)');
-  const box = (await canvas.boundingBox())!;
-  const at = (x: number, y: number) => ({
-    x: box.x + ((x + 0.5) / 128) * box.width,
-    y: box.y + ((y + 0.5) / 128) * box.height,
-  });
-  await page.mouse.move(at(79, 48).x, at(79, 48).y);
-  await page.mouse.move(at(80, 49).x, at(80, 49).y);
-
-  // Positions are the IMAGE's, not the level's: 128 pixels of a 1/2 level are
-  // 256 pixels of the image, and a readout that counted to 128 would be
-  // describing the machinery rather than the picture.
-  await expect(page.locator('#web-status-size')).toContainText('160x98');
-
-  // And the value settles onto the one actually stored there (804), not the
-  // level's own sample (758).
-  await expect(page.locator('#web-status-size')).toContainText('804', { timeout: 10_000 });
+  await expect.poll(async () => {
+    const box = (await canvas.boundingBox())!;
+    await page.mouse.move(box.x + (159.5 / 256) * box.width, box.y + (97.5 / 256) * box.height);
+    await page.mouse.move(box.x + (160.5 / 256) * box.width, box.y + (98.5 / 256) * box.height);
+    return page.locator('#web-status-size').innerText();
+  }).toContain('160x98');
+  await expect(page.locator('#web-status-size')).toContainText('0.758');
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
 });
 
@@ -422,35 +404,30 @@ test('draws a sharp patch of a finer level over the visible area', async ({ page
 	const tiles = page.locator('.pyramid-scene > canvas.pyramid-tile');
 	await expect.poll(() => tiles.count(), { timeout: 60_000 }).toBeGreaterThan(0);
 
-	// And the compact, single-line status names the sharper resolution and its
-	// resident tiles without repeating the full scene dimensions.
-	const note = page.locator('.dataset-note');
-	await expect(note).toContainText('Resolution: Full,');
-	await expect(note).toContainText(/\d+ tiles?, each \d+x\d+px/);
-	const noteText = await note.innerText();
-	expect(noteText).toMatch(/^Scene overview: 1\/\d+ · Resolution:/);
-	expect(noteText).not.toContain('\n');
+	const resolution = page.locator('.dataset-resolution');
+	await expect(resolution.locator('[data-resolution="detail"]')).toHaveText('1:1');
+	await expect(resolution).toHaveAttribute('title', /\d+ tiles?, each \d+x\d+px/);
+	await expect(page.locator('.dataset-axis-label')).not.toContainText(['Level']);
+
 });
 
-test('a level chosen by hand turns the patch off', async ({ page }) => {
-  const corpusFile = '/Users/florian/Projects/cursor/test_data/cog/big_40000px_cog.tif';
-  test.skip(!fs.existsSync(corpusFile), 'corpus file not present');
-
+test('keeps band controls collapsible and stable while loading at full resolution', async ({ page }) => {
   await page.goto('/');
-  await page.locator('#web-file-input').setInputFiles(corpusFile);
-  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 120_000 });
-  await page.waitForTimeout(2500);
-  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 16 }, '*'));
-  await expect(page.locator('canvas.detail-patch')).toHaveCount(1, { timeout: 60_000 });
-
-  // Pinning a level says which resolution to look at; a finer one laid over it
-  // would contradict that.
-  await page.locator('.dataset-overlay select').selectOption({ index: 5 });
-  await expect(page.locator('canvas.detail-patch')).toHaveCount(0, { timeout: 60_000 });
-
-  // Auto takes the decision back, and the patch with it.
-  await page.locator('.dataset-overlay select').selectOption({ index: 0 });
-  await expect(page.locator('canvas.detail-patch')).toHaveCount(1, { timeout: 60_000 });
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/cog_2band_pyramid.tif'));
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 30_000 });
+  const overlay = page.locator('.nav-overlay');
+  await overlay.locator('.dataset-title').click();
+  await expect(overlay).toHaveClass(/dataset-overlay--collapsed/);
+  await expect(overlay.locator('.dataset-resolution')).toBeHidden();
+  await expect(overlay.locator('.dataset-axis-controls')).toBeHidden();
+  const before = await overlay.locator('.dataset-title-label').boundingBox();
+  await overlay.evaluate(el => el.classList.add('dataset-overlay--loading'));
+  expect(await overlay.locator('.dataset-title-label').boundingBox()).toEqual(before);
+  await overlay.evaluate(el => el.classList.remove('dataset-overlay--loading'));
+  expect(await overlay.locator('.dataset-title-label').boundingBox()).toEqual(before);
+  await overlay.locator('.dataset-title').click();
+  await expect(overlay).not.toHaveClass(/dataset-overlay--collapsed/);
+  await expect(overlay.locator('.dataset-axis-controls')).toBeVisible();
 });
 
 test('leaves an ordinary TIFF completely alone', async ({ page }) => {

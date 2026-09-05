@@ -16,7 +16,15 @@ test('opens a large scalar TIFF, picks original values, and streams zoomed detai
     await expect(scene).toBeVisible({ timeout: 90_000 });
     await expect(page.locator('body')).toHaveClass(/ready/);
     await expect(scene).toHaveAttribute('data-scene-width', String(image.getWidth()));
-    await expect(page.locator('.dataset-note')).toContainText('Generated preview');
+    await expect(page.locator('.dataset-resolution')).toHaveAttribute('title', /Generated preview/);
+    await expect(page.locator('.nav-overlay')).not.toContainText('Auto');
+    const titleBox = (await page.locator('.dataset-title').boundingBox())!;
+    const scaleBox = (await page.locator('.dataset-resolution').boundingBox())!;
+    expect(Math.abs((titleBox.y + titleBox.height / 2) - (scaleBox.y + scaleBox.height / 2))).toBeLessThan(2);
+    const before = await page.locator('.dataset-title-label').boundingBox();
+    await page.locator('.nav-overlay').evaluate(el => el.classList.add('dataset-overlay--loading'));
+    expect(await page.locator('.dataset-title-label').boundingBox()).toEqual(before);
+    await page.locator('.nav-overlay').evaluate(el => el.classList.remove('dataset-overlay--loading'));
     const size = await scene.locator('.pyramid-base').evaluate((el: HTMLCanvasElement) => ({ width: el.width, height: el.height }));
     expect(size.width).toBeLessThanOrEqual(4096);
     expect(size.height).toBeLessThanOrEqual(4096);
@@ -43,6 +51,27 @@ test('opens a large scalar TIFF, picks original values, and streams zoomed detai
     await page.locator('#web-control-popover select[name="scale"]').selectOption('1');
     await page.locator('#web-control-popover button[type="submit"]').click();
     await expect(scene.locator('.pyramid-tile').first()).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[data-resolution="detail"]')).toHaveText('1:1');
     await checkPicker();
+  } finally { await source.close(); }
+});
+
+// A previously supported ~100 MP file must retain the ordinary full-raster path.
+test('keeps a 100 MP TIFF at full resolution without a preview readout', async ({ page }) => {
+  const medium = process.env.TIFF_MEDIUM_SAMPLE;
+  test.skip(!medium, 'Set TIFF_MEDIUM_SAMPLE to the 100 MP example');
+  test.setTimeout(120_000);
+  const source = await fromFile(medium!);
+  try {
+    const image = await source.getImage();
+    await page.goto('/');
+    await page.locator('#web-file-input').setInputFiles(medium!);
+    await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 90_000 });
+    const canvas = page.locator('body > canvas:not(.measure-overlay)');
+    await expect(canvas).toBeVisible();
+    await expect(canvas).toHaveJSProperty('width', image.getWidth(), { timeout: 90_000 });
+    await expect(canvas).toHaveJSProperty('height', image.getHeight());
+    await expect(page.locator('.pyramid-scene')).toHaveCount(0);
+    await expect(page.locator('.nav-overlay')).toBeHidden();
   } finally { await source.close(); }
 });

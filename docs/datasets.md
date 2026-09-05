@@ -62,76 +62,35 @@ collection is loaded.
 
 ## Pyramidal TIFF (COG, whole-slide)
 
-Some TIFFs store the same scene several times at halving resolutions — a
-Cloud-Optimized GeoTIFF and most whole-slide images do. Those extra images are
-**levels**, not pages: they are the same data, downsampled. The overlay offers
-a **Level** selector for them, showing each level's reduction and size
-(`Full · 10980x10980`, `1/4 · 2745x2745`), and a Page selector as well only
-when the file really does hold more than one image.
+Some TIFFs store the same scene at several resolutions. These are overview
+levels, not separate pages. Resolution selection is automatic: opening and
+zooming choose an appropriate level, with original detail loaded over the
+preview when the layout and memory budget allow it.
 
-**The level is chosen for you.** Opening a file picks the level that matches
-your window, zooming in loads a finer one, and the image stays the same size on
-screen across the switch — so what you see always looks like full resolution for
-the area you are looking at. The selector reads **Auto** while that is
-happening; picking a level from it pins that one, and choosing Auto again hands
-the decision back.
+The read-only strip shows **Preview 1/8 · Detail 1:1**:
 
-Under the selector is a line saying what is actually on screen:
+- **Preview** is the background image's resolution relative to the original.
+  `1/8` means one preview pixel per eight original pixels along each axis;
+  `1:1` means full resolution. This is separate from the display zoom percentage.
+- **Detail** appears when finer pixels have actually been loaded over the preview.
+  It describes those patches, not necessarily the entire visible image.
+- Hover the strip for the original dimensions and loaded tile information.
 
-    Loaded 1/8 · 1373x1373 of 10980x10980 · viewing 0,0 10240x5760 (49% of the
-    scene) · 0.13x detail
+The title and resolution strip share one line. No scale readout is shown when
+the preview is already 1:1. Click the title to collapse additional band or page
+controls; the resolution strip stays visible.
+Band and page selectors remain available when the file has multiple data bands
+or separate images. There is no manual overview selector.
 
-— which level is decoded, how much of the full-resolution scene is in view, and
-how many screen pixels each stored pixel gets (1.0 means every stored pixel is
-on screen; below that the view is coarser than the file).
+TIFFs with stored overviews generally open at full resolution up to about
+40 megapixels if the canvas can hold them. Larger images use a suitable overview. Oversized pyramids use a
+bounded set of detail tiles so the original image need not fit on one canvas.
 
-What it chooses, and why:
-
-- **Full resolution** whenever the image is small enough that you would not wait
-  for it (about 40 megapixels), because the values under the cursor come from
-  whatever was decoded, and a reduced level means an approximate readout.
-- **The level that matches your window** for anything larger — a 10980x10980
-  Sentinel-2 band opens in about 200 ms this way instead of four seconds, and at
-  fit-to-window it looks identical. While a reduced level is showing, the pixel
-  readout says so (`… · 1/8 overview`), so an approximate value never passes for
-  a stored one.
-- **The largest level that can be drawn at all** when even that is too big.
-  Browsers cap how many pixels a canvas can hold, so a 40000x40000 raster can
-  never be shown whole; it opens at a usable level instead of failing.
-
-Zooming back out keeps the sharper data already decoded. Picking a level from
-the selector yourself pins it — automatic refinement stops until you reopen the
-file.
-
-One limit worth knowing: refinement loads a whole level, not just the part you
-are looking at. For an image whose full resolution exceeds the canvas limit,
-zooming in cannot reach the stored pixels.
-
-**On Auto, the viewer lifts that limit for the part you are looking at.** The
-decoder can read a rectangle — a 1600x1000 view of a 10980x10980 band is four
-tiles and about 25 ms, against a second for the whole page — so while the level
-is chosen automatically:
-
-- a sharp **patch** of a finer level is drawn over the visible area, and a
-  40000x40000 scene shows its stored pixels at high zoom even though no canvas
-  could ever hold that level whole. The coarse image underneath is unchanged and
-  still the image for every other purpose;
-- that coarse image stops growing once it passes the size worth decoding (about
-  40 megapixels), since the patch already shows the detail where you are looking.
-  Zooming into a 10980x10980 band settles in about 3 seconds rather than 5, and
-  holds a quarter of the pixels;
-- hovering reads the value actually **stored** under the cursor rather than the
-  overview's average. The readout says so only when that is impossible — a
-  layout the decoder cannot read a rectangle at a time — since otherwise the
-  exact value arrives within a tenth of a second.
-
-Cursor positions are always in the image's own pixels, whichever level is
-loaded: a 40000x40000 scene reads to 40000 even while its 1/8 level is on
-screen.
-
-Choosing a level by hand turns all of that off: a pinned level is a statement
-about which resolution you want to look at, and laying a finer one over it would
-contradict the choice. Selecting **Auto** again brings it back.
+Cursor positions always use original image coordinates. An overview readout is
+labelled with its reduction; full-resolution values are reported when available.
+Single-page float32 TIFFs without stored overviews generate a preview only above
+128 megapixels; a 100 MP image keeps the normal full-resolution loading path.
+The preview mode reads exact pixels on demand; see [format notes](./formats.md).
 
 ## CZI
 
