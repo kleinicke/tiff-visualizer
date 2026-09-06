@@ -25,6 +25,15 @@ export class ZoomController {
 	 * resize, which a zoom on an image smaller than the viewport never produces.
 	 */
 	onScaleChanged: (() => void) | null = null;
+	private gestureScale: number | null = null;
+
+	private viewport() {
+		const style = getComputedStyle(this.container);
+		const left = parseFloat(style.paddingLeft) || 0, right = parseFloat(style.paddingRight) || 0;
+		const top = parseFloat(style.paddingTop) || 0, bottom = parseFloat(style.paddingBottom) || 0;
+		const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+		return { width: Math.max(1, width - left - right), height: Math.max(1, height - top - bottom), left, top };
+	}
 
 	constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
 		this.settingsManager = settingsManager;
@@ -95,6 +104,12 @@ export class ZoomController {
 
 		const constants = this.settingsManager.constants;
 		const wasInFitMode = this.scale === 'fit';
+		if (this.container.classList.contains('web-app')) {
+			this.container.classList.toggle('web-image-zoomed', newScale !== 'fit');
+		}
+		const viewport = this.viewport();
+		const centerX = viewport.left + viewport.width / 2;
+		const centerY = viewport.top + viewport.height / 2;
 
 		if (newScale === 'fit') {
 			this.scale = 'fit';
@@ -109,16 +124,18 @@ export class ZoomController {
 			// A pyramid scene is a normal element rather than a replaced img/canvas,
 			// so object-fit cannot size it. Give it the same fitted dimensions here;
 			// numeric zooms below continue to operate in full-resolution scene space.
-			if (this.imageElement.classList.contains('pyramid-scene')) {
+			if (this.imageElement.classList.contains('pyramid-scene') || this.container.classList.contains('web-app')) {
 				const { width, height } = this._getNaturalSize(this.imageElement);
 				const fit = Math.min(
-					Math.max(1, this.container.clientWidth - 20) / width,
-					Math.max(1, this.container.clientHeight - 20) / height,
+					this.container.classList.contains('web-app') ? Infinity : 1,
+					Math.max(1, viewport.width - 20) / width,
+					Math.max(1, viewport.height - 20) / height,
 				);
 				this.imageElement.style.width = `${width * fit}px`;
 				this.imageElement.style.height = `${height * fit}px`;
 				this.imageElement.style.margin = 'auto';
 			}
+			window.scrollTo(0, 0);
 			// Clear zoom fields but keep other state (peerImageUris, etc.)
 			const existing = this.vscode.getState() || {};
 			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
@@ -138,8 +155,8 @@ export class ZoomController {
 				: (oldScale as number);
 
 			// Viewport center in document coordinates
-			const viewportCenterX = window.scrollX + this.container.clientWidth / 2;
-			const viewportCenterY = window.scrollY + this.container.clientHeight / 2;
+			const viewportCenterX = window.scrollX + centerX;
+			const viewportCenterY = window.scrollY + centerY;
 			// Element top-left in document coordinates
 			const rectBefore = this.imageElement.getBoundingClientRect();
 			const elemLeftDoc = window.scrollX + rectBefore.left;
@@ -156,8 +173,8 @@ export class ZoomController {
 			this.imageElement.style.height = `${naturalHeight * this.scale}px`;
 
 			// Center when smaller than viewport, remove margins when scrollable
-			const canScrollX = this.container.scrollWidth > this.container.clientWidth + 1;
-			const canScrollY = this.container.scrollHeight > this.container.clientHeight + 1;
+			const canScrollX = naturalWidth * this.scale > viewport.width;
+			const canScrollY = naturalHeight * this.scale > viewport.height;
 			this.imageElement.style.marginLeft = canScrollX ? '0' : 'auto';
 			this.imageElement.style.marginRight = canScrollX ? '0' : 'auto';
 			this.imageElement.style.marginTop = canScrollY ? '0' : 'auto';
@@ -169,12 +186,13 @@ export class ZoomController {
 			const elemTopDocAfter = window.scrollY + rectAfter.top;
 
 			// Calculate new scroll position to keep the same image point centered
-			let newScrollX = centerXImage * this.scale + elemLeftDocAfter - this.container.clientWidth / 2;
-			let newScrollY = centerYImage * this.scale + elemTopDocAfter - this.container.clientHeight / 2;
+			let newScrollX = centerXImage * this.scale + elemLeftDocAfter - centerX;
+			let newScrollY = centerYImage * this.scale + elemTopDocAfter - centerY;
 
 			// Clamp scroll positions to valid ranges
-			const maxScrollX = Math.max(0, this.container.scrollWidth - this.container.clientWidth);
-			const maxScrollY = Math.max(0, this.container.scrollHeight - this.container.clientHeight);
+			const scrolling = document.scrollingElement || this.container;
+			const maxScrollX = Math.max(0, scrolling.scrollWidth - document.documentElement.clientWidth);
+			const maxScrollY = Math.max(0, scrolling.scrollHeight - document.documentElement.clientHeight);
 			newScrollX = Math.min(Math.max(0, newScrollX), maxScrollX);
 			newScrollY = Math.min(Math.max(0, newScrollY), maxScrollY);
 
@@ -271,13 +289,35 @@ export class ZoomController {
 
 		e.preventDefault();
 		e.stopPropagation();
+		if (this.gestureScale !== null) { return; }
+		if (!e.deltaY) { return; }
 
 		if (this.scale === 'fit') {
 			this.firstZoom();
 		}
 
-		const delta = e.deltaY > 0 ? 1 : -1;
-		this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
+		if (this.container.classList.contains('web-app')) {
+			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
+			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
+			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)));
+		} else {
+			const delta = e.deltaY > 0 ? 1 : -1;
+			this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
+		}
+	}
+
+	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */
+	handleGesture(event: Event & { scale?: number }) {
+		if (!this.imageElement || !this.hasLoadedImage) { return; }
+		event.preventDefault();
+		if (event.type === 'gestureend') { this.gestureScale = null; return; }
+		if (event.type === 'gesturestart') {
+			this.gestureScale = this.imageElement.clientWidth / this._getNaturalSize(this.imageElement).width;
+			return;
+		}
+		if (this.gestureScale !== null && Number.isFinite(event.scale) && event.scale! > 0) {
+			this.updateScale(this.gestureScale * event.scale!);
+		}
 	}
 
 	/**

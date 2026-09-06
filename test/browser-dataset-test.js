@@ -127,7 +127,7 @@ assert.doesNotMatch(html, /data-web-action="close-control"/, 'display popovers s
 assert.match(css, /> canvas:not\(\.scale-to-fit\)[\s\S]*?max-height: none !important/, 'zoomed canvases must not retain fit-mode height limits');
 assert.match(css, /> canvas:not\(\.scale-to-fit\)[\s\S]*?flex: none;[\s\S]*?max-width: none !important/, 'zoomed canvases must not be flex-shrunk back to the viewport');
 assert.match(css, /body\.web-app\s*\{[\s\S]*?margin:\s*0;[\s\S]*?overflow:\s*hidden;/, 'fit mode must not create page scrollbars from browser body defaults');
-assert.match(css, /\.web-app\.web-has-image\.web-image-zoomed \{ overflow: auto; \}/, 'explicit zoom must keep page panning available');
+assert.match(css, /html:has\(\.web-app\.web-has-image\.web-image-zoomed\) \{ overflow: auto; \}/, 'explicit zoom must pan the document, matching the shared zoom controller');
 assert.match(css, /--context-menu-bottom-inset:\s*28px/, 'the website context menu should reserve its status bar');
 assert.match(css, /\.web-app \.dataset-overlay \{ top: 58px; \}/, 'dataset navigation should sit below the website toolbar');
 assert.match(host, /!controlPopover\.contains\(target as Node\)/, 'display popovers should close after an outside click');
@@ -162,7 +162,7 @@ assert.match(host, /detected\?\.hint === 'tiff'/,
   'remote TIFF routing should follow its header even when the URL has no TIFF suffix');
 assert.match(host, /formatHint: entry\.formatHint/,
   'content-derived browser hints must reach the shared decoder router');
-assert.match(commands, /sniffRemoteImageFormat\(parsed\.toString\(\), probeController\.signal\)/,
+assert.match(commands, /probeRemoteImage\(parsed\.toString\(\), probeController\.signal\)/,
   'the extension URL command should identify content before choosing streaming or download');
 assert.match(host, /switchTo\(firstNewIndex, false, true\)/, 'new images should explicitly start fitted to the whole scene');
 assert.match(host, /className = 'web-image-tab-select'/, 'each open image should receive a selectable tab');

@@ -81,6 +81,8 @@ async function main() {
   assert.equal(remoteTileConcurrency(8192,8192,4),1);
   global.fetch=async()=>new Response('ignored range',{status:200});
   await assert.rejects(new TiffRangeSource('https://test.invalid').fetch([{offset:0,length:16}]),/must support byte ranges/);
+  global.fetch=async()=>new Response('missing file',{status:404,statusText:'Not Found'});
+  await assert.rejects(new TiffRangeSource('https://test.invalid').fetch([{offset:0,length:16}]),/TIFF request failed: HTTP 404 Not Found/);
   for(const data of [new Uint8Array(),new Uint8Array([73,73,43,0,4,0,0,0])])assert.throws(()=>wasm.remote_tiff_header(data));
   assert.throws(()=>wasm.remote_tiff_index_values(new Uint8Array(3),2,true));
   assert.throws(()=>wasm.remote_tiff_index_values(new Uint8Array(8).fill(255),8,true));

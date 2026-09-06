@@ -40,15 +40,35 @@ test('streams the massive remote COG through lazy indices and bounded requests',
   test.setTimeout(120_000);
   const messages: string[] = [];
   page.on('console', message => messages.push(message.text()));
-  await page.goto('/?url=' + encodeURIComponent(sample!));
+  await page.addInitScript(() => localStorage.setItem('scientific-image-visualizer.webview-state', JSON.stringify({ scale: 4, offsetX: 200, offsetY: 300 })));
+  await page.goto('/?source=' + encodeURIComponent(sample!), { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.pyramid-scene')).toBeVisible({ timeout: 60_000 });
-  await expect.poll(() => messages.some(text => text.startsWith('[Refine]')), { timeout: 60_000 }).toBe(true);
+  await expect(page.locator('#web-status-zoom')).toHaveText('Whole Image');
+  const fit = await page.locator('.pyramid-scene').boundingBox();
+  expect(fit!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+  expect(fit!.height).toBeLessThanOrEqual(page.viewportSize()!.height - 92);
+  // Read a screenshot: the overview may own a WebGL context, so asking that
+  // canvas for a 2D context would return null even when its pixels are visible.
+  const screenshot = await page.locator('.pyramid-base').screenshot();
+  expect(await page.evaluate(async bytes => {
+    const image = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: 'image/png' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width; canvas.height = image.height;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    image.close();
+    return pixels.some((value, index) => index % 4 !== 3 && value !== pixels[0]);
+  }, Array.from(screenshot))).toBe(true);
   expect(messages.some(text => text.includes('[RemoteTIFF] Lazy directory'))).toBe(true);
   await expect(page.locator('.pyramid-base')).toBeVisible();
   await expect(page.locator('.pyramid-gpu')).toHaveCount(0);
   expect(messages.filter(text => /pool unavailable|using existing directory reader|render failure/.test(text))).toEqual([]);
   await expect(page.locator('.nav-overlay')).not.toHaveClass(/dataset-overlay--loading/);
   await expect(page.locator('#web-status-size')).not.toContainText('overview');
+  await page.getByRole('button', { name: /^Close / }).click();
+  await expect(page.locator('#web-empty-state')).toBeVisible();
+  await expect(page.locator('.pyramid-scene')).toHaveCount(0);
 });
 
 test('RGB band mapping preserves original samples', async ({ page }) => {

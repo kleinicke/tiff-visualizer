@@ -1,13 +1,13 @@
 # Change Log
 
-## 1.11.0 (2026-)
+## 1.11.0 (2026-09-06)
 
-- Noticeable speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure
+- Noticeable loading speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure
 - Add several additional tiff compression standards
 - Read GeoTIFF georeferencing: named GeoKeys and a CRS label in the metadata panel, and map coordinates under the cursor
+- Allow loading of massive tiff images. For images above 130 MP use lower resolution image combined with a high resolution area currently visible.
 - Open standalone JPEG 2000 files (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`) at native precision
 - Load images from url using command
-- Allow loading of massive tiff images. For images above 130 MP use lower resolution image combined with a high resolution area currently visible.
 
 ## 1.10.0 (2026-08-22)
 

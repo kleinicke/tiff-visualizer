@@ -74,6 +74,8 @@ report the codec by name rather than failing silently.
 
 Multi-page files are navigable with `[` and `]`. OME-TIFF adds semantic
 dimensions and multi-file datasets — see [datasets](./datasets.md).
+ImageJ TIFF hyperstacks also expose separate channel (C), slice (Z), and time
+(T) controls when their declared dimensions match the stored pages.
 
 Scientific TIFFs with multiple data bands show a **Band** selector alongside
 the page controls and automatic resolution readout. GDAL band names appear when available, and

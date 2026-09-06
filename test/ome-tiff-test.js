@@ -26,7 +26,13 @@ async function main() {
 		parseOmeBinaryOnly,
 		parseOmeXml,
 		parseOmeXmlImages,
+		parseImageJMetadata,
 	} = await import(path.join('..', 'out', 'media', 'modules', 'ome-tiff.js').replace(/\\/g, '/'));
+	const imageJ = parseImageJMetadata('ImageJ=1.11a\nimages=120\nchannels=2\nslices=60\nhyperstack=true\n', 256, 256, 120);
+	assert.ok(imageJ);
+	assert.equal(omeCoordinatesToIfd(imageJ, { c: 1, z: 12, t: 0 }), 25);
+	assert.deepEqual(omeIfdToCoordinates(imageJ, 119), { c: 1, z: 59, t: 0 });
+	assert.equal(parseImageJMetadata('ImageJ=1.11a\nimages=120\nchannels=2\nslices=60', 256, 256, 119), null);
 
 	const xml = `<?xml version="1.0" encoding="UTF-8"?>
 	<ome:OME xmlns:ome="http://www.openmicroscopy.org/Schemas/OME/2016-06" Creator="Unit &amp; Integration">

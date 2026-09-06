@@ -38,6 +38,7 @@ export class TiffRangeSource {
 		const response = await fetch(this.url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` }, cache: 'no-store', signal });
 		if (response.status !== 206) {
 			await response.body?.cancel();
+			if (!response.ok) { throw new Error(`TIFF request failed: HTTP ${response.status} ${response.statusText}`); }
 			throw new Error(`TIFF server must support byte ranges (HTTP ${response.status})`);
 		}
 		const range = response.headers.get('content-range');
@@ -101,7 +102,11 @@ async function ordinaryRemote(url: string, GeoTIFF: any, signal?: AbortSignal): 
 	let activeSignal = signal;
 	const tiff = await GeoTIFF.fromCustomClient({ request: async ({ headers, signal: requestSignal }: any) => {
 		const response = await fetch(url, { headers, signal: requestSignal || activeSignal, cache: 'no-store' });
-		if (response.status !== 206) { await response.body?.cancel(); throw new Error(`TIFF server must support byte ranges (HTTP ${response.status})`); }
+		if (response.status !== 206) {
+			await response.body?.cancel();
+			if (!response.ok) { throw new Error(`TIFF request failed: HTTP ${response.status} ${response.statusText}`); }
+			throw new Error(`TIFF server must support byte ranges (HTTP ${response.status})`);
+		}
 		return { ok: response.ok, status: response.status,
 			getHeader: (name: string) => response.headers.get(name), getData: () => response.arrayBuffer() };
 	} }, { blockSize: 64 * 1024, cacheSize: 256, allowFullFile: false }, signal);

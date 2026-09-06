@@ -31,8 +31,8 @@ async function main() {
 	});
 
 	handler._handleMouseMove({ clientX: 50, clientY: 50 });
-	assert.deepStrictEqual(messages, [{ type: 'pixelBlur' }],
-		'an unpainted streamed tile clears the previous readout without starting hidden IO');
+	assert.deepStrictEqual(messages, [{ type: 'pixelFocus', value: '20000x20000 …' }],
+		'an unpainted streamed tile retains coordinates without displaying a stale value');
 	await new Promise(resolve => setTimeout(resolve, 0));
 	assert.strictEqual(exactReads, 0, 'hover does not fetch a full-resolution tile');
 
@@ -40,7 +40,7 @@ async function main() {
 	left = -10;
 	handler.refreshAtPointer();
 	await new Promise(resolve => setTimeout(resolve, 0));
-	assert.deepStrictEqual(messages, [{ type: 'pixelBlur' }],
+	assert.deepStrictEqual(messages, [{ type: 'pixelFocus', value: '24000x20000 …' }],
 		'a stationary pointer follows the image without starting hidden IO after a pan');
 	console.log('✅ Stationary picker refreshes after trackpad and keyboard scrolling');
 
@@ -64,11 +64,12 @@ async function main() {
 	messages.length = 0;
 	left = 0;
 	handler._handleMouseMove({ clientX: 50.005, clientY: 50 });
-	assert.deepStrictEqual(messages, [{ type: 'pixelBlur' }], 'an unpainted neighbouring pixel has no stale value');
+	assert.deepStrictEqual(messages, [{ type: 'pixelFocus', value: '20002x20000 …' }], 'an unpainted neighbouring pixel has no stale value');
 	await new Promise(resolve => setTimeout(resolve, 0));
 	assert.strictEqual(exactReads, 0);
 
 	handler._handleMouseLeave({});
+	assert.deepStrictEqual(messages[messages.length - 1], { type: 'pixelBlur' }, 'leaving the image restores the default readout');
 	messages.length = 0;
 	left = -20;
 	handler.refreshAtPointer();

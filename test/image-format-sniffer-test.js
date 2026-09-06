@@ -10,7 +10,7 @@ const bundle = buildSync({
 });
 const loaded = { exports: {} };
 new Function('module', 'exports', 'require', bundle.outputFiles[0].text)(loaded, loaded.exports, require);
-const { sniffImageFormat, filenameForDetectedFormat, readResponsePrefix } = loaded.exports;
+const { sniffImageFormat, filenameForDetectedFormat, readResponsePrefix, probeRemoteImage } = loaded.exports;
 
 const bytes = (...values) => new Uint8Array(values);
 const text = value => new TextEncoder().encode(value);
@@ -42,6 +42,21 @@ async function main() {
 	const response = new Response(new Uint8Array(20_000).fill(7));
 	assert.equal((await readResponsePrefix(response, 4096)).length, 4096,
 		'a server ignoring Range must not make the probe buffer its whole response');
+	const originalFetch = global.fetch;
+	try {
+		for (const status of [200, 206]) {
+			global.fetch = async (_url, options) => {
+				assert.equal(options.headers.Range, 'bytes=0-4095');
+				return new Response(bytes(0x49, 0x49, 0x2a, 0x00), {
+					status, headers: { 'Accept-Ranges': 'bytes' },
+				});
+			};
+			const probe = await probeRemoteImage('https://example.test/raw');
+			assert.equal(probe.format.hint, 'tiff');
+			assert.equal(probe.supportsRanges, status === 206,
+				'a full response must trigger download even when Accept-Ranges advertises support');
+		}
+	} finally { global.fetch = originalFetch; }
 	console.log('Image header sniffing tests passed');
 }
 

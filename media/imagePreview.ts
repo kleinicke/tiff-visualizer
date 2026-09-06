@@ -696,7 +696,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// A scroll moves the image under the patch; the patch is placed in document
 	// coordinates so it travels with it, but a pan can also expose ground the
 	// patch does not cover, which needs a new rectangle.
-	window.addEventListener('resize', () => { invalidatePyramidViewport(); scheduleLevelRefinement(); });
+	window.addEventListener('resize', () => {
+		if (container.classList.contains('web-app') && zoomController.scale === 'fit') { zoomController.updateScale('fit'); }
+		invalidatePyramidViewport(); scheduleLevelRefinement();
+	});
 	window.addEventListener('scroll', () => {
 		invalidatePyramidViewport();
 		mouseHandler.refreshAtPointer();
@@ -1068,6 +1071,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let peerExrStats: any = null;         // Cached stats for peer EXR image
 	let peerImageUris: string[] = []; // Track peer URIs for comparison state
 	let _pendingZoomState: { scale: number | string, [key: string]: any } | null = null; // Zoom state to restore after next image load
+	let _pendingZoomStateExplicit = false;
 	/** Pyramid level switches rescale the pending zoom; see navigateTiffToPage. */
 	let _pendingLevelScaleMultiplier: number | null = null;
 	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
@@ -2526,7 +2530,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function finalizeImageSetup() {
 		if (!imageElement || !canvas) return;
 		const nextImageElement = imageElement;
-		if (_imageTransitionActive) {
+		if (_imageTransitionActive && !_pendingZoomStateExplicit) {
 			// The outgoing frame remains interactive while decoding; carry any pan or
 			// zoom made during that interval into the replacement frame as well.
 			_pendingZoomState = zoomController.getCurrentState();
@@ -2594,6 +2598,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			zoomController.applyInitialZoom();
 		}
 		_pendingZoomState = null;
+		_pendingZoomStateExplicit = false;
 		finishSeamlessImageTransition();
 
 		// Restore overlay counter from loading state — but only if no deferred render is still pending.
@@ -3634,7 +3639,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	function getDisplayedImageElement(): HTMLElement | null {
 		for (const child of Array.from(container.children)) {
-			if (child instanceof HTMLElement && (child.tagName === 'IMG' || child.tagName === 'CANVAS'
+			if (child instanceof HTMLElement && !isOverlayChrome(child) && (child.tagName === 'IMG' || child.tagName === 'CANVAS'
 				|| child.classList.contains('pyramid-scene'))) {
 				return child;
 			}
@@ -3715,6 +3720,43 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	async function handleVSCodeMessage(message: { type: string, [key: string]: any }) {
 		switch (message.type) {
+			case 'clearImage': {
+				_loadGeneration++;
+				_loadAbortController?.abort();
+				signalTiffCanvasReady();
+				invalidatePyramidViewport();
+				if (_levelRefineTimer !== null) { clearTimeout(_levelRefineTimer); _levelRefineTimer = null; }
+				for (const worker of [decodeWorkerClient, pngDecodeWorkerClient, layeredDecodeWorkerClient, fastRawWorkerClient]) { worker.cancelActiveDecodes(); }
+				for (const processor of allProcessors) { processor._pendingRenderData = null; }
+				_pyramidScene?.dispose();
+				_pyramidScene = null;
+				removeDetailPatch();
+				_pyramidPatchRegion = null;
+				hasLoadedImage = false;
+				zoomController.hasLoadedImage = false;
+				zoomController.imageElement = null;
+				zoomController.canvas = null;
+				zoomController.scale = 'fit';
+				mouseHandler.imageElement = null;
+				mouseHandler.setStoredValueResolver(null);
+				canvas = null;
+				imageElement = null;
+				primaryImageData = null;
+				_pendingZoomState = null;
+				_pendingZoomStateExplicit = false;
+				_previousDecodedImageCache = null;
+				_restoreDecodedImageCandidate = null;
+				for (const element of Array.from(container.children)) {
+					if (element instanceof HTMLElement && !isOverlayChrome(element)
+						&& (element.tagName === 'IMG' || element.tagName === 'CANVAS' || element.classList.contains('pyramid-scene'))) { element.remove(); }
+				}
+				finishSeamlessImageTransition();
+				disposeWebglRenderers();
+				hideNavOverlay();
+				container.classList.remove('ready', 'loading', 'error', 'web-image-zoomed');
+				window.scrollTo(0, 0);
+				break;
+			}
 			case 'setScale':
 				zoomController.updateScale(message.scale);
 				break;
@@ -3859,6 +3901,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 				// Check if this is a deferred render trigger (initial load)
 				if (message.isInitialRender && canvas) {
+					const renderGeneration = _loadGeneration;
 					// Time between formatInfo going out and per-format settings
 					// coming back — extension-host latency, not main-thread work.
 					if (lastFormatInfoPost && lastFormatInfoPost.generation === _loadGeneration) {
@@ -3940,6 +3983,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						deferredImageData = webImageProcessor.performDeferredRender();
 					}
 
+					if (renderGeneration !== _loadGeneration) { break; }
 					if (deferredImageData) {
 						if (deferredCanvasAlreadyRendered) {
 							PerfTrace.mark('canvas-upload-skipped');
@@ -4105,6 +4149,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				break;
 
 			case 'switchToImage':
+				_pendingZoomStateExplicit = !!message.zoomState;
 				if (Number.isFinite(Number(message.loadStartTime))) {
 					extensionLoadStartTime = Number(message.loadStartTime);
 				}
@@ -5417,6 +5462,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	function setupEventListeners() {
 		installRangeDoubleClickReset(document);
+		if (container.classList.contains('web-app')) {
+			for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+				container.addEventListener(type, event => zoomController.handleGesture(event), { passive: false });
+			}
+		}
 		// Wheel zoom handling
 		container.addEventListener('wheel', (e) => {
 			// Prevent pinch to zoom
@@ -7000,7 +7050,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const ome = tiffProcessor.omeMetadata;
 		renderNavOverlay({
 			owner: 'tiff',
-			title: ome ? 'OME-TIFF' : 'TIFF',
+			title: ome?.metadataFormat === 'ImageJ' ? 'ImageJ TIFF' : ome ? 'OME-TIFF' : 'TIFF',
 			controls: tiffControls(),
 			loading: loading || _levelSwitchPending || _tiffViewportLoadCount > 0,
 			resolution: tiffResolutionStatus(),

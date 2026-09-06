@@ -104,3 +104,11 @@ A browser-based version is also available at [images.f-kleinicke.de](https://ima
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/tiff-visualizer/issues).
 I'm open adding more file formats that can serve you.
+
+## Links
+
+- **Available on:** [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=kleinicke.tiff-visualizer) · [Open VSX](https://open-vsx.org/extension/kleinicke/tiff-visualizer)
+- **Website:** [images.f-kleinicke.de](https://images.f-kleinicke.de/)
+- **Documentation:** [Read the docs](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/index.md)
+- **Blog:** Coming soon
+- **Videos:** Coming soon

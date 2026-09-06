@@ -15,7 +15,7 @@ import { parseGeoReference, type GeoReference } from './geo-reference.js';
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
-import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml } from './ome-tiff.js';
+import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml, parseImageJMetadata } from './ome-tiff.js';
 import { loadGeoTiff } from './lazy-vendor-loader.js';
 import { tiffFormatTypeFor, tiffNeedsFloatCarrier, tiffTypeMax } from './tiff-format-utils.js';
 export { tiffFormatTypeFor, tiffNeedsFloatCarrier, tiffTypeMax } from './tiff-format-utils.js';
@@ -390,10 +390,14 @@ export class TiffProcessor {
 	}
 
 	private _setOmeXml(xml: string | undefined | null): void {
-		if (!xml) { return; }
-		this.omeXml = xml;
-		this.omeBinaryOnly = parseOmeBinaryOnly(xml);
-		this.omeMetadata = parseOmeXml(xml) || this.omeMetadata;
+		const description = xml || this._lastAllTags.find(tag => tag.tag === 270 || tag.name === 'ImageDescription')?.value || '';
+		if (!description) { return; }
+		this.omeBinaryOnly = parseOmeBinaryOnly(description);
+		const ome = parseOmeXml(description);
+		if (ome) { this.omeXml = description; this.omeMetadata = ome; return; }
+		const dimension = (id: number, name: string) => Number(this._lastAllTags.find(tag => tag.tag === id || tag.name === name)?.value);
+		this.omeMetadata = this.omeMetadata || parseImageJMetadata(description,
+			dimension(256, 'ImageWidth'), dimension(257, 'ImageLength'), this.pageCount);
 	}
 
 	/**

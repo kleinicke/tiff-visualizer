@@ -258,8 +258,12 @@ export class MouseHandler {
 			if (!this._upgradeApproximateStoredValues) {
 				// Large streamed scenes must never turn mouse movement into hidden
 				// full-resolution IO. A missing value means that the tile underneath
-				// the pointer has not painted yet; clear the old readout until it does.
-				this.vscode.postMessage({ type: 'pixelBlur' });
+				// the pointer has not painted yet. Keep the position visible without
+				// misrepresenting an old value or reporting that the pointer left.
+				this.vscode.postMessage({
+					type: 'pixelFocus',
+					value: this._composeReadout(position.x, position.y, '…'),
+				});
 				return;
 			}
 			// A visible overview value makes the picker responsive; upgrade it in

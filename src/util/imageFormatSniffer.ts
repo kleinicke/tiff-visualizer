@@ -145,13 +145,21 @@ export class ImageHeaderHttpError extends Error {
 }
 
 export async function sniffRemoteImageFormat(url: string, signal?: AbortSignal): Promise<DetectedImageFormat | null> {
+	return (await probeRemoteImage(url, signal)).format;
+}
+
+/** Check actual range behavior: Accept-Ranges alone is not reliable. */
+export async function probeRemoteImage(url: string, signal?: AbortSignal): Promise<{
+	format: DetectedImageFormat | null;
+	supportsRanges: boolean;
+}> {
 	const response = await fetch(url, {
 		signal,
 		redirect: 'follow',
 		headers: { Range: `bytes=0-${IMAGE_HEADER_PROBE_BYTES - 1}`, Accept: '*/*' },
 	});
 	if (!response.ok) { throw new ImageHeaderHttpError(response.status, response.statusText); }
-	return sniffImageFormat(await readResponsePrefix(response));
+	return { format: sniffImageFormat(await readResponsePrefix(response)), supportsRanges: response.status === 206 };
 }
 
 const FORMAT_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {

@@ -102,8 +102,22 @@
           placeholder="https://example.com/scene.tif" aria-label="Image URL">
         <button type="submit" class="web-url-submit">Open</button>
       </div>
-      <p class="web-url-note">Read straight from the host into this tab. TIFF detail streams as needed. Use ↑/↓ for URL history.</p>
+      <p class="web-url-note">Read straight from the host into this tab. TIFF detail streams when the host supports it; otherwise the file downloads. Use ↑/↓ for URL history.</p>
     </form>
+    <section class="web-examples" aria-label="Example images">
+      <strong>Try an example</strong>
+      <div class="web-example-buttons">
+        <button type="button" data-example-url="https://data.source.coop/ausantarctic/gebco/GEBCO_2026.tif">Global terrain <small>3.29 GB · streaming TIFF</small></button>
+        <button type="button" data-example-url="https://gitlab.com/api/v4/projects/scikit-image%2Fdata/repository/files/cells3d.tif/raw?ref=master">Microscopy <small>60 slices × 2 channels · 11.4 MB</small></button>
+        <button type="button" data-example-url="https://huggingface.co/datasets/yanmorona/UE4-Stereo/resolve/main/scene_1/sequence01/depth_npy/000000.npy">Stereo depth <small>Synthetic · metres · 1.23 MB</small></button>
+      </div>
+      <details class="web-example-credits">
+        <summary>Sources and licenses</summary>
+        <p>Terrain: <a href="https://doi.org/10.5285/4f68d5c7-45eb-f999-e063-7086abc036fa" target="_blank" rel="noreferrer">GEBCO Bathymetric Compilation Group 2026 — GEBCO_2026 Grid</a>, hosted as a cloud-optimized TIFF by the Australian Antarctic Division. Public domain under <a href="https://www.gebco.net/data-products/gridded-bathymetry-data" target="_blank" rel="noreferrer">GEBCO’s terms</a>. Not for navigation; no endorsement implied.</p>
+        <p>Microscopy: Allen Institute for Cell Science, distributed by <a href="https://gitlab.com/scikit-image/data" target="_blank" rel="noreferrer">scikit-image</a> under <a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noreferrer">CC0</a>.</p>
+        <p>Depth: Morona, Pinto &amp; Regner (2026), <a href="https://huggingface.co/datasets/yanmorona/UE4-Stereo" target="_blank" rel="noreferrer">UE4-Stereo</a>, <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noreferrer">CC BY 4.0</a>. Unmodified synthetic ground-truth depth accompanying stereo images; display adjustments do not change the source data.</p>
+      </details>
+    </section>
     <p class="web-local-note">Files stay on this device · <span class="web-format-hint" data-supported-formats tabindex="0">Supported formats</span></p>
   </main>
 
@@ -118,6 +132,7 @@
     <a href="https://f-kleinicke.de/datenschutz.html">Datenschutz</a>
   </nav>
   <footer class="web-status-bar" id="web-status-bar" aria-label="Image status and display controls">
+    <span class="web-status-readout" id="web-status-size">—</span>
     <button type="button" id="web-status-options" data-status-action="options" title="Show all image actions">Options</button>
     <span class="web-status-separator" aria-hidden="true"></span>
     <button type="button" id="web-status-layers" data-status-action="layers" title="Add images as layers">Layers</button>
@@ -125,9 +140,7 @@
     <button type="button" id="web-status-exposure" data-status-action="exposure">Exposure: +0.0 EV</button>
     <button type="button" id="web-status-gamma" data-status-action="gamma">γ: 2.2→2.2</button>
     <button type="button" id="web-status-normalization" data-status-action="normalization">Auto-Norm</button>
-    <button type="button" id="web-status-color-picker" data-status-action="color-picker" title="Switch pixel inspection between original and displayed values">Values: Original</button>
     <button type="button" id="web-status-zoom" data-status-action="zoom">Whole Image</button>
-    <span class="web-status-readout" id="web-status-size">—</span>
     <span class="web-status-readout web-status-bytes" id="web-status-bytes">—</span>
   </footer>
   <div class="web-control-popover" id="web-control-popover" role="dialog" aria-modal="false" aria-labelledby="web-control-title" hidden>

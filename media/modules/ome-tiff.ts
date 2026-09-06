@@ -46,6 +46,7 @@ export interface OmePlaneSource extends OmeCoordinates {
 }
 
 export interface OmeMetadata {
+	metadataFormat?: 'ImageJ';
 	xml: string;
 	creator?: string;
 	uuid?: string;
@@ -381,6 +382,26 @@ export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null 
 		return copy;
 	});
 	return images[0];
+}
+
+/** ImageJ hyperstacks store channel-fastest C/Z/T planes in TIFF IFD order. */
+export function parseImageJMetadata(description: string, width: number, height: number, pageCount: number): OmeMetadata | null {
+	if (!description.startsWith('ImageJ=')) { return null; }
+	const fields = Object.fromEntries(description.replace(/\0/g, '').split(/\r?\n/).map(line => {
+		const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)];
+	}));
+	const count = (key: string) => fields[key] === undefined ? 1 : Number(fields[key]);
+	const c = count('channels'), z = count('slices'), t = count('frames');
+	const planes = c * z * t;
+	if (![c, z, t, width, height].every(value => Number.isSafeInteger(value) && value > 0)
+		|| planes !== pageCount || Number(fields.images) !== planes) { return null; }
+	return {
+		metadataFormat: 'ImageJ', xml: '', dimensionOrder: 'XYCZT',
+		sizeX: width, sizeY: height, sizeC: c, planeSizeC: c, sizeZ: z, sizeT: t,
+		channels: Array.from({ length: c }, () => ({ name: '', samplesPerPixel: 1 })),
+		tiffData: [], expectedPlaneCount: planes,
+		coordinateToIfd: {}, ifdToCoordinate: {}, coordinateToPlane: {},
+	};
 }
 
 /** Locate the external metadata document referenced by a BinaryOnly OME block. */

@@ -396,7 +396,8 @@ body.web-app {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
+  overflow-y: auto;
   gap: 18px;
   padding: 96px clamp(20px, 6vw, 80px) 58px;
   box-sizing: border-box;
@@ -404,6 +405,11 @@ body.web-app {
 }
 
 .web-app.web-has-image .web-empty-state { display: none; }
+.web-app:not(.web-has-image) > canvas,
+.web-app:not(.web-has-image) > img,
+.web-app:not(.web-has-image) > .pyramid-scene,
+.web-app:not(.web-has-image) > .detail-patch,
+.web-app:not(.web-has-image) > .nav-overlay { display: none !important; }
 .web-status-bar { display: none; }
 .web-app.web-has-image .web-status-bar { display: flex; }
 .web-app.web-has-image .web-toolbar {
@@ -528,6 +534,27 @@ body.web-app {
   text-align: center;
 }
 
+.web-examples { width: min(680px, 100%); font-size: 13px; }
+.web-example-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.web-example-buttons button {
+  flex: 1 1 180px;
+  padding: 12px;
+  border: 1px solid var(--web-border);
+  border-radius: 8px;
+  background: var(--vscode-editor-background);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.web-example-buttons small { display: block; margin-top: 5px; color: var(--web-muted); }
+.web-example-buttons button:hover { border-color: var(--web-accent); }
+.web-example-buttons button:focus-visible { outline: 2px solid var(--web-accent); outline-offset: 2px; }
+.web-example-buttons button:disabled { opacity: 0.6; cursor: wait; }
+.web-example-credits { margin-top: 10px; color: var(--web-muted); font-size: 12px; }
+.web-example-credits summary { cursor: pointer; }
+.web-example-credits p { text-align: left; line-height: 1.5; }
+.web-example-credits a { color: inherit; text-decoration: underline; }
+
 .web-format-hint {
   color: var(--vscode-editor-foreground);
   text-decoration: underline dotted;
@@ -629,7 +656,8 @@ body.web-app {
 
 /* Zoomed images need deliberate panning. Fit-to-window images stay locked to
    the viewport so Safari does not expose page scrollbars for a few extra px. */
-.web-app.web-has-image.web-image-zoomed { overflow: auto; }
+html:has(.web-app.web-has-image.web-image-zoomed) { overflow: auto; }
+.web-app.web-has-image.web-image-zoomed { overflow: visible; }
 
 .web-app .tiff-page-overlay,
 .web-app .dataset-overlay { top: 58px; }
@@ -672,6 +700,10 @@ body.web-app {
 .web-status-bar button[aria-pressed="true"] { background: rgba(127, 171, 104, 0.18); }
 .web-status-separator { width: 1px; margin: 5px 2px; background: var(--web-border); }
 .web-status-readout { min-width: 92px; text-align: left; }
+#web-status-size {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
 .web-status-bytes { min-width: auto; color: var(--web-muted); }
 
 .web-control-popover {

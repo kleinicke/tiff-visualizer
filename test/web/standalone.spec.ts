@@ -2,6 +2,155 @@ import { expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 
+test('home opens the overview while retaining image tabs', async ({ page }) => {
+  const source = fs.readFileSync(path.resolve('test-samples/house.tif'));
+  await page.route('https://images.example/**', route => route.fulfill({ status: 200, body: source,
+    headers: { 'Content-Type': 'image/tiff', 'Access-Control-Allow-Origin': '*' } }));
+  const remote = 'https://images.example/remote.tif';
+  await page.goto('/?source=' + encodeURIComponent(remote));
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  await expect(canvas).toBeVisible();
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/house.tif'));
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await page.getByRole('link', { name: 'Scientific Image Visualizer home', exact: true }).click();
+  await expect(page.locator('#web-empty-state')).toBeVisible();
+  await expect(page.getByRole('tab')).toHaveCount(2);
+  await expect(page.locator('[role="tab"][aria-selected="true"]')).toHaveCount(0);
+  await expect(canvas).toHaveCount(0);
+  expect(new URL(page.url()).searchParams.has('source')).toBe(false);
+  await page.getByRole('tab', { name: 'house.tif', exact: true }).click();
+  await expect(canvas).toBeVisible();
+  await expect(page.locator('#web-empty-state')).toBeHidden();
+  await page.getByRole('link', { name: 'Scientific Image Visualizer home', exact: true }).click();
+  await page.getByRole('button', { name: 'Close house.tif', exact: true }).click();
+  await expect(page.locator('#web-empty-state')).toBeVisible();
+  await expect(page.getByRole('tab')).toHaveCount(1);
+  await page.getByRole('tab', { name: 'remote.tif', exact: true }).click();
+  await expect(canvas).toBeVisible();
+  expect(new URL(page.url()).searchParams.get('source')).toBe(remote);
+});
+
+test('new images reset zoom and closing the last tab clears the viewer', async ({ page }) => {
+  const source = fs.readFileSync(path.resolve('test-samples/house.tif'));
+  await page.route('https://images.example/**', route => route.fulfill({ status: 200, body: source,
+    headers: { 'Content-Type': 'image/tiff', 'Access-Control-Allow-Origin': '*' } }));
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/house.tif'));
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  await expect.poll(() => canvas.evaluate((e: HTMLCanvasElement) => e.width)).toBe(512);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 4 }, '*'));
+  await expect(page.locator('#web-status-zoom')).toHaveText('400%');
+  await page.getByRole('button', { name: 'Open URL', exact: true }).click();
+  await page.locator('#web-url-dialog-input').fill('https://images.example/new.tif');
+  await page.locator('#web-url-dialog-form').evaluate(form => (form as HTMLFormElement).requestSubmit());
+  await expect(page.getByRole('tab', { name: 'new.tif' })).toBeVisible();
+  await expect(page.locator('#web-status-zoom')).toHaveText('Whole Image');
+  await page.getByRole('button', { name: 'Close house.tif', exact: true }).click();
+  await page.getByRole('button', { name: 'Close new.tif', exact: true }).click();
+  await expect(page.locator('#web-empty-state')).toBeVisible();
+  await expect(canvas).toHaveCount(0);
+  await expect(page.locator('.pyramid-scene')).toHaveCount(0);
+  await expect(page.locator('body')).not.toHaveClass(/web-image-zoomed/);
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/house.tif'));
+  await expect.poll(() => canvas.evaluate((e: HTMLCanvasElement) => e.width)).toBe(512);
+  await expect(page.locator('#web-status-zoom')).toHaveText('Whole Image');
+});
+
+test('downloads the microscopy example when its host ignores byte ranges', async ({ page }) => {
+  const source = fs.readFileSync(process.env.TIFF_MICROSCOPY_SAMPLE || path.resolve('test-samples/multipage_description_only.tif'));
+  const requests: (string | undefined)[] = [];
+  await page.route('https://gitlab.com/api/v4/**', async route => {
+    requests.push(route.request().headers().range);
+    await route.fulfill({ status: 200, body: source,
+      headers: { 'Content-Type': 'application/octet-stream', 'Access-Control-Allow-Origin': '*', 'Accept-Ranges': 'bytes' } });
+  });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.getByRole('button', { name: /^Microscopy/ }).click();
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.nav-overlay')).toBeVisible();
+  if (process.env.TIFF_MICROSCOPY_SAMPLE) {
+    await expect(page.locator('.nav-overlay [data-axis="C"] input')).toHaveAttribute('max', '1');
+    await expect(page.locator('.nav-overlay [data-axis="Z"] input')).toHaveAttribute('max', '59');
+  }
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  const firstPlane = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());
+  const control = page.locator('.nav-overlay .dataset-axis-controls input, .nav-overlay .dataset-axis-controls select').first();
+  await control.evaluate((element: HTMLInputElement | HTMLSelectElement) => {
+    element.value = '1';
+    element.dispatchEvent(new Event(element.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+  });
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).not.toBe(firstPlane);
+  expect(requests).toEqual(['bytes=0-4095', undefined]);
+});
+
+test('keeps the active remote source in the address bar across tabs', async ({ page }) => {
+  const source = fs.readFileSync(path.resolve('test-samples/orientation_tag1.tif'));
+  await page.route('https://images.example/**', route => route.fulfill({ status: 200, body: source,
+    headers: { 'Content-Type': 'image/tiff', 'Access-Control-Allow-Origin': '*' } }));
+  const first = 'https://images.example/one.tif?part=1&band=2';
+  const second = 'https://images.example/two.tif';
+  await page.goto('/?source=' + encodeURIComponent(first), { waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('tab', { name: 'one.tif' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open URL', exact: true }).click();
+  await page.locator('#web-url-dialog-input').fill(second);
+  await page.locator('#web-url-dialog-form').evaluate(form => (form as HTMLFormElement).requestSubmit());
+  await expect.poll(() => new URL(page.url()).searchParams.get('source')).toBe(second);
+  await page.getByRole('tab', { name: 'one.tif' }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('source')).toBe(first);
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/orientation_tag2.tif'));
+  await expect.poll(() => new URL(page.url()).searchParams.has('source')).toBe(false);
+  await page.getByRole('tab', { name: 'two.tif' }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('source')).toBe(second);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('tab', { name: 'two.tif' })).toBeVisible();
+});
+
+test('fits the viewport and preserves the image center through wheel and Safari gestures', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/house.tif'));
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  await expect(canvas).toBeVisible();
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.width)).toBe(512);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const fit = await canvas.evaluate((element: HTMLCanvasElement) => {
+    const rect = element.getBoundingClientRect();
+    return { top: rect.top, bottom: rect.bottom, height: innerHeight, ratio: rect.width / rect.height,
+      naturalRatio: element.width / element.height };
+  });
+  expect(fit.top).toBeGreaterThanOrEqual(58);
+  expect(fit.bottom).toBeLessThanOrEqual(fit.height - 34);
+  expect(fit.ratio).toBeCloseTo(fit.naturalRatio, 2);
+  await page.evaluate(() => window.postMessage({ type: 'setScale', scale: 4 }, '*'));
+  await expect(canvas).not.toHaveClass(/scale-to-fit/);
+  const center = () => canvas.evaluate((element: HTMLCanvasElement) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(document.body);
+    const top = parseFloat(style.paddingTop), bottom = parseFloat(style.paddingBottom);
+    return { x: (document.documentElement.clientWidth / 2 - rect.left) * element.width / rect.width,
+      y: ((document.documentElement.clientHeight + top - bottom) / 2 - rect.top) * element.height / rect.height };
+  });
+  const before = await center();
+  await canvas.dispatchEvent('wheel', { deltaY: -30, ctrlKey: true });
+  const after = await center();
+  expect(Math.abs(after.x - before.x)).toBeLessThan(1);
+  expect(Math.abs(after.y - before.y)).toBeLessThan(1);
+  await canvas.evaluate(element => {
+    for (const [type, scale] of [['gesturestart', 1], ['gesturechange', 1.2], ['gestureend', 1.2]] as const) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'scale', { value: scale });
+      element.dispatchEvent(event);
+    }
+  });
+  const gesture = await center();
+  expect(Math.abs(gesture.x - after.x)).toBeLessThan(1);
+  expect(Math.abs(gesture.y - after.y)).toBeLessThan(1);
+  const beforeOut = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  await canvas.dispatchEvent('wheel', { deltaY: 100, ctrlKey: true });
+  const afterOut = await canvas.evaluate(element => element.getBoundingClientRect().width);
+  expect(afterOut / beforeOut).toBeCloseTo(Math.exp(-1), 2);
+});
+
 test('serves the standalone scientific image viewer', async ({ page }) => {
   await page.goto('/');
 
@@ -116,6 +265,8 @@ test('keeps display menus transient and lets explicit zoom sizing win', async ({
 
   const canvas = page.locator('body > canvas:not(.measure-overlay)');
   await expect(canvas).toBeVisible({ timeout: 30_000 });
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.width)).toBeGreaterThan(1);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
   await page.locator('#web-status-normalization').click();
   await expect(page.locator('#web-control-popover')).toBeVisible();
@@ -125,6 +276,21 @@ test('keeps display menus transient and lets explicit zoom sizing win', async ({
   await expect(page.locator('#web-control-popover')).toBeVisible();
   await page.locator('#web-status-size').click();
   await expect(page.locator('#web-control-popover')).toBeHidden();
+
+  const options = page.locator('#web-status-options');
+  const menu = page.locator('.custom-context-menu');
+  await options.click();
+  await expect(menu).toBeVisible();
+  await options.click();
+  await expect(menu).toHaveCount(0);
+  await options.click();
+  await expect(menu).toBeVisible();
+  await page.locator('#web-status-size').click();
+  await expect(menu).toHaveCount(0);
+  const readoutBox = (await page.locator('#web-status-size').boundingBox())!;
+  const optionsBox = (await options.boundingBox())!;
+  expect(readoutBox.x + readoutBox.width).toBeCloseTo(optionsBox.x, 1);
+  expect(readoutBox.x).toBeGreaterThan(100);
 
   await page.locator('#web-status-zoom').click();
   await page.locator('#web-control-popover select[name="scale"]').selectOption('2');

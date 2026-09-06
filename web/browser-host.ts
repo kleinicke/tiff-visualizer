@@ -10,12 +10,14 @@ import {
   IMAGE_HEADER_PROBE_BYTES,
   ImageHeaderHttpError,
   sniffImageFormat,
-  sniffRemoteImageFormat,
+  probeRemoteImage,
+  filenameForDetectedFormat,
 } from '../src/util/imageFormatSniffer.js';
 
 type ViewerMessage = { type: string; [key: string]: any };
 
 interface BrowserFileEntry {
+  sourceUrl?: string;
   name: string;
   size: number | null;
   file?: File;
@@ -58,6 +60,7 @@ let files: BrowserFileEntry[] = [];
 let urlHistory = normalizeUrlHistory(readJson(STORAGE_URL_HISTORY));
 const urlHistoryCursor = new UrlHistoryCursor(urlHistory);
 let fileIndex = 0;
+let showingOverview = true;
 let currentFormat = '';
 let copiedPosition: any = null;
 let state: any = readJson(STORAGE_STATE) || {};
@@ -242,10 +245,10 @@ function syncStatusBar(): void {
   const normalization = document.getElementById('web-status-normalization');
   const gamma = document.getElementById('web-status-gamma');
   const exposure = document.getElementById('web-status-exposure');
-  const colorPicker = document.getElementById('web-status-color-picker');
   const layers = document.getElementById('web-status-layers');
   const pointCloud = document.querySelector('[data-web-point-cloud]') as HTMLButtonElement | null;
-  if (size) size.textContent = currentPixel || currentSize || '—';
+  const readout = currentPixel || currentSize || '—';
+  if (size && size.textContent !== readout) size.textContent = readout;
   if (bytes) {
     const entry = files[fileIndex];
     bytes.textContent = entry ? (entry.size === null ? 'Remote' : formatBytes(entry.size)) : '—';
@@ -260,10 +263,6 @@ function syncStatusBar(): void {
     const value = currentSettings.brightness.offset;
     exposure.textContent = `Exposure: ${value >= 0 ? '+' : ''}${value.toFixed(1)} EV`;
     exposure.hidden = !currentSettings.normalization.gammaMode;
-  }
-  if (colorPicker) {
-    colorPicker.textContent = currentSettings.colorPickerShowModified ? 'Values: Modified' : 'Values: Original';
-    colorPicker.setAttribute('aria-pressed', String(!!currentSettings.colorPickerShowModified));
   }
   if (layers) layers.setAttribute('aria-pressed', String(layersActive));
   if (pointCloud) {
@@ -513,7 +512,7 @@ function renderImageTabs(): void {
   files.forEach((entry, index) => {
     const wrapper = document.createElement('div');
     wrapper.className = 'web-image-tab';
-    wrapper.dataset.active = String(index === fileIndex);
+    wrapper.dataset.active = String(!showingOverview && index === fileIndex);
 
     const select = document.createElement('button');
     select.type = 'button';
@@ -522,10 +521,10 @@ function renderImageTabs(): void {
     select.textContent = entry.name;
     select.title = entry.size === null ? `${entry.name} · remote` : `${entry.name} · ${formatBytes(entry.size)}`;
     select.setAttribute('role', 'tab');
-    select.setAttribute('aria-selected', String(index === fileIndex));
+    select.setAttribute('aria-selected', String(!showingOverview && index === fileIndex));
     select.tabIndex = index === fileIndex ? 0 : -1;
     select.addEventListener('click', () => {
-      if (index !== fileIndex) switchTo(index);
+      if (showingOverview || index !== fileIndex) switchTo(index);
     });
     wrapper.appendChild(select);
 
@@ -550,21 +549,14 @@ function closeImageAt(index: number, restoreFocus = false): void {
   if (removed.ownsObjectUrl) { URL.revokeObjectURL(removed.url); }
   if (files.length === 0) {
     fileIndex = 0;
-    currentDataset = null;
-    currentDatasetCoordinates = {};
-    currentFormatInfo = null;
-    currentStats = null;
-    currentSize = '';
-    currentPixel = '';
-    document.body.classList.remove('web-has-image', 'web-image-zoomed');
-    sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
-    renderImageTabs();
-    updateCollectionOverlay();
-    syncStatusBar();
+    showOverview();
     return;
   }
   if (index < fileIndex) fileIndex--;
-  if (closingActiveImage) {
+  if (showingOverview) {
+    fileIndex = Math.min(fileIndex, files.length - 1);
+    renderImageTabs();
+  } else if (closingActiveImage) {
     switchTo(Math.min(index, files.length - 1));
   } else {
     renderImageTabs();
@@ -576,10 +568,32 @@ function closeImageAt(index: number, restoreFocus = false): void {
   }
 }
 
+function showOverview(): void {
+  showingOverview = true;
+  currentDataset = null;
+  currentDatasetCoordinates = {};
+  currentFormatInfo = null;
+  currentStats = null;
+  currentSize = '';
+  currentPixel = '';
+  currentZoom = 'fit';
+  closeControlPopover();
+  document.body.classList.remove('web-has-image', 'web-image-zoomed');
+  updateSourceUrl();
+  sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
+  sendToViewer({ type: 'clearImage' });
+  renderImageTabs();
+  updateCollectionOverlay();
+  syncStatusBar();
+}
+
 function switchTo(index: number, preserveDataset = false, resetView = false): void {
   if (files.length === 0) return;
+  resetView ||= showingOverview;
+  showingOverview = false;
   fileIndex = (index + files.length) % files.length;
   const entry = files[fileIndex];
+  updateSourceUrl(entry.sourceUrl);
   if (!preserveDataset && currentDataset) {
     currentDataset = null;
     currentDatasetCoordinates = {};
@@ -600,7 +614,15 @@ function switchTo(index: number, preserveDataset = false, resetView = false): vo
   syncStatusBar();
 }
 
-async function openFiles(selected: File[]): Promise<void> {
+function updateSourceUrl(source?: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('url');
+  if (source) url.searchParams.set('source', source);
+  else url.searchParams.delete('source');
+  window.history.replaceState(window.history.state, '', url);
+}
+
+async function openFiles(selected: File[], sourceUrl?: string): Promise<void> {
   const nextFiles = selected.filter(file => file.size > 0);
   if (nextFiles.length === 0) {
     showToast('No readable files were selected.');
@@ -620,6 +642,7 @@ async function openFiles(selected: File[]): Promise<void> {
       size: file.size,
       url: URL.createObjectURL(file),
       resourceUri: file.name,
+      sourceUrl,
       ownsObjectUrl: true,
       formatHint: detected[index],
     })));
@@ -635,8 +658,9 @@ async function openFiles(selected: File[]): Promise<void> {
 /**
  * Open an image straight from an https:// link.
  *
- * TIFF stays as a remote URL so the shared range-backed path can read metadata,
- * an overview, and then only visible detail tiles. Decoders for other formats
+ * TIFF stays as a remote URL when its host supports byte ranges, so the shared
+ * range-backed path reads metadata, an overview, then visible detail tiles.
+ * TIFF hosts returning full responses and decoders for other formats
  * still need one contiguous buffer, so those URLs become a File and follow the
  * same path as a dropped local image.
  *
@@ -673,11 +697,14 @@ async function openUrl(rawUrl: string): Promise<void> {
   const visibleInput = document.getElementById('web-url-input') as HTMLInputElement | null;
   if (visibleInput) { visibleInput.value = canonicalUrl; }
 
-  let detected: Awaited<ReturnType<typeof sniffRemoteImageFormat>> = null;
+  let detected: Awaited<ReturnType<typeof probeRemoteImage>>['format'] = null;
+  let supportsRanges: boolean | undefined;
   const probeController = new AbortController();
   const probeTimeout = window.setTimeout(() => probeController.abort(), 5_000);
   try {
-    detected = await sniffRemoteImageFormat(canonicalUrl, probeController.signal);
+    const probe = await probeRemoteImage(canonicalUrl, probeController.signal);
+    detected = probe.format;
+    supportsRanges = probe.supportsRanges;
   } catch (error) {
     // A rejected range can still be readable through the normal loader.
     // Other HTTP failures must reach the user before TIFF routing loses the status.
@@ -691,7 +718,7 @@ async function openUrl(rawUrl: string): Promise<void> {
   }
 
   const suffixSaysTiff = /\.(?:tif|tiff|tf2|tf8|btf)$/i.test(parsed.pathname);
-  if (detected?.hint === 'tiff' || (!detected && suffixSaysTiff)) {
+  if (supportsRanges !== false && (detected?.hint === 'tiff' || (!detected && suffixSaysTiff))) {
     if (currentDataset) sendToViewer({ type: 'setDataset', manifest: null, seriesIndex: 0, coordinates: {} });
     const firstNewIndex = files.length;
     files.push({
@@ -699,6 +726,7 @@ async function openUrl(rawUrl: string): Promise<void> {
       size: null,
       url: canonicalUrl,
       resourceUri: canonicalUrl,
+      sourceUrl: canonicalUrl,
       ownsObjectUrl: false,
       formatHint: detected?.hint || 'tiff',
     });
@@ -725,7 +753,8 @@ async function openUrl(rawUrl: string): Promise<void> {
       showToast(`${name} is empty.`);
       return;
     }
-    await openFiles([new File([blob], name, { type: blob.type || 'application/octet-stream' })]);
+    const downloadName = detected ? filenameForDetectedFormat(name, detected) : name;
+    await openFiles([new File([blob], downloadName, { type: blob.type || 'application/octet-stream' })], canonicalUrl);
   } catch (error) {
     // A cross-origin refusal reaches script as an opaque TypeError with no
     // detail — the browser deliberately withholds the reason — so this message
@@ -1060,6 +1089,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const previousImageTabs = document.getElementById('web-image-tabs-previous') as HTMLButtonElement;
   const nextImageTabs = document.getElementById('web-image-tabs-next') as HTMLButtonElement;
 
+  document.querySelector<HTMLAnchorElement>('.web-brand')?.addEventListener('click', event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    moreMenu.hidden = true;
+    moreButton.setAttribute('aria-expanded', 'false');
+    showOverview();
+  });
+
   document.querySelectorAll('[data-web-action="open"]').forEach(button => {
     button.addEventListener('click', () => {
       delete fileInput.dataset.mode;
@@ -1067,6 +1104,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
   const urlForm = document.getElementById('web-url-form') as HTMLFormElement | null;
+  document.querySelectorAll<HTMLButtonElement>('[data-example-url]').forEach(button => {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try { await openUrl(button.dataset.exampleUrl || ''); }
+      finally { button.disabled = false; }
+    });
+  });
   const urlInput = document.getElementById('web-url-input') as HTMLInputElement | null;
   const urlDialog = document.getElementById('web-url-dialog') as HTMLDialogElement | null;
   const urlDialogForm = document.getElementById('web-url-dialog-form') as HTMLFormElement | null;
@@ -1101,7 +1145,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ?url=… opens a link directly, which is what makes a viewer address
   // shareable: a catalogue entry, a chat message, a bookmark.
-  const requested = new URLSearchParams(window.location.search).get('url');
+  const query = new URLSearchParams(window.location.search);
+  const requested = query.get('source') || query.get('url');
   if (requested) {
     if (urlInput) { urlInput.value = requested; }
     void openUrl(requested);
@@ -1116,10 +1161,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (action === 'normalization' || action === 'gamma' || action === 'exposure' || action === 'zoom') {
         openControlPopover(action);
       } else if (action === 'options') {
+        const menu = document.querySelector('.custom-context-menu');
+        if (menu) {
+          menu.remove();
+          return;
+        }
         const anchor = (button as HTMLElement).getBoundingClientRect();
         sendToViewer({ type: 'showContextMenu', x: anchor.left, y: anchor.top });
-      } else if (action === 'color-picker') {
-        executeCommand('tiffVisualizer.toggleColorPickerMode');
       } else if (action === 'layers') {
         executeCommand('tiffVisualizer.toggleLayers');
       }
