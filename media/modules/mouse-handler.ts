@@ -558,6 +558,11 @@ export class MouseHandler {
 			const tiffColor = this.tiffProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
 			if (tiffColor) {
 				if (showModified) {
+					// Alpha and unspecified extra samples are not colour values.
+					const labeledExtra = /^(\S+) (α|C2):(\S+)$/.exec(tiffColor);
+					if (labeledExtra) {
+						return `${this._applyGammaBrightness(Number(labeledExtra[1])).toFixed(6)} ${labeledExtra[2]}:${labeledExtra[3]}`;
+					}
 					// Apply gamma and brightness to TIFF values
 					const values = this._parseTiffColor(tiffColor);
 					if (values) {

@@ -93,6 +93,16 @@ async function main() {
 	assert.strictEqual(messages[messages.length - 1].value, '20000x20000 123.5');
 	console.log('✅ Generated-preview picker upgrades to the exact original pixel');
 	console.log('✅ Pyramid picker is immediate from resident tiles and hover performs no IO');
+	const modified = new MouseHandler({ isMac: false, settings: {
+		normalization: { gammaMode: true }, colorPickerShowModified: true,
+		gamma: { in: 1, out: 1 }, brightness: { offset: 1 },
+	} }, { postMessage() {} }, null);
+	for (const label of ['α', 'C2']) {
+		modified.tiffProcessor = { getColorAtPixel: () => `0.5 ${label}:128` };
+		assert.strictEqual(modified._getColorAtPixel(0, 0, 1, 1), `1.000000 ${label}:128`,
+			'exposure changes intensity but preserves alpha/extra samples and their labels');
+	}
+
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

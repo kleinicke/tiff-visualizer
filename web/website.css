@@ -782,3 +782,14 @@ html:has(.web-app.web-has-image.web-image-zoomed) { overflow: auto; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
 }
+
+/* JetBrains owns file tabs; retain only the viewer contextual controls. */
+.jetbrains-host .web-brand,
+.jetbrains-host .web-actions,
+.jetbrains-host .web-legal-nav { display: none !important; }
+.jetbrains-host .web-toolbar { display: none !important; }
+.jetbrains-host .web-status-bar { justify-content: flex-start; }
+.jetbrains-host .web-status-bar > :first-child { margin-left: auto; }
+.jetbrains-host .web-app.web-has-image { padding-top: 0; }
+.jetbrains-host .web-app.web-has-image > canvas.scale-to-fit,
+.jetbrains-host .web-app.web-has-image > img.scale-to-fit { max-height: calc(100vh - 40px) !important; }

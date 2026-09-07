@@ -107,8 +107,11 @@ I'm open adding more file formats that can serve you.
 
 ## Links
 
-- **Available on:** [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=kleinicke.tiff-visualizer) · [Open VSX](https://open-vsx.org/extension/kleinicke/tiff-visualizer)
+- **VS Code Marketplace:** [Install extension](https://marketplace.visualstudio.com/items?itemName=kleinicke.tiff-visualizer)
+- **Open VSX:** [Install extension](https://open-vsx.org/extension/kleinicke/tiff-visualizer)
 - **Website:** [images.f-kleinicke.de](https://images.f-kleinicke.de/)
 - **Documentation:** [Read the docs](https://github.com/kleinicke/tiff-visualizer/blob/main/docs/index.md)
+- **Standalone app:** Coming soon
+- **More platforms:** Coming soon
 - **Blog:** Coming soon
 - **Videos:** Coming soon

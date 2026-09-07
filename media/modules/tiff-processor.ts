@@ -2096,9 +2096,10 @@ export class TiffProcessor {
 			}
 
 			return format === 3 ? value.toPrecision(4) : value.toString();
-		} else if (samples === 2) { // Gray + alpha
+		} else if (samples === 2) { // Gray plus alpha or an unspecified extra sample
 			const formatSample = (value: number) =>
 				format === 3 ? value.toPrecision(4) : value.toString();
+			const extraLabel = this._extraSamplesAreAlpha === true ? "α" : "C2";
 			let gray, alpha;
 			if (planarConfig === 2) { // Planar data
 				const planeSize = naturalWidth * naturalHeight;
@@ -2111,10 +2112,10 @@ export class TiffProcessor {
 
 			if (settings.normalizedFloatMode && format !== 3) {
 				const maxValue = tiffTypeMax(format, bitsPerSample);
-				return `${(gray / maxValue).toPrecision(4)} ${(alpha / maxValue).toPrecision(4)}`;
+				return `${(gray / maxValue).toPrecision(4)} ${extraLabel}:${(alpha / maxValue).toPrecision(4)}`;
 			}
 
-			return `${formatSample(gray)} ${formatSample(alpha)}`;
+			return `${formatSample(gray)} ${extraLabel}:${formatSample(alpha)}`;
 		} else if (samples >= 3) {
 			// Integers stay plain integer strings; zero-padding is only safe for
 			// unsigned values (padStart would mangle a negative like -5 to "0-5").

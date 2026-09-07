@@ -1,0 +1,1 @@
+rootProject.name = "scientific-visualizers"

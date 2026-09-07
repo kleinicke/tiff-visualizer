@@ -1,0 +1,14 @@
+<idea-plugin>
+  <id>de.kleinicke.scientific-visualizers</id>
+  <name>Scientific Image and 3D Visualizers</name>
+  <vendor url="https://f-kleinicke.de">Florian Kleinicke</vendor>
+  <description>Development preview: inspect local scientific images, point clouds and meshes in editor tabs using the Scientific Image Visualizer and 3D Visualizer engines.</description>
+  <depends>com.intellij.modules.platform</depends>
+  <extensions defaultExtensionNs="com.intellij">
+    <!-- generated file types -->
+    <fileType name="Scientific Image" implementationClass="de.kleinicke.visualizer.ScientificImageFileType" fieldName="INSTANCE" extensions="af;afphoto;btf;cdf;czi;dcm;dicom;exr;fit;fits;fts;hdp;hdr;j2c;j2k;jp2;jpc;jpf;jpx;jxl;jxr;kra;lif;nc;nd2;npy;npz;ora;pbm;pfm;pgm;ppm;psb;psd;sdt;tf2;tf8;tga;wdp;xcf"/>
+    <fileType name="PLY" implementationClass="de.kleinicke.visualizer.PlyFileType" fieldName="INSTANCE" extensions="e57;glb;gltf;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;stl;x3a;x3r;xyz;xyzn;xyzrgb"/>
+    <!-- end generated file types -->
+    <fileEditorProvider implementation="de.kleinicke.visualizer.VisualizerEditorProvider"/>
+  </extensions>
+</idea-plugin>

@@ -2600,6 +2600,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		_pendingZoomState = null;
 		_pendingZoomStateExplicit = false;
 		finishSeamlessImageTransition();
+		// Dimensions belong to the committed image, independently of deferred
+		// analysis/paint bookkeeping. Keep an idle readout even on that first load.
+		vscode.postMessage({ type: 'size', value: `${sizeWidth}x${sizeHeight}` });
 
 		// Restore overlay counter from loading state — but only if no deferred render is still pending.
 		// Deferred renders (EXR, NPY, TIFF with per-format settings, etc.) call finalizeImageSetup
@@ -2653,12 +2656,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				if (!analysisNeededForCommittedFrame) {
 					invalidateMeasurementForNewImage();
 				}
-				// Status-bar dimensions, metadata/histogram refresh, and opening the
+				// Metadata/histogram refresh and opening the
 				// dedicated layer controls do not affect the committed base frame.
-				vscode.postMessage({
-					type: 'size',
-					value: `${sizeWidth}x${sizeHeight}`,
-				});
 				updateHistogramData();
 				if (settingsManager.settings.surfaceMode === 'layers' && !_layerSurfaceShown &&
 					!layeredPreviewProcessor.hasDeferredLayersPending()) {

@@ -1,3 +1,4 @@
+import { installEmbeddedImageHost, notifyEmbeddedImageHost } from './embedded-host.js';
 import { setupAppInstall } from './app-install.js';
 import {
   createDicomFrameDataset,
@@ -270,6 +271,7 @@ function syncStatusBar(): void {
     pointCloud.hidden = !files[fileIndex] || !POINT_CLOUD_FORMATS.has(currentFormatInfo?.formatType || '');
   }
   document.body.classList.toggle('web-image-zoomed', currentZoom !== 'fit');
+  notifyEmbeddedImageHost();
 }
 
 async function openCurrentAsPointCloud(): Promise<void> {
@@ -1287,4 +1289,40 @@ document.addEventListener('DOMContentLoaded', () => {
     openFiles(Array.from(event.dataTransfer?.files || []));
   });
   syncStatusBar();
+});
+
+
+// Native IDE controls share the browser host's settings and command semantics.
+installEmbeddedImageHost({
+  snapshot: () => ({
+    ready: !!files[fileIndex],
+    readout: [currentPixel || currentSize, currentZoom === 'fit' ? 'Fit' : `${Math.round(currentZoom * 100)}%`, document.getElementById('web-status-bytes')?.textContent].filter(Boolean).join('  |  '),
+    normalization: currentSettings.normalization,
+    gamma: currentSettings.gamma,
+    exposure: currentSettings.brightness.offset,
+  }),
+  adjust(name, values) {
+    if (!values.every(Number.isFinite)) return;
+    if (name === 'gamma' && values.length === 2 && values.every(v => v > 0)) {
+      currentSettings.gamma = { in: values[0], out: values[1] };
+      currentSettings.normalization.autoNormalize = false;
+      currentSettings.normalization.gammaMode = true;
+    } else if (name === 'exposure' && values.length === 1 && Math.abs(values[0]) <= 16) {
+      currentSettings.brightness = { offset: values[0] };
+      currentSettings.normalization.autoNormalize = false;
+      currentSettings.normalization.gammaMode = true;
+    } else if (name === 'range' && values.length === 2 && values[0] < values[1]) {
+      currentSettings.normalization = { min: values[0], max: values[1], autoNormalize: false, gammaMode: false };
+    } else if (name === 'auto') {
+      currentSettings.normalization.autoNormalize = true;
+      currentSettings.normalization.gammaMode = false;
+    } else return;
+    sendCurrentSettings('embedded-controls');
+  },
+  command(name) {
+    if (name === 'fit') sendToViewer({ type: 'setScale', scale: 'fit' });
+    else if (name === 'zoomIn' || name === 'zoomOut') sendToViewer({ type: name });
+    else executeCommand(`tiffVisualizer.${name}`);
+  },
+  theme: applyTheme,
 });

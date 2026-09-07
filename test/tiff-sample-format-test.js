@@ -557,6 +557,18 @@ async function main() {
 		console.log('✅ Scientific band selection: pixels, per-band ranges, detail tiles, and colour exclusions');
 	}
 
+	// Do not present the second sample as an unexplained extra intensity.
+	{
+		const p = makeProcessor(TiffProcessor, autoNormalizeSettings);
+		p.rawTiffData = { ifd: { t277: 2, t262: 1, t258: 8, t339: 1, t284: 1 }, data: new Uint8Array([205, 255]) };
+		p._extraSamplesAreAlpha = undefined;
+		assert.strictEqual(p.getColorAtPixel(0, 0, 1, 1), '205 C2:255');
+		p._extraSamplesAreAlpha = true;
+		assert.strictEqual(p.getColorAtPixel(0, 0, 1, 1), '205 α:255');
+		p.rawTiffData.data[1] = 128;
+		assert.strictEqual(p.getColorAtPixel(0, 0, 1, 1), '205 α:128');
+		assert.deepStrictEqual(Array.from(p.rawTiffData.data), [205, 128]);
+	}
 	console.log('\n🎉 All TIFF sample-format tests passed.\n');
 }
 

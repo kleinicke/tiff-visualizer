@@ -282,7 +282,9 @@ export class ZoomController {
 			return;
 		}
 
-		const isScrollWheelKeyPressed = this.settingsManager.isMac ? altPressed : ctrlPressed;
+		// Embedded IDE controls can receive the keydown before focus reaches the
+		// image. WheelEvent carries the modifier even when that keydown was missed.
+		const isScrollWheelKeyPressed = this.settingsManager.isMac ? (e.altKey || altPressed) : (e.ctrlKey || ctrlPressed);
 		if (!isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
 			return;
 		}
