@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const NORMALIZATION_RANGE_COMMAND_ID = 'tiffVisualizer.setNormalizationRange';
 
 export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 
@@ -24,7 +23,7 @@ export class NormalizationStatusBarEntry extends PreviewStatusBarEntry {
 			vscode.StatusBarAlignment.Right,
 			101
 		);
-		this.entry.command = NORMALIZATION_RANGE_COMMAND_ID;
+		this.entry.command = { command: 'tiffVisualizer.focusDisplay', title: 'Open display controls', arguments: ['normalization'] };
 	}
 
 	public show(autoNormalize?: boolean, gammaMode?: boolean) {

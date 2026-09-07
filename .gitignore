@@ -56,3 +56,6 @@ media/comparisonPanel.bundle.js.map
 
 # Output of `npm run benchmark:vscode`
 benchmark-vscode-result.json
+
+media/imagePreview.bundle.css
+media/imagePreview.bundle.css.map

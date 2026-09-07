@@ -1,3 +1,4 @@
+import { applyDisplayEdit } from '../shared/display-settings.js';
 import { installEmbeddedImageHost, notifyEmbeddedImageHost } from './embedded-host.js';
 import { setupAppInstall } from './app-install.js';
 import {
@@ -81,7 +82,7 @@ let currentDatasetCoordinates: Record<string, number> = {};
 let layersActive = false;
 const loadingLog: string[] = [];
 let loadingLogArmed = false;
-type ControlPopoverKind = 'normalization' | 'gamma' | 'exposure' | 'zoom';
+type ControlPopoverKind = 'zoom';
 let activeControlPopover: ControlPopoverKind | null = null;
 
 function baseSettings(): ViewerSettings {
@@ -373,92 +374,19 @@ function openControlPopover(kind: ControlPopoverKind): void {
   const form = document.createElement('form');
   form.className = 'web-control-form';
 
-  if (kind === 'normalization') {
-    title.textContent = 'Image normalization';
-    const mode = currentSettings.normalization.autoNormalize ? 'auto' : currentSettings.normalization.gammaMode ? 'gamma' : 'manual';
-    const isSingleChannelInteger = (currentFormatInfo?.samplesPerPixel ?? 1) === 1 && currentFormatInfo?.sampleFormat !== 3;
-    form.innerHTML = `
-      <fieldset>
-        <legend>Mode</legend>
-        <label class="web-radio"><input type="radio" name="mode" value="auto" ${mode === 'auto' ? 'checked' : ''}><span>Auto-normalize to the image minimum and maximum</span></label>
-        <label class="web-radio"><input type="radio" name="mode" value="gamma" ${mode === 'gamma' ? 'checked' : ''}><span>Gamma and exposure mode using the complete sample range</span></label>
-        <label class="web-radio"><input type="radio" name="mode" value="manual" ${mode === 'manual' ? 'checked' : ''}><span>Manual display range</span></label>
-      </fieldset>
-      <label>Minimum <input name="minimum" type="number" step="any" value="${currentSettings.normalization.min}"></label>
-      <label>Maximum <input name="maximum" type="number" step="any" value="${currentSettings.normalization.max}"></label>
-      ${isSingleChannelInteger ? `<label class="web-radio"><input name="normalizedFloat" type="checkbox" ${currentSettings.normalizedFloatMode ? 'checked' : ''}><span>Show unsigned integer values normalized to 0–1</span></label>` : ''}
-      <p class="web-control-note">Raw pixel values are preserved. These settings only change how the image is displayed.</p>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      const data = new FormData(form);
-      const selectedMode = String(data.get('mode') || 'auto');
-      const minimum = Number(data.get('minimum'));
-      const maximum = Number(data.get('maximum'));
-      if (selectedMode === 'manual' && (!Number.isFinite(minimum) || !Number.isFinite(maximum) || maximum <= minimum)) {
-        showToast('The maximum display value must be greater than the minimum.');
-        return;
-      }
-      currentSettings.normalization = {
-        min: Number.isFinite(minimum) ? minimum : currentSettings.normalization.min,
-        max: Number.isFinite(maximum) ? maximum : currentSettings.normalization.max,
-        autoNormalize: selectedMode === 'auto',
-        gammaMode: selectedMode === 'gamma',
-      };
-      if (isSingleChannelInteger) currentSettings.normalizedFloatMode = data.get('normalizedFloat') === 'on';
-      sendCurrentSettings('browser-normalization');
-      closeControlPopover();
-    });
-  } else if (kind === 'gamma') {
-    title.textContent = 'Gamma correction';
-    form.innerHTML = `
-      <label>Source gamma <input name="gammaIn" type="number" min="0" step="any" value="${currentSettings.gamma.in}"></label>
-      <label>Target gamma <input name="gammaOut" type="number" min="0" step="any" value="${currentSettings.gamma.out}"></label>
-      <p class="web-control-note">2.2 is typical display gamma; 1.0 is linear.</p>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      const data = new FormData(form);
-      const gammaIn = Number(data.get('gammaIn'));
-      const gammaOut = Number(data.get('gammaOut'));
-      if (!(gammaIn > 0) || !(gammaOut > 0)) { showToast('Gamma values must be greater than zero.'); return; }
-      currentSettings.gamma = { in: gammaIn, out: gammaOut };
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
-      sendCurrentSettings('browser-gamma');
-      closeControlPopover();
-    });
-  } else if (kind === 'exposure') {
-    title.textContent = 'Exposure';
-    form.innerHTML = `
-      <label>Exposure stops <input name="exposure" type="number" min="-16" max="16" step="0.1" value="${currentSettings.brightness.offset}"></label>
-      <p class="web-control-note">+1 EV doubles linear brightness; −1 EV halves it.</p>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      const exposure = Number(new FormData(form).get('exposure'));
-      if (!Number.isFinite(exposure)) { showToast('Enter a valid exposure value.'); return; }
-      currentSettings.brightness = { offset: exposure };
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
-      sendCurrentSettings('browser-exposure');
-      closeControlPopover();
-    });
-  } else {
-    title.textContent = 'Zoom';
-    form.innerHTML = `
-      <label>Scale <select name="scale">
-        <option value="fit" ${currentZoom === 'fit' ? 'selected' : ''}>Whole image</option>
-        ${[0.1, 0.2, 0.5, 1, 2, 5, 10].map(scale => `<option value="${scale}" ${currentZoom === scale ? 'selected' : ''}>${scale * 100}%</option>`).join('')}
-      </select></label>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      const raw = String(new FormData(form).get('scale') || 'fit');
-      sendToViewer({ type: 'setScale', scale: raw === 'fit' ? 'fit' : Number(raw) });
-      closeControlPopover();
-    });
-  }
+  title.textContent = 'Zoom';
+  form.innerHTML = `
+    <label>Scale <select name="scale">
+      <option value="fit" ${currentZoom === 'fit' ? 'selected' : ''}>Whole image</option>
+      ${[0.1, 0.2, 0.5, 1, 2, 5, 10].map(scale => `<option value="${scale}" ${currentZoom === scale ? 'selected' : ''}>${scale * 100}%</option>`).join('')}
+    </select></label>
+    <button class="web-control-submit" type="submit">Apply</button>`;
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const raw = String(new FormData(form).get('scale') || 'fit');
+    sendToViewer({ type: 'setScale', scale: raw === 'fit' ? 'fit' : Number(raw) });
+    closeControlPopover();
+  });
   content.appendChild(form);
   popover.hidden = false;
   (form.querySelector('input, select') as HTMLElement | null)?.focus();
@@ -866,6 +794,7 @@ function handleFormatInfo(message: ViewerMessage): void {
 function executeCommand(command: string): void {
   const directMessages: Record<string, ViewerMessage> = {
     'tiffVisualizer.copyImage': { type: 'copyImage' },
+    'tiffVisualizer.resetZoom': { type: 'setScale', scale: 'fit' },
     'tiffVisualizer.pastePosition': { type: 'pastePosition', state: copiedPosition },
     'tiffVisualizer.toggleHistogram': { type: 'toggleHistogram' },
     'tiffVisualizer.toggleChannels': { type: 'toggleChannels' },
@@ -943,6 +872,11 @@ function executeCommand(command: string): void {
 
 function handleViewerMessage(message: ViewerMessage): void {
   switch (message.type) {
+    case 'editDisplaySettings': {
+      const next = applyDisplayEdit(currentSettings, message.edit);
+      if (next) { Object.assign(currentSettings, next); sendCurrentSettings('inspector'); }
+      break;
+    }
     case 'get-initial-data':
       sendToViewer({ type: 'restoreHistogramState', isVisible: false, scaleMode: 'sqrt' });
       updateCollectionOverlay();
@@ -1162,7 +1096,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-status-action]').forEach(button => {
     button.addEventListener('click', () => {
       const action = (button as HTMLElement).dataset.statusAction;
-      if (action === 'normalization' || action === 'gamma' || action === 'exposure' || action === 'zoom') {
+      if (action === 'normalization' || action === 'gamma' || action === 'exposure') {
+        sendToViewer({ type: 'focusImageInspector', control: action });
+      } else if (action === 'zoom') {
         openControlPopover(action);
       } else if (action === 'options') {
         const menu = document.querySelector('.custom-context-menu');
@@ -1342,7 +1278,9 @@ installEmbeddedImageHost({
     else executeCommand(`tiffVisualizer.${name}`);
   },
   statusAction(name) {
-    if (name === 'normalization' || name === 'gamma' || name === 'exposure' || name === 'zoom') {
+    if (name === 'normalization' || name === 'gamma' || name === 'exposure') {
+      sendToViewer({ type: 'focusImageInspector', control: name });
+    } else if (name === 'zoom') {
       openControlPopover(name);
     } else if (name === 'options') {
       const menu = document.querySelector('.custom-context-menu');

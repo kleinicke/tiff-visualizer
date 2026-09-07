@@ -257,7 +257,7 @@ test('keeps separately opened images available as toolbar tabs', async ({ page }
   await expect(page.getByRole('button', { name: /Drop images here/ })).toBeVisible();
 });
 
-test('keeps display menus transient and lets explicit zoom sizing win', async ({ page }) => {
+test('focuses the shared display inspector and lets explicit zoom sizing win', async ({ page }) => {
   await page.goto('/');
   await page
     .locator('#web-file-input')
@@ -269,13 +269,12 @@ test('keeps display menus transient and lets explicit zoom sizing win', async ({
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
   await page.locator('#web-status-normalization').click();
-  await expect(page.locator('#web-control-popover')).toBeVisible();
+  await expect(page.locator('#image-inspector')).toBeVisible();
   await page.locator('#web-status-normalization').click();
-  await expect(page.locator('#web-control-popover')).toBeHidden();
-  await page.locator('#web-status-normalization').click();
-  await expect(page.locator('#web-control-popover')).toBeVisible();
-  await page.locator('#web-status-size').click();
-  await expect(page.locator('#web-control-popover')).toBeHidden();
+  await expect(page.locator('#image-inspector')).toBeVisible();
+  await expect(page.getByLabel('Mapping', { exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.locator('#image-inspector')).toHaveCount(0);
 
   const options = page.locator('#web-status-options');
   const menu = page.locator('.custom-context-menu');

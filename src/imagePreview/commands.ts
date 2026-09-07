@@ -615,6 +615,10 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.focusDisplay', (control: string) => {
+		previewManager.activePreview?.focusDisplay(control);
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.setNormalizationRange', async () => {
 		logCommand('setNormalizationRange', 'start');
 		const currentConfig = previewManager.getNormalizationConfig();

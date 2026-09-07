@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const GAMMA_COMMAND_ID = 'tiffVisualizer.setGamma';
 
 export class GammaStatusBarEntry extends PreviewStatusBarEntry {
 	private _gammaIn: number | undefined;
@@ -14,7 +13,7 @@ export class GammaStatusBarEntry extends PreviewStatusBarEntry {
 			vscode.StatusBarAlignment.Right,
 			100
 		);
-		this.entry.command = GAMMA_COMMAND_ID;
+		this.entry.command = { command: 'tiffVisualizer.focusDisplay', title: 'Open display controls', arguments: ['gamma'] };
 	}
 
 	public show() {

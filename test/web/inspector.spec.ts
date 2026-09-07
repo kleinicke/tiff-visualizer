@@ -1,0 +1,74 @@
+import { expect, test } from '@playwright/test';
+import path from 'node:path';
+
+test('Svelte display edits render and stay synchronized with the host', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/house.tif'));
+  const canvas = page.locator('body > canvas:not(.measure-overlay)');
+  await expect(canvas).toBeVisible();
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  const inspector = page.getByRole('complementary', { name: 'Display inspector' });
+  await expect(inspector).toContainText('house.tif');
+  await inspector.getByLabel('Mapping', { exact: true }).selectOption('gamma');
+  await expect(page.locator('#web-status-normalization')).toHaveText(/Gamma/);
+  const before = await canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL());
+  await inspector.getByLabel('Exposure · EV', { exact: true }).fill('-2');
+  await inspector.getByLabel('Exposure · EV', { exact: true }).press('Tab');
+  await expect(page.locator('#web-status-exposure')).toHaveText(/-2.0/);
+  await expect.poll(() => canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL())).not.toBe(before);
+  await inspector.getByLabel('Exposure', { exact: true }).dblclick();
+  await expect(inspector.getByLabel('Exposure · EV', { exact: true })).toHaveValue('0');
+  await expect.poll(() => canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL())).toBe(before);
+  await inspector.getByText('Gamma', { exact: true }).click();
+  await inspector.getByLabel('Input gamma').fill('1.8');
+  await inspector.getByLabel('Input gamma').press('Tab');
+  await expect(page.locator('#web-status-gamma')).toHaveText(/1.8/);
+  await inspector.getByLabel('Mapping', { exact: true }).selectOption('range');
+  await inspector.getByLabel('Maximum').fill('100');
+  await inspector.getByLabel('Maximum').press('Tab');
+  await inspector.getByLabel('Minimum').fill('101');
+  await inspector.getByLabel('Minimum').press('Tab');
+  await expect(inspector.getByRole('alert')).toHaveText('Maximum must be greater than minimum.');
+  await inspector.getByLabel('Mapping', { exact: true }).selectOption('auto');
+  await expect(page.locator('#web-status-normalization')).toHaveText(/^Auto-Norm/);
+  await page.getByRole('button', { name: 'Inspect', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: 'Inspect inspector' })).toContainText('512');
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.locator('#image-inspector')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('the inspector fits a small light-theme editor', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 640 });
+  await page.goto('/?host=jetbrains');
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/house.tif'));
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible();
+  await page.evaluate(() => (window as any).scientificImageHost.theme('light'));
+  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  const inspector = page.locator('#image-inspector');
+  const box = await inspector.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  expect(box!.y + box!.height).toBeLessThan(640);
+  await expect(page.locator('.web-toolbar')).toBeHidden();
+});
+
+test('integer interpretation stays available and closing the file clears the inspector', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/png_u16_gray.png'));
+  await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible();
+  await page.locator('#web-status-normalization').click();
+  await page.getByText('Interpretation', { exact: true }).click();
+  const toggle = page.getByLabel('Normalize integer values to 0–1');
+  await toggle.check();
+  await expect(toggle).toBeChecked();
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await page.locator('#web-status-normalization').click();
+  await page.getByText('Interpretation', { exact: true }).click();
+  await expect(toggle).toBeChecked();
+  await page.getByRole('button', { name: 'Close png_u16_gray.png', exact: true }).click();
+  await expect(page.locator('#image-inspector')).toContainText('Open an image');
+  await expect(page.locator('#image-inspector input')).toHaveCount(0);
+});

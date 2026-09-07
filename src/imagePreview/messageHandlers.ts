@@ -44,6 +44,9 @@ export class MessageRouter {
 		this.handlers.set('histogramPositionChanged', new HistogramPositionChangedMessageHandler());
 		this.handlers.set('histogramScaleModeChanged', new HistogramScaleModeChangedMessageHandler());
 		this.handlers.set('executeCommand', new ExecuteCommandMessageHandler());
+		this.handlers.set('editDisplaySettings', { handle: (message, preview) => {
+			preview.getManager().appStateManager.editDisplaySettings(message.edit);
+		} });
 		this.handlers.set('layerModeChanged', new LayerModeChangedMessageHandler());
 		this.handlers.set('resolveLayerUris', new ResolveLayerUrisMessageHandler());
 		this.handlers.set('requestInitialLayers', new RequestInitialLayersMessageHandler());

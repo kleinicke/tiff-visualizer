@@ -408,6 +408,10 @@ export class ImagePreview extends MediaPreview {
 		return this._webviewEditor.webview;
 	}
 
+	public focusDisplay(control: string): void {
+		void this._webviewEditor.webview.postMessage({ type: 'focusImageInspector', control });
+	}
+
 	public fireLayerExportCompatibilityEvent(options: LayerExportOption[]): void {
 		this._onDidGetLayerExportCompatibility.fire(options);
 	}
@@ -1154,6 +1158,7 @@ export class ImagePreview extends MediaPreview {
 			loadStartTime: this._openTimestamp // For total elapsed time measurement (captured when file was opened)
 		};
 
+		const inspectorCssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.bundle.css'));
 		const cssUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.css'));
 		const jsUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagePreview.bundle.js'));
 		const decodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'decodeWorker.bundle.js'));
@@ -1428,6 +1433,7 @@ export class ImagePreview extends MediaPreview {
 
 	<link rel="stylesheet" href="${escapeAttribute(cssUri.toString())}" type="text/css" media="screen" nonce="${nonce}">
 
+	<link rel="stylesheet" href="${escapeAttribute(inspectorCssUri.toString())}" nonce="${nonce}">
 	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob: ${cspSource}; script-src 'nonce-${nonce}' ${cspSource} 'wasm-unsafe-eval' 'unsafe-eval'; worker-src blob:;style-src ${cspSource} 'nonce-${nonce}'; connect-src ${cspSource} https: http:;">
 	<meta id="image-preview-settings" data-settings="${escapeAttribute(JSON.stringify(extendedSettings))}" data-resource="${escapeAttribute(uri.toString())}" data-folder="${escapeAttribute(folderUri.toString())}" data-version="${escapeAttribute(version)}">
 </head>

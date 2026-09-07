@@ -1,3 +1,4 @@
+import { mountImageInspector } from '../ui/image/mount.js';
 import { remoteTileConcurrency } from './modules/remote-tiff-source.js';
 "use strict";
 
@@ -107,6 +108,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
 	const originalVscode = nativeBootstrap?.vscode || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
 	const settingsManager = new SettingsManager();
+	const imageUi = mountImageInspector(settingsManager.settings, message => originalVscode.postMessage(message));
 	const stateExtensionVersion = settingsManager.settings.extensionVersion;
 	const stateVsCodeVersion = settingsManager.settings.vscodeVersion;
 	const initialPersistedState = originalVscode.getState();
@@ -145,6 +147,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					formatType: String(message.value.formatType || '')
 				};
 			}
+			imageUi.message(message);
 			return originalVscode.postMessage(message);
 		},
 		setState: (state: any) => originalVscode.setState(
@@ -3721,6 +3724,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	async function handleVSCodeMessage(message: { type: string, [key: string]: any }) {
 		switch (message.type) {
 			case 'clearImage': {
+				imageUi.message(message);
 				_loadGeneration++;
 				_loadAbortController?.abort();
 				signalTiffCanvasReady();
@@ -3860,6 +3864,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const updateApplyStart = performance.now();
 				const changes = settingsManager.updateSettings(message.settings);
+				imageUi.message({ type: 'updateSettings', settings: settingsManager.settings });
 				const updateApplyDuration = performance.now() - updateApplyStart;
 				const newResourceUri = settingsManager.settings.resourceUri;
 				// The scale bar is a SESSION preference held by the host, so it

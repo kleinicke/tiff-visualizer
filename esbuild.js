@@ -1,4 +1,5 @@
 const { build } = require('esbuild');
+const sveltePlugin = require('./scripts/svelte-plugin.cjs');
 const fs = require('fs');
 const path = require('path');
 
@@ -43,6 +44,8 @@ const appStateManagerBuildOptions = {
 
 // Build webview scripts
 const webviewBuildOptions = {
+  plugins: [sveltePlugin()],
+  conditions: ['browser'],
   entryPoints: ['media/imagePreview.ts'],
   bundle: true,
   outdir: 'media',

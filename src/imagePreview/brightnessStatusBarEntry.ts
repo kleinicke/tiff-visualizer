@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { PreviewStatusBarEntry } from '../ownedStatusBarEntry';
 
-const BRIGHTNESS_COMMAND_ID = 'tiffVisualizer.setBrightness';
 
 export class BrightnessStatusBarEntry extends PreviewStatusBarEntry {
 	private _brightness: number | undefined;
@@ -13,7 +12,7 @@ export class BrightnessStatusBarEntry extends PreviewStatusBarEntry {
 			vscode.StatusBarAlignment.Right,
 			99 // To appear next to gamma
 		);
-		this.entry.command = BRIGHTNESS_COMMAND_ID;
+		this.entry.command = { command: 'tiffVisualizer.focusDisplay', title: 'Open display controls', arguments: ['exposure'] };
 	}
 
 	public show() {

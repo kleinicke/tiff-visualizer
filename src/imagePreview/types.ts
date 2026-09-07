@@ -49,6 +49,7 @@ export interface IImagePreview {
 	zoomOut(): void;
 	copyImage(): void;
 	resetZoom(): void;
+	focusDisplay(control: string): void;
 	getLayerExportCompatibility(): Promise<LayerExportOption[] | undefined>;
 	exportLayerDocument(format: LayerExportFormat): Promise<LayerExportResult | undefined>;
 	startComparison(peerUri: vscode.Uri): void;

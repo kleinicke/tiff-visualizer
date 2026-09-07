@@ -4,11 +4,8 @@ import com.intellij.openapi.fileEditor.*;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.wm.*;
 import com.intellij.openapi.util.Disposer;
-import com.intellij.openapi.ui.DialogWrapper;
-import com.intellij.openapi.ui.ValidationInfo;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.ui.components.JBLabel;
-import com.intellij.ui.components.JBTextField;
 import com.intellij.util.ui.JBUI;
 import org.jetbrains.annotations.NotNull;
 import javax.swing.*;
@@ -107,7 +104,6 @@ public abstract class ImageStatusWidgetFactory implements StatusBarWidgetFactory
         }
         private void click() {
             ImageStatusBridge selected = bridge;
-            var state = selected.state();
             JPopupMenu menu = new JPopupMenu();
             switch (item) {
                 case "size" -> add(menu, "Copy image / pixel readout", () -> CopyPasteManager.getInstance().setContents(new StringSelection(label.getText())));
@@ -115,13 +111,7 @@ public abstract class ImageStatusWidgetFactory implements StatusBarWidgetFactory
                     for (double scale : new double[]{10, 5, 2, 1, 0.5, 0.2}) add(menu, Math.round(scale * 100) + "%", () -> selected.adjust("zoom", scale));
                     add(menu, "Whole Image", () -> selected.command("fit"));
                 }
-                case "normalization" -> {
-                    add(menu, "Auto-normalize", () -> selected.adjust("auto"));
-                    add(menu, "Gamma / Exposure", () -> selected.adjust("gammaMode"));
-                    add(menu, "Custom range…", () -> edit(selected, "range", "Normalization range", new String[]{"Minimum", "Maximum"}, state.normalization().min(), state.normalization().max()));
-                }
-                case "gamma" -> { edit(selected, "gamma", "Gamma correction", new String[]{"Source gamma", "Target gamma"}, state.gamma().in(), state.gamma().out()); return; }
-                case "exposure" -> { edit(selected, "exposure", "Exposure compensation", new String[]{"Exposure stops (EV)"}, state.exposure()); return; }
+                case "normalization", "gamma", "exposure" -> { selected.action(item); return; }
                 default -> { return; }
             }
             menu.show(label, 0, -menu.getPreferredSize().height);
@@ -130,39 +120,6 @@ public abstract class ImageStatusWidgetFactory implements StatusBarWidgetFactory
             JMenuItem entry = new JMenuItem(text);
             entry.addActionListener(event -> action.run());
             menu.add(entry);
-        }
-        private void edit(ImageStatusBridge selected, String setting, String title, String[] names, double... values) {
-            JBTextField[] fields = new JBTextField[values.length];
-            for (int i = 0; i < fields.length; i++) {
-                fields[i] = new JBTextField(Double.toString(values[i]), 14);
-                fields[i].setName("scientific-input-" + setting + "-" + i);
-            }
-            DialogWrapper dialog = new DialogWrapper(project) {
-                { setTitle(title); init(); }
-                @Override protected JComponent createCenterPanel() {
-                    JPanel form = new JPanel(new GridLayout(fields.length, 2, 12, 8));
-                    for (int i = 0; i < fields.length; i++) { form.add(new JBLabel(names[i])); form.add(fields[i]); }
-                    return form;
-                }
-                @Override public JComponent getPreferredFocusedComponent() { return fields[0]; }
-                @Override protected ValidationInfo doValidate() {
-                    double[] parsed = parse();
-                    if (parsed == null) return new ValidationInfo("Enter finite numeric values.", fields[0]);
-                    if (setting.equals("gamma") && (parsed[0] <= 0 || parsed[1] <= 0)) return new ValidationInfo("Gamma must be greater than zero.", fields[0]);
-                    if (setting.equals("range") && parsed[0] >= parsed[1]) return new ValidationInfo("Maximum must be greater than minimum.", fields[1]);
-                    if (setting.equals("exposure") && Math.abs(parsed[0]) > 16) return new ValidationInfo("Enter exposure between −16 and +16 EV.", fields[0]);
-                    return null;
-                }
-                private double[] parse() {
-                    try {
-                        double[] parsed = new double[fields.length];
-                        for (int i = 0; i < fields.length; i++) { parsed[i] = Double.parseDouble(fields[i].getText().trim()); if (!Double.isFinite(parsed[i])) return null; }
-                        return parsed;
-                    } catch (NumberFormatException e) { return null; }
-                }
-                @Override protected void doOKAction() { if (doValidate() == null) { selected.adjust(setting, parse()); super.doOKAction(); } }
-            };
-            dialog.show();
         }
         @Override public void dispose() {
             disposed = true;

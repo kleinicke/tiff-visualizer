@@ -1,3 +1,4 @@
+import { applyDisplayEdit } from '../../shared/display-settings';
 import * as vscode from 'vscode';
 
 // Core state interfaces
@@ -176,6 +177,13 @@ export class AppStateManager {
 	}
 
 	// Image Settings Management
+	public editDisplaySettings(edit: unknown): void {
+		const next = applyDisplayEdit(this._imageSettings, edit);
+		if (!next) return;
+		Object.assign(this._imageSettings, next);
+		this._emitSettingsChanged();
+	}
+
 	public updateNormalization(min: number, max: number): void {
 		if (this._imageSettings.normalization.min !== min || this._imageSettings.normalization.max !== max) {
 			this._imageSettings.normalization.min = min;

@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import sveltePlugin from './svelte-plugin.cjs';
 import { cp, mkdir, rm } from 'node:fs/promises';
 
 const outputDirectory = 'web-dist';
@@ -21,6 +22,8 @@ await Promise.all([
   build({
     ...browserBuild,
     entryPoints: ['media/imagePreview.ts'],
+    plugins: [sveltePlugin()],
+    conditions: ['browser'],
     outdir: mediaDirectory,
     entryNames: 'imagePreview.bundle',
     chunkNames: 'chunks/[name]-[hash]',
