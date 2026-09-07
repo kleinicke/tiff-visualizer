@@ -17,7 +17,7 @@ cd jetbrains
 ```
 
 Gradle downloads the target IDE and builds both websites from their existing
-sources. The installable archive is `build/distributions/scientific-visualizers-0.2.5.zip`.
+sources. The installable archive is `build/distributions/scientific-visualizers-0.3.2.zip`.
 In PyCharm, use Settings → Plugins → gear → Install Plugin from Disk, select that
 ZIP and restart. Opening a registered local image or 3D file then offers the
 **Scientific Visualizer** editor. Existing IDE editor alternatives remain available
@@ -175,7 +175,7 @@ See [the 3D release plan](PLY-RELEASE.md) for a standalone PLY release.
 
 ## Shared fixture project and interaction profiling
 
-`./gradlew runIde` now opens `../../test_data/testfiles`, the same local fixture
+`./gradlew runIde` now opens `../../test_data`, the same local fixture
 folder used for VS Code. Override with `-PviewerTestProject=/absolute/path`.
 The fixture folder is not bundled in the distributable. Opening it does not
 imply every format or multi-file variant is supported by this host.
@@ -246,3 +246,44 @@ independently of delayed analysis bookkeeping. This addresses a missing idle
 readout observed on the first `house.tif` load (reopening it restored the size).
 JetBrains status controls stay aligned to the right when they fit, including
 below the website's 900 px breakpoint; overflowing controls remain scrollable.
+
+## 0.3.0 IDE status bar
+
+The active image editor now supplies JetBrains status items for dimensions/pixel
+values, Options, Layers, exposure, gamma, normalization, zoom and file size.
+They follow editor selection and disappear for other editor types. The readout
+offers a native popup to copy its text or switch original/display-adjusted
+values. Other clickable items open the existing viewer settings or actions;
+those forms still live inside the editor, keeping the same feature semantics.
+
+`ImageStatusBridge` uses a per-editor JCEF query. JavaScript sends only changed
+snapshots, coalesced per animation frame; the Swing side coalesces pending updates
+and releases listeners/queries when disposed. Image pixels never cross this
+status channel. The embedded status strip is hidden only while the IDE widget
+owns it; disabling the widget restores the viewer controls.
+
+The shared gamma form also accepts ordinary positive values such as 1.8: its
+previous HTML min/step combination made them fail browser validation.
+
+Validation: Java tests, web type checking, TIFF/PLY browser smoke checks, native
+Gamma click/apply (1.8 reflected back in the IDE), and native selection changes
+between TIFF, NumPy, PLY and text editors. A native wheel probe still reached
+the page in 2 ms with the status bridge enabled; this measures event delivery,
+not physical trackpad input-to-paint latency.
+
+## 0.3.1 separate native controls
+
+Each status area is a separately registered JetBrains widget, so hover and
+visibility apply independently. The order follows the VS Code entries: zoom,
+size/pixel readout, Original/Modified picker toggle, normalization, gamma,
+exposure, and file size. Layers and Options are removed from the IDE strip.
+These widgets format typed viewer state directly, rather than copying website
+DOM labels. Zoom and normalization use native menus; gamma, exposure and custom
+ranges use validated JetBrains dialogs. They apply changes through the same
+host settings API, and the website retains its own forms.
+
+## 0.3.2 test project and picker
+
+The test IDE opens the full `test_data` project, including examples outside
+`testfiles`. The Original/Modified status widget is removed; pixel inspection
+remains part of the size readout.

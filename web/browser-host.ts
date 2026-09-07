@@ -412,8 +412,8 @@ function openControlPopover(kind: ControlPopoverKind): void {
   } else if (kind === 'gamma') {
     title.textContent = 'Gamma correction';
     form.innerHTML = `
-      <label>Source gamma <input name="gammaIn" type="number" min="0.01" step="0.1" value="${currentSettings.gamma.in}"></label>
-      <label>Target gamma <input name="gammaOut" type="number" min="0.01" step="0.1" value="${currentSettings.gamma.out}"></label>
+      <label>Source gamma <input name="gammaIn" type="number" min="0" step="any" value="${currentSettings.gamma.in}"></label>
+      <label>Target gamma <input name="gammaOut" type="number" min="0" step="any" value="${currentSettings.gamma.out}"></label>
       <p class="web-control-note">2.2 is typical display gamma; 1.0 is linear.</p>
       <button class="web-control-submit" type="submit">Apply</button>`;
     form.addEventListener('submit', event => {
@@ -1300,9 +1300,23 @@ installEmbeddedImageHost({
     normalization: currentSettings.normalization,
     gamma: currentSettings.gamma,
     exposure: currentSettings.brightness.offset,
+    modifiedPicker: !!currentSettings.colorPickerShowModified,
+    size: currentSize,
+    pixel: currentPixel,
+    zoom: currentZoom,
+    fileSize: files[fileIndex]?.size ?? null,
+    stats: currentStats,
+    statusItems: ['size', 'options', 'layers', 'exposure', 'gamma', 'normalization', 'zoom', 'bytes'].map(id => {
+      const element = document.getElementById(`web-status-${id}`);
+      return { id, text: element?.textContent || '', visible: !!element && !element.hidden, tooltip: element?.title || '' };
+    }),
   }),
   adjust(name, values) {
     if (!values.every(Number.isFinite)) return;
+    if (name === 'zoom' && values.length === 1 && values[0] > 0 && values[0] <= 200) {
+      sendToViewer({ type: 'setScale', scale: values[0] });
+      return;
+    }
     if (name === 'gamma' && values.length === 2 && values.every(v => v > 0)) {
       currentSettings.gamma = { in: values[0], out: values[1] };
       currentSettings.normalization.autoNormalize = false;
@@ -1313,6 +1327,9 @@ installEmbeddedImageHost({
       currentSettings.normalization.gammaMode = true;
     } else if (name === 'range' && values.length === 2 && values[0] < values[1]) {
       currentSettings.normalization = { min: values[0], max: values[1], autoNormalize: false, gammaMode: false };
+    } else if (name === 'gammaMode') {
+      currentSettings.normalization.autoNormalize = false;
+      currentSettings.normalization.gammaMode = true;
     } else if (name === 'auto') {
       currentSettings.normalization.autoNormalize = true;
       currentSettings.normalization.gammaMode = false;
@@ -1323,6 +1340,15 @@ installEmbeddedImageHost({
     if (name === 'fit') sendToViewer({ type: 'setScale', scale: 'fit' });
     else if (name === 'zoomIn' || name === 'zoomOut') sendToViewer({ type: name });
     else executeCommand(`tiffVisualizer.${name}`);
+  },
+  statusAction(name) {
+    if (name === 'normalization' || name === 'gamma' || name === 'exposure' || name === 'zoom') {
+      openControlPopover(name);
+    } else if (name === 'options') {
+      const menu = document.querySelector('.custom-context-menu');
+      if (menu) menu.remove();
+      else sendToViewer({ type: 'showContextMenu', x: Math.max(0, innerWidth - 280), y: innerHeight - 8 });
+    } else if (name === 'layers') executeCommand('tiffVisualizer.toggleLayers');
   },
   theme: applyTheme,
 });

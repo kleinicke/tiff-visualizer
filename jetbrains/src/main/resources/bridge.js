@@ -1,3 +1,23 @@
+// One latest-state update per frame, with no polling or per-pixel native queue.
+window.jetbrainsConnectStatus = receiver => {
+  window.jetbrainsDisconnectStatus?.();
+  let frame = 0, last = '';
+  const publish = () => {
+    frame = 0;
+    const host = window.scientificImageHost;
+    if (!host) return;
+    const json = JSON.stringify(host.snapshot());
+    if (json !== last) { last = json; receiver(json); }
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(publish); };
+  window.addEventListener('scientific-image-state', schedule);
+  window.jetbrainsDisconnectStatus = () => {
+    window.removeEventListener('scientific-image-state', schedule);
+    cancelAnimationFrame(frame);
+  };
+  publish();
+};
+
 // Preserve small native wheel deltas instead of waiting in JCEF's OSR accumulator.
 // Custom image/panel wheel handlers still run; only unhandled default scrolling
 // is performed here because synthetic DOM wheel events have no default action.

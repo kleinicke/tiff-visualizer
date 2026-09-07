@@ -3,6 +3,7 @@ export interface EmbeddedImageHost {
   snapshot(): unknown;
   adjust(name: string, values: number[]): void;
   command(name: string): void;
+  statusAction(name: string): void;
   theme(value: 'dark' | 'light'): void;
 }
 export function installEmbeddedImageHost(host: EmbeddedImageHost): void {

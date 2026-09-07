@@ -790,6 +790,11 @@ html:has(.web-app.web-has-image.web-image-zoomed) { overflow: auto; }
 .jetbrains-host .web-toolbar { display: none !important; }
 .jetbrains-host .web-status-bar { justify-content: flex-start; }
 .jetbrains-host .web-status-bar > :first-child { margin-left: auto; }
+.jetbrains-host #web-status-options,
+.jetbrains-host #web-status-layers,
+.jetbrains-host .web-status-separator { display: none; }
+.jetbrains-native-status .web-status-bar { display: none !important; }
+.jetbrains-native-status .web-control-popover { bottom: 8px; }
 .jetbrains-host .web-app.web-has-image { padding-top: 0; }
 .jetbrains-host .web-app.web-has-image > canvas.scale-to-fit,
 .jetbrains-host .web-app.web-has-image > img.scale-to-fit { max-height: calc(100vh - 40px) !important; }

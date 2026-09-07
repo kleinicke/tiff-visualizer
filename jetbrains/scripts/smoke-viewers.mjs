@@ -56,7 +56,25 @@ try {
         const gamma = await page.evaluate(() => window.scientificImageHost.snapshot());
         if (gamma.gamma.in !== 1 || !gamma.normalization.gammaMode) throw new Error('Native gamma adjustment not applied');
         await page.evaluate(() => window.scientificImageHost.adjust('auto', []));
+        await page.evaluate(() => {
+          window.__nativeStatus = [];
+          window.jetbrainsConnectStatus(json => window.__nativeStatus.push(JSON.parse(json)));
+          const items = window.__nativeStatus.at(-1).statusItems;
+          if (!items.some(item => item.id === 'size' && item.text.includes('x'))) throw new Error('Native status snapshot omitted dimensions');
+          document.documentElement.classList.add('jetbrains-native-status');
+          window.scientificImageHost.statusAction('gamma');
+        });
+        if (await page.locator('.web-status-bar').isVisible()) throw new Error('Duplicate viewer status bar remained visible');
+        if (!await page.locator('#web-control-popover').isVisible()) throw new Error('Native gamma action failed to open settings');
+        await page.locator('#web-control-popover input[name="gammaIn"]').fill('1.8');
+        await page.locator('#web-control-popover button[type="submit"]').click();
+        await page.waitForFunction(() => window.__nativeStatus.at(-1)?.gamma.in === 1.8);
+        await page.evaluate(() => {
+          window.jetbrainsDisconnectStatus();
+          document.documentElement.classList.remove('jetbrains-native-status');
+        });
         if (await page.locator('.web-toolbar').isVisible()) throw new Error('Website branding leaked into IDE');
+        if (await page.locator('#web-status-options').isVisible() || await page.locator('#web-status-layers').isVisible()) throw new Error('Website-only status actions leaked into IDE');
         if (!await page.locator('.web-status-bar').isVisible()) throw new Error('Contextual status controls are missing');
         await page.evaluate(() => {
           const panel = document.createElement('div');

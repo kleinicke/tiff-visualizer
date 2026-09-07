@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.7.2"
 }
 group = "de.kleinicke"
-version = "0.2.5"
+version = "0.3.2"
 repositories {
     mavenCentral()
     intellijPlatform { defaultRepositories() }
@@ -21,9 +21,11 @@ intellijPlatform {
     }
 }
 tasks.runIde {
+    // Rebuilds must not dispose editors while native input checks are running.
+    systemProperty("idea.auto.reload.plugins", "false")
     systemProperty("ide.browser.jcef.debug.port", "9223")
     val fixtures = providers.gradleProperty("viewerTestProject")
-        .orElse(file("../../test_data/testfiles").absolutePath)
+        .orElse(file("../../test_data").absolutePath)
     args(fixtures.get())
 }
 val prepareViewers by tasks.registering(Exec::class) {

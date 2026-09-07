@@ -10,5 +10,11 @@
     <fileType name="PLY" implementationClass="de.kleinicke.visualizer.PlyFileType" fieldName="INSTANCE" extensions="e57;glb;gltf;ksplat;las;laz;nrrd;obj;off;pcd;ply;pts;sog;splat;spz;stl;x3a;x3r;xyz;xyzn;xyzrgb"/>
     <!-- end generated file types -->
     <fileEditorProvider implementation="de.kleinicke.visualizer.VisualizerEditorProvider"/>
+    <statusBarWidgetFactory id="ScientificImage.zoom" implementation="de.kleinicke.visualizer.ImageStatusWidgetFactory$Zoom"/>
+    <statusBarWidgetFactory id="ScientificImage.size" implementation="de.kleinicke.visualizer.ImageStatusWidgetFactory$Size" order="after ScientificImage.zoom"/>
+    <statusBarWidgetFactory id="ScientificImage.normalization" implementation="de.kleinicke.visualizer.ImageStatusWidgetFactory$Normalization" order="after ScientificImage.size"/>
+    <statusBarWidgetFactory id="ScientificImage.gamma" implementation="de.kleinicke.visualizer.ImageStatusWidgetFactory$Gamma" order="after ScientificImage.normalization"/>
+    <statusBarWidgetFactory id="ScientificImage.exposure" implementation="de.kleinicke.visualizer.ImageStatusWidgetFactory$Exposure" order="after ScientificImage.gamma"/>
+    <statusBarWidgetFactory id="ScientificImage.bytes" implementation="de.kleinicke.visualizer.ImageStatusWidgetFactory$Bytes" order="after ScientificImage.exposure"/>
   </extensions>
 </idea-plugin>

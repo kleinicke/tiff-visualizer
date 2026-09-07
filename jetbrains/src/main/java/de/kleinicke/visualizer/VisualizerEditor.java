@@ -17,6 +17,7 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
     private JBCefBrowser browser;
     private ViewerServer server;
     private MacImageScroll macScroll;
+    private ImageStatusBridge imageStatus;
     private boolean disposed;
     public VisualizerEditor(VirtualFile file) {
         this.file = file;
@@ -39,6 +40,7 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
                 }
             });
             if (kind.equals("image")) {
+                imageStatus = new ImageStatusBridge(browser, server.url());
                 macScroll = new MacImageScroll(browser, server.url());
                 panel.setGestureReceiver((type, scale) -> {
                     if (disposed || browser == null) return;
@@ -49,6 +51,7 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
             browser.loadURL(server.url());
             panel.add(browser.getComponent(), BorderLayout.CENTER);
         } catch (Exception exception) {
+            if (imageStatus != null) imageStatus.close();
             if (macScroll != null) macScroll.close();
             if (browser != null) browser.dispose();
             if (server != null) server.close();
@@ -57,6 +60,7 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
         }
     }
     @Override public @NotNull JComponent getComponent() { return panel; }
+    ImageStatusBridge imageStatus() { return imageStatus; }
     @Override public JComponent getPreferredFocusedComponent() { return browser == null ? panel : browser.getComponent(); }
     @Override public @NotNull String getName() { return "Scientific Visualizer"; }
     @Override public void setState(@NotNull FileEditorState state) { }
@@ -68,6 +72,7 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
     @Override public void dispose() {
         disposed = true;
         panel.setGestureReceiver(null);
+        if (imageStatus != null) imageStatus.close();
         if (macScroll != null) macScroll.close();
         if (browser != null) browser.dispose();
         if (server != null) server.close();
