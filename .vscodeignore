@@ -16,6 +16,12 @@ test-results/**
 .claude/**
 .netlify/**
 
+# The JetBrains plugin is packaged separately, including its IDE test sandbox.
+jetbrains/**
+
+# Never include previously packaged VS Code extensions in a new package.
+*.vsix
+
 # Development-only project instructions and test tooling
 AGENTS.md
 agents.md

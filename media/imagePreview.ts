@@ -163,6 +163,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		_isInitialLoad: true, _pendingRenderData: null, _lastRaw: null,
 		_lastAllTags: [], metadata: {}, rawTiffData: null, rawExrData: null,
 		pageIndex: 0, pageCount: 1, pageDirectory: [], omeMetadata: null, omeBinaryOnly: null,
+		selectableBandCount: 0,
 		// MouseHandler probes processors in a fixed order. A lazy family that has
 		// not been installed yet must behave like an empty processor, not merely
 		// be truthy and then throw when its pixel accessor is called.
@@ -6583,7 +6584,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/** TIFF: OME C/Z/T, pyramid levels, or the page index for a multi-page file. */
 	function tiffBandControls(): NavControlSpec[] {
 		const count = tiffProcessor.selectableBandCount;
-		if (count < 2) { return []; }
+		if (currentLoadFormat !== 'TIFF' || !Number.isInteger(count) || count < 2) { return []; }
 		const labels = Array.from({ length: count }, (_unused, index) =>
 			bandDescription(tiffProcessor.gdalMetadata, index) || `Band ${index + 1}`);
 		const rgb = tiffProcessor.displayRgbBands;
@@ -7043,9 +7044,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		renderNavOverlay({ owner: 'netcdf', title: 'NetCDF', controls: netcdfControls(metadata), loading });
 	}
 	function updateTiffPageOverlay(loading = false) {
-		// A dataset manifest (a DICOM study) owns the overlay when present.
-		// A DICOM study owns the overlay when present; never speak for it.
+		// Shared load completion runs for every format. Only TIFF may populate
+		// this overlay; a retained or dormant TIFF processor is not the active image.
 		if (datasetManifest) { return; }
+		if (currentLoadFormat !== 'TIFF') { hideNavOverlay('tiff'); return; }
 		const ome = tiffProcessor.omeMetadata;
 		renderNavOverlay({
 			owner: 'tiff',

@@ -12,6 +12,8 @@ interface RawImageData {
     height: number;
     data: Uint8Array | Uint8ClampedArray | Uint16Array;
     channels: number;
+    /** Source layout before the browser expands grayscale pixels to RGBA. */
+    sourceChannels?: number;
     bitDepth: number;
     maxValue: number;
     /** If true, data is RGBA format; if false, data is raw channel format */
@@ -385,6 +387,7 @@ export class PngProcessor {
                         height: canvas.height,
                         data: rawData,
                         channels: 4,
+                        sourceChannels: encodedChannels ?? undefined,
                         bitDepth: 8,
                         maxValue: 255,
                         isRgbaFormat: true,
@@ -592,7 +595,7 @@ export class PngProcessor {
             return `${pixel[0].toString().padStart(3, '0')} ${pixel[1].toString().padStart(3, '0')} ${pixel[2].toString().padStart(3, '0')}`;
         }
         if (!this._lastRaw) return '';
-        const { width, height, data, channels, bitDepth, maxValue, hasAlpha } = this._lastRaw;
+        const { width, height, data, channels, bitDepth, maxValue, hasAlpha, sourceChannels, isRgbaFormat } = this._lastRaw;
         if (width !== naturalWidth || height !== naturalHeight) return '';
 
         const pixelIdx = y * width + x;
@@ -600,7 +603,8 @@ export class PngProcessor {
         const settings = this.settingsManager.settings;
 
         if (dataIdx >= 0 && dataIdx < data.length) {
-            if (channels === 1) {
+            const grayscale = channels === 1 || (isRgbaFormat && sourceChannels === 1);
+            if (grayscale && !hasAlpha) {
                 // Grayscale
                 const value = data[dataIdx];
 
@@ -613,11 +617,11 @@ export class PngProcessor {
 
                 // Normal mode - show actual bit depth value
                 return value.toString();
-            } else if (channels === 2) {
+            } else if (channels === 2 || (isRgbaFormat && (sourceChannels === 1 || sourceChannels === 2))) {
                 // Grayscale + Alpha
                 const maxVal = bitDepth === 16 ? 65535 : 255;
                 const gray = data[dataIdx];
-                const alpha = data[dataIdx + 1];
+                const alpha = data[dataIdx + (isRgbaFormat ? 3 : 1)];
                 return `${gray} α:${(alpha / maxVal).toFixed(2)}`;
             } else if (channels === 3 || channels === 4) {
                 // RGB or RGBA
