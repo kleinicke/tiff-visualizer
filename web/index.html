@@ -17,6 +17,9 @@
   <title>Scientific Image Visualizer</title>
   <link rel="canonical" href="https://images.f-kleinicke.de/">
   <link rel="icon" href="./icon.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon.png">
+  <meta name="apple-mobile-web-app-title" content="Image Visualizer">
   <link rel="stylesheet" href="./media/imagePreview.css">
   <link rel="stylesheet" href="./website.css">
   <script async src="https://analytics.re4vive.com/js/pa-GabvR7klxXIEzqdnoWcJw.js"></script>
@@ -46,6 +49,7 @@
       <button type="button" class="web-more-button" data-web-action="more" aria-expanded="false" aria-controls="web-more-menu">More</button>
     </nav>
     <div class="web-more-menu" id="web-more-menu" hidden>
+      <button type="button" data-web-action="install">Install app…</button>
       <button type="button" data-web-command="tiffVisualizer.copyImage">Copy image</button>
       <button type="button" data-web-command="tiffVisualizer.exportLayers">Export current view</button>
       <button type="button" data-web-command="tiffVisualizer.openAsPointCloud" data-web-point-cloud hidden>Open as point cloud</button>

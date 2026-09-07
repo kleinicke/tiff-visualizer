@@ -1,3 +1,4 @@
+import { setupAppInstall } from './app-install.js';
 import {
   createDicomFrameDataset,
   createOmeDataset,
@@ -1078,6 +1079,7 @@ function applyTheme(theme: 'dark' | 'light'): void {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  setupAppInstall(openFiles, showToast);
   applyTheme(localStorage.getItem(STORAGE_THEME) === 'light' ? 'light' : 'dark');
   const fileInput = document.getElementById('web-file-input') as HTMLInputElement;
   const importInput = document.getElementById('web-import-input') as HTMLInputElement;

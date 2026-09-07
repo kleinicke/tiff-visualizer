@@ -126,7 +126,7 @@ body.web-app {
   gap: 2px;
 }
 
-.web-image-tabs-shell[hidden] { display: none; }
+.web-image-tabs-shell[hidden], [data-web-action="install"][hidden] { display: none; }
 
 .web-image-tabs {
   min-width: 0;

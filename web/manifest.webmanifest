@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Scientific Image Visualizer",
+  "short_name": "Image Visualizer",
+  "description": "Inspect scientific images, HDR values and microscopy data locally in your browser.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111612",
+  "theme_color": "#111612",
+  "icons": [
+    { "src": "icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }
+  ],
+  "file_handlers": [
+    {
+      "action": "/",
+      "name": "Open scientific images",
+      "accept": {
+        "image/tiff": [".tif", ".tiff"],
+        "application/octet-stream": [".exr", ".pfm", ".npy", ".npz", ".fits", ".fit", ".fts", ".czi", ".nd2", ".lif", ".sdt"],
+        "application/dicom": [".dcm", ".dicom"]
+      }
+    }
+  ]
+}

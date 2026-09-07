@@ -2,6 +2,8 @@ Distribution and growth strategy — Scientific Image Visualizer and 3D Visualiz
 
 Research date: 5 September 2026. Based on both local repositories, public registry metadata, live website HTML, and the platform documentation linked below. Effort ranges are planning estimates for one developer familiar with these projects; they exclude review queues and are not implementation commitments. Platform availability is not a claim that either extension has been tested in that platform.
 
+Follow-up, 7 September: the user confirms installation from Cursor's marketplace already works. No additional Cursor integration is needed. Local browser improvements now add an image app manifest, installation control and scientific-file launch handling, plus stable identity, an additional existing icon and discovery metadata for the 3D app. Offline caching remains future work. The baseline findings below describe the original audit; these changes require website deployment to reach users.
+
 **Recommendation**
 
 Build recognition around two related tools for inspecting scientific files locally, with consistent branding and shared distribution infrastructure. Retain the existing extension IDs and websites. Keep the image and 3D engines separately loadable and maintain thin integrations around them.

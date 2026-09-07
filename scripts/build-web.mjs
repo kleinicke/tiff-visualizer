@@ -47,6 +47,7 @@ await Promise.all([
 
 await Promise.all([
   cp('web/index.html', `${outputDirectory}/index.html`),
+  cp('web/manifest.webmanifest', `${outputDirectory}/manifest.webmanifest`),
   cp('web/website.css', `${outputDirectory}/website.css`),
   cp('web/plausible-init.js', `${outputDirectory}/plausible-init.js`),
   cp('web/vendor-assets.js', `${outputDirectory}/vendor-assets.js`),
