@@ -152,7 +152,7 @@
       },
       {
         "command": "tiffVisualizer.exportLayers",
-        "title": "Export…",
+        "title": "Export\u2026",
         "category": "Scientific Image Visualizer"
       },
       {
@@ -384,8 +384,8 @@
     "docs:commands": "node scripts/generate-command-docs.js",
     "docs:check": "node scripts/generate-command-docs.js --check",
     "pretest": "npm run compile:quick && npm run lint && npm run docs:check",
-    "lint": "eslint src media/imagePreview.ts media/decode-worker.ts media/png-decode-worker.ts media/layered-decode-worker.ts media/layered-preview-fallback.ts media/layer-document-writer-entry.ts media/imagej-roi-entry.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules web --ext ts,js",
-    "typecheck": "npm run typecheck:src && npm run typecheck:media && npm run typecheck:web",
+    "lint": "eslint src media/imagePreview.ts media/decode-worker.ts media/png-decode-worker.ts media/layered-decode-worker.ts media/layered-preview-fallback.ts media/layer-document-writer-entry.ts media/imagej-roi-entry.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules web ui --ext ts,js",
+    "typecheck": "npm run typecheck:src && npm run typecheck:media && npm run typecheck:web && npm run typecheck:ui",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
     "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
@@ -455,7 +455,8 @@
     "test:pyramid-picker": "node test/pyramid-picker-test.js",
     "test:request-scheduler": "node test/request-scheduler-test.js",
     "test:remote-tiff-source": "node test/remote-tiff-source-test.js",
-    "test:remote-cog-range": "node test/remote-cog-range-test.js"
+    "test:remote-cog-range": "node test/remote-cog-range-test.js",
+    "typecheck:ui": "svelte-check --tsconfig ./ui/tsconfig.json"
   },
   "dependencies": {
     "ag-psd": "^31.0.2",
@@ -484,6 +485,8 @@
     "eslint": "^8.57.0",
     "mocha": "^10.4.0",
     "rimraf": "^6.0.1",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.4.5",
     "vscode-extension-tester": "^8.17.0"
   },

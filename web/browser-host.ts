@@ -1,3 +1,10 @@
+import { flushSync, mount } from 'svelte';
+import App from './App.svelte';
+import DisplayForm from './DisplayForm.svelte';
+import ImageTabs from './ImageTabs.svelte';
+import { mountView } from '../ui/mount.js';
+import { unmount } from 'svelte';
+
 import { installEmbeddedImageHost, notifyEmbeddedImageHost } from './embedded-host.js';
 import { setupAppInstall } from './app-install.js';
 import {
@@ -46,6 +53,14 @@ interface ViewerSettings {
   src?: string;
   [key: string]: any;
 }
+
+// Mount synchronously before the host binds native file and message handlers.
+flushSync(() => mount(App, { target: document.body }));
+const toolbar = document.querySelector<HTMLElement>('.web-toolbar')!;
+const toolbarObserver = new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--web-toolbar-bottom', `${Math.max(0, toolbar.getBoundingClientRect().bottom) + 12}px`);
+});
+toolbarObserver.observe(toolbar);
 
 const STORAGE_STATE = 'scientific-image-visualizer.webview-state';
 const STORAGE_THEME = 'scientific-image-visualizer.theme';
@@ -353,7 +368,9 @@ function sendCurrentSettings(reason: string): void {
   syncStatusBar();
 }
 
+let controlForm: ReturnType<typeof mount> | null = null;
 function closeControlPopover(): void {
+  if (controlForm) { void unmount(controlForm); controlForm = null; }
   const popover = document.getElementById('web-control-popover');
   if (popover) popover.hidden = true;
   activeControlPopover = null;
@@ -369,29 +386,15 @@ function openControlPopover(kind: ControlPopoverKind): void {
     return;
   }
   activeControlPopover = kind;
-  content.replaceChildren();
-  const form = document.createElement('form');
-  form.className = 'web-control-form';
+  if (controlForm) void unmount(controlForm);
+  let submit: (event: SubmitEvent) => void;
+  const isSingleChannelInteger = (currentFormatInfo?.samplesPerPixel ?? 1) === 1 && currentFormatInfo?.sampleFormat !== 3;
 
   if (kind === 'normalization') {
     title.textContent = 'Image normalization';
-    const mode = currentSettings.normalization.autoNormalize ? 'auto' : currentSettings.normalization.gammaMode ? 'gamma' : 'manual';
-    const isSingleChannelInteger = (currentFormatInfo?.samplesPerPixel ?? 1) === 1 && currentFormatInfo?.sampleFormat !== 3;
-    form.innerHTML = `
-      <fieldset>
-        <legend>Mode</legend>
-        <label class="web-radio"><input type="radio" name="mode" value="auto" ${mode === 'auto' ? 'checked' : ''}><span>Auto-normalize to the image minimum and maximum</span></label>
-        <label class="web-radio"><input type="radio" name="mode" value="gamma" ${mode === 'gamma' ? 'checked' : ''}><span>Gamma and exposure mode using the complete sample range</span></label>
-        <label class="web-radio"><input type="radio" name="mode" value="manual" ${mode === 'manual' ? 'checked' : ''}><span>Manual display range</span></label>
-      </fieldset>
-      <label>Minimum <input name="minimum" type="number" step="any" value="${currentSettings.normalization.min}"></label>
-      <label>Maximum <input name="maximum" type="number" step="any" value="${currentSettings.normalization.max}"></label>
-      ${isSingleChannelInteger ? `<label class="web-radio"><input name="normalizedFloat" type="checkbox" ${currentSettings.normalizedFloatMode ? 'checked' : ''}><span>Show unsigned integer values normalized to 0–1</span></label>` : ''}
-      <p class="web-control-note">Raw pixel values are preserved. These settings only change how the image is displayed.</p>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
+    submit = event => {
       event.preventDefault();
-      const data = new FormData(form);
+      const data = new FormData(event.currentTarget as HTMLFormElement);
       const selectedMode = String(data.get('mode') || 'auto');
       const minimum = Number(data.get('minimum'));
       const maximum = Number(data.get('maximum'));
@@ -408,17 +411,12 @@ function openControlPopover(kind: ControlPopoverKind): void {
       if (isSingleChannelInteger) currentSettings.normalizedFloatMode = data.get('normalizedFloat') === 'on';
       sendCurrentSettings('browser-normalization');
       closeControlPopover();
-    });
+    };
   } else if (kind === 'gamma') {
     title.textContent = 'Gamma correction';
-    form.innerHTML = `
-      <label>Source gamma <input name="gammaIn" type="number" min="0" step="any" value="${currentSettings.gamma.in}"></label>
-      <label>Target gamma <input name="gammaOut" type="number" min="0" step="any" value="${currentSettings.gamma.out}"></label>
-      <p class="web-control-note">2.2 is typical display gamma; 1.0 is linear.</p>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
+    submit = event => {
       event.preventDefault();
-      const data = new FormData(form);
+      const data = new FormData(event.currentTarget as HTMLFormElement);
       const gammaIn = Number(data.get('gammaIn'));
       const gammaOut = Number(data.get('gammaOut'));
       if (!(gammaIn > 0) || !(gammaOut > 0)) { showToast('Gamma values must be greater than zero.'); return; }
@@ -427,41 +425,31 @@ function openControlPopover(kind: ControlPopoverKind): void {
       currentSettings.normalization.gammaMode = true;
       sendCurrentSettings('browser-gamma');
       closeControlPopover();
-    });
+    };
   } else if (kind === 'exposure') {
     title.textContent = 'Exposure';
-    form.innerHTML = `
-      <label>Exposure stops <input name="exposure" type="number" min="-16" max="16" step="0.1" value="${currentSettings.brightness.offset}"></label>
-      <p class="web-control-note">+1 EV doubles linear brightness; −1 EV halves it.</p>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
+    submit = event => {
       event.preventDefault();
-      const exposure = Number(new FormData(form).get('exposure'));
+      const exposure = Number(new FormData(event.currentTarget as HTMLFormElement).get('exposure'));
       if (!Number.isFinite(exposure)) { showToast('Enter a valid exposure value.'); return; }
       currentSettings.brightness = { offset: exposure };
       currentSettings.normalization.autoNormalize = false;
       currentSettings.normalization.gammaMode = true;
       sendCurrentSettings('browser-exposure');
       closeControlPopover();
-    });
+    };
   } else {
     title.textContent = 'Zoom';
-    form.innerHTML = `
-      <label>Scale <select name="scale">
-        <option value="fit" ${currentZoom === 'fit' ? 'selected' : ''}>Whole image</option>
-        ${[0.1, 0.2, 0.5, 1, 2, 5, 10].map(scale => `<option value="${scale}" ${currentZoom === scale ? 'selected' : ''}>${scale * 100}%</option>`).join('')}
-      </select></label>
-      <button class="web-control-submit" type="submit">Apply</button>`;
-    form.addEventListener('submit', event => {
+    submit = event => {
       event.preventDefault();
-      const raw = String(new FormData(form).get('scale') || 'fit');
+      const raw = String(new FormData(event.currentTarget as HTMLFormElement).get('scale') || 'fit');
       sendToViewer({ type: 'setScale', scale: raw === 'fit' ? 'fit' : Number(raw) });
       closeControlPopover();
-    });
+    };
   }
-  content.appendChild(form);
+  controlForm = flushSync(() => mount(DisplayForm, { target: content, props: { kind, settings: structuredClone(currentSettings), zoom: currentZoom, isSingleChannelInteger, submit } }));
   popover.hidden = false;
-  (form.querySelector('input, select') as HTMLElement | null)?.focus();
+  (content.querySelector('input, select') as HTMLElement | null)?.focus();
 }
 
 function downloadBytes(fileName: string, bytes: Uint8Array, type = 'application/octet-stream'): void {
@@ -506,40 +494,19 @@ function updateTabScrollControls(): void {
   next.disabled = !overflowing || tabList.scrollLeft + tabList.clientWidth >= tabList.scrollWidth - 1;
 }
 
+const tabsView = mountView(ImageTabs, { entries: [] as { name: string; title: string }[], index: 0, overview: true,
+  select: (index: number) => { if (showingOverview || index !== fileIndex) switchTo(index); },
+  close: (index: number) => closeImageAt(index, true),
+}, document.getElementById('web-image-tabs')!);
 function renderImageTabs(): void {
   const tabList = document.getElementById('web-image-tabs');
   const tabShell = document.getElementById('web-image-tabs-shell');
   if (!tabList || !tabShell) return;
-  tabList.replaceChildren();
   tabShell.hidden = files.length === 0;
-  files.forEach((entry, index) => {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'web-image-tab';
-    wrapper.dataset.active = String(!showingOverview && index === fileIndex);
-
-    const select = document.createElement('button');
-    select.type = 'button';
-    select.className = 'web-image-tab-select';
-    select.dataset.imageIndex = String(index);
-    select.textContent = entry.name;
-    select.title = entry.size === null ? `${entry.name} · remote` : `${entry.name} · ${formatBytes(entry.size)}`;
-    select.setAttribute('role', 'tab');
-    select.setAttribute('aria-selected', String(!showingOverview && index === fileIndex));
-    select.tabIndex = index === fileIndex ? 0 : -1;
-    select.addEventListener('click', () => {
-      if (showingOverview || index !== fileIndex) switchTo(index);
-    });
-    wrapper.appendChild(select);
-
-    const close = document.createElement('button');
-    close.type = 'button';
-    close.className = 'web-image-tab-close';
-    close.dataset.closeImageIndex = String(index);
-    close.textContent = '×';
-    close.setAttribute('aria-label', `Close ${entry.name}`);
-    close.addEventListener('click', () => closeImageAt(index, true));
-    wrapper.appendChild(close);
-    tabList.appendChild(wrapper);
+  tabsView.update({ entries: files.map(entry => ({ name: entry.name, title: entry.size === null ? `${entry.name} · remote` : `${entry.name} · ${formatBytes(entry.size)}` })),
+    index: fileIndex, overview: showingOverview,
+    select: index => { if (showingOverview || index !== fileIndex) switchTo(index); },
+    close: index => closeImageAt(index, true),
   });
   tabList.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   window.requestAnimationFrame(updateTabScrollControls);
@@ -1167,7 +1134,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (action === 'options') {
         const menu = document.querySelector('.custom-context-menu');
         if (menu) {
-          menu.remove();
+          menu.dispatchEvent(new Event('dismiss'));
           return;
         }
         const anchor = (button as HTMLElement).getBoundingClientRect();
@@ -1346,7 +1313,7 @@ installEmbeddedImageHost({
       openControlPopover(name);
     } else if (name === 'options') {
       const menu = document.querySelector('.custom-context-menu');
-      if (menu) menu.remove();
+      if (menu) menu.dispatchEvent(new Event('dismiss'));
       else sendToViewer({ type: 'showContextMenu', x: Math.max(0, innerWidth - 280), y: innerHeight - 8 });
     } else if (name === 'layers') executeCommand('tiffVisualizer.toggleLayers');
   },

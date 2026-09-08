@@ -76,3 +76,6 @@ media/decode-worker.ts
 media/layer-compositor-worker.ts
 media/comparisonPanel.ts
 media/tsconfig.json
+
+# Svelte source is compiled into the media bundles.
+ui/**

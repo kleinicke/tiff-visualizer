@@ -76,41 +76,63 @@ test('the shipped webview bundle loads and initializes WASM with no missing reso
 
 	// The DOM and globals the extension's generated HTML provides. Without
 	// `acquireVsCodeApi` the bundle throws immediately.
-	await page.goto('https://tiff-visualizer.test/media/harness.html', { waitUntil: 'domcontentloaded' }).catch(() => { /* served below */ });
+	await page.goto('https://tiff-visualizer.test/harness.html', { waitUntil: 'domcontentloaded' }).catch(() => { /* served below */ });
 	await page.setContent(`<!DOCTYPE html><html><body class="container image">
 		<div class="loading-indicator"></div>
 		<div class="image-load-error"><p>error</p></div>
 		<meta id="image-preview-settings"
-			data-settings='{"isMac":false,"gpuAcceleration":true}'
+			data-settings='{"isMac":false,"gpuAcceleration":true,"src":"https://tiff-visualizer.test/test-samples/house.tif","resourceUri":"https://tiff-visualizer.test/test-samples/house.tif"}'
 			data-resource="https://tiff-visualizer.test/test-samples/house.tif"
 			data-folder="https://tiff-visualizer.test/test-samples/"
 			data-version="1">
 	</body></html>`);
-	await page.addScriptTag({ content: 'window.acquireVsCodeApi = () => ({ postMessage(){}, setState(){}, getState(){ return undefined; } });' });
+	await page.addScriptTag({ url: 'https://tiff-visualizer.test/web/vendor-assets.js' });
+  await page.addScriptTag({ content: `window.messages = [];
+    window.acquireVsCodeApi = () => ({
+      postMessage(message) {
+        window.messages.push(message);
+        if (message.type === 'formatInfo') window.postMessage({ type: 'updateSettings', isInitialRender: true,
+          settings: { normalization: { min: 0, max: 255, autoNormalize: false, gammaMode: true }, gamma: { in: 2.2, out: 2.2 }, brightness: { offset: 0 } }
+        }, '*');
+      }, setState(){}, getState(){ return undefined; }
+    });` });
 
 	await page.addScriptTag({ url: 'https://tiff-visualizer.test/media/imagePreview.bundle.js', type: 'module' })
 		.catch(error => { pageErrors.push(`bundle failed to load: ${error}`); });
 
-	// The wrapper reports WASM availability once at startup; wait for either
-	// outcome rather than a fixed delay.
-	await page.waitForFunction(
-		() => (window as any).__wasmStartupSeen === true,
-		null, { timeout: 15_000 },
-	).catch(() => { /* asserted through the console lines below */ });
-	await page.waitForTimeout(2000);
+  // Decode a real image: an old startup log is not proof the decoder ran.
+  await expect(page.locator('body')).toHaveClass(/ready/, { timeout: 15_000 });
+  const format = await page.evaluate(() => (window as any).messages.find((message: any) => message.type === 'formatInfo')?.value);
+  expect(format?.decodedWith).toMatch(/^wasm/);
 
 	const wasmMissing = missing.filter(name => name.includes('wasm'));
 	expect(wasmMissing, `the bundle requested WASM resources that do not exist: ${wasmMissing.join(', ')}`).toEqual([]);
 
-	const unavailable = consoleLines.filter(line => line.includes('Rust/WASM decoder unavailable'));
-	expect(unavailable, `WASM failed to initialize in the bundle: ${unavailable.join(' | ')}`).toEqual([]);
+  expect(pageErrors, `bundle raised errors: ${pageErrors.join(' | ')}`).toEqual([]);
 
-	const fatal = pageErrors.filter(error => !/Cannot read|is not defined/.test(error));
-	expect(fatal, `bundle raised errors: ${fatal.join(' | ')}`).toEqual([]);
+});
 
-	// Positive confirmation: the shared decoder came up.
-	expect(
-		consoleLines.some(line => line.includes('Rust/WASM decoder ready')),
-		`expected the startup readiness log; saw:\n${consoleLines.slice(0, 40).join('\n')}`,
-	).toBe(true);
+test('Svelte comparison renders filenames safely and preserves its host protocol under CSP', async ({ page }) => {
+  const missing: string[] = [], errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await serveRepository(page, missing);
+  const filename = '<img src=x onerror=alert(1)>.png';
+  const images = [{ filename, uri: 'file:///comparison.png', webviewUri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' }];
+  await page.route('**/comparison-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html>
+    <html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-test'; style-src https://tiff-visualizer.test; img-src data:">
+    <link rel="stylesheet" href="/media/comparisonPanel.css"><link rel="stylesheet" href="/media/comparisonPanel.bundle.css"></head><body>
+    <script nonce="test">window.messages = []; window.acquireVsCodeApi = () => ({ postMessage: message => window.messages.push(message) }); window.imageData = ${JSON.stringify(images).replace(/</g, '\\u003c')};</script>
+    <script nonce="test" src="/media/comparisonPanel.bundle.js"></script></body></html>` }));
+  await page.goto('https://tiff-visualizer.test/comparison-test');
+  await expect(page.locator('.image-filename')).toHaveText(filename);
+  await expect(page.locator('.image-count')).toHaveText('1 images');
+  await expect(page.locator('.image-filename img')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open', exact: true }).click();
+  await page.getByRole('button', { name: 'Remove', exact: true }).click();
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => (window as any).messages)).toEqual([
+    { type: 'openImageInMainEditor', uri: images[0].uri }, { type: 'removeImage', uri: images[0].uri }, { type: 'closePanel' },
+  ]);
+  expect(errors).toEqual([]);
+  expect(missing).toEqual([]);
 });

@@ -109,7 +109,8 @@ const ome = createOmeDataset({
 assert.ok(ome, 'selected OME files should create a browser dataset');
 assert.equal(findDatasetPlane(ome.manifest, 0, { c: 0, z: 1, t: 0 }).plane.src, 'blob:z1');
 
-const html = fs.readFileSync('web/index.html', 'utf8');
+const html = fs.readFileSync('web/index.html', 'utf8') + fs.readFileSync('web/App.svelte', 'utf8');
+const tabs = fs.readFileSync('web/ImageTabs.svelte', 'utf8');
 const css = fs.readFileSync('web/website.css', 'utf8');
 const host = fs.readFileSync('web/browser-host.ts', 'utf8');
 const netlify = fs.readFileSync('netlify.toml', 'utf8');
@@ -165,9 +166,9 @@ assert.match(host, /formatHint: entry\.formatHint/,
 assert.match(commands, /probeRemoteImage\(parsed\.toString\(\), probeController\.signal\)/,
   'the extension URL command should identify content before choosing streaming or download');
 assert.match(host, /switchTo\(firstNewIndex, false, true\)/, 'new images should explicitly start fitted to the whole scene');
-assert.match(host, /className = 'web-image-tab-select'/, 'each open image should receive a selectable tab');
+assert.match(tabs, /class="web-image-tab-select"/, 'each open image should receive a selectable tab');
 assert.match(host, /closeImageAt\(index, true\)/, 'image tabs should be individually closable');
-assert.doesNotMatch(host, /if \(files\.length > 1\) \{[\s\S]*?className = 'web-image-tab-close'/, 'the final image tab should retain its close button');
+assert.doesNotMatch(tabs, /\{#if [^}]*entries\.length > 1[^}]*\}[\s\S]*?class="web-image-tab-close"/, 'the final image tab should retain its close button');
 assert.match(host, /case 'toggleImage':[\s\S]*?case 'jumpToCollectionIndex':[\s\S]*?click-only/, 'shared viewer navigation must not switch website image tabs');
 assert.match(css, /\.web-image-tabs \{[\s\S]*?overflow-x:\s*auto;/, 'overflowing image tabs should remain horizontally scrollable');
 assert.match(html, /id="web-log-panel"[^>]*role="dialog"/, 'loading timings should live in a separate diagnostics panel');
@@ -193,7 +194,7 @@ assert.match(imagePreview, /resetVisibleTiming\(\);\s*initialLoadStartTime = per
 assert.match(host, /type: 'showContextMenu'/, 'the Options status action should open the shared image menu');
 assert.match(host, /getBoundingClientRect\(\)[\s\S]*?type: 'showContextMenu', x: anchor\.left, y: anchor\.top/, 'the shared image menu should originate at the Options button');
 assert.match(imagePreview, /case 'showContextMenu':[\s\S]*?MouseEvent\('contextmenu'/, 'the shared viewer should open its real context menu on host request');
-assert.match(imagePreview, /getPropertyValue\('--context-menu-bottom-inset'\)/, 'context-menu placement should account for host UI below the image');
+assert.match(fs.readFileSync('ui/context-menu.ts', 'utf8'), /getPropertyValue\('--context-menu-bottom-inset'\)/, 'context-menu placement should account for host UI below the image');
 assert.match(imagePreview, /container\.addEventListener\('click',[\s\S]*?e\.target !== imageElement[\s\S]*?zoomController\.zoomIn\(\)/, 'website controls must not bubble into click-to-zoom');
 assert.match(imagePreviewCss, /max-height: calc\(100vh - 16px - var\(--context-menu-bottom-inset, 0px\)\)/, 'an over-tall context menu should scroll above host UI');
 assert.match(host, /scientific-image-handoff-probe/, 'the browser host should wait for the 3D viewer before transferring a file');
@@ -204,6 +205,6 @@ assert.match(css, /--measure-scale-bar-bottom-inset:\s*28px/, 'the site should r
 assert.match(roiOverlay, /window\.innerHeight - bottomInset/, 'the shared scale bar should honor a host-provided bottom inset');
 assert.match(measurePanel, /if \(result && this\.isVisible\(\)\) \{ this\.render\(\); \}/, 'completed particle analysis should update both the green preview and its count');
 assert.match(measurePanel, /token !== this\.particleToken[\s\S]*?void this\.startParticleAnalysis\(\)/, 'a filter change during analysis should schedule the current result');
-assert.match(measurePanel, /\? 'Analyzing objects…'/, 'pending analysis must not be described as zero accepted objects');
+assert.match(fs.readFileSync('ui/components/MeasureSegment.svelte', 'utf8'), /pending\s*\?\s*'Analyzing objects…'/, 'pending analysis must not be described as zero accepted objects');
 
 console.log('Browser dataset host tests passed');

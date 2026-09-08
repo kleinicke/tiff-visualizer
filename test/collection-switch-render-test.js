@@ -221,11 +221,11 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 	// ordinary controls in the one shared navigation overlay. The invariants
 	// those buttons carried still apply to every control in it — stay out of
 	// the Tab order, and never let a press reach the canvas zoom handlers.
-	assert.match(webviewSource, /function buildNavRow[\s\S]*?input\.tabIndex = -1;/,
+	assert.match(fs.readFileSync('ui/components/NavigationRow.svelte', 'utf8'), /<input[^>]*tabindex="-1"/,
 		'navigation sliders must not enter the keyboard tab order');
-	assert.match(webviewSource, /function buildNavRow[\s\S]*?select\.tabIndex = -1;/,
+	assert.match(fs.readFileSync('ui/components/NavigationRow.svelte', 'utf8'), /<select[^>]*tabindex="-1"/,
 		'navigation dropdowns must not enter the keyboard tab order');
-	assert.match(webviewSource, /overlay\.addEventListener\('pointerdown'[\s\S]*?event\.stopPropagation\(\);/,
+	assert.match(webviewSource, /onSvelteEvent\(overlay, 'pointerdown'[\s\S]*?event\.stopPropagation\(\);/,
 		'overlay presses must not bubble into canvas click/zoom handling');
 	assert.match(webviewSource, /loading: loading \|\| _levelSwitchPending \|\| _tiffViewportLoadCount > 0/,
 		'TIFF navigation chrome must stay visibly busy during page loads and viewport tile streams');
@@ -275,9 +275,9 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 	// Rows are reused so a drag survives the reload it triggers; their
 	// listeners must therefore read the CURRENT spec, not the one they were
 	// built with, or a slider moves a single step and then appears stuck.
-	assert.match(webviewSource, /navRowSpecs\.get\(row\)\?\.go\(/,
+	assert.match(fs.readFileSync('ui/components/NavigationRow.svelte', 'utf8'), /spec\.go\(displayed\)/,
 		'row listeners must dispatch through the live spec, not a build-time closure');
-	assert.match(webviewSource, /function renderNavOverlay[\s\S]*?navRowSpecs\.set\(row, spec\);/,
+	assert.match(webviewSource, /function renderNavOverlay[\s\S]*?navigationView\.update\(navigationModel\);/,
 		'each render must refresh the spec stored on a reused row');
 
 	// The container's zoom/pan handlers listen on mouse events, which are a
@@ -296,7 +296,7 @@ function testSwitchKeepsOutgoingFrameUntilReplacementIsReady() {
 	// carries them (a dropdown), never after a slider.
 	assert.doesNotMatch(webviewSource, /valueSuffix/,
 		'nothing may be appended after a slider reading');
-	assert.match(webviewSource, /value\.textContent = `\$\{Number\(input\.value\) \+ 1\} \/ \$\{spec\.size\}`;/,
+	assert.match(fs.readFileSync('ui/components/NavigationRow.svelte', 'utf8'), /\{displayed \+ 1\} \/ \{spec\.size\}/,
 		'a slider reading must be exactly "n / total"');
 	// One rule for the widget, applied by every format: named values are a
 	// dropdown, unnamed values are a slider.

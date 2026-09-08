@@ -56,3 +56,7 @@ media/comparisonPanel.bundle.js.map
 
 # Output of `npm run benchmark:vscode`
 benchmark-vscode-result.json
+
+# Compiled Svelte component styles
+media/*.bundle.css
+media/*.bundle.css.map

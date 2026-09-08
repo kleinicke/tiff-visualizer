@@ -1,4 +1,13 @@
-const { build } = require('esbuild');
+const { build: esbuild, context } = require('esbuild');
+const sveltePlugin = require('./scripts/svelte-plugin.cjs');
+async function build(config) {
+  if (isWatch) {
+    const ctx = await context(config);
+    await ctx.watch();
+  } else {
+    await esbuild(config);
+  }
+}
 const fs = require('fs');
 const path = require('path');
 
@@ -43,6 +52,8 @@ const appStateManagerBuildOptions = {
 
 // Build webview scripts
 const webviewBuildOptions = {
+  plugins: [sveltePlugin()],
+  conditions: ['browser'],
   entryPoints: ['media/imagePreview.ts'],
   bundle: true,
   outdir: 'media',
@@ -161,6 +172,8 @@ const layerCompositorWorkerBuildOptions = {
 
 // Build the comparison panel webview script (classic script, no imports/exports).
 const comparisonPanelBuildOptions = {
+  plugins: [sveltePlugin()],
+  conditions: ['browser'],
   entryPoints: ['media/comparisonPanel.ts'],
   bundle: true,
   outfile: 'media/comparisonPanel.bundle.js',
@@ -262,128 +275,6 @@ const testFiles = findTestFiles('test');
 if (testFiles.length > 0) {
   testBuildOptions.entryPoints = testFiles;
   console.log('Found test files:', testFiles);
-}
-
-if (isWatch) {
-  extensionBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('extension watch build failed:', error);
-      } else {
-        console.log('extension watch build succeeded');
-      }
-    },
-  };
-
-  if (testBuildOptions.entryPoints.length > 0) {
-    testBuildOptions.watch = {
-      onRebuild(error) {
-        if (error) {
-          console.error('test watch build failed:', error);
-        } else {
-          console.log('test watch build succeeded');
-        }
-      },
-    };
-  }
-
-  webviewBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('webview watch build failed:', error);
-      } else {
-        console.log('webview watch build succeeded');
-      }
-    },
-  };
-
-  decodeWorkerBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('decode worker watch build failed:', error);
-      } else {
-        console.log('decode worker watch build succeeded');
-      }
-    },
-  };
-
-  pngDecodeWorkerBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('PNG decode worker watch build failed:', error);
-      } else {
-        console.log('PNG decode worker watch build succeeded');
-      }
-    },
-  };
-
-  layeredDecodeWorkerBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) console.error('layered decode worker watch build failed:', error);
-      else console.log('layered decode worker watch build succeeded');
-    },
-  };
-
-  layeredPreviewFallbackBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) console.error('layered preview fallback watch build failed:', error);
-      else console.log('layered preview fallback watch build succeeded');
-    },
-  };
-
-  layerDocumentWriterBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) console.error('layer document writer watch build failed:', error);
-      else console.log('layer document writer watch build succeeded');
-    },
-  };
-
-  imagejRoiBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) console.error('ImageJ ROI watch build failed:', error);
-      else console.log('ImageJ ROI watch build succeeded');
-    },
-  };
-
-  stripDecodeWorkerBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('strip decode worker watch build failed:', error);
-      } else {
-        console.log('strip decode worker watch build succeeded');
-      }
-    },
-  };
-
-  fastRawWorkerBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('fast raw worker watch build failed:', error);
-      } else {
-        console.log('fast raw worker watch build succeeded');
-      }
-    },
-  };
-
-  layerCompositorWorkerBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('layer compositor worker watch build failed', error);
-      } else {
-        console.log('layer compositor worker watch build succeeded');
-      }
-    },
-  };
-
-  comparisonPanelBuildOptions.watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('comparison panel watch build failed:', error);
-      } else {
-        console.log('comparison panel watch build succeeded');
-      }
-    },
-  };
 }
 
 function copyMediaAssets() {

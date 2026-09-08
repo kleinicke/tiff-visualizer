@@ -16,7 +16,7 @@ function layer(id, name, groupPath = [], groupIds = []) {
 }
 
 async function main() {
-	const panelPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layers-panel.js');
+	const panelPath = path.join(__dirname, '..', 'out', 'media', 'modules', 'layer-panel-model.js');
 	const { adjustmentLabel, adjustmentSummary, buildLayerDisplayTree, clippingTarget } = await import(panelPath);
 	const layers = [
 		layer('background', 'Background'),

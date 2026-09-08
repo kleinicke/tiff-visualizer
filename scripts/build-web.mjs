@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import sveltePlugin from './svelte-plugin.cjs';
 import { cp, mkdir, rm } from 'node:fs/promises';
 
 const outputDirectory = 'web-dist';
@@ -9,6 +10,8 @@ await mkdir(`${mediaDirectory}/wasm`, { recursive: true });
 
 const browserBuild = {
   bundle: true,
+  plugins: [sveltePlugin()],
+  conditions: ['browser'],
   minify: true,
   platform: 'browser',
   target: 'es2020',

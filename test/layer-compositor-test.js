@@ -20,7 +20,7 @@ async function main() {
 		resetLayerCompositorCacheStats,
 	} = mod;
 	const { LayerManager } = await import(path.join('..', 'out', 'media', 'modules', 'layer-manager.js').replace(/\\/g, '/'));
-	const { blendModePatch } = await import(path.join('..', 'out', 'media', 'modules', 'layers-panel.js').replace(/\\/g, '/'));
+	const { blendModePatch } = await import(path.join('..', 'out', 'media', 'modules', 'layer-panel-model.js').replace(/\\/g, '/'));
 
 	console.log('🧪 Running Layer Compositor tests...\n');
 

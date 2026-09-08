@@ -25,6 +25,9 @@ jobs:
     - name: Install Playwright Browsers
       run: npx playwright install --with-deps
     
+    - name: Check TypeScript and Svelte
+      run: npm run typecheck
+
     - name: Build extension
       run: npm run compile:quick
 

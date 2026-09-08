@@ -1,3 +1,8 @@
+import { openContextMenu, type MenuItem } from '../ui/context-menu';
+import Navigation from '../ui/components/Navigation.svelte';
+import { mountView } from '../ui/mount.js';
+import type { NavigationModel } from '../ui/navigation-model.js';
+import { on as onSvelteEvent } from 'svelte/events';
 import { remoteTileConcurrency } from './modules/remote-tiff-source.js';
 "use strict";
 
@@ -5595,70 +5600,41 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isEditableEventTarget(e.target)) { return; }
 			e.preventDefault();
 
-			// Remove any existing custom context menu
-			const existingMenu = document.querySelector('.custom-context-menu');
-			if (existingMenu) {
-				existingMenu.remove();
-			}
-
-			// Create custom context menu
-			const menu = document.createElement('div');
-			menu.className = 'custom-context-menu';
-			menu.style.left = `${e.clientX}px`;
-			menu.style.top = `${e.clientY}px`;
-
-			// Helper function to create menu items
-			const createMenuItem = (text: string, action: () => void) => {
-				const item = document.createElement('div');
-				item.className = 'context-menu-item';
-				item.textContent = text;
-				item.addEventListener('click', (e) => {
-					e.stopPropagation(); // Prevent event bubbling
-					menu.remove();
-					// Execute action after removing menu to avoid timing issues
-					setTimeout(() => action(), 0);
-				});
-				return item;
-			};
-
-			// Helper function to create separator
-			const createSeparator = () => {
-				const separator = document.createElement('div');
-				separator.className = 'context-menu-separator';
-				return separator;
-			};
+			const items: MenuItem[] = [];
+			const createMenuItem = (label: string, action: () => void): MenuItem => ({ label, action: () => { setTimeout(action, 0); } });
+			const createSeparator = (): MenuItem => ({ separator: true });
 
 			// Add Copy option (triggers command via extension for logging)
-			menu.appendChild(createMenuItem('Copy Image and Position', () => {
+			items.push(createMenuItem('Copy Image and Position', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.copyImage' });
 			}));
 
 			// Add Paste Position option (uses extension command for cross-webview support)
-			menu.appendChild(createMenuItem('Paste Position', () => {
+			items.push(createMenuItem('Paste Position', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
 			}));
 
 			// The unified exporter evaluates compatibility before choosing a format.
-			menu.appendChild(createMenuItem('Export…', () => {
+			items.push(createMenuItem('Export…', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' });
 			}));
 
-			menu.appendChild(createSeparator());
+			items.push(createSeparator());
 
 			// Add Images to Collection option
-			menu.appendChild(createMenuItem('Add Images to Collection', () => {
+			items.push(createMenuItem('Add Images to Collection', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
 			}));
 
-			menu.appendChild(createSeparator());
+			items.push(createSeparator());
 
 			// Add Toggle Histogram option (triggers command via extension for logging)
-			menu.appendChild(createMenuItem('Toggle Histogram', () => {
+			items.push(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
 
 			if (hasCompositableChannels()) {
-				menu.appendChild(createMenuItem(
+				items.push(createMenuItem(
 					channelsPanel.isVisible() ? 'Close Channels Panel' : 'Channels…',
 					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleChannels' }); },
 				));
@@ -5666,7 +5642,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 			// Measurement is one entry, not a submenu of eleven: the tools live
 			// inside the panel, so the menu stays as short as it is today.
-			menu.appendChild(createMenuItem(
+			items.push(createMenuItem(
 				measurePanel.isVisible() ? 'Close Measure Panel' : 'Measure…',
 				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMeasure' }); },
 			));
@@ -5674,12 +5650,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// A scale-bar command is meaningful only after the current image has
 			// supplied physical calibration (embedded metadata or Set Scale).
 			if (measureCalibration.origin !== 'none') {
-				menu.appendChild(createMenuItem(
+				items.push(createMenuItem(
 					roiOverlay.getShowScaleBar() ? 'Hide Scale Bar' : 'Show Scale Bar',
 					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleScaleBar' }); },
 				));
 				if (roiOverlay.hasCustomScaleBarPosition()) {
-					menu.appendChild(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
+					items.push(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
 				}
 			}
 
@@ -5693,25 +5669,25 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			const isSingleChannel = !!currentFormatInfo && (currentFormatInfo.samplesPerPixel ?? 1) <= 1;
 
 			if (isRgb8BitUint) {
-				menu.appendChild(createSeparator());
+				items.push(createSeparator());
 
 				const rgb24Active = settingsManager.settings.rgbAs24BitGrayscale || false;
-				menu.appendChild(createMenuItem(rgb24Active ? '✓ Interpret as 24-bit Grayscale' : 'Interpret as 24-bit Grayscale', () => {
+				items.push(createMenuItem(rgb24Active ? '✓ Interpret as 24-bit Grayscale' : 'Interpret as 24-bit Grayscale', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleRgb24Mode' });
 				}));
 			}
 
 			// "Apply Colormap" (pseudocolor): map a single-channel scalar to colors.
 			if (isSingleChannel) {
-				menu.appendChild(createSeparator());
+				items.push(createSeparator());
 
 				const activeColormap = settingsManager.settings.displayColormap;
 				const hasColormap = activeColormap && activeColormap !== 'none';
-				menu.appendChild(createMenuItem(hasColormap ? `Apply Colormap… (${activeColormap})` : 'Apply Colormap…', () => {
+				items.push(createMenuItem(hasColormap ? `Apply Colormap… (${activeColormap})` : 'Apply Colormap…', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.applyColormap' });
 				}));
 				if (hasColormap) {
-					menu.appendChild(createMenuItem('Remove Colormap', () => {
+					items.push(createMenuItem('Remove Colormap', () => {
 						handleSetDisplayColormap('none');
 					}));
 				}
@@ -5720,41 +5696,41 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// "Decode Colormap to Float": recover a scalar from a colormapped RGB image.
 			if (isRgbImage) {
 				if (!isRgb8BitUint) {
-					menu.appendChild(createSeparator());
+					items.push(createSeparator());
 				}
 
-				menu.appendChild(createMenuItem('Decode Colormap to Float', () => {
+				items.push(createMenuItem('Decode Colormap to Float', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.convertColormapToFloat' });
 				}));
 			}
 
 			// Show revert option if a colormap conversion has been applied
 			if (hasAppliedConversion) {
-				menu.appendChild(createSeparator());
+				items.push(createSeparator());
 
-				menu.appendChild(createMenuItem('Revert to Original', () => {
+				items.push(createMenuItem('Revert to Original', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.revertToOriginal' });
 				}));
 			}
 
-			menu.appendChild(createSeparator());
+			items.push(createSeparator());
 
 			// Layers compositing view
-			menu.appendChild(createMenuItem('Open Layers View', () => {
+			items.push(createMenuItem('Open Layers View', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
 			}));
 
 
-			menu.appendChild(createSeparator());
+			items.push(createSeparator());
 
 			// Add Open Comparison Panel option
-			// menu.appendChild(createMenuItem('Open Comparison Panel', () => {
+			// items.push(createMenuItem('Open Comparison Panel', () => {
 			// 	vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openComparisonPanel' });
 			// }));
 
 			// Cycle how pixels with no value are drawn (black/fuchsia/transparent)
 			const nextNanColor = nextNanColor_(settingsManager.settings.nanColor);
-			menu.appendChild(createMenuItem(`Show No-Value Pixels as ${nextNanColor}`, () => {
+			items.push(createMenuItem(`Show No-Value Pixels as ${nextNanColor}`, () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
 			}));
 
@@ -5764,59 +5740,26 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isGammaMode && !layerManager.active) {
 				const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
 				const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
-				menu.appendChild(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
+				items.push(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
 				}));
 			}
 
 			// Add Toggle Metadata Panel option
-			menu.appendChild(createMenuItem('Toggle Metadata Panel', () => {
+			items.push(createMenuItem('Toggle Metadata Panel', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMetadata' });
 			}));
 
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
 			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide', 'tiff-uint16', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
 			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
-				menu.appendChild(createSeparator());
-				menu.appendChild(createMenuItem('Open as Point Cloud', () => {
+				items.push(createSeparator());
+				items.push(createMenuItem('Open as Point Cloud', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openAsPointCloud' });
 				}));
 			}
 
-			document.body.appendChild(menu);
-
-			// Keep the menu inside the viewport: if it would overflow the right or
-			// bottom edge, shift it back so it isn't clipped by the webview bounds.
-			// (An over-tall menu is capped and made scrollable via CSS max-height.)
-			const edgeMargin = 8;
-			const bottomInset = Math.max(0, Number.parseFloat(
-				getComputedStyle(document.documentElement).getPropertyValue('--context-menu-bottom-inset'),
-			) || 0);
-			const menuBottom = window.innerHeight - bottomInset - edgeMargin;
-			const menuRect = menu.getBoundingClientRect();
-			let menuLeft = e.clientX;
-			let menuTop = e.clientY;
-			if (menuLeft + menuRect.width > window.innerWidth - edgeMargin) {
-				menuLeft = Math.max(edgeMargin, window.innerWidth - menuRect.width - edgeMargin);
-			}
-			if (menuTop + menuRect.height > menuBottom) {
-				menuTop = Math.max(edgeMargin, menuBottom - menuRect.height);
-			}
-			menu.style.left = `${menuLeft}px`;
-			menu.style.top = `${menuTop}px`;
-
-			// Remove menu when clicking outside
-			const removeMenu = (event: MouseEvent) => {
-				if (!menu.contains(event.target as Node)) {
-					menu.remove();
-					document.removeEventListener('click', removeMenu);
-				}
-			};
-
-			// Use setTimeout to avoid immediate removal
-			setTimeout(() => {
-				document.addEventListener('click', removeMenu);
-			}, 0);
+			openContextMenu(items, e.clientX, e.clientY);
 		});
 
 		// Prevent cut operation (only copy makes sense for image viewer)
@@ -6171,29 +6114,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	/**
-	 * Apply the hint text to already-rendered rows.
-	 *
-	 * `rows` must be in the same order as the controls, so the hint always
-	 * lands on the row it describes.
-	 */
-	function paintNavHints(rows: (HTMLElement | null | undefined)[]) {
-		const hints = navKeyHints(navControls);
-		rows.forEach((row, index) => {
-			if (!row) { return; }
-			let cell = row.querySelector('.dataset-axis-hint') as HTMLElement | null;
-			if (!cell) {
-				cell = document.createElement('span');
-				cell.className = 'dataset-axis-hint';
-				row.appendChild(cell);
-			}
-			const control = navControls[index];
-			const text = (control && control.size > 1 && hints[index]) ? hints[index] : '';
-			cell.textContent = text;
-			cell.title = text ? `Step ${control.label} with ${text}` : '';
-		});
-	}
-
-	/**
 	 * Make a floating overlay draggable by its body.
 	 *
 	 * The plane overlays sit over the image, so on a small window they cover
@@ -6247,7 +6167,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// stopping `pointerdown` alone still let every press reach the zoom
 		// handler, and moving the overlay zoomed the image underneath it.
 		for (const type of ['mousedown', 'click', 'dblclick', 'wheel'] as const) {
-			overlay.addEventListener(type, event => { event.stopPropagation(); });
+			onSvelteEvent(overlay, type, event => { event.stopPropagation(); });
 		}
 		overlay.addEventListener('dblclick', event => {
 			const target = event.target as HTMLElement;
@@ -6261,7 +6181,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			}
 			restoreDefaultPosition();
 		});
-		overlay.addEventListener('pointerdown', event => {
+		onSvelteEvent(overlay, 'pointerdown', event => {
 			const target = event.target as HTMLElement;
 			event.stopPropagation();
 			// Never hijack a control the user meant to operate.
@@ -6698,6 +6618,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	let navOverlay: HTMLElement | null = null;
 	let navOverlayCollapsed = false;
+  let navigationView: ReturnType<typeof mountView<NavigationModel>>;
+  let navigationModel: NavigationModel;
 
 	function applyNavOverlayCollapsedState() {
 		if (!navOverlay) { return; }
@@ -6734,39 +6656,20 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/** True while a pointer is held on a control, so re-renders leave it alone. */
 	let navControlHeld = false;
 
-	function createNavOverlay() {
-		navOverlay = document.createElement('div');
-		navOverlay.className = 'dataset-overlay nav-overlay';
-		navOverlay.style.display = 'none';
-		navOverlay.innerHTML = `
-			<div class="dataset-title" role="button" tabindex="0" aria-expanded="true"><span class="dataset-title-label"></span></div>
-			<div class="dataset-resolution" hidden><span>Preview <b data-resolution="preview"></b></span><span class="dataset-detail">Detail <b data-resolution="detail"></b></span></div>
-			<div class="dataset-axis-controls"></div>
-			<div class="dataset-note" hidden></div>
-		`;
-		const toggleCollapsed = () => {
-			if (navOverlay?.classList.contains('dataset-overlay--readonly')) { return; }
-			navOverlayCollapsed = !navOverlayCollapsed;
-			applyNavOverlayCollapsedState();
-		};
-		makeOverlayDraggable(navOverlay, 'plane', toggleCollapsed);
-		navOverlay.querySelector('.dataset-title')!.addEventListener('keydown', (event: KeyboardEvent) => {
-			if (event.key === 'Enter' || event.key === ' ') {
-				event.preventDefault();
-				event.stopPropagation();
-				toggleCollapsed();
-			}
-		});
-		applyNavOverlayCollapsedState();
-		document.body.appendChild(navOverlay);
-	}
-
-	/** Signature of the control SHAPE; rows are rebuilt only when this changes. */
-	function navSignature(controls: readonly NavControlSpec[]): string {
-		return controls
-			.map(c => `${c.key}:${c.size}:${c.labels ? 'choice' : 'axis'}`)
-			.join(',');
-	}
+  function createNavOverlay() {
+    const toggle = () => {
+      if (navOverlay?.classList.contains('dataset-overlay--readonly')) return;
+      navOverlayCollapsed = !navOverlayCollapsed;
+      applyNavOverlayCollapsedState();
+    };
+    navigationModel = { title: '', controls: [], hints: [], note: '', loading: false,
+      ready: node => { navOverlay = node; }, toggle,
+      held: () => navControlHeld, hold: () => { navControlHeld = true; },
+    };
+    navigationView = mountView(Navigation, navigationModel);
+    makeOverlayDraggable(navOverlay!, 'plane', toggle);
+    applyNavOverlayCollapsedState();
+  }
 
 	/**
 	 * Render the overlay for `controls`.
@@ -6813,141 +6716,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			isChoice: !!spec.labels && spec.size > 1,
 			go: spec.go,
 		}));
+    const focusedKey = (document.activeElement instanceof HTMLElement)
+      ? document.activeElement.closest('[data-nav-key]')?.getAttribute('data-nav-key') : null;
+    navigationModel = { ...navigationModel, title, controls, hints: navKeyHints(navControls), note, loading, resolution: options.resolution };
+    navigationView.update(navigationModel);
+    if (focusedKey && !navOverlay.contains(document.activeElement)) {
+      navOverlay.querySelector<HTMLElement>(`[data-nav-key="${CSS.escape(focusedKey)}"] input, [data-nav-key="${CSS.escape(focusedKey)}"] select`)?.focus();
+    }
 
-		const resolution = navOverlay.querySelector('.dataset-resolution') as HTMLElement;
-		resolution.hidden = !options.resolution;
-		navOverlay.classList.toggle('dataset-overlay--resolution', !!options.resolution);
-		if (options.resolution) {
-			resolution.querySelector('[data-resolution="preview"]')!.textContent = options.resolution.preview;
-			resolution.querySelector('[data-resolution="detail"]')!.textContent = options.resolution.detail || '—';
-			resolution.querySelector('.dataset-detail')!.classList.toggle('dataset-detail--empty', !options.resolution.detail);
-			resolution.title = options.resolution.description;
-			resolution.setAttribute('aria-label', `Automatic resolution. Preview ${options.resolution.preview}. ${options.resolution.detail ? `Loaded detail ${options.resolution.detail}.` : ''} ${options.resolution.description}`);
-		}
-
-		const titleEl = navOverlay.querySelector('.dataset-title-label') as HTMLElement;
-		if (titleEl.textContent !== title) { titleEl.textContent = title; }
-		const rows = navOverlay.querySelector('.dataset-axis-controls') as HTMLElement;
-
-		const signature = navSignature(controls);
-		if (rows.dataset.signature !== signature) {
-			const focusedKey = (document.activeElement instanceof HTMLElement)
-				? document.activeElement.closest('[data-nav-key]')?.getAttribute('data-nav-key') || ''
-				: '';
-			rows.replaceChildren(...controls.map(spec => buildNavRow(spec)));
-			rows.dataset.signature = signature;
-			if (focusedKey) {
-				const restored = rows.querySelector(
-					`[data-nav-key="${CSS.escape(focusedKey)}"] input, [data-nav-key="${CSS.escape(focusedKey)}"] select`,
-				) as HTMLElement | null;
-				restored?.focus();
-			}
-		}
-
-		controls.forEach((spec, index) => {
-			const row = rows.children[index] as HTMLElement | undefined;
-			if (!row) { return; }
-			// Point the row's listeners at the CURRENT spec.
-			navRowSpecs.set(row, spec);
-			const current = Math.min(Math.max(0, spec.value), Math.max(0, spec.size - 1));
-			const select = row.querySelector('select') as HTMLSelectElement | null;
-			if (select) {
-				// Never write into the control the user is operating.
-				if (document.activeElement !== select) { select.value = String(current); }
-				return;
-			}
-			const input = row.querySelector('input') as HTMLInputElement | null;
-			const value = row.querySelector('.dataset-axis-value') as HTMLElement | null;
-			if (!input || !value) { return; }
-			const held = navControlHeld && document.activeElement === input;
-			if (!held && document.activeElement !== input) { input.value = String(current); }
-			// Nothing trails the reading. A name whose length changes with the
-			// value re-sizes this cell and drags the slider with it, which is
-			// why names belong in the control that carries them (a dropdown) or
-			// in the title — never after the slider.
-			value.textContent = `${Number(input.value) + 1} / ${spec.size}`;
-		});
-
-		const noteEl = navOverlay.querySelector('.dataset-note') as HTMLElement;
-		if (noteEl.textContent !== note) { noteEl.textContent = note; }
-		noteEl.hidden = !note;
-
-		paintNavHints(Array.from(rows.children) as HTMLElement[]);
-		navOverlay.classList.toggle('dataset-overlay--loading', loading);
 		applyNavOverlayCollapsedState();
 		navOverlay.style.display = options.resolution ? 'grid' : 'flex';
-	}
-
-	/**
-	 * The live spec for a row.
-	 *
-	 * Rows outlive the specs that created them (they are reused so a drag is not
-	 * destroyed mid-gesture), so a listener must never close over the spec it
-	 * was built with — after one render that spec is stale, which is exactly why
-	 * a slider would move a single step and then stop responding. The current
-	 * spec is stored on the element and read at event time.
-	 */
-	const navRowSpecs = new WeakMap<HTMLElement, NavControlSpec>();
-
-	function buildNavRow(spec: NavControlSpec): HTMLElement {
-		const isChoice = !!spec.labels && spec.size > 1;
-		const row = document.createElement('label');
-		row.className = isChoice ? 'dataset-series-row' : 'dataset-axis';
-		row.dataset.navKey = spec.key;
-		// `data-axis` is retained: existing styling and tests key off it.
-		row.dataset.axis = spec.label;
-
-		const label = document.createElement('span');
-		label.className = 'dataset-axis-label';
-		label.textContent = spec.label;
-		const hint = document.createElement('span');
-		hint.className = 'dataset-axis-hint';
-
-		if (isChoice) {
-			const select = document.createElement('select');
-			select.tabIndex = -1;
-			select.className = 'dataset-series';
-			// A long list (hundreds of ND2 stage positions) is not ideal in a
-			// dropdown, but it must still WORK: options are plain and cheap, and
-			// the browser scrolls them.
-			select.replaceChildren(...spec.labels!.map((text, index) => {
-				const option = document.createElement('option');
-				option.value = String(index);
-				option.text = text || `${spec.label} ${index + 1}`;
-				return option;
-			}));
-			select.addEventListener('change', () => {
-				navRowSpecs.get(row)?.go(Number(select.value));
-			});
-			row.append(label, select, hint);
-			navRowSpecs.set(row, spec);
-			return row;
-		}
-
-		const input = document.createElement('input');
-		// Out of the Tab order, like the navigation buttons it replaces: Tab
-		// should not walk through a dozen plane sliders, and a focused slider
-		// must not swallow the arrow keys that drive navigation.
-		input.tabIndex = -1;
-		input.type = 'range';
-		input.min = '0';
-		input.max = String(Math.max(0, spec.size - 1));
-		input.step = '1';
-		input.dataset.defaultValue = '0';
-		input.title = `${spec.label} · Double-click to reset`;
-		const value = document.createElement('span');
-		value.className = 'dataset-axis-value';
-		// Reserve the widest reading so stepping never reflows the row.
-		value.style.minWidth = `${String(spec.size).length * 2 + 3}ch`;
-		input.addEventListener('input', () => {
-			navRowSpecs.get(row)?.go(Number(input.value));
-		});
-		// A held control must not be written to by a re-render that its own
-		// movement triggered; `activeElement` alone is not reliable for this.
-		input.addEventListener('pointerdown', () => { navControlHeld = true; });
-		row.append(label, input, value, hint);
-		navRowSpecs.set(row, spec);
-		return row;
 	}
 
 	/** Release the overlay without hiding it, so it survives the next decode. */

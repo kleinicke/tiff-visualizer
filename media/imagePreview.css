@@ -1271,6 +1271,11 @@ body img {
 }
 
 .context-menu-item {
+	display: block;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	text-align: left;
 	padding: 6px 16px;
 	cursor: pointer;
 	color: var(--vscode-menu-foreground, #cccccc);
@@ -1278,7 +1283,8 @@ body img {
 	font-size: var(--vscode-font-size, 13px);
 }
 
-.context-menu-item:hover {
+.context-menu-item:hover,
+.context-menu-item:focus-visible {
 	background: var(--vscode-menu-selectionBackground, #094771);
 	color: var(--vscode-menu-selectionForeground, #ffffff);
 }

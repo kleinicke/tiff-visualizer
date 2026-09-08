@@ -433,7 +433,7 @@ test('shows a pyramidal COG as levels of one image, not as pages', async ({ page
   await expect(overlay.locator('.dataset-resolution')).toBeHidden();
   await expect(overlay.locator('.dataset-axis-label')).not.toContainText(['Level']);
   await expect(overlay).not.toContainText('Page');
-  await expect(overlay.locator('select')).toHaveValue('0');
+  await expect(overlay.locator('[data-axis="Band"] select')).toHaveValue('0');
 
   await page.getByRole('button', { name: 'More' }).click();
   await page.getByRole('button', { name: 'Loading log' }).click();

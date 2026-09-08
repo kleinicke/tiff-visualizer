@@ -1,5 +1,10 @@
 # 3D JetBrains release plan
 
+The standalone 3D host now lives in
+[`ply-visualizer/jetbrains`](../../ply-visualizer/jetbrains/README.md), with its
+own ID and local engine build. Follow its release checklist for that product.
+This directory retains the combined development prototype.
+
 The shared 3D viewer UI is a suitable basis for a first release. The current
 archive is a combined image/3D development plugin, not a standalone 3D product.
 Do not publish that archive as a finished 3D extension.

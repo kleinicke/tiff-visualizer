@@ -798,3 +798,14 @@ html:has(.web-app.web-has-image.web-image-zoomed) { overflow: auto; }
 .jetbrains-host .web-app.web-has-image { padding-top: 0; }
 .jetbrains-host .web-app.web-has-image > canvas.scale-to-fit,
 .jetbrains-host .web-app.web-has-image > img.scale-to-fit { max-height: calc(100vh - 40px) !important; }
+
+/* Keep shared viewer panels clear of the browser's fixed toolbar/status strip. */
+.web-app :is(.metadata-panel, .channels-panel, .layers-panel, .measure-panel) {
+  top: var(--web-toolbar-bottom, 88px);
+  max-height: calc(100dvh - var(--web-toolbar-bottom, 88px) - 40px);
+  max-width: calc(100vw - 40px);
+}
+.web-app :is(.histogram-overlay, .debayer-panel) {
+  bottom: 40px;
+  max-width: calc(100vw - 40px);
+}

@@ -1,3 +1,5 @@
+import Histogram from '../../ui/components/Histogram.svelte';
+import { mountView } from '../../ui/mount.js';
 "use strict";
 
 import { PerfTrace } from './perf-trace.js';
@@ -46,7 +48,16 @@ interface OriginalStats {
  * Histogram Overlay Module
  * Provides interactive histogram visualization for images
  */
+export interface HistogramUi {
+  host: HistogramOverlay;
+  tooltipTitle: string;
+  tooltipRows: { text: string; color: string | null }[];
+  statsRows: { text: string; color?: string }[];
+  nanCount: number;
+}
 export class HistogramOverlay {
+  private view!: ReturnType<typeof mountView<HistogramUi>>;
+  private ui: HistogramUi = { host: this, tooltipTitle: '', tooltipRows: [], statsRows: [], nanCount: 0 };
 	settingsManager: SettingsManager;
 	vscode: VsCodeApi;
 	overlay: HTMLDivElement | null;
@@ -58,13 +69,11 @@ export class HistogramOverlay {
 	scaleMode: 'linear' | 'sqrt';
 	valueRange: { min: number, max: number, isFloat: boolean };
 	originalStats: OriginalStats | null;
-	isDragging: boolean;
-	dragOffset: { x: number, y: number };
 	hoveredBin: number;
 	tooltip: HTMLDivElement | null;
 	minLabel: HTMLSpanElement | null;
 	maxLabel: HTMLSpanElement | null;
-	themeObserver: MutationObserver;
+	themeObserver!: MutationObserver;
 
 	/**
 	 * @param settingsManager
@@ -88,8 +97,6 @@ export class HistogramOverlay {
 		this.originalStats = null;
 
 		// UI state
-		this.isDragging = false;
-		this.dragOffset = { x: 0, y: 0 };
 		this.hoveredBin = -1;
 
 		this.tooltip = null;
@@ -103,92 +110,8 @@ export class HistogramOverlay {
 	 * Create the histogram overlay DOM structure
 	 */
 	createOverlay(): void {
-		this.overlay = document.createElement('div');
-		this.overlay.className = 'histogram-overlay';
-		this.overlay.style.display = 'none';
-
-		// Header with controls
-		const header = document.createElement('div');
-		header.className = 'histogram-header';
-
-		const title = document.createElement('div');
-		title.className = 'histogram-title';
-		title.textContent = 'Histogram';
-
-		// Scale mode toggle
-		const scaleToggle = document.createElement('button');
-		scaleToggle.className = 'histogram-button';
-		scaleToggle.textContent = 'Sqrt Mode';
-		scaleToggle.title = 'Toggle Linear/Sqrt scale';
-		scaleToggle.onclick = () => this.toggleScaleMode(scaleToggle);
-
-		// Close button
-		const closeBtn = document.createElement('button');
-		closeBtn.className = 'histogram-close';
-		closeBtn.textContent = '×';
-		closeBtn.title = 'Close histogram';
-		closeBtn.onclick = () => this.hide();
-
-		header.appendChild(title);
-		header.appendChild(scaleToggle);
-		header.appendChild(closeBtn);
-
-		// Canvas for histogram
-		this.canvas = document.createElement('canvas');
-		this.canvas.className = 'histogram-canvas';
-		this.canvas.width = 300;
-		this.canvas.height = 150;
-		this.ctx = this.canvas.getContext('2d');
-
-		// Add mouse event listeners for hover effect
-		this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-		this.canvas.addEventListener('mouseleave', () => this.handleMouseLeave());
-
-		// Min/Max labels container
-		const labels = document.createElement('div');
-		labels.className = 'histogram-labels';
-		labels.style.display = 'flex';
-		labels.style.justifyContent = 'space-between';
-		labels.style.fontSize = '10px';
-		labels.style.color = '#cccccc';
-
-		this.minLabel = document.createElement('span');
-		this.minLabel.textContent = '0';
-		this.maxLabel = document.createElement('span');
-		this.maxLabel.textContent = '255';
-
-		labels.appendChild(this.minLabel);
-		labels.appendChild(this.maxLabel);
-
-		// Stats display
-		const stats = document.createElement('div');
-		stats.className = 'histogram-stats';
-		stats.id = 'histogram-stats';
-
-		// Tooltip
-		this.tooltip = document.createElement('div');
-		this.tooltip.className = 'histogram-tooltip';
-		this.tooltip.style.position = 'absolute';
-		this.tooltip.style.display = 'none';
-		this.tooltip.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-		this.tooltip.style.color = 'white';
-		this.tooltip.style.padding = '4px 8px';
-		this.tooltip.style.borderRadius = '4px';
-		this.tooltip.style.fontSize = '11px';
-		this.tooltip.style.pointerEvents = 'none';
-		this.tooltip.style.zIndex = '1000';
-
-		this.overlay.appendChild(header);
-		this.overlay.appendChild(this.canvas);
-		this.overlay.appendChild(labels);
-		this.overlay.appendChild(stats);
-		this.overlay.appendChild(this.tooltip);
-
-		// Make draggable
-		header.style.cursor = 'move';
-		header.onmousedown = (e) => this.startDrag(e);
-
-		document.body.appendChild(this.overlay);
+		this.view = mountView(Histogram, this.ui);
+    this.ctx = this.canvas!.getContext('2d');
 
 		// Observe theme changes
 		this.themeObserver = new MutationObserver(() => {
@@ -281,8 +204,7 @@ export class HistogramOverlay {
 
 		if (!this.tooltip) return;
 
-		// Clear existing content
-		this.tooltip.innerHTML = '';
+
 
 		// Calculate the value range for this bin
 		const { min, max, isFloat } = this.valueRange;
@@ -291,8 +213,7 @@ export class HistogramOverlay {
 		const binStart = min + binIndex * binWidth;
 		const binEnd = binStart + binWidth;
 
-		const valueDiv = document.createElement('div');
-		const valueStrong = document.createElement('strong');
+		let tooltipTitle = '';
 		
 		// Check if we have a 1:1 mapping (256 integer values for 256 bins)
 		// This is true when: range is 255 (0-255) or 65535 (0-65535) and not float
@@ -300,44 +221,24 @@ export class HistogramOverlay {
 		
 		if (isFloat) {
 			// Float: always show range
-			valueStrong.textContent = `Value: ${this.formatValue(binStart, true)} - ${this.formatValue(binEnd, true)}`;
+			tooltipTitle = `Value: ${this.formatValue(binStart, true)} - ${this.formatValue(binEnd, true)}`;
 		} else if (isOneToOne) {
 			// 1:1 mapping (e.g., uint8 0-255): show single value
-			valueStrong.textContent = `Value: ${binIndex + Math.round(min)}`;
+			tooltipTitle = `Value: ${binIndex + Math.round(min)}`;
 		} else {
 			// Integer with range mapping: show range
 			const startInt = Math.floor(binStart);
 			const endInt = Math.floor(binEnd);
 			if (startInt === endInt) {
-				valueStrong.textContent = `Value: ${startInt}`;
+				tooltipTitle = `Value: ${startInt}`;
 			} else {
-				valueStrong.textContent = `Value: ${startInt} - ${endInt}`;
+				tooltipTitle = `Value: ${startInt} - ${endInt}`;
 			}
 		}
-		valueDiv.appendChild(valueStrong);
-		this.tooltip.appendChild(valueDiv);
-
-		// Check if image is grayscale (all channels have same count for this bin)
-		const isGrayscale = rCount === gCount && gCount === bCount;
-
-		const createRow = (label: string, count: number, color: string | null) => {
-			const div = document.createElement('div');
-			const span = document.createElement('span');
-			if (color) span.style.color = color;
-			span.textContent = `${label}: ${count.toLocaleString()}`;
-			div.appendChild(span);
-			return div;
-		};
-
-		if (isGrayscale) {
-			// Grayscale: show single count
-			this.tooltip.appendChild(createRow('Count', rCount, null));
-		} else {
-			// RGB: show separate channel counts
-		this.tooltip.appendChild(createRow('R', rCount, '#ff8888'));
-		this.tooltip.appendChild(createRow('G', gCount, '#88ff88'));
-		this.tooltip.appendChild(createRow('B', bCount, '#8888ff'));
-		}
+    const isGrayscale = rCount === gCount && gCount === bCount;
+    const row = (label: string, count: number, color: string | null) => ({ text: `${label}: ${count.toLocaleString()}`, color });
+    this.ui = { ...this.ui, tooltipTitle, tooltipRows: isGrayscale ? [row('Count', rCount, null)] : [row('R', rCount, '#ff8888'), row('G', gCount, '#88ff88'), row('B', bCount, '#8888ff')] };
+    this.view.update(this.ui);
 
 		this.tooltip.style.display = 'block';
 
@@ -1196,8 +1097,7 @@ export class HistogramOverlay {
 			Math.abs(origStats.r.max - origStats.g.max) < 0.001 && 
 			Math.abs(origStats.g.max - origStats.b.max) < 0.001;
 
-		// Clear existing content
-		statsEl.innerHTML = '';
+
 
 		// Helper to format stat values
 		const formatStat = (value: number) => {
@@ -1210,60 +1110,35 @@ export class HistogramOverlay {
 			return Math.round(value).toString();
 		};
 
-		const createCell = (text: string, className: string = 'histogram-stat-item') => {
-			const span = document.createElement('span');
-			span.textContent = text;
-			if (className) span.className = className;
-			return span;
-		};
-
-		const createLine = (values: string[], colors: string[] = []) => {
-			const row = document.createElement('div');
-			row.className = 'histogram-stat-line';
-			values.forEach((value, index) => {
-				const cell = createCell(value);
-				if (colors[index]) cell.style.color = colors[index];
-				row.appendChild(cell);
-			});
-			return row;
-		};
-
-		const createNanLine = () => {
-			const row = document.createElement('div');
-			row.className = 'histogram-stat-line histogram-stat-nan';
-			const cell = createCell(`NaN/Inf: ${this.histogramData ? this.histogramData.nanCount.toLocaleString() : '0'}`, 'histogram-stat-item histogram-stat-nan');
-			row.appendChild(cell);
-			if (!this.histogramData || this.histogramData.nanCount <= 0) {
-				row.style.visibility = 'hidden';
-			}
-			return row;
-		};
+    let statsRows: HistogramUi['statsRows'] = [];
+    const createLine = (values: string[], colors: string[] = []) => values.map((text, index) => ({ text, color: colors[index] }));
 
 		// For grayscale images, show single channel stats, otherwise show RGB
 		if (isGrayscale && origStats) {
 			const s = origStats.r;
-			statsEl.appendChild(createLine([
+			statsRows = createLine([
 				`Min: ${formatStat(s.min)}`,
 				`Max: ${formatStat(s.max)}`,
 				`Mean: ${formatStat(s.mean)}`
-			]));
+			]);
 		} else if (origStats) {
 			// Show RGB stats in original values
-			statsEl.appendChild(createLine([
+			statsRows = createLine([
 				`R: ${formatStat(origStats.r.min)}-${formatStat(origStats.r.max)} μ=${formatStat(origStats.r.mean)}`,
 				`G: ${formatStat(origStats.g.min)}-${formatStat(origStats.g.max)} μ=${formatStat(origStats.g.mean)}`,
 				`B: ${formatStat(origStats.b.min)}-${formatStat(origStats.b.max)} μ=${formatStat(origStats.b.mean)}`
-			], ['#ff6666', '#66ff66', '#6666ff']));
+			], ['#ff6666', '#66ff66', '#6666ff']);
 		} else {
 			// Fallback to bin-based stats (when no raw data available)
 			const stats = this.histogramData.stats;
-			statsEl.appendChild(createLine([
+			statsRows = createLine([
 				`R: ${stats.r.minBin}-${stats.r.maxBin} μ=${formatStat(stats.r.meanBin)}`,
 				`G: ${stats.g.minBin}-${stats.g.maxBin} μ=${formatStat(stats.g.meanBin)}`,
 				`B: ${stats.b.minBin}-${stats.b.maxBin} μ=${formatStat(stats.b.meanBin)}`
-			], ['#ff6666', '#66ff66', '#6666ff']));
+			], ['#ff6666', '#66ff66', '#6666ff']);
 		}
-		statsEl.appendChild(createNanLine());
+		this.ui = { ...this.ui, statsRows, nanCount: this.histogramData.nanCount };
+    this.view.update(this.ui);
 
 		// Update picker background and position
 		const bgColor = getComputedStyle(document.body).getPropertyValue('--vscode-editor-background') || '#1e1e1e';
@@ -1320,54 +1195,7 @@ export class HistogramOverlay {
 		}
 	}
 
-	/**
-	 * Start dragging the overlay
-	 */
-	startDrag(e: MouseEvent): void {
-		if (!this.overlay) return;
-		const rect = this.overlay.getBoundingClientRect();
-		this.isDragging = true;
-		this.dragOffset = {
-			x: e.clientX - rect.left,
-			y: e.clientY - rect.top
-		};
-
-		const onMouseMove = (e: MouseEvent) => {
-			if (!this.isDragging || !this.overlay) return;
-
-			const x = e.clientX - this.dragOffset.x;
-			const y = e.clientY - this.dragOffset.y;
-
-			// Keep within viewport bounds
-			const maxX = window.innerWidth - this.overlay.offsetWidth;
-			const maxY = window.innerHeight - this.overlay.offsetHeight;
-
-			this.overlay.style.left = Math.max(0, Math.min(x, maxX)) + 'px';
-			this.overlay.style.top = Math.max(0, Math.min(y, maxY)) + 'px';
-			this.overlay.style.right = 'auto';
-			this.overlay.style.bottom = 'auto';
-		};
-
-		const onMouseUp = () => {
-			this.isDragging = false;
-			document.removeEventListener('mousemove', onMouseMove);
-			document.removeEventListener('mouseup', onMouseUp);
-			
-			// Notify extension of position change for global persistence
-			const position = this.getPosition();
-			if (position) {
-				this.vscode.postMessage({
-					type: 'histogramPositionChanged',
-					position: position
-				});
-			}
-		};
-
-		document.addEventListener('mousemove', onMouseMove);
-		document.addEventListener('mouseup', onMouseUp);
-
-		e.preventDefault();
-	}
+  dispose(): void { this.themeObserver.disconnect(); this.view.dispose(); }
 
 	/**
 	 * Get current visibility state

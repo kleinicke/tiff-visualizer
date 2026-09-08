@@ -128,6 +128,17 @@ Extension host ↔ Webview communication via `postMessage` (handled by [messageH
 - **Outbound** (extension → webview): Settings updates, command execution (export, normalization, gamma, brightness)
 - **MessageRouter pattern**: Type-based routing to specific handler classes
 
+### Svelte UI
+
+The shared metadata, channel, debayer, histogram, layers, measurement, navigation
+and comparison panels live in
+`ui/components/`. The website shell, tabs and display forms are Svelte components
+in `web/`. Host-owned settings feed typed snapshots through `ui/mount.ts`; keep
+pixel buffers and render loops outside reactive UI state. Both esbuild pipelines
+use `scripts/svelte-plugin.cjs` with external CSS for CSP compatibility.
+Run `npm run typecheck:ui` after component changes. See [docs/SVELTE.md](docs/SVELTE.md)
+for build details and the UI/engine boundary.
+
 ### Modular Webview Design
 The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules for maintainability:
 

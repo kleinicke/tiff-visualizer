@@ -131,6 +131,7 @@ export class ComparisonPanel extends Disposable {
 		const styleResetPath = vscode.Uri.joinPath(this._extensionRoot, 'media', 'reset.css');
 		const stylesPathMainPath = vscode.Uri.joinPath(this._extensionRoot, 'media', 'comparisonPanel.css');
 		const stylesResetUri = webview.asWebviewUri(styleResetPath);
+		const componentStylesUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionRoot, 'media', 'comparisonPanel.bundle.css'));
 		const stylesMainUri = webview.asWebviewUri(stylesPathMainPath);
 
 		// Use a nonce to only allow specific scripts to be run
@@ -154,20 +155,12 @@ export class ComparisonPanel extends Disposable {
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<link href="${stylesResetUri}" rel="stylesheet">
 				<link href="${stylesMainUri}" rel="stylesheet">
+				<link href="${componentStylesUri}" rel="stylesheet">
 				<title>Image Comparison</title>
 			</head>
 			<body>
-				<div class="header">
-					<h2>Image Comparison Panel</h2>
-					<div class="image-count">${this._images.length} images</div>
-				</div>
-				<div class="container">
-					<div id="image-grid" class="image-grid">
-						${imageData.length === 0 ? '<div class="empty-state">No images to compare. Use "Select for Compare" from the context menu in an image editor.</div>' : ''}
-					</div>
-				</div>
 				<script nonce="${nonce}">
-					window.imageData = ${JSON.stringify(imageData)};
+					window.imageData = ${JSON.stringify(imageData).replace(/</g, '\\u003c')};
 				</script>
 				<script nonce="${nonce}" src="${scriptUri}"></script>
 			</body>
