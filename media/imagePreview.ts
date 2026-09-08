@@ -1,3 +1,4 @@
+import { sampleAt } from './modules/measure/types';
 import { openContextMenu, type MenuItem } from '../ui/context-menu';
 import Navigation from '../ui/components/Navigation.svelte';
 import { mountView } from '../ui/mount.js';
@@ -3725,6 +3726,59 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	async function handleVSCodeMessage(message: { type: string, [key: string]: any }) {
 		switch (message.type) {
+			case 'automationRequest': {
+				try {
+					const deadline=performance.now()+14000;
+					while (_imageTransitionActive || !document.body.classList.contains('ready')) {
+						if (performance.now()>deadline) throw new Error('Image is still loading; retry inspection after decoding completes');
+						await new Promise(resolve=>setTimeout(resolve,25));
+					}
+					const args = message.args || {};
+					let result: unknown;
+					if (message.operation === 'display') {
+						await handleVSCodeMessage({type:'updateSettings',settings:args.settings,reason:'python-api'});
+						if (args.zoom !== undefined) await handleVSCodeMessage({type:'setScale',scale:args.zoom});
+						result = {applied:true};
+					} else if (message.operation === 'capture') {
+						const target = document.createElement('canvas');
+						const source = imageElement as HTMLCanvasElement | HTMLImageElement | null;
+						if (!source) throw new Error('No rendered image is available');
+						target.width = source instanceof HTMLImageElement ? source.naturalWidth : source.width;
+						target.height = source instanceof HTMLImageElement ? source.naturalHeight : source.height;
+						if (target.width * target.height > 16000000) throw new Error('Capture exceeds 16 megapixels; select a smaller image or preview');
+						if (layerManager.active && layerManager.hasCompositeStack()) {
+							const rendered = await renderedExportImage();
+							if (!rendered) throw new Error('No rendered layer image is available');
+							target.width=rendered.width;target.height=rendered.height;
+							if (target.width * target.height > 16000000) throw new Error('Layer capture exceeds 16 megapixels');
+							target.getContext('2d')!.putImageData(rendered,0,0);
+						} else target.getContext('2d')!.drawImage(source,0,0);
+						const png = target.toDataURL('image/png').split(',')[1];
+						if (png.length > 24*1024*1024) throw new Error('Compressed capture exceeds 24 MiB');
+						result={png,width:target.width,height:target.height};
+					} else if (message.operation === 'region') {
+						const source=getMeasurementSource();
+						if (!source || ![args.x,args.y,args.width,args.height].every(Number.isInteger) || args.x<0 || args.y<0 || args.width<1 || args.height<1 || args.x+args.width>source.width || args.y+args.height>source.height) throw new Error('Rectangle is outside the decoded image');
+						const id=crypto.randomUUID();
+						roiManager.add({kind:'rect',id,name:args.name||'API region',source:'manual',x:args.x,y:args.y,width:args.width,height:args.height});
+						measurePanel.refresh();
+						result={roiId:id,rows:measurePanel.getRows().filter(row=>row.roiId===id),calibration:measureCalibration};
+					} else if (message.operation === 'measurements') {
+						measurePanel.refresh();
+						result={rois:serializeRoisForState(roiManager.list()),rows:measurePanel.getRows(),calibration:measureCalibration};
+					} else {
+						const source=getMeasurementSource();
+						if (!source) throw new Error('Original pixel data is not available for this image or preview');
+						if (message.operation === 'pixel') {
+							if (!Number.isInteger(args.x)||!Number.isInteger(args.y)||args.x<0||args.y<0||args.x>=source.width||args.y>=source.height) throw new Error('Pixel coordinates are outside the decoded image');
+							result={x:args.x,y:args.y,values:Array.from({length:source.channels},(_,channel)=>sampleAt(source,args.x,args.y,channel)),coordinateSpace:'decoded-image'};
+						} else if (message.operation === 'inspect') result={width:source.width,height:source.height,channels:source.channels,isFloat:source.isFloat,typeMax:source.typeMax,settings:settingsManager.settings};
+						else throw new Error('Unknown image operation');
+					}
+					vscode.postMessage({type:'automationResult',id:message.id,result});
+				} catch (error) { vscode.postMessage({type:'automationResult',id:message.id,error:error instanceof Error?error.message:String(error)}); }
+				break;
+			}
 			case 'clearImage': {
 				_loadGeneration++;
 				_loadAbortController?.abort();

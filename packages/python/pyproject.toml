@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scientific-image-visualizer"
+version = "0.1.0"
+description = "Local scientific image viewing and inspection through Python, REST and MCP"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+[project.optional-dependencies]
+arrays = ["numpy>=1.24"]
+notebook = ["ipython>=8"]
+mcp = ["mcp>=2.2,<3"]
+http = ["mcp>=2.2,<3", "starlette>=0.48,<2", "uvicorn>=0.31.1,<1"]
+
+[project.scripts]
+image-viewer = "scientific_image_visualizer.__main__:main"
+image-viewer-mcp = "scientific_image_visualizer.mcp_server:main"
+image-viewer-api = "scientific_image_visualizer.http_api:main"
+
+[tool.setuptools.packages.find]
+include = ["scientific_image_visualizer*"]
+
+[tool.setuptools.package-data]
+scientific_image_visualizer = ["_assets/**/*", "_assets/*"]

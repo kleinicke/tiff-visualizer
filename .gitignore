@@ -60,3 +60,10 @@ benchmark-vscode-result.json
 # Compiled Svelte component styles
 media/*.bundle.css
 media/*.bundle.css.map
+
+# Python distribution and bundled viewer
+__pycache__/
+*.egg-info/
+packages/python/build/
+packages/python/dist/
+packages/python/scientific_image_visualizer/_assets/

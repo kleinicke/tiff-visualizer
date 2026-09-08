@@ -100,6 +100,13 @@ You can also read it on GitHub: [documentation index](https://github.com/kleinic
 
 A browser-based version is also available at [images.f-kleinicke.de](https://images.f-kleinicke.de/).
 
+## Python, REST and MCP
+
+Use the shared viewer from Python or a notebook with `show(path)` / `show(array)`,
+or through authenticated local REST and MCP tools. Inspect original pixels,
+adjust display ranges, measure regions and capture PNG previews.
+See the [client guide](docs/python-rest-mcp.md) for checkout installation and examples.
+
 ## Feature Requests and Issues
 
 If you have use cases that would be helpful for others or find problems, feel free to suggest them on the [GitHub repository](https://github.com/kleinicke/tiff-visualizer/issues).

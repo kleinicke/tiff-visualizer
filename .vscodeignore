@@ -79,3 +79,6 @@ media/tsconfig.json
 
 # Svelte source is compiled into the media bundles.
 ui/**
+
+# Python/REST/MCP distribution ships separately.
+packages/python/**

@@ -456,7 +456,9 @@
     "test:request-scheduler": "node test/request-scheduler-test.js",
     "test:remote-tiff-source": "node test/remote-tiff-source-test.js",
     "test:remote-cog-range": "node test/remote-cog-range-test.js",
-    "typecheck:ui": "svelte-check --tsconfig ./ui/tsconfig.json"
+    "typecheck:ui": "svelte-check --tsconfig ./ui/tsconfig.json",
+    "build:python-viewer": "npm run web:build && node scripts/build-python-viewer.mjs",
+    "test:python": "python3 -m unittest discover -s packages/python/tests -v"
   },
   "dependencies": {
     "ag-psd": "^31.0.2",

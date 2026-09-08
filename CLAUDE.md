@@ -549,3 +549,14 @@ The extension handles diverse image formats with minimal processor code. Each fo
 - **Session state**: AppStateManager keeps settings during VS Code window session
 - **Webview state**: Uses `vscode.getState()`/`vscode.setState()` for tab switch persistence
 - **No workspace state**: Settings reset when VS Code window closes (by design)
+
+### Python, REST and MCP client
+
+`packages/python/scientific_image_visualizer` hosts the standalone viewer on a
+private loopback URL. Build assets with `npm run build:python-viewer`; the wheel
+includes them. `web/python-host.ts` is inert except on explicit loopback Python
+sessions. Browser operations use correlated `automationRequest` messages in the
+shared viewer; retain authoritative settings, original samples and ROI history.
+REST and MCP call the same SDK tools in `mcp_server.py`. Keep path validation,
+body limits, auth and renderer timeouts consistent. See
+[docs/python-rest-mcp.md](docs/python-rest-mcp.md) for commands and semantics.

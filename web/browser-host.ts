@@ -1,3 +1,4 @@
+import { installPythonHost } from './python-host';
 import { flushSync, mount } from 'svelte';
 import App from './App.svelte';
 import DisplayForm from './DisplayForm.svelte';
@@ -910,6 +911,11 @@ function executeCommand(command: string): void {
 
 function handleViewerMessage(message: ViewerMessage): void {
   switch (message.type) {
+    case 'automationResult': {
+      const pending = automationRequests.get(message.id);
+      if (pending) { automationRequests.delete(message.id); clearTimeout(pending.timer); if (message.error) pending.reject(new Error(message.error)); else pending.resolve(message.result); }
+      break;
+    }
     case 'get-initial-data':
       sendToViewer({ type: 'restoreHistogramState', isVisible: false, scaleMode: 'sqrt' });
       updateCollectionOverlay();
@@ -1319,3 +1325,46 @@ installEmbeddedImageHost({
   },
   theme: applyTheme,
 });
+
+
+const automationRequests = new Map<string, { resolve: (result: any) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+function automationRequest(operation: string, args: Record<string, any> = {}): Promise<any> {
+  return new Promise((resolve,reject) => {
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { automationRequests.delete(id); reject(new Error('Image renderer did not respond within 15 seconds')); }, 15000);
+    automationRequests.set(id, {resolve,reject,timer});
+    sendToViewer({type:'automationRequest',id,operation,args});
+  });
+}
+async function waitForAutomationImage() {
+  const deadline = performance.now()+15000;
+  while (!currentFormatInfo || !document.body.classList.contains('ready')) {
+    if (performance.now()>deadline) throw new Error('Image did not decode within 15 seconds. Check the viewer error message or choose a supported image.');
+    await new Promise(resolve=>setTimeout(resolve,50));
+  }
+}
+document.addEventListener('DOMContentLoaded', () => installPythonHost({
+  open: async selected => {
+    while (files.length) closeImageAt(files.length-1);
+    await openFiles(selected);
+  },
+  execute: async (operation,args) => {
+    await waitForAutomationImage();
+    if (operation==='select') {
+      if (!Number.isInteger(args.index)||args.index<0||args.index>=files.length) throw new Error('Image index is out of range');
+      currentFormatInfo=null;
+      switchTo(args.index);
+      await waitForAutomationImage();
+    } else if (operation==='display') {
+      if (args.exposure!==undefined) currentSettings.brightness={offset:args.exposure};
+      if (args.gamma!==undefined) currentSettings.gamma={in:args.gamma[0],out:args.gamma[1]};
+      if (args.exposure!==undefined||args.gamma!==undefined) currentSettings.normalization={...currentSettings.normalization,autoNormalize:false,gammaMode:true};
+      if (args.value_range!==undefined) currentSettings.normalization={min:args.value_range[0],max:args.value_range[1],autoNormalize:false,gammaMode:false};
+      if (args.auto!==undefined) currentSettings.normalization={...currentSettings.normalization,autoNormalize:args.auto,gammaMode:false};
+      await automationRequest('display',{settings:currentSettings,zoom:args.zoom});
+      syncStatusBar();
+    } else if (!['inspect','pixel','capture','measurements','region'].includes(operation)) throw new Error(`Unknown operation: ${operation}`);
+    const result = await automationRequest(['display','select'].includes(operation)?'inspect':operation,args);
+    return {...result, file:files[fileIndex]?.name, index:fileIndex, count:files.length, format:currentFormatInfo, stats:currentStats};
+  },
+}));
