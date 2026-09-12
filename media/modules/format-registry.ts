@@ -28,6 +28,7 @@ export type DecoderKind =
 	| 'npy'
 	| 'hdr'
 	| 'tga'
+	| 'sgi'
 	| 'web-image'
 	| 'jxl'
 	| 'jxr'
@@ -67,6 +68,7 @@ export const FORMATS: readonly FormatEntry[] = [
 	{ kind: 'png', label: 'PNG/JPEG', extensions: ['png', 'jpg', 'jpeg'] },
 	{ kind: 'npy', label: 'NumPy', extensions: ['npy', 'npz'] },
 	{ kind: 'hdr', label: 'Radiance HDR', extensions: ['hdr'] },
+	{ kind: 'sgi', label: 'SGI RGB', extensions: ['rgb', 'rgba', 'sgi', 'bw'] },
 	{ kind: 'tga', label: 'TGA', extensions: ['tga'] },
 	{ kind: 'web-image', label: 'Browser image', extensions: ['webp', 'avif', 'bmp', 'ico'] },
 	{ kind: 'jxl', label: 'JPEG XL', extensions: ['jxl'] },

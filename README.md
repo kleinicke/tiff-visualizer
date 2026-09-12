@@ -2,7 +2,7 @@
 
 Rust-based image decoding and GPU accelerated rendering for high-bit-depth, floating-point, scientific, and standard image files inside Visual Studio Code.
 
-Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, JPEG XR, JPEG 2000, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2, Leica LIF, and Becker & Hickl SDT.
+Supports TIFF/OME-TIFF (including embedded multi-file filesets), EXR, NPY/NPZ, PNG, JPEG, WebP, AVIF, HDR, JXL, JPEG XR, JPEG 2000, SGI RGB, TGA, BMP, ICO, PPM, PFM, PBM, PGM, FITS, DICOM, classic NetCDF, Zeiss CZI, Nikon ND2, Leica LIF, and Becker & Hickl SDT.
 Layered creative documents
 are previewed from OpenRaster, Krita, Photoshop PSD/PSB, GIMP XCF, and Affinity Photo files.
 
@@ -22,6 +22,7 @@ The viewer supports 8-bit and 16-bit integer images as well as 16-bit and 32-bit
 | PFM                                          |    No |      No |      No |     Yes | Portable Float Map                                                                                                                                                                                                                  |
 | PPM / PGM / PBM                              |   Yes |     Yes |      No |      No | PBM is 1-bit, shown as 8-bit                                                                                                                                                                                                        |
 | PNG                                          |   Yes |     Yes |      No |      No | Palette PNGs become 8-bit RGBA                                                                                                                                                                                                      |
+| SGI RGB (`.rgb`, `.rgba`, `.sgi`, `.bw`) | Yes | Yes | No | No | Uncompressed and RLE; grayscale and RGB with optional alpha |
 | JPEG / WebP / AVIF / BMP / ICO / TGA         |   Yes |      No |      No |      No | Decoded as 8-bit image data                                                                                                                                                                                                         |
 | JPEG XL (`.jxl`)                             |   Yes |     Yes |      No |     Yes | Decoded in Rust at the file's own sample type: 8/16-bit and float, grey or RGB(A)                                                                                                                                                   |
 | JPEG XR (`.jxr`, `.wdp`, `.hdp`)             |   Yes |     Yes |      No |     Yes | Decoded in Rust; 8/16/32-bit grey and RGB(A), including scene-referred float                                                                                                                                                        |

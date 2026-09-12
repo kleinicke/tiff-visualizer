@@ -81,3 +81,6 @@ pub(crate) mod scientific_common;
 pub(crate) mod sdt;
 #[cfg(feature = "tiff")]
 pub(crate) mod tiff;
+
+#[cfg(feature = "sgi")]
+pub(crate) mod sgi;

@@ -340,3 +340,10 @@ export function decodeSdtWithWasm(
 	const result = decodeSdtFast(new Uint8Array(buffer), JSON.stringify(options || {}));
 	return assembleDecoded<Float32Array>(result, 'sdt', context, startedAt);
 }
+
+export function decodeSgiWithWasm(
+	decodeSgiFast: (bytes: Uint8Array) => any, buffer: ArrayBuffer, context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	return assembleDecoded<Float32Array>(decodeSgiFast(new Uint8Array(buffer)), 'sgi', context, startedAt);
+}

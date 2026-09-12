@@ -129,7 +129,7 @@ closes. See [rendering](./rendering.md).
 
 | Editor | Opens |
 | --- | --- |
-| Scientific Image Visualizer (`tiffVisualizer.previewEditor`) | `*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,jxl,jxr,wdp,hdp,jp2,jpf,jpx,j2k,j2c,jpc,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,czi,nd2,lif,sdt,ora,kra,psd,psb,xcf,afphoto,af}`, `*.{png,jpeg,jpg,bmp,ico,webp,avif}` |
+| Scientific Image Visualizer (`tiffVisualizer.previewEditor`) | `*.{tif,tiff,tf2,tf8,btf,exr,pfm,npy,npz,ppm,pgm,pbm,hdr,tga,rgb,rgba,sgi,bw,jxl,jxr,wdp,hdp,jp2,jpf,jpx,j2k,j2c,jpc,fits,fit,fts,dcm,dicom,DCM,DICOM,nc,cdf,czi,nd2,lif,sdt,ora,kra,psd,psb,xcf,afphoto,af}`, `*.{png,jpeg,jpg,bmp,ico,webp,avif}` |
 
 All supported formats use Scientific Image Visualizer by default, including
 PNG/JPEG and Git revision previews. See

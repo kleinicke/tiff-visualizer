@@ -1203,3 +1203,11 @@ pub fn remote_tiff_ifd(header: &[u8], data: &[u8], offset: f64) -> Result<String
 pub fn remote_tiff_index_values(data: &[u8], item_bytes: usize, little: bool) -> Result<Vec<f64>, JsValue> {
     core::remote_tiff_index_values(data, item_bytes, little).map_err(js_error)
 }
+
+#[wasm_bindgen]
+pub fn decode_sgi_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_sgi_fast(data)
+        .map(Into::into)
+        .map_err(js_error)
+}

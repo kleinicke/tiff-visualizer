@@ -20,6 +20,7 @@
 import { initWasm } from './tiff-wasm-wrapper.js';
 import { initJxlDecoder } from './jxl-wasm-wrapper.js';
 import {
+	decodeSgiWithWasm,
 	decodeCziWithWasm,
 	decodeLifWithWasm,
 	decodeNd2WithWasm,
@@ -172,4 +173,9 @@ export async function decodeCziLocal(buffer: ArrayBuffer, options: Record<string
 		const wasm = await requireWasm('CZI');
 		return decodeCziWithWasm(wasm.decode_czi_fast, buffer, options, 'main');
 	});
+}
+
+export async function decodeSgiLocal(buffer: ArrayBuffer) {
+	const wasm = await requireWasm('SGI RGB');
+	return decodeSgiWithWasm(wasm.decode_sgi_fast, buffer, 'main');
 }

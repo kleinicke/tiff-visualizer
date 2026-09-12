@@ -1552,3 +1552,9 @@ pub fn decode_tiff_strip_range_raw(
 
 #[cfg(feature = "tiff")]
 pub use formats::tiff::remote::{header_json as remote_tiff_header, ifd_json as remote_tiff_ifd, index_values as remote_tiff_index_values};
+
+/// Decode SGI RGB (verbatim or RLE, 8/16-bit) to top-down interleaved samples.
+#[cfg(feature = "sgi")]
+pub fn decode_sgi_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
+    formats::sgi::decode(data)
+}

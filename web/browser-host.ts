@@ -125,7 +125,7 @@ function baseSettings(): ViewerSettings {
 function defaultsForFormat(format: string): ViewerSettings {
   const settings = baseSettings();
   const displayIntegers = new Set([
-    'tiff-int', 'ppm', 'png', 'jpg', 'tga', 'webp', 'avif', 'bmp', 'jxl',
+    'tiff-int', 'ppm', 'png', 'jpg', 'sgi', 'tga', 'webp', 'avif', 'bmp', 'jxl',
     'ora', 'kra', 'psd', 'psb', 'xcf', 'affinity',
   ]);
   const displayFloats = new Set(['tiff-float', 'pfm', 'hdr']);

@@ -34,6 +34,14 @@ async function main() {
 	assert.equal(sniffImageFormat(text('not an image')), null, 'unknown content is never guessed');
 	assert.equal(sniffImageFormat(bytes(0x49, 0x49)), null, 'truncated signatures are harmless');
 
+	const sgi = bytes(0x01, 0xda, 1, 2, 0, 3, 0, 4, 0, 2, 0, 3);
+	assert.equal(sniffImageFormat(sgi).hint, 'rgb');
+	assert.equal(filenameForDetectedFormat('image.RGBA', sniffImageFormat(sgi)), 'image.RGBA');
+	assert.equal(filenameForDetectedFormat('download', sniffImageFormat(sgi)), 'download.rgb');
+	assert.equal(sniffImageFormat(sgi.subarray(0, 4)), null);
+	sgi[3] = 4;
+	assert.equal(sniffImageFormat(sgi), null, 'invalid SGI sample size is not detected');
+
 	const tiff = sniffImageFormat(bytes(0x49, 0x49, 0x2a, 0x00));
 	assert.equal(filenameForDetectedFormat('download', tiff), 'download.tif');
 	assert.equal(filenameForDetectedFormat('scene.TIFF', tiff), 'scene.TIFF');

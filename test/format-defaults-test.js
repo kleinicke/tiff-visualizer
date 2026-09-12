@@ -55,7 +55,7 @@ const AUTO_NORMALIZE = [
 
 const GAMMA_MODE = [
 	// Authored pictures whose integer samples do span the type's range.
-	'png', 'jpg', 'ppm', 'tiff-int', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl',
+	'png', 'jpg', 'ppm', 'tiff-int', 'sgi', 'tga', 'webp', 'avif', 'bmp', 'ico', 'jxl',
 	// Layered creative documents are authored pictures too.
 	'ora', 'kra', 'psd', 'psb', 'xcf', 'affinity',
 	// Float images conventionally stored in 0..1.

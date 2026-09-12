@@ -17,13 +17,14 @@
 | HDR | No | No | No | Yes | Radiance RGBE, decoded to float32 |
 | PFM | No | No | No | Yes | Portable Float Map |
 | PPM / PGM / PBM | Yes | Yes | No | No | PBM is 1-bit, shown as 8-bit |
+| SGI RGB (`.rgb`, `.rgba`, `.sgi`, `.bw`) | Yes | Yes | No | No | Uncompressed and RLE; grayscale, grayscale-alpha, RGB and RGBA. Obsolete colormap modes are unsupported. |
 | PNG | Yes | Yes | No | No | Palette PNGs become 8-bit RGBA |
 | JPEG / WebP / AVIF / BMP / ICO / TGA | Yes | No | No | No | Decoded as 8-bit |
 | JPEG XL (`.jxl`) | Yes | Yes | No | Yes | Decoded in Rust; 8/16-bit and float, greyscale or RGB(A) |
 | ORA / KRA / PSD / PSB / XCF / Affinity | Yes | PSD/PSB | No | PSD/PSB | Previews, and layer composition where supported — see [layers](./layers.md) |
 
 File extensions registered by the extension:
-`tif tiff tf2 tf8 btf exr pfm npy npz ppm pgm pbm hdr tga jxl jxr wdp hdp
+`tif tiff tf2 tf8 btf exr pfm npy npz ppm pgm pbm hdr tga rgb rgba sgi bw jxl jxr wdp hdp
 jp2 jpf jpx j2k j2c jpc fits fit fts dcm dicom nc cdf czi nd2 lif sdt ora
 kra psd psb xcf afphoto af` open automatically;
 `png jpeg jpg bmp ico webp avif` are available via **Open With…**.

@@ -15,6 +15,7 @@ declare module '*/wasm/tiff-wasm.js' {
     export const decode_czi_fast: any;
     export const decode_nd2_fast: any;
     export const decode_lif_fast: any;
+    export const decode_sgi_fast: any;
     export const decode_sdt_fast: any;
     export const decode_dicom_fast: any;
     export const label_components_fast: any;

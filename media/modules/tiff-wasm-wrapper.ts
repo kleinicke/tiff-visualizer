@@ -12,7 +12,7 @@ import { parseAllTagsJson, TagEntry } from './tiff-tag-utils.js';
 // Importing the module does not instantiate wasm; `init()` below does.
 import initTiffWasm, {
 	decode_czi_fast, decode_dicom_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast, decode_fits_fast, decode_netcdf_fast, decode_npy_display_fast,
-    decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
+    decode_sgi_fast, decode_pfm_display_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_page,
     demosaic, extract_exif_tags, tiff_page_count, tiff_page_directory,
     decode_tiff_region, tiff_region_decode_available, decode_tiff_preview, tiff_preview_reduction,
     remote_tiff_header, remote_tiff_ifd, remote_tiff_index_values,
@@ -76,7 +76,7 @@ async function initWasm(): Promise<any> {
                 // Rectangle reads: the cost of a view follows the window, not the file.
                 decode_tiff_region, tiff_region_decode_available, decode_tiff_preview, tiff_preview_reduction,
     remote_tiff_header, remote_tiff_ifd, remote_tiff_index_values,
-                decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_display_fast, decode_fits_fast,
+                decode_sgi_fast, decode_pfm_display_fast, decode_ppm_display_fast, decode_npy_display_fast, decode_fits_fast,
 				decode_netcdf_fast, decode_dicom_fast, decode_czi_fast, decode_nd2_fast, decode_lif_fast, decode_sdt_fast,
                 compute_image_stats_f32, compute_image_stats_u8, compute_image_stats_u16,
                 label_components_fast, fill_mask_holes_fast, distance_transform_fast, gaussian_blur_fast, subtract_background_fast,

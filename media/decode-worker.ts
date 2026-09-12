@@ -18,14 +18,14 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
 // The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
 // few KB of bundle; the ~2.2 MB payload is fetched by `initJxlWasm` below only
 // for standalone JXL worker jobs. Embedded JXL takes the main-thread module
 // retry path after the core container parser identifies it.
 import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeSgiWithWasm, decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
 
@@ -858,6 +858,9 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeNd2(buffer, options);
 		case 'lif':
 			return decodeLif(buffer, options);
+		case 'sgi':
+			await requireWasm('SGI RGB');
+			return decodeSgiWithWasm(decode_sgi_fast, buffer, 'worker');
 		case 'sdt':
 			return decodeSdt(buffer, options);
 		default:

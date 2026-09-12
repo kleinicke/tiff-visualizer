@@ -1,5 +1,9 @@
 # Change Log
 
+## Unreleased
+
+- Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
+
 ## 1.11.0 (2026-09-06)
 
 - Noticeable loading speedup for tiff, exr, png, jpg and other image formats by improving the startup procedure

@@ -74,6 +74,10 @@ export function sniffImageFormat(bytes: Uint8Array): DetectedImageFormat | null 
 			: bytes[1] === 0x32 || bytes[1] === 0x35 ? 'pgm' : 'ppm';
 		return detected(extension, extension, 'NetPBM');
 	}
+	if (bytes.length >= 12 && has(bytes, 0, [0x01, 0xda]) && bytes[2] <= 1
+		&& (bytes[3] === 1 || bytes[3] === 2) && bytes[4] === 0 && bytes[5] >= 1 && bytes[5] <= 3) {
+		return detected('rgb', 'rgb', 'SGI RGB');
+	}
 	if (ascii(bytes, 0, 2) === 'BM') { return detected('bmp', 'bmp', 'BMP'); }
 	if (has(bytes, 0, [0x00, 0x00, 0x01, 0x00])) { return detected('ico', 'ico', 'ICO'); }
 	if (ascii(bytes, 0, 4) === 'RIFF' && ascii(bytes, 8, 4) === 'WEBP') {
@@ -169,7 +173,7 @@ const FORMAT_EXTENSIONS: Readonly<Record<string, readonly string[]>> = {
 	webp: ['webp'], avif: ['avif'], jxl: ['jxl'], jxr: ['jxr', 'wdp', 'hdp'],
 	jp2: ['jp2', 'jpf', 'jpx', 'j2k', 'j2c', 'jpc'], fits: ['fits', 'fit', 'fts'],
 	dicom: ['dcm', 'dicom'], netcdf: ['nc', 'cdf'], czi: ['czi'], nd2: ['nd2'],
-	lif: ['lif'], ora: ['ora'], kra: ['kra'], psd: ['psd'], psb: ['psb'], xcf: ['xcf'],
+	rgb: ['rgb', 'rgba', 'sgi', 'bw'], lif: ['lif'], ora: ['ora'], kra: ['kra'], psd: ['psd'], psb: ['psb'], xcf: ['xcf'],
 };
 
 export function filenameForDetectedFormat(name: string, format: DetectedImageFormat): string {

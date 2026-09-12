@@ -197,6 +197,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let nd2Processor: any = dormantProcessor();
 	let lifProcessor: any = dormantProcessor();
 	let sdtProcessor: any = dormantProcessor();
+	let sgiProcessor: any = dormantProcessor();
 	let scientificProcessors: any[] = [];
 	const layeredPreviewProcessor = new LayeredPreviewProcessor(settingsManager, vscode);
 	// All format processors, for bulk per-switch state resets and load cancellation.
@@ -219,7 +220,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return processor;
 	};
 	function ensureProcessorFamily(kind: string): Promise<void> {
-		const family = ['fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt', 'jxr', 'jp2', 'jxl'].includes(kind) ? 'scientific' : kind;
+		const family = ['sgi', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt', 'jxr', 'jp2', 'jxl'].includes(kind) ? 'scientific' : kind;
 		const existing = processorFamilyLoads.get(family);
 		if (existing) { return existing; }
 		const load = (async () => {
@@ -274,7 +275,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
 				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
 				sdtProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sdt', formatLabel: 'SDT', formatType: 'sdt', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeSdtLocal(buffer, options || {}) }));
-				scientificProcessors = [fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
+				sgiProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sgi', formatLabel: 'SGI RGB', formatType: 'sgi', parse: (buffer: ArrayBuffer) => decoders.decodeSgiLocal(buffer) }));
+				scientificProcessors = [sgiProcessor, fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 				mouseHandler.setScientificProcessors(scientificProcessors);
 				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 			}
@@ -2783,6 +2785,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			case 'CZI': return lastRawToLayer(cziProcessor._lastRaw, scientificTypeInfo(cziProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'ND2': return lastRawToLayer(nd2Processor._lastRaw, scientificTypeInfo(nd2Processor), name, uri) || baseFromCanvas(name, uri);
 			case 'LIF': return lastRawToLayer(lifProcessor._lastRaw, scientificTypeInfo(lifProcessor), name, uri) || baseFromCanvas(name, uri);
+			case 'SGI RGB': return lastRawToLayer(sgiProcessor._lastRaw, scientificTypeInfo(sgiProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'SDT': return lastRawToLayer(sdtProcessor._lastRaw, scientificTypeInfo(sdtProcessor), name, uri) || baseFromCanvas(name, uri);
 			case 'Layered Document': {
 				const raw = layeredPreviewProcessor._lastRaw;
@@ -2850,7 +2853,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const p = new npyProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = lower.endsWith('.npy') ? fastRawWorkerClient : decodeWorkerClient;
 				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
 			}
-			const isScientific = /\.(fits|fit|fts|dcm|dicom|nc|cdf|czi|nd2|lif|sdt)$/.test(lower);
+			const isScientific = /\.(rgb|rgba|sgi|bw|fits|fit|fts|dcm|dicom|nc|cdf|czi|nd2|lif|sdt)$/.test(lower);
 			if (isScientific) { await ensureProcessorFamily('scientific'); }
 			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
 				lower.match(/\.(dcm|dicom)$/) ? dicomProcessor.config :
@@ -2858,7 +2861,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				lower.match(/\.czi$/) ? cziProcessor.config :
 				lower.match(/\.nd2$/) ? nd2Processor.config :
 				lower.match(/\.lif$/) ? lifProcessor.config :
-				lower.match(/\.sdt$/) ? sdtProcessor.config : null;
+				lower.match(/\.sdt$/) ? sdtProcessor.config :
+				lower.match(/\.(rgb|rgba|sgi|bw)$/) ? sgiProcessor.config : null;
 			if (scientificConfig) {
 				const p = new fitsProcessor.constructor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
 				await p.process(src); return lastRawToLayer(p._lastRaw, scientificTypeInfo(p), name, resourceUri);
@@ -4615,6 +4619,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 							currentLoadFormat === 'CZI' ? cziProcessor :
 							currentLoadFormat === 'ND2' ? nd2Processor :
 							currentLoadFormat === 'LIF' ? lifProcessor :
+							currentLoadFormat === 'SGI RGB' ? sgiProcessor :
 							currentLoadFormat === 'SDT' ? sdtProcessor :
 															currentLoadFormat === 'Layered Document' ? layeredPreviewProcessor :
 																webImageProcessor;
@@ -8092,7 +8097,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const format = resolveFormat(resourceUri, formatHint);
 		const layeredFormat = (format?.kind === 'layered' ? format.layeredFormat : null)
 			|| layeredFormatForPath(lower);
-		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jp2', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt'].includes(format.kind)) {
+		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jp2', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt', 'sgi'].includes(format.kind)) {
 			await ensureProcessorFamily(format.kind);
 			if (gen !== _loadGeneration) { return; }
 		}
@@ -8165,6 +8170,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			handleScientificArray(nd2Processor, uri, gen, planeOptions || planeSelection);
 		} else if (format?.kind === 'lif') {
 			handleScientificArray(lifProcessor, uri, gen, planeOptions || planeSelection);
+		} else if (format?.kind === 'sgi') {
+			handleScientificArray(sgiProcessor, uri, gen);
 		} else if (format?.kind === 'sdt') {
 			handleScientificArray(sdtProcessor, uri, gen, planeOptions || planeSelection);
 		} else {

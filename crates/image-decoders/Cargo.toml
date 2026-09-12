@@ -22,6 +22,7 @@ all-formats = [
     "hdr",
     "jpeg",
     "pfm",
+    "sgi",
     "netpbm",
     "npy",
     "fits",
@@ -79,6 +80,7 @@ jpeg2000 = ["codec-jpeg2000"]
 # TIFF open would pay for. `wasm/jxl-decoder` builds this feature on its own.
 jxl = ["dep:jxl"]
 jpeg = ["dep:zune-jpeg"]
+sgi = []
 pfm = []
 netpbm = []
 npy = []
