@@ -1,0 +1,3 @@
+<idea-plugin>
+  <!-- JCEF is a separate plugin in 2026.2; older IDEs provide it in core. -->
+</idea-plugin>

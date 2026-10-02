@@ -69,9 +69,15 @@ test('downloads the microscopy example when its host ignores byte ranges', async
   await page.getByRole('button', { name: /^Microscopy/ }).click();
   await expect(page.locator('body > canvas:not(.measure-overlay)')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.nav-overlay')).toBeVisible();
+  await expect(page.locator('.dataset-title-label')).toHaveText('TIFF');
   if (process.env.TIFF_MICROSCOPY_SAMPLE) {
     await expect(page.locator('.nav-overlay [data-axis="C"] input')).toHaveAttribute('max', '1');
     await expect(page.locator('.nav-overlay [data-axis="Z"] input')).toHaveAttribute('max', '59');
+    await page.locator('body > canvas:not(.measure-overlay)').click({ button: 'right' });
+    await page.getByText('Toggle Metadata Panel', { exact: true }).click();
+    await expect(page.locator('.metadata-panel')).toBeVisible();
+    await expect(page.locator('.metadata-panel-row').filter({ hasText: 'Metadata Convention' })).toContainText('ImageJ');
+    await page.locator('.metadata-panel-close').click();
   }
   const canvas = page.locator('body > canvas:not(.measure-overlay)');
   const firstPlane = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL());

@@ -3,7 +3,7 @@ package de.kleinicke.visualizer;
 import java.io.IOException;
 import java.util.*;
 
-/** Registry generated from both VS Code manifests, with explicit host limitations. */
+/** Registry generated from the image VS Code manifest, with explicit host limitations. */
 public final class ViewerFormats {
     private static final Properties FORMATS = new Properties();
     static {
@@ -15,10 +15,8 @@ public final class ViewerFormats {
     public static String kind(String extension) {
         if (extension == null) return null;
         String suffix = extension.toLowerCase(Locale.ROOT);
-        for (String kind : new String[]{"image", "ply"}) {
-            if (Arrays.asList(FORMATS.getProperty(kind).split(",")).contains(suffix)) return kind;
-        }
-        return null;
+        return Arrays.asList(FORMATS.getProperty("image").split(",")).contains(suffix)
+            ? "image" : null;
     }
     private ViewerFormats() { }
 }

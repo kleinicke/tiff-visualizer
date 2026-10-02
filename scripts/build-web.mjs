@@ -50,7 +50,10 @@ await Promise.all([
 
 await Promise.all([
   cp('web/index.html', `${outputDirectory}/index.html`),
+  cp('web/guide.html', `${outputDirectory}/guide.html`),
   cp('web/manifest.webmanifest', `${outputDirectory}/manifest.webmanifest`),
+  cp('web/robots.txt', `${outputDirectory}/robots.txt`),
+  cp('web/sitemap.xml', `${outputDirectory}/sitemap.xml`),
   cp('web/website.css', `${outputDirectory}/website.css`),
   cp('web/plausible-init.js', `${outputDirectory}/plausible-init.js`),
   cp('web/vendor-assets.js', `${outputDirectory}/vendor-assets.js`),

@@ -298,7 +298,7 @@ export class ZoomController {
 			this.firstZoom();
 		}
 
-		if (this.container.classList.contains('web-app')) {
+		if (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host')) {
 			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
 			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
 			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)));

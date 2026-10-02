@@ -17,7 +17,8 @@ final class MacImageScroll implements AutoCloseable {
                     || event.getScrollType() != MouseWheelEvent.WHEEL_UNIT_SCROLL) return;
             Component source = event.getComponent();
             if (source.getWidth() <= 0 || source.getHeight() <= 0) return;
-            double delta = event.getPreciseWheelRotation() * 40.0;
+            // Conservative pixel conversion: the old 40x gain overshot on trackpads.
+            double delta = event.getPreciseWheelRotation() * 8.0;
             if (!Double.isFinite(delta) || delta == 0) return;
             double x = (double) event.getX() / source.getWidth();
             double y = (double) event.getY() / source.getHeight();

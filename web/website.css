@@ -809,3 +809,6 @@ html:has(.web-app.web-has-image.web-image-zoomed) { overflow: auto; }
   bottom: 40px;
   max-width: calc(100vw - 40px);
 }
+
+/* Embedded editors have no website landing page, including before file delivery. */
+.jetbrains-host .web-app { padding-top: 0; }

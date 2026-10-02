@@ -402,6 +402,7 @@ docs/                                 # User documentation, ships in the VSIX (c
 5. Add format type to `ImageFormatType` in [appStateManager.ts](src/imagePreview/appStateManager.ts)
 6. Set up default settings for the format in `AppStateManager.getDefaultSettings()`
 7. Update MouseHandler to support pixel inspection for the new format
+8. Run `node jetbrains/scripts/register-formats.mjs` and add the format to [jetbrains/DESCRIPTION.md](jetbrains/DESCRIPTION.md) (JetBrains Marketplace text)
 
 ### Adding New Commands
 1. Register command in [package.json](package.json) `contributes.commands` section
@@ -411,6 +412,7 @@ docs/                                 # User documentation, ships in the VSIX (c
 5. Add keyboard shortcut in [package.json](package.json) `contributes.keybindings` if desired
 6. Add to context menu in [package.json](package.json) `contributes.menus` if appropriate
 7. Run `npm run docs:commands`, and document user-visible behaviour on the matching page in [docs/](docs/)
+8. If the feature is reachable in the JetBrains plugin, add it to [jetbrains/DESCRIPTION.md](jetbrains/DESCRIPTION.md)
 
 ### User Documentation
 

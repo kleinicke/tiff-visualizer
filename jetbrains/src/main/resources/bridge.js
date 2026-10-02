@@ -55,23 +55,18 @@ window.jetbrainsGesture = (type, scale) => {
   document.body.dispatchEvent(event);
 };
 
-/* Thin prototype adapter: deliver the IDE's selected file through each viewer's
+/* Thin image adapter: deliver the IDE's selected file through the viewer's
  * existing file input. No decoder, renderer or privileged browser API is added. */
 window.addEventListener('load', async () => {
   try {
-    const input = document.querySelector('#web-file-input, #hiddenFileInput');
+    const input = document.querySelector('#web-file-input');
     if (!input) throw new Error('Viewer file input is unavailable');
-    if (input.id === 'hiddenFileInput') {
-      const deadline = Date.now() + 30000;
-      while (document.documentElement.dataset.visualizerReady !== 'true') {
-        if (Date.now() > deadline) throw new Error('3D viewer initialization timed out');
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-    }
     const [source, filename] = await Promise.all([fetch('../source'), fetch('../filename')]);
     if (!source.ok || !filename.ok) throw new Error('The selected file could not be read');
     const transfer = new DataTransfer();
-    transfer.items.add(new File([await source.blob()], await filename.text()));
+    // JCEF can fail when response.blob() spills larger responses to its blob store.
+    // Read bytes directly; the decoder needs an ArrayBuffer in every host anyway.
+    transfer.items.add(new File([await source.arrayBuffer()], await filename.text()));
     input.files = transfer.files;
     input.dispatchEvent(new Event('change', { bubbles: true }));
     document.documentElement.dataset.jetbrainsFileDelivered = 'true';

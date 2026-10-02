@@ -1,1 +1,1 @@
-rootProject.name = "scientific-visualizers"
+rootProject.name = "scientific-image-visualizer-jetbrains"

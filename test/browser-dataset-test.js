@@ -109,7 +109,7 @@ const ome = createOmeDataset({
 assert.ok(ome, 'selected OME files should create a browser dataset');
 assert.equal(findDatasetPlane(ome.manifest, 0, { c: 0, z: 1, t: 0 }).plane.src, 'blob:z1');
 
-const html = fs.readFileSync('web/index.html', 'utf8') + fs.readFileSync('web/App.svelte', 'utf8');
+const html = fs.readFileSync('web/index.html', 'utf8') + fs.readFileSync('web/App.svelte', 'utf8') + fs.readFileSync('web/ViewerChrome.svelte', 'utf8');
 const tabs = fs.readFileSync('web/ImageTabs.svelte', 'utf8');
 const css = fs.readFileSync('web/website.css', 'utf8');
 const host = fs.readFileSync('web/browser-host.ts', 'utf8');

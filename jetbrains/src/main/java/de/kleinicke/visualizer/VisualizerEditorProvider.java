@@ -14,6 +14,6 @@ public final class VisualizerEditorProvider implements FileEditorProvider, DumbA
     @Override public @NotNull FileEditor createEditor(@NotNull Project project, @NotNull VirtualFile file) {
         return new VisualizerEditor(file);
     }
-    @Override public @NotNull String getEditorTypeId() { return "kleinicke.visualizer"; }
+    @Override public @NotNull String getEditorTypeId() { return "kleinicke.scientificimagevisualizer"; }
     @Override public @NotNull FileEditorPolicy getPolicy() { return FileEditorPolicy.PLACE_BEFORE_DEFAULT_EDITOR; }
 }

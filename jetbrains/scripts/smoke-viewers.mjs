@@ -1,14 +1,17 @@
 import { chromium } from '@playwright/test';
 import { spawn } from 'node:child_process';
+import { readFile, mkdir } from 'node:fs/promises';
+import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin/java') : 'java';
 const classpath = [path.join(root, 'build/classes/java/main'), path.join(root, 'build/resources/main')].join(path.delimiter);
+if (process.argv.length < 3) throw new Error('Pass image sample paths');
 const browser = await chromium.launch();
 try {
-  for (const [kind, sample] of [['image', process.argv[2]], ['ply', process.argv[3]]]) {
-    if (!sample) throw new Error('Pass TIFF and PLY sample paths');
+  for (const [kind, sample] of process.argv.slice(2).map(sample => ['image', sample])) {
+    if (!sample) throw new Error('Pass image sample paths');
     const host = spawn(java, ['-cp', classpath, path.join(root, 'scripts/smoke-server.java'), path.resolve(sample), kind], { stdio: ['pipe', 'pipe', 'inherit'] });
     try {
       const line = await new Promise((resolve, reject) => {
@@ -21,6 +24,8 @@ try {
       await page.setViewportSize({ width: 856, height: 900 });
       const failures = [];
       page.on('pageerror', error => failures.push(error.message));
+      page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
+      page.on('response', response => { if (response.status() >= 400) console.error(response.status(), response.url()); });
       await page.goto(line.toString().trim());
       await page.waitForFunction(() => document.documentElement.dataset.jetbrainsFileDelivered === 'true');
       if (kind === 'image') {
@@ -28,9 +33,6 @@ try {
           const canvas = document.querySelector('body > canvas:not(.measure-overlay)');
           return canvas && canvas.width > 1 && canvas.height > 1;
         });
-      } else {
-        await page.waitForFunction(() => window.visualizer?.meshes?.length > 0);
-        if (await page.locator('.bottom-right-nav').count()) throw new Error('Website footer leaked into IDE');
       }
       if (kind === 'image') {
         await page.waitForFunction(() => window.scientificImageHost?.snapshot().ready);
@@ -95,7 +97,46 @@ try {
           } finally { panel.remove(); }
         });
       }
-      if (await page.locator('.web-legal-nav, .bottom-right-nav').count()) throw new Error('Website legal navigation leaked into IDE');
+      // Exercise the real export pipeline, validate the PNG header and reopen
+      // the saved file through the shared file-input path.
+      const dimensions = await page.evaluate(async () => {
+        const canvas = document.querySelector('body > canvas:not(.measure-overlay)');
+        const reference = document.createElement('canvas');
+        reference.width = canvas.width; reference.height = canvas.height;
+        const ctx = reference.getContext('2d'); ctx.drawImage(canvas, 0, 0);
+        window.__exportPixels = Array.from(ctx.getImageData(0, 0, reference.width, reference.height).data);
+        return [canvas.width, canvas.height];
+      });
+
+      const downloadPromise = page.waitForEvent('download');
+      await page.evaluate(() => window.scientificImageHost.command('exportLayers'));
+      const download = await downloadPromise.catch(async error => { console.error(await page.locator('body').innerText()); throw error; });
+      assert.equal(download.suggestedFilename(), 'scientific-image-export.png');
+      const exportDir = path.join(root, 'build/release-evidence');
+      await mkdir(exportDir, { recursive: true });
+      const exported = path.join(exportDir, `${path.basename(sample)}.png`);
+      await download.saveAs(exported);
+      const bytes = await readFile(exported);
+      assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+      assert.deepEqual([bytes.readUInt32BE(16), bytes.readUInt32BE(20)], dimensions);
+      await page.evaluate(async encoded => {
+        const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(encoded), c => c.charCodeAt(0))], { type: 'image/png' }));
+        const decoded = document.createElement('canvas'); decoded.width = bitmap.width; decoded.height = bitmap.height;
+        const ctx = decoded.getContext('2d'); ctx.drawImage(bitmap, 0, 0); bitmap.close();
+        const pixels = ctx.getImageData(0, 0, decoded.width, decoded.height).data;
+        if (pixels.length !== window.__exportPixels.length || pixels.some((v, i) => v !== window.__exportPixels[i])) throw new Error('PNG export pixels differ from displayed image');
+      }, bytes.toString('base64'));
+      await page.evaluate(() => { window.__previousCanvas = document.querySelector('body > canvas:not(.measure-overlay)'); });
+      await page.locator('#web-file-input').setInputFiles(exported);
+      await page.waitForFunction(() => {
+        const current = document.querySelector('body > canvas:not(.measure-overlay)');
+        return current && current !== window.__previousCanvas && document.body.classList.contains('ready');
+      });
+      await page.reload();
+      await page.waitForFunction(() => document.body.classList.contains('ready') && document.documentElement.dataset.jetbrainsFileDelivered === 'true');
+      console.log(`${path.basename(sample)}: PNG export dimensions, pixel equality and reopen passed`);
+      // Svelte keeps the legal navigation mounted; embedded-host CSS hides it.
+      if (await page.locator('.web-legal-nav:visible, .bottom-right-nav:visible').count()) throw new Error('Website legal navigation leaked into IDE');
       if (failures.length) throw new Error(failures.join('\n'));
       await page.screenshot({ path: path.join(root, `build/${kind}-smoke.png`) });
       console.log(`${kind}: selected file decoded and rendered through the Java host`);

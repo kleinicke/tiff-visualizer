@@ -2301,10 +2301,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				});
 			}
 			if (isPlaneNavProcessor(processor)) {
+				// Show completed planes during scrubbing, but keep the controls at
+				// the newest requested position rather than the older decoded one.
 				planeNavProcessor = processor;
-				planeSelection = { indices: { ...(processor.metadata.selectedIndices || {}) } };
-				updatePlaneOverlay(processor.metadata, false);
-				onPlaneLoadSettled();
+				if (!planeLoadPending) {
+					planeSelection = { indices: { ...(processor.metadata.selectedIndices || {}) } };
+				}
+				updatePlaneOverlay(processor.metadata, planeLoadPending);
 			}
 			if (processor === netcdfProcessor) {
 				netcdfSelection = {
@@ -2320,6 +2323,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (ctx && primaryImageData) { await renderImageDataToCanvas(primaryImageData, ctx); }
 			hasLoadedImage = true;
 			if (!processor._pendingRenderData) { finalizeImageSetup(); }
+			// Start the trailing decode only after this canvas has been installed.
+			// The next load yields to paint and keeps this frame visible while busy.
+			if (isPlaneNavProcessor(processor)) { onPlaneLoadSettled(); }
 		} catch (error) {
 			if (gen !== _loadGeneration) { return; }
 			if (processor === netcdfProcessor) { navOverlay?.classList.remove('dataset-overlay--loading'); }
@@ -4481,12 +4487,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			const ome = tiffProcessor.omeMetadata;
 			if (ome) {
 				const coordinates = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
-				fileFields['OME Dimensions'] = `C ${ome.planeSizeC} × Z ${ome.sizeZ} × T ${ome.sizeT}`;
+				fileFields['Metadata Convention'] = ome.metadataFormat === 'ImageJ' ? 'ImageJ' : 'OME';
+				fileFields['Stack Dimensions'] = `C ${ome.planeSizeC} × Z ${ome.sizeZ} × T ${ome.sizeT}`;
 				fileFields['Current Plane'] = `C ${coordinates.c + 1}, Z ${coordinates.z + 1}, T ${coordinates.t + 1} (IFD ${tiffProcessor.pageIndex})`;
 				fileFields['Dimension Order'] = ome.dimensionOrder;
 				if (ome.imageName) { fileFields['Image Name'] = ome.imageName; }
-				if (ome.pixelType) { fileFields['OME Pixel Type'] = ome.pixelType; }
-				if (ome.channels.length) { fileFields['OME Channels'] = ome.channels.map((channel: any) => channel.name).join(', '); }
+				if (ome.pixelType) { fileFields['Pixel Type'] = ome.pixelType; }
+				if (ome.channels.length) { fileFields['Channel Names'] = ome.channels.map((channel: any) => channel.name).join(', '); }
 				if (ome.physicalSizeX !== undefined) { fileFields['Physical Size X'] = `${ome.physicalSizeX} ${ome.physicalSizeXUnit || ''}`.trim(); }
 				if (ome.physicalSizeY !== undefined) { fileFields['Physical Size Y'] = `${ome.physicalSizeY} ${ome.physicalSizeYUnit || ''}`.trim(); }
 				if (ome.physicalSizeZ !== undefined) { fileFields['Physical Size Z'] = `${ome.physicalSizeZ} ${ome.physicalSizeZUnit || ''}`.trim(); }
@@ -6767,6 +6774,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			return;
 		}
 		navOwner = owner;
+		navOverlay.classList.toggle('dataset-overlay--loading', loading);
 		navOverlay.classList.toggle('dataset-overlay--readonly', controls.length === 0 && !note);
 		navControls = controls.map(spec => ({
 			label: spec.label,
@@ -6847,6 +6855,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * fast as the machine allows and always lands on the released value.
 	 */
 	function requestPlaneReload() {
+		// Publish the requested position immediately so repeated keys advance
+		// from it, even while the decoder is busy with an older plane.
+		if (planeNavProcessor) { updatePlaneOverlay(planeNavProcessor.metadata, true); }
 		if (planeLoadInFlight) { planeLoadPending = true; return; }
 		planeLoadInFlight = true;
 		reloadPlaneSelection();
@@ -6885,10 +6896,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// this overlay; a retained or dormant TIFF processor is not the active image.
 		if (datasetManifest) { return; }
 		if (currentLoadFormat !== 'TIFF') { hideNavOverlay('tiff'); return; }
-		const ome = tiffProcessor.omeMetadata;
 		renderNavOverlay({
 			owner: 'tiff',
-			title: ome?.metadataFormat === 'ImageJ' ? 'ImageJ TIFF' : ome ? 'OME-TIFF' : 'TIFF',
+			title: 'TIFF',
 			controls: tiffControls(),
 			loading: loading || _levelSwitchPending || _tiffViewportLoadCount > 0,
 			resolution: tiffResolutionStatus(),
@@ -8245,8 +8255,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				return result;
 			}
 		} else if (canvas) {
-			const context = canvas.getContext('2d');
-			return context ? context.getImageData(0, 0, canvas.width, canvas.height) : null;
+			return readDisplayedCanvasImageData(canvas);
 		} else if (image && image.src) {
 			// If no canvas, create a temporary canvas from the image element
 			const tempCanvas = document.createElement('canvas');

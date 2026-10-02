@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A quick start for the Scientific Image Visualizer: try an example, inspect pixel values, adjust a dark image, and open your own files." />
+    <link rel="canonical" href="https://images.f-kleinicke.de/guide.html" />
+    <title>Get started with the Scientific Image Visualizer</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; line-height: 1.6; background: #111612; color: #eef4eb; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      a { color: #b9f28f; text-underline-offset: .2em; }
+      a:hover, a:focus-visible { color: #d7ffb9; }
+      header, main, footer { width: min(880px, calc(100% - 40px)); margin: auto; }
+      header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.25rem 0; border-bottom: 1px solid #3b4a3d; }
+      header strong { font-size: 1rem; }
+      nav { display: flex; gap: 1.25rem; }
+      main { padding: 3rem 0 4rem; }
+      .eyebrow { color: #b9f28f; font-size: .8rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+      h1 { max-width: 750px; font-size: clamp(2.2rem, 6vw, 4rem); line-height: 1.1; margin: .7rem 0 1rem; }
+      h2 { font-size: 1.5rem; margin: 2.5rem 0 .5rem; }
+      p, li { max-width: 72ch; }
+      .lead { color: #c6d4c6; font-size: 1.2rem; }
+      .actions { display: flex; flex-wrap: wrap; gap: .8rem; margin: 1.8rem 0 2.5rem; }
+      .button { display: inline-block; padding: .7rem 1rem; border: 1px solid #677b68; border-radius: .5rem; text-decoration: none; font-weight: 650; }
+      .button.primary { background: #b9f28f; border-color: #b9f28f; color: #14220d; }
+      .button.primary:hover, .button.primary:focus-visible { background: #d7ffb9; color: #14220d; }
+      section { border-top: 1px solid #3b4a3d; }
+      li + li { margin-top: .45rem; }
+      footer { padding: 1.5rem 0 2.5rem; border-top: 1px solid #3b4a3d; color: #b9c9b9; font-size: .9rem; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Scientific Image Visualizer</strong>
+      <nav aria-label="Main navigation">
+        <a href="/">Open viewer</a>
+        <a href="https://f-kleinicke.de/">About the project</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Quick start · about 2 minutes</p>
+      <h1>Open an image and see what its pixels contain</h1>
+      <p class="lead">Start with a sample image. You can inspect values, change how the image is displayed, and then open your own scientific data.</p>
+      <div class="actions">
+        <a class="button primary" href="/">Try the viewer</a>
+      </div>
+
+      <section aria-labelledby="start-title">
+        <h2 id="start-title">Try it with a sample</h2>
+        <ol>
+          <li>Open the <a href="/">viewer</a> and select <strong>Microscopy</strong> under <strong>Try an example</strong>. It loads a multi-slice TIFF with two channels.</li>
+          <li>Zoom with the mouse wheel or trackpad, drag to pan, and hover over the image to see its pixel readout.</li>
+          <li>Use the image navigation controls to change slice or channel. Open <strong>Options</strong> in the bottom bar for the histogram, metadata and measurement tools.</li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="own-file-title">
+        <h2 id="own-file-title">Open your own image</h2>
+        <p>Choose <strong>Open files</strong> or drop files onto the page. Local files stay on your device. To inspect a public image, choose <strong>Open URL</strong> and paste its link; the image host must permit cross-origin browser access.</p>
+        <p>The viewer handles TIFF/OME-TIFF, microscopy formats such as CZI and ND2, DICOM, FITS, NetCDF, NPY/NPZ, EXR, PFM and common image formats. See the <a href="https://github.com/kleinicke/tiff-visualizer/blob/main/docs/formats.md">format reference</a> for compression and bit-depth details.</p>
+      </section>
+
+      <section aria-labelledby="appearance-title">
+        <h2 id="appearance-title">If an image appears all black or white</h2>
+        <p>A floating-point image can contain valid values outside the default display range. The bottom bar has <strong>Auto-Norm</strong>, gamma and exposure controls. Start with Auto-Norm; then open the histogram from <strong>Options</strong> to see the value distribution. These controls change the display, not the source file.</p>
+      </section>
+
+      <section aria-labelledby="next-title">
+        <h2 id="next-title">What next?</h2>
+        <ul>
+          <li><strong>Compare images:</strong> open more than one file and use the tabs or layers tools.</li>
+          <li><strong>Measure a region:</strong> open <strong>Options → Measure</strong> and choose a shape.</li>
+          <li><strong>Need more detail?</strong> Read the <a href="https://github.com/kleinicke/tiff-visualizer/blob/main/docs/getting-started.md">getting started documentation</a>.</li>
+        </ul>
+      </section>
+    </main>
+    <footer><a href="https://f-kleinicke.de/impressum.html">Impressum</a> · <a href="https://f-kleinicke.de/datenschutz.html">Privacy</a></footer>
+  </body>
+</html>

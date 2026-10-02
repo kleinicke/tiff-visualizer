@@ -32,11 +32,12 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
             // animation cadence in the tested runtime (30 fps versus 60 fps).
             browser = new com.intellij.ui.jcef.JBCefBrowserBuilder().setWindowlessFramerate(60).build();
             browser.getJBCefClient().getCefClient().addDownloadHandler(new org.cef.handler.CefDownloadHandlerAdapter() {
-                @Override public void onBeforeDownload(org.cef.browser.CefBrowser cef,
+                @Override public boolean onBeforeDownload(org.cef.browser.CefBrowser cef,
                         org.cef.callback.CefDownloadItem item, String suggestedName,
                         org.cef.callback.CefBeforeDownloadCallback callback) {
                     // JCEF's native Save dialog owns the destination and overwrite confirmation.
                     callback.Continue(suggestedName, true);
+                    return true;
                 }
             });
             if (kind.equals("image")) {
@@ -62,7 +63,7 @@ public final class VisualizerEditor extends UserDataHolderBase implements FileEd
     @Override public @NotNull JComponent getComponent() { return panel; }
     ImageStatusBridge imageStatus() { return imageStatus; }
     @Override public JComponent getPreferredFocusedComponent() { return browser == null ? panel : browser.getComponent(); }
-    @Override public @NotNull String getName() { return "Scientific Visualizer"; }
+    @Override public @NotNull String getName() { return "Scientific Image Visualizer"; }
     @Override public void setState(@NotNull FileEditorState state) { }
     @Override public boolean isModified() { return false; }
     @Override public boolean isValid() { return !disposed && file.isValid(); }

@@ -5,6 +5,7 @@
     "avif",
     "bmp",
     "btf",
+    "bw",
     "cdf",
     "czi",
     "dcm",
@@ -40,7 +41,10 @@
     "ppm",
     "psb",
     "psd",
+    "rgb",
+    "rgba",
     "sdt",
+    "sgi",
     "tf2",
     "tf8",
     "tga",
@@ -49,32 +53,5 @@
     "wdp",
     "webp",
     "xcf"
-  ],
-  "ply": [
-    "e57",
-    "glb",
-    "gltf",
-    "ksplat",
-    "las",
-    "laz",
-    "nrrd",
-    "obj",
-    "off",
-    "pcd",
-    "ply",
-    "pts",
-    "sog",
-    "splat",
-    "spz",
-    "stl",
-    "x3a",
-    "x3r",
-    "xyz",
-    "xyzn",
-    "xyzrgb"
-  ],
-  "deferred": {
-    "bin": "Ambiguous generic binary extension; needs an explicit Open as KITTI action.",
-    "nhdr": "Detached volume requires companion-file resolution."
-  }
+  ]
 }

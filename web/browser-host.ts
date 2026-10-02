@@ -1,6 +1,7 @@
 import { installPythonHost } from './python-host';
 import { flushSync, mount } from 'svelte';
 import App from './App.svelte';
+import JetBrainsApp from './JetBrainsApp.svelte';
 import DisplayForm from './DisplayForm.svelte';
 import ImageTabs from './ImageTabs.svelte';
 import { mountView } from '../ui/mount.js';
@@ -56,12 +57,14 @@ interface ViewerSettings {
 }
 
 // Mount synchronously before the host binds native file and message handlers.
-flushSync(() => mount(App, { target: document.body }));
+const embeddedIde = new URLSearchParams(location.search).get('host') === 'jetbrains';
+if (embeddedIde) document.documentElement.classList.add('jetbrains-host');
+flushSync(() => mount(embeddedIde ? JetBrainsApp : App, { target: document.body }));
 const toolbar = document.querySelector<HTMLElement>('.web-toolbar')!;
 const toolbarObserver = new ResizeObserver(() => {
   document.documentElement.style.setProperty('--web-toolbar-bottom', `${Math.max(0, toolbar.getBoundingClientRect().bottom) + 12}px`);
 });
-toolbarObserver.observe(toolbar);
+if (toolbar) toolbarObserver.observe(toolbar);
 
 const STORAGE_STATE = 'scientific-image-visualizer.webview-state';
 const STORAGE_THEME = 'scientific-image-visualizer.theme';
@@ -495,16 +498,17 @@ function updateTabScrollControls(): void {
   next.disabled = !overflowing || tabList.scrollLeft + tabList.clientWidth >= tabList.scrollWidth - 1;
 }
 
-const tabsView = mountView(ImageTabs, { entries: [] as { name: string; title: string }[], index: 0, overview: true,
+const tabTarget = document.getElementById('web-image-tabs');
+const tabsView = tabTarget ? mountView(ImageTabs, { entries: [] as { name: string; title: string }[], index: 0, overview: true,
   select: (index: number) => { if (showingOverview || index !== fileIndex) switchTo(index); },
   close: (index: number) => closeImageAt(index, true),
-}, document.getElementById('web-image-tabs')!);
+}, tabTarget) : null;
 function renderImageTabs(): void {
   const tabList = document.getElementById('web-image-tabs');
   const tabShell = document.getElementById('web-image-tabs-shell');
   if (!tabList || !tabShell) return;
   tabShell.hidden = files.length === 0;
-  tabsView.update({ entries: files.map(entry => ({ name: entry.name, title: entry.size === null ? `${entry.name} · remote` : `${entry.name} · ${formatBytes(entry.size)}` })),
+  tabsView?.update({ entries: files.map(entry => ({ name: entry.name, title: entry.size === null ? `${entry.name} · remote` : `${entry.name} · ${formatBytes(entry.size)}` })),
     index: fileIndex, overview: showingOverview,
     select: index => { if (showingOverview || index !== fileIndex) switchTo(index); },
     close: index => closeImageAt(index, true),
@@ -1054,7 +1058,7 @@ function applyTheme(theme: 'dark' | 'light'): void {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  setupAppInstall(openFiles, showToast);
+  if (!embeddedIde) setupAppInstall(openFiles, showToast);
   applyTheme(localStorage.getItem(STORAGE_THEME) === 'light' ? 'light' : 'dark');
   const fileInput = document.getElementById('web-file-input') as HTMLInputElement;
   const importInput = document.getElementById('web-import-input') as HTMLInputElement;
@@ -1161,7 +1165,7 @@ document.addEventListener('DOMContentLoaded', () => {
     element.setAttribute('title', SUPPORTED_FORMATS_TOOLTIP);
     element.setAttribute('aria-label', `${element.textContent?.trim() || 'Supported formats'}: ${SUPPORTED_FORMATS_TOOLTIP}`);
   });
-  moreButton.addEventListener('click', event => {
+  moreButton?.addEventListener('click', event => {
     event.stopPropagation();
     moreMenu.hidden = !moreMenu.hidden;
     moreButton.setAttribute('aria-expanded', String(!moreMenu.hidden));
@@ -1190,7 +1194,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.addEventListener('click', event => {
-    if (!moreMenu.hidden && !moreMenu.contains(event.target as Node) && event.target !== moreButton) {
+    if (moreMenu && !moreMenu.hidden && !moreMenu.contains(event.target as Node) && event.target !== moreButton) {
       moreMenu.hidden = true;
       moreButton.setAttribute('aria-expanded', 'false');
     }
@@ -1202,17 +1206,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !controlPopover.hidden) closeControlPopover();
-    if (event.key === 'Escape' && !logPanel.hidden) setLoadingLogOpen(false);
+    if (event.key === 'Escape' && logPanel && !logPanel.hidden) setLoadingLogOpen(false);
   });
-  imageTabs.addEventListener('scroll', updateTabScrollControls, { passive: true });
-  previousImageTabs.addEventListener('click', () => {
+  imageTabs?.addEventListener('scroll', updateTabScrollControls, { passive: true });
+  previousImageTabs?.addEventListener('click', () => {
     imageTabs.scrollBy({ left: -Math.max(180, imageTabs.clientWidth * 0.7), behavior: 'smooth' });
   });
-  nextImageTabs.addEventListener('click', () => {
+  nextImageTabs?.addEventListener('click', () => {
     imageTabs.scrollBy({ left: Math.max(180, imageTabs.clientWidth * 0.7), behavior: 'smooth' });
   });
   window.addEventListener('resize', updateTabScrollControls);
-  imageTabs.addEventListener('keydown', event => {
+  imageTabs?.addEventListener('keydown', event => {
     const target = event.target as HTMLElement;
     const index = Number(target.dataset.imageIndex);
     if (!Number.isInteger(index)) return;

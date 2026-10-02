@@ -18,7 +18,7 @@ public final class ViewerServer implements AutoCloseable {
     private final String prefix = "/" + UUID.randomUUID() + "/";
     private final String authority;
     public ViewerServer(Path file, String kind) throws IOException {
-        if (!Set.of("image", "ply").contains(kind)) throw new IllegalArgumentException("Unknown viewer");
+        if (!"image".equals(kind)) throw new IllegalArgumentException("Unknown viewer");
         this.file = file.toRealPath();
         if (!Files.isRegularFile(this.file)) throw new IOException("Not a regular file");
         this.kind = kind;
