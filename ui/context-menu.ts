@@ -1,6 +1,6 @@
 import ContextMenu from './components/ContextMenu.svelte';
 import { mountView } from './mount';
-export interface MenuItem { label?: string; action?: () => void; separator?: boolean }
+export interface MenuItem { label?: string; action?: () => void; separator?: boolean; heading?: boolean }
 export interface MenuModel { items: MenuItem[]; className?: string; element?: HTMLDivElement; close: () => void }
 let active: (() => void) | undefined;
 /** One menu at a time; disposal also releases the global dismissal listeners. */

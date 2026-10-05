@@ -1,51 +1,12 @@
 "use strict";
 
-import type { DebayerSettings } from './debayer.js';
 
-export interface NormalizationSettings {
-  min: number;
-  max: number;
-  autoNormalize: boolean;
-  gammaMode: boolean;
-}
 
-export interface GammaSettings {
-  in: number;
-  out: number;
-}
 
-export interface BrightnessSettings {
-  offset: number;
-}
+export type { NormalizationSettings, GammaSettings, BrightnessSettings } from '../../shared/display-settings.js';
 
-export interface ImageSettings {
-  normalization?: NormalizationSettings;
-  gamma?: GammaSettings;
-  brightness?: BrightnessSettings;
-  nanColor?: string;
-  displayColormap?: string;
-  debayer?: DebayerSettings;
-  rgbAs24BitGrayscale?: boolean;
-  scale24BitFactor?: number;
-  normalizedFloatMode?: boolean;
-  colorPickerShowModified?: boolean;
-  /** Session-wide idle scale bar visibility, owned by the extension host. */
-  showScaleBar?: boolean;
-  gpuAcceleration?: boolean;
-  /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
-  experimentalRegionDecode?: boolean;
-  plyVisualizerInstalled?: boolean;
-  resourceUri?: string;
-  src?: string;
-	/** Original HTTP(S) TIFF URL; activates the range-backed byte source. */
-	remoteTiffUrl?: string;
-	/** Content-derived registry hint; overrides a missing or misleading suffix. */
-	formatHint?: string;
-  loadStartTime?: number;
-  surfaceMode?: 'editor' | 'layers';
-  extensionVersion?: string;
-  vscodeVersion?: string;
-}
+import type { ImageSettings } from '../../shared/viewer-settings';
+export type { ImageSettings } from '../../shared/viewer-settings';
 
 export function webviewStateMatchesVersions(
   state: any,

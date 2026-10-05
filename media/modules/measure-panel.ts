@@ -1,10 +1,12 @@
+import { MeasurementResults } from './measure/results';
+import { MeasurementAnalysis } from './measure/analysis';
 import Measure from '../../ui/components/Measure.svelte';
 import { mountView } from '../../ui/mount';
 "use strict";
 
 import { areaUnit, formatNumber } from './measure/calibration.js';
 import { maskContour } from './measure/geometry.js';
-import { analyzeParticles, countIntensityMaxima, particleToRoi, type SplitMode } from './measure/particles.js';
+import { particleToRoi } from './measure/particles.js';
 import type { RoiManager } from './measure/roi-manager.js';
 import {
 	buildPandasScript,
@@ -14,12 +16,8 @@ import {
 	type DerivedColumn,
 } from './measure/roi-io.js';
 import type { MeasureTool, RoiOverlay } from './measure/roi-overlay.js';
-import { measureAll, sampleLineProfile } from './measure/statistics.js';
-import { gaussianBlur, subtractBackground } from './measure/segmentation.js';
+import { sampleLineProfile } from './measure/statistics.js';
 import {
-	autoThresholdBin,
-	buildHistogram,
-	computeStabilityCurve,
 	globalThresholdMask,
 	localAutoThresholdMask,
 	localThresholdMask,
@@ -27,7 +25,6 @@ import {
 	THRESHOLD_METHODS,
 	thresholdValueFromBin,
 	valueToBin,
-	type LocalMethod,
 	type ScalarHistogram,
 	type StabilityCurve,
 	type ThresholdMethod,
@@ -55,9 +52,10 @@ import {
  * opens a TIFF to look at it sees nothing of any of this, which was the design
  * constraint the feature had to satisfy before anything else.
  *
- * Svelte owns the five tab views. This controller owns measurement state,
- * asynchronous analysis, exports, and canvas plots; pixel arrays stay outside
- * reactive state. Host callbacks remain authoritative for ROIs and calibration.
+ * Svelte owns the five tab views. This controller coordinates view snapshots,
+ * exports and canvas plots. MeasurementAnalysis owns asynchronous numerical
+ * work; MeasurementResults owns rows and provenance. Pixel arrays stay outside
+ * reactive state; host callbacks own ROIs and calibration.
  */
 
 export type MeasureTab = 'tools' | 'rois' | 'results' | 'segment' | 'setup';
@@ -92,51 +90,6 @@ export interface MeasurePanelHost {
 	extensionVersion?: string;
 }
 
-interface ThresholdState {
-	method: ThresholdMethod;
-	localMethod: LocalMethod;
-	/** Run the selected global method per window instead of once. */
-	localizeGlobal: boolean;
-	localRadius: number;
-	localK: number;
-	low: number;
-	high: number;
-	darkBackground: boolean;
-	blurSigma: number;
-	backgroundRadius: number;
-	split: SplitMode;
-	prominence: number;
-	fillHoles: boolean;
-	excludeEdges: boolean;
-	minArea: number;
-	maxArea: number;
-	minCircularity: number;
-	maxCircularity: number;
-	manual: boolean;
-}
-
-const DEFAULT_THRESHOLD: ThresholdState = {
-	method: 'otsu',
-	localMethod: 'none',
-	localizeGlobal: false,
-	localRadius: 15,
-	localK: 0.25,
-	low: 0,
-	high: 1,
-	darkBackground: true,
-	blurSigma: 0,
-	backgroundRadius: 0,
-	split: 'none',
-	prominence: 0,
-	fillHoles: true,
-	excludeEdges: false,
-	minArea: 10,
-	maxArea: Number.POSITIVE_INFINITY,
-	minCircularity: 0,
-	maxCircularity: 1,
-	manual: false,
-};
-
 export const TOOLS: { id: MeasureTool; label: string; key?: string }[] = [
 	{ id: 'select', label: 'Select', key: 'V' },
 	{ id: 'rect', label: 'Rect', key: 'R' },
@@ -152,68 +105,23 @@ export const TOOLS: { id: MeasureTool; label: string; key?: string }[] = [
 ];
 
 export class MeasurePanel {
+	readonly analysis: MeasurementAnalysis;
+	readonly results: MeasurementResults;
 	overlayRoot!: HTMLDivElement;
 	body!: HTMLDivElement;
-	hintLine!: HTMLDivElement;
+	private hint = "";
+	private visible = false;
 	view: ReturnType<typeof mountView<MeasureModel>>;
-	revision = 0;
 	tab: MeasureTab = 'tools';
 	host: MeasurePanelHost;
 
-	rows: MeasurementRow[] = [];
 	derivedColumns: DerivedColumn[] = [];
 	visibleColumns: MeasurementColumn[] = [...DEFAULT_COLUMNS];
-	/**
-	 * Measure a whole folder into one table.
-	 *
-	 * Each image's rows are snapshotted together with the provenance that
-	 * produced them, so an export spanning several images reports each row's own
-	 * scale and threshold rather than whichever image happens to be open.
-	 */
-	collecting = false;
-	collected = new Map<string, {
-		rows: MeasurementRow[];
-		provenance: MeasurementProvenance;
-		extraColumns: Record<string, string>;
-	}>();
 	groupPattern = '';
-	channelMode: 'first' | 'all' = 'first';
-	threshold: ThresholdState = { ...DEFAULT_THRESHOLD };
-	histogram: ScalarHistogram | null = null;
-	stability: StabilityCurve | null = null;
-	thresholdMask: Uint8Array | null = null;
-	previewPlane: Float32Array | null = null;
-	/**
-	 * Rises on every threshold-affecting change (preprocessing, method, range).
-	 * `buildHistogram`/`autoThresholdBin`/the mask builders now reach the
-	 * Rust/WASM module, so their callers are lazy-async: a stale in-flight
-	 * result is dropped by comparing against this token when it resolves,
-	 * exactly like `particleToken` below. Eager precomputation on every
-	 * keystroke would stall the range-field inputs, which is why these stay
-	 * lazy rather than being awaited inline.
-	 */
-	thresholdToken = 0;
-	thresholdPrepareBusy = false;
-	thresholdApplyBusy = false;
-	stabilityBusy = false;
-	/** Auto-threshold bin per method, cached per histogram for the gallery. */
-	methodBins: Map<ThresholdMethod, number> | null = null;
-	methodBinsBusy = false;
-	/** Discards a stale hover-preview mask that resolves after the pointer left. */
-	hoverToken = 0;
 	pendingCalibrationDistance = 0;
-	measureHandle = 0;
-	/** Cached particle pass, so the stats line and the preview agree and the
-	 *  analysis is not run twice per render. */
-	particleResult: Awaited<ReturnType<typeof analyzeParticles>> | null = null;
-	/** Rises on every invalidation so a late analysis can be discarded. */
-	particleToken = 0;
-	particleAnalysisRunning = false;
 	showMaskOverlay = true;
 
-	maskToggle: HTMLButtonElement | null = null;
-	roiToggle: HTMLButtonElement | null = null;
-	/** Scroll offsets carried across the full rebuild every render performs. */
+	/** Scroll offsets retained while the panel updates its view snapshot. */
 	scrollOffsets = new Map<string, number>();
 	/** Set while a table row is handling its own click. */
 	selectionFromTable = false;
@@ -224,35 +132,76 @@ export class MeasurePanel {
 
 	constructor(host: MeasurePanelHost) {
 		this.host = host;
-		this.view = mountView(Measure, { panel: this, revision: 0, tab: this.tab });
+		this.analysis = new MeasurementAnalysis({
+			getSource: host.getSource, getScalarPlane: host.getScalarPlane,
+			changed: () => this.render(), isVisible: () => this.isVisible(),
+			maskChanged: () => this.refreshMaskOverlay({ withParticles: false }),
+		});
+		this.results = new MeasurementResults({
+			getSource: host.getSource, getCalibration: host.getCalibration, getRois: () => host.manager.list(),
+			provenance: () => this.provenance(), extraColumns: () => this.extraColumns(),
+			changed: () => { if (['results', 'rois', 'tools'].includes(this.tab)) this.render(); },
+		});
+		this.view = mountView(Measure, this.snapshot());
 		this.syncHeaderToggles();
 	}
 
-	syncHeaderToggles(): void {
-		this.maskToggle?.classList.toggle('active', this.showMaskOverlay);
-		this.roiToggle?.classList.toggle('active', this.host.overlay.getShowRois());
+	private snapshot(): MeasureModel {
+		const source = this.visible ? this.host.getSource() : null;
+		const particles = this.tab === 'segment' && this.analysis.thresholdMask ? this.analysis.ensureParticles() : null;
+		return { panel: this, tab: this.tab,
+			results: this.tab === 'results' ? {
+				source: source ? { channels: source.channels, fileName: source.fileName } : null,
+				calibration: { ...this.host.getCalibration() }, columns: this.resultColumns(), rows: this.results.rows,
+				derivedColumns: this.derivedColumns.map(column => ({ ...column })), visibleColumns: [...this.visibleColumns],
+				groupPattern: this.groupPattern, channelMode: this.results.channelMode, collecting: this.results.collecting,
+				collectedCount: this.results.collected.size, summaryRows: this.results.exportRows(), selectedIds: new Set(this.host.manager.selectedIds()),
+			} : null,
+			segment: this.tab === 'segment' ? {
+				threshold: { ...this.analysis.threshold }, hasSource: !!source && !!this.host.getScalarPlane(),
+				methods: this.methodSpecs(), pending: !!this.analysis.thresholdMask && !particles, count: particles?.particles.length ?? 0,
+				hasMask: !!this.analysis.thresholdMask, hasHistogram: !!this.analysis.histogram,
+				histogramRange: this.analysis.histogram ? this.analysis.histogram.max - this.analysis.histogram.min : 1,
+				stability: this.analysis.stability ? { plateauWidth: this.analysis.stability.plateauWidth, count: this.analysis.stability.points.length,
+					suggested: this.analysis.histogram ? thresholdValueFromBin(this.analysis.histogram, this.analysis.stability.suggestedBin) : 0 } : null,
+				maskStats: this.currentMaskStats(), maxima: this.analysis.threshold.split === 'intensity' ? this.analysis.countMaxima() : null,
+			} : null,
+			visible: this.visible, hint: this.hint, maskVisible: this.showMaskOverlay,
+			roisVisible: this.host.overlay.getShowRois(),
+			tools: { tool: this.host.overlay.getTool(), selected: this.host.manager.selectedRois(),
+				rois: this.host.manager.list(), selectedIds: new Set(this.host.manager.selectedIds()),
+				canUndo: this.host.manager.canUndo(), canRedo: this.host.manager.canRedo(),
+				calibration: { ...this.host.getCalibration() }, pendingDistance: this.pendingCalibrationDistance,
+				wandTolerance: this.host.overlay.getWandTolerance(), brushRadius: this.host.overlay.getBrushRadius(),
+				hasSource: !!source },
+			toggleMask: () => { this.showMaskOverlay = !this.showMaskOverlay; this.refreshMaskOverlay(); this.syncHeaderToggles(); },
+			toggleRois: () => { this.host.overlay.setShowRois(!this.host.overlay.getShowRois()); this.syncHeaderToggles(); },
+		};
 	}
+
+	syncHeaderToggles(): void { this.view?.update(this.snapshot()); }
 
 	// --- visibility ---------------------------------------------------------
 
 	show(): void {
-		this.overlayRoot.style.display = 'flex';
+		this.visible = true;
 		this.host.overlay.setActive(true);
 		this.refresh();
 	}
 
 	hide(): void {
-		this.overlayRoot.style.display = 'none';
+		this.visible = false;
+		this.syncHeaderToggles();
 		this.host.overlay.setActive(false);
 		this.host.overlay.setTool('select');
 		this.host.overlay.setMaskPreview(null);
 	}
 
-	isVisible(): boolean { return this.overlayRoot.style.display !== 'none'; }
+	isVisible(): boolean { return this.visible; }
 
 	toggle(): void { if (this.isVisible()) { this.hide(); } else { this.show(); } }
 
-	setHint(text: string): void { this.hintLine.textContent = text; }
+	setHint(text: string): void { this.hint = text; this.syncHeaderToggles(); }
 
 	setTab(tab: MeasureTab): void {
 		this.tab = tab;
@@ -267,12 +216,7 @@ export class MeasurePanel {
 
 	/** Called when the displayed image changes. */
 	onImageChanged(): void {
-		this.histogram = null;
-		this.stability = null;
-		this.thresholdMask = null;
-		this.previewPlane = null;
-		this.particleResult = null;
-		this.particleToken++;
+		this.analysis.invalidateImage();
 		this.showMaskOverlay = true;
 		this.host.overlay.invalidateImage();
 		this.scheduleMeasure();
@@ -286,46 +230,8 @@ export class MeasurePanel {
 	 * Coalesced through a frame callback because it is driven by ROI edits,
 	 * which arrive once per mouse move while a vertex is being dragged.
 	 */
-	scheduleMeasure(): void {
-		if (this.measureHandle) { return; }
-		this.measureHandle = requestAnimationFrame(() => {
-			this.measureHandle = 0;
-			this.measure();
-			if (this.tab === 'results' || this.tab === 'rois' || this.tab === 'tools') { this.render(); }
-		});
-	}
-
-	measure(): void {
-		const source = this.host.getSource();
-		if (!source) { this.rows = []; return; }
-		const channels = this.channelMode === 'all'
-			? Array.from({ length: source.channels || 1 }, (_, i) => i)
-			: [0];
-		this.rows = measureAll(this.host.manager.list(), source, this.host.getCalibration(), channels);
-
-		if (this.collecting && source.fileName && this.rows.length > 0) {
-			this.collected.set(source.fileName, {
-				rows: this.rows.map(row => ({ ...row })),
-				provenance: this.provenance(),
-				extraColumns: this.extraColumns(),
-			});
-		}
-	}
-
-	/** Rows an export should cover: the collected set, or just this image. */
-	exportRows(): MeasurementRow[] {
-		if (!this.collecting) { return this.rows; }
-		const all: MeasurementRow[] = [];
-		for (const snapshot of this.collected.values()) { all.push(...snapshot.rows); }
-		return all;
-	}
-
-	/** Look up the snapshot a row came from, for its own provenance. */
-	snapshotFor(row: MeasurementRow) {
-		return row.fileName ? this.collected.get(row.fileName) : undefined;
-	}
-
-	getRows(): MeasurementRow[] { return this.rows; }
+	scheduleMeasure(): void { this.results.schedule(); }
+	measure(): void { this.results.measure(); }
 
 	// --- rendering ----------------------------------------------------------
 
@@ -335,25 +241,17 @@ export class MeasurePanel {
 	}
 
 	render(): void {
-		this.syncHeaderToggles();
 		this.captureScrollOffsets();
 		this.noteSelectionChange();
 
-		if (this.tab === 'segment' && this.host.getSource() && this.host.getScalarPlane() && !this.histogram) this.prepareThreshold();
-		this.view.update({ panel: this, revision: ++this.revision, tab: this.tab });
+		if (this.tab === 'segment' && this.host.getSource() && this.host.getScalarPlane() && !this.analysis.histogram) this.analysis.prepareThreshold();
+		this.view.update(this.snapshot());
 		if (this.tab === 'segment') this.refreshMaskOverlay();
 
 		this.restoreScrollOffsets();
 	}
 
-	/**
-	 * Scrolling containers rebuilt on every render.
-	 *
-	 * The panel re-renders on any change, including a selection, and a rebuilt
-	 * list starts at the top. Without carrying the offset across, clicking row
-	 * 200 in a table of 465 objects throws you back to row 1 — which makes the
-	 * table unusable for exactly the case it exists for.
-	 */
+	/** Preserve each tab's scroll position and reveal selections made on the image. */
 	static readonly SCROLLABLES = ['.measure-results-wrapper', '.measure-roi-list'];
 
 	captureScrollOffsets(): void {
@@ -467,8 +365,6 @@ export class MeasurePanel {
 		}
 	}
 
-	// --- results ------------------------------------------------------------
-
 	// --- segmentation -------------------------------------------------------
 
 	/**
@@ -484,7 +380,7 @@ export class MeasurePanel {
 
 	drawHistogramSlider(canvas: HTMLCanvasElement, padding: { left: number; right: number; top: number; bottom: number }): void {
 		const ctx = canvas.getContext('2d');
-		const histogram = this.histogram;
+		const histogram = this.analysis.histogram;
 		if (!ctx || !histogram) { return; }
 
 		const plotWidth = canvas.width - padding.left - padding.right;
@@ -505,8 +401,8 @@ export class MeasurePanel {
 			return padding.left + Math.max(0, Math.min(1, fraction)) * plotWidth;
 		};
 
-		const lowX = toX(this.threshold.low);
-		const highX = toX(this.threshold.high);
+		const lowX = toX(this.analysis.threshold.low);
+		const highX = toX(this.analysis.threshold.high);
 
 		// Selected band behind the bars, so the cut reads as a region of the
 		// distribution rather than as two unrelated lines.
@@ -517,7 +413,7 @@ export class MeasurePanel {
 			const index = Math.floor((x / plotWidth) * histogram.counts.length);
 			const height = barHeight(histogram.counts[index]);
 			const value = histogram.min + (index / histogram.counts.length) * (histogram.max - histogram.min);
-			const inside = value >= this.threshold.low && value <= this.threshold.high;
+			const inside = value >= this.analysis.threshold.low && value <= this.analysis.threshold.high;
 			ctx.fillStyle = inside ? 'rgba(255, 110, 110, 0.95)' : 'rgba(150, 150, 150, 0.65)';
 			ctx.fillRect(padding.left + x, padding.top + plotHeight - height, 1, height);
 		}
@@ -542,32 +438,6 @@ export class MeasurePanel {
 		ctx.fillText(formatNumber(histogram.max, 4), padding.left + plotWidth, canvas.height - 3);
 	}
 
-	/** Cached auto-threshold bin per method; used by the Svelte method gallery. */
-	ensureMethodBins(): Map<ThresholdMethod, number> | null {
-		if (this.methodBins) { return this.methodBins; }
-		void this.computeMethodBins(this.thresholdToken);
-		return null;
-	}
-
-	async computeMethodBins(token: number): Promise<void> {
-		if (this.methodBinsBusy) { return; }
-		const histogram = this.histogram;
-		if (!histogram) { return; }
-		this.methodBinsBusy = true;
-		try {
-			const bins = new Map<ThresholdMethod, number>();
-			for (const method of THRESHOLD_METHODS) {
-				const bin = await autoThresholdBin(histogram.counts, method.id);
-				if (token !== this.thresholdToken) { return; }
-				bins.set(method.id, bin);
-			}
-			this.methodBins = bins;
-			this.render();
-		} finally {
-			this.methodBinsBusy = false;
-		}
-	}
-
 	/**
 	 * The stability curve.
 	 *
@@ -579,7 +449,7 @@ export class MeasurePanel {
 
 	drawStability(canvas: HTMLCanvasElement): void {
 		const ctx = canvas.getContext('2d');
-		const curve = this.stability;
+		const curve = this.analysis.stability;
 		if (!ctx || !curve || curve.points.length === 0) { return; }
 
 		const width = canvas.width;
@@ -618,8 +488,8 @@ export class MeasurePanel {
 		ctx.stroke();
 
 		// Mark the currently selected threshold.
-		if (this.histogram) {
-			const bin = valueToBin(this.histogram, this.threshold.darkBackground ? this.threshold.low : this.threshold.high);
+		if (this.analysis.histogram) {
+			const bin = valueToBin(this.analysis.histogram, this.analysis.threshold.darkBackground ? this.analysis.threshold.low : this.analysis.threshold.high);
 			const index = curve.points.findIndex(point => point.bin >= bin);
 			if (index >= 0) {
 				const x = padding.left + (index / (curve.points.length - 1)) * plotWidth;
@@ -643,129 +513,6 @@ export class MeasurePanel {
 
 	// --- threshold plumbing -------------------------------------------------
 
-	async preprocessedPlane(): Promise<Float32Array | null> {
-		const plane = this.host.getScalarPlane();
-		const source = this.host.getSource();
-		if (!plane || !source) { return null; }
-		let working = plane;
-		if (this.threshold.blurSigma > 0) {
-			working = await gaussianBlur(working, source.width, source.height, this.threshold.blurSigma);
-		}
-		if (this.threshold.backgroundRadius > 0) {
-			working = await subtractBackground(
-				working, source.width, source.height,
-				this.threshold.backgroundRadius, !this.threshold.darkBackground,
-			);
-		}
-		return working;
-	}
-
-	/**
-	 * Lazy trigger: rebuilds the histogram (and, unless manual, the threshold
-	 * mask) in the background and re-renders when it lands. Synchronous
-	 * callers keep calling this exactly as before `buildHistogram` moved to
-	 * Rust/WASM — the async work now happens off to the side rather than
-	 * inline, per the lazy-async + staleness-token pattern `ensureParticles`
-	 * already uses below.
-	 */
-	prepareThreshold(): void {
-		this.thresholdToken++;
-		this.histogram = null;
-		this.stability = null;
-		this.methodBins = null;
-		void this.runPrepareThreshold(this.thresholdToken);
-	}
-
-	async runPrepareThreshold(token: number): Promise<void> {
-		if (this.thresholdPrepareBusy) { return; }
-		this.thresholdPrepareBusy = true;
-		try {
-			const source = this.host.getSource();
-			const plane = await this.preprocessedPlane();
-			if (!source || !plane) { return; }
-			// Subsample the histogram on large images; every method below is
-			// scale-invariant in the counts, so the chosen bin does not move.
-			const step = Math.max(1, Math.floor(plane.length / 1_000_000));
-			const histogram = await buildHistogram(plane, step);
-			if (token !== this.thresholdToken) { return; }
-			this.previewPlane = plane;
-			this.histogram = histogram;
-			if (!this.threshold.manual) {
-				await this.runApplyThreshold(token);
-				if (token !== this.thresholdToken) { return; }
-			}
-			this.render();
-		} finally {
-			this.thresholdPrepareBusy = false;
-		}
-	}
-
-	/** Lazy trigger for `runApplyThreshold`; see `prepareThreshold` above. */
-	applyThreshold(): void {
-		this.thresholdToken++;
-		void this.runApplyThreshold(this.thresholdToken);
-	}
-
-	async runApplyThreshold(token: number): Promise<void> {
-		if (this.thresholdApplyBusy) { return; }
-		this.thresholdApplyBusy = true;
-		try {
-			const source = this.host.getSource();
-			const plane = this.previewPlane;
-			const histogram = this.histogram;
-			if (!source || !plane || !histogram) { return; }
-
-			const usingGlobalAuto = !this.threshold.manual
-				&& this.threshold.localMethod === 'none'
-				&& !this.threshold.localizeGlobal;
-
-			if (usingGlobalAuto) {
-				const bin = await autoThresholdBin(histogram.counts, this.threshold.method);
-				if (token !== this.thresholdToken) { return; }
-				if (bin >= 0) {
-					const value = thresholdValueFromBin(histogram, bin);
-					if (this.threshold.darkBackground) {
-						this.threshold.low = value;
-						this.threshold.high = histogram.max;
-					} else {
-						this.threshold.low = histogram.min;
-						this.threshold.high = value;
-					}
-				}
-			}
-
-			let mask: Uint8Array;
-			if (this.threshold.localMethod !== 'none') {
-				mask = await localThresholdMask(plane, source.width, source.height, {
-					method: this.threshold.localMethod,
-					radius: this.threshold.localRadius,
-					k: this.threshold.localK,
-					darkBackground: this.threshold.darkBackground,
-				});
-			} else if (this.threshold.localizeGlobal && !this.threshold.manual) {
-				mask = await localAutoThresholdMask(plane, source.width, source.height, {
-					method: this.threshold.method,
-					radius: this.threshold.localRadius,
-					darkBackground: this.threshold.darkBackground,
-				});
-			} else {
-				mask = await globalThresholdMask(plane, this.threshold.low, this.threshold.high);
-			}
-			if (token !== this.thresholdToken) { return; }
-			this.thresholdMask = mask;
-			this.particleResult = null;
-			this.particleToken++;
-			// Raw mask only: this runs on every keystroke in the range fields, and a
-			// full labelling pass per keystroke would stall a large image. The green
-			// accepted layer is added once per render, where the particle analysis
-			// has to happen anyway for the object count.
-			this.refreshMaskOverlay({ withParticles: false });
-			this.render();
-		} finally {
-			this.thresholdApplyBusy = false;
-		}
-	}
-
 	/**
 	 * Paint the current threshold over the image.
 	 *
@@ -782,14 +529,14 @@ export class MeasurePanel {
 	 */
 	refreshMaskOverlay(options: { withParticles?: boolean } = {}): void {
 		const source = this.host.getSource();
-		if (!this.showMaskOverlay || !this.thresholdMask || !source) {
+		if (!this.showMaskOverlay || !this.analysis.thresholdMask || !source) {
 			this.host.overlay.setMaskPreview(null);
 			return;
 		}
 
 		let accepted: Uint8Array | null = null;
 		if (options.withParticles !== false) {
-			const result = this.ensureParticles();
+			const result = this.analysis.ensureParticles();
 			if (result) {
 				accepted = new Uint8Array(source.width * source.height);
 				for (const particle of result.particles) {
@@ -806,7 +553,7 @@ export class MeasurePanel {
 		this.host.overlay.setMaskPreview({
 			width: source.width,
 			height: source.height,
-			mask: this.thresholdMask,
+			mask: this.analysis.thresholdMask,
 			accepted,
 		});
 	}
@@ -824,47 +571,10 @@ export class MeasurePanel {
 		});
 	}
 
-	adoptThresholdValue(value: number): void {
-		if (!this.histogram) { return; }
-		this.threshold.manual = true;
-		if (this.threshold.darkBackground) {
-			this.threshold.low = value;
-			this.threshold.high = this.histogram.max;
-		} else {
-			this.threshold.low = this.histogram.min;
-			this.threshold.high = value;
-		}
-		this.applyThreshold();
-	}
-
-	/** Lazy trigger, invoked from the "Compute" button; see `prepareThreshold`. */
-	computeStability(): void {
-		void this.runComputeStability(this.thresholdToken);
-	}
-
-	async runComputeStability(token: number): Promise<void> {
-		if (this.stabilityBusy) { return; }
-		this.stabilityBusy = true;
-		try {
-			const source = this.host.getSource();
-			const plane = this.previewPlane;
-			const histogram = this.histogram;
-			if (!source || !plane || !histogram) { return; }
-			const curve = await computeStabilityCurve(plane, source.width, source.height, histogram, {
-				darkBackground: this.threshold.darkBackground,
-			});
-			if (token !== this.thresholdToken) { return; }
-			this.stability = curve;
-			this.render();
-		} finally {
-			this.stabilityBusy = false;
-		}
-	}
-
 	currentMaskStats(): string {
 		const source = this.host.getSource();
-		if (!this.thresholdMask || !source) { return 'No threshold applied yet.'; }
-		const result = this.ensureParticles();
+		if (!this.analysis.thresholdMask || !source) { return 'No threshold applied yet.'; }
+		const result = this.analysis.ensureParticles();
 		if (!result) { return 'Analyzing objects…'; }
 		const rejected = result.rejected;
 		const dropped = rejected.tooSmall + rejected.tooLarge + rejected.shape + rejected.edge;
@@ -880,85 +590,8 @@ export class MeasurePanel {
 		return parts.join(' · ');
 	}
 
-	/**
-	 * Particle analysis for the current threshold mask, or null while it is
-	 * still being computed.
-	 *
-	 * Deliberately LAZY, not eager. The threshold mask is rebuilt on every
-	 * keystroke in the range fields, and labelling a full-resolution mask costs
-	 * ~280 ms at 5120x5120 even in Rust (it was ~1 s in JavaScript) — so
-	 * recomputing on every mask change would stall exactly the interaction the
-	 * mask exists to serve. Instead the work starts on first USE after an
-	 * invalidation, runs off the UI thread, and the panel re-renders when it
-	 * lands. Every caller already handles a null result, which is what makes
-	 * that safe.
-	 */
-	ensureParticles() {
-		if (this.particleResult) { return this.particleResult; }
-		void this.startParticleAnalysis();
-		return null;
-	}
-
-	/**
-	 * Runs one particle analysis at a time and discards stale results.
-	 *
-	 * `particleToken` rises on every invalidation, so a pass that finishes
-	 * after the user has moved the threshold on is dropped rather than
-	 * overwriting a newer answer with an older one.
-	 */
-	async startParticleAnalysis(): Promise<void> {
-		if (this.particleAnalysisRunning) { return; }
-		const token = this.particleToken;
-		this.particleAnalysisRunning = true;
-		try {
-			const result = await this.runParticles();
-			if (token !== this.particleToken) { return; }
-			this.particleResult = result;
-			// The count, CTA, and green accepted-object preview are one result and
-			// must update together. Refreshing only the canvas left the panel saying
-			// "No objects" even while accepted objects were visibly green.
-			if (result && this.isVisible()) { this.render(); }
-		} catch (error) {
-			console.warn('[MeasurePanel] Particle analysis failed:', error);
-		} finally {
-			this.particleAnalysisRunning = false;
-			// A filter can change while the worker/WASM pass is in flight. The old
-			// result is correctly discarded above; immediately service the newer
-			// request so the panel cannot remain stuck in its pending state.
-			if (token !== this.particleToken && this.thresholdMask && this.isVisible()) {
-				void this.startParticleAnalysis();
-			}
-		}
-	}
-
-	async runParticles() {
-		const source = this.host.getSource();
-		if (!this.thresholdMask || !source) { return null; }
-		return await analyzeParticles(this.thresholdMask, source.width, source.height, {
-			minArea: this.threshold.minArea,
-			maxArea: Number.isFinite(this.threshold.maxArea) ? this.threshold.maxArea : undefined,
-			minCircularity: this.threshold.minCircularity > 0 ? this.threshold.minCircularity : undefined,
-			maxCircularity: this.threshold.maxCircularity < 1 ? this.threshold.maxCircularity : undefined,
-			excludeEdges: this.threshold.excludeEdges,
-			fillHoles: this.threshold.fillHoles,
-		}, {
-			split: this.threshold.split,
-			prominence: this.threshold.prominence,
-			plane: this.previewPlane || undefined,
-		});
-	}
-
-	/** Centres the current prominence would accept, for the live readout. */
-	countMaxima(): number | null {
-		const source = this.host.getSource();
-		if (!this.thresholdMask || !this.previewPlane || !source) { return null; }
-		return countIntensityMaxima(
-			this.previewPlane, this.thresholdMask, source.width, source.height, this.threshold.prominence,
-		);
-	}
-
 	commitParticles(): void {
-		const result = this.ensureParticles();
+		const result = this.analysis.ensureParticles();
 		if (!result || result.particles.length === 0) { return; }
 		const manager = this.host.manager;
 		const rois: Roi[] = result.particles.map((particle, index) =>
@@ -986,8 +619,8 @@ export class MeasurePanel {
 		const calibration = this.host.getCalibration();
 		const source = this.host.getSource();
 		const preprocessing: string[] = [];
-		if (this.threshold.blurSigma > 0) { preprocessing.push(`gaussian:${this.threshold.blurSigma}`); }
-		if (this.threshold.backgroundRadius > 0) { preprocessing.push(`rollingBall:${this.threshold.backgroundRadius}`); }
+		if (this.analysis.threshold.blurSigma > 0) { preprocessing.push(`gaussian:${this.analysis.threshold.blurSigma}`); }
+		if (this.analysis.threshold.backgroundRadius > 0) { preprocessing.push(`rollingBall:${this.analysis.threshold.backgroundRadius}`); }
 
 		return {
 			fileName: source?.fileName,
@@ -995,17 +628,17 @@ export class MeasurePanel {
 			pixelWidth: calibration.pixelWidth,
 			pixelHeight: calibration.pixelHeight,
 			calibrationOrigin: calibration.origin,
-			thresholdMethod: this.thresholdMask
-				? (this.threshold.localMethod !== 'none'
-					? `local:${this.threshold.localMethod}`
-					: (this.threshold.manual ? 'manual' : this.threshold.method))
+			thresholdMethod: this.analysis.thresholdMask
+				? (this.analysis.threshold.localMethod !== 'none'
+					? `local:${this.analysis.threshold.localMethod}`
+					: (this.analysis.threshold.manual ? 'manual' : this.analysis.threshold.method))
 				: undefined,
-			thresholdLow: this.thresholdMask ? this.threshold.low : undefined,
-			thresholdHigh: this.thresholdMask ? this.threshold.high : undefined,
+			thresholdLow: this.analysis.thresholdMask ? this.analysis.threshold.low : undefined,
+			thresholdHigh: this.analysis.thresholdMask ? this.analysis.threshold.high : undefined,
 			preprocessing: [
 				...preprocessing,
-				this.threshold.split === 'shape' ? 'watershed' : '',
-				this.threshold.split === 'intensity' ? `maxima:${this.threshold.prominence}` : '',
+				this.analysis.threshold.split === 'shape' ? 'watershed' : '',
+				this.analysis.threshold.split === 'intensity' ? `maxima:${this.analysis.threshold.prominence}` : '',
 			].filter(Boolean).join(' ') || undefined,
 			extensionVersion: this.host.extensionVersion,
 		};
@@ -1026,14 +659,14 @@ export class MeasurePanel {
 	exportTable(format: 'csv' | 'csv-de' | 'xlsx'): void {
 		const provenance = this.provenance();
 		const extraColumns = this.extraColumns();
-		const rows = this.exportRows();
+		const rows = this.results.exportRows();
 		// Per-row lookups only when collecting; a single-image export has one
 		// provenance and does not need the indirection.
-		const provenanceForRow = this.collecting
-			? (row: MeasurementRow) => this.snapshotFor(row)?.provenance
+		const provenanceForRow = this.results.collecting
+			? (row: MeasurementRow) => this.results.snapshotFor(row)?.provenance
 			: undefined;
-		const extraColumnsForRow = this.collecting
-			? (row: MeasurementRow) => this.snapshotFor(row)?.extraColumns
+		const extraColumnsForRow = this.results.collecting
+			? (row: MeasurementRow) => this.results.snapshotFor(row)?.extraColumns
 			: undefined;
 
 		if (format === 'xlsx') {
@@ -1073,7 +706,7 @@ export class MeasurePanel {
 		// Only columns the rows actually populate, so the script never refers to
 		// a column that is not in the CSV next to it.
 		const columns = new Set<string>();
-		for (const row of this.exportRows()) {
+		for (const row of this.results.exportRows()) {
 			for (const key of Object.keys(row)) {
 				const value = row[key as keyof MeasurementRow];
 				if (value !== undefined && value !== null) { columns.add(key); }
@@ -1091,8 +724,8 @@ export class MeasurePanel {
 			groupColumns: Object.keys(this.extraColumns()),
 			derivedColumns: this.derivedColumns,
 			thresholdMethod: provenance.thresholdMethod,
-			roiCount: this.collecting ? this.exportRows().length : this.host.manager.count(),
-			channelCount: this.channelMode === 'all' ? (source?.channels || 1) : 1,
+			roiCount: this.results.collecting ? this.results.exportRows().length : this.host.manager.count(),
+			channelCount: this.results.channelMode === 'all' ? (source?.channels || 1) : 1,
 		});
 		this.host.saveTextFile(`${this.baseName()}-analysis.py`, script, { open: true });
 	}
@@ -1211,7 +844,7 @@ export class MeasurePanel {
 		if (!additive) this.host.overlay.revealRoi(id);
 	}
 	quickStats(roi: Roi): [string,string][] {
-		const row = this.rows.find(candidate => candidate.roiId === roi.id);
+		const row = this.results.rows.find(candidate => candidate.roiId === roi.id);
 		if (!row) return [];
 		const calibration = this.host.getCalibration();
 		const entries: [string, string][] = [];
@@ -1268,13 +901,12 @@ export class MeasurePanel {
 
 		const present = columns.filter(column =>
 			column.key === 'roiName' || column.key === 'channel'
-			|| this.rows.some(row => row[column.key] !== undefined && row[column.key] !== null));
+			|| this.results.rows.some(row => row[column.key] !== undefined && row[column.key] !== null));
 
 		return present;
 	}
 	bindHistogram(canvas: HTMLCanvasElement): void {
-		const histogram = this.histogram;
-		if (!histogram) return;
+		if (!this.analysis.histogram) return;
 		const padding = { left: 8, right: 8, top: 6, bottom: 14 };
 		const plotWidth = canvas.width - padding.left - padding.right;
 
@@ -1284,6 +916,7 @@ export class MeasurePanel {
 			// what makes a click land a few units off the value under the cursor.
 			const fraction = ((clientX - rect.left) / rect.width * canvas.width - padding.left) / plotWidth;
 			const clamped = Math.max(0, Math.min(1, fraction));
+			const histogram = this.analysis.histogram!;
 			return histogram.min + clamped * (histogram.max - histogram.min);
 		};
 
@@ -1296,26 +929,26 @@ export class MeasurePanel {
 		let dragging: 'low' | 'high' | null = null;
 		canvas.addEventListener('pointerdown', event => {
 			const value = valueAt(event.clientX);
-			dragging = Math.abs(value - this.threshold.low) <= Math.abs(value - this.threshold.high) ? 'low' : 'high';
+			dragging = Math.abs(value - this.analysis.threshold.low) <= Math.abs(value - this.analysis.threshold.high) ? 'low' : 'high';
 			canvas.setPointerCapture(event.pointerId);
 			// Dragging the range is a global, manual cut. An adaptive method
 			// computes its own threshold per pixel and would simply ignore these
 			// handles, so taking hold of them has to switch it off — otherwise the
 			// control silently does nothing.
-			this.threshold.manual = true;
-			this.threshold.localMethod = 'none';
-			this.threshold.localizeGlobal = false;
-			if (dragging === 'low') { this.threshold.low = value; } else { this.threshold.high = value; }
-			this.applyThreshold();
+			this.analysis.threshold.manual = true;
+			this.analysis.threshold.localMethod = 'none';
+			this.analysis.threshold.localizeGlobal = false;
+			if (dragging === 'low') { this.analysis.threshold.low = value; } else { this.analysis.threshold.high = value; }
+			this.analysis.applyThreshold();
 			draw();
 			event.preventDefault();
 		});
 		canvas.addEventListener('pointermove', event => {
 			if (!dragging) { return; }
 			const value = valueAt(event.clientX);
-			if (dragging === 'low') { this.threshold.low = Math.min(value, this.threshold.high); }
-			else { this.threshold.high = Math.max(value, this.threshold.low); }
-			this.applyThreshold();
+			if (dragging === 'low') { this.analysis.threshold.low = Math.min(value, this.analysis.threshold.high); }
+			else { this.analysis.threshold.high = Math.max(value, this.analysis.threshold.low); }
+			this.analysis.applyThreshold();
 			draw();
 		});
 		const endDrag = () => {
@@ -1340,7 +973,7 @@ export class MeasurePanel {
 			const rect = canvas.getBoundingClientRect();
 			const canvasX = (clientX - rect.left) / rect.width * canvas.width;
 			const fraction = (canvasX - padding.left) / plotWidth;
-			const points = this.stability!.points;
+			const points = this.analysis.stability!.points;
 			const index = Math.round(Math.max(0, Math.min(1, fraction)) * (points.length - 1));
 			return points[index];
 		};
@@ -1349,13 +982,13 @@ export class MeasurePanel {
 		canvas.addEventListener('pointerdown', event => {
 			scrubbing = true;
 			canvas.setPointerCapture(event.pointerId);
-			this.adoptThresholdValue(pickAt(event.clientX).value);
+			this.analysis.adoptThresholdValue(pickAt(event.clientX).value);
 			this.drawStability(canvas);
 			event.preventDefault();
 		});
 		canvas.addEventListener('pointermove', event => {
 			if (!scrubbing) { return; }
-			this.adoptThresholdValue(pickAt(event.clientX).value);
+			this.analysis.adoptThresholdValue(pickAt(event.clientX).value);
 			this.drawStability(canvas);
 		});
 		const endScrub = () => {
@@ -1367,7 +1000,7 @@ export class MeasurePanel {
 		canvas.addEventListener('pointercancel', endScrub);
 	}
 	methodSpecs(): ThresholdMethodView[] {
-		const histogram = this.histogram, source = this.host.getSource();
+		const histogram = this.analysis.histogram, source = this.host.getSource();
 		if (!histogram || !source) return [];
 		const specs: ThresholdMethodView[] = [];
 		// Cached per histogram: `autoThresholdBin` now reaches Rust/WASM, and
@@ -1376,45 +1009,45 @@ export class MeasurePanel {
 		// returns the cached map immediately once computed, and triggers a
 		// background recompute (with a re-render on completion) otherwise —
 		// the same lazy-async pattern `ensureParticles` uses.
-		const methodBins = this.ensureMethodBins();
+		const methodBins = this.analysis.ensureMethodBins();
 
 		for (const method of THRESHOLD_METHODS) {
 			const bin = methodBins?.get(method.id) ?? -1;
 			const pending = !methodBins;
-			const localized = this.threshold.localizeGlobal;
-			const active = !this.threshold.manual
-				&& this.threshold.localMethod === 'none'
-				&& this.threshold.method === method.id;
+			const localized = this.analysis.threshold.localizeGlobal;
+			const active = !this.analysis.threshold.manual
+				&& this.analysis.threshold.localMethod === 'none'
+				&& this.analysis.threshold.method === method.id;
 			const button: ThresholdMethodView = ({
 				label: localized ? `${method.label} · per window` : method.label,
 				hint: pending
 					? `${method.hint}\n\nComputing…`
 					: (bin < 0 ? `${method.hint}\n\nNo threshold found for this histogram.` : method.hint),
 				value: localized
-					? `r=${this.threshold.localRadius}`
+					? `r=${this.analysis.threshold.localRadius}`
 					: (pending ? '…' : (bin < 0 ? '—' : formatNumber(thresholdValueFromBin(histogram, bin), 4))),
 				active,
 				disabled: pending || (bin < 0 && !localized),
 				spark: localized || pending ? undefined : bin,
 				computeMask: async () => {
-					if (!this.previewPlane) { return null; }
+					if (!this.analysis.previewPlane) { return null; }
 					if (localized) {
-						return localAutoThresholdMask(this.previewPlane, source.width, source.height, {
+						return localAutoThresholdMask(this.analysis.previewPlane, source.width, source.height, {
 							method: method.id,
-							radius: this.threshold.localRadius,
-							darkBackground: this.threshold.darkBackground,
+							radius: this.analysis.threshold.localRadius,
+							darkBackground: this.analysis.threshold.darkBackground,
 						});
 					}
 					if (bin < 0) { return null; }
 					const value = thresholdValueFromBin(histogram, bin);
-					return this.threshold.darkBackground
-						? globalThresholdMask(this.previewPlane, value, histogram.max)
-						: globalThresholdMask(this.previewPlane, histogram.min, value);
+					return this.analysis.threshold.darkBackground
+						? globalThresholdMask(this.analysis.previewPlane, value, histogram.max)
+						: globalThresholdMask(this.analysis.previewPlane, histogram.min, value);
 				},
 				apply: () => {
-					this.threshold.method = method.id;
-					this.threshold.localMethod = 'none';
-					this.threshold.manual = false;
+					this.analysis.threshold.method = method.id;
+					this.analysis.threshold.localMethod = 'none';
+					this.analysis.threshold.manual = false;
 				},
 			});
 			specs.push(button);
@@ -1426,25 +1059,25 @@ export class MeasurePanel {
 		// was what actually ran.
 		for (const method of LOCAL_METHODS) {
 			if (method.id === 'none') { continue; }
-			const active = this.threshold.localMethod === method.id;
+			const active = this.analysis.threshold.localMethod === method.id;
 			const button: ThresholdMethodView = ({
 				label: `${method.label} (local)`,
 				hint: method.hint,
-				value: `r=${this.threshold.localRadius}, k=${formatNumber(this.threshold.localK, 2)}`,
+				value: `r=${this.analysis.threshold.localRadius}, k=${formatNumber(this.analysis.threshold.localK, 2)}`,
 				active,
 				disabled: false,
-				computeMask: async () => this.previewPlane
-					? localThresholdMask(this.previewPlane, source.width, source.height, {
+				computeMask: async () => this.analysis.previewPlane
+					? localThresholdMask(this.analysis.previewPlane, source.width, source.height, {
 						method: method.id,
-						radius: this.threshold.localRadius,
-						k: this.threshold.localK,
-						darkBackground: this.threshold.darkBackground,
+						radius: this.analysis.threshold.localRadius,
+						k: this.analysis.threshold.localK,
+						darkBackground: this.analysis.threshold.darkBackground,
 					})
 					: null,
 				apply: () => {
-					this.threshold.localMethod = method.id;
-					this.threshold.localizeGlobal = false;
-					this.threshold.manual = false;
+					this.analysis.threshold.localMethod = method.id;
+					this.analysis.threshold.localizeGlobal = false;
+					this.analysis.threshold.manual = false;
 				},
 			});
 			specs.push(button);
@@ -1454,15 +1087,15 @@ export class MeasurePanel {
 	}
 	previewMethod(spec: ThresholdMethodView): void {
 		if (spec.disabled) return;
-		const token = ++this.hoverToken;
+		const token = ++this.analysis.hoverToken;
 		void spec.computeMask().then(mask => {
-			if (token !== this.hoverToken || !mask) return;
+			if (token !== this.analysis.hoverToken || !mask) return;
 			this.showTemporaryMask(mask);
 			this.setHint(`${spec.label}: preview in red — click to keep it, then the filters mark kept objects green.`);
 		});
 	}
 	paintSpark(canvas: HTMLCanvasElement, bin: number): void {
-		const histogram = this.histogram;
+		const histogram = this.analysis.histogram;
 		if (!histogram) return;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) { return; }
@@ -1489,5 +1122,27 @@ export class MeasurePanel {
 
 }
 
-export interface MeasureModel { panel: MeasurePanel; revision: number; tab: MeasureTab }
+export interface MeasureModel {
+  panel: MeasurePanel; tab: MeasureTab;
+  visible: boolean; hint: string; maskVisible: boolean; roisVisible: boolean;
+  toggleMask(): void; toggleRois(): void;
+  results: {
+    source: { channels: number; fileName?: string } | null; calibration: Calibration;
+    columns: ReturnType<MeasurePanel['resultColumns']>; rows: MeasurementRow[];
+    derivedColumns: DerivedColumn[]; visibleColumns: MeasurementColumn[];
+    groupPattern: string; channelMode: MeasurementResults['channelMode']; collecting: boolean;
+    collectedCount: number; summaryRows: ReturnType<MeasurementResults['exportRows']>; selectedIds: Set<string>;
+  } | null;
+  segment: {
+    threshold: MeasurementAnalysis['threshold']; hasSource: boolean; methods: ThresholdMethodView[];
+    pending: boolean; count: number; hasMask: boolean; hasHistogram: boolean; histogramRange: number;
+    stability: { plateauWidth: number; count: number; suggested: number } | null;
+    maskStats: string; maxima: number | null;
+  } | null;
+  tools: {
+    tool: MeasureTool; selected: Roi[]; rois: Roi[]; selectedIds: Set<string>;
+    canUndo: boolean; canRedo: boolean; calibration: Calibration; pendingDistance: number;
+    wandTolerance: number | null; brushRadius: number; hasSource: boolean;
+  };
+}
 export interface ThresholdMethodView { label: string; hint: string; value: string; active: boolean; disabled: boolean; spark?: number; computeMask: () => Promise<Uint8Array | null>; apply: () => void }

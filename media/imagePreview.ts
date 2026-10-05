@@ -1,3 +1,7 @@
+import { parseAutomationRequest, type HostToViewerMessage, type ViewerToHostMessage, type FormatInfo, type DatasetManifest, type DatasetSeries, type DatasetAxis, type DatasetPlane } from '../shared/viewer-protocol';
+import { ImageNavigation, type CachedImage } from './modules/image-navigation';
+import { installImageLoad, type ImageLoadResult, type LoadProcessor } from './modules/image-load';
+import { imageMeasurement, imageHistogram, imageLayer, type ActiveImage, type DecodedSnapshot } from './modules/active-image';
 import { sampleAt } from './modules/measure/types';
 import { openContextMenu, type MenuItem } from '../ui/context-menu';
 import Navigation from '../ui/components/Navigation.svelte';
@@ -79,11 +83,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	type SettingsChanges = SettingsUpdateResult;
 	type CopiedPosition = { relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number | string };
 	type ColormapConversionState = { colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean };
-	type FormatInfo = { width?: number, height?: number, samplesPerPixel?: number, bitsPerSample?: number, sampleFormat?: number, formatType?: string, [key: string]: any };
-	type DatasetPlane = { coordinates: Record<string, number>, resourceUri: string, src: string, format: 'dicom' | 'tiff', pageIndex?: number, frameIndex?: number };
-	type DatasetAxis = { key: string, label: string, size: number, valueLabels?: string[] };
-	type DatasetSeries = { id: string, label: string, axes: DatasetAxis[], planes: DatasetPlane[] };
-	type DatasetManifest = { id: string, kind: 'dicom' | 'ome-tiff', label: string, series: DatasetSeries[] };
 
 	const nativeBootstrap = (window as any).__tiffVisualizerBootstrap as {
 		vscode?: { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
@@ -113,6 +112,19 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
 	const originalVscode = nativeBootstrap?.vscode || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
 	const settingsManager = new SettingsManager();
+	const navigation = new ImageNavigation<FormatInfo>({
+		cancelWorkers: () => {
+			for (const worker of [decodeWorkerClient, pngDecodeWorkerClient, layeredDecodeWorkerClient, fastRawWorkerClient]) worker.cancelActiveDecodes();
+			resetTiffCanvasReady();
+		},
+		setSignal: signal => { for (const processor of allProcessors) processor.loadSignal = signal; },
+		resetFile: () => {
+			disposeWebglRenderers();
+			for (const processor of allProcessors) processor.resetForNewFile();
+			_expandedLayerDocumentUri = undefined;
+			updateLayeredPreviewOverlay();
+		},
+	});
 	const stateExtensionVersion = settingsManager.settings.extensionVersion;
 	const stateVsCodeVersion = settingsManager.settings.vscodeVersion;
 	const initialPersistedState = originalVscode.getState();
@@ -134,7 +146,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	// Wrap vscode.postMessage to track formatInfo
 	const vscode = {
-		postMessage: (message: { type: string, [key: string]: any }) => {
+		postMessage: (message: ViewerToHostMessage) => {
 			// Track formatInfo when it's sent
 			if (message.type === 'formatInfo' && message.value) {
 				// The extension host uses this URI to report the correct on-disk size,
@@ -147,7 +159,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				currentFormatInfo = message.value;
 				lastFormatInfoPost = {
 					time: performance.now(),
-					generation: _loadGeneration,
+					generation: navigation.generation,
 					formatType: String(message.value.formatType || '')
 				};
 			}
@@ -178,7 +190,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let tiffProcessor: any = dormantProcessor();
 	let exrProcessor: any = dormantProcessor();
 	const zoomController = new ZoomController(settingsManager, vscode);
-	const mouseHandler = new MouseHandler(settingsManager, vscode, tiffProcessor);
+	const mouseHandler = new MouseHandler(settingsManager, vscode, () => getActiveImage());
 	let npyProcessor: any = dormantProcessor();
 	let pfmProcessor: any = dormantProcessor();
 	let ppmProcessor: any = dormantProcessor();
@@ -213,9 +225,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	const installProcessor = (processor: any, worker: DecodeWorkerClient | FastRawWorkerClient = decodeWorkerClient) => {
 		processor.decodeWorker = worker;
 		processor._isInitialLoad = true;
-		if (typeof _loadAbortController !== 'undefined') {
-			processor.loadSignal = _loadAbortController.signal;
-		}
+		processor.loadSignal = navigation.signal;
 		allProcessors.push(processor);
 		return processor;
 	};
@@ -233,7 +243,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				]);
 				tiffProcessor = installProcessor(new TiffProcessor(settingsManager, vscode));
 				tiffProcessor.pageIndex = pendingPageIndex;
-				mouseHandler.tiffProcessor = tiffProcessor;
+
 				void wasm.getWasmModule();
 				strips.prewarmStripPool();
 			} else if (family === 'exr') {
@@ -242,24 +252,24 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					import('./modules/strip-parallel-decode.js'),
 				]);
 				exrProcessor = installProcessor(new ExrProcessor(settingsManager, vscode));
-				mouseHandler.setExrProcessor(exrProcessor);
+
 				strips.prewarmStripPool();
 			} else if (family === 'npy') {
 				const { NpyProcessor } = await import('./modules/npy-processor.js');
 				npyProcessor = installProcessor(new NpyProcessor(settingsManager, vscode), fastRawWorkerClient);
-				mouseHandler.setNpyProcessor(npyProcessor);
+
 			} else if (family === 'pfm') {
 				const { PfmProcessor } = await import('./modules/pfm-processor.js');
 				pfmProcessor = installProcessor(new PfmProcessor(settingsManager, vscode), fastRawWorkerClient);
-				mouseHandler.setPfmProcessor(pfmProcessor);
+
 			} else if (family === 'netpbm') {
 				const { PpmProcessor } = await import('./modules/ppm-processor.js');
 				ppmProcessor = installProcessor(new PpmProcessor(settingsManager, vscode), fastRawWorkerClient);
-				mouseHandler.setPpmProcessor(ppmProcessor);
+
 			} else if (family === 'hdr') {
 				const { HdrProcessor } = await import('./modules/hdr-processor.js');
 				hdrProcessor = installProcessor(new HdrProcessor(settingsManager, vscode));
-				mouseHandler.setHdrProcessor(hdrProcessor);
+
 			} else if (family === 'scientific') {
 				const [{ ScientificArrayProcessor }, decoders] = await Promise.all([
 					import('./modules/scientific-array-processor.js'),
@@ -277,7 +287,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				sdtProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sdt', formatLabel: 'SDT', formatType: 'sdt', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeSdtLocal(buffer, options || {}) }));
 				sgiProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sgi', formatLabel: 'SGI RGB', formatType: 'sgi', parse: (buffer: ArrayBuffer) => decoders.decodeSgiLocal(buffer) }));
 				scientificProcessors = [sgiProcessor, fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
-				mouseHandler.setScientificProcessors(scientificProcessors);
+
 				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 			}
 		})();
@@ -340,8 +350,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * `loadOmeChannelPlanes`.
 	 */
 	function rebuildChannelPlanes(): void {
-		if (channelGeneration === _loadGeneration) { return; }
-		channelGeneration = _loadGeneration;
+		if (channelGeneration === navigation.generation) { return; }
+		channelGeneration = navigation.generation;
 		// Tints and opacities the user chose should survive stepping to the next
 		// image of a series; the display ranges belong to the data and are
 		// recomputed. Carrying either across a change in channel count would be
@@ -360,7 +370,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (omeChannelCount > 1 && (source.channels || 1) === 1) {
 			// Channels live on separate pages; fetch them in the background so the
 			// first page still appears immediately.
-			void loadOmeChannelPlanes(omeChannelCount, _loadGeneration);
+			void loadOmeChannelPlanes(omeChannelCount, navigation.generation);
 			return;
 		}
 
@@ -399,7 +409,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const planes: ChannelPlane[] = [];
 
 		for (let c = 0; c < channelCount; c++) {
-			if (generation !== _loadGeneration) { return; }
+			if (generation !== navigation.generation) { return; }
 			const ifd = omeCoordinatesToIfd(ome, { ...current, c });
 
 			let decoded: { data?: ArrayLike<number>; width?: number; height?: number; channels?: number } | null = null;
@@ -437,7 +447,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			});
 		}
 
-		if (generation !== _loadGeneration || planes.length < 2) { return; }
+		if (generation !== navigation.generation || planes.length < 2) { return; }
 		channelPlanes = planes;
 		channelSettings = adoptChannelSettings(planes, channelSettings, {
 			colors: ome.channels?.map((channel: any) => channel?.colorCss),
@@ -579,75 +589,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * indexes by pixel.
 	 */
 	function buildMeasurementSource(): MeasurementSource | null {
-		const fileName = settingsManager.settings.resourceUri || settingsManager.settings.src || undefined;
-
-		if (tiffProcessor.rawTiffData?.data) {
-			const ifd = tiffProcessor.rawTiffData.ifd;
-			const width = ifd.width;
-			const height = ifd.height;
-			if (!width || !height) { return null; }
-			const bitsPerSample = ifd.t258 || 8;
-			const format = ifd.t339;
-			return {
-				width,
-				height,
-				channels: ifd.t277 || 1,
-				data: tiffProcessor.rawTiffData.data,
-				isFloat: tiffNeedsFloatCarrier(format, bitsPerSample),
-				typeMax: tiffTypeMax(format, bitsPerSample),
-				fileName,
-				page: ifd.pageIndex,
-				pageCount: ifd.pageCount,
-			};
-		}
-
-		const simple: { processor: any; isFloat: boolean; typeMax: (raw: any) => number }[] = [
-			{ processor: exrProcessor, isFloat: true, typeMax: () => 1.0 },
-			{ processor: pfmProcessor, isFloat: true, typeMax: () => 1.0 },
-			{ processor: hdrProcessor, isFloat: true, typeMax: () => 1.0 },
-			{ processor: npyProcessor, isFloat: true, typeMax: raw => (String(raw.dtype || '').includes('f') ? 1.0 : (String(raw.dtype).includes('16') ? 65535 : 255)) },
-			{ processor: ppmProcessor, isFloat: false, typeMax: raw => raw.maxval || 255 },
-			{ processor: pngProcessor, isFloat: false, typeMax: raw => raw.maxValue || 255 },
-			{ processor: tgaProcessor, isFloat: false, typeMax: () => 255 },
-			{ processor: webImageProcessor, isFloat: false, typeMax: () => 255 },
-			...scientificProcessors.map(processor => ({ processor, isFloat: true, typeMax: () => processor.numericDomain?.typeMax ?? 1.0 })),
-		];
-
-		// EXR keeps its raw buffer under a different field name than the rest.
-		const exrRaw = exrProcessor?.rawExrData;
-		if (exrRaw?.data && exrRaw.width && exrRaw.height) {
-			return {
-				width: exrRaw.width,
-				height: exrRaw.height,
-				channels: exrRaw.channels || 1,
-				data: exrRaw.data,
-				isFloat: true,
-				typeMax: 1.0,
-				fileName,
-			};
-		}
-
-		for (const entry of simple) {
-			const raw = entry.processor?._lastRaw;
-			if (!raw?.data || !raw.width || !raw.height) { continue; }
-			return {
-				width: raw.width,
-				height: raw.height,
-				channels: raw.channels || 1,
-				data: raw.data,
-				isFloat: entry.isFloat,
-				typeMax: entry.typeMax(raw),
-				fileName,
-			};
-		}
-
-		return null;
+		return imageMeasurement(getActiveImage(), settingsManager.settings.resourceUri || settingsManager.settings.src || undefined);
 	}
 
 	function getMeasurementSource(): MeasurementSource | null {
-		if (measurementSourceCache?.generation === _loadGeneration) { return measurementSourceCache.source; }
+		if (measurementSourceCache?.generation === navigation.generation) { return measurementSourceCache.source; }
 		const source = buildMeasurementSource();
-		measurementSourceCache = { generation: _loadGeneration, source };
+		measurementSourceCache = { generation: navigation.generation, source };
 		return source;
 	}
 
@@ -659,10 +607,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * luma per probe, and it is only ever built after the panel is opened.
 	 */
 	function getScalarPlane(): Float32Array | null {
-		if (scalarPlaneCache?.generation === _loadGeneration) { return scalarPlaneCache.plane; }
+		if (scalarPlaneCache?.generation === navigation.generation) { return scalarPlaneCache.plane; }
 		const source = getMeasurementSource();
 		const plane = source ? toScalarPlane(source) : null;
-		scalarPlaneCache = { generation: _loadGeneration, plane };
+		scalarPlaneCache = { generation: navigation.generation, plane };
 		return plane;
 	}
 
@@ -807,16 +755,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	const colormapConverter = new ColormapConverter();
-	mouseHandler.setNpyProcessor(npyProcessor);
-	mouseHandler.setPfmProcessor(pfmProcessor);
-	mouseHandler.setPpmProcessor(ppmProcessor);
-	mouseHandler.setPngProcessor(pngProcessor);
-	mouseHandler.setHdrProcessor(hdrProcessor);
-	mouseHandler.setTgaProcessor(tgaProcessor);
-	mouseHandler.setWebImageProcessor(webImageProcessor);
-	mouseHandler.setExrProcessor(exrProcessor);
-	mouseHandler.setScientificProcessors(scientificProcessors);
-	mouseHandler.setLayeredPreviewProcessor(layeredPreviewProcessor);
 
 	function disposeWebglRenderers() {
 		layerGpuCompositor.dispose();
@@ -1083,8 +1021,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let _pendingZoomStateExplicit = false;
 	/** Pyramid level switches rescale the pending zoom; see navigateTiffToPage. */
 	let _pendingLevelScaleMultiplier: number | null = null;
-	let _loadGeneration = 0;     // Incremented on every switchToNewImage; stale loads bail out
-	let _loadAbortController: AbortController | null = null; // Aborts the in-flight load's fetch when a newer switch supersedes it
 	let _tiffCanvasReadyPromise: Promise<void>;
 	let _tiffCanvasReadyResolve: (() => void) | null = null;
 	let isShowingPeer = false;
@@ -1098,8 +1034,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let _layerHistogramTimer: number | null = null;
 	let _layerHistogramCanvas: HTMLCanvasElement | null = null;
 	let _normalRenderBackend: 'webgl2' | 'cpu' = 'cpu';
-	let _previousDecodedImageCache: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
-	let _restoreDecodedImageCandidate: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
 	let _outgoingImageElement: HTMLElement | null = null;
 	let _imageTransitionActive = false;
 	let _collectionSwitchLoading = false;
@@ -1186,9 +1120,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * and can still delay that frame, so cross a task boundary as well.
 	 */
 	function scheduleAfterVisiblePaint(callback: () => void): void {
-		const generation = _loadGeneration;
+		const generation = navigation.generation;
 		const run = () => window.setTimeout(() => {
-			if (generation === _loadGeneration) { callback(); }
+			if (generation === navigation.generation) { callback(); }
 		}, 0);
 		if (visiblePaintPromise) {
 			void visiblePaintPromise.then(run);
@@ -1218,7 +1152,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Only trust format info this load actually posted; on a collection or
 		// page switch the previous image's info is still in the variable until
 		// the new one is sent.
-		const info = lastFormatInfoPost?.generation === _loadGeneration ? currentFormatInfo : null;
+		const info = lastFormatInfoPost?.generation === navigation.generation ? currentFormatInfo : null;
 		const samples = Number(info?.samplesPerPixel ?? 0);
 		if (samples > 0) { parts.push(`${samples} sample${samples === 1 ? '' : 's'}`); }
 		const bits = Number(info?.bitsPerSample ?? 0);
@@ -1317,7 +1251,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// When set, it becomes the active single-image source: it renders through the
 	// central ImageRenderer pipeline (so normalization/gamma/display-colormap all
 	// apply) and feeds the pixel inspector.
-	let decodedColormapSource: { floatData: Float32Array, width: number, height: number } | null = null;
+	let decodedColormapSource: { floatData: Float32Array, width: number, height: number, stats?: { min: number; max: number } } | null = null;
 
 	// Copied position state (for paste position feature)
 	// Stores position as relative coordinates (0-1) for cross-resolution compatibility
@@ -1582,8 +1516,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// The initial image must be cancellable too. Without a signal, switching
 		// while it decodes lets the stale load continue after its worker is
 		// terminated and interfere with the newest image.
-		_loadAbortController = new AbortController();
-		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
+		for (const p of allProcessors) { p.loadSignal = navigation.signal; }
 		setupImageLoading();
 		setupMessageHandling();
 		setupEventListeners();
@@ -1603,7 +1536,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Load image based on file extension
 		const src = settings.src ?? '';
 		beginDirectLoadTrace('open', resourceUri);
-		loadImageByType(src, resourceUri, _loadGeneration, settings.formatHint);
+		loadImageByType(src, resourceUri, navigation.generation, settings.formatHint);
 
 		// Restore comparison state if we have peer images
 		if (peerImageUris.length > 0) {
@@ -1717,13 +1650,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Load image based on file extension
 		const reloadSrc = settings.src ?? '';
 		beginDirectLoadTrace('reload', resourceUri);
-		loadImageByType(reloadSrc, resourceUri, _loadGeneration, settings.formatHint);
+		loadImageByType(reloadSrc, resourceUri, navigation.generation, settings.formatHint);
 	}
 
 	/**
 	 * Helper function to send formatInfo (tracking happens automatically in vscode wrapper)
 	 */
-	function sendFormatInfo(formatInfo: object) {
+	function sendFormatInfo(formatInfo: FormatInfo) {
 		vscode.postMessage({
 			type: 'formatInfo',
 			value: formatInfo
@@ -2043,6 +1976,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	function onImageError(message: string = '') {
+		navigation.markFailed(navigation.generation);
 		PerfTrace.cancel();
 		hasLoadedImage = true;
 		signalTiffCanvasReady();
@@ -2074,14 +2008,14 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	async function handleTiff(
 		src: string,
-		gen: number = _loadGeneration,
+		gen: number = navigation.generation,
 		pageIndex: number = tiffProcessor.pageIndex,
 		{ chooseLevel = true }: { chooseLevel?: boolean } = {},
 	) {
 		currentLoadFormat = 'TIFF';
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await tiffProcessor.processTiff(src, pageIndex, chooseLevel ? {
+			const result = await tiffProcessor.load(src, pageIndex, chooseLevel ? {
 				// Fit-to-window is the opening view, so the container width is
 				// what a level has to cover.
 				displayWidth: (container.clientWidth || window.innerWidth || 1024) * (window.devicePixelRatio || 1),
@@ -2094,7 +2028,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				maxBytes: IMAGE_DATA_MAX_BYTES,
 				pixelBudget: FULL_RESOLUTION_PIXEL_BUDGET,
 			} : undefined);
-			if (gen !== _loadGeneration) { return; }
+			if (gen !== navigation.generation) { return; }
 			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
 				// A pyramidal file carries smaller copies of this very scene.
 				// Showing the largest one that fits beats refusing the file —
@@ -2165,18 +2099,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			_pyramidScene = null;
 			_pyramidPatchRegion = null;
 			invalidatePyramidViewport();
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-
-			// Deferred TIFF renders must not create a 2D context here; doing so
-			// would prevent the later WebGL2 render path from using this canvas.
-			const ctx = tiffProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-
-			hasLoadedImage = true;
+			if (!await installLoadedImage(tiffProcessor, result, gen)) return;
 			signalTiffCanvasReady();
 			// The TIFF directory has already given us the scene/page geometry and
 			// block layout. Publish that UI now, before the per-format settings
@@ -2197,7 +2120,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// else: finalizeImageSetup called after deferred render in updateSettings handler
 
 		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
+			if (gen !== navigation.generation) { return; }
 			console.error('Error handling TIFF:', error);
 			const msg = String(error instanceof Error ? error.message : error);
 			// ZSTD itself is decoded (strips, tiles and planar layouts alike),
@@ -2212,83 +2135,40 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 	}
 
-	/**
-	 * Handle EXR file loading
-	 */
-	async function handleExr(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'EXR';
+	async function installLoadedImage(processor: LoadProcessor, result: ImageLoadResult, gen: number): Promise<boolean> {
+		return installImageLoad({
+			isCurrent: generation => generation === navigation.generation,
+			install: loaded => { canvas = loaded.canvas; primaryImageData = loaded.imageData; imageElement = loaded.displayElement || canvas; },
+			draw: renderImageDataToCanvas,
+			complete: () => { hasLoadedImage = true; },
+		}, processor, result, gen);
+	}
+
+	async function handleImageLoad(processor: LoadProcessor & { load(src: string): Promise<ImageLoadResult>; _lastDecodeInfo?: typeof currentLoadDecodeInfo }, label: string, src: string, gen = navigation.generation) {
+		currentLoadFormat = label;
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await exrProcessor.processExr(src);
-			if (gen !== _loadGeneration) { return; }
-			currentLoadDecodeInfo = exrProcessor._lastDecodeInfo;
-
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-
-			// Deferred float renders may use WebGL2, so don't create a 2D
-			// context for their placeholder canvases.
-			const ctx = exrProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-
-			hasLoadedImage = true;
-			if (!exrProcessor._pendingRenderData) {
+			const result = await processor.load(src);
+			if (!await installLoadedImage(processor, result, gen)) return;
+			currentLoadDecodeInfo = processor._lastDecodeInfo ?? null;
+			if (!processor._pendingRenderData && !result.lazyPixelData) {
 				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('EXR', webviewTime, totalTime);
+				const webviewTime = (performance.now() - initialLoadStartTime).toFixed(2);
+				logLoadPerformance(label, webviewTime, extensionLoadStartTime ? Date.now() - extensionLoadStartTime : webviewTime);
 			}
-			// else: finalizeImageSetup called after deferred render in updateSettings handler
-
 		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling EXR:', error);
+			if (gen !== navigation.generation) return;
+			console.error(`Error handling ${label}:`, error);
 			onImageError();
 		}
 	}
 
-	/**
-	 * Handle PFM file loading
-	 */
-	async function handlePfm(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'PFM';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await pfmProcessor.processPfm(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = pfmProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!pfmProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('PFM', webviewTime, totalTime);
-			}
-			// else: finalizeImageSetup called after deferred render in updateSettings handler
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling PFM:', error);
-			onImageError();
-		}
-	}
-
-	async function handleScientificArray(processor: any, src: string, gen: number = _loadGeneration, decodeOptions: Record<string, any> = {}) {
+	async function handleScientificArray(processor: any, src: string, gen: number = navigation.generation, decodeOptions: Record<string, any> = {}) {
 		currentLoadFormat = processor.config.formatLabel;
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await processor.process(src, decodeOptions);
-			if (gen !== _loadGeneration) { return; }
+			const result = await processor.load(src, decodeOptions);
+			if (gen !== navigation.generation) { return; }
 			if (!canvasCanHold(result.canvas.width, result.canvas.height)) {
 				onImageError(tooLargeMessage(result.canvas.width, result.canvas.height));
 				return;
@@ -2316,18 +2196,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				};
 				updateNetCdfOverlay(processor.metadata, false);
 			}
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = processor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) { await renderImageDataToCanvas(primaryImageData, ctx); }
-			hasLoadedImage = true;
+			if (!await installLoadedImage(processor, result, gen)) return;
 			if (!processor._pendingRenderData) { finalizeImageSetup(); }
 			// Start the trailing decode only after this canvas has been installed.
 			// The next load yields to paint and keeps this frame visible while busy.
 			if (isPlaneNavProcessor(processor)) { onPlaneLoadSettled(); }
 		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
+			if (gen !== navigation.generation) { return; }
 			if (processor === netcdfProcessor) { navOverlay?.classList.remove('dataset-overlay--loading'); }
 			if (isPlaneNavProcessor(processor)) {
 				navOverlay?.classList.remove('dataset-overlay--loading');
@@ -2338,204 +2213,19 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 	}
 
-	async function handleLayeredPreview(format: LayeredDocumentFormat, src: string, gen: number = _loadGeneration) {
+	async function handleLayeredPreview(format: LayeredDocumentFormat, src: string, gen: number = navigation.generation) {
 		currentLoadFormat = 'Layered Document';
 		currentLoadDecodeInfo = null;
 		try {
-			const result = await layeredPreviewProcessor.process(src, format);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = layeredPreviewProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) { await renderImageDataToCanvas(primaryImageData, ctx); }
-			hasLoadedImage = true;
+			const result = await layeredPreviewProcessor.load(src, format);
+			if (gen !== navigation.generation) { return; }
+			if (!await installLoadedImage(layeredPreviewProcessor, result, gen)) return;
 			updateLayeredPreviewOverlay();
 			if (!layeredPreviewProcessor._pendingRenderData) { finalizeImageSetup(); }
 		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
+			if (gen !== navigation.generation) { return; }
 			console.error(`Error handling layered ${format} document:`, error);
 			onImageError(`Failed to load ${format.toUpperCase()}: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-
-	/**
-	 * Handle PPM/PGM file loading
-	 */
-	async function handlePpm(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'PPM/PGM';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await ppmProcessor.processPpm(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = ppmProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!ppmProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('PPM/PGM', webviewTime, totalTime);
-			}
-			// else: finalizeImageSetup called after deferred render in updateSettings handler
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling PPM/PGM:', error);
-			onImageError();
-		}
-	}
-
-	/**
-	 * Handle PNG/JPEG file loading
-	 */
-	async function handlePng(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'PNG/JPEG';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await pngProcessor.processPng(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = result.displayElement || canvas;
-			const ctx = pngProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData && !result.canvasAlreadyRendered) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!pngProcessor._pendingRenderData && !result.lazyPixelData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('PNG/JPEG', webviewTime, totalTime);
-			}
-			// else: finalizeImageSetup called after deferred render in updateSettings handler
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling PNG/JPEG:', error);
-			onImageError();
-		}
-	}
-
-	/**
-	 * Handle NPY/NPZ file loading
-	 */
-	async function handleNpy(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'NPY/NPZ';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await npyProcessor.processNpy(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = npyProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!npyProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('NPY/NPZ', webviewTime, totalTime);
-			}
-			// else: finalizeImageSetup called after deferred render in updateSettings handler
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling NPY/NPZ:', error);
-			onImageError();
-		}
-	}
-
-	async function handleHdr(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'HDR';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await hdrProcessor.processHdr(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = hdrProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!hdrProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('HDR', webviewTime, totalTime);
-			}
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling HDR:', error);
-			onImageError();
-		}
-	}
-
-	async function handleTga(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'TGA';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await tgaProcessor.processTga(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = canvas;
-			const ctx = tgaProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!tgaProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('TGA', webviewTime, totalTime);
-			}
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling TGA:', error);
-			onImageError();
-		}
-	}
-
-	async function handleWebImage(src: string, gen: number = _loadGeneration) {
-		currentLoadFormat = 'Web Image';
-		currentLoadDecodeInfo = null;
-		try {
-			const result = await webImageProcessor.processWebImage(src);
-			if (gen !== _loadGeneration) { return; }
-			canvas = result.canvas;
-			primaryImageData = result.imageData;
-			imageElement = result.displayElement || canvas;
-			const ctx = webImageProcessor._pendingRenderData ? null : canvas.getContext('2d');
-			if (ctx && primaryImageData && !result.canvasAlreadyRendered) {
-				await renderImageDataToCanvas(primaryImageData, ctx);
-			}
-			hasLoadedImage = true;
-			if (!webImageProcessor._pendingRenderData) {
-				finalizeImageSetup();
-				const endTime = performance.now();
-				const webviewTime = (endTime - initialLoadStartTime).toFixed(2);
-				const totalTime = extensionLoadStartTime ? (Date.now() - extensionLoadStartTime) : webviewTime;
-				logLoadPerformance('Web', webviewTime, totalTime);
-			}
-		} catch (error) {
-			if (gen !== _loadGeneration) { return; }
-			console.error('Error handling Web Image:', error);
-			onImageError();
 		}
 	}
 
@@ -2666,6 +2356,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// open; the post-deferred finalize (pending cleared by then) ends it.
 		PerfTrace.mark('finalize');
 		if (!hasPendingDeferred) {
+			navigation.markReady(navigation.generation);
 			PerfTrace.end();
 			scheduleAfterVisiblePaint(() => {
 				if (!analysisNeededForCommittedFrame) {
@@ -2698,60 +2389,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return resolveNanColor(settingsManager.settings);
 	}
 
-	function npyTypeInfo(dtype?: string): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
-		const d = String(dtype || '').toLowerCase();
-		const compact = d.match(/^[<>=|]?([fiu])(\d+)$/);
-		const bits = compact ? Number(compact[2]) * 8 : parseInt(d.replace(/\D/g, ''), 10) || 8;
-		if (d.includes('f')) {
-			return { isFloat: true, typeMax: 1.0, sourceNumericType: bits <= 16 ? 'float16' : bits <= 32 ? 'float32' : 'float64' };
-		}
-		const signed = compact ? compact[1] === 'i' : d.includes('i') && !d.includes('u');
-		const sourceNumericType: LayerInput['sourceNumericType'] = `${signed ? 'int' : 'uint'}${bits <= 8 ? 8 : bits <= 16 ? 16 : 32}` as LayerInput['sourceNumericType'];
-		return { isFloat: false, typeMax: bits >= 16 ? 65535 : 255, sourceNumericType };
-	}
-
-	/**
-	 * Map a processor's raw struct to a compositor layer.
-	 */
-	function lastRawToLayer(raw: any, ti: { isFloat: boolean, typeMax: number, sourceNumericType?: LayerInput['sourceNumericType'] }, name: string, uri: string): LayerInput | null {
-		if (!raw || !raw.data) { return null; }
-		const inferred = raw.data instanceof Uint16Array ? 'uint16' : raw.data instanceof Uint8Array || raw.data instanceof Uint8ClampedArray ? 'uint8' : raw.data instanceof Float64Array ? 'float64' : 'float32';
-		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: ti.isFloat, typeMax: ti.typeMax, sourceNumericType: ti.sourceNumericType || inferred, name, uri };
-	}
-
-	function scientificTypeInfo(processor: any): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
-		return {
-			// Scientific decoders intentionally use a Float32 carrier so rescale,
-			// signed values, and NaN no-data remain representable. Keep that
-			// carrier fact separate from the source numeric type and range.
-			isFloat: true,
-			typeMax: processor.numericDomain.typeMax,
-			sourceNumericType: processor.numericDomain.sourceNumericType,
-		};
-	}
-
-	function tiffRawToLayer(raw: any, name: string, uri: string): LayerInput | null {
-		if (!raw || !raw.data || !raw.ifd) { return null; }
-		const ifd = raw.ifd;
-		// Signed integer samples and wide (>16-bit) unsigned integer samples
-		// (t339 === 2, or bitsPerSample > 16) are carried in a Float32Array too
-		// (see tiff-processor.js tiffNeedsFloatCarrier/pickTiffArrayCtor), so
-		// they route through the same float compositing path as true IEEE
-		// float data.
-		const isFloat = tiffNeedsFloatCarrier(ifd.t339, ifd.t258);
-		const typeMax = tiffTypeMax(ifd.t339, ifd.t258);
-		const sampleFormat = Array.isArray(ifd.t339) ? ifd.t339[0] : ifd.t339;
-		const bits = Array.isArray(ifd.t258) ? ifd.t258[0] : ifd.t258;
-		const sourceNumericType: LayerInput['sourceNumericType'] = sampleFormat === 3
-			? bits <= 16 ? 'float16' : bits <= 32 ? 'float32' : 'float64'
-			: `${sampleFormat === 2 ? 'int' : 'uint'}${bits <= 8 ? 8 : bits <= 16 ? 16 : 32}` as LayerInput['sourceNumericType'];
-		return { data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277, isFloat, typeMax, sourceNumericType, name, uri };
-	}
-
-	function exrRawToLayer(raw: any, name: string, uri: string): LayerInput | null {
-		if (!raw || !raw.data) { return null; }
-		return { data: raw.data, width: raw.width, height: raw.height, channels: raw.channels, isFloat: true, typeMax: 1.0, sourceNumericType: raw.type === 1016 ? 'float16' : 'float32', name, uri };
-	}
 
 	/**
 	 * Capture the currently displayed canvas pixels as a fallback layer (used for
@@ -2767,39 +2404,34 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return { data, width: w, height: h, channels: 4, isFloat: false, typeMax: 255, name, uri };
 	}
 
-	/**
-	 * Derive the base (background) layer from whichever processor loaded the
-	 * current primary image.
-	 */
+	/** Lazy processors are selected here; image consumers do not probe formats. */
+	const processorSources = {
+		get tiff() { return tiffProcessor; }, get exr() { return exrProcessor; },
+		get npy() { return npyProcessor; }, get pfm() { return pfmProcessor; },
+		get netpbm() { return ppmProcessor; }, get png() { return pngProcessor; },
+		get hdr() { return hdrProcessor; }, get tga() { return tgaProcessor; },
+		get 'web-image'() { return webImageProcessor; }, get layered() { return layeredPreviewProcessor; },
+	};
+	function activeProcessor(kind = resolveFormat(settingsManager.settings.resourceUri || '', settingsManager.settings.formatHint)?.kind): { activeImage?: ActiveImage; captureDecoded?: () => DecodedSnapshot | null; config?: unknown } | undefined {
+		return processorSources[kind as keyof typeof processorSources]
+			?? scientificProcessors.find(processor => processor.config.workerFormat === kind);
+	}
+
+	function getActiveImage(): ActiveImage | null {
+		const decoded = decodedColormapSource;
+		if (!decoded) return activeProcessor()?.activeImage ?? null;
+		return {
+			raster: { data: decoded.floatData, width: decoded.width, height: decoded.height, channels: 1, isFloat: true, typeMax: 1, sourceNumericType: 'float32' },
+			stats: decoded.stats, pixelDisplay: 'float',
+			readPixel: (x, y) => x >= 0 && y >= 0 && x < decoded.width && y < decoded.height ? String(decoded.floatData[y * decoded.width + x]) : '',
+		};
+	}
+
+	/** Derive the base layer from the current image, preserving source samples. */
 	function deriveBaseLayer(): LayerInput | null {
 		const uri = settingsManager.settings.resourceUri || '';
 		const name = layerBaseName(uri);
-		switch (currentLoadFormat) {
-			case 'TIFF': return tiffRawToLayer(tiffProcessor.rawTiffData, name, uri) || baseFromCanvas(name, uri);
-			case 'EXR': return exrRawToLayer(exrProcessor.rawExrData, name, uri) || baseFromCanvas(name, uri);
-			case 'PFM': return lastRawToLayer(pfmProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
-			case 'PPM/PGM': return lastRawToLayer(ppmProcessor._lastRaw, { isFloat: false, typeMax: (ppmProcessor._lastRaw && ppmProcessor._lastRaw.maxval) || 255 }, name, uri) || baseFromCanvas(name, uri);
-			case 'PNG/JPEG': return lastRawToLayer(pngProcessor._lastRaw, { isFloat: false, typeMax: (pngProcessor._lastRaw && pngProcessor._lastRaw.maxValue) || 255 }, name, uri) || baseFromCanvas(name, uri);
-			case 'NPY/NPZ': return lastRawToLayer(npyProcessor._lastRaw, npyTypeInfo(npyProcessor._lastRaw && npyProcessor._lastRaw.dtype), name, uri) || baseFromCanvas(name, uri);
-			case 'HDR': return lastRawToLayer(hdrProcessor._lastRaw, { isFloat: true, typeMax: 1.0 }, name, uri) || baseFromCanvas(name, uri);
-			case 'TGA': return lastRawToLayer(tgaProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
-			case 'Web Image': return lastRawToLayer(webImageProcessor._lastRaw, { isFloat: false, typeMax: 255 }, name, uri) || baseFromCanvas(name, uri);
-			case 'JPEG XL': return lastRawToLayer(jxlProcessor._lastRaw, scientificTypeInfo(jxlProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'FITS': return lastRawToLayer(fitsProcessor._lastRaw, scientificTypeInfo(fitsProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'DICOM': return lastRawToLayer(dicomProcessor._lastRaw, scientificTypeInfo(dicomProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'NetCDF': return lastRawToLayer(netcdfProcessor._lastRaw, scientificTypeInfo(netcdfProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'CZI': return lastRawToLayer(cziProcessor._lastRaw, scientificTypeInfo(cziProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'ND2': return lastRawToLayer(nd2Processor._lastRaw, scientificTypeInfo(nd2Processor), name, uri) || baseFromCanvas(name, uri);
-			case 'LIF': return lastRawToLayer(lifProcessor._lastRaw, scientificTypeInfo(lifProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'SGI RGB': return lastRawToLayer(sgiProcessor._lastRaw, scientificTypeInfo(sgiProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'SDT': return lastRawToLayer(sdtProcessor._lastRaw, scientificTypeInfo(sdtProcessor), name, uri) || baseFromCanvas(name, uri);
-			case 'Layered Document': {
-				const raw = layeredPreviewProcessor._lastRaw;
-				const activeRaw = raw ? { ...raw, data: layeredPreviewProcessor.activeData() } : null;
-				return lastRawToLayer(activeRaw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, uri) || baseFromCanvas(name, uri);
-			}
-			default: return baseFromCanvas(name, uri);
-		}
+		return imageLayer(getActiveImage(), name, uri) || baseFromCanvas(name, uri);
 	}
 
 	/**
@@ -2810,72 +2442,29 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 * @param resourceUri Original resource URI (for extension + name).
 	 */
 	async function decodeLayer(src: string, resourceUri: string): Promise<LayerInput | null> {
-		const lower = (resourceUri || src || '').toLowerCase();
 		const name = layerBaseName(resourceUri || src);
-		const noop = {
-			postMessage() { },
-			setState() { },
-			getState: (): any => undefined,
-		};
+		const format = resolveFormat(resourceUri || src);
+		const noop = { postMessage() {}, setState() {}, getState: (): undefined => undefined };
 		try {
-			const layeredFormat = layeredFormatForPath(lower);
-			if (layeredFormat) {
-				const p = new LayeredPreviewProcessor(settingsManager, noop);
-				p._isInitialLoad = false;
-				p.decodeEditableLayers = false;
-				p.decodeWorker = layeredDecodeWorkerClient;
-				await p.process(src, layeredFormat);
-				const raw = p._lastRaw;
-				return lastRawToLayer(raw, { isFloat: raw?.sampleFormat === 3, typeMax: raw?.sampleFormat === 3 ? 1 : raw?.bitDepth === 16 ? 65535 : 255 }, name, resourceUri);
-			}
-			if (isTiffExtension(lower)) {
-				await ensureProcessorFamily('tiff');
-				const p = new tiffProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
-				await p.processTiff(src); return tiffRawToLayer(p.rawTiffData, name, resourceUri);
-			}
-			if (lower.endsWith('.exr')) {
-				await ensureProcessorFamily('exr');
-				const p = new exrProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
-				await p.processExr(src); return exrRawToLayer(p.rawExrData, name, resourceUri);
-			}
-			if (lower.endsWith('.pfm')) {
-				await ensureProcessorFamily('pfm');
-				const p = new pfmProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
-				await p.processPfm(src); return lastRawToLayer(p._lastRaw, { isFloat: true, typeMax: 1.0 }, name, resourceUri);
-			}
-			if (lower.match(/\.(ppm|pgm|pbm)$/)) {
-				await ensureProcessorFamily('netpbm');
-				const p = new ppmProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = fastRawWorkerClient;
-				await p.processPpm(src); return lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxval) || 255 }, name, resourceUri);
-			}
-			if (lower.match(/\.(png|jpg|jpeg)$/)) {
-				const p = new PngProcessor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = pngDecodeWorkerClient;
-				await p.processPng(src);
-				const layer = lastRawToLayer(p._lastRaw, { isFloat: false, typeMax: (p._lastRaw && p._lastRaw.maxValue) || 255 }, name, resourceUri);
-				return layer || decodeViaImage(src, name, resourceUri);
-			}
-			if (lower.match(/\.(npy|npz)$/)) {
-				await ensureProcessorFamily('npy');
-				const p = new npyProcessor.constructor(settingsManager, noop); p._isInitialLoad = false; p.decodeWorker = lower.endsWith('.npy') ? fastRawWorkerClient : decodeWorkerClient;
-				await p.processNpy(src); return lastRawToLayer(p._lastRaw, npyTypeInfo(p._lastRaw && p._lastRaw.dtype), name, resourceUri);
-			}
-			const isScientific = /\.(rgb|rgba|sgi|bw|fits|fit|fts|dcm|dicom|nc|cdf|czi|nd2|lif|sdt)$/.test(lower);
-			if (isScientific) { await ensureProcessorFamily('scientific'); }
-			const scientificConfig = lower.match(/\.(fits|fit|fts)$/) ? fitsProcessor.config :
-				lower.match(/\.(dcm|dicom)$/) ? dicomProcessor.config :
-				lower.match(/\.(nc|cdf)$/) ? netcdfProcessor.config :
-				lower.match(/\.czi$/) ? cziProcessor.config :
-				lower.match(/\.nd2$/) ? nd2Processor.config :
-				lower.match(/\.lif$/) ? lifProcessor.config :
-				lower.match(/\.sdt$/) ? sdtProcessor.config :
-				lower.match(/\.(rgb|rgba|sgi|bw)$/) ? sgiProcessor.config : null;
-			if (scientificConfig) {
-				const p = new fitsProcessor.constructor(settingsManager, noop, scientificConfig); p._isInitialLoad = false; p.decodeWorker = decodeWorkerClient;
-				await p.process(src); return lastRawToLayer(p._lastRaw, scientificTypeInfo(p), name, resourceUri);
-			}
-			return decodeViaImage(src, name, resourceUri);
-		} catch (err) {
-			console.error('Failed to decode layer', resourceUri, err);
+			if (!format) return decodeViaImage(src, name, resourceUri);
+			await ensureProcessorFamily(format.kind);
+			const source = activeProcessor(format.kind);
+			if (!source?.activeImage) return decodeViaImage(src, name, resourceUri);
+			// A fresh instance isolates layer decoding from the currently displayed image.
+			const Processor = source.constructor as new (...args: any[]) => {
+				activeImage: ActiveImage; load: (src: string, format?: string) => Promise<unknown>;
+				_isInitialLoad: boolean; decodeEditableLayers?: boolean; decodeWorker: unknown;
+			};
+			const processor = new Processor(settingsManager, noop, source.config);
+			processor._isInitialLoad = false;
+			processor.decodeEditableLayers = false;
+			processor.decodeWorker = format.kind === 'png' ? pngDecodeWorkerClient
+				: format.kind === 'layered' ? layeredDecodeWorkerClient
+				: format.kind === 'pfm' || format.kind === 'netpbm' || (format.kind === 'npy' && resourceUri.toLowerCase().endsWith('.npy')) ? fastRawWorkerClient : decodeWorkerClient;
+			await processor.load(src, format.layeredFormat);
+			return imageLayer(processor.activeImage, name, resourceUri) || decodeViaImage(src, name, resourceUri);
+		} catch (error) {
+			console.error('Failed to decode layer', resourceUri, error);
 			return null;
 		}
 	}
@@ -3734,7 +3323,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/**
 	 * Handle messages from VS Code
 	 */
-	async function handleVSCodeMessage(message: { type: string, [key: string]: any }) {
+	async function handleVSCodeMessage(message: HostToViewerMessage) {
 		switch (message.type) {
 			case 'automationRequest': {
 				try {
@@ -3743,7 +3332,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						if (performance.now()>deadline) throw new Error('Image is still loading; retry inspection after decoding completes');
 						await new Promise(resolve=>setTimeout(resolve,25));
 					}
-					const args = message.args || {};
+					const { args } = parseAutomationRequest(message);
 					let result: unknown;
 					if (message.operation === 'display') {
 						await handleVSCodeMessage({type:'updateSettings',settings:args.settings,reason:'python-api'});
@@ -3772,10 +3361,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						const id=crypto.randomUUID();
 						roiManager.add({kind:'rect',id,name:args.name||'API region',source:'manual',x:args.x,y:args.y,width:args.width,height:args.height});
 						measurePanel.refresh();
-						result={roiId:id,rows:measurePanel.getRows().filter(row=>row.roiId===id),calibration:measureCalibration};
+						result={roiId:id,rows:measurePanel.results.getRows().filter(row=>row.roiId===id),calibration:measureCalibration};
 					} else if (message.operation === 'measurements') {
 						measurePanel.refresh();
-						result={rois:serializeRoisForState(roiManager.list()),rows:measurePanel.getRows(),calibration:measureCalibration};
+						result={rois:serializeRoisForState(roiManager.list()),rows:measurePanel.results.getRows(),calibration:measureCalibration};
 					} else {
 						const source=getMeasurementSource();
 						if (!source) throw new Error('Original pixel data is not available for this image or preview');
@@ -3790,12 +3379,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				break;
 			}
 			case 'clearImage': {
-				_loadGeneration++;
-				_loadAbortController?.abort();
+				navigation.clear();
 				signalTiffCanvasReady();
 				invalidatePyramidViewport();
 				if (_levelRefineTimer !== null) { clearTimeout(_levelRefineTimer); _levelRefineTimer = null; }
-				for (const worker of [decodeWorkerClient, pngDecodeWorkerClient, layeredDecodeWorkerClient, fastRawWorkerClient]) { worker.cancelActiveDecodes(); }
 				for (const processor of allProcessors) { processor._pendingRenderData = null; }
 				_pyramidScene?.dispose();
 				_pyramidScene = null;
@@ -3813,8 +3400,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				primaryImageData = null;
 				_pendingZoomState = null;
 				_pendingZoomStateExplicit = false;
-				_previousDecodedImageCache = null;
-				_restoreDecodedImageCandidate = null;
 				for (const element of Array.from(container.children)) {
 					if (element instanceof HTMLElement && !isOverlayChrome(element)
 						&& (element.tagName === 'IMG' || element.tagName === 'CANVAS' || element.classList.contains('pyramid-scene'))) { element.remove(); }
@@ -3831,6 +3416,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				break;
 
 			case 'addLayerImages': {
+				const layerGeneration = navigation.generation;
+				// A visible outgoing frame does not mean the new source is ready.
+				if (!await navigation.waitUntilReady(layerGeneration)) break;
 				const images = message.images || [];
 				const imageLabel = `${images.length} image${images.length === 1 ? '' : 's'}`;
 				PerfTrace.begin(`add-layer ${imageLabel}`, { conciseLabel: `Layer add (${imageLabel}) completed` });
@@ -3849,6 +3437,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				let addedLayers = 0;
 				for (const im of images) {
 					const layer = await decodeLayer(im.src, im.resourceUri);
+					if (layerGeneration !== navigation.generation) break;
 					PerfTrace.mark('layer-decode');
 					if (layer) { layerManager.addLayer(layer); addedLayers++; }
 				}
@@ -3955,25 +3544,25 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					}
 				}
 
-				// formatInfo is posted from inside processTiff(), before handleTiff()
+				// formatInfo is posted from inside load(), before handleTiff()
 				// receives and installs its canvas. Do not drop the immediate
 				// initial-settings response while that canvas is still in flight.
 				if (message.isInitialRender && currentLoadFormat === 'TIFF' && !canvas) {
-					const waitingGeneration = _loadGeneration;
+					const waitingGeneration = navigation.generation;
 					const canvasWaitStart = performance.now();
 					await _tiffCanvasReadyPromise;
 					PerfTrace.detail('await-settings-tiff-canvas-wait', performance.now() - canvasWaitStart);
-					if (waitingGeneration !== _loadGeneration) {
+					if (waitingGeneration !== navigation.generation) {
 						break;
 					}
 				}
 
 				// Check if this is a deferred render trigger (initial load)
 				if (message.isInitialRender && canvas) {
-					const renderGeneration = _loadGeneration;
+					const renderGeneration = navigation.generation;
 					// Time between formatInfo going out and per-format settings
 					// coming back — extension-host latency, not main-thread work.
-					if (lastFormatInfoPost && lastFormatInfoPost.generation === _loadGeneration) {
+					if (lastFormatInfoPost && lastFormatInfoPost.generation === navigation.generation) {
 						PerfTrace.detail('await-settings-roundtrip', updateMessageStart - lastFormatInfoPost.time);
 					}
 					PerfTrace.detail('settings-apply', updateApplyDuration);
@@ -4052,7 +3641,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						deferredImageData = webImageProcessor.performDeferredRender();
 					}
 
-					if (renderGeneration !== _loadGeneration) { break; }
+					if (renderGeneration !== navigation.generation) { break; }
 					if (deferredImageData) {
 						if (deferredCanvasAlreadyRendered) {
 							PerfTrace.mark('canvas-upload-skipped');
@@ -4719,51 +4308,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				clearTimeout(_deferredHistogramTimer);
 				_deferredHistogramTimer = null;
 			}
-			if (pngProcessor && pngProcessor.hasLazyNativeReadback()) {
-				const sampledImageData = pngProcessor.getLazyNativeHistogramImageData(1_000_000);
-				if (sampledImageData) {
-					PerfTrace.mark('histogram-prepare');
-					histogramOverlay.update(sampledImageData, { settings: settingsManager.settings, sampleStep: 1 });
-					return;
-				}
-				const imageData = pngProcessor.renderPngWithSettings();
-				if (imageData) { primaryImageData = imageData; }
-			}
-
-			if (tiffProcessor.rawTiffData && tiffProcessor._lastRenderHistogram) {
+			const image = getActiveImage();
+			const sampled = image?.sampleHistogram?.();
+			if (sampled) {
 				PerfTrace.mark('histogram-prepare');
-				histogramOverlay.updateFromPrecomputed(tiffProcessor._lastRenderHistogram);
-				PerfTrace.mark('histogram-from-render');
+				histogramOverlay.update(sampled, { settings: settingsManager.settings, sampleStep: 1 });
 				return;
 			}
-			if (exrProcessor.rawExrData && exrProcessor._lastRenderHistogram) {
+			if (image?.histogram) {
 				PerfTrace.mark('histogram-prepare');
-				histogramOverlay.updateFromPrecomputed(exrProcessor._lastRenderHistogram);
-				PerfTrace.mark('histogram-from-render');
-				return;
-			}
-			if (npyProcessor._lastRaw && npyProcessor._lastRenderHistogram) {
-				PerfTrace.mark('histogram-prepare');
-				histogramOverlay.updateFromPrecomputed(npyProcessor._lastRenderHistogram);
-				PerfTrace.mark('histogram-from-render');
-				return;
-			}
-			if (pfmProcessor._lastRaw && pfmProcessor._lastRenderHistogram) {
-				PerfTrace.mark('histogram-prepare');
-				histogramOverlay.updateFromPrecomputed(pfmProcessor._lastRenderHistogram);
-				PerfTrace.mark('histogram-from-render');
-				return;
-			}
-			const scientificWithHistogram = scientificProcessors.find(processor => processor._lastRaw && processor._lastRenderHistogram);
-			if (scientificWithHistogram) {
-				PerfTrace.mark('histogram-prepare');
-				histogramOverlay.updateFromPrecomputed(scientificWithHistogram._lastRenderHistogram);
-				PerfTrace.mark('histogram-from-render');
-				return;
-			}
-			if (hdrProcessor._lastRaw && hdrProcessor._lastRenderHistogram) {
-				PerfTrace.mark('histogram-prepare');
-				histogramOverlay.updateFromPrecomputed(hdrProcessor._lastRenderHistogram);
+				histogramOverlay.updateFromPrecomputed(image.histogram);
 				PerfTrace.mark('histogram-from-render');
 				return;
 			}
@@ -4785,148 +4339,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			}
 			histogramOverlay.clearChannelHistograms();
 
-			const settings = settingsManager.settings;
-			let histogramOptions: any = {
-				settings: settings
-			};
-
-			// Try to get raw data from the appropriate processor
-			if (tiffProcessor.rawTiffData) {
-				// TIFF raw data
-				const ifd = tiffProcessor.rawTiffData.ifd;
-				const rasters = tiffProcessor.rawTiffData.rasters;
-				const format = ifd.t339; // SampleFormat: 1=uint, 2=int, 3=float
-				const bitsPerSample = ifd.t258 || 8;
-				const samples = ifd.t277 || 1;
-				// Signed ints and wide (>16-bit) unsigned ints are carried as
-				// Float32Array too (see tiff-processor.js
-				// tiffNeedsFloatCarrier/pickTiffArrayCtor), so they're binned
-				// through the float path.
-				const isFloat = tiffNeedsFloatCarrier(format, bitsPerSample);
-				const typeMax = tiffTypeMax(format, bitsPerSample);
-
-				// Get stats if available
-				const stats = tiffProcessor._lastStatistics || null;
-
-				histogramOptions = {
-					...histogramOptions,
-					planarData: rasters,
-					channels: samples,
-					isFloat: isFloat,
-					typeMax: typeMax,
-					stats: stats
-				};
-			} else if (layeredPreviewProcessor._lastRaw) {
-				const raw = layeredPreviewProcessor._lastRaw;
-				histogramOptions = {
-					...histogramOptions,
-					rawData: layeredPreviewProcessor.activeData(),
-					channels: raw.channels,
-					isFloat: raw.sampleFormat === 3,
-					typeMax: raw.sampleFormat === 3 ? 1.0 : raw.bitDepth === 16 ? 65535 : 255,
-					stats: layeredPreviewProcessor._cachedStats || null
-				};
-			} else if (exrProcessor && exrProcessor.rawExrData) {
-				// EXR raw data (always float)
-				const { width, height, data, channels } = exrProcessor.rawExrData;
-				const stats = exrProcessor._cachedStats || null;
-
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels: channels,
-					isFloat: true,
-					typeMax: 1.0,
-					stats: stats
-				};
-			} else if (npyProcessor && npyProcessor._lastRaw) {
-				// NPY raw data
-				const { width, height, data, dtype, channels } = npyProcessor._lastRaw;
-				const isFloat = dtype.includes('f');
-				const stats = npyProcessor._cachedStats || null;
-
-				let typeMax: number;
-				if (isFloat) {
-					typeMax = 1.0;
-				} else if (dtype.includes('16') || dtype.includes('u2') || dtype.includes('i2')) {
-					typeMax = 65535;
-				} else {
-					typeMax = 255;
-				}
-
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels: channels,
-					isFloat: isFloat,
-					typeMax: typeMax,
-					stats: stats
-				};
-			} else if (pfmProcessor && pfmProcessor._lastRaw) {
-				// PFM raw data (always float)
-				const { width, height, data, channels } = pfmProcessor._lastRaw;
-				const stats = pfmProcessor._cachedStats || null;
-
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels: channels,
-					isFloat: true,
-					typeMax: 1.0,
-					stats: stats
-				};
-			} else if (scientificProcessors.some(processor => !!processor._lastRaw)) {
-				const processor = scientificProcessors.find(candidate => !!candidate._lastRaw)!;
-				const { data, channels } = processor._lastRaw!;
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels,
-					isFloat: true,
-					typeMin: processor.numericDomain.typeMin,
-					typeMax: processor.numericDomain.typeMax,
-					stats: processor._cachedStats || null
-				};
-			} else if (hdrProcessor && hdrProcessor._lastRaw) {
-				// HDR raw data (float RGBA from parse-hdr; alpha is ignored by histogram stats)
-				const { width, height, data, channels } = hdrProcessor._lastRaw;
-				const stats = hdrProcessor._cachedStats || null;
-
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels: channels,
-					isFloat: true,
-					typeMax: 1.0,
-					stats: stats
-				};
-			} else if (ppmProcessor && ppmProcessor._lastRaw) {
-				// PPM/PGM raw data
-				const { width, height, data, maxval, channels } = ppmProcessor._lastRaw;
-				const stats = ppmProcessor._cachedStats || null;
-
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels: channels,
-					isFloat: false,
-					typeMax: maxval,
-					stats: stats
-				};
-			} else if (pngProcessor && pngProcessor._lastRaw) {
-				// PNG raw data
-				const { width, height, data, channels, bitDepth, maxValue } = pngProcessor._lastRaw;
-				const stats = pngProcessor._cachedStats || null;
-
-				histogramOptions = {
-					...histogramOptions,
-					rawData: data,
-					channels: channels,
-					isFloat: false,
-					typeMax: maxValue || 255,
-					stats: stats
-				};
-			}
+			const histogramOptions = { ...imageHistogram(image), settings: settingsManager.settings };
 
 			PerfTrace.mark('histogram-prepare');
 
@@ -4945,10 +4358,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (largeRawHistogram) {
 				const sampleStep = Math.max(2, Math.ceil(rawPixelCount / 1_000_000));
 				histogramOverlay.update(imageData, { ...histogramOptions, sampleStep });
-				const generation = _loadGeneration;
+				const generation = navigation.generation;
 				const runExact = () => {
 					_deferredHistogramTimer = null;
-					if (generation !== _loadGeneration || !histogramOverlay.getVisibility()) { return; }
+					if (generation !== navigation.generation || !histogramOverlay.getVisibility()) { return; }
 					try {
 						const exactStart = performance.now();
 						histogramOverlay.update(imageData, histogramOptions);
@@ -4998,6 +4411,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (!ctx) { return; }
 		const { floatData, width, height } = decodedColormapSource;
 		const stats = ImageStatsCalculator.calculateFloatStats(floatData, width, height, 1);
+		decodedColormapSource.stats = stats;
 		const imageData = ImageRenderer.render(
 			floatData, width, height, 1, true, stats,
 			settingsManager.settings, { nanColor: getNanColorObj() }
@@ -5046,6 +4460,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// the per-processor raw data ensures settings re-renders go through the
 			// decoded-source path below instead of re-rendering the original image.
 			decodedColormapSource = { floatData, width, height };
+			measurementSourceCache = null;
+			scalarPlaneCache = null;
+			measurePanel.onImageChanged();
 			clearAllProcessorRawData();
 
 			// Switch to a float view of the decoded range.
@@ -5666,41 +5083,38 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isEditableEventTarget(e.target)) { return; }
 			e.preventDefault();
 
-			const items: MenuItem[] = [];
+			const fileItems: MenuItem[] = [], displayItems: MenuItem[] = [], inspectItems: MenuItem[] = [], measureItems: MenuItem[] = [], layerItems: MenuItem[] = [];
 			const createMenuItem = (label: string, action: () => void): MenuItem => ({ label, action: () => { setTimeout(action, 0); } });
-			const createSeparator = (): MenuItem => ({ separator: true });
 
 			// Add Copy option (triggers command via extension for logging)
-			items.push(createMenuItem('Copy Image and Position', () => {
+			fileItems.push(createMenuItem('Copy Image and Position', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.copyImage' });
 			}));
 
 			// Add Paste Position option (uses extension command for cross-webview support)
-			items.push(createMenuItem('Paste Position', () => {
+			fileItems.push(createMenuItem('Paste Position', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.pastePosition' });
 			}));
 
 			// The unified exporter evaluates compatibility before choosing a format.
-			items.push(createMenuItem('Export…', () => {
+			fileItems.push(createMenuItem('Export…', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.exportLayers' });
 			}));
 
-			items.push(createSeparator());
 
 			// Add Images to Collection option
-			items.push(createMenuItem('Add Images to Collection', () => {
+			fileItems.push(createMenuItem('Add Images to Collection', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.browseAndAddToCollection' });
 			}));
 
-			items.push(createSeparator());
 
 			// Add Toggle Histogram option (triggers command via extension for logging)
-			items.push(createMenuItem('Toggle Histogram', () => {
+			inspectItems.push(createMenuItem('Toggle Histogram', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleHistogram' });
 			}));
 
 			if (hasCompositableChannels()) {
-				items.push(createMenuItem(
+				displayItems.push(createMenuItem(
 					channelsPanel.isVisible() ? 'Close Channels Panel' : 'Channels…',
 					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleChannels' }); },
 				));
@@ -5708,7 +5122,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 			// Measurement is one entry, not a submenu of eleven: the tools live
 			// inside the panel, so the menu stays as short as it is today.
-			items.push(createMenuItem(
+			measureItems.push(createMenuItem(
 				measurePanel.isVisible() ? 'Close Measure Panel' : 'Measure…',
 				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMeasure' }); },
 			));
@@ -5716,12 +5130,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// A scale-bar command is meaningful only after the current image has
 			// supplied physical calibration (embedded metadata or Set Scale).
 			if (measureCalibration.origin !== 'none') {
-				items.push(createMenuItem(
+				measureItems.push(createMenuItem(
 					roiOverlay.getShowScaleBar() ? 'Hide Scale Bar' : 'Show Scale Bar',
 					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleScaleBar' }); },
 				));
 				if (roiOverlay.hasCustomScaleBarPosition()) {
-					items.push(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
+					measureItems.push(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
 				}
 			}
 
@@ -5735,25 +5149,23 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			const isSingleChannel = !!currentFormatInfo && (currentFormatInfo.samplesPerPixel ?? 1) <= 1;
 
 			if (isRgb8BitUint) {
-				items.push(createSeparator());
 
 				const rgb24Active = settingsManager.settings.rgbAs24BitGrayscale || false;
-				items.push(createMenuItem(rgb24Active ? '✓ Interpret as 24-bit Grayscale' : 'Interpret as 24-bit Grayscale', () => {
+				displayItems.push(createMenuItem(rgb24Active ? '✓ Interpret as 24-bit Grayscale' : 'Interpret as 24-bit Grayscale', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleRgb24Mode' });
 				}));
 			}
 
 			// "Apply Colormap" (pseudocolor): map a single-channel scalar to colors.
 			if (isSingleChannel) {
-				items.push(createSeparator());
 
 				const activeColormap = settingsManager.settings.displayColormap;
 				const hasColormap = activeColormap && activeColormap !== 'none';
-				items.push(createMenuItem(hasColormap ? `Apply Colormap… (${activeColormap})` : 'Apply Colormap…', () => {
+				displayItems.push(createMenuItem(hasColormap ? `Apply Colormap… (${activeColormap})` : 'Apply Colormap…', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.applyColormap' });
 				}));
 				if (hasColormap) {
-					items.push(createMenuItem('Remove Colormap', () => {
+					displayItems.push(createMenuItem('Remove Colormap', () => {
 						handleSetDisplayColormap('none');
 					}));
 				}
@@ -5761,42 +5173,29 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 			// "Decode Colormap to Float": recover a scalar from a colormapped RGB image.
 			if (isRgbImage) {
-				if (!isRgb8BitUint) {
-					items.push(createSeparator());
-				}
 
-				items.push(createMenuItem('Decode Colormap to Float', () => {
+				displayItems.push(createMenuItem('Decode Colormap to Float', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.convertColormapToFloat' });
 				}));
 			}
 
 			// Show revert option if a colormap conversion has been applied
 			if (hasAppliedConversion) {
-				items.push(createSeparator());
 
-				items.push(createMenuItem('Revert to Original', () => {
+				displayItems.push(createMenuItem('Revert to Original', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.revertToOriginal' });
 				}));
 			}
 
-			items.push(createSeparator());
 
 			// Layers compositing view
-			items.push(createMenuItem('Open Layers View', () => {
+			layerItems.push(createMenuItem('Open Layers View', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
 			}));
 
-
-			items.push(createSeparator());
-
-			// Add Open Comparison Panel option
-			// items.push(createMenuItem('Open Comparison Panel', () => {
-			// 	vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openComparisonPanel' });
-			// }));
-
 			// Cycle how pixels with no value are drawn (black/fuchsia/transparent)
 			const nextNanColor = nextNanColor_(settingsManager.settings.nanColor);
-			items.push(createMenuItem(`Show No-Value Pixels as ${nextNanColor}`, () => {
+			displayItems.push(createMenuItem(`Show No-Value Pixels as ${nextNanColor}`, () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleNanColor' });
 			}));
 
@@ -5806,24 +5205,30 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isGammaMode && !layerManager.active) {
 				const isShowingModified = settingsManager.settings.colorPickerShowModified || false;
 				const nextColorMode = isShowingModified ? 'Original Values' : 'Modified Values';
-				items.push(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
+				inspectItems.push(createMenuItem(`Color Picker: Show ${nextColorMode}`, () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleColorPickerMode' });
 				}));
 			}
 
 			// Add Toggle Metadata Panel option
-			items.push(createMenuItem('Toggle Metadata Panel', () => {
+			inspectItems.push(createMenuItem('Toggle Metadata Panel', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMetadata' });
 			}));
 
 			// Open as Point Cloud — only when ply-visualizer is installed and format is supported
 			const plyFormats = ['tiff-float', 'tiff-int', 'tiff-int-signed', 'tiff-int-wide', 'tiff-uint16', 'pfm', 'npy', 'npy-float', 'npy-uint', 'png'];
 			if (settingsManager.settings.plyVisualizerInstalled && currentFormatInfo && plyFormats.includes(currentFormatInfo.formatType ?? '')) {
-				items.push(createSeparator());
-				items.push(createMenuItem('Open as Point Cloud', () => {
+				fileItems.push(createMenuItem('Open as Point Cloud', () => {
 					vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.openAsPointCloud' });
 				}));
 			}
+			const items: MenuItem[] = [
+				{ heading: true, label: 'Display' }, ...displayItems,
+				{ heading: true, label: 'Inspect' }, ...inspectItems,
+				{ heading: true, label: 'Measure' }, ...measureItems,
+				{ heading: true, label: 'Layers' }, ...layerItems,
+				{ heading: true, label: 'File' }, ...fileItems,
+			];
 
 			openContextMenu(items, e.clientX, e.clientY);
 		});
@@ -6119,8 +5524,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		document.body.appendChild(overlayElement);
 	}
 
-
-
 	/**
 	 * One shared model of "things the keyboard can step" for every format.
 	 *
@@ -6304,8 +5707,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			window.addEventListener(end, () => { navControlHeld = false; });
 		}
 	}
-
-
 
 	/**
 	 * Resolve a desired coordinate to a plane that actually exists.
@@ -7217,13 +6618,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 
 		const generation = ++_detailPatchGeneration;
-		_detailPatchLoad = _loadGeneration;
+		_detailPatchLoad = navigation.generation;
 		beginTiffViewportLoad();
 		try {
 			const rendered = await tiffProcessor.renderRegion(wanted.index, plan.rect);
 			// A zoom or a page change while the blocks were decoding makes this
 			// answer describe a view that no longer exists.
-			if (!rendered || generation !== _detailPatchGeneration || _loadGeneration !== _detailPatchLoad) { return; }
+			if (!rendered || generation !== _detailPatchGeneration || navigation.generation !== _detailPatchLoad) { return; }
 
 			if (!_detailPatch) {
 				_detailPatch = document.createElement('canvas');
@@ -7349,7 +6750,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}];
 
 		_pyramidTileLoadPending = true;
-		const load = _loadGeneration;
+		const load = navigation.generation;
 		const view = _pyramidViewGeneration;
 		const requestController = new AbortController();
 		_pyramidViewportAbortController = requestController;
@@ -7376,7 +6777,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				}
 				// A block remains useful after a pan because its scene position is
 				// absolute. A different image, however, must never receive it.
-				if (scene !== _pyramidScene || load !== _loadGeneration || requestController.signal.aborted) { return; }
+				if (scene !== _pyramidScene || load !== navigation.generation || requestController.signal.aborted) { return; }
 				if (rendered) {
 					if (streamingBase) {
 						scene.commitBaseRegion(wanted, rect, rendered);
@@ -7581,7 +6982,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 		const src = settingsManager.settings.src || '';
 		if (!src) { return; }
-		const gen = ++_loadGeneration;
+		const gen = navigation.changeLevel();
 		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
 		// This load starts NOW. Without this, `total` kept measuring from when
@@ -7595,14 +6996,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// applied at restore time rather than here because the pending state is
 		// re-captured from the live view just before it is restored.
 		_pendingLevelScaleMultiplier = options.scaleMultiplier ?? null;
-		_loadAbortController?.abort();
-		decodeWorkerClient.cancelActiveDecodes();
-		pngDecodeWorkerClient.cancelActiveDecodes();
-		layeredDecodeWorkerClient.cancelActiveDecodes();
-		fastRawWorkerClient.cancelActiveDecodes();
-		_loadAbortController = new AbortController();
-		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
-		resetTiffCanvasReady();
+
 		beginSeamlessImageTransition(false);
 
 		// A patch belongs to the IMAGE, not to the level currently under it, so a
@@ -7709,57 +7103,20 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 	}
 
-	function cacheCurrentDecodedImage() {
-		const resourceUri = settingsManager.settings.resourceUri;
-		if (!resourceUri || !hasLoadedImage) { return; }
-		const resolvedKind = resolveFormat(resourceUri, settingsManager.settings.formatHint)?.kind;
-		let entry: { resourceUri: string, cacheKey: string, format: string, raw: any } | null = null;
-		if (resolvedKind === 'tiff' && tiffProcessor.rawTiffData) {
-			entry = {
-				resourceUri,
-				cacheKey: `${resourceUri}#tiff-page=${tiffProcessor.pageIndex}`,
-				format: 'tiff',
-				raw: {
-					tiffData: tiffProcessor.rawTiffData,
-					lastStatistics: tiffProcessor._lastStatistics,
-					lastStatisticsRgb24Mode: tiffProcessor._lastStatisticsRgb24Mode,
-					convertedFloatData: tiffProcessor._convertedFloatData,
-					pageIndex: tiffProcessor.pageIndex,
-					pageCount: tiffProcessor.pageCount,
-					displayBand: tiffProcessor.displayBand,
-					displayRgbBands: tiffProcessor.displayRgbBands,
-					// Carried through the cache so switching back to a
-					// GeoTIFF in a collection keeps its coordinate readout;
-					// the restore path below has no bytes to re-parse.
-					geoReference: tiffProcessor.geoReference,
-					// Same reason as geoReference: the restore path has no bytes
-					// to re-classify, and without this a pyramidal file comes
-					// back from the cache looking like a plain multi-page one.
-					pageDirectory: tiffProcessor.pageDirectory,
-					formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null
-				}
-			};
-		} else if (resolvedKind === 'exr' && exrProcessor.rawExrData) {
-			entry = { resourceUri, cacheKey: resourceUri, format: 'exr', raw: exrProcessor.rawExrData };
-		} else if (resolvedKind === 'npy' && npyProcessor._lastRaw) {
-			entry = { resourceUri, cacheKey: resourceUri, format: 'npy', raw: npyProcessor._lastRaw };
-		} else if (resolvedKind === 'pfm' && pfmProcessor._lastRaw) {
-			entry = { resourceUri, cacheKey: resourceUri, format: 'pfm', raw: pfmProcessor._lastRaw };
-		} else if (resolvedKind === 'netpbm' && ppmProcessor._lastRaw) {
-			entry = { resourceUri, cacheKey: resourceUri, format: 'ppm', raw: ppmProcessor._lastRaw };
-		} else if (resolvedKind === 'png' && pngProcessor._lastRaw && pngProcessor._lastRaw.bitDepth > 8) {
-			entry = { resourceUri, cacheKey: resourceUri, format: 'png', raw: pngProcessor._lastRaw };
-		} else if (resolvedKind === 'hdr' && hdrProcessor._lastRaw) {
-			entry = { resourceUri, cacheKey: resourceUri, format: 'hdr', raw: hdrProcessor._lastRaw };
-		} else if (dicomProcessor._lastRaw && (datasetManifest?.kind === 'dicom' || resolvedKind === 'dicom')) {
-			entry = {
-				resourceUri,
-				cacheKey: `${resourceUri}#dicom-frame=${Number(dicomProcessor.metadata.frameIndex || 0)}`,
-				format: 'dicom',
-				raw: { image: dicomProcessor._lastRaw, metadata: { ...dicomProcessor.metadata } },
-			};
-		}
-		_previousDecodedImageCache = entry;
+	function decodedCacheKey(resourceUri: string, formatHint?: string, pageIndex = 0, frameIndex = 0): string {
+		const kind = resolveFormat(resourceUri, formatHint)?.kind;
+		return kind === 'tiff' ? `${resourceUri}#tiff-page=${pageIndex}`
+			: kind === 'dicom' ? `${resourceUri}#dicom-frame=${frameIndex}` : resourceUri;
+	}
+
+	function captureCurrentDecodedImage(): CachedImage<FormatInfo> | null {
+		const { resourceUri, formatHint } = settingsManager.settings;
+		if (!resourceUri || !hasLoadedImage) return null;
+		const snapshot = activeProcessor()?.captureDecoded?.();
+		return snapshot ? {
+			cacheKey: decodedCacheKey(resourceUri, formatHint, tiffProcessor.pageIndex, Number(dicomProcessor.metadata.frameIndex || 0)),
+			label: currentLoadFormat, snapshot, formatInfo: currentFormatInfo ? { ...currentFormatInfo } : null,
+		} : null;
 	}
 
 	function installCachedPlaceholder(width: number, height: number) {
@@ -7773,235 +7130,34 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		PerfTrace.mark('decoded-cache-hit');
 	}
 
-	function postCachedExrFormatInfo(raw: any) {
-		vscode.postMessage({
-			type: 'formatInfo',
-			value: {
-				width: raw.width,
-				height: raw.height,
-				channels: raw.channels,
-				samplesPerPixel: raw.channels,
-				dataType: raw.type === 1016 ? 'float16' : 'float32',
-				isHdr: true,
-				formatLabel: 'EXR',
-				formatType: 'exr-float',
-				isInitialLoad: true,
-				channelNames: raw.channelNames || [],
-				displayedChannels: raw.displayedChannels || raw.channelNames || []
-			}
-		});
-	}
-
 	function tryRestoreDecodedImageFromCache(resourceUri: string, formatHint?: string, pageIndex = 0, frameIndex = 0): boolean {
-		const cache = _restoreDecodedImageCandidate;
-		const requestedKind = resolveFormat(resourceUri, formatHint)?.kind;
-		const requestedKey = requestedKind === 'tiff'
-			? `${resourceUri}#tiff-page=${pageIndex}`
-			: requestedKind === 'dicom' || datasetManifest?.kind === 'dicom'
-				? `${resourceUri}#dicom-frame=${frameIndex}`
-				: resourceUri;
-		if (!cache || cache.cacheKey !== requestedKey) { return false; }
-		const raw = cache.raw;
-		currentLoadDecodeInfo = null;
-		switch (cache.format) {
-			case 'tiff': {
-				const tiffData = raw.tiffData;
-				const image = tiffData?.image;
-				const rasters = tiffData?.rasters;
-				if (!image || !rasters) { return false; }
-				currentLoadFormat = 'TIFF';
-				currentLoadDecodeInfo = { engine: 'decoded-cache', durationMs: 0 };
-				tiffProcessor.rawTiffData = tiffData;
-				tiffProcessor.displayBand = Math.max(0, Number(raw.displayBand || 0));
-				tiffProcessor.displayRgbBands = raw.displayRgbBands || null;
-				tiffProcessor._lastStatistics = raw.lastStatistics || null;
-				tiffProcessor._lastStatisticsRgb24Mode = raw.lastStatisticsRgb24Mode === true;
-				tiffProcessor._convertedFloatData = raw.convertedFloatData || null;
-				tiffProcessor.pageIndex = Number(raw.pageIndex || 0);
-				tiffProcessor.pageCount = Math.max(1, Number(raw.pageCount || 1));
-				tiffProcessor.pageDirectory = Array.isArray(raw.pageDirectory) ? raw.pageDirectory : [];
-				tiffProcessor.omeMetadata = tiffData.ome || null;
-				const cachedOme = tiffProcessor.omeMetadata;
-				mouseHandler.setPhysicalPixelSize(cachedOme ? {
-					x: cachedOme.physicalSizeX, y: cachedOme.physicalSizeY,
-					xUnit: cachedOme.physicalSizeXUnit, yUnit: cachedOme.physicalSizeYUnit,
-				} : null);
-				tiffProcessor.geoReference = raw.geoReference || null;
-				mouseHandler.setGeoReference(tiffProcessor.geoReference);
-				updateTiffPageOverlay();
-				tiffProcessor._lastRenderHistogram = null;
-				tiffProcessor._lastRenderUsedWebGL = false;
-				tiffProcessor._isInitialLoad = true;
-				tiffProcessor._pendingRenderData = { image, rasters };
-				installCachedPlaceholder(image.getWidth(), image.getHeight());
-				const sampleFormat = image.getSampleFormat?.();
-				const bitsPerSample = image.getBitsPerSample?.();
-				const samplesPerPixel = image.getSamplesPerPixel?.();
-				const sampleFormatValue = Array.isArray(sampleFormat) ? sampleFormat[0] : sampleFormat;
-				vscode.postMessage({
-					type: 'formatInfo',
-					value: {
-						width: image.getWidth(),
-						height: image.getHeight(),
-						sampleFormat,
-						samplesPerPixel,
-						bitsPerSample,
-						planarConfig: tiffData.ifd?.t284 ?? 1,
-						formatType: tiffFormatTypeFor(sampleFormatValue, bitsPerSample),
-						...(raw.formatInfo || {}),
-						isInitialLoad: true,
-						decodedWith: 'decoded-cache',
-						...tiffProcessor._omeFormatInfo()
-					}
-				});
-				return true;
-			}
-			case 'exr':
-				currentLoadFormat = 'EXR';
-				exrProcessor.rawExrData = raw;
-				exrProcessor._cachedStats = undefined;
-				exrProcessor._isInitialLoad = true;
-				exrProcessor._pendingRenderData = {
-					width: raw.width,
-					height: raw.height,
-					data: raw.data,
-					channels: raw.channels,
-					type: raw.type,
-					format: raw.format
-				};
-				installCachedPlaceholder(raw.width, raw.height);
-				postCachedExrFormatInfo(raw);
-				return true;
-			case 'npy':
-				currentLoadFormat = 'NPY/NPZ';
-				npyProcessor._lastRaw = raw;
-				npyProcessor._cachedStats = undefined;
-				npyProcessor._cachedStatsRgb24Mode = false;
-				npyProcessor._isInitialLoad = true;
-				npyProcessor._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height };
-				installCachedPlaceholder(raw.width, raw.height);
-				npyProcessor._postFormatInfo(raw.width, raw.height, 'NPY');
-				return true;
-			case 'pfm':
-				currentLoadFormat = 'PFM';
-				pfmProcessor._lastRaw = raw;
-				pfmProcessor._cachedStats = undefined;
-				pfmProcessor._isInitialLoad = true;
-				pfmProcessor._pendingRenderData = { displayData: raw.data, width: raw.width, height: raw.height, channels: raw.channels };
-				installCachedPlaceholder(raw.width, raw.height);
-				pfmProcessor._postFormatInfo(raw.width, raw.height, raw.channels, 'PFM');
-				return true;
-			case 'ppm':
-				currentLoadFormat = 'PPM/PGM';
-				ppmProcessor._lastRaw = raw;
-				ppmProcessor._cachedStats = undefined;
-				ppmProcessor._cachedStatsRgb24Mode = false;
-				ppmProcessor._isInitialLoad = true;
-				ppmProcessor._pendingRenderData = {
-					displayData: raw.data,
-					width: raw.width,
-					height: raw.height,
-					maxval: raw.maxval,
-					channels: raw.channels
-				};
-				installCachedPlaceholder(raw.width, raw.height);
-				ppmProcessor._postFormatInfo(raw.width, raw.height, raw.channels, raw.format || 'PPM/PGM', raw.maxval);
-				return true;
-			case 'png':
-				currentLoadFormat = 'PNG/JPEG';
-				pngProcessor._lastRaw = raw;
-				pngProcessor._cachedStats = undefined;
-				pngProcessor._cachedStatsRgb24Mode = false;
-				pngProcessor._isInitialLoad = true;
-				pngProcessor._pendingRenderData = true;
-				installCachedPlaceholder(raw.width, raw.height);
-				pngProcessor._postFormatInfo(raw.width, raw.height, raw.channels, raw.bitDepth, 'PNG');
-				return true;
-			case 'hdr':
-				currentLoadFormat = 'HDR';
-				hdrProcessor._lastRaw = raw;
-				hdrProcessor._cachedStats = undefined;
-				hdrProcessor._cachedWebglRgb = null;
-				hdrProcessor._isInitialLoad = true;
-				hdrProcessor._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height, renderChannels: raw.channels };
-				installCachedPlaceholder(raw.width, raw.height);
-				hdrProcessor._postFormatInfo(raw.width, raw.height, 3, 'HDR');
-				return true;
-			case 'dicom': {
-				const image = raw.image;
-				if (!image?.data) { return false; }
-				currentLoadFormat = 'DICOM';
-				dicomProcessor._lastRaw = image;
-				dicomProcessor.metadata = raw.metadata || {};
-				dicomProcessor._cachedStats = undefined;
-				dicomProcessor._isInitialLoad = true;
-				dicomProcessor._pendingRenderData = { displayData: image.data, width: image.width, height: image.height, channels: image.channels };
-				installCachedPlaceholder(image.width, image.height);
-				dicomProcessor._postScientificFormatInfo({ ...image, metadata: dicomProcessor.metadata });
-				return true;
-			}
-			default:
-				return false;
+		const cache = navigation.restore(decodedCacheKey(resourceUri, formatHint, pageIndex, frameIndex));
+		if (!cache) return false;
+		currentLoadFormat = cache.label;
+		currentLoadDecodeInfo = { engine: 'decoded-cache', durationMs: 0 };
+		if (resolveFormat(resourceUri, formatHint)?.kind === 'tiff') {
+			const ome = tiffProcessor.omeMetadata;
+			mouseHandler.setPhysicalPixelSize(ome ? { x: ome.physicalSizeX, y: ome.physicalSizeY, xUnit: ome.physicalSizeXUnit, yUnit: ome.physicalSizeYUnit } : null);
+			mouseHandler.setGeoReference(tiffProcessor.geoReference);
+			updateTiffPageOverlay();
 		}
+		installCachedPlaceholder(cache.snapshot.width, cache.snapshot.height);
+		vscode.postMessage({ type: 'formatInfo', value: { ...cache.formatInfo, isInitialLoad: true, decodedWith: 'decoded-cache' } });
+		return true;
 	}
 
 	/**
 	 * Switch to a new image in the collection (legacy - for fallback)
 	 */
 	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: string, pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange?: boolean } = {}) {
-		// Every switch gets a new generation so any in-flight load from a
-		// previous rapid press can detect it is stale and bail out.
-		const gen = ++_loadGeneration;
+		const planeChange = !!options.planeChange;
 		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
-
-		// A plane change (dragging a scientific dataset selector) is
-		// NOT a new image: same file, same format, same settings, usually the
-		// same dimensions. Running the full switch teardown for one made the
-		// sliders unusable — every step disposed the WebGL renderers (paying
-		// the per-format GPU validation stall again), reset every processor's
-		// `_isInitialLoad` (forcing a settings round trip to the extension
-		// host before anything could render), cleared raw data the inspector
-		// was still reading, and played the collection-switch loading UI.
-		// The flag was already being passed here and simply never read.
-		const planeChange = !!options.planeChange;
-
-		// Trace where this switch spends its time; the summary is logged from
-		// finalizeImageSetup once the final pixels are on screen.
 		let switchName = resourceUri.split('/').pop() || 'image';
 		try { switchName = decodeURIComponent(switchName); } catch { /* keep encoded name */ }
 		PerfTrace.begin(planeChange ? `plane ${switchName}` : `switch ${switchName}`);
-		if (!planeChange) {
-			// A Level choice belongs to the file it was made for.
-			// Caching the outgoing image is for stepping between FILES. Doing it
-			// per plane would fill the cache with planes of the file already open.
-			_restoreDecodedImageCandidate = _previousDecodedImageCache;
-			cacheCurrentDecodedImage();
-			beginSeamlessImageTransition(true);
-		}
-
-		// Abort the previous in-flight load: cancels its network fetch and lets
-		// the processors stop before decoding, instead of the superseded load
-		// running to completion and blocking the next image.
-		if (_loadAbortController) { _loadAbortController.abort(); }
-		// `cancelActiveDecodes()` TERMINATES the decode worker, and the retained
-		// source bytes for multi-plane formats live in that worker. Doing it per
-		// plane step threw away the cache and forced the whole file to be
-		// refetched and the WASM module re-instantiated for every notch of the
-		// slider — the dominant cost of stepping through a stack, far larger
-		// than the decode itself. Plane requests are already coalesced by
-		// `requestPlaneReload()` (one in flight, newest kept as trailing), and a
-		// superseded load still bails out on the generation check, so there is
-		// nothing here that needs the worker destroyed.
-		if (!planeChange) {
-			decodeWorkerClient.cancelActiveDecodes();
-			pngDecodeWorkerClient.cancelActiveDecodes();
-			layeredDecodeWorkerClient.cancelActiveDecodes();
-			fastRawWorkerClient.cancelActiveDecodes();
-			resetTiffCanvasReady();
-		}
-		_loadAbortController = new AbortController();
-		for (const p of allProcessors) { p.loadSignal = _loadAbortController.signal; }
+		const gen = planeChange ? navigation.changePlane() : navigation.openFile(captureCurrentDecodedImage());
+		if (!planeChange) beginSeamlessImageTransition(true);
 
 		// Update the settings with the new resource URI
 		settingsManager.settings.resourceUri = resourceUri;
@@ -8039,40 +7195,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Same format and (almost always) same dimensions across a plane step, so
 		// the renderers stay valid. Tearing them down here cost a full GPU
 		// re-validation per slider step.
-		if (!planeChange) { disposeWebglRenderers(); }
-
-		// Reset each processor's initial-load flag so they re-send formatInfo and
-		// trigger the extension to apply the correct per-format settings for the
-		// new image (e.g. switching from TIFF-int to EXR-float needs different
-		// normalization defaults). The AppStateManager caches settings per-format
-		// so any user adjustments are preserved when switching back.
-		// Only a real format change needs the per-format settings re-applied.
-		if (!planeChange) { for (const p of allProcessors) { p._isInitialLoad = true; } }
-
-		// Clear each processor's stale raw data so the mouse handler and histogram
-		// don't read pixels from the previous image. Without this, the TIFF-first
-		// checks in mouse-handler.js and updateHistogramData() would return values
-		// from the old image while the new one is loading/rendering.
-		if (!planeChange) {
-			tiffProcessor.rawTiffData = null;
-			tiffProcessor._lastStatistics = null;
-			tiffProcessor._convertedFloatData = null;
-			exrProcessor.rawExrData = undefined;
-			exrProcessor._cachedStats = undefined;
-			const rawDataProcessors = [exrProcessor, npyProcessor, pfmProcessor, ppmProcessor, pngProcessor, hdrProcessor, tgaProcessor, webImageProcessor, ...scientificProcessors];
-			for (const p of rawDataProcessors) { p._lastRaw = null; }
-			layeredPreviewProcessor.reset();
-			_expandedLayerDocumentUri = undefined;
-			updateLayeredPreviewOverlay();
-		}
-
-		// Drop any pending deferred-render data from the previous image. Otherwise a
-		// late updateSettings(isInitialRender) for the old image could draw it onto
-		// the new image's canvas, overlaying two images of different sizes.
-		if (!planeChange) {
-			for (const p of allProcessors) { p._pendingRenderData = null; }
-			pngProcessor._lazyNativeReadback = null;
-		}
 
 		// Keep existing image/canvas visible while the new image loads to avoid
 		// a black flash. They will be removed in finalizeImageSetup once the new
@@ -8101,7 +7223,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				setTimeout(resolve, 100);
 			});
 		}
-		if (gen !== _loadGeneration) { return; }
+		if (gen !== navigation.generation) { return; }
 		PerfTrace.mark(shouldYieldForLoadingUi ? 'paint-yield' : 'load-start');
 		const lower = resourceUri.toLowerCase();
 		const format = resolveFormat(resourceUri, formatHint);
@@ -8109,7 +7231,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			|| layeredFormatForPath(lower);
 		if (format && ['tiff', 'exr', 'npy', 'pfm', 'netpbm', 'hdr', 'jxr', 'jp2', 'jxl', 'fits', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt', 'sgi'].includes(format.kind)) {
 			await ensureProcessorFamily(format.kind);
-			if (gen !== _loadGeneration) { return; }
+			if (gen !== navigation.generation) { return; }
 		}
 
 		// The cache is keyed by URI/page/frame and knows nothing about plane
@@ -8147,21 +7269,21 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		} else if (format?.kind === 'tiff') {
 			handleTiff(uri, gen, pageIndex);
 		} else if (format?.kind === 'exr') {
-			handleExr(uri, gen);
+			handleImageLoad(exrProcessor, 'EXR', uri, gen);
 		} else if (format?.kind === 'pfm') {
-			handlePfm(uri, gen);
+			handleImageLoad(pfmProcessor, 'PFM', uri, gen);
 		} else if (format?.kind === 'netpbm') {
-			handlePpm(uri, gen);
+			handleImageLoad(ppmProcessor, 'PPM/PGM', uri, gen);
 		} else if (format?.kind === 'png') {
-			handlePng(uri, gen);
+			handleImageLoad(pngProcessor, 'PNG/JPEG', uri, gen);
 		} else if (format?.kind === 'npy') {
-			handleNpy(uri, gen);
+			handleImageLoad(npyProcessor, 'NPY/NPZ', uri, gen);
 		} else if (format?.kind === 'hdr') {
-			handleHdr(uri, gen);
+			handleImageLoad(hdrProcessor, 'HDR', uri, gen);
 		} else if (format?.kind === 'tga') {
-			handleTga(uri, gen);
+			handleImageLoad(tgaProcessor, 'TGA', uri, gen);
 		} else if (format?.kind === 'web-image') {
-			handleWebImage(uri, gen);
+			handleImageLoad(webImageProcessor, 'Web Image', uri, gen);
 		} else if (format?.kind === 'jxl') {
 			handleScientificArray(jxlProcessor, uri, gen);
 		} else if (format?.kind === 'jxr') {
@@ -8191,7 +7313,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			newImage.src = uri;
 
 			newImage.addEventListener('load', () => {
-				if (gen !== _loadGeneration) return;
+				if (gen !== navigation.generation) return;
 
 				// Create canvas and draw image
 				canvas = document.createElement('canvas');
@@ -8209,7 +7331,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			});
 
 			newImage.addEventListener('error', () => {
-				if (gen !== _loadGeneration) return;
+				if (gen !== navigation.generation) return;
 				onImageError();
 			});
 		}
@@ -8357,11 +7479,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			const zoomState = zoomController.getCurrentState();
 			const imageWidth = canvas.width;
 			const imageHeight = canvas.height;
-			
+
 			// Calculate the center point of the viewport in image coordinates
 			// This is what the user is looking at
 			let centerXImage: number, centerYImage: number;
-			
+
 			if (zoomState.scale === 'fit') {
 				// In fit mode, the center is simply the image center
 				centerXImage = imageWidth / 2;
@@ -8370,25 +7492,25 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				// In zoomed mode, calculate the visible center point
 				const displayedWidth = imageWidth * zoomState.scale;
 				const displayedHeight = imageHeight * zoomState.scale;
-				
+
 				// Get the element's position
 				const rect = imageElement.getBoundingClientRect();
 				const elemLeftDoc = window.scrollX + rect.left;
 				const elemTopDoc = window.scrollY + rect.top;
-				
+
 				// Viewport center in document coordinates
 				const viewportCenterX = window.scrollX + container.clientWidth / 2;
 				const viewportCenterY = window.scrollY + container.clientHeight / 2;
-				
+
 				// Convert to image coordinates
 				centerXImage = (viewportCenterX - elemLeftDoc) / zoomState.scale;
 				centerYImage = (viewportCenterY - elemTopDoc) / zoomState.scale;
-				
+
 				// Clamp to valid image bounds
 				centerXImage = Math.max(0, Math.min(imageWidth, centerXImage));
 				centerYImage = Math.max(0, Math.min(imageHeight, centerYImage));
 			}
-			
+
 			// Store as relative position (0-1) for cross-resolution compatibility
 			copiedPositionState = {
 				relativeX: centerXImage / imageWidth,
@@ -8397,13 +7519,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				sourceWidth: imageWidth,
 				sourceHeight: imageHeight
 			};
-			
+
 			// Send position to extension for cross-webview paste support
 			vscode.postMessage({
 				type: 'positionCopied',
 				state: copiedPositionState
 			});
-			
+
 			console.log('Position copied:', copiedPositionState);
 		}
 
@@ -8453,7 +7575,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function pastePosition(positionState: CopiedPosition | null) {
 		// Use provided state (from extension) or fall back to local state
 		const state = positionState || copiedPositionState;
-		
+
 		if (!state) {
 			showNotification('No position copied. Copy an image first (Ctrl+C)', 'error');
 			return;
@@ -8478,16 +7600,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// For different sizes, scale the zoom proportionally based on the geometric mean
 		// This ensures that the "visual coverage" is similar
 		let targetScale = state.scale;
-		
+
 		if (targetScale !== 'fit') {
 			// Scale factor based on the geometric mean of width and height ratios
 			// This gives balanced scaling for images with different aspect ratios
 			const widthRatio = targetWidth / sourceWidth;
 			const heightRatio = targetHeight / sourceHeight;
 			const scaleRatio = Math.sqrt(widthRatio * heightRatio);
-			
+
 			targetScale = (state.scale as number) * scaleRatio;
-			
+
 			// Clamp to valid zoom range
 			const constants = settingsManager.constants;
 			targetScale = Math.max(constants.MIN_SCALE, Math.min(constants.MAX_SCALE, targetScale));
@@ -8499,7 +7621,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		} else {
 			// First set the scale (this will center on current view)
 			zoomController.updateScale(targetScale);
-			
+
 			// Then scroll to center on the target point
 			// We need to wait a tick for the scale to be applied
 			setTimeout(() => {
@@ -8507,19 +7629,19 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const rect = imageElement.getBoundingClientRect();
 				const elemLeftDoc = window.scrollX + rect.left;
 				const elemTopDoc = window.scrollY + rect.top;
-				
+
 				// Calculate where the target center should be in document coordinates
 				const targetDocX = elemLeftDoc + targetCenterX * (targetScale as number);
 				const targetDocY = elemTopDoc + targetCenterY * (targetScale as number);
-				
+
 				// Scroll to center this point in the viewport
 				const newScrollX = targetDocX - container.clientWidth / 2;
 				const newScrollY = targetDocY - container.clientHeight / 2;
-				
+
 				// Clamp to valid scroll range
 				const maxScrollX = Math.max(0, document.documentElement.scrollWidth - container.clientWidth);
 				const maxScrollY = Math.max(0, document.documentElement.scrollHeight - container.clientHeight);
-				
+
 				window.scrollTo(
 					Math.max(0, Math.min(maxScrollX, newScrollX)),
 					Math.max(0, Math.min(maxScrollY, newScrollY))
@@ -8573,7 +7695,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const savedExrData = exrProcessor.rawExrData;
 				const savedExrStats = exrProcessor._cachedStats;
 
-				result = await exrProcessor.processExr(peerUri);
+				result = await exrProcessor.load(peerUri);
 				peerImageData = result.imageData;
 
 				peerRawExrData = exrProcessor.rawExrData;
@@ -8585,7 +7707,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const savedRawTiffData = tiffProcessor.rawTiffData;
 				const savedLastStatistics = tiffProcessor._lastStatistics;
 
-				result = await tiffProcessor.processTiff(peerUri);
+				result = await tiffProcessor.load(peerUri);
 				peerImageData = result.imageData;
 
 				peerRawTiffData = tiffProcessor.rawTiffData;

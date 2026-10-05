@@ -17,26 +17,7 @@
  */
 
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
-const Module = require('module');
-
-// `appStateManager.js` is bundled with `vscode` left external, so it must be
-// stubbed before the module is required. Only EventEmitter is used, and only
-// for change notifications this test does not subscribe to.
-const originalLoad = Module._load;
-Module._load = function (request, ...rest) {
-	if (request === 'vscode') {
-		return {
-			EventEmitter: class {
-				constructor() { this.event = () => ({ dispose() {} }); }
-				fire() {}
-				dispose() {}
-			},
-		};
-	}
-	return originalLoad.call(this, request, ...rest);
-};
+const { loadSource } = require('./lib/load-source.cjs');
 
 const AUTO_NORMALIZE = [
 	// NumPy arrays: computed data, arbitrary range, either sample type.
@@ -63,12 +44,7 @@ const GAMMA_MODE = [
 ];
 
 async function main() {
-	const modulePath = path.join(__dirname, '..', 'out', 'src', 'imagePreview', 'appStateManager.js');
-	if (!fs.existsSync(modulePath)) {
-		console.log('⚠️  out/src/imagePreview/appStateManager.js not found — run `npm run compile` first. Skipping.');
-		return;
-	}
-	const { AppStateManager } = require(modulePath);
+	const { AppStateManager } = loadSource('src/imagePreview/appStateManager.ts');
 
 	console.log('🧪 Running per-format default settings tests...\n');
 	let count = 0;

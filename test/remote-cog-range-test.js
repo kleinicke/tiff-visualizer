@@ -80,7 +80,7 @@ async function main() {
 		console.log(`✅ Remote region matched local pixels using ${bytesServed} / ${source.length} bytes`);
 
 		processor.settingsManager.settings.remoteTiffUrl = url;
-		const progressive = await processor.processTiff('unused', 0, {
+		const progressive = await processor.load('unused', 0, {
 			displayWidth: 100,
 			maxAxis: 10000,
 			maxArea: 100_000_000,

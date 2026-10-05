@@ -1,3 +1,4 @@
+import type { ActiveImage } from './active-image';
 "use strict";
 
 import type { SettingsManager } from './settings-manager.js';
@@ -13,17 +14,6 @@ type ImmediateStoredValue = { value: string, exact: boolean, note?: string };
 export class MouseHandler {
 	settingsManager: SettingsManager;
 	vscode: VsCodeApi;
-	tiffProcessor: any;
-	exrProcessor: any;
-	npyProcessor: any;
-	pfmProcessor: any;
-	ppmProcessor: any;
-	pngProcessor: any;
-	hdrProcessor: any;
-	tgaProcessor: any;
-	webImageProcessor: any;
-	scientificProcessors: any[];
-	layeredPreviewProcessor: any;
 
 	// State
 	ctrlPressed: boolean;
@@ -83,20 +73,9 @@ export class MouseHandler {
 	container: HTMLElement;
 	imageElement: HTMLElement | null;
 
-	constructor(settingsManager: SettingsManager, vscode: VsCodeApi, tiffProcessor: any) {
+	constructor(settingsManager: SettingsManager, vscode: VsCodeApi, private readonly getActiveImage: () => ActiveImage | null = () => null) {
 		this.settingsManager = settingsManager;
 		this.vscode = vscode;
-		this.tiffProcessor = tiffProcessor;
-		this.exrProcessor = null;
-		this.npyProcessor = null;
-		this.pfmProcessor = null;
-		this.ppmProcessor = null;
-		this.pngProcessor = null;
-		this.hdrProcessor = null;
-		this.tgaProcessor = null;
-		this.webImageProcessor = null;
-		this.scientificProcessors = [];
-		this.layeredPreviewProcessor = null;
 
 		// State
 		this.ctrlPressed = false;
@@ -180,16 +159,6 @@ export class MouseHandler {
 		this._storedResolverGeneration++;
 	}
 
-	setExrProcessor(proc: any) { this.exrProcessor = proc; }
-	setNpyProcessor(proc: any) { this.npyProcessor = proc; }
-	setPfmProcessor(proc: any) { this.pfmProcessor = proc; }
-	setPpmProcessor(proc: any) { this.ppmProcessor = proc; }
-	setPngProcessor(proc: any) { this.pngProcessor = proc; }
-	setHdrProcessor(proc: any) { this.hdrProcessor = proc; }
-	setTgaProcessor(proc: any) { this.tgaProcessor = proc; }
-	setWebImageProcessor(proc: any) { this.webImageProcessor = proc; }
-	setScientificProcessors(processors: any[]) { this.scientificProcessors = processors || []; }
-	setLayeredPreviewProcessor(processor: any) { this.layeredPreviewProcessor = processor; }
 
 	/**
 	 * Set active state
@@ -548,191 +517,22 @@ export class MouseHandler {
 		const isGammaMode = this.settingsManager.settings.normalization && this.settingsManager.settings.normalization.gammaMode;
 		const showModified = isGammaMode && (this.settingsManager.settings.colorPickerShowModified || false);
 
-		if (this.layeredPreviewProcessor?._lastRaw) {
-			const value = this.layeredPreviewProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (value) { return value; }
-		}
-
-		// Try TIFF processor first
-		if (this.tiffProcessor) {
-			const tiffColor = this.tiffProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (tiffColor) {
-				if (showModified) {
-					// Alpha and unspecified extra samples are not colour values.
-					const labeledExtra = /^(\S+) (α|C2):(\S+)$/.exec(tiffColor);
-					if (labeledExtra) {
-						return `${this._applyGammaBrightness(Number(labeledExtra[1])).toFixed(6)} ${labeledExtra[2]}:${labeledExtra[3]}`;
-					}
-					// Apply gamma and brightness to TIFF values
-					const values = this._parseTiffColor(tiffColor);
-					if (values) {
-						const transformed = values.map(v => this._applyGammaBrightness(v));
-						return this._formatColorValues(transformed, values.length);
-					}
-				}
-				return tiffColor;
-			}
-		}
-
-		// Try EXR processor for HDR images
-		if (this.exrProcessor && this.exrProcessor.rawExrData) {
-			const pixelValues = this.exrProcessor.getPixelValue(x, y);
-			if (pixelValues) {
-				if (showModified) {
-					// Apply gamma and brightness to HDR values (but NOT to alpha)
-					const transformed = [];
-					for (let i = 0; i < pixelValues.length; i++) {
-						const v = pixelValues[i];
-						if (isNaN(v) || !isFinite(v)) {
-							transformed.push(v);
-						} else if (i === 3 && pixelValues.length === 4) {
-							// Alpha channel: do NOT apply gamma/brightness
-							transformed.push(v);
-						} else {
-							// RGB channels: apply gamma/brightness
-							transformed.push(this._applyGammaBrightness(v));
-						}
-					}
-
-					// Format HDR values with more precision
-					if (transformed.length === 1) {
-						// Grayscale
-						return transformed[0].toFixed(6);
-					} else if (transformed.length === 3) {
-						// RGB
-						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)}`;
-					} else if (transformed.length === 4) {
-						// RGBA - alpha is shown unmodified
-						return `${transformed[0].toFixed(6)} ${transformed[1].toFixed(6)} ${transformed[2].toFixed(6)} α:${transformed[3].toFixed(6)}`;
-					}
-				} else {
-					// Show original values
-					if (pixelValues.length === 1) {
-						return pixelValues[0].toFixed(6);
-					} else if (pixelValues.length === 3) {
-						return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)}`;
-					} else if (pixelValues.length === 4) {
-						// RGBA - consistent format with α: prefix for alpha
-						return `${pixelValues[0].toFixed(6)} ${pixelValues[1].toFixed(6)} ${pixelValues[2].toFixed(6)} α:${pixelValues[3].toFixed(6)}`;
-					}
-				}
-			}
-		}
-
-		// Try NPY/PFM/PPM processors for other image formats
-		if (this.npyProcessor) {
-			const v = this.npyProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseFloatColor(v);
-					if (values) {
-						const transformed = values.map(val => this._applyGammaBrightness(val));
-						return this._formatColorValues(transformed, values.length);
-					}
-				}
-				return v;
-			}
-		}
-		if (this.pfmProcessor) {
-			const v = this.pfmProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseFloatColor(v);
-					if (values) {
-						const transformed = values.map(val => this._applyGammaBrightness(val));
-						return this._formatColorValues(transformed, values.length);
-					}
-				}
-				return v;
-			}
-		}
-		for (const processor of this.scientificProcessors) {
-			const v = processor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseFloatColor(v);
-					if (values) {
-						const transformed = values.map(val => this._applyGammaBrightness(val));
-						return this._formatColorValues(transformed, values.length);
-					}
-				}
-				return v;
-			}
-		}
-		if (this.ppmProcessor) {
-			const v = this.ppmProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseIntColor(v);
-					if (values) {
-						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
-						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
-						return this._formatColorValues(scaled, values.length, true);
-					}
-				}
-				return v;
-			}
-		}
-		if (this.pngProcessor) {
-			const v = this.pngProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseIntColor(v);
-					if (values) {
-						// Normalize to 0-1, apply gamma/brightness to RGB only (skip alpha at index 3)
-						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
-						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
-						return this._formatColorValues(scaled, values.length, true);
-					}
-				}
-				return v;
-			}
-		}
-
-		if (this.hdrProcessor) {
-			const v = this.hdrProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseFloatColor(v);
-					if (values) {
-						const transformed = values.map(val => this._applyGammaBrightness(val));
-						return this._formatColorValues(transformed, values.length);
-					}
-				}
-				return v;
-			}
-		}
-		if (this.tgaProcessor) {
-			const v = this.tgaProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseIntColor(v);
-					if (values) {
-						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
-						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
-						return this._formatColorValues(scaled, values.length, true);
-					}
-				}
-				return v;
-			}
-		}
-		if (this.webImageProcessor) {
-			const v = this.webImageProcessor.getColorAtPixel(x, y, naturalWidth, naturalHeight);
-			if (v) {
-				if (showModified) {
-					const values = this._parseIntColor(v);
-					if (values) {
-						const normalized = values.map(val => val / 255);
-						const transformed = normalized.map((val, idx) => idx === 3 ? val : this._applyGammaBrightness(val));
-						const scaled = transformed.map(val => Math.round(Math.max(0, Math.min(1, val)) * 255));
-						return this._formatColorValues(scaled, values.length, true);
-					}
-				}
-				return v;
-			}
+		const image = this.getActiveImage();
+		const value = image?.readPixel(x, y, naturalWidth, naturalHeight);
+		if (value) {
+			if (!showModified || image.pixelDisplay === 'native') return value;
+			// TIFF extra samples are not colour values; preserve their labels.
+			const extra = image.pixelDisplay === 'tiff' && /^(\S+) (α|C2):(\S+)$/.exec(value);
+			if (extra) return `${this._applyGammaBrightness(Number(extra[1])).toFixed(6)} ${extra[2]}:${extra[3]}`;
+			const bytes = image.pixelDisplay === 'byte';
+			const values = bytes ? this._parseIntColor(value) : this._parseFloatColor(value);
+			if (!values) return value;
+			const transformed = values.map((v, i) => {
+				if (i === 3 && values.length === 4) return v;
+				const adjusted = this._applyGammaBrightness(bytes ? v / 255 : v);
+				return bytes ? Math.round(Math.max(0, Math.min(1, adjusted)) * 255) : adjusted;
+			});
+			return this._formatColorValues(transformed, values.length, bytes);
 		}
 		// Fallback to canvas pixel reading for standard images
 		if (this.imageElement instanceof HTMLCanvasElement) {
@@ -752,26 +552,6 @@ export class MouseHandler {
 		}
 
 		return '';
-	}
-
-	/**
-	 * Parse TIFF color string to array of values
-	 * @private
-	 * @param colorStr - Color string from TIFF processor
-	 * @returns Array of numeric values or null
-	 */
-	_parseTiffColor(colorStr: string): number[] | null {
-		try {
-			// TIFF colors are space-separated numbers
-			const parts = colorStr.trim().split(/\s+/);
-			const values = parts.map(p => {
-				const num = parseFloat(p);
-				return isNaN(num) ? null : num;
-			});
-			return values.every(v => v !== null) ? (values as number[]) : null;
-		} catch (e) {
-			return null;
-		}
 	}
 
 	/**

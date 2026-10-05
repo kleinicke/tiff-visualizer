@@ -30,10 +30,9 @@ import { adjustmentSummary, clippingTarget, buildLayerDisplayTree, type DisplayI
 import Layers from '../../ui/components/Layers.svelte';
 import { mountView } from '../../ui/mount.js';
 const thumbnailBoundsCache = new WeakMap<object, { left: number; top: number; right: number; bottom: number }>();
-export interface LayersModel { host: LayersPanel; tree: DisplayItem[]; revision: number; }
+export interface LayersModel { host: LayersPanel; tree: DisplayItem[]; ui: { movingLayerId: string | null; pendingRemoveId: string | null; collapsedGroups: Set<string>; expandedEffectStacks: Set<string> }; backend: LayerCompositorBackendSelection; resolvedBackend: LayerCompositorBackend; selectBackend: (backend: LayerCompositorBackendSelection) => void; }
 export class LayersPanel {
   private view: ReturnType<typeof mountView<LayersModel>> | null = null;
-  private revision = 0;
 	manager: LayerManager;
 	onChange: (options?: { interactive?: boolean; settled?: boolean }) => void;
 	onBackgroundChange?: (brightness: number | null) => void;
@@ -53,7 +52,6 @@ export class LayersPanel {
 	backgroundBrightness: number | null;
 	compositorBackend: LayerCompositorBackendSelection;
 	resolvedCompositorBackend: LayerCompositorBackend = 'javascript';
-	compositorSelect: HTMLSelectElement | null;
 	themeBackgroundBrightness: number;
 	/** id of the layer currently armed for drag-to-move, or null */
 	movingLayerId: string | null;
@@ -86,7 +84,6 @@ export class LayersPanel {
 		this.backgroundSlider = null;
 		this.backgroundBrightness = null;
 		this.compositorBackend = 'auto';
-		this.compositorSelect = null;
 		this.themeBackgroundBrightness = 50;
 		this.movingLayerId = null;
 		this._pendingRemoveId = null;
@@ -109,7 +106,7 @@ export class LayersPanel {
 	/** Build the panel DOM (once) and attach it to the document body. */
 	mount(): void {
 		if (this.root) { return; }
-    this.view = mountView(Layers, { host: this, tree: buildLayerDisplayTree(this.manager.layers), revision: this.revision });
+    this.view = mountView(Layers, this.snapshot());
 
 		window.addEventListener('keydown', event => {
 			if (!this.isVisible() || event.key.toLowerCase() !== 'z' || (!event.ctrlKey && !event.metaKey) || event.altKey) { return; }
@@ -161,18 +158,22 @@ export class LayersPanel {
 
 	setCompositorBackend(backend: LayerCompositorBackendSelection): void {
 		this.compositorBackend = backend;
-		if (this.compositorSelect) { this.compositorSelect.value = backend; }
+		this.refresh();
 	}
 
 	setResolvedCompositorBackend(backend: LayerCompositorBackend): void {
+		if (this.resolvedCompositorBackend === backend) return;
 		this.resolvedCompositorBackend = backend;
-		const option = this.compositorSelect?.querySelector<HTMLOptionElement>('option[value="auto"]');
-		if (option) {
-			const labels: Record<LayerCompositorBackend, string> = {
-				webgpu: 'WebGPU', gpu: 'WebGL', wasm: 'Wasm', javascript: 'JS',
-			};
-			option.textContent = `Auto (${labels[backend]})`;
-		}
+		this.refresh();
+	}
+
+	private snapshot(): LayersModel {
+		return { host: this, tree: buildLayerDisplayTree(this.manager.layers),
+			ui: { movingLayerId: this.movingLayerId, pendingRemoveId: this._pendingRemoveId,
+				collapsedGroups: new Set(this.collapsedGroups), expandedEffectStacks: new Set(this.expandedEffectStacks) },
+			backend: this.compositorBackend, resolvedBackend: this.resolvedCompositorBackend,
+			selectBackend: backend => { this.setCompositorBackend(backend); this.onCompositorBackendChange?.(backend); },
+		};
 	}
 
 	isVisible(): boolean {
@@ -222,7 +223,7 @@ export class LayersPanel {
 	/** Rebuild the layer rows from the manager state (top layer shown first). */
   refresh(): void {
     if (!this.view) return;
-    this.view.update({ host: this, tree: buildLayerDisplayTree(this.manager.layers), revision: ++this.revision });
+    this.view.update(this.snapshot());
     this._applyCollapsed();
   }
   toggleGroups(): void {

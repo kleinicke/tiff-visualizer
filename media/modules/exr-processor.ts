@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
@@ -39,6 +40,42 @@ interface ExrImageData {
  * Uses parse-exr library for EXR file parsing
  */
 export class ExrProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      const raw = this.rawExrData;
+      if (!raw?.data)
+          return null;
+      const { width, height } = raw;
+      const tags = this._lastAllTags;
+      return { width, height, restore: () => {
+              this.rawExrData = raw;
+              this._lastAllTags = tags;
+              this._cachedStats = undefined;
+              this._isInitialLoad = true;
+              this._pendingRenderData = {
+                  width: raw.width,
+                  height: raw.height,
+                  data: raw.data,
+                  channels: raw.channels,
+                  type: raw.type,
+                  format: raw.format
+              };
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this.rawExrData = undefined; this._cachedStats = undefined;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, histogram: this._lastRenderHistogram, raster: imageRaster(this.rawExrData, { isFloat: true, typeMax: 1, sourceNumericType: this.rawExrData?.type === 1016 ? 'float16' : 'float32' }),
+          readPixel: (x, y) => {
+              const values = this.getPixelValue(x, y);
+              return values ? Array.from(values, (v: number, i) => `${i === 3 && values.length === 4 ? 'α:' : ''}${v.toFixed(6)}`).join(' ') : '';
+          }, pixelDisplay: 'float' };
+  }
+
 	settingsManager: SettingsManager;
 	vscode: VsCodeApi;
 	_lastRaw: any;
@@ -91,7 +128,7 @@ export class ExrProcessor {
 	/**
 	 * Process EXR file from URL
 	 */
-	async processExr(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData; exrData: ExrImageData }> {
+	async load(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData; exrData: ExrImageData }> {
 		const loadSignal = this.loadSignal;
 		try {
 			this._lastDecodeInfo = null;

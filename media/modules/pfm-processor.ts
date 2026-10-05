@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
@@ -29,6 +30,32 @@ interface PendingRenderData {
  * Supports grayscale (Pf) and RGB (PF) portable float map files
  */
 export class PfmProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      const raw = this._lastRaw;
+      if (!raw?.data)
+          return null;
+      const { width, height } = raw;
+      const decodedStats = this._decodedStats;
+      return { width, height, restore: () => {
+              this._lastRaw = raw;
+              this._decodedStats = decodedStats;
+              this._cachedStats = undefined;
+              this._isInitialLoad = true;
+              this._pendingRenderData = { displayData: raw.data, width: raw.width, height: raw.height, channels: raw.channels };
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, histogram: this._lastRenderHistogram, raster: imageRaster(this._lastRaw, { isFloat: true, typeMax: 1 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'float' };
+  }
+
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
     _lastRaw: RawImageData | null; // { width, height, data: Float32Array }
@@ -62,7 +89,7 @@ export class PfmProcessor {
         this.decodeWorker = null;
     }
 
-    async processPfm(src: string) {
+    async load(src: string) {
         const loadSignal = this.loadSignal;
         const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'pfm');
         let decoded: any;

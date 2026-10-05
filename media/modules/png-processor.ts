@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
@@ -46,6 +47,33 @@ function bootstrapImageFor(src: string): HTMLImageElement | null {
  * Supports proper uint16 PNG handling and grayscale/RGB channel detection
  */
 export class PngProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      const raw = this._lastRaw;
+      if (!raw?.data || raw.bitDepth <= 8)
+          return null;
+      const { width, height } = raw;
+      const tags = this._lastAllTags;
+      return { width, height, restore: () => {
+              this._lastRaw = raw;
+              this._lastAllTags = tags;
+              this._cachedStats = undefined;
+              this._cachedStatsRgb24Mode = false;
+              this._isInitialLoad = true;
+              this._pendingRenderData = true;
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null; this._lazyNativeReadback = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, sampleHistogram: () => this.hasLazyNativeReadback() ? this.getLazyNativeHistogramImageData(1_000_000) : null, raster: imageRaster(this._lastRaw, { isFloat: false, typeMax: this._lastRaw?.maxValue || 255 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'byte' };
+  }
+
     settingsManager: any;
     vscode: any;
     _lastRaw: RawImageData | null;
@@ -89,7 +117,7 @@ export class PngProcessor {
      * Note: JPEG handling is included here since JPEGs are always 8-bit and use the same native Image API path
      * @param src - Source URI
      */
-    async processPng(src: string): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
+    async load(src: string): Promise<{ canvas: HTMLCanvasElement, imageData: ImageData | null, canvasAlreadyRendered?: boolean, lazyPixelData?: boolean, displayElement?: HTMLElement }> {
         const loadSignal = this.loadSignal;
         // JPEG files always use native browser Image API (they don't support 16-bit)
         const isJpeg = src.toLowerCase().includes('.jpg') || src.toLowerCase().includes('.jpeg');

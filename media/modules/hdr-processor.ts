@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
@@ -18,6 +19,31 @@ type VsCodeApi = { postMessage: (msg: any) => any };
  * alpha fixed at 1.0, so its stride is retained only on that fallback path.
  */
 export class HdrProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      const raw = this._lastRaw;
+      if (!raw?.data)
+          return null;
+      const { width, height } = raw;
+      return { width, height, restore: () => {
+              this._lastRaw = raw;
+              this._cachedStats = undefined;
+              this._cachedWebglRgb = null;
+              this._isInitialLoad = true;
+              this._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height, renderChannels: raw.channels };
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, histogram: this._lastRenderHistogram, raster: imageRaster(this._lastRaw, { isFloat: true, typeMax: 1 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'float' };
+  }
+
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
     _lastRaw: { width: number; height: number; data: Float32Array; channels: number } | null;
@@ -49,7 +75,7 @@ export class HdrProcessor {
         this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
     }
 
-    async processHdr(src: string) {
+    async load(src: string) {
         const loadSignal = this.loadSignal;
         // parse-hdr returns { shape:[width,height], exposure, gamma, data:Float32Array }
         // data is RGBA stride-4, alpha is always 1.0

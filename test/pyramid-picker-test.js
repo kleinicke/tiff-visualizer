@@ -15,7 +15,7 @@ async function main() {
 		isMac: false,
 		settings: { normalization: { gammaMode: false }, gamma: { in: 1, out: 1 }, brightness: { offset: 0 } },
 	};
-	const handler = new MouseHandler(settings, { postMessage: message => messages.push(message) }, null);
+	const handler = new MouseHandler(settings, { postMessage: message => messages.push(message) });
 	const residentValues = new Map();
 	let exactReads = 0;
 	let left = 0;
@@ -93,12 +93,13 @@ async function main() {
 	assert.strictEqual(messages[messages.length - 1].value, '20000x20000 123.5');
 	console.log('✅ Generated-preview picker upgrades to the exact original pixel');
 	console.log('✅ Pyramid picker is immediate from resident tiles and hover performs no IO');
+	let activeImage;
 	const modified = new MouseHandler({ isMac: false, settings: {
 		normalization: { gammaMode: true }, colorPickerShowModified: true,
 		gamma: { in: 1, out: 1 }, brightness: { offset: 1 },
-	} }, { postMessage() {} }, null);
+	} }, { postMessage() {} }, () => activeImage);
 	for (const label of ['α', 'C2']) {
-		modified.tiffProcessor = { getColorAtPixel: () => `0.5 ${label}:128` };
+		activeImage = { raster: null, pixelDisplay: 'tiff', readPixel: () => `0.5 ${label}:128` };
 		assert.strictEqual(modified._getColorAtPixel(0, 0, 1, 1), `1.000000 ${label}:128`,
 			'exposure changes intensity but preserves alpha/extra samples and their labels');
 	}

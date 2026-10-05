@@ -1,564 +1,126 @@
-# CLAUDE.md
+# Scientific Image Visualizer — contributor guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Shared scientific/HDR/image viewer for VS Code desktop and Web, the standalone
+browser site, JetBrains, and the local Python/REST/MCP package. The sibling
+`ply-visualizer` repository is the 3D viewer; confirm the target if a request is
+ambiguous. User-facing format support lives in `README.md` and `docs/formats.md`.
 
-## Repository Overview
+## Ownership
 
-This VS Code extension visualizes scientific, HDR, and standard images. Major families include TIFF/OME-TIFF, FITS, DICOM, classic NetCDF, EXR, NumPy, NetPBM, and browser image formats. The exact user-facing matrix belongs in `README.md` and `docs/formats.md`; `package.json` selectors are the registration source of truth.
-Prefer Rust for complete byte parsers and pixel algorithms; anything that touches the DOM, the GPU API, or the VS Code API stays in TS. A narrowly scoped TypeScript accelerator is acceptable when measurement shows that the input bytes already match a JavaScript TypedArray and crossing WASM memory is the dominant cost. Such an accelerator must preserve the source buffer for unsupported inputs and delegate them to the authoritative Rust implementation.
+| Responsibility | Location |
+| --- | --- |
+| Byte parsing, decoded samples, pixel algorithms, statistics | `crates/image-decoders/` |
+| WASM bindings and viewer-specific numerical kernels | `wasm/tiff-decoder/`, `wasm/jxl-decoder/` |
+| Shared display defaults, types and mode policy | `shared/display-settings.ts` |
+| Extension routing | `media/modules/format-registry.ts` |
+| Decoder lifecycle and active-image adapters | `media/modules/*-processor.ts` |
+| Active image, measurement/histogram adapters and cache snapshots | `media/modules/active-image.ts` |
+| Load installation and navigation/cancellation lifecycle | `media/modules/image-load.ts`, `media/modules/image-navigation.ts` |
+| Cross-host messages and automation validation | `shared/viewer-protocol.ts` |
+| Measurement jobs and collected results | `media/modules/measure/analysis.ts`, `media/modules/measure/results.ts` |
+| Rendering, workers, navigation, measurements, layers | `media/modules/` |
+| Shared controls and panel markup | `ui/components/` |
+| VS Code APIs, commands, status bars and persistence | `src/` |
+| Browser/embedded host, file access and browser persistence | `web/` |
 
-**Decoder inventory:** the complete byte-parsing decoders are Rust — TIFF, EXR, PNG16, HDR, JPEG, JPEG XR, JPEG 2000, JPEG XL, PFM, NetPBM, NPY/NPZ, FITS, NetCDF, DICOM, CZI, ND2, LIF and SDT.
+Keep `media/imagePreview.ts` as coordination code. New features belong in the
+owning module; do not add format-specific pixel inspection, layer conversion or
+cache restoration branches there. Measurements and histograms consume the same
+active source; retain its numeric domain and planar storage where applicable. Processors expose `activeImage`; supported
+cache paths expose `captureDecoded()`. Snapshots retain buffers without copying
+and restore processor state without doing host UI work.
 
-**Three WebAssembly modules, not one.** The decoders are split by how often a real file needs them, because the alternative is every image open paying for codecs almost nobody uses:
+Prefer Rust for byte parsers and pixel algorithms. DOM, GPU API and host API work
+stays TypeScript. A measured zero-copy TS accelerator may handle narrowly defined
+TypedArray-compatible inputs; unsupported variants must retain their source
+buffer and delegate to Rust. Do not copy parsers into the WASM adapters.
 
-| module | built from | ~size | fetched |
-| --- | --- | --- | --- |
-| `media/wasm/tiff-wasm.wasm` | `wasm/tiff-decoder`, default features | 1.8 MB | always |
-| `media/wasm/codec-wasm.wasm` | the SAME crate, `--features heavy-codecs` | 2.7 MB | only for a file declaring JPEG 2000, JPEG XR, LERC, LZMA, WebP, or a DICOM JPEG-LS/lossless syntax |
-| `media/wasm/jxl-wasm.wasm` | `wasm/jxl-decoder`, JXL plus shared TIFF/DICOM parsers | 2.2 MB | only when standalone or embedded JPEG XL is declared |
+Svelte owns markup and controls; pixel buffers and render loops stay outside
+reactive state. Publish small view snapshots and explicit actions. Keep stable
+control identity during updates, especially sliders and text inputs. Do not
+force whole-panel remounts merely to refresh a value. See `docs/SVELTE.md`.
 
-The codec module is a strict SUPERSET of the core — same adapter, same container parsers, more codecs — so a file the core cannot finish is re-decoded there through the very same code and the two cannot drift. Routing is by failure, not by guesswork: `decompress_block` (and the DICOM codec dispatch) reports a codec it does not carry as `[external-codec:NAME]` while reading the file's header, before any pixel work, and that error is the ONLY thing that triggers the download. Anything else propagates. Because a codestream codec carries no container knowledge, one module answers for every container: the same JPEG XR decoder serves TIFF 34934, a CZI subblock and a standalone `.jxr`, and the same JPEG 2000 decoder serves TIFF 34712, a DICOM `.4.90` frame and a standalone `.jp2`.
+## Invariants worth protecting
 
-Two rules that are load-bearing rather than stylistic. `external_codec_needed` in [strips.rs](crates/image-decoders/src/formats/tiff/strips.rs) and `EXTERNAL_CODEC_PATTERN` in [codec-wasm-wrapper.ts](media/modules/codec-wasm-wrapper.ts) are one protocol — change either and change both. And `float_strip_plan_for` must not claim a codec the build cannot decode: the strip pool decodes with whichever module produced the plan, so a core-build plan naming JPEG 2000 would have every worker fail.
+- **Numeric domain is not the carrier type.** Preserve source dtype/range,
+  channel interpretation, alpha, NaN/Infinity and no-data semantics. Do not
+  assume a Float32Array means the source was float, or force all samples to f32.
+- `ImageRenderer` is the common display pipeline. Pass the correct `typeMax` and
+  extra-sample semantics. Histogram and rendering must agree about non-finite
+  values (`Number.isFinite`, not a NaN-only test).
+- Matched decoder results are assembled in `media/modules/wasm-decoders.ts` for
+  both worker and local paths. WASM `take_data_as_*` methods are one-shot moves.
+- Core, heavy-codec and JXL WASM modules are deliberately separate lazy loads.
+  The heavy module is the same TIFF adapter built with `heavy-codecs`; JXL
+  includes the shared container parsers. Keep uncommon codecs off ordinary opens.
+- `[external-codec:NAME]` is a protocol between Rust's `external_codec_needed`
+  and TS's `EXTERNAL_CODEC_PATTERN`. Change both together. Strip plans must not
+  claim a codec absent from the selected module. See `docs/decoder-fallbacks.md`.
+- Source decoding, display changes and exports must preserve their distinct
+  semantics. Do not silently replace scientific samples with rendered RGBA.
+- `ImageNavigation` owns load generations, cancellation and file-cache selection.
+  Switching files cancels stale work. Changing planes within a dataset retains
+  worker source caches and renderers; generation checks still discard stale
+  results. Cache keys include URI plus page/frame where applicable.
+- On initial load, send `formatInfo` before rendering, retain pending decoded
+  data, and render after the host applies per-format settings. Preserve this
+  deferred-render handshake when adding processors or restoring cached images.
+- Host/viewer messages use the discriminated types in `shared/viewer-protocol.ts`.
+  Validate external automation before changing settings, navigation or ROIs.
+- Host settings remain authoritative. Per-format defaults are shared, while
+  session preferences and document-specific state keep their existing scopes.
+  VS Code display settings are session-scoped; do not introduce workspace
+  persistence implicitly. Preserve webview state through `getState`/`setState`
+  so tab reloads restore navigation and document state.
+- Keep CSP-compatible external scripts/styles. The standalone site processes
+  files locally; never upload image data to its deployment.
+- Keep the TIFF WASM glue import static. A non-literal runtime import can resolve
+  relative to the wrong bundled URL and silently fail.
 
-Embedded JPEG XL (TIFF 50002 and DICOM `.4.110`/`.111`/`.112`) retries the complete container through `wasm/jxl-decoder`, which compiles the same TIFF and DICOM parsers alongside jxl-rs. Common binary NetPBM, native little-endian float32 NPY, and native-endian PFM additionally have conservative zero-copy TypeScript accelerators; binary P5 runs directly because its conversion is cheaper than a worker round trip, while the larger raw paths use the small worker. Unsupported variants go to Rust. `geotiff.js`, `parse-exr`, `upng` and `pako` remain only for cases Rust does not yet cover, not as general fallbacks. OME-XML parsing ([media/modules/ome-tiff.ts](media/modules/ome-tiff.ts)) stays TypeScript deliberately: the byte-level extraction is already in Rust (`extract_ome_xml`), and what remains maps XML text onto a typed model consumed by dataset-navigation UI, which is the TS side of the rule above.
+## Routine checks
 
-**Shared decoder crate:** all byte parsing, decoded-pixel assembly, demosaicing, and format-neutral
-statistics live in the plain-Rust [`scientific-image-decoders`](crates/image-decoders) crate. It has
-no `wasm-bindgen` types. [`wasm/tiff-decoder`](wasm/tiff-decoder) is the thin JavaScript adapter plus
-TIFF Visualizer-specific measurement and compositing kernels;
-[`wasm/jxl-decoder`](wasm/jxl-decoder) is a second, much smaller adapter that takes ONLY the `jxl`
-feature, so jxl-rs is linked into nothing else. The heavy-codec module needs no third adapter: it is
-`wasm/tiff-decoder` built again with `--features heavy-codecs` into `pkg-codecs/`. Decoder changes happen in the shared
-crate and are picked up immediately through its local path dependency; do not recreate decoder
-modules in the adapter.
+Node 24 is pinned in `.nvmrc`; install dependencies at the repository root.
 
-**Decoder result contract:** the six array formats share one `DecodedArray` struct
-([crates/image-decoders/src/lib.rs](crates/image-decoders/src/lib.rs)); TIFF/EXR/PNG/HDR/JPEG keep richer
-per-format structs because their callers need the extra fields. `take_data_as_f32/_u8/_u16` are
-ONE-SHOT: the samples are moved, not copied, and a second call throws. Assemble results only through
-[media/modules/wasm-decoders.ts](media/modules/wasm-decoders.ts), which is shared by the decode worker
-and the main-thread path so the two cannot drift.
-
-**Format routing** lives in [media/modules/format-registry.ts](media/modules/format-registry.ts) — one
-table mapping extension to decoder. Add a format there and in `package.json`'s `customEditors`;
-`test:format-registry` fails if the two disagree.
-
-## Development Commands
-
-### Build & Development
 ```bash
-npm install              # Install dependencies
-npm run compile          # Build using esbuild (creates 4 bundles: Node.js, Web, Webview, Decode Worker)
-npm run watch            # Watch mode for development
-npm run vscode:prepublish # Production build
-npm run web:build        # Build the standalone site into web-dist/
-npm run web:dev          # Build and serve the standalone site locally
+npm run compile:quick       # TS/Svelte bundles; uses existing WASM artifacts
+npm run typecheck           # extension, engine, browser and Svelte
+npm run lint
+npm run test:behavior       # real production settings, no IDE or Rust rebuild
+npm run test:format-defaults
+npm run test               # full numerical/format/behavior suite
+npm run test:web            # standalone build plus browser regressions
+npm run web:dev             # local standalone viewer
 ```
 
-### Website Deployment
-```bash
-npm run typecheck:web && npm run test:web-host && npm run web:build
-netlify deploy --prod --dir=web-dist
-```
-The repository is already linked to the production Netlify site at `https://images.f-kleinicke.de`.
-
-### Testing & Quality
-```bash
-npm run test             # Run all tests (behavior + visualization)
-npm run test:behavior    # Run behavioral tests (fast, no VS Code required)
-npm run test:visualization # Run visualization tests
-npm run test:web         # Playwright smoke tests against the standalone site
-npm run test:ui          # Run UI tests with Extension Tester
-npm run lint             # Run ESLint
-npm run pretest          # Compile and lint before testing
-```
-
-### Extension Testing
-- Press **F5** in VS Code to launch Extension Development Host
-- Test files in `example/` directory (various TIFF formats)
-- Registered extensions are defined by `contributes.customEditors` in `package.json`; do not duplicate the full list here.
-
-### Packaging
-```bash
-npm install -g @vscode/vsce
-vsce package            # Creates .vsix file for distribution
-```
-
-## Architecture Overview
-
-### Five-Bundle Build System
-The extension uses five primary build targets:
-
-1. **Extension bundle** (`out/extension.js`) - Node.js target for VS Code desktop API integration
-2. **Web bundle** (`out/extension.web.js`) - Browser target for VS Code Web/vscode.dev support
-3. **Webview bundle** (`media/imagePreview.js`) - Browser-based visualization with ES6 modules
-4. **Decode worker bundle** (`media/decode-worker.js` → `media/decodeWorker.bundle.js`) - Runs pure-data decoders, including TIFF/WASM, EXR, NPY/NPZ, NetPBM, HDR, FITS, DICOM, JPEG XL, NetCDF, CZI, ND2, LIF, and SDT, off the UI thread. Bytes and typed arrays cross as zero-copy transfers; every path retains a main-thread fallback.
-The TIFF decode also has a **worker pool** ([media/modules/strip-parallel-decode.ts](media/modules/strip-parallel-decode.ts)): eligible files are split into units of work — one strip, or one whole tile ROW, since both are full-width bands that drop into the image at a single offset — and decoded concurrently. Eligibility is decided in Rust (`tiff_float_strip_plan`), which covers byte-aligned chunky layouts, predictors 1/2/3, and every codec `decompress_block` implements. `test:strip-parallel` asserts the pool's output is identical to the single-threaded decode for every eligible file in `test-samples`; that equality is the whole contract, so do not widen the plan without running it.
-
-5. **Layer compositor worker bundle** (`media/layer-compositor-worker.ts` → `media/layerCompositorWorker.bundle.js`) - Retains raster assets off-thread, composes full-resolution editable layer stacks, produces scaled interaction previews, and reuses group/clipping/dirty-region caches. The synchronous CPU path remains the fallback and export correctness reference.
-
-This allows the extension to work in both desktop VS Code and browser-based VS Code (vscode.dev).
-
-The standalone browser host is built from `web/` and deployed independently at
-`https://images.f-kleinicke.de`. Netlify uses the root `netlify.toml`; Node 24 is
-pinned in `.nvmrc`. The browser host must continue to process user files locally
-and must not upload image data to the deployment.
-
-### Custom Editor Pattern
-Uses VS Code's `CustomReadonlyEditorProvider` API:
-- **View Type**: `tiffVisualizer.previewEditor`
-- **File associations**: See `contributes.customEditors` in `package.json` (the canonical list).
-- **Registration**: Handled in [src/imagePreview/index.ts](src/imagePreview/index.ts)
-- **Provider Implementation**: [src/imagePreview/imagePreviewManager.ts](src/imagePreview/imagePreviewManager.ts)
-
-### Centralized State Management
-**AppStateManager** ([src/imagePreview/appStateManager.ts](src/imagePreview/appStateManager.ts)) is the single source of truth for:
-- **Image settings**: Normalization ranges, gamma, brightness (global across session)
-- **Per-format settings**: Different defaults for TIFF-float, TIFF-int, EXR, NPY, etc.
-- **UI state**: Zoom level, image size, format info, pixel position
-- **Image statistics**: Min/max values from current image
-- **Event coordination**: Emits events when state changes to update UI components
-
-This centralized design ensures consistency across all status bar entries and command handlers.
-
-### Message Passing Architecture
-Extension host ↔ Webview communication via `postMessage` (handled by [messageHandlers.ts](src/imagePreview/messageHandlers.ts)):
-- **Inbound** (webview → extension): Image loaded, stats calculated, pixel focus/blur, zoom changes
-- **Outbound** (extension → webview): Settings updates, command execution (export, normalization, gamma, brightness)
-- **MessageRouter pattern**: Type-based routing to specific handler classes
-
-### Svelte UI
-
-The shared metadata, channel, debayer, histogram, layers, measurement, navigation
-and comparison panels live in
-`ui/components/`. The website shell, tabs and display forms are Svelte components
-in `web/`. Host-owned settings feed typed snapshots through `ui/mount.ts`; keep
-pixel buffers and render loops outside reactive UI state. Both esbuild pipelines
-use `scripts/svelte-plugin.cjs` with external CSS for CSP compatibility.
-Run `npm run typecheck:ui` after component changes. See [docs/SVELTE.md](docs/SVELTE.md)
-for build details and the UI/engine boundary.
-
-### Modular Webview Design
-The webview ([media/imagePreview.js](media/imagePreview.js)) uses ES6 modules for maintainability:
-
-- **SettingsManager** ([media/modules/settings-manager.js](media/modules/settings-manager.js)): Global settings and state management
-- **Format Processors**: Separate modules for each format
-  - **TiffProcessor** ([media/modules/tiff-processor.ts](media/modules/tiff-processor.ts)): TIFF via Rust/WASM, with geotiff.js retained only for the cases the Rust decoder does not yet cover
-  - **TiffWasmWrapper** ([media/modules/tiff-wasm-wrapper.ts](media/modules/tiff-wasm-wrapper.ts)): Loads and caches the one Rust/WASM module instance used by the main thread. It must import the wasm-pack glue STATICALLY — a dynamic import with a non-literal specifier is left to the runtime and resolves against the bundle, which silently 404s.
-  - **ExrProcessor**: OpenEXR using parse-exr library
-  - **NpyProcessor**: NumPy arrays (.npy)
-  - **PfmProcessor**: Portable Float Map
-  - **PpmProcessor**: Portable PixMap formats (PPM/PGM/PBM)
-  - **PngProcessor**: PNG with uint8/16 and float16/32 support
-  - **ScientificArrayProcessor**: Shared FITS/DICOM/NetCDF/CZI/ND2/LIF/SDT/JPEG XR/JPEG 2000 lifecycle. The decoders are Rust; this only orchestrates load, render and dataset navigation.
-- **ZoomController**: Pan/zoom with mouse/trackpad
-- **MouseHandler**: Pixel inspection, hover effects
-- **HistogramOverlay**: Interactive histogram with draggable overlay, linear/sqrt scale toggle, bin hover tooltips, and per-channel display
-- **Colormaps** ([media/modules/colormaps.js](media/modules/colormaps.js)): Shared source of truth for all colormaps (viridis, plasma, jet, etc.) — `getColormapLut()` (forward 256-entry RGB LUT, used for render-time "apply"/pseudocolor) and `rgbToColormapIndex()` (cached 32³ inverse cube, used for "decode")
-- **ColormapConverter** ([media/modules/colormap-converter.js](media/modules/colormap-converter.js)): "Decode" direction — recovers scalar float values from a colormapped RGB image using the shared inverse lookup
-
-### Status Bar Integration
-Comprehensive status bar system with specialized entries:
-- **Size** ([sizeStatusBarEntry.ts](src/imagePreview/sizeStatusBarEntry.ts)): Image dimensions, pixel position on hover
-- **Zoom** ([zoomStatusBarEntry.ts](src/imagePreview/zoomStatusBarEntry.ts)): Current zoom level with click to reset
-- **Normalization** ([normalizationStatusBarEntry.ts](src/imagePreview/normalizationStatusBarEntry.ts)): Float range controls (for float images)
-- **Gamma** ([gammaStatusBarEntry.ts](src/imagePreview/gammaStatusBarEntry.ts)): Gamma correction (in/out)
-- **Brightness** ([brightnessStatusBarEntry.ts](src/imagePreview/brightnessStatusBarEntry.ts)): Brightness adjustment in linear space
-- **Binary Size** ([binarySizeStatusBarEntry.ts](src/binarySizeStatusBarEntry.ts)): File size information
-- **Mask Filter** ([maskFilterStatusBarEntry.ts](src/imagePreview/maskFilterStatusBarEntry.ts)): Pixel filtering by mask
-- **Histogram** ([histogramStatusBarEntry.ts](src/imagePreview/histogramStatusBarEntry.ts)): Toggle histogram overlay
-- **Color Picker Mode** ([colorPickerModeStatusBarEntry.ts](src/imagePreview/colorPickerModeStatusBarEntry.ts)): Toggle whether pixel inspector shows original or gamma/exposure-modified values
-
-Each status bar entry implements `StatusBarEntryInterface` and registers with `ImagePreviewManager`.
-
-### Image Collection Feature
-Each preview instance maintains an ordered collection of images ([src/imagePreview/imagePreview.ts](src/imagePreview/imagePreview.ts)):
-- Starts with the opened file as the single entry
-- Additional images added via `browseAndAddToCollection` (glob/path prompt or Explorer context menu)
-- Navigate forward/backward with `t`/`r` keys
-- An overlay indicator shows current position (e.g. "2 / 5") when the collection has more than one image
-- Webview state is preserved across tab switches; if the webview reloads it re-navigates to the correct collection index
-- Preloads image data for smooth switching
-
-### Comparison Panel Feature
-Side-by-side image comparison ([src/comparisonPanel/comparisonPanel.ts](src/comparisonPanel/comparisonPanel.ts)):
-- Separate webview panel for comparing multiple images
-- Commands: "Select for Compare", "Compare with Selected", "Open Comparison Panel"
-- Persists comparison state across tab switches
-- Allows adding/removing images dynamically
-
-## Key Development Patterns
-
-### Image Processing Pipeline
-1. **Detection**: File extension check
-2. **Loading**: Format-specific processor loads image data
-3. **Type Detection**: Automatic float vs integer, bit depth detection
-4. **Statistics**: Calculate min/max for normalization
-5. **Rendering**: Canvas-based display with ImageData manipulation
-6. **Enhancement**: Apply gamma, brightness, normalization in render loop
-
-### Settings Management Strategy
-- **Global settings**: Normalization, gamma, brightness applied across all images in session
-- **Per-format defaults**: Different defaults for TIFF-float vs TIFF-int vs EXR, etc.
-- **Image-specific state**: Per-file mask filters, comparison selection
-- **Automatic persistence**: Settings maintained during VS Code session via AppStateManager
-- **Real-time updates**: Settings changes trigger re-render via message passing
-
-### Command System
-All commands registered with `tiffVisualizer.` prefix ([src/imagePreview/commands.ts](src/imagePreview/commands.ts)):
-- **Zoom**: `zoomIn`, `zoomOut`, `resetZoom`
-- **Image adjustments**: `setGamma`, `setBrightness`, `setNormalizationRange`
-- **Export**: `exportLayers` (PNG, ORA, GIMP 3 XCF, KRA, or PSD), `copyImage`
-- **Collection**: `browseAndAddToCollection` — adds a file to the active preview's image collection; accepts an optional URI (Explorer context menu) or prompts with a glob/path picker (command palette)
-- **Comparison**: `selectForCompare`, `compareWithSelected`, `openComparisonPanel`
-- **Filters**: `filterByMask`, `toggleNanColor`
-- **Colormap apply**: `applyColormap` - sets the render-time `displayColormap` (pseudocolor) on single-channel images; non-destructive and applied in `ImageRenderer.render()`, so it also works in layers
-- **Colormap decode**: `convertColormapToFloat` - recovers scalar float values from a colormapped RGB image (inverse colormap)
-- **Reset**: `resetAllSettings`
-- **Histogram**: `toggleHistogram` (Ctrl+H / Cmd+H)
-- **Color picker mode**: `toggleColorPickerMode` — switches pixel inspector between original and modified (gamma/exposure) values
-
-Commands work via:
-1. User invokes command → registered handler in extension host
-2. Handler may show input prompts or directly update AppStateManager
-3. AppStateManager fires change event → status bar updates
-4. Extension sends message to webview → webview re-renders
-
-### Centralized Rendering Pipeline
-Major refactoring centralizes all image rendering logic in [media/modules/normalization-helper.js](media/modules/normalization-helper.js):
-
-**ImageRenderer class** handles all rendering with unified approach:
-- **Single entry point**: `ImageRenderer.render()` for all formats and data types
-- **Unified normalization**: `NormalizationHelper.getNormalizationRange()` determines min/max based on mode
-  - **Auto-normalize mode**: Uses actual data statistics
-  - **Gamma mode**: Uses full type range (0-255, 0-65535, or 0-1 for floats)
-  - **Manual mode**: User-specified range with optional normalized-float scaling
-- **Type-aware rendering**: Separate optimized paths for Uint8Array, Uint16Array, and Float32Array
-- **Non-finite pixel handling**: Float paths use `!Number.isFinite()` to detect NaN/Infinity and render with nanColor. Integer (Uint8/Uint16) paths also check this defensively. Histogram pixel loops in `histogram-overlay.js` must use the same guard — NOT `value !== value` (NaN-only).
-- **Identity transform optimization**: Skips expensive gamma/brightness calculations when not needed
-- **LUT acceleration**: Generates lookup tables for gamma/brightness in gamma mode
-
-**Key insight**: All format processors now:
-1. Load raw data and convert to Float32Array (if needed)
-2. Send format info with `typeMax` in options
-3. Call `ImageRenderer.render()` with appropriate parameters
-4. Let central pipeline handle normalization, gamma, brightness, NaN colors
-
-This eliminates duplication - each processor (TIFF, EXR, NPY, PNG, etc.) only handles:
-- Format-specific loading
-- Type detection (bit depth, channels, float vs integer)
-- Raw data extraction
-
-**Rendering modes and logic**:
-- `NormalizationHelper.getNormalizationRange()` - Calculates effective min/max based on mode and typeMax
-- `NormalizationHelper.applyGammaAndBrightness()` - Applies gamma in/out and exposure adjustments
-- `NormalizationHelper.generateLut()` - Creates 8-bit or 16-bit lookup tables for fast gamma/brightness
-- `NormalizationHelper.getEffectiveVisualizationRange()` - Determines visible input range for clipping optimization
-
-**ImageStatsCalculator** provides unified statistics:
-- `calculateFloatStats()` - Min/max for float data
-- `calculateIntegerStats()` - Min/max for integer data (uint8, uint16, etc.)
-
-### Float Image Handling
-Sophisticated normalization system for float images:
-- **Auto normalization**: Calculates min/max from actual data
-- **Manual normalization**: User specifies range (e.g., 0.0 to 1.0)
-- **Gamma mode**: Apply gamma before or after normalization
-- **NaN handling**: Display NaN pixels as black or fuchsia
-- **24-bit mode**: Special handling for depth data stored as RGB
-
-### OpenEXR (EXR) Format Support
-Comprehensive HDR image support via parse-exr library ([media/modules/exr-processor.js](media/modules/exr-processor.js)):
-- **Float precision**: Supports both Float16 (half) and Float32 formats
-- **Channel support**: Grayscale (1 channel), RGB (3 channels), RGBA (4 channels)
-- **Y-axis flipping**: Automatically handles EXR bottom-left origin vs canvas top-left origin
-- **HDR tone mapping**: Applies normalization, gamma, and brightness in sequence
-- **Pixel inspection**: Returns raw HDR float values for accurate analysis
-- **Per-format defaults**: Uses gamma mode with 0-1 range by default (configurable in AppStateManager)
-- **Auto-normalization**: Scans all pixel values to detect actual data range for HDR content
-- **Initial load pattern**: Sends format info before rendering to get correct per-format settings
-- **Re-rendering**: Supports real-time settings updates without reloading file
-
-## Build Configuration Details
-
-### ESBuild Setup ([esbuild.js](esbuild.js))
-```javascript
-// Three separate builds:
-1. Extension (Node.js) → out/extension.js
-2. Extension (Browser) → out/extension.web.js
-3. Webview (Browser) → media/imagePreview.js (built in esbuild.js if needed)
-
-// External libraries bundled with webview:
-- geotiff.min.js (copied from node_modules during build)
-- parse-exr.js (OpenEXR support)
-- upng.min.js (PNG decoding)
-- pako.min.js (compression support)
-```
-
-### Dependencies
-- **Core Processing**: `geotiff` (TIFF), `parse-exr` (EXR), `pako` (compression), `upng-js` (PNG)
-- **VS Code**: `vscode-uri` (URI handling)
-- **Runtime**: `tslib` (TypeScript runtime)
-- **Dev Tools**: `esbuild` (bundling), `typescript`, `eslint`
-- **Testing**: `mocha`, `chai`, `vscode-extension-tester`
-
-## Testing Strategy
-
-### Three-Tier Testing
-1. **Behavioral tests** ([test/simple-behavior-test.js](test/simple-behavior-test.js)): Fast unit tests without VS Code
-   - Tests AppStateManager logic in isolation
-   - No VS Code API required
-   - Run with: `npm run test:behavior`
-
-2. **Visualization tests** ([test/visualization-test.js](test/visualization-test.js)): Image processing verification
-   - Tests format processors work correctly
-   - Run with: `npm run test:visualization`
-
-3. **UI tests** (Extension Tester): Full VS Code integration tests
-   - Tests extension activation, commands, webview interaction
-   - Run with: `npm run test:ui`
-
-### Test Images
-Test images in `example/` directory:
-- **Formats**: UINT8, UINT16, Float32, Float64, OpenEXR
-- **Compression**: LZW, Deflate with predictors
-- **Use cases**: Scientific imagery, depth maps, disparity maps, HDR
-
-## File Organization
-
-```
-src/
-├── extension.ts                      # Main extension entry point, activates extension
-├── imagePreview/                     # Core image preview functionality
-│   ├── index.ts                      # Registers custom editor provider and commands
-│   ├── imagePreviewManager.ts        # CustomReadonlyEditorProvider implementation
-│   ├── imagePreview.ts               # Main preview class, manages webview
-│   ├── appStateManager.ts            # CENTRALIZED state management (settings, UI state)
-│   ├── imageSettings.ts              # Per-image settings (mask filters, comparison state)
-│   ├── messageHandlers.ts            # Routes messages from webview to handlers
-│   ├── messageHandlerSystem.ts       # Message handler interface definitions
-│   ├── commands.ts                   # Command implementations
-│   ├── types.ts                      # TypeScript interfaces
-│   ├── colorPickerModeStatusBarEntry.ts  # Toggle original vs modified pixel values
-│   └── *StatusBarEntry.ts            # Other status bar components
-├── comparisonPanel/                  # Side-by-side comparison feature
-│   ├── index.ts                      # Comparison panel registration
-│   └── comparisonPanel.ts            # Comparison webview panel implementation
-├── util/                             # Utility functions (dispose, DOM helpers)
-├── ownedStatusBarEntry.ts            # Base class for status bar entries
-├── binarySizeStatusBarEntry.ts       # File size status bar entry
-└── mediaPreview.ts                   # Base media preview class
-
-media/
-├── imagePreview.js                   # Main webview application (orchestrates modules)
-├── modules/                          # Modular webview components
-│   ├── settings-manager.js           # Webview-side settings management
-│   ├── tiff-processor.js             # TIFF loading/processing (uses geotiff.js + optional WASM)
-│   ├── tiff-wasm-wrapper.js          # Rust/WASM fast TIFF decoder (drop-in replacement for geotiff.js)
-│   ├── exr-processor.js              # OpenEXR support
-│   ├── npy-processor.js              # NumPy array support
-│   ├── pfm-processor.js              # Portable Float Map
-│   ├── ppm-processor.js              # PPM/PGM/PBM formats
-│   ├── png-processor.js              # PNG with float support
-│   ├── zoom-controller.js            # Pan/zoom functionality
-│   ├── mouse-handler.js              # Pixel inspection
-│   ├── histogram-overlay.js          # Histogram visualization
-│   ├── colormaps.js                  # Shared colormap LUTs + inverse lookup (apply & decode)
-│   └── colormap-converter.js         # Colormap decode (RGB → float, inverse colormap)
-├── geotiff.min.js                    # TIFF processing library (copied from node_modules)
-├── parse-exr.js                      # EXR processing library
-├── upng.min.js                       # PNG decoding
-├── pako.min.js                       # Compression support
-├── comparisonPanel.js                # Comparison panel webview script
-└── *.css, *.svg                      # Styling and assets
-
-test/
-├── simple-behavior-test.js           # Fast behavioral tests
-├── visualization-test.js             # Image processing tests
-└── ui/                               # Extension Tester UI tests
-
-example/
-└── Various test images in different formats
-
-docs/                                 # User documentation, ships in the VSIX (commands.md is generated)
-```
-
-## Common Development Tasks
-
-### Adding New Status Bar Features
-1. Create new `*StatusBarEntry.ts` in [src/imagePreview/](src/imagePreview/)
-2. Implement `StatusBarEntryInterface` interface
-3. Register in `ImagePreviewManager` constructor
-4. Add state to `AppStateManager` if needed
-5. Add message handling in [messageHandlers.ts](src/imagePreview/messageHandlers.ts) if webview needs to update it
-6. Add command in [commands.ts](src/imagePreview/commands.ts) if user interaction needed
-
-### Adding New Image Format Support
-1. Create new processor module in [media/modules/](media/modules/) (e.g., `myformat-processor.js`)
-2. Implement loading, type detection, and rendering logic
-3. Add file extension check in [media/imagePreview.js](media/imagePreview.js) initialization
-4. Register file pattern in [package.json](package.json) `customEditors.selector`
-5. Add format type to `ImageFormatType` in [appStateManager.ts](src/imagePreview/appStateManager.ts)
-6. Set up default settings for the format in `AppStateManager.getDefaultSettings()`
-7. Update MouseHandler to support pixel inspection for the new format
-8. Run `node jetbrains/scripts/register-formats.mjs` and add the format to [jetbrains/DESCRIPTION.md](jetbrains/DESCRIPTION.md) (JetBrains Marketplace text)
-
-### Adding New Commands
-1. Register command in [package.json](package.json) `contributes.commands` section
-2. Implement handler in [src/imagePreview/commands.ts](src/imagePreview/commands.ts)
-3. Update `AppStateManager` if command changes global state
-4. Add webview message handling in [messageHandlers.ts](src/imagePreview/messageHandlers.ts) if UI interaction needed
-5. Add keyboard shortcut in [package.json](package.json) `contributes.keybindings` if desired
-6. Add to context menu in [package.json](package.json) `contributes.menus` if appropriate
-7. Run `npm run docs:commands`, and document user-visible behaviour on the matching page in [docs/](docs/)
-8. If the feature is reachable in the JetBrains plugin, add it to [jetbrains/DESCRIPTION.md](jetbrains/DESCRIPTION.md)
-
-### User Documentation
-
-User docs live in [docs/](docs/), ship inside the VSIX, and open via the `tiffVisualizer.showDocumentation`
-command. `docs/commands.md` is generated — run `npm run docs:commands` after changing `contributes.*`
-(`pretest` fails if it is stale). Conventions and packaging gotchas are documented at the top of
-[scripts/generate-command-docs.js](scripts/generate-command-docs.js).
-
-### Performance work
-
-**Read [docs/performance-method.md](docs/performance-method.md) before changing a
-decoder or a render path.** It is the method, not a tool tour: how the `[Perf]`
-phases are constructed and why they sum exactly to `webview`, why the first open
-of a session must always be discarded, how to check the machine is quiet enough
-to believe a number, and — most important — how to prove a faster decoder still
-produces identical pixels (`scripts/compare-wasm-builds.mjs`). The expensive
-mistakes here have been confident conclusions from bad measurements, and
-correct-looking changes that quietly altered pixels.
-
-### Debugging Extension Host vs Webview
-- **Extension host** (TypeScript): Use VS Code debugger (F5), set breakpoints in `src/`
-- **Webview** (JavaScript): Use Developer Tools (Help > Toggle Developer Tools), check Console tab
-- **Message passing**: Add `console.log` in both extension host and webview to trace messages
-
-### Working with Format Processors
-Format processors follow a standardized pattern with the centralized rendering pipeline:
-
-**Processor responsibilities** (keep minimal):
-1. **Load format data**: Read file bytes and parse format-specific structures
-2. **Type detection**: Determine bit depth (8, 16, 32, 64), channels (1, 3, 4), float vs integer
-3. **Raw data extraction**: Convert to Float32Array (unified internal format)
-4. **Send formatInfo**: Post message with format details before first render
-   - Includes `typeMax` (e.g., 255, 65535, or 1.0) in format info
-   - Allows AppStateManager to apply per-format default settings
-5. **Delegate rendering**: Call `ImageRenderer.render()` with:
-   - Raw data (Float32Array)
-   - Width, height, channels
-   - `isFloat` flag (based on original dtype, not array type)
-   - Statistics (min/max)
-   - Settings (normalization, gamma, brightness)
-   - Options object with `typeMax` (critical for proper range handling)
-
-**Implementation pattern**:
-```javascript
-// In processor:
-const typeMax = (dtype === 'uint16') ? 65535 : (dtype === 'uint8') ? 255 : 1.0;
-const options = { typeMax, nanColor, flipY, rgbAs24BitGrayscale };
-
-// Delegate all rendering to central pipeline
-return ImageRenderer.render(
-    data,           // Float32Array (always)
-    width,
-    height,
-    channels,
-    isFloat,        // Original dtype flag (affects stat calculation)
-    stats,          // {min, max} from actual data
-    settings,       // From AppStateManager
-    options         // Contains typeMax and other rendering hints
-);
-```
-
-**Deferred rendering pattern** (for per-format settings):
-- Send `formatInfo` message BEFORE first render
-- Store pending data in `_pendingRenderData`
-- Return placeholder ImageData
-- Extension applies per-format settings in AppStateManager
-- When settings update fires, perform actual render in `performDeferredRender()`
-- Example: See ExrProcessor._pendingRenderData and _isInitialLoad pattern
-
-**Re-rendering on settings change**:
-- Implement `renderXyzWithSettings()` method that:
-  - Retrieves stored raw data
-  - Calls `ImageRenderer.render()` with updated settings
-  - Returns new ImageData for webview to display
-
-**Important considerations**:
-- **Raw data storage**: Keep original Float32Array for re-renders and pixel inspection
-- **Coordinate systems**: Handle origin differences (EXR: bottom-left, Canvas: top-left)
-- **Statistics caching**: Cache min/max stats if expensive to recalculate
-- **Always pass typeMax in options**: Critical for gamma mode normalization with integer types
-- **Type detection accuracy**: Auto-detect bit depth, channels, float vs integer correctly
-
-## Important Notes
-
-### Multi-Format Support
-The extension handles diverse image formats with minimal processor code. Each format processor converts to Float32Array and delegates rendering to the central pipeline:
-
-- **TIFF** ([media/modules/tiff-processor.js](media/modules/tiff-processor.js)):
-  - Decoded by Rust/WASM. geotiff.js remains only for TIFF cases the Rust decoder does not yet cover; it is not a general fallback. As of the LERC work its decoder registry (raw, LZW, Deflate, PackBits, JPEG, LERC, WebP-via-`createImageBitmap`) is a strict SUBSET of the Rust decoder's codecs, so it no longer covers any compression on its own
-  - Supports LZW, Deflate, PackBits, Zstd, LZMA, LERC (incl. LERC_DEFLATE/LERC_ZSTD), PNG-in-TIFF, JPEG, JPEG 2000 (incl. Aperio 33003/33004/33005), JPEG XR (34934/22610), JPEG XL (50002), WebP and CCITT fax, with predictors and multi-channel data. JPEG XR goes through [crates/jpegxr](crates/jpegxr), a vendored decoder patched to read from memory — the published crate decodes only through a temp file, which WebAssembly has nowhere to put; see its VENDORING.md before touching it.
-  - Detects bit depth (8, 16, 32, 64) and sample format (uint, int, float)
-  - Sets `typeMax` based on bit depth for proper gamma mode normalization
-  - Rasters are always copied into Float32Array internally (even for integer TIFFs) before interleaving — relevant when tracking how special float values (NaN, Infinity) propagate
-
-- **OpenEXR** ([media/modules/exr-processor.js](media/modules/exr-processor.js)):
-  - Via parse-exr, supports HDR, float16/float32
-  - Automatically flips Y-axis (EXR uses bottom-left origin vs canvas top-left)
-  - Uses deferred rendering pattern for per-format settings
-  - Stores raw float data for pixel inspection and re-rendering
-  - `typeMax=1.0` for float data in gamma mode
-
-- **NPY/NPZ** ([media/modules/npy-processor.js](media/modules/npy-processor.js)):
-  - Native NumPy array parsing
-  - Supports float (f2, f4, f8) and integer (u1, u2, u4, u8, i1, i2, i4, i8) types
-  - Converts all integer types to Float32Array for unified rendering
-  - Uses deferred rendering for per-format settings
-  - Sets `typeMax` from dtype (e.g., 65535 for uint16)
-  - Always passes `isFloat=true` since data is Float32Array, but uses `typeMax` in options
-
-- **PFM/PPM/PGM/PBM** ([media/modules/ppm-processor.js](media/modules/ppm-processor.js) and [media/modules/pfm-processor.js](media/modules/pfm-processor.js)):
-  - NetPBM formats (both binary and ASCII variants)
-  - Converts to Float32Array for unified rendering
-  - PFM: float32 values, set `typeMax=1.0` for gamma mode
-  - PPM/PGM/PBM: uint8 values, set `typeMax=255`
-
-- **PNG/JPG** ([media/modules/png-processor.js](media/modules/png-processor.js)):
-  - PNG: Supports uint8, uint16, and float16/float32 via upng.js
-  - JPG: Standard uint8 JPEG decoding
-  - Detects actual bit depth and converts to Float32Array
-  - Uses LUT optimization for gamma/brightness in 8-bit mode
-
-
-### Library Integration
-- **geotiff.min.js**: Browser build automatically copied from node_modules during build
-- **parse-exr.js**: Bundled with extension for OpenEXR support
-- **upng.min.js**: PNG decoding with transparency support
-- **pako.min.js**: Zlib decompression for various formats
-
-### Security & Performance
-- **CSP Compliance**: Webview uses Content Security Policy with nonce-based script loading
-- **Cross-platform**: Works in both desktop VS Code and VS Code Web (vscode.dev)
-- **Memory Management**: Large files handled efficiently with TypedArrays and canvas rendering
-- **Performance**: Canvas-based rendering for pixel-level access, real-time gamma/normalization
-
-### State Persistence
-- **Session state**: AppStateManager keeps settings during VS Code window session
-- **Webview state**: Uses `vscode.getState()`/`vscode.setState()` for tab switch persistence
-- **No workspace state**: Settings reset when VS Code window closes (by design)
-
-### Python, REST and MCP client
-
-`packages/python/scientific_image_visualizer` hosts the standalone viewer on a
-private loopback URL. Build assets with `npm run build:python-viewer`; the wheel
-includes them. `web/python-host.ts` is inert except on explicit loopback Python
-sessions. Browser operations use correlated `automationRequest` messages in the
-shared viewer; retain authoritative settings, original samples and ROI history.
-REST and MCP call the same SDK tools in `mcp_server.py`. Keep path validation,
-body limits, auth and renderer timeouts consistent. See
-[docs/python-rest-mcp.md](docs/python-rest-mcp.md) for commands and semantics.
+`npm run compile` also rebuilds all WASM modules. Rebuild them after Rust changes.
+Use focused tests during iteration, then the appropriate integration checks.
+Missing required fixtures/build artifacts must fail rather than report success.
+Use F5 or the VS Code integration harness for extension-host behavior; standalone
+browser tests do not prove native commands, resource URLs or status bars work.
+
+**Before changing decoding/render performance, read `docs/performance-method.md`.**
+Measure the actual `[Perf]` output, distinguish cold/warm runs, check system load,
+and verify pixels. Do not recapture goldens without explaining and accepting the
+output change. Parallel strip changes require full-vs-split sample equality;
+run `npm run test:strip-parallel` before widening strip-plan eligibility.
+
+## Adding or changing behavior
+
+- Vendored JPEG XR: read `crates/jpegxr/VENDORING.md` before changing or updating
+  the crate. Its in-memory input patches are required for WebAssembly; the
+  upstream temporary-file path cannot replace them.
+- Formats: update the registry, `package.json` custom-editor selectors and the
+  owning decoder/processor. `test:format-registry` checks registration parity.
+  Use the shared settings policy if a new decoded format needs a display default.
+- Commands: register in `package.json`, implement host integration in `src/`,
+  then run `npm run docs:commands`. `docs/commands.md` is generated and ships in
+  the VSIX. Document behavior in the corresponding existing user guide.
+- JetBrains-visible formats/features: run
+  `node jetbrains/scripts/register-formats.mjs` and update
+  `jetbrains/DESCRIPTION.md` as needed.
+- Python/REST/MCP: preserve correlated requests, authoritative settings, original
+  samples, ROI history, path validation, auth, body limits and timeouts. See
+  `docs/python-rest-mcp.md`.
+- Browser deployment: `netlify.toml` links `https://images.f-kleinicke.de`.
+  Validate with `npm run typecheck:web`, `npm run test:web-host` and
+  `npm run web:build` before a requested deployment.

@@ -40,8 +40,7 @@ external bundle stylesheets and linked from host documents for CSP support.
 Svelte owns panel markup and controls. Layers retain their authoritative manager,
 undo/redo history and thumbnail compositor. Measurement retains its ROI manager,
 calculation and export code, asynchronous threshold/particle work, and canvas
-plot drawing. Measurements and layers use explicit revision snapshots; channel
-and dataset sliders retain their DOM identity across engine updates.
+plot drawing. Measurements and layers publish view snapshots without remounting complete panels; measurement, layer, channel and dataset controls retain their DOM identity across engine updates. Backend overrides live under Layers → Rendering diagnostics.
 
 Some small image chrome (collection counter, filename badge, loading notices)
 and browser status/log readouts still use imperative host updates. Native IDE
@@ -50,3 +49,8 @@ status bars, file dialogs and commands remain in their platform adapters.
 The pre-existing `UI_MIGRATION.md` and `UI_REDESIGN_PLAN.md` discuss a separate
 inspector/redesign prototype. This change preserves the current UI organization
 and does not implement that proposed inspector or consolidate repositories.
+
+Measurement controls publish snapshots from `MeasurePanel`. Numerical jobs and
+stale-result cancellation belong to `measure/analysis.ts`; row computation,
+frame coalescing and per-file provenance belong to `measure/results.ts`. These
+services do not import Svelte or manipulate DOM elements.

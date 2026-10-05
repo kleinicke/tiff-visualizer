@@ -1,5 +1,6 @@
+import type { ViewerToHostMessage } from '../../shared/viewer-protocol';
 import * as vscode from 'vscode';
-import { AppStateManager } from './appStateManager';
+import { AppStateManager, type ImageFormatType } from './appStateManager';
 import { getOutputChannel } from '../extension';
 
 /**
@@ -15,7 +16,7 @@ export interface HandlerContext {
 /**
  * Base interface for typed message handlers using the command pattern
  */
-export interface MessageHandler<T = any> {
+export interface MessageHandler<T extends ViewerToHostMessage = ViewerToHostMessage> {
 	readonly type: string;
 	handle(message: T, context: HandlerContext): Promise<void> | void;
 }
@@ -42,11 +43,11 @@ export class TypedMessageRouter {
 		this.registerDefaultHandlers();
 	}
 
-	public registerHandler<T>(handler: MessageHandler<T>): void {
+	public registerHandler<T extends ViewerToHostMessage>(handler: MessageHandler<T>): void {
 		this.handlers.set(handler.type, handler);
 	}
 
-	public async handle(message: any): Promise<void> {
+	public async handle(message: ViewerToHostMessage): Promise<void> {
 		const handler = this.handlers.get(message.type);
 		if (handler) {
 			try {
@@ -77,43 +78,14 @@ export class TypedMessageRouter {
 	}
 }
 
-// Typed message interfaces
-export interface SizeMessage {
-	type: 'size';
-	value: string;
-}
-
-export interface ZoomMessage {
-	type: 'zoom';
-	value: any;
-}
-
-export interface PixelFocusMessage {
-	type: 'pixelFocus';
-	value: any;
-}
-
-export interface PixelBlurMessage {
-	type: 'pixelBlur';
-}
-
-export interface StatsMessage {
-	type: 'stats';
-	value: { min: number; max: number };
-}
-
-export interface FormatInfoMessage {
-	type: 'formatInfo';
-	value: any;
-}
-
-export interface ReadyMessage {
-	type: 'ready';
-}
-
-export interface InitialDataMessage {
-	type: 'get-initial-data';
-}
+export type SizeMessage = Extract<ViewerToHostMessage, { type: 'size' }>;
+export type ZoomMessage = Extract<ViewerToHostMessage, { type: 'zoom' }>;
+export type PixelFocusMessage = Extract<ViewerToHostMessage, { type: 'pixelFocus' }>;
+export type PixelBlurMessage = Extract<ViewerToHostMessage, { type: 'pixelBlur' }>;
+export type StatsMessage = Extract<ViewerToHostMessage, { type: 'stats' }>;
+export type FormatInfoMessage = Extract<ViewerToHostMessage, { type: 'formatInfo' }>;
+export type ReadyMessage = Extract<ViewerToHostMessage, { type: 'ready' }>;
+export type InitialDataMessage = Extract<ViewerToHostMessage, { type: 'get-initial-data' }>;
 
 // Typed message handlers
 export class SizeMessageHandler implements MessageHandler<SizeMessage> {
@@ -197,7 +169,7 @@ export class FormatInfoMessageHandler implements MessageHandler<FormatInfoMessag
 		// Set the format type for per-format settings
 		if (message.value && message.value.formatType) {
 			console.log('[FormatInfoMessageHandler] Setting format type:', message.value.formatType);
-			context.appStateManager.setImageFormat(message.value.formatType);
+			context.appStateManager.setImageFormat(message.value.formatType as ImageFormatType);
 		} else {
 			console.log('[FormatInfoMessageHandler] WARNING: No formatType in message!');
 		}

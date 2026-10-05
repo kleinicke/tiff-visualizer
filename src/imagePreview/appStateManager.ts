@@ -1,33 +1,7 @@
 import * as vscode from 'vscode';
 
-// Core state interfaces
-export interface NormalizationSettings {
-	min: number;
-	max: number;
-	autoNormalize: boolean;
-	gammaMode: boolean;
-}
-
-export interface GammaSettings {
-	in: number;
-	out: number;
-}
-
-export interface BrightnessSettings {
-	offset: number;
-}
-
-export interface ImageSettings {
-	normalization: NormalizationSettings;
-	gamma: GammaSettings;
-	brightness: BrightnessSettings;
-	rgbAs24BitGrayscale: boolean;
-	scale24BitFactor: number; // Divide 24-bit values by this for display (default 1000)
-	normalizedFloatMode: boolean; // Convert uint images to normalized float (0-1 range)
-}
-
-// Image format types for per-format settings
-export type ImageFormatType = 'png' | 'jpg' | 'ppm' | 'tiff-float' | 'tiff-int' | 'tiff-int-signed' | 'tiff-int-wide' | 'tiff-uint16' | 'exr-float' | 'pfm' | 'hdr' | 'npy-float' | 'npy-uint' | 'sgi' | 'tga' | 'webp' | 'avif' | 'bmp' | 'ico' | 'jxl' | 'jxl-float' | 'jxr' | 'jp2' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'sdt' | 'ora' | 'kra' | 'psd' | 'psb' | 'xcf' | 'affinity';
+import { defaultDisplaySettings, copyDisplaySettings, setDisplayMode, type DisplaySettings as ImageSettings, type ImageFormatType } from '../../shared/display-settings';
+export type { DisplaySettings as ImageSettings, ImageFormatType, NormalizationSettings, GammaSettings, BrightnessSettings } from '../../shared/display-settings';
 
 export interface ImageStats {
 	min: number;
@@ -82,24 +56,7 @@ export class AppStateManager {
 	public readonly onDidChangeHistogramState = this._onDidChangeHistogramState.event;
 
 	// State storage
-	private _imageSettings: ImageSettings = {
-		normalization: {
-			min: 0.0,
-			max: 1.0,
-			autoNormalize: false,
-			gammaMode: false
-		},
-		gamma: {
-			in: 2.2,
-			out: 2.2
-		},
-		brightness: {
-			offset: 0
-		},
-		rgbAs24BitGrayscale: false,
-		scale24BitFactor: 1000,
-		normalizedFloatMode: false
-	};
+	private _imageSettings: ImageSettings = defaultDisplaySettings();
 
 	private _uiState: UIState = {
 		zoom: 'fit',
@@ -186,25 +143,14 @@ export class AppStateManager {
 
 	public setAutoNormalize(enabled: boolean): void {
 		if (this._imageSettings.normalization.autoNormalize !== enabled) {
-			this._imageSettings.normalization.autoNormalize = enabled;
-			if (enabled) {
-				this._imageSettings.normalization.gammaMode = false; // Disable gamma mode when auto-normalize is enabled
-			}
+			setDisplayMode(this._imageSettings, enabled ? 'auto' : 'manual');
 			this._emitSettingsChanged();
 		}
 	}
 
 	public setGammaMode(enabled: boolean): void {
 		if (this._imageSettings.normalization.gammaMode !== enabled) {
-			this._imageSettings.normalization.gammaMode = enabled;
-			if (enabled) {
-				// When enabling gamma mode, preserve current normalization range
-				if (this._imageSettings.normalization.autoNormalize) {
-					// Coming from auto-normalize: disable auto mode but keep existing manual values
-					this._imageSettings.normalization.autoNormalize = false;
-				}
-				// If coming from manual mode, keep the current manual values
-			}
+			setDisplayMode(this._imageSettings, enabled ? 'gamma' : 'manual');
 			this._emitSettingsChanged();
 		}
 	}
@@ -275,7 +221,7 @@ export class AppStateManager {
 
 		// Save current settings for the previous format
 		if (this._currentFormat) {
-			this._formatSettingsCache.set(this._currentFormat, this._deepCopySettings(this._imageSettings));
+			this._formatSettingsCache.set(this._currentFormat, copyDisplaySettings(this._imageSettings));
 		}
 
 		this._currentFormat = format;
@@ -283,11 +229,11 @@ export class AppStateManager {
 		// Load settings for the new format
 		const cachedSettings = this._formatSettingsCache.get(format);
 		if (cachedSettings) {
-			this._imageSettings = this._deepCopySettings(cachedSettings);
+			this._imageSettings = copyDisplaySettings(cachedSettings);
 			this._emitSettingsChanged();
 		} else {
 			// Use default settings for this format
-			const defaults = this._getDefaultSettingsForFormat(format);
+			const defaults = defaultDisplaySettings(format);
 			this._imageSettings = defaults;
 			this._emitSettingsChanged();
 		}
@@ -301,108 +247,12 @@ export class AppStateManager {
 	 */
 	public getSettingsForFormat(format: ImageFormatType): ImageSettings {
 		if (this._currentFormat === format) {
-			return this._deepCopySettings(this._imageSettings);
+			return copyDisplaySettings(this._imageSettings);
 		}
 		const cached = this._formatSettingsCache.get(format);
-		return this._deepCopySettings(cached || this._getDefaultSettingsForFormat(format));
+		return copyDisplaySettings(cached || defaultDisplaySettings(format));
 	}
 
-	private _deepCopySettings(settings: ImageSettings): ImageSettings {
-		return {
-			normalization: { ...settings.normalization },
-			gamma: { ...settings.gamma },
-			brightness: { ...settings.brightness },
-			rgbAs24BitGrayscale: settings.rgbAs24BitGrayscale,
-			scale24BitFactor: settings.scale24BitFactor,
-			normalizedFloatMode: settings.normalizedFloatMode
-		};
-	}
-
-	private _getDefaultSettingsForFormat(format: ImageFormatType): ImageSettings {
-		// Base defaults - gamma correction settings apply to all
-		const defaults: ImageSettings = {
-			normalization: {
-				min: 0.0,
-				max: 1.0,
-				autoNormalize: false,
-				gammaMode: false
-			},
-			gamma: {
-				in: 2.2,
-				out: 2.2
-			},
-			brightness: {
-				offset: 0
-			},
-			rgbAs24BitGrayscale: false,
-			scale24BitFactor: 1000,
-			normalizedFloatMode: false
-		};
-
-		// Rule 1: Integer formats → Gamma mode with type-specific ranges
-		// (Ranges will be set by webview based on actual bit depth)
-		if (format === 'tiff-int' || format === 'ppm' || format === 'png' || format === 'jpg' || format === 'sgi' || format === 'tga' || format === 'webp' || format === 'avif' || format === 'bmp' || format === 'ico' || format === 'jxl' || format === 'ora' || format === 'kra' || format === 'psd' || format === 'psb' || format === 'xcf' || format === 'affinity') {
-			defaults.normalization.gammaMode = true;
-			defaults.normalization.autoNormalize = false;
-			defaults.normalization.min = 0;
-			defaults.normalization.max = 1; // Will be overridden by webview based on bit depth
-		}
-		// Rule 2: Float images (TIFF, PFM) → Gamma mode with 0-1 range
-		// (These are typically images stored as floats, expected in 0-1 range)
-		else if (format === 'tiff-float' || format === 'pfm' || format === 'hdr') {
-			defaults.normalization.gammaMode = true;
-			defaults.normalization.autoNormalize = false;
-			defaults.normalization.min = 0;
-			defaults.normalization.max = 1;
-		}
-		// Rule 3: NumPy arrays, uint16 TIFFs, signed-integer TIFFs, and
-		// wide (>16-bit) unsigned-integer TIFFs (e.g. uint32) → Auto-normalize
-		// to the actual data range. (Scientific data can have any range —
-		// signed data especially never fits gamma mode's unsigned [0, typeMax]
-		// assumption, e.g. an int16 elevation map with values 0..2 would render
-		// black. Wide unsigned data hits the same problem from the other
-		// direction: gamma mode's full range there is [0, 2^32-1], and typical
-		// data, which rarely spans anywhere near that, would render
-		// essentially black too.
-		//
-		// A FLOAT JPEG XL is here for the same reason: an 8-bit .jxl is a
-		// photograph and keeps gamma mode above, but a float one carries
-		// scene-referred values that gamma mode's [0, 1] would clip. The
-		// decoder reports which it decoded, so the two get different defaults
-		// instead of one compromise.
-		//
-		// JPEG XR is here for the same reason as the float scientific formats
-		// rather than with the display integers it superficially resembles:
-		// the format exists to carry high-bit-depth and scene-referred float
-		// images, and a float32 .jxr under gamma mode's [0, 1] would clip
-		// anything above white. One format type covers both its integer and
-		// its float files, and auto-normalize is the setting that is never
-		// badly wrong for either.
-		//
-		// JPEG 2000 joins them for a concrete reason: a Sentinel-2 band is
-		// 12-bit reflectance whose real values sit in the low hundreds out of
-		// 4095, so gamma mode's normalize-against-the-type-range would render
-		// a correct decode as a nearly black image.
-		//
-		// `npy-uint` belongs here rather than with the display-image integer
-		// formats: an .npy is an array someone computed, not a picture someone
-		// authored, so its values carry no expectation of filling the type's
-		// range. A uint8 PNG spans 0..255 by construction; a uint8 NumPy array
-		// might be a label map holding 0..3. The uint64 case makes it starkest
-		// — gamma mode would normalize against 2^64-1 and render everything
-		// black.)
-		else if (format === 'npy-uint' || format === 'npy-float' || format === 'tiff-int-signed' || format === 'tiff-int-wide' || format === 'tiff-uint16' || format === 'fits' || format === 'dicom' || format === 'netcdf' || format === 'czi' || format === 'nd2' || format === 'lif' || format === 'sdt' || format === 'jxr' || format === 'jp2' || format === 'jxl-float') {
-			defaults.normalization.gammaMode = false;
-			defaults.normalization.autoNormalize = true;
-		}
-		// Fallback: Unknown formats
-		else {
-			defaults.normalization.gammaMode = false;
-			defaults.normalization.autoNormalize = true;
-		}
-
-		return defaults;
-	}
 
 	// UI State Management
 	public setImageZoom(zoom: any): void {
@@ -451,7 +301,7 @@ export class AppStateManager {
 	public setActivePreview(preview: any): void {
 		const wasActive = this._statusBarState.activePreview;
 		this._statusBarState.activePreview = preview;
-		
+
 		if (wasActive !== preview) {
 			if (wasActive) {
 				this._onDidDeactivatePreview.fire(wasActive);
@@ -502,14 +352,14 @@ export class AppStateManager {
 			// Reset specific format
 			this._formatSettingsCache.delete(format);
 			if (this._currentFormat === format) {
-				this._imageSettings = this._getDefaultSettingsForFormat(format);
+				this._imageSettings = defaultDisplaySettings(format);
 				this._emitSettingsChanged();
 			}
 		} else {
 			// Reset all
 			this._formatSettingsCache.clear();
 			if (this._currentFormat) {
-				this._imageSettings = this._getDefaultSettingsForFormat(this._currentFormat);
+				this._imageSettings = defaultDisplaySettings(this._currentFormat);
 				this._emitSettingsChanged();
 			}
 		}

@@ -299,7 +299,7 @@ async function main() {
 	// --- 1. 12-bit unsigned RGB (values > 255 must survive) ---------------
 	{
 		const p = makeProcessor(TiffProcessor, gammaIdentitySettings);
-		const { imageData } = await p.processTiff(twelveBitFixture);
+		const { imageData } = await p.load(twelveBitFixture);
 
 		const data = p.rawTiffData.data;
 		assert.ok(data instanceof Uint16Array,
@@ -342,7 +342,7 @@ async function main() {
 		const messages = [];
 		const vscodeStub = { postMessage: (msg) => messages.push(msg) };
 		const p = makeProcessor(TiffProcessor, autoNormalizeSettings, vscodeStub);
-		await p.processTiff(syntheticInt16Path);
+		await p.load(syntheticInt16Path);
 
 		// Initial load defers rendering and posts formatInfo first: signed int
 		// must be routed to the 'tiff-int-signed' per-format settings key
@@ -424,7 +424,7 @@ async function main() {
 		p._wasmAvailable = true;
 		p._wasmProcessor = { init: async () => true, decode: async () => wasmResult };
 		syntheticFiles.set(syntheticInt16Path, synthetic.buffer);
-		const { imageData } = await p.processTiff(syntheticInt16Path);
+		const { imageData } = await p.load(syntheticInt16Path);
 
 		assert.strictEqual(p.rawTiffData.data, wasmResult.data,
 			'the WASM path must keep the decoded Float32Array as the stored carrier');
@@ -445,7 +445,7 @@ async function main() {
 		const messages = [];
 		const vscodeStub = { postMessage: (msg) => messages.push(msg) };
 		const p = makeProcessor(TiffProcessor, autoNormalizeSettings, vscodeStub);
-		await p.processTiff(syntheticUint32Path);
+		await p.load(syntheticUint32Path);
 
 		// Wide unsigned int must be routed to the 'tiff-int-wide' per-format
 		// settings key (auto-normalize defaults), not gamma-mode 'tiff-int' -
@@ -513,7 +513,7 @@ async function main() {
 		p._wasmAvailable = true;
 		p._wasmProcessor = { init: async () => true, decode: async () => wasmResult };
 		syntheticFiles.set(syntheticUint32Path, synthetic.buffer);
-		const { imageData } = await p.processTiff(syntheticUint32Path);
+		const { imageData } = await p.load(syntheticUint32Path);
 
 		assert.strictEqual(p.rawTiffData.data, wasmResult.data,
 			'the WASM path must keep the decoded Float32Array as the stored carrier');

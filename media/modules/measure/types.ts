@@ -170,7 +170,7 @@ export interface MeasurementSource {
 	width: number;
 	height: number;
 	channels: number;
-	data?: Float32Array | Uint8Array | Uint16Array | Int16Array | Int32Array | Float64Array;
+	data?: ArrayLike<number>;
 	planar?: ArrayLike<number>[];
 	isFloat: boolean;
 	/** Nominal maximum of the sample type (255, 65535, 1.0, …). */

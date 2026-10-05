@@ -1,3 +1,5 @@
+import { parseAutomationRequest, type HostToViewerMessage, type ViewerToHostMessage } from '../shared/viewer-protocol';
+import { defaultDisplaySettings, setDisplayMode, type DisplaySettings } from '../shared/display-settings';
 import { installPythonHost } from './python-host';
 import { flushSync, mount } from 'svelte';
 import App from './App.svelte';
@@ -25,7 +27,7 @@ import {
   filenameForDetectedFormat,
 } from '../src/util/imageFormatSniffer.js';
 
-type ViewerMessage = { type: string; [key: string]: any };
+
 
 interface BrowserFileEntry {
   sourceUrl?: string;
@@ -39,13 +41,7 @@ interface BrowserFileEntry {
   formatHint?: string;
 }
 
-interface ViewerSettings {
-  normalization: { min: number; max: number; autoNormalize: boolean; gammaMode: boolean };
-  gamma: { in: number; out: number };
-  brightness: { offset: number };
-  rgbAs24BitGrayscale: boolean;
-  scale24BitFactor: number;
-  normalizedFloatMode: boolean;
+interface ViewerSettings extends DisplaySettings {
   nanColor?: string;
   colorPickerShowModified?: boolean;
   showScaleBar?: boolean;
@@ -105,12 +101,7 @@ let activeControlPopover: ControlPopoverKind | null = null;
 
 function baseSettings(): ViewerSettings {
   return {
-    normalization: { min: 0, max: 1, autoNormalize: true, gammaMode: false },
-    gamma: { in: 2.2, out: 2.2 },
-    brightness: { offset: 0 },
-    rgbAs24BitGrayscale: false,
-    scale24BitFactor: 1000,
-    normalizedFloatMode: false,
+    ...defaultDisplaySettings(''),
     nanColor: 'black',
     colorPickerShowModified: false,
     showScaleBar,
@@ -126,16 +117,7 @@ function baseSettings(): ViewerSettings {
 }
 
 function defaultsForFormat(format: string): ViewerSettings {
-  const settings = baseSettings();
-  const displayIntegers = new Set([
-    'tiff-int', 'ppm', 'png', 'jpg', 'sgi', 'tga', 'webp', 'avif', 'bmp', 'jxl',
-    'ora', 'kra', 'psd', 'psb', 'xcf', 'affinity',
-  ]);
-  const displayFloats = new Set(['tiff-float', 'pfm', 'hdr']);
-  if (displayIntegers.has(format) || displayFloats.has(format)) {
-    settings.normalization = { min: 0, max: 1, autoNormalize: false, gammaMode: true };
-  }
-  return settings;
+  return { ...baseSettings(), ...defaultDisplaySettings(format) };
 }
 
 function readJson(key: string): any {
@@ -168,7 +150,7 @@ function installUrlHistoryNavigation(input: HTMLInputElement): void {
   input.addEventListener('input', () => urlHistoryCursor.reset());
 }
 
-function sendToViewer(message: ViewerMessage): void {
+function sendToViewer(message: HostToViewerMessage): void {
   window.postMessage(message, window.location.origin);
 }
 
@@ -425,8 +407,7 @@ function openControlPopover(kind: ControlPopoverKind): void {
       const gammaOut = Number(data.get('gammaOut'));
       if (!(gammaIn > 0) || !(gammaOut > 0)) { showToast('Gamma values must be greater than zero.'); return; }
       currentSettings.gamma = { in: gammaIn, out: gammaOut };
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
+      setDisplayMode(currentSettings, 'gamma');
       sendCurrentSettings('browser-gamma');
       closeControlPopover();
     };
@@ -437,8 +418,7 @@ function openControlPopover(kind: ControlPopoverKind): void {
       const exposure = Number(new FormData(event.currentTarget as HTMLFormElement).get('exposure'));
       if (!Number.isFinite(exposure)) { showToast('Enter a valid exposure value.'); return; }
       currentSettings.brightness = { offset: exposure };
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
+      setDisplayMode(currentSettings, 'gamma');
       sendCurrentSettings('browser-exposure');
       closeControlPopover();
     };
@@ -805,7 +785,7 @@ function navigateDataset(seriesIndexValue: unknown, coordinatesValue: unknown): 
   syncStatusBar();
 }
 
-function handleFormatInfo(message: ViewerMessage): void {
+function handleFormatInfo(message: Extract<ViewerToHostMessage, { type: 'formatInfo' }>): void {
   const format = String(message.value?.formatType || 'unknown');
   if (currentFormat && currentFormat !== format) {
     formatSettings.set(currentFormat, structuredClone(currentSettings));
@@ -836,7 +816,7 @@ function handleFormatInfo(message: ViewerMessage): void {
 }
 
 function executeCommand(command: string): void {
-  const directMessages: Record<string, ViewerMessage> = {
+  const directMessages: Record<string, HostToViewerMessage> = {
     'tiffVisualizer.copyImage': { type: 'copyImage' },
     'tiffVisualizer.pastePosition': { type: 'pastePosition', state: copiedPosition },
     'tiffVisualizer.toggleHistogram': { type: 'toggleHistogram' },
@@ -913,7 +893,7 @@ function executeCommand(command: string): void {
   }
 }
 
-function handleViewerMessage(message: ViewerMessage): void {
+function handleViewerMessage(message: ViewerToHostMessage): void {
   switch (message.type) {
     case 'automationResult': {
       const pending = automationRequests.get(message.id);
@@ -1032,7 +1012,7 @@ function handleViewerMessage(message: ViewerMessage): void {
 }
 
 (window as any).acquireVsCodeApi = () => ({
-  postMessage(message: ViewerMessage) {
+  postMessage(message: ViewerToHostMessage) {
     handleViewerMessage(message);
     return Promise.resolve(true);
   },
@@ -1134,7 +1114,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   document.querySelectorAll('[data-viewer-message]').forEach(button => {
-    button.addEventListener('click', () => sendToViewer({ type: (button as HTMLElement).dataset.viewerMessage || '' }));
+    button.addEventListener('click', () => {
+      const type = (button as HTMLElement).dataset.viewerMessage;
+      if (type === 'zoomIn' || type === 'zoomOut' || type === 'resetZoom' || type === 'copyImage') sendToViewer({ type });
+    });
   });
   document.querySelectorAll('[data-status-action]').forEach(button => {
     button.addEventListener('click', () => {
@@ -1296,20 +1279,16 @@ installEmbeddedImageHost({
     }
     if (name === 'gamma' && values.length === 2 && values.every(v => v > 0)) {
       currentSettings.gamma = { in: values[0], out: values[1] };
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
+      setDisplayMode(currentSettings, 'gamma');
     } else if (name === 'exposure' && values.length === 1 && Math.abs(values[0]) <= 16) {
       currentSettings.brightness = { offset: values[0] };
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
+      setDisplayMode(currentSettings, 'gamma');
     } else if (name === 'range' && values.length === 2 && values[0] < values[1]) {
       currentSettings.normalization = { min: values[0], max: values[1], autoNormalize: false, gammaMode: false };
     } else if (name === 'gammaMode') {
-      currentSettings.normalization.autoNormalize = false;
-      currentSettings.normalization.gammaMode = true;
+      setDisplayMode(currentSettings, 'gamma');
     } else if (name === 'auto') {
-      currentSettings.normalization.autoNormalize = true;
-      currentSettings.normalization.gammaMode = false;
+      setDisplayMode(currentSettings, 'auto');
     } else return;
     sendCurrentSettings('embedded-controls');
   },
@@ -1337,7 +1316,7 @@ function automationRequest(operation: string, args: Record<string, any> = {}): P
     const id = crypto.randomUUID();
     const timer = setTimeout(() => { automationRequests.delete(id); reject(new Error('Image renderer did not respond within 15 seconds')); }, 15000);
     automationRequests.set(id, {resolve,reject,timer});
-    sendToViewer({type:'automationRequest',id,operation,args});
+    sendToViewer(parseAutomationRequest({type:'automationRequest',id,operation,args}));
   });
 }
 async function waitForAutomationImage() {
@@ -1355,7 +1334,7 @@ document.addEventListener('DOMContentLoaded', () => installPythonHost({
   execute: async (operation,args) => {
     await waitForAutomationImage();
     if (operation==='select') {
-      if (!Number.isInteger(args.index)||args.index<0||args.index>=files.length) throw new Error('Image index is out of range');
+      if (args.index === undefined || !Number.isInteger(args.index)||args.index<0||args.index>=files.length) throw new Error('Image index is out of range');
       currentFormatInfo=null;
       switchTo(args.index);
       await waitForAutomationImage();

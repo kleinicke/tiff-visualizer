@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage } from './active-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
@@ -21,6 +22,17 @@ function bootstrapImageFor(src: string): HTMLImageElement | null {
  * transparency so the pixel inspector only shows α: when meaningful.
  */
 export class WebImageProcessor {
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { raster: imageRaster(this._lastRaw, { isFloat: false, typeMax: 255 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'byte' };
+  }
+
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
     _lastRaw: {
@@ -48,7 +60,7 @@ export class WebImageProcessor {
         this.loadSignal = undefined; // Set before each load; superseded loads are discarded by the caller's generation check
     }
 
-    async processWebImage(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData | null; canvasAlreadyRendered?: boolean; displayElement?: HTMLElement }> {
+    async load(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData | null; canvasAlreadyRendered?: boolean; displayElement?: HTMLElement }> {
         const lower = src.toLowerCase();
         let formatName = 'WebP';
         let formatType = 'webp';

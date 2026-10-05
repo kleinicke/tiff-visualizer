@@ -1,3 +1,5 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
+import type { LayerInput } from './layer-manager';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
@@ -90,6 +92,65 @@ function pickTiffArrayCtor(sampleFormat: number | number[], bitsPerSample: numbe
  * Handles TIFF image processing, normalization, and data extraction
  */
 export class TiffProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+    const raw = this.rawTiffData;
+    if (!raw?.image || !raw.rasters) return null;
+    // These values describe the source, not the renderer or a worker's residency.
+    const retained = {
+      rawTiffData: raw, displayBand: this.displayBand, displayRgbBands: this.displayRgbBands,
+      _lastStatistics: this._lastStatistics, _lastStatisticsRgb24Mode: this._lastStatisticsRgb24Mode,
+      _convertedFloatData: this._convertedFloatData, pageIndex: this.pageIndex, pageCount: this.pageCount,
+      pageDirectory: this.pageDirectory, geoReference: this.geoReference, gdalMetadata: this.gdalMetadata,
+      _lastAllTags: this._lastAllTags, _gdalNodata: this._gdalNodata, _extraSamplesAreAlpha: this._extraSamplesAreAlpha,
+      omeMetadata: this.omeMetadata, omeBinaryOnly: this.omeBinaryOnly, omeXml: this.omeXml,
+      _sourceBuffer: this._sourceBuffer, _sourceBufferSrc: this._sourceBufferSrc,
+      _remoteTiff: this._remoteTiff, _remoteTiffUrl: this._remoteTiffUrl, _remoteDecodePool: this._remoteDecodePool,
+    };
+    return { width: raw.image.getWidth(), height: raw.image.getHeight(), restore: () => {
+      Object.assign(this, retained);
+      this._regionSourceGeneration++;
+      this._regionWorkerPrimed = false;
+      this._regionSampleCache.clear();
+      this._regionSampleCacheBytes = 0;
+      this._lastRenderHistogram = null;
+      this._lastRenderUsedWebGL = false;
+      this._isInitialLoad = true;
+      this._pendingRenderData = { image: raw.image, rasters: raw.rasters };
+    } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this.rawTiffData = null; this._lastStatistics = null; this._convertedFloatData = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._lastStatistics, histogram: this._lastRenderHistogram,
+          planar: this.rawTiffData?.rasters, page: this.rawTiffData?.ifd.pageIndex, pageCount: this.rawTiffData?.ifd.pageCount,
+          raster: this.imageRaster(), readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'tiff' };
+  }
+  private imageRaster(): ActiveImage['raster'] {
+      const raw = this.rawTiffData;
+      if (!raw || !raw.data || !raw.ifd) {
+          return null;
+      }
+      const ifd = raw.ifd;
+      // Signed integer samples and wide (>16-bit) unsigned integer samples
+      // (t339 === 2, or bitsPerSample > 16) are carried in a Float32Array too
+      // (see tiff-processor.js tiffNeedsFloatCarrier/pickTiffArrayCtor), so
+      // they route through the same float compositing path as true IEEE
+      // float data.
+      const isFloat = tiffNeedsFloatCarrier(ifd.t339, ifd.t258);
+      const typeMax = tiffTypeMax(ifd.t339, ifd.t258);
+      const sampleFormat = Array.isArray(ifd.t339) ? ifd.t339[0] : ifd.t339;
+      const bits = Array.isArray(ifd.t258) ? ifd.t258[0] : ifd.t258;
+      const sourceNumericType: LayerInput['sourceNumericType'] = sampleFormat === 3
+          ? bits <= 16 ? 'float16' : bits <= 32 ? 'float32' : 'float64'
+          : `${sampleFormat === 2 ? 'int' : 'uint'}${bits <= 8 ? 8 : bits <= 16 ? 16 : 32}` as LayerInput['sourceNumericType'];
+      return imageRaster({ data: raw.data, width: ifd.width, height: ifd.height, channels: ifd.t277 }, { isFloat, typeMax, sourceNumericType });
+  }
+
 	settingsManager: SettingsManager;
 	vscode: VsCodeApi;
 	rawTiffData: any;
@@ -490,7 +551,7 @@ export class TiffProcessor {
 	 * display side supplies both as NUMBERS — the decision is made in the decode
 	 * worker, and a predicate cannot cross that boundary.
 	 */
-	async processTiff(
+	async load(
 		src: string,
 		pageIndex = 0,
 		levelHint?: TiffLevelHint,
@@ -1081,7 +1142,7 @@ export class TiffProcessor {
 			// turned the Level control into a page selector mid-session, which
 			// is exactly the confusion the classification exists to prevent.
 			// Any directory already read for this file is therefore kept; the
-			// source check at the top of processTiff clears it when the file
+			// source check at the top of load clears it when the file
 			// actually changes.
 			this.gdalMetadata = parseGdalMetadata(this._lastAllTags);
 			if (this.selectableBandCount > 1) { this._lastStatistics = null; }

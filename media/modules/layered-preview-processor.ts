@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage } from './active-image.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { ImageRenderer, ImageStatsCalculator, NormalizationHelper } from './normalization-helper.js';
 import type { DecodedLayeredPreview, LayeredDocumentFormat, LayeredDocumentSummary, LayeredPixelArray } from './layered-document.js';
@@ -13,6 +14,17 @@ async function decodeLayeredLocally(format: LayeredDocumentFormat, buffer: Array
 }
 
 export class LayeredPreviewProcessor {
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this.reset();
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, raster: imageRaster(this._lastRaw ? { ...this._lastRaw, data: this.activeData() } : null, { isFloat: this._lastRaw?.sampleFormat === 3, typeMax: this._lastRaw?.sampleFormat === 3 ? 1 : this._lastRaw?.bitDepth === 16 ? 65535 : 255 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'native' };
+  }
+
 	settingsManager: any;
 	vscode: VsCodeApi;
 	decodeWorker: DecodeWorkerClient | null = null;
@@ -35,7 +47,7 @@ export class LayeredPreviewProcessor {
 		this.vscode = vscode;
 	}
 
-	async process(src: string, format: LayeredDocumentFormat) {
+	async load(src: string, format: LayeredDocumentFormat) {
 		const signal = this.loadSignal;
 		const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, format);
 		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }

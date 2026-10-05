@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
@@ -35,6 +36,39 @@ interface PendingRenderData {
  * Both ASCII (P2/P3) and binary (P5/P6) formats
  */
 export class PpmProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      const raw = this._lastRaw;
+      if (!raw?.data)
+          return null;
+      const { width, height } = raw;
+      const decodedStats = this._decodedStats;
+      return { width, height, restore: () => {
+              this._lastRaw = raw;
+              this._decodedStats = decodedStats;
+              this._cachedStats = undefined;
+              this._cachedStatsRgb24Mode = false;
+              this._isInitialLoad = true;
+              this._pendingRenderData = {
+                  displayData: raw.data,
+                  width: raw.width,
+                  height: raw.height,
+                  maxval: raw.maxval,
+                  channels: raw.channels
+              };
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, raster: imageRaster(this._lastRaw, { isFloat: false, typeMax: this._lastRaw?.maxval || 255 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'byte' };
+  }
+
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
     _lastRaw: RawImageData | null; // { width, height, data: Uint8Array|Uint16Array, maxval, channels }
@@ -68,7 +102,7 @@ export class PpmProcessor {
         this.decodeWorker = null;
     }
 
-    async processPpm(src: string) {
+    async load(src: string) {
         const loadSignal = this.loadSignal;
         const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'ppm');
         let decoded: any;

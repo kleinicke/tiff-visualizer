@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage } from './active-image.js';
 "use strict";
 import TgaLoader from 'tga-js';
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
@@ -16,6 +17,17 @@ type VsCodeApi = { postMessage: (msg: any) => any };
  * values and alpha visibility.
  */
 export class TgaProcessor {
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { raster: imageRaster(this._lastRaw, { isFloat: false, typeMax: 255 }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'byte' };
+  }
+
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
     _lastRaw: {
@@ -45,7 +57,7 @@ export class TgaProcessor {
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
     }
 
-    async processTga(src: string) {
+    async load(src: string) {
         const loadSignal = this.loadSignal;
         try {
             this._cachedStats = undefined;

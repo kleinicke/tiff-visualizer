@@ -1,3 +1,4 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
 "use strict";
 
 import { PfmProcessor } from './pfm-processor.js';
@@ -38,6 +39,38 @@ export interface ScientificArrayProcessorConfig {
  * navigation, which costs nothing when the decoder reports no selectors.
  */
 export class ScientificArrayProcessor extends PfmProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      if (this.config.workerFormat !== 'dicom' || !this._lastRaw?.data)
+          return null;
+      const raw = { image: this._lastRaw, metadata: { ...this.metadata }, numericDomain: { ...this.numericDomain } };
+      const { width, height } = raw.image;
+      const decodedStats = this._decodedStats;
+      return { width, height, restore: () => {
+              const image = raw.image;
+              if (!image?.data) {
+                  return;
+              }
+              this._lastRaw = image;
+              this.metadata = raw.metadata;
+              this.numericDomain = raw.numericDomain;
+              this._decodedStats = decodedStats;
+              this._cachedStats = undefined;
+              this._isInitialLoad = true;
+              this._pendingRenderData = { displayData: image.data, width: image.width, height: image.height, channels: image.channels };
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, histogram: this._lastRenderHistogram, typeMin: this.numericDomain.typeMin, raster: imageRaster(this._lastRaw, { isFloat: true, typeMax: this.numericDomain.typeMax, sourceNumericType: this.numericDomain.sourceNumericType }),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'float' };
+  }
+
 	config: ScientificArrayProcessorConfig;
 	metadata: Record<string, any> = {};
 	/** Source key the decode worker is believed to still hold, if any. */
@@ -55,7 +88,7 @@ export class ScientificArrayProcessor extends PfmProcessor {
 		this.config = config;
 	}
 
-	async process(src: string, decodeOptions: Record<string, any> = {}) {
+	async load(src: string, decodeOptions: Record<string, any> = {}) {
 		const signal = this.loadSignal;
 		// When the worker still holds this file, send no bytes at all: refetching
 		// a large stack per plane costs far more than the decode does. On a miss

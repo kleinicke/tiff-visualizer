@@ -1,3 +1,5 @@
+import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
+import type { LayerInput } from './layer-manager';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
@@ -41,6 +43,33 @@ interface PendingRenderData {
  * Parses NumPy .npy and .npz files and renders them to ImageData
  */
 export class NpyProcessor {
+  captureDecoded(): DecodedSnapshot | null {
+      const raw = this._lastRaw;
+      if (!raw?.data)
+          return null;
+      const { width, height } = raw;
+      const decodedStats = this._decodedStats;
+      return { width, height, restore: () => {
+              this._lastRaw = raw;
+              this._decodedStats = decodedStats;
+              this._cachedStats = undefined;
+              this._cachedStatsRgb24Mode = false;
+              this._isInitialLoad = true;
+              this._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height };
+          } };
+  }
+
+  resetForNewFile(): void {
+    this._isInitialLoad = true;
+    this._pendingRenderData = null;
+    this._lastRaw = null;
+  }
+
+  get activeImage(): ActiveImage {
+      return { stats: this._cachedStats, histogram: this._lastRenderHistogram, typeMin: this._lastRaw?.numericDomain?.typeMin, raster: imageRaster(this._lastRaw, this._lastRaw?.numericDomain ? { isFloat: this._lastRaw.numericDomain.sampleFormat === 3, typeMax: this._lastRaw.numericDomain.typeMax, sourceNumericType: this._lastRaw.numericDomain.sourceNumericType as LayerInput['sourceNumericType'] } : npyTypeInfo(this._lastRaw?.dtype)),
+          readPixel: (x, y, width, height) => this.getColorAtPixel(x, y, width, height), pixelDisplay: 'float' };
+  }
+
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
     _lastRaw: RawImageData | null; // { width, height, data: Float32Array, dtype: string, numericDomain, channels }
@@ -76,7 +105,7 @@ export class NpyProcessor {
         this.decodeWorker = null;
     }
 
-    async processNpy(src: string) {
+    async load(src: string) {
         const loadSignal = this.loadSignal;
         // Invalidate stats cache for new image
         this._cachedStats = undefined;
@@ -373,3 +402,15 @@ export class NpyProcessor {
         return resolveNanColor(settings);
     }
 }
+
+	function npyTypeInfo(dtype?: string): { isFloat: boolean, typeMax: number, sourceNumericType: LayerInput['sourceNumericType'] } {
+		const d = String(dtype || '').toLowerCase();
+		const compact = d.match(/^[<>=|]?([fiu])(\d+)$/);
+		const bits = compact ? Number(compact[2]) * 8 : parseInt(d.replace(/\D/g, ''), 10) || 8;
+		if (d.includes('f')) {
+			return { isFloat: true, typeMax: 1.0, sourceNumericType: bits <= 16 ? 'float16' : bits <= 32 ? 'float32' : 'float64' };
+		}
+		const signed = compact ? compact[1] === 'i' : d.includes('i') && !d.includes('u');
+		const sourceNumericType: LayerInput['sourceNumericType'] = `${signed ? 'int' : 'uint'}${bits <= 8 ? 8 : bits <= 16 ? 16 : 32}` as LayerInput['sourceNumericType'];
+		return { isFloat: false, typeMax: bits >= 16 ? 65535 : 255, sourceNumericType };
+	}

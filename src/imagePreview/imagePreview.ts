@@ -1,3 +1,4 @@
+import type { HostToViewerMessage } from '../../shared/viewer-protocol';
 import * as vscode from 'vscode';
 import type { NanColorName } from './imageSettings';
 import { Utils } from 'vscode-uri';
@@ -47,6 +48,9 @@ function canUseNativeFirstPaint(settings: ImageSettings, surfaceMode: 'editor' |
 }
 
 export class ImagePreview extends MediaPreview {
+	private postViewerMessage(message: HostToViewerMessage): Thenable<boolean> {
+		return this._webviewEditor.webview.postMessage(message);
+	}
 
 	private _imageSize: string | undefined;
 	private _imageZoom: Scale | undefined;
@@ -89,7 +93,7 @@ export class ImagePreview extends MediaPreview {
 
 	public setOpenTimestamp(timestamp: number) {
 		this._openTimestamp = timestamp;
-		this._webviewEditor.webview.postMessage({
+		this.postViewerMessage({
 			type: 'updateLoadStartTime',
 			timestamp: timestamp
 		});
@@ -137,7 +141,7 @@ export class ImagePreview extends MediaPreview {
 
 		this._register(this._zoomStatusBarEntry.onDidChangeScale(e => {
 			if (this.previewState === PreviewState.Active) {
-				this._webviewEditor.webview.postMessage({ type: 'setScale', scale: e.scale });
+				this.postViewerMessage({ type: 'setScale', scale: e.scale });
 			}
 		}));
 
@@ -258,19 +262,19 @@ export class ImagePreview extends MediaPreview {
 
 	public zoomIn() {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'zoomIn' });
+			this.postViewerMessage({ type: 'zoomIn' });
 		}
 	}
 
 	public zoomOut() {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'zoomOut' });
+			this.postViewerMessage({ type: 'zoomOut' });
 		}
 	}
 
 	public copyImage() {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'copyImage' });
+			this.postViewerMessage({ type: 'copyImage' });
 		}
 	}
 
@@ -281,23 +285,23 @@ export class ImagePreview extends MediaPreview {
 			if (manager.getCopiedPosition) {
 				const positionState = manager.getCopiedPosition();
 				if (positionState) {
-					this._webviewEditor.webview.postMessage({ 
+					this.postViewerMessage({
 						type: 'pastePosition',
 						state: positionState
 					});
 				} else {
 					// No position copied - let webview show error
-					this._webviewEditor.webview.postMessage({ type: 'pastePosition' });
+					this.postViewerMessage({ type: 'pastePosition' });
 				}
 			} else {
-				this._webviewEditor.webview.postMessage({ type: 'pastePosition' });
+				this.postViewerMessage({ type: 'pastePosition' });
 			}
 		}
 	}
 
 	public resetZoom() {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'resetZoom' });
+			this.postViewerMessage({ type: 'resetZoom' });
 		}
 	}
 
@@ -305,7 +309,7 @@ export class ImagePreview extends MediaPreview {
 		if (this.previewState !== PreviewState.Active) { return undefined; }
 		return new Promise(resolve => {
 			const subscription = this.onDidGetLayerExportCompatibility(options => { subscription.dispose(); resolve(options); });
-			this._webviewEditor.webview.postMessage({ type: 'getLayerExportCompatibility' });
+			this.postViewerMessage({ type: 'getLayerExportCompatibility' });
 		});
 	}
 
@@ -316,7 +320,7 @@ export class ImagePreview extends MediaPreview {
 				if (result.format !== format) { return; }
 				subscription.dispose(); resolve(result);
 			});
-			this._webviewEditor.webview.postMessage({ type: 'exportLayerDocument', format });
+			this.postViewerMessage({ type: 'exportLayerDocument', format });
 		});
 	}
 
@@ -330,7 +334,7 @@ export class ImagePreview extends MediaPreview {
 				this._currentComparisonState.peerUris.push(peerUri.toString());
 			}
 
-			this._webviewEditor.webview.postMessage({ type: 'start-comparison', peerUri: peerUri.toString() });
+			this.postViewerMessage({ type: 'start-comparison', peerUri: peerUri.toString() });
 		}
 	}
 
@@ -440,25 +444,25 @@ export class ImagePreview extends MediaPreview {
 
 	public toggleHistogram(): void {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'toggleHistogram' });
+			this.postViewerMessage({ type: 'toggleHistogram' });
 		}
 	}
 
 	public toggleMetadata(): void {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'toggleMetadata' });
+			this.postViewerMessage({ type: 'toggleMetadata' });
 		}
 	}
 
 	public toggleMeasure(): void {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'toggleMeasure' });
+			this.postViewerMessage({ type: 'toggleMeasure' });
 		}
 	}
 
 	public toggleChannels(): void {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'toggleChannels' });
+			this.postViewerMessage({ type: 'toggleChannels' });
 		}
 	}
 
@@ -470,7 +474,7 @@ export class ImagePreview extends MediaPreview {
 		// next time a webview is built.
 		const shown = this._manager.settingsManager.toggleScaleBar();
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'toggleScaleBar', shown });
+			this.postViewerMessage({ type: 'toggleScaleBar', shown });
 		}
 	}
 
@@ -480,7 +484,7 @@ export class ImagePreview extends MediaPreview {
 	 */
 	private sendHistogramState(): void {
 		const histogramState = this._manager.appStateManager.histogramState;
-		this._webviewEditor.webview.postMessage({
+		this.postViewerMessage({
 			type: 'restoreHistogramState',
 			isVisible: histogramState.isVisible,
 			position: histogramState.position,
@@ -538,7 +542,7 @@ export class ImagePreview extends MediaPreview {
 				}),
 			})),
 		};
-		this._webviewEditor.webview.postMessage({
+		this.postViewerMessage({
 			type: 'setDataset',
 			manifest,
 			seriesIndex: this._datasetSeriesIndex,
@@ -722,7 +726,7 @@ export class ImagePreview extends MediaPreview {
 
 	private sendDatasetPlane(plane: DatasetPlane): void {
 		const resource = vscode.Uri.parse(plane.resourceUri);
-		this._webviewEditor.webview.postMessage({
+		this.postViewerMessage({
 			type: 'switchToDatasetPlane',
 			uri: this._webviewEditor.webview.asWebviewUri(resource).toString(),
 			resourceUri: resource.toString(),
@@ -823,7 +827,7 @@ export class ImagePreview extends MediaPreview {
 		for (const u of uris) {
 			map[u.toString()] = this._webviewEditor.webview.asWebviewUri(u).toString();
 		}
-		this._webviewEditor.webview.postMessage({ type: 'layerUrisResolved', map });
+		this.postViewerMessage({ type: 'layerUrisResolved', map });
 	}
 
 	public getSurfaceMode(): 'editor' | 'layers' {
@@ -851,7 +855,7 @@ export class ImagePreview extends MediaPreview {
 			src: this._webviewEditor.webview.asWebviewUri(u).toString(),
 			resourceUri: u.toString(),
 		}));
-		this._webviewEditor.webview.postMessage({ type: 'addLayerImages', images });
+		this.postViewerMessage({ type: 'addLayerImages', images });
 	}
 
 	/** Returns true if the image was added, false if it was already in the collection. */
@@ -950,7 +954,7 @@ export class ImagePreview extends MediaPreview {
 
 	private saveCurrentZoomState(): void {
 		if (this.previewState === PreviewState.Active) {
-			this._webviewEditor.webview.postMessage({ type: 'getComparisonState' });
+			this.postViewerMessage({ type: 'getComparisonState' });
 		}
 	}
 
@@ -965,7 +969,7 @@ export class ImagePreview extends MediaPreview {
 		const cachedData = this._preloadedImageData.get(cacheKey);
 
 		// Send switch request to webview
-		this._webviewEditor.webview.postMessage({
+		this.postViewerMessage({
 			type: 'switchToImage',
 			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
 			resourceUri: newResource.toString(),
@@ -983,7 +987,7 @@ export class ImagePreview extends MediaPreview {
 		// Restore comparison state after the image loads (zoom is handled webview-side)
 		setTimeout(() => {
 			if (this._currentComparisonState && this._currentComparisonState.peerUris.length > 0) {
-				this._webviewEditor.webview.postMessage({
+				this.postViewerMessage({
 					type: 'restoreComparisonState',
 					state: this._currentComparisonState
 				});
@@ -999,7 +1003,7 @@ export class ImagePreview extends MediaPreview {
 				show: this._imageCollection.length > 1
 			};
 
-			this._webviewEditor.webview.postMessage({
+			this.postViewerMessage({
 				type: 'updateImageCollectionOverlay',
 				data: overlayData
 			});
@@ -1020,7 +1024,7 @@ export class ImagePreview extends MediaPreview {
 				src: uri.toString()
 			};
 
-			this._webviewEditor.webview.postMessage({
+			this.postViewerMessage({
 				type: 'updateSettings',
 				settings: webviewSafeSettings,
 				reason
@@ -1440,7 +1444,7 @@ export class ImagePreview extends MediaPreview {
 		<p>${vscode.l10n.t("An error occurred while loading the image.")}</p>
 	</div>
 	${nativeFirstPaint ? `<img id="native-fast-preview" class="scale-to-fit" src="${escapeAttribute(uri.toString())}" alt="">` : ''}
-	
+
 	<script nonce="${nonce}">
 		// Add error handler for module loading
 		window.addEventListener('error', function(e) {
@@ -1451,7 +1455,7 @@ export class ImagePreview extends MediaPreview {
 			console.error('TIFF Visualizer: Unhandled promise rejection:', e.reason);
 		});
 	</script>
-	
+
 	<script nonce="${nonce}">window.__tiffVisualizerVendorAssets = ${JSON.stringify(vendorAssets)};</script>
 	${decoderWarmupScript}
 	${bootstrapScript || staticScripts}

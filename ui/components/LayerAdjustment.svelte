@@ -8,6 +8,7 @@
   import ToneCurve from './ToneCurve.svelte';
   let { host, layer }: { host: LayersPanel; layer: Layer } = $props();
   let adjustment = $state.raw<LayerAdjustment>(untrack(() => layer.adjustment!));
+  $effect(() => { adjustment = layer.adjustment!; });
   let selection = $state(untrack(() => adjustment.type === 'hue/saturation' ? 'master' : adjustment.type === 'channel mixer' ? 'red' : adjustment.type === 'color balance' ? 'shadows' : 'rgb'));
   const fields = $derived(adjustmentFields(adjustment, selection, value => commit(value)));
   const colorize = $derived(adjustment.type === 'hue/saturation' && !!adjustment.colorize && adjustment.colorizeEnabled !== false);

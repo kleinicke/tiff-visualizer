@@ -1,3 +1,4 @@
+import type { BinStats, HistogramData, HistogramOptions, OriginalStats, HistogramSnapshot } from './histogram-types';
 import Histogram from '../../ui/components/Histogram.svelte';
 import { mountView } from '../../ui/mount.js';
 "use strict";
@@ -7,41 +8,6 @@ import type { SettingsManager, ImageSettings } from './settings-manager.js';
 
 interface VsCodeApi {
 	postMessage: (msg: any) => any;
-}
-
-interface BinStats {
-	minBin: number;
-	maxBin: number;
-	meanBin: number;
-	total: number;
-}
-
-interface HistogramData {
-	r: Uint32Array;
-	g: Uint32Array;
-	b: Uint32Array;
-	luminance: Uint32Array;
-	nanCount: number;
-	stats: { r: BinStats, g: BinStats, b: BinStats, luminance: BinStats };
-}
-
-interface HistogramOptions {
-	rawData?: ArrayLike<number> | null;
-	planarData?: ArrayLike<number>[] | null;
-	channels?: number;
-	settings?: ImageSettings;
-	isFloat?: boolean;
-	typeMin?: number;
-	typeMax?: number;
-	stats?: { min: number, max: number } | null;
-	lut?: Uint8Array | null;
-	sampleStep?: number;
-}
-
-interface OriginalStats {
-	r: { min: number, max: number, mean: number, total: number };
-	g: { min: number, max: number, mean: number, total: number };
-	b: { min: number, max: number, mean: number, total: number };
 }
 
 /**
@@ -763,7 +729,7 @@ export class HistogramOverlay {
 	 * Use a histogram computed during image rendering.
 	 * @param precomputed
 	 */
-	updateFromPrecomputed(precomputed: { histogramData: HistogramData, originalStats?: any, valueRange?: { min: number, max: number, isFloat: boolean } }): void {
+	updateFromPrecomputed(precomputed: HistogramSnapshot): void {
 		this.histogramData = precomputed.histogramData;
 		if (precomputed.originalStats) {
 			this.originalStats = precomputed.originalStats;

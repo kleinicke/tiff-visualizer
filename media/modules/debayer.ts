@@ -15,24 +15,8 @@ import { getWasmModuleSync, getWasmModule } from './tiff-wasm-wrapper.js';
  * works if WASM fails to load.
  */
 
-export type DebayerAlgorithm = 'nearest' | 'bilinear' | 'malvar';
-export type DebayerView = 'rgb' | 'r' | 'g' | 'b' | 'i' | 'mosaic';
-
-export interface DebayerSettings {
-    enabled: boolean;
-    pattern: string;
-    algorithm: DebayerAlgorithm;
-    offsetX: number;
-    offsetY: number;
-    view: DebayerView;
-    autoWb: boolean;
-    gainR: number;
-    gainG: number;
-    gainB: number;
-    /** Sensor black level in raw units; 0 with whiteLevel 0 disables levelling. */
-    blackLevel: number;
-    whiteLevel: number;
-}
+import type { DebayerSettings, DebayerAlgorithm, DebayerView } from '../../shared/viewer-settings';
+export type { DebayerSettings, DebayerAlgorithm, DebayerView } from '../../shared/viewer-settings';
 
 export const DEFAULT_DEBAYER: DebayerSettings = {
     // On by default: this object only ever applies once the user has opened the

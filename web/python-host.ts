@@ -1,8 +1,9 @@
+import { parsePythonCommand, type PythonArguments, type PythonOperation } from '../shared/viewer-protocol';
 /** Private loopback session transport. Inert on the public website and in IDEs. */
-type Command = { id: string; operation: string; arguments: Record<string, any> };
+
 export function installPythonHost(host: {
   open: (files: File[]) => Promise<void>;
-  execute: (operation: string, args: Record<string, any>) => Promise<unknown>;
+  execute: (operation: PythonOperation, args: PythonArguments) => Promise<unknown>;
 }) {
   if (new URLSearchParams(location.search).get('host') !== 'python' || location.hostname !== '127.0.0.1') return;
   const renderer = crypto.randomUUID();
@@ -34,10 +35,13 @@ export function installPythonHost(host: {
           await host.open(files);
           revision = manifest.revision;
         }
-        const command = state.command as Command | null;
+        const command = state.command;
         if (command && command.id !== lastId) {
           lastId = command.id;
-          try { reply = { id: command.id, renderer_id: renderer, result: await host.execute(command.operation, command.arguments) }; }
+          try {
+            const validated = parsePythonCommand(command);
+            reply = { id: validated.id, renderer_id: renderer, result: await host.execute(validated.operation, validated.arguments) };
+          }
           catch (error) { reply = { id: command.id, renderer_id: renderer, error: error instanceof Error ? error.message : String(error) }; }
         }
       }
