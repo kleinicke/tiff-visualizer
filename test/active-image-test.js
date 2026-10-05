@@ -55,6 +55,30 @@ async function main() {
     _sourceBuffer: new ArrayBuffer(12), _sourceBufferSrc: 'first.tif', _regionSourceGeneration: 0,
     _regionSampleCache: new Map(), _regionSampleCacheBytes: 0,
   });
+  const renderOptions = { collectHistogram: true, targetCanvas: {}, placeholderImageData: {} };
+  const rendered = {};
+  tiff.renderTiffWithSettings = async (image, rasters, options) => {
+    assert.equal(image, tiff.rawTiffData.image);
+    assert.equal(rasters, tiff.rawTiffData.rasters);
+    assert.equal(options, renderOptions, 'TIFF must forward canvas and histogram options');
+    return rendered;
+  };
+  assert.equal(await tiff.renderWithSettings(renderOptions), rendered);
+
+  const { ExrProcessor } = await import(moduleUrl('exr-processor'));
+  const exr = Object.create(ExrProcessor.prototype);
+  exr.settingsManager = { settings: {} };
+  exr.rawExrData = { width: 2, height: 2 };
+  exr.renderExrToCanvas = (settings, options) => {
+    assert.equal(settings, exr.settingsManager.settings);
+    assert.equal(options, renderOptions, 'EXR must forward options on initial and subsequent renders');
+    return rendered;
+  };
+  exr._pendingRenderData = {}; exr._isInitialLoad = true;
+  assert.equal(exr.renderWithSettings(renderOptions), rendered);
+  assert.equal(exr._pendingRenderData, null);
+  assert.equal(exr.renderWithSettings(renderOptions), rendered);
+
   const tiffSnapshot = tiff.captureDecoded();
   tiff._gdalNodata = 99; tiff._lastAllTags = []; tiff._sourceBufferSrc = 'second.tif';
   tiff.rawTiffData = null; tiff._regionSampleCache.set('stale', {});

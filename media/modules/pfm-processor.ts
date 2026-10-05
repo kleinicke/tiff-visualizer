@@ -289,7 +289,7 @@ export class PfmProcessor {
     /**
      * Re-render PFM with current settings (for real-time updates)
      */
-    renderPfmWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+    renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
         if (!this._lastRaw) return null;
         const { width, height, data, channels } = this._lastRaw;
         return this._toImageDataFloat(data, width, height, channels, renderOptions);

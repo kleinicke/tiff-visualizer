@@ -162,7 +162,7 @@ export class TgaProcessor {
         );
     }
 
-    renderTgaWithSettings(): ImageData | null {
+    renderWithSettings(): ImageData | null {
         if (!this._lastRaw) return null;
         return this._renderToImageData();
     }

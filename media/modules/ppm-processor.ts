@@ -260,7 +260,7 @@ export class PpmProcessor {
     /**
      * Re-render PPM/PGM with current settings (for real-time updates)
      */
-    renderPgmWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+    renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
         if (!this._lastRaw) return null;
         const { width, height, data, maxval, channels } = this._lastRaw;
         return this._toImageDataWithNormalization(data, width, height, maxval, channels, renderOptions);

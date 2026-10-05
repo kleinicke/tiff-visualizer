@@ -1,3 +1,4 @@
+import type { ActiveImageProcessor } from './modules/active-image.js';
 import { parseAutomationRequest, type HostToViewerMessage, type ViewerToHostMessage, type FormatInfo, type DatasetManifest, type DatasetSeries, type DatasetAxis, type DatasetPlane } from '../shared/viewer-protocol';
 import { ImageNavigation, type CachedImage } from './modules/image-navigation';
 import { installImageLoad, type ImageLoadResult, type LoadProcessor } from './modules/image-load';
@@ -12,7 +13,7 @@ import { remoteTileConcurrency } from './modules/remote-tiff-source.js';
 "use strict";
 
 import { SettingsManager, webviewStateMatchesVersions, withWebviewStateVersions } from './modules/settings-manager.js';
-import type { ImageSettings, SettingsUpdateResult } from './modules/settings-manager.js';
+import type { ImageSettings } from './modules/settings-manager.js';
 import type { DeferredRenderOptions } from './modules/types.js';
 import { tiffFormatTypeFor, tiffTypeMax, tiffNeedsFloatCarrier } from './modules/tiff-format-utils.js';
 import { scenePageDirectory, imagePages, isPyramidal, levelForDisplayWidth, levelForZoom, levelLabel, levelsForPage, pageOwningIfd } from './modules/tiff-pages.js';
@@ -80,7 +81,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
  * Orchestrates all modules to provide image viewing functionality
  */
 (function () {
-	type SettingsChanges = SettingsUpdateResult;
 	type CopiedPosition = { relativeX: number, relativeY: number, sourceWidth: number, sourceHeight: number, scale: number | string };
 	type ColormapConversionState = { colormapName: string, minValue: number, maxValue: number, inverted: boolean, logarithmic: boolean };
 
@@ -530,7 +530,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			} else {
 				// Leaving composite mode re-renders the image exactly as it was
 				// decoded, so the mode is genuinely a view and not a conversion.
-				void updateImageWithNewSettings(null);
+				void updateImageWithNewSettings();
 			}
 			scheduleSaveState();
 		},
@@ -883,7 +883,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				schedulePreviewThenNative(stateRevision, 60);
 			} else {
 				// Restore the normal single-image render.
-				updateImageWithNewSettings(null);
+				updateImageWithNewSettings();
 			}
 			updateLayeredPreviewOverlay();
 			scheduleSaveState();
@@ -2412,7 +2412,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		get hdr() { return hdrProcessor; }, get tga() { return tgaProcessor; },
 		get 'web-image'() { return webImageProcessor; }, get layered() { return layeredPreviewProcessor; },
 	};
-	function activeProcessor(kind = resolveFormat(settingsManager.settings.resourceUri || '', settingsManager.settings.formatHint)?.kind): { activeImage?: ActiveImage; captureDecoded?: () => DecodedSnapshot | null; config?: unknown } | undefined {
+	function activeProcessor(kind = resolveFormat(settingsManager.settings.resourceUri || '', settingsManager.settings.formatHint)?.kind): ActiveImageProcessor | undefined {
 		return processorSources[kind as keyof typeof processorSources]
 			?? scientificProcessors.find(processor => processor.config.workerFormat === kind);
 	}
@@ -3688,7 +3688,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						}
 					} else if (pngProcessor.hasLazyNativeReadback()) {
 						if (!pngProcessor.canUseLazyNativeCanvasForSettings(settingsManager.settings)) {
-							await updateImageWithNewSettings(changes);
+							await updateImageWithNewSettings();
 						}
 						finalizeImageSetup();
 						clearCollectionLoadingState();
@@ -3727,7 +3727,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 					if (hasLoadedImage && !hasPendingRender && changes.changed) {
 						const startTime = performance.now();
-						await updateImageWithNewSettings(changes);
+						await updateImageWithNewSettings();
 						const endTime = performance.now();
 						logToOutput(`[Perf] Settings re-render (${updateReason}; ${changes.changedKeys.join(', ')}) took ${(endTime - startTime).toFixed(2)}ms`);
 					} else if (hasLoadedImage && !hasPendingRender && !changes.changed) {
@@ -4019,12 +4019,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	async function handleDebayerSettingsChanged(settings: DebayerSettings) {
 		settingsManager.settings.debayer = settings;
 		saveState();
-		await updateImageWithNewSettings({
-			changed: true,
-			changedKeys: ['debayer'],
-			parametersOnly: true,
-			changedStructure: false
-		});
+		await updateImageWithNewSettings();
 		// Auto WB resolves gains during the render; show the user what it picked.
 		if (settings.autoWb) {
 			const resolved = getLastDebayerGains();
@@ -4040,12 +4035,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	async function handleSetDisplayColormap(colormapName: string) {
 		settingsManager.settings.displayColormap = colormapName;
 		saveState();
-		await updateImageWithNewSettings({
-			changed: true,
-			changedKeys: ['displayColormap'],
-			parametersOnly: true,
-			changedStructure: false
-		});
+		await updateImageWithNewSettings();
 	}
 
 	/**
@@ -4561,9 +4551,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	/**
 	 * Update image rendering with new settings
-	 * @param changes - Changed settings
 	 */
-	async function updateImageWithNewSettings(changes?: SettingsChanges | null) {
+	async function updateImageWithNewSettings() {
 		const canRenderLazyPng = pngProcessor && pngProcessor.hasLazyNativeReadback();
 		if (!canvas || (!primaryImageData && !canRenderLazyPng)) {
 			return;
@@ -4594,28 +4583,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			return;
 		}
 
-		if (primaryImageData && layeredPreviewProcessor._lastRaw) {
-			const newImageData = layeredPreviewProcessor.renderWithSettings({ collectHistogram: histogramOverlay.getVisibility() });
-			const ctx = ensure2dCanvasContext();
-			if (newImageData && ctx) {
-				await renderImageDataToCanvas(newImageData, ctx);
-				primaryImageData = newImageData;
-				updateHistogramData();
-			}
-			return;
-		}
-
-		// Default to full update if no change info provided
-		if (!changes) {
-			changes = { changed: true, changedKeys: ['unspecified'], parametersOnly: false, changedStructure: false };
-		}
-
-		// For TIFF images, optimize based on what changed
-		if (primaryImageData && tiffProcessor.rawTiffData) {
-			try {
+		const processor = activeProcessor();
+		if (!processor) return;
+		const renderGeneration = navigation.generation;
+		const renderCanvas = canvas;
+		try {
+			if (processor === tiffProcessor) {
 				if (tiffProcessor.isProgressiveRemoteBase && _pyramidScene) {
-					// No whole raster exists by design. Repaint only the current view
-					// from the range cache using the new display transform.
 					_pyramidScene.clearTiles();
 					_pyramidScene.clearBase();
 					_pyramidPatchRegion = null;
@@ -4623,325 +4597,28 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					void updatePyramidSceneTiles();
 					return;
 				}
-				// Rebuild detail for changed display settings; the overview remains the background.
 				_pyramidScene?.clearTiles();
-				// If only parameters changed (gamma/brightness/normalization), use optimized path
-				if (changes.parametersOnly) {
-					// Skip mask loading and statistics recalculation
-					// Just re-render with new parameters from raw data
-					// Pre-existing arg-count mismatch predating the TS migration:
-					// renderTiffWithSettingsFast only takes 3 params, so this 4th "skipMasks"
-					// arg was already silently dropped by JS at runtime. Cast to `any` rather
-					// than fix the call, to avoid a behavior change outside migration scope.
-					const newImageData = await (tiffProcessor.renderTiffWithSettingsFast as any)(
-						tiffProcessor.rawTiffData.image,
-						tiffProcessor.rawTiffData.rasters,
-						true, // skipMasks flag
-						{
-							collectHistogram: histogramOverlay.getVisibility(),
-							targetCanvas: canvas,
-							placeholderImageData: primaryImageData
-						}
-					);
-
-					// Update the canvas with new image data
-					if (tiffProcessor._lastRenderUsedWebGL && newImageData) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx && newImageData) {
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							updateHistogramData();
-						}
-					}
-					void updateDetailPatch();
-					return;
-				}
-
-				// Fallback to full re-render for structural changes or mask changes
-				const newImageData = await tiffProcessor.renderTiffWithSettings(
-					tiffProcessor.rawTiffData.image,
-					tiffProcessor.rawTiffData.rasters,
-					{
-						collectHistogram: histogramOverlay.getVisibility(),
-						targetCanvas: canvas,
-						placeholderImageData: primaryImageData
-					}
-				);
-
-				// Update the canvas with new image data
-				if (tiffProcessor._lastRenderUsedWebGL && newImageData) {
-					PerfTrace.mark('canvas-upload-skipped');
-					primaryImageData = newImageData;
-					updateHistogramData();
-				} else {
-					const ctx = ensure2dCanvasContext();
-					if (ctx && newImageData) {
-						console.log('✅ CANVAS UPDATE (TIFF slow path): Applying new ImageData to canvas');
-						await renderImageDataToCanvas(newImageData, ctx);
-						primaryImageData = newImageData;
-						updateHistogramData();
-					}
-				}
-				void updateDetailPatch();
-				console.log('✨ Slow path complete, returning');
-				return; // Don't fall through to other processors
-			} catch (error) {
-				console.error('❌ Error updating TIFF image with new settings:', error);
 			}
-			console.log('↩️ Returning after TIFF processing (even on error)');
-			return; // Return even on error to prevent fall-through
-		}
-
-		// Re-render based on which processor was used (mutually exclusive)
-		// Check in order: EXR -> PGM -> PNG/JPEG -> NPY
-
-		// For EXR images, re-render with new settings
-		if (primaryImageData && exrProcessor && exrProcessor.rawExrData) {
-			console.log('📄 Processing EXR update');
-			try {
-				// Re-render the EXR with current settings
-				const newImageData = exrProcessor.updateSettings(settingsManager.settings, {
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-
-				if (newImageData) {
-					// Update the canvas with new image data
-					if (exrProcessor._lastRenderUsedWebGL) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) {
-							console.log('✅ CANVAS UPDATE (EXR): Applying new ImageData to canvas');
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							updateHistogramData();
-						}
-					}
-				}
-			} catch (error) {
-				console.error('❌ Error updating EXR image with new settings:', error);
+			const newImageData = await processor.renderWithSettings({
+				collectHistogram: histogramOverlay.getVisibility(),
+				targetCanvas: renderCanvas,
+				placeholderImageData: primaryImageData,
+			});
+			if (!newImageData || renderGeneration !== navigation.generation || canvas !== renderCanvas) return;
+			if (processor._lastRenderUsedWebGL) {
+				PerfTrace.mark('canvas-upload-skipped');
+			} else {
+				const ctx = ensure2dCanvasContext();
+				if (!ctx) return;
+				await renderImageDataToCanvas(newImageData, ctx);
+				if (renderGeneration !== navigation.generation) return;
+				if (processor === ppmProcessor || processor === pngProcessor) swapImageElementToCanvas();
 			}
-			return;
-		}
-		// For PGM images, re-render with new settings
-		if (primaryImageData && ppmProcessor && ppmProcessor._lastRaw) {
-			try {
-				// Re-render the PGM with current settings
-				const newImageData = ppmProcessor.renderPgmWithSettings({
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-
-				if (newImageData) {
-					// Update the canvas with new image data
-					if (ppmProcessor._lastRenderUsedWebGL) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) {
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							swapImageElementToCanvas();
-							updateHistogramData();
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error updating PGM image with new settings:', error);
-			}
-			return;
-		}
-
-		// For PFM images, re-render with new settings
-		if (primaryImageData && pfmProcessor && pfmProcessor._lastRaw) {
-			try {
-				// Re-render the PFM with current settings
-				const newImageData = pfmProcessor.renderPfmWithSettings({
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-
-				if (newImageData) {
-					// Update the canvas with new image data
-					if (pfmProcessor._lastRenderUsedWebGL) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) {
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							updateHistogramData();
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error updating PFM image with new settings:', error);
-			}
-			return;
-		}
-
-		const activeScientific = scientificProcessors.find(processor => !!processor._lastRaw);
-		if (primaryImageData && activeScientific) {
-			try {
-				const newImageData = activeScientific.renderWithSettings({
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-				if (newImageData) {
-					if (activeScientific._lastRenderUsedWebGL) {
-						primaryImageData = newImageData;
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) { await renderImageDataToCanvas(newImageData, ctx); primaryImageData = newImageData; }
-					}
-					updateHistogramData();
-				}
-			} catch (error) {
-				console.error(`Error updating ${activeScientific.config.formatLabel} with new settings:`, error);
-			}
-			return;
-		}
-
-		// For NPY images, re-render with new settings
-		if (primaryImageData && npyProcessor && npyProcessor._lastRaw) {
-			try {
-				// Re-render the NPY with current settings
-				const newImageData = npyProcessor.renderNpyWithSettings({
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-
-				if (newImageData) {
-					// Update the canvas with new image data
-					if (npyProcessor._lastRenderUsedWebGL) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) {
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							updateHistogramData();
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error updating NPY image with new settings:', error);
-			}
-			return;
-		}
-
-		// For PNG/JPEG images, re-render with new settings
-		if (pngProcessor && (pngProcessor._lastRaw || pngProcessor.hasLazyNativeReadback())) {
-			try {
-				// Re-render the PNG with current settings
-				const newImageData = pngProcessor.renderPngWithSettings({
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-
-				if (newImageData) {
-					// Update the canvas with new image data
-					if (pngProcessor._lastRenderUsedWebGL) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) {
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							swapImageElementToCanvas();
-							updateHistogramData();
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error updating PNG/JPEG image with new settings:', error);
-			}
-			return;
-		}
-
-		// For HDR images, re-render with new settings
-		if (primaryImageData && hdrProcessor && hdrProcessor._lastRaw) {
-			try {
-				const newImageData = hdrProcessor.renderHdrWithSettings({
-					collectHistogram: histogramOverlay.getVisibility(),
-					targetCanvas: canvas,
-					placeholderImageData: primaryImageData
-				});
-				if (newImageData) {
-					if (hdrProcessor._lastRenderUsedWebGL) {
-						PerfTrace.mark('canvas-upload-skipped');
-						primaryImageData = newImageData;
-						updateHistogramData();
-					} else {
-						const ctx = ensure2dCanvasContext();
-						if (ctx) {
-							await renderImageDataToCanvas(newImageData, ctx);
-							primaryImageData = newImageData;
-							updateHistogramData();
-						}
-					}
-				}
-			} catch (error) {
-				console.error('Error updating HDR image with new settings:', error);
-			}
-			return;
-		}
-
-		// For TGA images, re-render with new settings
-		if (primaryImageData && tgaProcessor && tgaProcessor._lastRaw) {
-			try {
-				const newImageData = tgaProcessor.renderTgaWithSettings();
-				if (newImageData) {
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
-						primaryImageData = newImageData;
-						updateHistogramData();
-					}
-				}
-			} catch (error) {
-				console.error('Error updating TGA image with new settings:', error);
-			}
-			return;
-		}
-
-		// For WebP/AVIF/BMP/ICO images, re-render with new settings
-		if (primaryImageData && webImageProcessor && webImageProcessor._lastRaw) {
-			try {
-				const newImageData = webImageProcessor.renderWebImageWithSettings();
-				if (newImageData) {
-					const ctx = canvas.getContext('2d');
-					if (ctx) {
-						await renderImageDataToCanvas(newImageData, ctx);
-						primaryImageData = newImageData;
-						updateHistogramData();
-					}
-				}
-			} catch (error) {
-				console.error('Error updating Web Image with new settings:', error);
-			}
-			return;
+			primaryImageData = newImageData;
+			updateHistogramData();
+			if (processor === tiffProcessor) void updateDetailPatch();
+		} catch (error) {
+			console.error('Error updating image with new settings:', error);
 		}
 	}
 
@@ -5779,7 +5456,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const mode = button.dataset.previewMode as 'integrated' | 'reconstructed';
 				if (!layeredPreviewProcessor.setPreviewMode(mode)) { return; }
 				updateLayeredPreviewOverlay();
-				await updateImageWithNewSettings(null);
+				await updateImageWithNewSettings();
 				if (!layerManager.active) { syncBaseLayer(); }
 				updateMetadataData();
 			});
@@ -6005,7 +5682,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// dropdown appear to do nothing.
 		compositeEnabled = false;
 		channelSolo = null;
-		await updateImageWithNewSettings(null);
+		await updateImageWithNewSettings();
 		channelsPanel.render();
 		updateTiffPageOverlay();
 	}

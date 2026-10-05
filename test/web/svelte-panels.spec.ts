@@ -88,7 +88,8 @@ test('embedded JetBrains controls use the Svelte forms and narrow panels stay re
   await page.setViewportSize({ width: 390, height: 740 });
   await page.goto('/?host=jetbrains');
   await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/pred_ref_rgb8.tif'));
-  await expect(page.locator('body')).toHaveClass(/ready/);
+  // The bootstrap frame is already ready; wait for the selected image to replace it.
+  await expect.poll(() => page.locator('body > canvas:not(.measure-overlay)').evaluate((element: HTMLCanvasElement) => element.width)).toBeGreaterThan(1);
   await expect(page.locator('.web-toolbar')).toBeHidden();
   await page.evaluate(() => {
     (window as any).scientificImageHost.theme('light');

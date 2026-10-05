@@ -593,7 +593,7 @@ export class PngProcessor {
         return sampleCtx.getImageData(0, 0, sampleWidth, sampleHeight);
     }
 
-    renderPngWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+    renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
         if (!this._lastRaw && !this._ensureLazyNativeImageData()) return null;
         return this._renderToImageData(renderOptions);
     }

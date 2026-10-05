@@ -42,6 +42,13 @@ test('viewer protocol validates automation and measures the active decoded sourc
   const region = await request(page,'region',{x:0,y:0,width:2,height:2});
   expect(region.result.rows[0].area).toBe(4);
 
+  const sourcePixel = (await request(page, 'pixel', {x:1,y:1})).result.values;
+  const before = (await request(page, 'capture')).result.png;
+  const display = await request(page, 'display', {settings:{gamma:{in:1,out:2.2}}});
+  expect(display.error).toBeUndefined();
+  expect((await request(page, 'capture')).result.png).not.toBe(before);
+  expect((await request(page, 'pixel', {x:1,y:1})).result.values).toEqual(sourcePixel);
+
   await page.evaluate(() => window.postMessage({type:'convertColormapToFloat',colormap:'viridis',min:-10,max:10,inverted:false,logarithmic:false},location.origin));
   await expect.poll(async () => (await request(page,'inspect')).result?.channels).toBe(1);
   const pixel = await request(page,'pixel',{x:0,y:0});

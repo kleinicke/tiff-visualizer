@@ -256,7 +256,7 @@ export class NpyProcessor {
     /**
      * Re-render NPY with current settings (for real-time updates)
      */
-    renderNpyWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+    renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
         if (!this._lastRaw) return null;
         const { width, height, data } = this._lastRaw;
         return this._toImageDataFloat(data, width, height, renderOptions);

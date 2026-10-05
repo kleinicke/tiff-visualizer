@@ -125,6 +125,11 @@ export class TiffProcessor {
     this.rawTiffData = null; this._lastStatistics = null; this._convertedFloatData = null;
   }
 
+  renderWithSettings(options: DeferredRenderOptions = {}): Promise<ImageData> | null {
+    const raw = this.rawTiffData;
+    return raw ? this.renderTiffWithSettings(raw.image, raw.rasters, options) : null;
+  }
+
   get activeImage(): ActiveImage {
       return { stats: this._lastStatistics, histogram: this._lastRenderHistogram,
           planar: this.rawTiffData?.rasters, page: this.rawTiffData?.ifd.pageIndex, pageCount: this.rawTiffData?.ifd.pageCount,
@@ -2088,16 +2093,6 @@ export class TiffProcessor {
 		} catch {
 			return null;
 		}
-	}
-
-	/**
-	 * Fast render TIFF data with current settings.
-	 * @param image - GeoTIFF image object
-	 * @param rasters - Raster data
-	 */
-	async renderTiffWithSettingsFast(image: any, rasters: any, renderOptions: DeferredRenderOptions = {}): Promise<ImageData> {
-		// Redirect to main render method for now to ensure correctness and use centralized ImageRenderer
-		return this.renderTiffWithSettings(image, rasters, renderOptions);
 	}
 
 	async renderTiff(image: any, rasters: any, renderOptions: DeferredRenderOptions = {}): Promise<ImageData> {

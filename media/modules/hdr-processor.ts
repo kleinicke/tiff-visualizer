@@ -286,7 +286,7 @@ export class HdrProcessor {
         return imageData;
     }
 
-    renderHdrWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
+    renderWithSettings(renderOptions: DeferredRenderOptions = {}): ImageData | null {
         if (!this._lastRaw) return null;
         const { width, height, data, channels } = this._lastRaw;
         return this._toImageDataFloat(data, width, height, channels, renderOptions);

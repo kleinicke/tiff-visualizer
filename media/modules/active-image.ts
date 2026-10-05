@@ -1,3 +1,4 @@
+import type { DeferredRenderOptions } from './types';
 import type { MeasurementSource } from './measure/types';
 import type { HistogramOptions, HistogramSnapshot } from './histogram-types';
 import type { LayerInput } from './layer-manager';
@@ -54,4 +55,13 @@ export function imageHistogram(image: ActiveImage | null | undefined): Histogram
   return { rawData: image.planar ? undefined : raster.data, planarData: image.planar,
     channels: raster.channels, isFloat: raster.isFloat, typeMax: raster.typeMax,
     typeMin: image.typeMin, stats: image.stats };
+}
+
+/** Processor-owned rendering; the coordinator only installs its output. */
+export interface ActiveImageProcessor {
+  activeImage?: ActiveImage;
+  captureDecoded?: () => DecodedSnapshot | null;
+  config?: unknown;
+  _lastRenderUsedWebGL?: boolean;
+  renderWithSettings(options: DeferredRenderOptions): ImageData | null | Promise<ImageData | null>;
 }

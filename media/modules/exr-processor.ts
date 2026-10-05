@@ -68,6 +68,10 @@ export class ExrProcessor {
     this.rawExrData = undefined; this._cachedStats = undefined;
   }
 
+  renderWithSettings(options: DeferredRenderOptions = {}): ImageData | null {
+    return this.updateSettings(this.settingsManager.settings, options);
+  }
+
   get activeImage(): ActiveImage {
       return { stats: this._cachedStats, histogram: this._lastRenderHistogram, raster: imageRaster(this.rawExrData, { isFloat: true, typeMax: 1, sourceNumericType: this.rawExrData?.type === 1016 ? 'float16' : 'float32' }),
           readPixel: (x, y) => {
@@ -393,8 +397,7 @@ export class ExrProcessor {
 			return imageData;
 		} else if (this.rawExrData) {
 			// Re-render with new settings
-			const { width, height } = this.rawExrData;
-			return this.renderExrToCanvas(settings);
+			return this.renderExrToCanvas(settings, renderOptions);
 		}
 		return null;
 	}

@@ -26,7 +26,7 @@ ambiguous. User-facing format support lives in `README.md` and `docs/formats.md`
 Keep `media/imagePreview.ts` as coordination code. New features belong in the
 owning module; do not add format-specific pixel inspection, layer conversion or
 cache restoration branches there. Measurements and histograms consume the same
-active source; retain its numeric domain and planar storage where applicable. Processors expose `activeImage`; supported
+active source; retain its numeric domain and planar storage where applicable. Processors expose `activeImage` and `renderWithSettings(options)`; supported
 cache paths expose `captureDecoded()`. Snapshots retain buffers without copying
 and restore processor state without doing host UI work.
 

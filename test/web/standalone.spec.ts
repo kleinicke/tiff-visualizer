@@ -563,7 +563,8 @@ test('reads original COG pixels with automatic resolution', async ({ page }) => 
 
   const canvas = page.locator('body > canvas:not(.measure-overlay):not(.detail-patch)');
   await expect.poll(async () => {
-    const box = (await canvas.boundingBox())!;
+    const box = await canvas.boundingBox();
+    if (!box) return ''; // The new canvas can still be replacing the bootstrap frame.
     await page.mouse.move(box.x + (159.5 / 256) * box.width, box.y + (97.5 / 256) * box.height);
     await page.mouse.move(box.x + (160.5 / 256) * box.width, box.y + (98.5 / 256) * box.height);
     return page.locator('#web-status-size').innerText();
