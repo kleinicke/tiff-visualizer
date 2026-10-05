@@ -40,11 +40,11 @@ pub(crate) fn decode_jpeg2000_impl(data: &[u8]) -> Result<ScientificParsed, Deco
 
     let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
     let image = dicom_toolkit_jpeg2000::Image::new(data, &settings)
-        .map_err(|e| DecodeError::new(&format!("JPEG 2000 header: {:?}", e)))?;
+        .map_err(|e| DecodeError::new(format!("JPEG 2000 header: {:?}", e)))?;
     let color_space = format!("{:?}", image.color_space());
     let raw = image
         .decode_native()
-        .map_err(|e| DecodeError::new(&format!("JPEG 2000 decode failed: {:?}", e)))?;
+        .map_err(|e| DecodeError::new(format!("JPEG 2000 decode failed: {:?}", e)))?;
 
     let width = raw.width;
     let height = raw.height;
@@ -54,13 +54,13 @@ pub(crate) fn decode_jpeg2000_impl(data: &[u8]) -> Result<ScientificParsed, Deco
     // own precision (12 for Sentinel-2) and is what the value range comes from.
     let bit_depth = raw.bit_depth as u32;
     if channels == 0 || channels > 4 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "JPEG 2000 images with {} components are not supported",
             channels
         )));
     }
     if !matches!(raw.bytes_per_sample, 1 | 2) || bit_depth == 0 || bit_depth > 16 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "JPEG 2000 bit depth {} is not supported",
             bit_depth
         )));
@@ -72,7 +72,7 @@ pub(crate) fn decode_jpeg2000_impl(data: &[u8]) -> Result<ScientificParsed, Deco
         .and_then(|n| n.checked_mul(raw.bytes_per_sample as usize))
         .ok_or_else(|| DecodeError::new("JPEG 2000: image dimensions overflow"))?;
     if raw.data.len() < expected {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "JPEG 2000: decoded {} bytes, expected {}",
             raw.data.len(),
             expected
@@ -105,7 +105,10 @@ pub(crate) fn decode_jpeg2000_impl(data: &[u8]) -> Result<ScientificParsed, Deco
         ("height".to_string(), JsonValue::Num(height as f64)),
         ("channels".to_string(), JsonValue::Num(channels as f64)),
         ("colorSpace".to_string(), JsonValue::Str(color_space)),
-        ("bitsPerSample".to_string(), JsonValue::Num(bit_depth as f64)),
+        (
+            "bitsPerSample".to_string(),
+            JsonValue::Num(bit_depth as f64),
+        ),
         (
             "storageBitsPerSample".to_string(),
             JsonValue::Num((raw.bytes_per_sample as f64) * 8.0),

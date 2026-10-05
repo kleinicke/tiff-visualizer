@@ -11,6 +11,7 @@ fn tiff_is_little_endian(data: &[u8]) -> Option<bool> {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // The TIFF metadata is passed through from the caller unchanged.
 pub(crate) fn try_decode_uncompressed_strips(
     data: &[u8],
     decoder: &mut Decoder<Cursor<&[u8]>>,
@@ -27,7 +28,7 @@ pub(crate) fn try_decode_uncompressed_strips(
     if compression != 1 || predictor != 1 || planar_configuration != 1 {
         return Ok(None);
     }
-    if bits_per_sample == 0 || bits_per_sample % 8 != 0 {
+    if bits_per_sample == 0 || !bits_per_sample.is_multiple_of(8) {
         return Ok(None);
     }
     if decoder.get_tag_u64_vec(Tag::TileOffsets).is_ok() {
@@ -254,7 +255,7 @@ pub(crate) fn decompress_block(
             let mut zd = flate2::read::ZlibDecoder::new(block);
             let mut buf = Vec::new();
             zd.read_to_end(&mut buf).map_err(|e| {
-                DecodeError::new(&format!("{}: Deflate decode failed: {}", context, e))
+                DecodeError::new(format!("{}: Deflate decode failed: {}", context, e))
             })?;
             Ok(buf)
         }
@@ -269,10 +270,10 @@ pub(crate) fn decompress_block(
                 let mut cursor = std::io::Cursor::new(rest);
                 let mut dec =
                     ruzstd::decoding::StreamingDecoder::new(&mut cursor).map_err(|e| {
-                        DecodeError::new(&format!("{}: ZSTD decoder init failed: {:?}", context, e))
+                        DecodeError::new(format!("{}: ZSTD decoder init failed: {:?}", context, e))
                     })?;
                 dec.read_to_end(&mut buf).map_err(|e| {
-                    DecodeError::new(&format!("{}: ZSTD decode failed: {:?}", context, e))
+                    DecodeError::new(format!("{}: ZSTD decode failed: {:?}", context, e))
                 })?;
                 let consumed = cursor.position() as usize;
                 if consumed == 0 || consumed > rest.len() {
@@ -307,9 +308,9 @@ pub(crate) fn decompress_block(
                 std::num::NonZeroUsize::new(8192).unwrap(),
                 xz,
             );
-            decoder.read_to_end(&mut out).map_err(|e| {
-                DecodeError::new(&format!("{}: LZMA decode failed: {}", context, e))
-            })?;
+            decoder
+                .read_to_end(&mut out)
+                .map_err(|e| DecodeError::new(format!("{}: LZMA decode failed: {}", context, e)))?;
             Ok(out)
         }
         #[cfg(not(feature = "codec-lzma"))]
@@ -367,7 +368,7 @@ pub(crate) fn decompress_block(
         ),
         #[cfg(not(feature = "jxl"))]
         50002 => Err(crate::formats::external_codec::needed("JPEG XL", context)),
-        _ => Err(DecodeError::new(&format!(
+        _ => Err(DecodeError::new(format!(
             "{}: compression {} is not supported",
             context, compression
         ))),
@@ -384,7 +385,7 @@ fn decode_jxl_block(
     let decoded = crate::formats::jxl::decode_jxl_impl(block)?;
     let bytes_per_sample = (info.bits_per_sample as usize).div_ceil(8);
     if decoded.data.len().saturating_mul(bytes_per_sample) != expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: JPEG XL decoded {} samples, but the TIFF block needs {} bytes of {}-bit samples",
             context,
             decoded.data.len(),
@@ -395,7 +396,7 @@ fn decode_jxl_block(
     if decoded.sample_format != info.sample_format
         || decoded.bits_per_sample != info.bits_per_sample
     {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: JPEG XL is sample format {}/{}-bit, TIFF declares {}/{}-bit",
             context,
             decoded.sample_format,
@@ -419,7 +420,7 @@ fn decode_jxl_block(
             }
         }
         _ => {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "{}: JPEG XL TIFF samples {}/{}-bit are not supported",
                 context, info.sample_format, info.bits_per_sample
             )))
@@ -436,7 +437,7 @@ fn codec_info<'a>(
     codec: &str,
 ) -> Result<&'a BlockCodecInfo, DecodeError> {
     info.ok_or_else(|| {
-        DecodeError::new(&format!(
+        DecodeError::new(format!(
             "{}: {} blocks need the sample layout, which this path does not have",
             context, codec
         ))
@@ -459,11 +460,11 @@ fn decode_png_block(
     decoder.set_transformations(png::Transformations::IDENTITY);
     let mut reader = decoder
         .read_info()
-        .map_err(|e| DecodeError::new(&format!("{}: PNG header: {}", context, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: PNG header: {}", context, e)))?;
     let mut buffer = vec![0u8; reader.output_buffer_size()];
     let frame = reader
         .next_frame(&mut buffer)
-        .map_err(|e| DecodeError::new(&format!("{}: PNG decode failed: {}", context, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: PNG decode failed: {}", context, e)))?;
     buffer.truncate(frame.buffer_size());
     if info.bits_per_sample == 16 && info.little_endian {
         for pair in buffer.chunks_exact_mut(2) {
@@ -471,7 +472,7 @@ fn decode_png_block(
         }
     }
     if buffer.len() < expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: PNG block holds {} bytes, expected {}",
             context,
             buffer.len(),
@@ -507,7 +508,7 @@ fn decode_lerc_block(
             flate2::read::ZlibDecoder::new(block)
                 .read_to_end(&mut inflated)
                 .map_err(|e| {
-                    DecodeError::new(&format!("{}: LERC Deflate wrapper failed: {}", context, e))
+                    DecodeError::new(format!("{}: LERC Deflate wrapper failed: {}", context, e))
                 })?;
             std::borrow::Cow::Owned(inflated)
         }
@@ -518,7 +519,7 @@ fn decode_lerc_block(
             context,
         )?),
         other => {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "{}: LERC additional compression {} is not supported",
                 context, other
             )))
@@ -526,10 +527,11 @@ fn decode_lerc_block(
     };
 
     let decoded = lerc_reader::decode_to_f64(&blob)
-        .map_err(|e| DecodeError::new(&format!("{}: LERC decode failed: {}", context, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: LERC decode failed: {}", context, e)))?;
+    #[allow(clippy::manual_div_ceil)] // The u32 tag plus 7 may overflow on wasm32.
     let bytes_per_sample = (info.bits_per_sample as usize + 7) / 8;
     if decoded.pixels.len().saturating_mul(bytes_per_sample) < expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: LERC block holds {} samples ({} bytes), expected {}",
             context,
             decoded.pixels.len(),
@@ -570,7 +572,7 @@ fn decode_lerc_block(
             (_, 16) => out.extend_from_slice(&to_file_order_2(value as u16, info.little_endian)),
             (_, 32) => out.extend_from_slice(&to_file_order_4(value as u32, info.little_endian)),
             (format, bits) => {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "{}: LERC with sample format {} at {} bits is not supported",
                     context, format, bits
                 )))
@@ -594,10 +596,10 @@ fn decode_jpeg2000_block(
 ) -> Result<Vec<u8>, DecodeError> {
     let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
     let image = dicom_toolkit_jpeg2000::Image::new(block, &settings)
-        .map_err(|e| DecodeError::new(&format!("{}: JPEG 2000 header: {:?}", context, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: JPEG 2000 header: {:?}", context, e)))?;
     let raw = image
         .decode_native()
-        .map_err(|e| DecodeError::new(&format!("{}: JPEG 2000 decode failed: {:?}", context, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: JPEG 2000 decode failed: {:?}", context, e)))?;
     let mut data = raw.data;
 
     // An Aperio 33003 block holds YCbCr, which the codestream does not convert
@@ -614,7 +616,7 @@ fn decode_jpeg2000_block(
         }
     }
     if data.len() < expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: JPEG 2000 block holds {} bytes, expected {}",
             context,
             data.len(),
@@ -645,7 +647,7 @@ fn decode_jpegxr_block(
         }
     }
     if data.len() < expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: JPEG XR block holds {} bytes, expected {}",
             context,
             data.len(),
@@ -758,7 +760,7 @@ fn unpack_row_u64(
     little_endian: bool,
 ) -> Vec<u64> {
     let mut out = Vec::with_capacity(samples_per_row);
-    if bits_per_sample % 8 == 0 {
+    if bits_per_sample.is_multiple_of(8) {
         let width = (bits_per_sample / 8) as usize;
         for index in 0..samples_per_row {
             let start = index * width;
@@ -900,7 +902,7 @@ pub(crate) fn try_decode_subbit_strips(
         ));
     }
     if predictor != 1 && predictor != 2 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Sub-16-bit TIFF: predictor {} is not supported",
             predictor
         )));
@@ -917,7 +919,7 @@ pub(crate) fn try_decode_subbit_strips(
         .and_then(|values| values.first().copied())
         .unwrap_or(1) as u32;
     if sample_format != 1 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Sub-16-bit TIFF: sample format {} is not supported (only unsigned integer)",
             sample_format
         )));
@@ -937,6 +939,7 @@ pub(crate) fn try_decode_subbit_strips(
         .max(1);
 
     let samples_per_row = (width as usize).saturating_mul(channels as usize);
+    #[allow(clippy::manual_div_ceil)] // Packed-row multiplication and addition may overflow usize.
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
     let max_value = (1u32 << bits_per_sample) - 1;
 
@@ -961,7 +964,7 @@ pub(crate) fn try_decode_subbit_strips(
         let decompressed =
             decompress_strip_or_tile(strip, compression, expected_bytes, "Sub-16-bit TIFF")?;
         if decompressed.len() < expected_bytes {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "Sub-16-bit TIFF: strip decompressed to {} bytes, expected at least {}",
                 decompressed.len(),
                 expected_bytes
@@ -987,7 +990,7 @@ pub(crate) fn try_decode_subbit_strips(
     }
 
     if rows_decoded != height {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Sub-16-bit TIFF: decoded {} of {} rows",
             rows_decoded, height
         )));
@@ -1099,26 +1102,26 @@ pub(crate) fn try_decode_general_strips_tiles(
         || bits_per_sample > 64
         || (bits_per_sample > 32 && bits_per_sample != 64)
     {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: {}-bit samples are not supported",
             CTX, bits_per_sample
         )));
     }
     if !matches!(compression, 1 | 5 | 8 | 32946 | 50000) && !block_only_codec {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: compression {} is not supported",
             CTX, compression
         )));
     }
-    if !matches!(predictor, 1 | 2 | 3) {
-        return Err(DecodeError::new(&format!(
+    if !matches!(predictor, 1..=3) {
+        return Err(DecodeError::new(format!(
             "{}: predictor {} is not supported",
             CTX, predictor
         )));
     }
     let fill_order = decoder.get_tag_u32(Tag::FillOrder).unwrap_or(1);
     if fill_order != 1 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: FillOrder 2 (LSB-first) is not supported",
             CTX
         )));
@@ -1133,10 +1136,10 @@ pub(crate) fn try_decode_general_strips_tiles(
     // (`strip_bytes_to_f32`, `float_predictor_plan`, the ZSTD path). Leaving 16
     // out made a float16 image decode fine under LZW or ZSTD and fail under any
     // block-only codec, which is a difference no file property justifies.
-    if !matches!(sample_format, 1 | 2 | 3)
+    if !matches!(sample_format, 1..=3)
         || (sample_format == 3 && !matches!(bits_per_sample, 16 | 32 | 64))
     {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: sample format {} at {} bits is not supported",
             CTX, sample_format, bits_per_sample
         )));
@@ -1145,13 +1148,13 @@ pub(crate) fn try_decode_general_strips_tiles(
     // is defined for integer samples only, and predictor 3 (the floating-point
     // predictor, undone per block below) only for float ones.
     if sample_format == 3 && predictor == 2 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: horizontal predictor on float samples is not supported",
             CTX
         )));
     }
     if predictor == 3 && (sample_format != 3 || !matches!(bits_per_sample, 16 | 32 | 64)) {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: the floating-point predictor is only supported on 16/32/64-bit float samples",
             CTX
         )));
@@ -1194,15 +1197,15 @@ pub(crate) fn try_decode_general_strips_tiles(
     // rows/columns past width/height are dropped below when assembling the
     // output.
     let (block_width, block_height, blocks_across, blocks_down, rows_per_strip) = if is_tiled {
-        let across = ((width as u64) + tile_width as u64 - 1) / tile_width as u64;
-        let down = ((height as u64) + tile_length as u64 - 1) / tile_length as u64;
+        let across = (width as u64).div_ceil(tile_width as u64);
+        let down = (height as u64).div_ceil(tile_length as u64);
         (tile_width, tile_length, across as u32, down as u32, 0u32)
     } else {
         let rps = decoder
             .get_tag_u32(Tag::RowsPerStrip)
             .unwrap_or(height)
             .max(1);
-        let down = ((height as u64) + rps as u64 - 1) / rps as u64;
+        let down = (height as u64).div_ceil(rps as u64);
         (width, rps, 1u32, down as u32, rps)
     };
     let blocks_per_plane = (blocks_across as u64) * (blocks_down as u64);
@@ -1212,19 +1215,19 @@ pub(crate) fn try_decode_general_strips_tiles(
     } else {
         decoder.get_tag_u64_vec(Tag::StripOffsets)
     })
-    .map_err(|e| DecodeError::new(&format!("{}: missing offsets: {}", CTX, e)))?;
+    .map_err(|e| DecodeError::new(format!("{}: missing offsets: {}", CTX, e)))?;
     let counts = (if is_tiled {
         decoder.get_tag_u64_vec(Tag::TileByteCounts)
     } else {
         decoder.get_tag_u64_vec(Tag::StripByteCounts)
     })
-    .map_err(|e| DecodeError::new(&format!("{}: missing byte counts: {}", CTX, e)))?;
+    .map_err(|e| DecodeError::new(format!("{}: missing byte counts: {}", CTX, e)))?;
 
     let expected_blocks = blocks_per_plane
         .checked_mul(planes as u64)
-        .ok_or_else(|| DecodeError::new(&format!("{}: block count overflow", CTX)))?;
+        .ok_or_else(|| DecodeError::new(format!("{}: block count overflow", CTX)))?;
     if offsets.len() as u64 != expected_blocks || counts.len() as u64 != expected_blocks {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: expected {} strip/tile offsets, found {}",
             CTX,
             expected_blocks,
@@ -1233,6 +1236,7 @@ pub(crate) fn try_decode_general_strips_tiles(
     }
 
     let samples_per_row = (block_width as usize) * (channels_per_block as usize);
+    #[allow(clippy::manual_div_ceil)] // Packed-row multiplication and addition may overflow usize.
     let row_bytes = (samples_per_row * bits_per_sample as usize + 7) / 8;
     let mut out: Vec<u64> = vec![0u64; (width as usize) * (height as usize) * (channels as usize)];
 
@@ -1251,7 +1255,7 @@ pub(crate) fn try_decode_general_strips_tiles(
                 let start = offset as usize;
                 let end = start.saturating_add(count as usize);
                 if end > data.len() {
-                    return Err(DecodeError::new(&format!(
+                    return Err(DecodeError::new(format!(
                         "{}: strip/tile byte range out of bounds",
                         CTX
                     )));
@@ -1292,7 +1296,7 @@ pub(crate) fn try_decode_general_strips_tiles(
                     )?
                 };
                 if decompressed.len() < expected_bytes {
-                    return Err(DecodeError::new(&format!(
+                    return Err(DecodeError::new(format!(
                         "{}: block decompressed to {} bytes, expected at least {}",
                         CTX,
                         decompressed.len(),
@@ -1423,13 +1427,13 @@ pub(crate) fn decode_zstd(
 
     let (width, height) = decoder
         .dimensions()
-        .map_err(|e| DecodeError::new(&format!("ZSTD: dimensions: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: dimensions: {}", e)))?;
     let offsets = decoder
         .get_tag_u64_vec(Tag::StripOffsets)
-        .map_err(|e| DecodeError::new(&format!("ZSTD: StripOffsets: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: StripOffsets: {}", e)))?;
     let counts = decoder
         .get_tag_u64_vec(Tag::StripByteCounts)
-        .map_err(|e| DecodeError::new(&format!("ZSTD: StripByteCounts: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("ZSTD: StripByteCounts: {}", e)))?;
     let spp = decoder.get_tag_u32(Tag::SamplesPerPixel).unwrap_or(1);
     let predictor = decoder.get_tag_u32(Tag::Predictor).unwrap_or(1);
     let photometric = decoder
@@ -1453,6 +1457,7 @@ pub(crate) fn decode_zstd(
         .unwrap_or(height)
         .max(1);
     let bits_per_pixel: u64 = bits.iter().map(|b| *b as u64).sum();
+    #[allow(clippy::manual_div_ceil)] // Pixel-bit multiplication and addition may overflow u64.
     let row_bytes = ((width as u64 * bits_per_pixel + 7) / 8) as usize;
     let mut raster: Vec<u8> = Vec::new();
     for (index, (off, cnt)) in offsets.iter().zip(counts.iter()).enumerate() {
@@ -1495,10 +1500,10 @@ pub(crate) fn decode_zstd(
     // WHOLE image in one strip, so a large GeoTIFF failed here with "decoder
     // limits exceeded" while the same pixels decoded fine tiled.
     let mut d = Decoder::new(Cursor::new(rebuilt.as_slice()))
-        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("ZSTD: rebuilt decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
     d.read_image()
-        .map_err(|e| DecodeError::new(&format!("ZSTD: rebuilt read_image: {}", e)))
+        .map_err(|e| DecodeError::new(format!("ZSTD: rebuilt read_image: {}", e)))
 }
 
 /// Decode chunky, strip-based **floating-point** samples that use TIFF

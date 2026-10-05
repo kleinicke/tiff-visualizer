@@ -27,13 +27,13 @@ pub(crate) fn decode_tiff_lzw(
                 if in_pos >= block.len() {
                     break;
                 }
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "{}: LZW decode stalled before end of input",
                     context
                 )));
             }
             Err(e) => {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "{}: LZW decode failed: {}",
                     context, e
                 )))
@@ -41,7 +41,7 @@ pub(crate) fn decode_tiff_lzw(
         }
     }
     if out_pos < expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: LZW stream produced {} bytes, expected {}",
             context, out_pos, expected_len
         )));
@@ -67,11 +67,11 @@ fn decode_lz4_block(
         if literal_len == 15 {
             loop {
                 let extra = *input.get(pos).ok_or_else(|| {
-                    DecodeError::new(&format!("{}: truncated LZ4 literal length", context))
+                    DecodeError::new(format!("{}: truncated LZ4 literal length", context))
                 })? as usize;
                 pos += 1;
                 literal_len = literal_len.checked_add(extra).ok_or_else(|| {
-                    DecodeError::new(&format!("{}: LZ4 literal length overflow", context))
+                    DecodeError::new(format!("{}: LZ4 literal length overflow", context))
                 })?;
                 if extra != 255 {
                     break;
@@ -80,12 +80,12 @@ fn decode_lz4_block(
         }
         let literal_end = pos
             .checked_add(literal_len)
-            .ok_or_else(|| DecodeError::new(&format!("{}: LZ4 literal range overflow", context)))?;
+            .ok_or_else(|| DecodeError::new(format!("{}: LZ4 literal range overflow", context)))?;
         let output_after_literals = out.len().checked_add(literal_len).ok_or_else(|| {
-            DecodeError::new(&format!("{}: LZ4 literal output size overflow", context))
+            DecodeError::new(format!("{}: LZ4 literal output size overflow", context))
         })?;
         if literal_end > input.len() || output_after_literals > expected_len {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "{}: invalid LZ4 literal run",
                 context
             )));
@@ -98,11 +98,11 @@ fn decode_lz4_block(
 
         let offset_bytes = input
             .get(pos..pos + 2)
-            .ok_or_else(|| DecodeError::new(&format!("{}: truncated LZ4 match offset", context)))?;
+            .ok_or_else(|| DecodeError::new(format!("{}: truncated LZ4 match offset", context)))?;
         pos += 2;
         let offset = u16::from_le_bytes([offset_bytes[0], offset_bytes[1]]) as usize;
         if offset == 0 || offset > out.len() {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "{}: invalid LZ4 match offset {}",
                 context, offset
             )));
@@ -112,11 +112,11 @@ fn decode_lz4_block(
         if token & 0x0f == 15 {
             loop {
                 let extra = *input.get(pos).ok_or_else(|| {
-                    DecodeError::new(&format!("{}: truncated LZ4 match length", context))
+                    DecodeError::new(format!("{}: truncated LZ4 match length", context))
                 })? as usize;
                 pos += 1;
                 match_len = match_len.checked_add(extra).ok_or_else(|| {
-                    DecodeError::new(&format!("{}: LZ4 match length overflow", context))
+                    DecodeError::new(format!("{}: LZ4 match length overflow", context))
                 })?;
                 if extra != 255 {
                     break;
@@ -124,10 +124,10 @@ fn decode_lz4_block(
             }
         }
         let output_after_match = out.len().checked_add(match_len).ok_or_else(|| {
-            DecodeError::new(&format!("{}: LZ4 match output size overflow", context))
+            DecodeError::new(format!("{}: LZ4 match output size overflow", context))
         })?;
         if output_after_match > expected_len {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "{}: LZ4 match exceeds declared output size",
                 context
             )));
@@ -138,7 +138,7 @@ fn decode_lz4_block(
         }
     }
     if out.len() != expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "{}: LZ4 block produced {} bytes, expected {}",
             context,
             out.len(),
@@ -159,14 +159,14 @@ fn chunked_varint(
     for index in 0..max_bytes {
         let byte = *payload
             .get(*pos)
-            .ok_or_else(|| DecodeError::new(&format!("{}: truncated varint", context)))?;
+            .ok_or_else(|| DecodeError::new(format!("{}: truncated varint", context)))?;
         *pos += 1;
         value |= ((byte & 0x7f) as usize) << (index * 7);
         if byte & 0x80 == 0 {
             return Ok(value);
         }
     }
-    Err(DecodeError::new(&format!(
+    Err(DecodeError::new(format!(
         "{}: varint exceeds {} bytes",
         context, max_bytes
     )))
@@ -245,7 +245,7 @@ pub(crate) fn decode_czi_chunked(
                 preprocessing = chunk[0];
             }
             _ => {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "CZI CHUNKED header chunk {} is not supported",
                     id
                 )))
@@ -279,7 +279,7 @@ pub(crate) fn decode_czi_chunked(
         .try_fold(0usize, |sum, &size| sum.checked_add(size))
         .ok_or_else(|| DecodeError::new("CZI CHUNKED decompressed size overflow"))?;
     if total != expected_len {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "CZI CHUNKED declares {} output bytes, expected {}",
             total, expected_len
         )));
@@ -305,12 +305,12 @@ pub(crate) fn decode_czi_chunked(
         let mut decoded = if method == 0 {
             let mut bytes = Vec::with_capacity(decompressed_len);
             let mut decoder = ruzstd::decoding::StreamingDecoder::new(Cursor::new(input))
-                .map_err(|e| DecodeError::new(&format!("{} zstd init: {:?}", context, e)))?;
+                .map_err(|e| DecodeError::new(format!("{} zstd init: {:?}", context, e)))?;
             decoder
                 .read_to_end(&mut bytes)
-                .map_err(|e| DecodeError::new(&format!("{} zstd decode: {:?}", context, e)))?;
+                .map_err(|e| DecodeError::new(format!("{} zstd decode: {:?}", context, e)))?;
             if bytes.len() != decompressed_len {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "{} produced {} bytes, expected {}",
                     context,
                     bytes.len(),

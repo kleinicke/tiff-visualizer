@@ -18,8 +18,8 @@ use super::scientific_common::ScientificParsed;
 use crate::DecodeError;
 
 use jxl::api::{
-    Endianness, JxlBitDepth, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions,
-    JxlOutputBuffer, JxlPixelFormat, ProcessingResult, states,
+    states, Endianness, JxlBitDepth, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions,
+    JxlOutputBuffer, JxlPixelFormat, ProcessingResult,
 };
 use jxl::headers::extra_channels::ExtraChannel;
 
@@ -30,7 +30,10 @@ pub(crate) fn is_jxl(data: &[u8]) -> bool {
         return true;
     }
     data.len() >= 12
-        && data[..12] == [0x00, 0x00, 0x00, 0x0c, b'J', b'X', b'L', b' ', 0x0d, 0x0a, 0x87, 0x0a]
+        && data[..12]
+            == [
+                0x00, 0x00, 0x00, 0x0c, b'J', b'X', b'L', b' ', 0x0d, 0x0a, 0x87, 0x0a,
+            ]
 }
 
 /// How the decoder should hand back samples, and how to describe them.
@@ -60,7 +63,7 @@ fn choose_output(bit_depth: &JxlBitDepth) -> OutputChoice {
         source_numeric_type: "float32",
     };
     match *bit_depth {
-        JxlBitDepth::Int { bits_per_sample } if bits_per_sample >= 1 && bits_per_sample <= 8 => {
+        JxlBitDepth::Int { bits_per_sample } if (1..=8).contains(&bits_per_sample) => {
             OutputChoice {
                 format: JxlDataFormat::U8 {
                     bit_depth: bits_per_sample as u8,
@@ -96,7 +99,7 @@ pub(crate) fn decode_jxl_impl(data: &[u8]) -> Result<ScientificParsed, DecodeErr
     }
 
     let fail = |what: &str, e: jxl::error::Error| {
-        DecodeError::new(&format!("JPEG XL {} failed: {:?}", what, e))
+        DecodeError::new(format!("JPEG XL {} failed: {:?}", what, e))
     };
     // The whole file is in memory, so every `process` call either completes or
     // the file is truncated; there is no partial-input loop to run.

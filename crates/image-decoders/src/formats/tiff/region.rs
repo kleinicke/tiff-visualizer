@@ -72,7 +72,9 @@ pub struct TiffRegionResult {
 
 /// Whether a page can be decoded a region at a time. Cheap: reads the IFD only.
 pub fn region_decode_supported(plan: &FloatStripPlan) -> bool {
-    plan.planar_configuration == 1 && plan.orientation == 1 && plan.bits_per_sample % 8 == 0
+    plan.planar_configuration == 1
+        && plan.orientation == 1
+        && plan.bits_per_sample.is_multiple_of(8)
 }
 
 /// Decode `region` of the page described by `plan`.
@@ -237,13 +239,20 @@ mod tests {
         let whole = decode_region(
             &data,
             &plan,
-            TiffRegion { x: 0, y: 0, width: plan.width, height: plan.height },
+            TiffRegion {
+                x: 0,
+                y: 0,
+                width: plan.width,
+                height: plan.height,
+            },
         )
         .unwrap();
         let channels = plan.channels as usize;
 
         for region in regions {
-            let Some(clamped) = region.clamped_to(plan.width, plan.height) else { continue };
+            let Some(clamped) = region.clamped_to(plan.width, plan.height) else {
+                continue;
+            };
             let part = decode_region(&data, &plan, *region).unwrap();
             assert_eq!(part.region, clamped);
             assert_eq!(
@@ -252,7 +261,8 @@ mod tests {
             );
             for row in 0..clamped.height as usize {
                 for column in 0..clamped.width as usize * channels {
-                    let from_region = part.data_f32[row * clamped.width as usize * channels + column];
+                    let from_region =
+                        part.data_f32[row * clamped.width as usize * channels + column];
                     let image_row = row + clamped.y as usize;
                     let image_column = clamped.x as usize * channels + column;
                     let from_whole =
@@ -270,17 +280,47 @@ mod tests {
     fn regions() -> Vec<TiffRegion> {
         vec![
             // A block-aligned rectangle, the easy case.
-            TiffRegion { x: 0, y: 0, width: 128, height: 128 },
+            TiffRegion {
+                x: 0,
+                y: 0,
+                width: 128,
+                height: 128,
+            },
             // Straddling block boundaries in both directions, which is what a
             // viewport actually does.
-            TiffRegion { x: 37, y: 91, width: 143, height: 77 },
+            TiffRegion {
+                x: 37,
+                y: 91,
+                width: 143,
+                height: 77,
+            },
             // A single pixel — what a pixel readout needs.
-            TiffRegion { x: 200, y: 13, width: 1, height: 1 },
+            TiffRegion {
+                x: 200,
+                y: 13,
+                width: 1,
+                height: 1,
+            },
             // Running off the right and bottom edges, where tiles are padded.
-            TiffRegion { x: 200, y: 200, width: 500, height: 500 },
+            TiffRegion {
+                x: 200,
+                y: 200,
+                width: 500,
+                height: 500,
+            },
             // One row and one column.
-            TiffRegion { x: 0, y: 64, width: 256, height: 1 },
-            TiffRegion { x: 64, y: 0, width: 1, height: 256 },
+            TiffRegion {
+                x: 0,
+                y: 64,
+                width: 256,
+                height: 1,
+            },
+            TiffRegion {
+                x: 64,
+                y: 0,
+                width: 1,
+                height: 256,
+            },
         ]
     }
 
@@ -309,7 +349,12 @@ mod tests {
         assert!(decode_region(
             &data,
             &plan,
-            TiffRegion { x: 9000, y: 9000, width: 10, height: 10 }
+            TiffRegion {
+                x: 9000,
+                y: 9000,
+                width: 10,
+                height: 10
+            }
         )
         .is_err());
     }
@@ -320,12 +365,27 @@ mod tests {
     fn a_small_region_reads_few_blocks() {
         let data = std::fs::read("../../test-samples/cog_2band_pyramid.tif").unwrap();
         let plan = float_strip_plan_for_page(&data, 0).unwrap();
-        let one = decode_region(&data, &plan, TiffRegion { x: 5, y: 5, width: 1, height: 1 }).unwrap();
+        let one = decode_region(
+            &data,
+            &plan,
+            TiffRegion {
+                x: 5,
+                y: 5,
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
         assert_eq!(one.blocks_decoded, 1);
         let whole = decode_region(
             &data,
             &plan,
-            TiffRegion { x: 0, y: 0, width: plan.width, height: plan.height },
+            TiffRegion {
+                x: 0,
+                y: 0,
+                width: plan.width,
+                height: plan.height,
+            },
         )
         .unwrap();
         assert!(whole.blocks_decoded > one.blocks_decoded);

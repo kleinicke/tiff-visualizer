@@ -22,8 +22,8 @@
 //! lossy modes are rejected by name rather than guessed at, matching how
 //! `czi.rs` handles codecs it does not implement.
 
-use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::half::f16_to_f32;
+use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{get_slice, ScientificParsed};
 use crate::DecodeError;
 use std::collections::HashMap;
@@ -62,7 +62,7 @@ fn mul(a: usize, b: usize) -> Result<usize, DecodeError> {
 }
 
 fn u64_to_usize(value: u64, what: &str) -> Result<usize, DecodeError> {
-    usize::try_from(value).map_err(|_| DecodeError::new(&format!("ND2 {} is too large", what)))
+    usize::try_from(value).map_err(|_| DecodeError::new(format!("ND2 {} is too large", what)))
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ fn parse_lv(data: &[u8], mut offset: usize, end: usize, depth: u32) -> (Vec<(Str
             4 | 5 | 7 => match u64_le(data, offset) {
                 Ok(v) => {
                     offset += 8;
-                    Lv::Int(if value_type == 4 { v as i64 } else { v as i64 })
+                    Lv::Int(v as i64)
                 }
                 Err(_) => break,
             },
@@ -445,7 +445,7 @@ fn chunk_payload(data: &[u8], position: u64) -> Result<&[u8], DecodeError> {
     let start = u64_to_usize(position, "chunk offset")?;
     let magic = u32_le(data, start)?;
     if magic != CHUNK_MAGIC {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Bad ND2 chunk magic 0x{:08X} at offset {}",
             magic, position
         )));
@@ -453,7 +453,7 @@ fn chunk_payload(data: &[u8], position: u64) -> Result<&[u8], DecodeError> {
     let name_length = u64_to_usize(u32_le(data, add(start, 4)?)? as u64, "chunk name length")?;
     let data_length = u64_to_usize(u64_le(data, add(start, 8)?)?, "chunk length")?;
     let payload_start = add(add(start, 16)?, name_length)?;
-    Ok(get_slice(data, payload_start, data_length, "ND2 chunk")?)
+    get_slice(data, payload_start, data_length, "ND2 chunk")
 }
 
 /// Parse the chunk map into `name -> (offset, length)`.
@@ -662,7 +662,7 @@ fn axis_model(experiment: &Lv, frame_count: usize) -> Vec<Axis> {
     if declared_product == 0 || frame_count == 0 {
         return Vec::new();
     }
-    if frame_count % declared_product == 0 {
+    if frame_count.is_multiple_of(declared_product) {
         axes.extend(declared.iter().cloned());
         let remainder = frame_count / declared_product;
         if remainder > 1 {
@@ -789,7 +789,7 @@ pub(crate) fn decode_nd2_impl(
         .and_then(Lv::as_i64)
         .unwrap_or(1);
     let kind = pixel_type(bits, pixel_type_id).ok_or_else(|| {
-        DecodeError::new(&format!(
+        DecodeError::new(format!(
             "Unsupported ND2 pixel layout: {} bits, pixel type {}",
             bits, pixel_type_id
         ))
@@ -801,7 +801,7 @@ pub(crate) fn decode_nd2_impl(
     if let Some(mode) = compression {
         if mode == 0 || mode == 1 {
             let name = if mode == 0 { "lossless" } else { "lossy" };
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "Compressed ND2 is not supported yet ({} compression); only uncompressed frames decode",
                 name
             )));

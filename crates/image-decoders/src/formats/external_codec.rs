@@ -14,9 +14,8 @@ use crate::DecodeError;
 /// `EXTERNAL_CODEC_PATTERN` in `media/modules/codec-wasm-wrapper.ts` with it.
 #[allow(dead_code)]
 pub(crate) fn needed(name: &str, what: &str) -> DecodeError {
-    DecodeError::new(&format!(
+    DecodeError::new(format!(
         "[external-codec:{}] {} needs the {} decoder, which is not in this build",
         name, what, name
     ))
 }
-

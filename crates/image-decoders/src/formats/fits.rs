@@ -114,7 +114,7 @@ fn xtension_upper(header: &Header) -> String {
 /// Removes the FIRST 'd' or 'D' character in `s`, replacing it with 'E' —
 /// matches the TS `.replace(/[dD]/, 'E')` (regex without the global flag).
 fn replace_first_dd(s: &str) -> String {
-    match s.find(|c| c == 'd' || c == 'D') {
+    match s.find(['d', 'D']) {
         Some(idx) => {
             let mut out = String::with_capacity(s.len());
             out.push_str(&s[..idx]);
@@ -301,7 +301,7 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
 
         if is_image
             && naxis >= 2.0
-            && axes.get(0).copied().unwrap_or(0.0) > 0.0
+            && axes.first().copied().unwrap_or(0.0) > 0.0
             && axes.get(1).copied().unwrap_or(0.0) > 0.0
             && bitpix_supported
         {
@@ -435,12 +435,12 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
             let object_val = header
                 .get("OBJECT")
                 .filter(|v| truthy(Some(v)))
-                .map(|v| header_value_to_json(v));
+                .map(header_value_to_json);
             push_opt(&mut fields, "object", object_val);
             let unit_val = header
                 .get("BUNIT")
                 .filter(|v| truthy(Some(v)))
-                .map(|v| header_value_to_json(v));
+                .map(header_value_to_json);
             push_opt(&mut fields, "unit", unit_val);
             fields.push((
                 "firstPlaneOnly".to_string(),
@@ -488,7 +488,7 @@ pub(crate) fn decode_fits_impl(data: &[u8]) -> Result<ScientificParsed, DecodeEr
     } else {
         "This file holds tabular or header-only data rather than an image."
     };
-    Err(DecodeError::new(&format!(
+    Err(DecodeError::new(format!(
         "FITS file contains no 2D image HDU (found {}). {}",
         hdu_kinds.join(", "),
         explanation

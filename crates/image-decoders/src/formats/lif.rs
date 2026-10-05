@@ -26,8 +26,8 @@
 //! (histograms and similar), keyed to the base file's block IDs, and carry no
 //! pixels the viewer needs.
 
-use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::half::f16_to_f32;
+use super::json_value::{push_opt, to_json_string, JsonValue};
 use super::scientific_common::{get_slice, ScientificParsed};
 use crate::DecodeError;
 use std::collections::HashMap;
@@ -58,7 +58,7 @@ fn mul(a: usize, b: usize) -> Result<usize, DecodeError> {
 }
 
 fn u64_to_usize(value: u64, what: &str) -> Result<usize, DecodeError> {
-    usize::try_from(value).map_err(|_| DecodeError::new(&format!("LIF {} is too large", what)))
+    usize::try_from(value).map_err(|_| DecodeError::new(format!("LIF {} is too large", what)))
 }
 
 /// Read `units` UTF-16LE code units as a `String`.
@@ -543,6 +543,8 @@ pub(crate) fn decode_lif_impl(
     }
     // Leica records significant bits (12-bit cameras are common); the stored
     // sample is the next whole number of bytes up.
+    // Resolution comes from metadata and may reach usize::MAX on 32-bit targets.
+    #[allow(clippy::manual_div_ceil)]
     let bytes_per_sample = ((resolution as usize) + 7) / 8;
     let is_float = series.channels[0].data_type == 1;
     if series
@@ -562,7 +564,7 @@ pub(crate) fn decode_lif_impl(
             (true, 2) => (3, 1.0, "float16", 16),
             (true, 4) => (3, 1.0, "float32", 32),
             _ => {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "Unsupported LIF channel format: {} bits, DataType {}",
                     resolution, series.channels[0].data_type
                 )))
@@ -680,21 +682,22 @@ pub(crate) fn decode_lif_impl(
         selectors.push(("C".to_string(), channel_count, requested_channel, labels));
     }
 
-    let mut fields: Vec<(String, JsonValue)> = Vec::new();
-    fields.push(("format".to_string(), JsonValue::Str("LIF".to_string())));
-    fields.push((
-        "pixelTypeName".to_string(),
-        JsonValue::Str(source_numeric_type.to_string()),
-    ));
-    fields.push((
-        "seriesName".to_string(),
-        JsonValue::Str(series.name.clone()),
-    ));
-    fields.push((
-        "seriesCount".to_string(),
-        JsonValue::Num(series_count as f64),
-    ));
-    if resolution % 8 != 0 {
+    let mut fields: Vec<(String, JsonValue)> = vec![
+        ("format".to_string(), JsonValue::Str("LIF".to_string())),
+        (
+            "pixelTypeName".to_string(),
+            JsonValue::Str(source_numeric_type.to_string()),
+        ),
+        (
+            "seriesName".to_string(),
+            JsonValue::Str(series.name.clone()),
+        ),
+        (
+            "seriesCount".to_string(),
+            JsonValue::Num(series_count as f64),
+        ),
+    ];
+    if !resolution.is_multiple_of(8) {
         // A 12-bit camera stored in 16-bit words: worth surfacing, because it
         // explains why the data never reaches the type maximum.
         fields.push((

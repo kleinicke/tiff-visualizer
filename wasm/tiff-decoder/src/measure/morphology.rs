@@ -103,12 +103,12 @@ fn transform_1d(f: &[f64], d: &mut [f64], v: &mut [i32], z: &mut [f64], n: usize
         z[k + 1] = INF;
     }
     k = 0;
-    for q in 0..n {
+    for (q, slot) in d.iter_mut().enumerate().take(n) {
         while z[k + 1] < q as f64 {
             k += 1;
         }
         let dv = q as f64 - v[k] as f64;
-        d[q] = dv * dv + f[v[k] as usize];
+        *slot = dv * dv + f[v[k] as usize];
     }
 }
 

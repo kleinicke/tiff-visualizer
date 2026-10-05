@@ -123,7 +123,7 @@ pub fn ifd_json(header: &[u8], data: &[u8], offset: u64) -> Result<String, Decod
     ))
 }
 pub fn index_values(data: &[u8], item_bytes: usize, little: bool) -> Result<Vec<f64>, DecodeError> {
-    if !matches!(item_bytes, 1 | 2 | 4 | 8) || data.len() % item_bytes != 0 {
+    if !matches!(item_bytes, 1 | 2 | 4 | 8) || !data.len().is_multiple_of(item_bytes) {
         return Err(DecodeError::new("Invalid TIFF index element size"));
     }
     (0..data.len())

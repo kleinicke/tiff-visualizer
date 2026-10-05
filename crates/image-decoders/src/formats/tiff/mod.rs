@@ -1,10 +1,10 @@
-pub(crate) mod remote;
 mod cmyk;
 mod codecs;
 pub(crate) mod geokeys;
 mod orientation;
 pub(crate) mod pages;
 pub(crate) mod region;
+pub(crate) mod remote;
 pub(crate) mod strips;
 pub(crate) mod tags;
 
@@ -148,16 +148,16 @@ pub(crate) fn decode_tiff_impl(
             let mut patched = data.to_vec();
             if patch_photometric_to_grayscale(&mut patched, page_index) {
                 let mut sgi_decoder = Decoder::new(Cursor::new(patched.as_slice()))
-                    .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: decoder init: {}", e)))?
+                    .map_err(|e| DecodeError::new(format!("SGI Log TIFF: decoder init: {}", e)))?
                     .with_limits(tiff::decoder::Limits::unlimited());
                 for _ in 0..page_index {
                     sgi_decoder.next_image().map_err(|e| {
-                        DecodeError::new(&format!("SGI Log TIFF: page select: {}", e))
+                        DecodeError::new(format!("SGI Log TIFF: page select: {}", e))
                     })?;
                 }
                 let (w, h) = sgi_decoder
                     .dimensions()
-                    .map_err(|e| DecodeError::new(&format!("SGI Log TIFF: dimensions: {}", e)))?;
+                    .map_err(|e| DecodeError::new(format!("SGI Log TIFF: dimensions: {}", e)))?;
                 let orientation_tag = TiffOrientation::from_tag(
                     sgi_decoder
                         .get_tag_u32(tiff::tags::Tag::Orientation)
@@ -174,8 +174,8 @@ pub(crate) fn decode_tiff_impl(
                 )?;
                 result.all_tags_json = extract_page_tags_json(data, page_index);
                 result.ome_xml = extract_ome_xml(data);
-            result.geo_json = extract_geo_json(data, page_index);
-            result.page_directory_json = pages::page_directory_json(data);
+                result.geo_json = extract_geo_json(data, page_index);
+                result.page_directory_json = pages::page_directory_json(data);
                 return Ok(result);
             }
         }
@@ -190,25 +190,25 @@ pub(crate) fn decode_tiff_impl(
     // here is wasm32's own address space, and an over-large allocation fails
     // as a normal allocation error rather than a security problem.
     let mut decoder = Decoder::new(cursor)
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
 
     for current in 0..page_index {
         if !decoder.more_images() {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "TIFF page index {} is out of range (only {} page(s))",
                 page_index,
                 current + 1
             )));
         }
         decoder.next_image().map_err(|e| {
-            DecodeError::new(&format!("Failed to select TIFF page {}: {}", page_index, e))
+            DecodeError::new(format!("Failed to select TIFF page {}: {}", page_index, e))
         })?;
     }
 
     let (width, height) = decoder
         .dimensions()
-        .map_err(|e| DecodeError::new(&format!("Failed to get dimensions: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to get dimensions: {}", e)))?;
 
     // Palette (RGBPalette, PhotometricInterpretation 3) images are rejected by
     // the tiff crate's colortype()/read_image(), so handle them via a dedicated
@@ -223,7 +223,7 @@ pub(crate) fn decode_tiff_impl(
     // Get color type and bits per sample
     let color_type = decoder
         .colortype()
-        .map_err(|e| DecodeError::new(&format!("Failed to get color type: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to get color type: {}", e)))?;
 
     // `channels` MUST equal the actual per-pixel stride of the buffer we hand
     // back below, so SamplesPerPixel (tag 277) - not `color_type` - is the
@@ -325,10 +325,10 @@ pub(crate) fn decode_tiff_impl(
     if compression == 2 || compression == 3 || compression == 4 {
         let offsets = decoder
             .get_tag_u64_vec(tiff::tags::Tag::StripOffsets)
-            .map_err(|e| DecodeError::new(&format!("CCITT: missing StripOffsets: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("CCITT: missing StripOffsets: {}", e)))?;
         let counts = decoder
             .get_tag_u64_vec(tiff::tags::Tag::StripByteCounts)
-            .map_err(|e| DecodeError::new(&format!("CCITT: missing StripByteCounts: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("CCITT: missing StripByteCounts: {}", e)))?;
         // FillOrder defaults to 1 (MSB first); T4Options (tag 292) defaults to 0.
         let fill_order = decoder.get_tag_u32(tiff::tags::Tag::FillOrder).unwrap_or(1);
         let t4_options = decoder
@@ -490,7 +490,7 @@ pub(crate) fn decode_tiff_impl(
                      -ot Float32 with a magnitude expression) opens correctly.",
                 );
             }
-            DecodeError::new(&format!("Failed to decode image: {}", e))
+            DecodeError::new(format!("Failed to decode image: {}", e))
         })?
     };
 
@@ -507,7 +507,7 @@ pub(crate) fn decode_tiff_impl(
     if !direct_decode {
         let element_count = decoding_result_len(&decode_result);
         let pixel_count = (width as usize) * (height as usize);
-        if pixel_count > 0 && element_count % pixel_count == 0 {
+        if pixel_count > 0 && element_count.is_multiple_of(pixel_count) {
             let actual_channels = (element_count / pixel_count) as u32;
             if actual_channels > 0 {
                 channels = actual_channels;
@@ -776,7 +776,7 @@ pub(crate) fn decode_tiff_impl(
     let total_time = crate::time::now_ms() - start_time;
     let metadata_time = total_time - decompress_time - convert_time;
 
-    let result = Ok(TiffResult {
+    Ok(TiffResult {
         width,
         height,
         channels,
@@ -808,16 +808,14 @@ pub(crate) fn decode_tiff_impl(
         ome_xml: extract_ome_xml(data),
         geo_json: extract_geo_json(data, page_index),
         page_directory_json: pages::page_directory_json(data),
-    });
-
-    result
+    })
 }
 
-/// Rewrite one IFD's PhotometricInterpretation (tag 262) from
-/// RGBPalette (3) to BlackIsZero (1), in place, so the tiff crate will decode
-/// the raw palette indices instead of refusing the image. Returns false (and
-/// leaves the buffer untouched) for anything it does not understand, e.g.
-/// BigTIFF.
+// Rewrite one IFD's PhotometricInterpretation (tag 262) from
+// RGBPalette (3) to BlackIsZero (1), in place, so the tiff crate will decode
+// the raw palette indices instead of refusing the image. Returns false (and
+// leaves the buffer untouched) for anything it does not understand, e.g.
+// BigTIFF.
 
 /// Read one SHORT/LONG tag straight out of the IFD, without the tiff crate.
 ///
@@ -883,7 +881,9 @@ pub(crate) fn raw_tag_u32(data: &[u8], page_index: u32, want: u16) -> Option<u32
 fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
     use tiff::tags::Tag;
 
-    let mut decoder = Decoder::new(Cursor::new(data)).ok()?.with_limits(tiff::decoder::Limits::unlimited());
+    let mut decoder = Decoder::new(Cursor::new(data))
+        .ok()?
+        .with_limits(tiff::decoder::Limits::unlimited());
     for _ in 0..page_index {
         decoder.next_image().ok()?;
     }
@@ -908,7 +908,11 @@ fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
         _ => return None,
     };
     let rd16 = |b: &[u8]| {
-        if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) }
+        if le {
+            u16::from_le_bytes([b[0], b[1]])
+        } else {
+            u16::from_be_bytes([b[0], b[1]])
+        }
     };
     let rd32 = |b: &[u8]| {
         if le {
@@ -927,10 +931,20 @@ fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
 
     let magic = rd16(data.get(2..4)?);
     let (mut ifd, count_bytes, entry_bytes, value_offset, next_bytes) = match magic {
-        42 => (rd32(data.get(4..8)?) as usize, 2usize, 12usize, 8usize, 4usize),
-        43 if rd16(data.get(4..6)?) == 8 => {
-            (rd64(data.get(8..16)?) as usize, 8usize, 20usize, 12usize, 8usize)
-        }
+        42 => (
+            rd32(data.get(4..8)?) as usize,
+            2usize,
+            12usize,
+            8usize,
+            4usize,
+        ),
+        43 if rd16(data.get(4..6)?) == 8 => (
+            rd64(data.get(8..16)?) as usize,
+            8usize,
+            20usize,
+            12usize,
+            8usize,
+        ),
         _ => return None,
     };
     for _ in 0..page_index {
@@ -939,13 +953,17 @@ fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
         } else {
             usize::try_from(rd64(data.get(ifd..ifd + 8)?)).ok()?
         };
-        let next = ifd.checked_add(count_bytes)?.checked_add(count.checked_mul(entry_bytes)?)?;
+        let next = ifd
+            .checked_add(count_bytes)?
+            .checked_add(count.checked_mul(entry_bytes)?)?;
         ifd = if next_bytes == 4 {
             rd32(data.get(next..next + 4)?) as usize
         } else {
             usize::try_from(rd64(data.get(next..next + 8)?)).ok()?
         };
-        if ifd == 0 { return None; }
+        if ifd == 0 {
+            return None;
+        }
     }
     let count = if count_bytes == 2 {
         rd16(data.get(ifd..ifd + 2)?) as usize
@@ -954,10 +972,10 @@ fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
     };
     let mut fill_value_at = None;
     for index in 0..count {
-        let entry = ifd.checked_add(count_bytes)?.checked_add(index.checked_mul(entry_bytes)?)?;
-        if rd16(data.get(entry..entry + 2)?) == 266
-            && rd16(data.get(entry + 2..entry + 4)?) == 3
-        {
+        let entry = ifd
+            .checked_add(count_bytes)?
+            .checked_add(index.checked_mul(entry_bytes)?)?;
+        if rd16(data.get(entry..entry + 2)?) == 266 && rd16(data.get(entry + 2..entry + 4)?) == 3 {
             fill_value_at = Some(entry + value_offset);
             break;
         }
@@ -973,8 +991,14 @@ fn normalize_lsb_fill_order(data: &[u8], page_index: u32) -> Option<Vec<u8>> {
         }
     }
     let value_at = fill_value_at?;
-    let one = if le { 1u16.to_le_bytes() } else { 1u16.to_be_bytes() };
-    patched.get_mut(value_at..value_at + 2)?.copy_from_slice(&one);
+    let one = if le {
+        1u16.to_le_bytes()
+    } else {
+        1u16.to_be_bytes()
+    };
+    patched
+        .get_mut(value_at..value_at + 2)?
+        .copy_from_slice(&one);
     Some(patched)
 }
 
@@ -1104,10 +1128,8 @@ pub(crate) fn float_strip_plan_for_page(
     let photometric = decoder
         .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
         .unwrap_or(1) as u32;
-    let parallel_cmyk = photometric == 5
-        && channels == 4
-        && bits_per_sample == 8
-        && planar_configuration == 1;
+    let parallel_cmyk =
+        photometric == 5 && channels == 4 && bits_per_sample == 8 && planar_configuration == 1;
     if photometric != 1 && photometric != 2 && !parallel_cmyk {
         return None;
     }
@@ -1151,7 +1173,7 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
     let cfa_patched = demosaic::neutralize_cfa_photometric(data);
     let raw: &[u8] = cfa_patched.as_deref().unwrap_or(data);
     let mut decoder = Decoder::new(Cursor::new(raw))
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
     let mut page_count = 1u32;
     while decoder.more_images() {
@@ -1161,7 +1183,7 @@ pub(crate) fn strip_metadata_for(data: &[u8]) -> Result<StripMetadata, DecodeErr
         page_count += 1;
     }
     let mut decoder = Decoder::new(Cursor::new(raw))
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?
         .with_limits(tiff::decoder::Limits::unlimited());
     let photometric_interpretation = decoder
         .get_tag_u64(tiff::tags::Tag::PhotometricInterpretation)
@@ -1185,7 +1207,9 @@ mod tests {
         let pixels = [75u8, 58, 42, 77, 60, 44];
         let mut encoded = vec![5u8]; // PackBits literal run of six bytes.
         encoded.extend_from_slice(&pixels);
-        encoded.iter_mut().for_each(|byte| *byte = byte.reverse_bits());
+        encoded
+            .iter_mut()
+            .for_each(|byte| *byte = byte.reverse_bits());
 
         const TAGS: u16 = 10;
         let data_offset = 8 + 2 + TAGS as u32 * 12 + 4;

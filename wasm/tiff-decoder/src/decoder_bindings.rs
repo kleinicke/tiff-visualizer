@@ -682,7 +682,9 @@ pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
 #[wasm_bindgen]
 pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, JsValue> {
     prepare();
-    core::decode_tiff_preview(data).map(|inner| TiffResult { inner }).map_err(js_error)
+    core::decode_tiff_preview(data)
+        .map(|inner| TiffResult { inner })
+        .map_err(js_error)
 }
 
 #[wasm_bindgen]
@@ -1200,7 +1202,11 @@ pub fn remote_tiff_ifd(header: &[u8], data: &[u8], offset: f64) -> Result<String
     core::remote_tiff_ifd(header, data, offset as u64).map_err(js_error)
 }
 #[wasm_bindgen]
-pub fn remote_tiff_index_values(data: &[u8], item_bytes: usize, little: bool) -> Result<Vec<f64>, JsValue> {
+pub fn remote_tiff_index_values(
+    data: &[u8],
+    item_bytes: usize,
+    little: bool,
+) -> Result<Vec<f64>, JsValue> {
     core::remote_tiff_index_values(data, item_bytes, little).map_err(js_error)
 }
 

@@ -14,7 +14,6 @@
     allow(dead_code)
 )]
 
-
 /// Escape a string for embedding inside a JSON string literal.
 pub(crate) fn json_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());

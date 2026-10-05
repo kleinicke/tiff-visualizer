@@ -272,7 +272,7 @@ fn exr_zip_differences_to_samples(bytes: &mut [u8]) {
 
 fn exr_zip_interleave_byte_blocks(bytes: &mut [u8]) {
     let separated = bytes.to_vec();
-    let split = (separated.len() + 1) / 2;
+    let split = separated.len().div_ceil(2);
     let (first, second) = separated.split_at(split);
     for index in 0..second.len() {
         bytes[index * 2] = first[index];
@@ -295,7 +295,7 @@ pub(crate) fn decode_exr_impl(data: &[u8]) -> Result<ExrResult, DecodeError> {
         .first_valid_layer()
         .all_attributes()
         .from_buffered(cursor)
-        .map_err(|e| DecodeError::new(&format!("Failed to decode EXR: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to decode EXR: {}", e)))?;
     let read_time = crate::time::now_ms() - start_time;
     let pack_start = crate::time::now_ms();
 

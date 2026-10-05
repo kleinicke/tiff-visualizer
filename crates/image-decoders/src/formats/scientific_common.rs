@@ -79,7 +79,7 @@ pub(crate) fn ascii(bytes: &[u8], start: usize, length: usize) -> String {
 }
 
 fn oob_generic(context: &str) -> DecodeError {
-    DecodeError::new(&format!(
+    DecodeError::new(format!(
         "{}: unexpected end of data while reading samples",
         context
     ))

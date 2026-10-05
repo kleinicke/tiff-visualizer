@@ -52,7 +52,7 @@ pub(crate) fn decode_jpegxr_pixels(
     }
 
     let image = jpegxr::decode_bytes(data)
-        .map_err(|e| DecodeError::new(&format!("{}: JPEG XR decode failed: {:?}", context, e)))?;
+        .map_err(|e| DecodeError::new(format!("{}: JPEG XR decode failed: {:?}", context, e)))?;
     let format = image.pixel_format();
     let channels = format.channel_count() as u32;
     let bits_per_sample = format.bits_per_sample() as u32;
@@ -60,23 +60,23 @@ pub(crate) fn decode_jpegxr_pixels(
     let row_bytes = (image.width() as usize)
         .checked_mul(channels as usize)
         .and_then(|v| v.checked_mul(bytes_per_sample))
-        .ok_or_else(|| DecodeError::new(&format!("{}: JPEG XR row size overflows", context)))?;
+        .ok_or_else(|| DecodeError::new(format!("{}: JPEG XR row size overflows", context)))?;
     let mut pixels = Vec::with_capacity(
         row_bytes
             .checked_mul(image.height() as usize)
             .ok_or_else(|| {
-                DecodeError::new(&format!("{}: JPEG XR image size overflows", context))
+                DecodeError::new(format!("{}: JPEG XR image size overflows", context))
             })?,
     );
     for row in 0..image.height() as usize {
         let start = row.checked_mul(image.stride()).ok_or_else(|| {
-            DecodeError::new(&format!("{}: JPEG XR row offset overflows", context))
+            DecodeError::new(format!("{}: JPEG XR row offset overflows", context))
         })?;
         let end = start
             .checked_add(row_bytes)
             .filter(|end| *end <= image.pixels().len())
             .ok_or_else(|| {
-                DecodeError::new(&format!("{}: JPEG XR row {} is short", context, row))
+                DecodeError::new(format!("{}: JPEG XR row {} is short", context, row))
             })?;
         pixels.extend_from_slice(&image.pixels()[start..end]);
     }
@@ -106,7 +106,7 @@ pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, Decode
         // Unspecified/FixedPoint/Other: the samples are not plain integers or
         // IEEE floats, so reading them as either would invent values.
         other => {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "JPEG XR sample format {:?} is not supported",
                 other
             )))
@@ -115,7 +115,7 @@ pub(crate) fn decode_jpegxr_impl(data: &[u8]) -> Result<ScientificParsed, Decode
     // Everything below reads whole bytes per sample; a packed format (5:6:5,
     // 10:10:10, RGBE) would need unpacking this does not do.
     if !matches!(bits_per_sample, 8 | 16 | 32) || channels == 0 || channels > 4 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "JPEG XR pixel format {:?} ({} channels, {} bits per sample) is not supported",
             decoded.color_format, channels, bits_per_sample
         )));

@@ -304,19 +304,15 @@ pub(crate) fn decode_sdt_impl(
     let height_padded_curves = width.checked_mul(padded_height);
     let padded_width = if curve_count == image_curves {
         width
+    } else if Some(curve_count) == fully_padded_curves || Some(curve_count) == width_padded_curves {
+        padded_width_candidate
+    } else if Some(curve_count) == height_padded_curves {
+        width
     } else {
-        if Some(curve_count) == fully_padded_curves {
-            padded_width_candidate
-        } else if Some(curve_count) == width_padded_curves {
-            padded_width_candidate
-        } else if Some(curve_count) == height_padded_curves {
-            width
-        } else {
-            return Err(DecodeError::new(format!(
-                "SDT: {} histograms do not match image dimensions {}x{}",
-                curve_count, width, height
-            )));
-        }
+        return Err(DecodeError::new(format!(
+            "SDT: {} histograms do not match image dimensions {}x{}",
+            curve_count, width, height
+        )));
     };
 
     let payload_end = if block.block_type & 0x5000 != 0 {

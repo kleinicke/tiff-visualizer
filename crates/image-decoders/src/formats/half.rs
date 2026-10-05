@@ -81,8 +81,10 @@ mod tests {
             };
             assert_eq!(got, expected, "0x{:04x}", bits);
             assert_eq!(
-                got.is_sign_negative(), expected.is_sign_negative(),
-                "0x{:04x}: sign of zero must be preserved", bits,
+                got.is_sign_negative(),
+                expected.is_sign_negative(),
+                "0x{:04x}: sign of zero must be preserved",
+                bits,
             );
         }
     }
@@ -99,7 +101,7 @@ mod tests {
         assert_eq!(f16_to_f32(0x7bff), 65504.0); // largest finite half
         assert_eq!(f16_to_f32(0x0400), 6.1035156e-5); // smallest normal
         assert_eq!(f16_to_f32(0x0001), 5.9604645e-8); // smallest subnormal
-        assert_eq!(f16_to_f32(0x03ff), 6.0975552e-5); // largest subnormal
+        assert_eq!(f16_to_f32(0x03ff), 6.097_555e-5); // largest subnormal
         assert!(f16_to_f32(0x7c00).is_infinite() && f16_to_f32(0x7c00) > 0.0);
         assert!(f16_to_f32(0xfc00).is_infinite() && f16_to_f32(0xfc00) < 0.0);
         assert!(f16_to_f32(0x7e00).is_nan());

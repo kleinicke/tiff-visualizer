@@ -85,12 +85,20 @@ Node 24 is pinned in `.nvmrc`; install dependencies at the repository root.
 npm run compile:quick       # TS/Svelte bundles; uses existing WASM artifacts
 npm run typecheck           # extension, engine, browser and Svelte
 npm run lint
+npm run lint:rust          # Clippy, all features/targets, warnings are errors
+npm run lint:rust:wasm     # also check wasm32-specific paths
+npm run format:rust:check  # use format:rust to apply Rust formatting
 npm run test:behavior       # real production settings, no IDE or Rust rebuild
 npm run test:format-defaults
 npm run test               # full numerical/format/behavior suite
 npm run test:web            # standalone build plus browser regressions
 npm run web:dev             # local standalone viewer
 ```
+
+Rust lint/format commands cover the three project-owned crates. The vendored
+`jpegxr-wasm` crate is excluded from linting and formatting to preserve the
+upstream implementation and its small local patch; see `crates/jpegxr/VENDORING.md`.
+These commands are explicit checks, separate from the JavaScript lint command.
 
 `npm run compile` also rebuilds all WASM modules. Rebuild them after Rust changes.
 Use focused tests during iteration, then the appropriate integration checks.

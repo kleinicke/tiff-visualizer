@@ -163,15 +163,15 @@ fn otsu(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         return -1;
     }
     let mut sum: f64 = 0.0;
-    for i in 0..HISTOGRAM_BINS {
-        sum += (i as f64) * counts[i] as f64;
+    for (i, &count) in counts.iter().enumerate() {
+        sum += (i as f64) * count as f64;
     }
     let mut sum_background: f64 = 0.0;
     let mut weight_background: i64 = 0;
     let mut best: i32 = -1;
     let mut best_variance: f64 = -1.0;
-    for t in 0..HISTOGRAM_BINS {
-        weight_background += counts[t] as i64;
+    for (t, &count) in counts.iter().enumerate() {
+        weight_background += count as i64;
         if weight_background == 0 {
             continue;
         }
@@ -179,7 +179,7 @@ fn otsu(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         if weight_foreground == 0 {
             break;
         }
-        sum_background += (t as f64) * counts[t] as f64;
+        sum_background += (t as f64) * count as f64;
         let mean_background = sum_background / weight_background as f64;
         let mean_foreground = (sum - sum_background) / weight_foreground as f64;
         let delta = mean_background - mean_foreground;
@@ -195,8 +195,8 @@ fn otsu(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
 /// Ridler-Calvard iterative isodata, as used by ImageJ's "Default".
 fn iso_data(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
     let mut t: i32 = 0;
-    for i in 0..HISTOGRAM_BINS {
-        if counts[i] > 0 {
+    for (i, &count) in counts.iter().enumerate() {
+        if count > 0 {
             t = i as i32;
             break;
         }
@@ -211,14 +211,18 @@ fn iso_data(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         let mut count_below: i64 = 0;
         let mut sum_above: f64 = 0.0;
         let mut count_above: i64 = 0;
-        for i in 0..=(threshold.max(0) as usize).min(HISTOGRAM_BINS - 1) {
-            sum_below += (i as f64) * counts[i] as f64;
-            count_below += counts[i] as i64;
+        for (i, &count) in counts
+            .iter()
+            .enumerate()
+            .take((threshold.max(0) as usize).min(HISTOGRAM_BINS - 1) + 1)
+        {
+            sum_below += (i as f64) * count as f64;
+            count_below += count as i64;
         }
         let start = (threshold + 1).max(0) as usize;
-        for i in start..HISTOGRAM_BINS {
-            sum_above += (i as f64) * counts[i] as f64;
-            count_above += counts[i] as i64;
+        for (i, &count) in counts.iter().enumerate().skip(start) {
+            sum_above += (i as f64) * count as f64;
+            count_above += count as i64;
         }
         if count_below == 0 || count_above == 0 {
             break;
@@ -241,8 +245,8 @@ fn li(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         return -1;
     }
     let mut mean: f64 = 0.0;
-    for i in 0..HISTOGRAM_BINS {
-        mean += (i as f64) * counts[i] as f64;
+    for (i, &count) in counts.iter().enumerate() {
+        mean += (i as f64) * count as f64;
     }
     mean /= n as f64;
 
@@ -263,15 +267,15 @@ fn li(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
 
         let mut sum_back: f64 = 0.0;
         let mut count_back: i64 = 0;
-        for i in 0..=t_idx {
-            sum_back += (i as f64) * counts[i] as f64;
-            count_back += counts[i] as i64;
+        for (i, &count) in counts.iter().enumerate().take(t_idx + 1) {
+            sum_back += (i as f64) * count as f64;
+            count_back += count as i64;
         }
         let mut sum_fore: f64 = 0.0;
         let mut count_fore: i64 = 0;
-        for i in (t_idx + 1)..HISTOGRAM_BINS {
-            sum_fore += (i as f64) * counts[i] as f64;
-            count_fore += counts[i] as i64;
+        for (i, &count) in counts.iter().enumerate().skip(t_idx + 1) {
+            sum_fore += (i as f64) * count as f64;
+            count_fore += count as i64;
         }
 
         let mean_back = if count_back > 0 {
@@ -402,8 +406,8 @@ fn yen(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
     for t in 0..HISTOGRAM_BINS {
         let a = p1_squared[t] * p2_squared[t];
         let b = p1[t] * (1.0 - p1[t]);
-        let criterion = (if a > 0.0 { -1.0 * a.ln() } else { 0.0 })
-            + (if b > 0.0 { 2.0 * b.ln() } else { 0.0 });
+        let criterion =
+            (if a > 0.0 { -a.ln() } else { 0.0 }) + (if b > 0.0 { 2.0 * b.ln() } else { 0.0 });
         if criterion > best_criterion {
             best_criterion = criterion;
             best = t as i32;
@@ -441,10 +445,9 @@ fn huang(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
     let c = (last - first) as f64;
     let c = if c == 0.0 { 1.0 } else { c };
     let mut membership_cost = [0f64; HISTOGRAM_BINS];
-    for i in 0..HISTOGRAM_BINS {
+    for (i, cost) in membership_cost.iter_mut().enumerate() {
         let membership = 1.0 / (1.0 + (i as f64).abs() / c);
-        membership_cost[i] =
-            -membership * membership.ln() - (1.0 - membership) * (1.0 - membership).ln();
+        *cost = -membership * membership.ln() - (1.0 - membership) * (1.0 - membership).ln();
     }
 
     let mut best = first;
@@ -456,10 +459,10 @@ fn huang(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         } else {
             0.0
         };
-        for i in first..=t {
+        for (i, &count) in counts.iter().enumerate().take(t + 1).skip(first) {
             let idx = ((i as f64 - mean_low).abs()) as usize;
             let idx = idx.min(HISTOGRAM_BINS - 1);
-            entropy += membership_cost[idx] * counts[i] as f64;
+            entropy += membership_cost[idx] * count as f64;
         }
         let high_count = cumulative[last] - cumulative[t];
         let mean_high = if high_count > 0.0 {
@@ -467,10 +470,10 @@ fn huang(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         } else {
             0.0
         };
-        for i in (t + 1)..=last {
+        for (i, &count) in counts.iter().enumerate().take(last + 1).skip(t + 1) {
             let idx = ((i as f64 - mean_high).abs()) as usize;
             let idx = idx.min(HISTOGRAM_BINS - 1);
-            entropy += membership_cost[idx] * counts[i] as f64;
+            entropy += membership_cost[idx] * count as f64;
         }
         if entropy < best_entropy {
             best_entropy = entropy;
@@ -499,22 +502,23 @@ fn max_entropy(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
 
     let mut best: i32 = -1;
     let mut best_entropy = f64::NEG_INFINITY;
-    for t in 0..HISTOGRAM_BINS {
-        let p_background = cumulative[t];
+    for (t, &p_background) in cumulative.iter().enumerate() {
         let p_foreground = 1.0 - p_background;
         if p_background <= 0.0 || p_foreground <= 0.0 {
             continue;
         }
         let mut background_entropy = 0.0;
-        for i in 0..=t {
-            if p[i] > 0.0 {
-                background_entropy -= (p[i] / p_background) * (p[i] / p_background).ln();
+        for &probability in p.iter().take(t + 1) {
+            if probability > 0.0 {
+                background_entropy -=
+                    (probability / p_background) * (probability / p_background).ln();
             }
         }
         let mut foreground_entropy = 0.0;
-        for i in (t + 1)..HISTOGRAM_BINS {
-            if p[i] > 0.0 {
-                foreground_entropy -= (p[i] / p_foreground) * (p[i] / p_foreground).ln();
+        for &probability in p.iter().skip(t + 1) {
+            if probability > 0.0 {
+                foreground_entropy -=
+                    (probability / p_foreground) * (probability / p_foreground).ln();
             }
         }
         let entropy = background_entropy + foreground_entropy;
@@ -532,8 +536,8 @@ fn mean_threshold(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         return -1;
     }
     let mut sum: f64 = 0.0;
-    for i in 0..HISTOGRAM_BINS {
-        sum += (i as f64) * counts[i] as f64;
+    for (i, &count) in counts.iter().enumerate() {
+        sum += (i as f64) * count as f64;
     }
     (sum / n as f64).floor() as i32
 }
@@ -545,8 +549,8 @@ fn moments(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         return -1;
     }
     let (mut m1, mut m2, mut m3) = (0f64, 0f64, 0f64);
-    for i in 0..HISTOGRAM_BINS {
-        let p = counts[i] as f64 / n as f64;
+    for (i, &count) in counts.iter().enumerate() {
+        let p = count as f64 / n as f64;
         m1 += i as f64 * p;
         m2 += (i * i) as f64 * p;
         m3 += (i * i * i) as f64 * p;
@@ -571,8 +575,8 @@ fn moments(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
     let p0 = (z1 - m1) / pd;
 
     let mut cumulative = 0.0;
-    for i in 0..HISTOGRAM_BINS {
-        cumulative += counts[i] as f64 / n as f64;
+    for (i, &count) in counts.iter().enumerate() {
+        cumulative += count as f64 / n as f64;
         if cumulative > p0 {
             return i as i32;
         }
@@ -590,8 +594,8 @@ fn percentile(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
     let mut best: i32 = -1;
     let mut best_distance = f64::INFINITY;
     let mut cumulative: i64 = 0;
-    for i in 0..HISTOGRAM_BINS {
-        cumulative += counts[i] as i64;
+    for (i, &count) in counts.iter().enumerate() {
+        cumulative += count as i64;
         let distance = (cumulative as f64 / n as f64 - target).abs();
         if distance < best_distance {
             best_distance = distance;
@@ -632,7 +636,7 @@ fn shanbhag(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         while i <= t {
             let idx = t - i + 1;
             running *= (p_background - p[idx]) / p_background;
-            if !(running > 0.0) {
+            if running <= 0.0 || running.is_nan() {
                 break;
             }
             background_term -= p[i] * running.ln();
@@ -645,7 +649,7 @@ fn shanbhag(counts: &[i32; HISTOGRAM_BINS]) -> i32 {
         let mut j = 1usize;
         while t + j < HISTOGRAM_BINS {
             running *= (p_foreground - p[t + j]) / p_foreground;
-            if !(running > 0.0) {
+            if running <= 0.0 || running.is_nan() {
                 break;
             }
             foreground_term -= p[t + j] * running.ln();
@@ -1136,8 +1140,8 @@ fn local_median_mask(
             }
             let mut cumulative: i64 = 0;
             let mut median_bin = 0usize;
-            for b in 0..bins {
-                cumulative += counts[b] as i64;
+            for (b, &count) in counts.iter().enumerate().take(bins) {
+                cumulative += count as i64;
                 if cumulative * 2 >= n {
                     median_bin = b;
                     break;
@@ -1162,6 +1166,8 @@ pub(crate) struct LocalAutoThresholdOptions {
 /// Run any of the global methods **per neighbourhood** instead of once, on a
 /// grid of tiles bilinearly interpolated between — the threshold surface of a
 /// real image varies on the scale of illumination, not per pixel.
+// Keep the original arithmetic and its overflow behavior at extreme dimensions.
+#[allow(clippy::manual_div_ceil)]
 pub(crate) fn local_auto_threshold_mask(
     plane: &[f32],
     width: usize,
@@ -1330,11 +1336,11 @@ mod tests {
     fn bimodal_counts() -> [i32; HISTOGRAM_BINS] {
         // Two well-separated clusters: 0..50 low, 200..255 high.
         let mut counts = [0i32; HISTOGRAM_BINS];
-        for i in 0..50 {
-            counts[i] = 10;
+        for count in counts.iter_mut().take(50) {
+            *count = 10;
         }
-        for i in 200..HISTOGRAM_BINS {
-            counts[i] = 10;
+        for count in counts.iter_mut().skip(200) {
+            *count = 10;
         }
         counts
     }
@@ -1344,7 +1350,7 @@ mod tests {
         let counts = bimodal_counts();
         let bin = otsu(&counts);
         assert!(
-            bin >= 49 && bin < 200,
+            (49..200).contains(&bin),
             "expected split in the gap, got {bin}"
         );
     }

@@ -37,9 +37,9 @@ mod formats;
 mod pipeline;
 #[cfg(any(feature = "tiff", feature = "exr", feature = "png", feature = "hdr"))]
 mod time;
-pub use pipeline::stats;
 #[cfg(feature = "tiff")]
 pub use formats::tiff::region::{TiffRegion, TiffRegionResult};
+pub use pipeline::stats;
 
 #[cfg(feature = "czi")]
 use formats::czi::decode_czi_impl;
@@ -364,7 +364,7 @@ impl DecodedArray {
     /// reported than answered with an empty array.
     fn claim(&mut self, method: &str) -> Result<(), DecodeError> {
         if self.taken {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "DecodedArray::{method} called more than once. The decoded samples are \
                  moved out on the first call, not copied. Take them once and reuse that \
                  array (media/modules/wasm-decoders.ts does this for every format)."
@@ -558,7 +558,7 @@ pub(crate) fn decode_jpeg_with_channels(
         1 => zune_jpeg::zune_core::colorspace::ColorSpace::Luma,
         3 => zune_jpeg::zune_core::colorspace::ColorSpace::RGB,
         _ => {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "JPEG: {} samples per pixel is not a baseline JPEG output",
                 channels
             )))
@@ -584,7 +584,7 @@ fn decode_jpeg_impl(
     };
     let pixels = decoder
         .decode()
-        .map_err(|e| DecodeError::new(&format!("JPEG decode failed: {:?}", e)))?;
+        .map_err(|e| DecodeError::new(format!("JPEG decode failed: {:?}", e)))?;
     let info = decoder
         .info()
         .ok_or_else(|| DecodeError::new("JPEG: missing image info"))?;
@@ -995,12 +995,12 @@ pub fn cfa_safe_bytes(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
 pub fn tiff_page_count(data: &[u8]) -> Result<u32, DecodeError> {
     let bytes = cfa_safe_bytes(data);
     let mut decoder = Decoder::new(Cursor::new(bytes.as_ref()))
-        .map_err(|e| DecodeError::new(&format!("Failed to create decoder: {}", e)))?;
+        .map_err(|e| DecodeError::new(format!("Failed to create decoder: {}", e)))?;
     let mut count = 1u32;
     while decoder.more_images() {
         decoder
             .next_image()
-            .map_err(|e| DecodeError::new(&format!("Failed to enumerate TIFF pages: {}", e)))?;
+            .map_err(|e| DecodeError::new(format!("Failed to enumerate TIFF pages: {}", e)))?;
         count = count.saturating_add(1);
     }
     Ok(count)
@@ -1039,7 +1039,12 @@ pub fn decode_tiff_region(
     formats::tiff::region::decode_region(
         data,
         &plan,
-        formats::tiff::region::TiffRegion { x, y, width, height },
+        formats::tiff::region::TiffRegion {
+            x,
+            y,
+            width,
+            height,
+        },
     )
 }
 
@@ -1047,15 +1052,32 @@ pub fn decode_tiff_region(
 /// Keep this conservative: region decoding must preserve the native samples.
 #[cfg(feature = "tiff")]
 pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
-    let Some(plan) = formats::tiff::float_strip_plan_for(data) else { return 0; };
+    let Some(plan) = formats::tiff::float_strip_plan_for(data) else {
+        return 0;
+    };
     if plan.width as u64 * plan.height as u64 <= 130_000_000
-        || plan.channels != 1 || plan.sample_format != 3 || plan.bits_per_sample != 32
+        || plan.channels != 1
+        || plan.sample_format != 3
+        || plan.bits_per_sample != 32
         || !formats::tiff::region::region_decode_supported(&plan)
-        || tiff_page_count(data).ok() != Some(1) { return 0; }
-    let block_width = if plan.is_tiled() { plan.tile_width } else { plan.width };
-    let block_height = if plan.is_tiled() { plan.tile_length } else { plan.rows_per_strip };
+        || tiff_page_count(data).ok() != Some(1)
+    {
+        return 0;
+    }
+    let block_width = if plan.is_tiled() {
+        plan.tile_width
+    } else {
+        plan.width
+    };
+    let block_height = if plan.is_tiled() {
+        plan.tile_length
+    } else {
+        plan.rows_per_strip
+    };
     // A stored block is the minimum allocation even for a one-pixel request.
-    if block_width as u64 * block_height as u64 > 8_000_000 { return 0; }
+    if block_width as u64 * block_height as u64 > 8_000_000 {
+        return 0;
+    }
     let mut reduction = 2;
     while plan.width.div_ceil(reduction) > 4096 || plan.height.div_ceil(reduction) > 4096 {
         reduction *= 2;
@@ -1070,24 +1092,51 @@ pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
 pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
     use formats::tiff::region::{decode_region, TiffRegion};
     let reduction = tiff_preview_reduction(data);
-    if reduction == 0 { return Err(DecodeError::new("TIFF has no bounded preview route")); }
+    if reduction == 0 {
+        return Err(DecodeError::new("TIFF has no bounded preview route"));
+    }
     let plan = formats::tiff::float_strip_plan_for(data).unwrap();
     let width = plan.width.div_ceil(reduction);
     let height = plan.height.div_ceil(reduction);
     let mut pixels = vec![0.0f32; width as usize * height as usize];
     let mut min = f64::INFINITY;
     let mut max = f64::NEG_INFINITY;
-    let bw = if plan.is_tiled() { plan.tile_width } else { plan.width };
-    let bh = if plan.is_tiled() { plan.tile_length } else { plan.rows_per_strip }.max(1);
+    let bw = if plan.is_tiled() {
+        plan.tile_width
+    } else {
+        plan.width
+    };
+    let bh = if plan.is_tiled() {
+        plan.tile_length
+    } else {
+        plan.rows_per_strip
+    }
+    .max(1);
     for y in (0..plan.height).step_by(bh as usize) {
         for x in (0..plan.width).step_by(bw as usize) {
-            let region = decode_region(data, &plan, TiffRegion { x, y, width: bw, height: bh })?;
+            let region = decode_region(
+                data,
+                &plan,
+                TiffRegion {
+                    x,
+                    y,
+                    width: bw,
+                    height: bh,
+                },
+            )?;
             for &value in &region.data_f32 {
-                if value.is_finite() { min = min.min(value as f64); max = max.max(value as f64); }
+                if value.is_finite() {
+                    min = min.min(value as f64);
+                    max = max.max(value as f64);
+                }
             }
             // Grid anchored at source pixel (0,0), including partial edge blocks.
-            for sy in ((y.div_ceil(reduction) * reduction)..y + region.region.height).step_by(reduction as usize) {
-                for sx in ((x.div_ceil(reduction) * reduction)..x + region.region.width).step_by(reduction as usize) {
+            for sy in ((y.div_ceil(reduction) * reduction)..y + region.region.height)
+                .step_by(reduction as usize)
+            {
+                for sx in ((x.div_ceil(reduction) * reduction)..x + region.region.width)
+                    .step_by(reduction as usize)
+                {
                     pixels[(sy / reduction * width + sx / reduction) as usize] =
                         region.data_f32[((sy - y) * region.region.width + sx - x) as usize];
                 }
@@ -1100,17 +1149,35 @@ pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
         meta.page_directory_json.trim_end().trim_end_matches(']'), width, height, reduction, width, height
     );
     Ok(TiffResult {
-        width, height, channels: 1, bits_per_sample: 32, sample_format: 3,
-        compression: plan.compression, predictor: plan.predictor,
-        photometric_interpretation: 1, planar_configuration: 1,
-        rows_per_strip: plan.rows_per_strip, strip_count: plan.offsets.len() as u32,
-        strip_byte_count_total: plan.counts.iter().sum(), strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
-        tile_width: plan.tile_width, tile_length: plan.tile_length, tile_count: 0,
-        direct_decode: false, data: Vec::new(), data_f32: pixels,
-        min_value: min, max_value: max,
-        timing_metadata_ms: 0.0, timing_decode_ms: 0.0, timing_convert_ms: 0.0,
-        timing_stats_ms: 0.0, timing_pack_ms: 0.0,
-        all_tags_json: meta.all_tags_json, ome_xml: meta.ome_xml, geo_json: meta.geo_json,
+        width,
+        height,
+        channels: 1,
+        bits_per_sample: 32,
+        sample_format: 3,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        photometric_interpretation: 1,
+        planar_configuration: 1,
+        rows_per_strip: plan.rows_per_strip,
+        strip_count: plan.offsets.len() as u32,
+        strip_byte_count_total: plan.counts.iter().sum(),
+        strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        tile_count: 0,
+        direct_decode: false,
+        data: Vec::new(),
+        data_f32: pixels,
+        min_value: min,
+        max_value: max,
+        timing_metadata_ms: 0.0,
+        timing_decode_ms: 0.0,
+        timing_convert_ms: 0.0,
+        timing_stats_ms: 0.0,
+        timing_pack_ms: 0.0,
+        all_tags_json: meta.all_tags_json,
+        ome_xml: meta.ome_xml,
+        geo_json: meta.geo_json,
         page_directory_json: directory,
     })
 }
@@ -1551,7 +1618,10 @@ pub fn decode_tiff_strip_range_raw(
 }
 
 #[cfg(feature = "tiff")]
-pub use formats::tiff::remote::{header_json as remote_tiff_header, ifd_json as remote_tiff_ifd, index_values as remote_tiff_index_values};
+pub use formats::tiff::remote::{
+    header_json as remote_tiff_header, ifd_json as remote_tiff_ifd,
+    index_values as remote_tiff_index_values,
+};
 
 /// Decode SGI RGB (verbatim or RLE, 8/16-bit) to top-down interleaved samples.
 #[cfg(feature = "sgi")]

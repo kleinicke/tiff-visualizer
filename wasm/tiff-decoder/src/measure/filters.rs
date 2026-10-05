@@ -15,7 +15,7 @@
 /// Returns a copy when `sigma <= 0`, matching the TypeScript, so callers can
 /// pass a disabled setting without branching.
 pub(crate) fn gaussian_blur(plane: &[f32], width: usize, height: usize, sigma: f64) -> Vec<f32> {
-    if !(sigma > 0.0) {
+    if sigma <= 0.0 || sigma.is_nan() {
         return plane.to_vec();
     }
     let pixels = width.saturating_mul(height);
@@ -148,9 +148,9 @@ fn sliding_extremum(input: &[f32], n: usize, radius: usize, minimum: bool) -> Ve
         let start = b * k;
         let end = start + k;
         let mut running = identity;
-        for i in start..end {
+        for (i, slot) in prefix.iter_mut().enumerate().take(end).skip(start) {
             running = better(running, at(i));
-            prefix[i] = running;
+            *slot = running;
         }
         running = identity;
         for i in (start..end).rev() {

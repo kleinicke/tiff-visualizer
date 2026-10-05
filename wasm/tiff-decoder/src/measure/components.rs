@@ -137,8 +137,8 @@ pub(crate) fn label_components(
     // caller sees 1..=count with no gaps.
     let mut remap = vec![0i32; next_label.max(1) as usize];
     let mut count: i32 = 0;
-    for i in 0..labels.len() {
-        let label = labels[i];
+    for label_slot in &mut labels {
+        let label = *label_slot;
         if label == 0 {
             continue;
         }
@@ -147,7 +147,7 @@ pub(crate) fn label_components(
             count += 1;
             remap[root as usize] = count;
         }
-        labels[i] = remap[root as usize];
+        *label_slot = remap[root as usize];
     }
 
     Labelled {

@@ -259,7 +259,7 @@ fn parse_dicom_context(data: &[u8]) -> Result<DicomContext<'_>, DecodeError> {
                 }
             }
             _ => {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "Compressed or unsupported DICOM Transfer Syntax: {}",
                     transfer_syntax
                 )));
@@ -434,7 +434,7 @@ fn dicom_image_info(context: &DicomContext) -> Result<DicomImageInfo, DecodeErro
         || bits_allocated == 32
         || bits_allocated == 64)
     {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "Unsupported DICOM Bits Allocated: {}",
             bits_allocated
         )));
@@ -497,23 +497,24 @@ fn dicom_image_info(context: &DicomContext) -> Result<DicomImageInfo, DecodeErro
         .map(|label| label.trim().to_string())
         .collect();
 
-    let mut fields: Vec<(String, JsonValue)> = Vec::new();
-    fields.push(("format".to_string(), JsonValue::Str("DICOM".to_string())));
-    fields.push((
-        "transferSyntax".to_string(),
-        JsonValue::Str(transfer_syntax.clone()),
-    ));
-    fields.push((
-        "photometric".to_string(),
-        JsonValue::Str(photometric.clone()),
-    ));
-    fields.push((
-        "bitsAllocated".to_string(),
-        JsonValue::Num(bits_allocated as f64),
-    ));
-    fields.push(("bitsStored".to_string(), JsonValue::Num(bits_stored as f64)));
-    fields.push(("signed".to_string(), JsonValue::Bool(signed)));
-    fields.push(("frames".to_string(), JsonValue::Num(frames as f64)));
+    let mut fields: Vec<(String, JsonValue)> = vec![
+        ("format".to_string(), JsonValue::Str("DICOM".to_string())),
+        (
+            "transferSyntax".to_string(),
+            JsonValue::Str(transfer_syntax.clone()),
+        ),
+        (
+            "photometric".to_string(),
+            JsonValue::Str(photometric.clone()),
+        ),
+        (
+            "bitsAllocated".to_string(),
+            JsonValue::Num(bits_allocated as f64),
+        ),
+        ("bitsStored".to_string(), JsonValue::Num(bits_stored as f64)),
+        ("signed".to_string(), JsonValue::Bool(signed)),
+        ("frames".to_string(), JsonValue::Num(frames as f64)),
+    ];
     if frame_labels.len() == frames as usize && frame_labels.iter().any(|label| !label.is_empty()) {
         fields.push((
             "frameLabels".to_string(),
@@ -574,18 +575,18 @@ fn dicom_image_info(context: &DicomContext) -> Result<DicomImageInfo, DecodeErro
     );
 
     Ok(DicomImageInfo {
-        rows: rows as u32,
-        columns: columns as u32,
-        samples: samples as u32,
-        planar: planar as u32,
-        bits_allocated: bits_allocated as u32,
-        bits_stored: bits_stored as u32,
+        rows,
+        columns,
+        samples,
+        planar,
+        bits_allocated,
+        bits_stored,
         signed,
         frames,
         photometric,
         slope,
         intercept,
-        bits_per_sample: bits_stored as u32,
+        bits_per_sample: bits_stored,
         sample_format,
         type_min,
         type_max,
@@ -753,6 +754,8 @@ fn decode_native_frame(
     Ok(raw)
 }
 
+type FragmentRanges = Vec<(usize, usize)>;
+
 /// Locate the fragments of encapsulated Pixel Data.
 ///
 /// The value is a sequence of items: a Basic Offset Table first (often empty),
@@ -761,7 +764,7 @@ fn decode_native_frame(
 fn encapsulated_fragments(
     data: &[u8],
     pixel_offset: usize,
-) -> Result<(Vec<u32>, Vec<(usize, usize)>), DecodeError> {
+) -> Result<(Vec<u32>, FragmentRanges), DecodeError> {
     let mut offset = pixel_offset;
     let mut offset_table: Vec<u32> = Vec::new();
     let mut fragments: Vec<(usize, usize)> = Vec::new();
@@ -852,7 +855,7 @@ fn encapsulated_frame_bytes(
         }
         return Ok(out);
     }
-    Err(DecodeError::new(&format!(
+    Err(DecodeError::new(format!(
         "DICOM: {} fragments for {} frames with no usable offset table",
         fragments.len(),
         frames
@@ -891,7 +894,7 @@ fn check_lossless_jpeg_predictor(encoded: &[u8]) -> Result<(), DecodeError> {
                 .copied()
                 .unwrap_or(1);
             if matches!(predictor, 5 | 6) {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM lossless JPEG: predictor {} is not supported (the decoder \
                      reproduces selection values 1-4 and 7 exactly, 5 and 6 incorrectly)",
                     predictor
@@ -937,7 +940,7 @@ fn unpack_bits(segment: &[u8], expected: usize, out: &mut Vec<u8>) -> Result<(),
                 .get(offset)
                 .ok_or_else(|| DecodeError::new("DICOM RLE: replicate run overruns the segment"))?;
             offset += 1;
-            out.extend(std::iter::repeat(value).take(count));
+            out.extend(std::iter::repeat_n(value, count));
         }
     }
     if out.len() > target {
@@ -981,7 +984,7 @@ fn decode_rle_lossless(
         .checked_mul(bytes_per_sample)
         .ok_or_else(|| DecodeError::new("DICOM RLE: segment count overflows"))?;
     if declared != expected_segments || declared == 0 || declared > 15 {
-        return Err(DecodeError::new(&format!(
+        return Err(DecodeError::new(format!(
             "DICOM RLE: frame declares {} segments, dataset needs {}",
             declared, expected_segments
         )));
@@ -998,7 +1001,7 @@ fn decode_rle_lossless(
             frame.len()
         };
         if start < 64 || end > frame.len() || start > end {
-            return Err(DecodeError::new(&format!(
+            return Err(DecodeError::new(format!(
                 "DICOM RLE: segment {} spans {}..{}, outside the {}-byte frame",
                 index,
                 start,
@@ -1075,10 +1078,10 @@ fn decode_own_codec_frame(
         CompressedCodec::Jpeg2000 => {
             let settings = dicom_toolkit_jpeg2000::DecodeSettings::default();
             let image = dicom_toolkit_jpeg2000::Image::new(&encoded, &settings)
-                .map_err(|e| DecodeError::new(&format!("DICOM JPEG 2000 header: {:?}", e)))?;
+                .map_err(|e| DecodeError::new(format!("DICOM JPEG 2000 header: {:?}", e)))?;
             let raw = image
                 .decode_native()
-                .map_err(|e| DecodeError::new(&format!("DICOM JPEG 2000 decode: {:?}", e)))?;
+                .map_err(|e| DecodeError::new(format!("DICOM JPEG 2000 decode: {:?}", e)))?;
             // Already little-endian at the codestream's own width; widen to
             // Bits Allocated when the two disagree (12-bit in 16, say).
             if raw.bytes_per_sample as usize == bytes_per_sample {
@@ -1086,7 +1089,7 @@ fn decode_own_codec_frame(
             } else if raw.bytes_per_sample == 1 && bytes_per_sample == 2 {
                 raw.data.iter().flat_map(|v| [*v, 0]).collect()
             } else {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM JPEG 2000: {} bytes per sample, dataset says {}",
                     raw.bytes_per_sample, bytes_per_sample
                 )));
@@ -1099,19 +1102,19 @@ fn decode_own_codec_frame(
                 || decoded.height != height
                 || decoded.channels != info.samples
             {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM JPEG XL: codestream is {}x{}x{}, dataset says {}x{}x{}",
                     decoded.width, decoded.height, decoded.channels, width, height, info.samples
                 )));
             }
             if decoded.sample_format != 1 || !matches!(info.bits_allocated, 8 | 16) {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM JPEG XL: unsupported sample layout {}/{}-bit (Bits Allocated {})",
                     decoded.sample_format, decoded.bits_per_sample, info.bits_allocated
                 )));
             }
             if decoded.bits_per_sample > info.bits_allocated {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM JPEG XL: {}-bit codestream does not fit {} Bits Allocated",
                     decoded.bits_per_sample, info.bits_allocated
                 )));
@@ -1133,11 +1136,10 @@ fn decode_own_codec_frame(
             }
             let (samples, _, _) = if codec == CompressedCodec::JpegLs {
                 jpegls::decode(&encoded, width, height)
-                    .map_err(|e| DecodeError::new(&format!("DICOM JPEG-LS decode: {:?}", e)))?
+                    .map_err(|e| DecodeError::new(format!("DICOM JPEG-LS decode: {:?}", e)))?
             } else {
-                jpegli::decode(&encoded, width, height).map_err(|e| {
-                    DecodeError::new(&format!("DICOM lossless JPEG decode: {:?}", e))
-                })?
+                jpegli::decode(&encoded, width, height)
+                    .map_err(|e| DecodeError::new(format!("DICOM lossless JPEG decode: {:?}", e)))?
             };
             if bytes_per_sample == 1 {
                 samples.iter().map(|v| *v as u8).collect()
@@ -1148,7 +1150,7 @@ fn decode_own_codec_frame(
         CompressedCodec::JpegBaseline => {
             let mut decoded = crate::decode_jpeg_with_channels(&encoded, info.samples)?;
             if decoded.width() != width || decoded.height() != height {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM JPEG Baseline: codestream is {}x{}, dataset says {}x{}",
                     decoded.width(),
                     decoded.height(),
@@ -1157,7 +1159,7 @@ fn decode_own_codec_frame(
                 )));
             }
             if decoded.channels() != info.samples {
-                return Err(DecodeError::new(&format!(
+                return Err(DecodeError::new(format!(
                     "DICOM JPEG Baseline: codestream has {} channels, dataset says {}",
                     decoded.channels(),
                     info.samples

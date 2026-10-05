@@ -27,6 +27,9 @@ pub struct RgbaLayerCompositor {
 }
 
 #[wasm_bindgen]
+// The exported methods mirror the JavaScript layer-worker ABI, and the private
+// helpers carry the same source/mask geometry through the compositor.
+#[allow(clippy::too_many_arguments)]
 impl RgbaLayerCompositor {
     fn validate_mask<T>(
         &self,
@@ -769,8 +772,8 @@ impl RgbaLayerCompositor {
             if pixel[3] <= 0.0 {
                 continue;
             }
-            for channel in 0..3 {
-                let original = pixel[channel];
+            for (channel, sample) in pixel[..3].iter_mut().enumerate() {
+                let original = *sample;
                 if !original.is_finite() {
                     continue;
                 }
@@ -781,7 +784,7 @@ impl RgbaLayerCompositor {
                 let base = channel * 256;
                 let adjusted =
                     tables[base + low] + (tables[base + high] - tables[base + low]) * fraction;
-                pixel[channel] = original + (adjusted - original) * amount;
+                *sample = original + (adjusted - original) * amount;
             }
         }
         Ok(())
@@ -874,7 +877,7 @@ impl RgbaLayerCompositor {
             hue = (hue + parameters[0]).rem_euclid(360.0);
             saturation = (saturation + parameters[1] / 100.0).clamp(0.0, 1.0);
             lightness = (lightness + parameters[2] / 100.0).clamp(0.0, 1.0);
-            for range in 0..6 {
+            for (range, &center) in centers.iter().enumerate() {
                 let base = 3 + range * 7;
                 let weight = configured_hue_range_weight_f32(
                     source_hue,
@@ -884,7 +887,7 @@ impl RgbaLayerCompositor {
                         parameters[base + 2],
                         parameters[base + 3],
                     ],
-                    centers[range],
+                    center,
                 );
                 hue = (hue + parameters[base + 4] * weight).rem_euclid(360.0);
                 saturation = (saturation + parameters[base + 5] / 100.0 * weight).clamp(0.0, 1.0);
@@ -1015,11 +1018,12 @@ impl RgbaLayerCompositor {
             .as_mut()
             .ok_or_else(|| JsValue::from_str("No active isolated layer surface"))?;
         let opacity = opacity.clamp(0.0, 1.0);
-        for pixel_index in 0..(self.width as usize * self.height as usize) {
+        for (pixel_index, &clip) in clip_alpha[..(self.width as usize * self.height as usize)]
+            .iter()
+            .enumerate()
+        {
             let index = pixel_index * 4;
-            let factor = (source[index + 3] / source_type_max * clip_alpha[pixel_index]
-                / self.type_max
-                * opacity)
+            let factor = (source[index + 3] / source_type_max * clip / self.type_max * opacity)
                 .clamp(0.0, 1.0);
             if factor <= 0.0 {
                 continue;
@@ -1207,6 +1211,8 @@ impl RgbaLayerCompositor {
     }
 }
 
+// Geometry and sampling parameters match the exported layer operations above.
+#[allow(clippy::too_many_arguments)]
 impl RgbaLayerCompositor {
     fn validate_source(&self, length: usize, width: u32, height: u32) -> Result<(), JsValue> {
         let expected = (width as usize)

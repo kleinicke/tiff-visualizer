@@ -259,12 +259,31 @@ fn ellipsoid_name(code: u16) -> Option<&'static str> {
 
 /// Interpret a key's raw value, turning the enumerated codes into words.
 fn describe_key(id: u16, raw: &str, numeric: Option<f64>) -> String {
-    let code = numeric.filter(|v| v.fract() == 0.0 && *v >= 0.0 && *v <= 65535.0).map(|v| v as u16);
+    let code = numeric
+        .filter(|v| v.fract() == 0.0 && *v >= 0.0 && *v <= 65535.0)
+        .map(|v| v as u16);
     // 32767 means "user-defined" for EVERY key that carries a code, not just
     // the CRS ones: the value is spelled out in other keys. Printing the bare
     // number invites reading it as a real code.
-    if code == Some(USER_DEFINED) && matches!(id, 1024 | 2048 | 2050 | 2051 | 2052 | 2054
-        | 2056 | 2060 | 3072 | 3074 | 3075 | 3076 | 4096 | 4098 | 4099) {
+    if code == Some(USER_DEFINED)
+        && matches!(
+            id,
+            1024 | 2048
+                | 2050
+                | 2051
+                | 2052
+                | 2054
+                | 2056
+                | 2060
+                | 3072
+                | 3074
+                | 3075
+                | 3076
+                | 4096
+                | 4098
+                | 4099
+        )
+    {
         return "user-defined".to_string();
     }
     match (id, code) {
@@ -343,7 +362,10 @@ pub(crate) fn parse_geo_reference(
 
         let (raw, numeric) = match location {
             // The value IS the fourth field.
-            0 => (directory[base + 3].to_string(), Some(directory[base + 3] as f64)),
+            0 => (
+                directory[base + 3].to_string(),
+                Some(directory[base + 3] as f64),
+            ),
             34736 => {
                 let end = offset.saturating_add(value_count).min(doubles.len());
                 let slice = doubles.get(offset..end).unwrap_or(&[]);
@@ -533,10 +555,10 @@ mod tests {
     fn resolves_a_utm_crs_and_the_north_up_transform() {
         let geo = parse_geo_reference(
             &directory(&[
-                [1024, 0, 1, 1],      // projected
-                [1025, 0, 1, 1],      // PixelIsArea
-                [3072, 0, 1, 32631],  // WGS 84 / UTM 31N
-                [3076, 0, 1, 9001],   // metre
+                [1024, 0, 1, 1],     // projected
+                [1025, 0, 1, 1],     // PixelIsArea
+                [3072, 0, 1, 32631], // WGS 84 / UTM 31N
+                [3076, 0, 1, 9001],  // metre
             ]),
             &[],
             "",
@@ -555,7 +577,9 @@ mod tests {
         assert_eq!(geo.unit.as_deref(), Some("metre"));
         assert!(!geo.pixel_is_point);
 
-        let t = geo.transform.expect("scale + tiepoint georeference the raster");
+        let t = geo
+            .transform
+            .expect("scale + tiepoint georeference the raster");
         assert_eq!((t.a, t.b, t.c), (10.0, 0.0, 300000.0));
         // The classic GeoTIFF trap: the tag's y scale is POSITIVE, but rows run
         // top-down while northing runs up, so `e` must come out negative.
@@ -586,10 +610,8 @@ mod tests {
         // express, so a file with both is describing a rotation and the pair
         // must not be preferred.
         let transformation = vec![
-            8.66, -5.0, 0.0, 300000.0,
-            5.0, 8.66, 0.0, 5700000.0,
-            0.0, 0.0, 0.0, 0.0,
-            0.0, 0.0, 0.0, 1.0,
+            8.66, -5.0, 0.0, 300000.0, 5.0, 8.66, 0.0, 5700000.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 1.0,
         ];
         let geo = parse_geo_reference(
             &directory(&[[3072, 0, 1, 32631]]),
@@ -615,13 +637,15 @@ mod tests {
             "",
             &[10.0, 10.0, 0.0],
             &[
-                0.0, 0.0, 0.0, 300000.0, 5700000.0, 0.0,
-                64.0, 48.0, 0.0, 300640.0, 5699520.0, 0.0,
+                0.0, 0.0, 0.0, 300000.0, 5700000.0, 0.0, 64.0, 48.0, 0.0, 300640.0, 5699520.0, 0.0,
             ],
             &[],
         )
         .unwrap();
-        assert!(geo.transform.is_none(), "a GCP warp is not an affine transform");
+        assert!(
+            geo.transform.is_none(),
+            "a GCP warp is not an affine transform"
+        );
         assert!(geo.crs_label.is_some(), "the CRS is still reported");
     }
 
@@ -629,9 +653,9 @@ mod tests {
     fn resolves_values_out_of_the_ascii_and_double_params() {
         let geo = parse_geo_reference(
             &directory(&[
-                [1025, 0, 1, 2],           // PixelIsPoint
-                [1026, 34737, 21, 0],      // citation, in GeoAsciiParams
-                [2057, 34736, 1, 0],       // semi-major axis, in GeoDoubleParams
+                [1025, 0, 1, 2],      // PixelIsPoint
+                [1026, 34737, 21, 0], // citation, in GeoAsciiParams
+                [2057, 34736, 1, 0],  // semi-major axis, in GeoDoubleParams
             ]),
             &[6378137.0],
             "WGS 84 / UTM zone 31N|WGS 84|",
@@ -640,13 +664,28 @@ mod tests {
             &[],
         )
         .unwrap();
-        assert!(geo.pixel_is_point, "PixelIsPoint shifts sampling by half a pixel");
+        assert!(
+            geo.pixel_is_point,
+            "PixelIsPoint shifts sampling by half a pixel"
+        );
         let by_name = |n: &str| {
-            geo.keys.iter().find(|k| k.name == n).map(|k| k.value.clone())
+            geo.keys
+                .iter()
+                .find(|k| k.name == n)
+                .map(|k| k.value.clone())
         };
-        assert_eq!(by_name("GTCitationGeoKey").as_deref(), Some("WGS 84 / UTM zone 31N"));
-        assert_eq!(by_name("GeogSemiMajorAxisGeoKey").as_deref(), Some("6378137"));
-        assert_eq!(by_name("GTRasterTypeGeoKey").as_deref(), Some("2 (PixelIsPoint)"));
+        assert_eq!(
+            by_name("GTCitationGeoKey").as_deref(),
+            Some("WGS 84 / UTM zone 31N")
+        );
+        assert_eq!(
+            by_name("GeogSemiMajorAxisGeoKey").as_deref(),
+            Some("6378137")
+        );
+        assert_eq!(
+            by_name("GTRasterTypeGeoKey").as_deref(),
+            Some("2 (PixelIsPoint)")
+        );
     }
 
     #[test]
@@ -657,7 +696,10 @@ mod tests {
         dir.extend_from_slice(&[3072, 0, 1, 32631]);
         let geo = parse_geo_reference(&dir, &[], "", &[], &[], &[]).unwrap();
         assert_eq!(geo.keys.len(), 1);
-        assert_eq!(geo.crs_label.as_deref(), Some("EPSG:32631 (WGS 84 / UTM zone 31N)"));
+        assert_eq!(
+            geo.crs_label.as_deref(),
+            Some("EPSG:32631 (WGS 84 / UTM zone 31N)")
+        );
     }
 
     #[test]
@@ -667,11 +709,7 @@ mod tests {
         // suite is exactly this, and GDAL reports an unnamed PROJCS for it.
         // Printing "EPSG:32767" would read as a real code.
         let geo = parse_geo_reference(
-            &directory(&[
-                [1024, 0, 1, 1],
-                [3072, 0, 1, 32767],
-                [3073, 34737, 24, 0],
-            ]),
+            &directory(&[[1024, 0, 1, 1], [3072, 0, 1, 32767], [3073, 34737, 24, 0]]),
             &[],
             "Cylindrical Equal Area|",
             &[],
@@ -698,20 +736,41 @@ mod tests {
         // the panel shows "ProjCoordTransGeoKey 28", which says nothing.
         let geo = parse_geo_reference(
             &directory(&[
-                [3074, 0, 1, 32767],  // ProjectionGeoKey, user-defined
-                [3075, 0, 1, 28],     // Cylindrical Equal Area
-                [2050, 0, 1, 6267],   // NAD27
-                [2056, 0, 1, 7008],   // Clarke 1866
+                [3074, 0, 1, 32767], // ProjectionGeoKey, user-defined
+                [3075, 0, 1, 28],    // Cylindrical Equal Area
+                [2050, 0, 1, 6267],  // NAD27
+                [2056, 0, 1, 7008],  // Clarke 1866
             ]),
-            &[], "", &[], &[], &[],
+            &[],
+            "",
+            &[],
+            &[],
+            &[],
         )
         .unwrap();
-        let by_name = |n: &str| geo.keys.iter().find(|k| k.name == n).map(|k| k.value.clone());
-        assert_eq!(by_name("ProjectionGeoKey").as_deref(), Some("user-defined"),
-            "32767 is user-defined for every key that carries a code, not just the CRS ones");
-        assert_eq!(by_name("ProjCoordTransGeoKey").as_deref(), Some("28 (Cylindrical Equal Area)"));
-        assert_eq!(by_name("GeogGeodeticDatumGeoKey").as_deref(), Some("6267 (North American Datum 1927)"));
-        assert_eq!(by_name("GeogEllipsoidGeoKey").as_deref(), Some("7008 (Clarke 1866)"));
+        let by_name = |n: &str| {
+            geo.keys
+                .iter()
+                .find(|k| k.name == n)
+                .map(|k| k.value.clone())
+        };
+        assert_eq!(
+            by_name("ProjectionGeoKey").as_deref(),
+            Some("user-defined"),
+            "32767 is user-defined for every key that carries a code, not just the CRS ones"
+        );
+        assert_eq!(
+            by_name("ProjCoordTransGeoKey").as_deref(),
+            Some("28 (Cylindrical Equal Area)")
+        );
+        assert_eq!(
+            by_name("GeogGeodeticDatumGeoKey").as_deref(),
+            Some("6267 (North American Datum 1927)")
+        );
+        assert_eq!(
+            by_name("GeogEllipsoidGeoKey").as_deref(),
+            Some("7008 (Clarke 1866)")
+        );
     }
 
     #[test]
@@ -720,17 +779,28 @@ mod tests {
         // NAD27, not WGS 84, so the WGS-only ranges would miss all of it.
         let geo = parse_geo_reference(
             &directory(&[[1024, 0, 1, 1], [3072, 0, 1, 26710]]),
-            &[], "", &[], &[], &[],
+            &[],
+            "",
+            &[],
+            &[],
+            &[],
         )
         .unwrap();
-        assert_eq!(geo.crs_label.as_deref(), Some("EPSG:26710 (NAD27 / UTM zone 10N)"));
+        assert_eq!(
+            geo.crs_label.as_deref(),
+            Some("EPSG:26710 (NAD27 / UTM zone 10N)")
+        );
     }
 
     #[test]
     fn an_unknown_epsg_code_reports_its_number_rather_than_a_guess() {
         let geo = parse_geo_reference(
             &directory(&[[1024, 0, 1, 1], [3072, 0, 1, 2154]]),
-            &[], "", &[], &[], &[],
+            &[],
+            "",
+            &[],
+            &[],
+            &[],
         )
         .unwrap();
         assert_eq!(geo.crs_label.as_deref(), Some("EPSG:2154"));

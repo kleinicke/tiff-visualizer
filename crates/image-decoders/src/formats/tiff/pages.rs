@@ -101,9 +101,7 @@ pub fn page_directory(data: &[u8]) -> Vec<TiffPageInfo> {
             break;
         };
         let subfile_type = decoder.get_tag_u64(Tag::NewSubfileType).unwrap_or(0);
-        let samples_per_pixel = decoder
-            .get_tag_u64(Tag::SamplesPerPixel)
-            .unwrap_or(1) as u32;
+        let samples_per_pixel = decoder.get_tag_u64(Tag::SamplesPerPixel).unwrap_or(1) as u32;
         let sub_ifd_count = decoder
             .get_tag_u64_vec(Tag::Unknown(330))
             .map(|offsets| offsets.len() as u32)
@@ -116,7 +114,12 @@ pub fn page_directory(data: &[u8]) -> Vec<TiffPageInfo> {
             // A strip spans the full width; RowsPerStrip defaults to the whole
             // image, which is exactly the "one block" case a caller must know
             // about — there is nothing smaller to read.
-            (width, decoder.get_tag_u64(Tag::RowsPerStrip).unwrap_or(height as u64) as u32)
+            (
+                width,
+                decoder
+                    .get_tag_u64(Tag::RowsPerStrip)
+                    .unwrap_or(height as u64) as u32,
+            )
         };
 
         let kind = if subfile_type & SUBFILE_TRANSPARENCY_MASK != 0 {
@@ -139,7 +142,11 @@ pub fn page_directory(data: &[u8]) -> Vec<TiffPageInfo> {
                 .find(|page| page.kind == TiffPageKind::Image)
                 .map(|page| page.index)
         };
-        let kind = if parent.is_none() { TiffPageKind::Image } else { kind };
+        let kind = if parent.is_none() {
+            TiffPageKind::Image
+        } else {
+            kind
+        };
 
         let reduction = match (kind, parent) {
             (TiffPageKind::Overview, Some(parent_index)) => pages
@@ -241,7 +248,9 @@ mod tests {
         assert_eq!(pages.len(), 3);
         assert_eq!(pages[0].kind, TiffPageKind::Image);
         assert_eq!(pages[0].samples_per_pixel, 2);
-        assert!(pages[1..].iter().all(|page| page.kind == TiffPageKind::Overview));
+        assert!(pages[1..]
+            .iter()
+            .all(|page| page.kind == TiffPageKind::Overview));
         assert!(pages[1..].iter().all(|page| page.parent == Some(0)));
         assert_eq!(pages[1].reduction, 2);
         assert_eq!(pages[2].reduction, 4);
@@ -256,7 +265,10 @@ mod tests {
         let data = std::fs::read("../../test-samples/deflate_pred3_f32.tif").unwrap();
         let pages = page_directory(&data);
         assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].block_width, pages[0].width, "a strip spans the width");
+        assert_eq!(
+            pages[0].block_width, pages[0].width,
+            "a strip spans the width"
+        );
         assert!(pages[0].block_height >= 1 && pages[0].block_height <= pages[0].height);
     }
 

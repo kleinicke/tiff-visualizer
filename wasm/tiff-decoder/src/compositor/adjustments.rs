@@ -173,11 +173,11 @@ pub(crate) fn apply_direct_adjustment(
                 1.0 - (light - 0.5).abs() * 2.0,
                 clamp_unit_f32((light - 0.5) * 2.0),
             ];
-            for range in 0..3 {
+            for (range, &weight) in weights.iter().enumerate() {
                 let base = range * 3;
-                red += parameters[base] / 100.0 * weights[range];
-                green += parameters[base + 1] / 100.0 * weights[range];
-                blue += parameters[base + 2] / 100.0 * weights[range];
+                red += parameters[base] / 100.0 * weight;
+                green += parameters[base + 1] / 100.0 * weight;
+                blue += parameters[base + 2] / 100.0 * weight;
             }
             if parameters[9] > 0.5 {
                 let (hue, saturation, _) = rgb_to_hsl_f32(
