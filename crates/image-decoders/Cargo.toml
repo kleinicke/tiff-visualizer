@@ -23,6 +23,7 @@ all-formats = [
     "jpeg",
     "pfm",
     "sgi",
+    "psd",
     "netpbm",
     "npy",
     "fits",
@@ -81,6 +82,8 @@ jpeg2000 = ["codec-jpeg2000"]
 jxl = ["dep:jxl"]
 jpeg = ["dep:zune-jpeg"]
 sgi = []
+# The merged image of 8-bit RGB Photoshop documents, in parallel row ranges.
+psd = []
 pfm = []
 netpbm = []
 npy = []

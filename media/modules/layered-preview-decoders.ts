@@ -929,16 +929,18 @@ function flattenNodeCount(nodes: LayerNodeSummary[]): number {
 function decodePsdPreview(
 	buffer: ArrayBuffer,
 	psb: boolean,
-	options: { previewOnly?: boolean; layersOnly?: boolean } = {},
+	options: { previewOnly?: boolean; layersOnly?: boolean; skipComposite?: boolean } = {},
 ): DecodedLayeredPreview {
 	ensurePsdImageDataFactory();
 	let layerDecodeWarning = '';
 	let psd: any;
 	const previewOnly = options.previewOnly === true;
 	const layersOnly = options.layersOnly === true;
+	// The document structure alone: the viewer decodes the composite itself.
+	const skipComposite = layersOnly || (previewOnly && options.skipComposite === true);
 	try {
 		psd = readPsd(buffer, {
-			useImageData: true, skipLayerImageData: previewOnly, skipCompositeImageData: layersOnly, skipThumbnail: true,
+			useImageData: true, skipLayerImageData: previewOnly, skipCompositeImageData: skipComposite, skipThumbnail: true,
 			skipLinkedFilesData: true, logMissingFeatures: false, totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
 		});
 	} catch (error) {
@@ -951,10 +953,10 @@ function decodePsdPreview(
 			skipLinkedFilesData: true, logMissingFeatures: false, totalMemoryLimit: MAX_PSD_MEMORY_BYTES,
 		});
 	}
-	if (!layersOnly && !psd.imageData?.data) { throw new Error('PSD contains no decodable composite image'); }
+	if (!skipComposite && !psd.imageData?.data) { throw new Error('PSD contains no decodable composite image'); }
 	const bitDepth = Number(psd.bitsPerChannel || 8);
 	assertDimensions(psd.width, psd.height, bitDepth === 32 ? 16 : bitDepth === 16 ? 8 : 4);
-	const data = layersOnly ? new Uint8Array() : psd.imageData.data as LayeredPixelArray;
+	const data = skipComposite ? new Uint8Array() : psd.imageData.data as LayeredPixelArray;
 	const root = summarizePsdLayers(psd.children);
 	const layerCount = flattenNodeCount(root);
 	const colorModes: Record<number, string> = { 0: 'Bitmap', 1: 'Grayscale', 2: 'Indexed', 3: 'RGB', 4: 'CMYK', 7: 'Multichannel', 8: 'Duotone', 9: 'Lab' };
@@ -1459,7 +1461,7 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 export function decodeLayeredPreview(
 	format: string,
 	buffer: ArrayBuffer,
-	options: { previewOnly?: boolean; layersOnly?: boolean } = {},
+	options: { previewOnly?: boolean; layersOnly?: boolean; skipComposite?: boolean } = {},
 ): DecodedLayeredPreview {
 	const started = performance.now();
 	let result: DecodedLayeredPreview;

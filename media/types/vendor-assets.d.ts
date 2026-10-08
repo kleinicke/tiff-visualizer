@@ -69,6 +69,8 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const decode_tiff_strip_range_raw_stats: any;
 	export const hdr_scanline_plan: any;
 	export const decode_hdr_rows: any;
+	export const psd_composite_plan: any;
+	export const decode_psd_composite_rows: any;
 	export const tiff_preview_header: any;
 	export const decode_tiff_preview_range: any;
 	export const tiff_strip_metadata: any;

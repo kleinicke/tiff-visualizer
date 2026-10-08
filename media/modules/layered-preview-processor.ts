@@ -3,8 +3,21 @@ import { DecodeWorkerClient } from './decode-worker-client.js';
 import { ImageRenderer, ImageStatsCalculator, NormalizationHelper } from './normalization-helper.js';
 import type { DecodedLayeredPreview, LayeredDocumentFormat, LayeredDocumentSummary, LayeredPixelArray } from './layered-document.js';
 import type { DeferredRenderOptions } from './types.js';
+import { PerfTrace } from './perf-trace.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
+
+type PsdPool = Promise<{ strips: typeof import('./strip-parallel-decode.js'); wasm: any }>;
+
+function startPsdPool(): PsdPool {
+	const tools = Promise.all([import('./strip-parallel-decode.js'), import('./tiff-wasm-wrapper.js')])
+		.then(async ([strips, wrapper]) => {
+			strips.prewarmStripPool();
+			return { strips, wasm: wrapper.getWasmModuleSync() || await wrapper.getWasmModule() };
+		});
+	tools.catch(() => {});
+	return tools;
+}
 
 async function decodeLayeredLocally(format: LayeredDocumentFormat, buffer: ArrayBuffer, options?: Record<string, any>) {
 	const url = (window as any).__tiffVisualizerVendorAssets?.layeredPreviewFallback;
@@ -49,11 +62,20 @@ export class LayeredPreviewProcessor {
 
 	async load(src: string, format: LayeredDocumentFormat) {
 		const signal = this.loadSignal;
-		const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, format);
-		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 		const splitLayeredDecode = this.decodeEditableLayers &&
 			(format === 'psd' || format === 'psb' || format === 'ora' || format === 'kra');
-		const decoded = await DecodeWorkerClient.decodeWithFallback(
+		// The composite of a PSD/PSB decodes on the strip pool; boot it (and the
+		// WebAssembly it plans with) while the file is read.
+		const psdPool = splitLayeredDecode && (format === 'psd' || format === 'psb') ? startPsdPool() : null;
+		let buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, format);
+		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+		let decoded: DecodedLayeredPreview | null = null;
+		if (psdPool) {
+			const parallel = await this._decodePsdPreviewParallel(psdPool, buffer, src, format, signal);
+			decoded = parallel.decoded;
+			buffer = parallel.buffer;
+		}
+		decoded ??= await DecodeWorkerClient.decodeWithFallback(
 			this.decodeWorker, format, buffer, src, signal,
 			(localBuffer, options) => decodeLayeredLocally(format, localBuffer, options),
 			splitLayeredDecode ? { previewOnly: true } : {},
@@ -64,7 +86,9 @@ export class LayeredPreviewProcessor {
 		this.document = decoded.document;
 		this.metadata = decoded.metadata || {};
 		this._postFormatInfo(decoded);
-		if (splitLayeredDecode) { this._startDeferredLayerDecode(src, format, signal); }
+		// A buffer still attached here (the PSD path keeps it) saves reading the
+		// whole document again for its layers.
+		if (splitLayeredDecode) { this._startDeferredLayerDecode(src, format, signal, buffer.byteLength ? buffer : undefined); }
 		const canvas = document.createElement('canvas');
 		canvas.width = decoded.width;
 		canvas.height = decoded.height;
@@ -75,14 +99,60 @@ export class LayeredPreviewProcessor {
 		return { canvas, imageData: this.renderWithSettings() };
 	}
 
+	/**
+	 * PSD/PSB preview: the composite rows on the strip pool, byte for byte
+	 * ag-psd's, while the layered worker parses only the document structure.
+	 * Returns null to use the ordinary ag-psd preview, with a buffer that is
+	 * still readable (refetched if the worker already took it).
+	 */
+	private async _decodePsdPreviewParallel(
+		psdPool: PsdPool,
+		buffer: ArrayBuffer,
+		src: string,
+		format: LayeredDocumentFormat,
+		signal: AbortSignal | undefined,
+	): Promise<{ decoded: DecodedLayeredPreview | null; buffer: ArrayBuffer }> {
+		const tools = await psdPool.catch((): null => null);
+		if (!tools) { return { decoded: null, buffer }; }
+		let structure: Promise<DecodedLayeredPreview> | null = null;
+		const composite = await tools.strips.decodePsdCompositeParallel(buffer, tools.wasm, () => {
+			structure = DecodeWorkerClient.decodeWithFallback(
+				this.decodeWorker, format, buffer, src, signal,
+				(localBuffer, options) => decodeLayeredLocally(format, localBuffer, options),
+				{ previewOnly: true, skipComposite: true, returnSource: true },
+			);
+			structure.catch(() => {});
+		});
+		const result = structure ? await (structure as Promise<DecodedLayeredPreview & { sourceBuffer?: ArrayBuffer }>).catch((): null => null) : null;
+		if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+		const { sourceBuffer, ...parsed } = result || {} as DecodedLayeredPreview & { sourceBuffer?: ArrayBuffer };
+		if (sourceBuffer instanceof ArrayBuffer) { buffer = sourceBuffer; }
+		if (composite && result && parsed.width === composite.width && parsed.height === composite.height) {
+			for (const timing of composite.timings) { PerfTrace.detail(timing.name, timing.durationMs); }
+			PerfTrace.note('psd-composite', `${composite.workers} strip workers`);
+			return {
+				buffer,
+				decoded: {
+					...parsed,
+					data: composite.data,
+					metadata: { ...parsed.metadata, decoder: `rust-psd-composite (${composite.workers} strip workers) + ag-psd` },
+				},
+			};
+		}
+		// The worker took the bytes and did not hand them back.
+		if (!buffer.byteLength) { buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, format); }
+		return { decoded: null, buffer };
+	}
+
 	private _startDeferredLayerDecode(
 		src: string,
 		format: LayeredDocumentFormat,
 		signal: AbortSignal | undefined,
+		source?: ArrayBuffer,
 	): void {
 		const token = ++this._deferredDecodeToken;
 		this._deferredLayersPromise = new Promise<void>(resolve => setTimeout(resolve, 0)).then(async () => {
-			const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, signal, `${format}-layers`);
+			const buffer = source || await DecodeWorkerClient.fetchArrayBuffer(src, signal, `${format}-layers`);
 			if (signal?.aborted || token !== this._deferredDecodeToken) { return; }
 			const decoded = await DecodeWorkerClient.decodeWithFallback(
 				this.decodeWorker, format, buffer, src, signal,

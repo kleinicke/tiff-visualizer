@@ -1425,6 +1425,38 @@ pub fn decode_hdr_rows(blob: &[u8], width: u32, rows: u32) -> Result<Vec<f32>, D
     formats::hdr::decode_hdr_rows(blob, width as usize, rows as usize)
 }
 
+#[cfg(feature = "psd")]
+pub use formats::psd::{PsdCompositePlan, PsdRowLayout};
+
+/// Where each row of an 8-bit RGB or grayscale Photoshop composite starts, for decoding
+/// row ranges in parallel with `decode_psd_composite_rows`.
+///
+/// # Errors
+///
+/// Not an 8-bit RGB or grayscale PSD/PSB with a raw or `PackBits` composite,
+/// or truncated.
+#[cfg(feature = "psd")]
+pub fn psd_composite_plan(data: &[u8]) -> Result<PsdCompositePlan, DecodeError> {
+    formats::psd::psd_composite_plan(data)
+}
+
+/// Decode `rows` composite rows to RGBA, byte for byte what ag-psd produces.
+/// `blob` holds the rows of each planned channel in turn, `counts` their
+/// lengths in the same order.
+///
+/// # Errors
+///
+/// Counts that do not match the blob, or a row that does not fill the width.
+#[cfg(feature = "psd")]
+pub fn decode_psd_composite_rows(
+    blob: &[u8],
+    counts: &[u32],
+    rows: u32,
+    layout: &PsdRowLayout,
+) -> Result<Vec<u8>, DecodeError> {
+    formats::psd::decode_psd_composite_rows(blob, counts, rows as usize, layout)
+}
+
 /// Decode a Portable Float Map (PFM). `top_down` requests a vertical flip so
 /// row 0 of the output is the PFM file's last (topmost, in image space) row —
 /// the worker always passes `true` to match the existing TS parser's

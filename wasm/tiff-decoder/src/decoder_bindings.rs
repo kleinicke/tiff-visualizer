@@ -911,6 +911,102 @@ pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, JsValue> {
         .map_err(js_error)
 }
 
+/// Composite row offsets of an 8-bit RGB or grayscale Photoshop document, for the
+/// parallel decode.
+#[wasm_bindgen]
+pub struct PsdCompositePlanJs {
+    inner: core::PsdCompositePlan,
+}
+
+#[wasm_bindgen]
+impl PsdCompositePlanJs {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
+    /// The output byte (0-3) each planned channel lands in.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn targets(&self) -> Vec<u8> {
+        self.inner.targets.clone()
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn grayscale(&self) -> bool {
+        self.inner.grayscale
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn global_alpha(&self) -> bool {
+        self.inner.global_alpha
+    }
+    /// 0 raw, 1 PackBits.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn compression(&self) -> u32 {
+        self.inner.compression
+    }
+    /// `channels * height` row starts, channel-major.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // offsets are within a loaded file, far below 2^53
+    pub fn row_offsets(&self) -> Vec<f64> {
+        self.inner
+            .row_offsets
+            .iter()
+            .map(|&offset| offset as f64)
+            .collect()
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn row_counts(&self) -> Vec<u32> {
+        self.inner.row_counts.clone()
+    }
+}
+
+/// # Errors
+///
+/// Not an 8-bit RGB or grayscale PSD/PSB with a raw or `PackBits` composite,
+/// or truncated.
+#[wasm_bindgen]
+pub fn psd_composite_plan(data: &[u8]) -> Result<PsdCompositePlanJs, JsValue> {
+    core::psd_composite_plan(data)
+        .map(|inner| PsdCompositePlanJs { inner })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// # Errors
+///
+/// Counts that do not match the blob, or a row that does not fill the width.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)] // flat arguments are the worker job's fields
+pub fn decode_psd_composite_rows(
+    blob: &[u8],
+    counts: &[u32],
+    width: u32,
+    rows: u32,
+    targets: &[u8],
+    compression: u32,
+    global_alpha: bool,
+    grayscale: bool,
+) -> Result<Vec<u8>, JsValue> {
+    let layout = core::PsdRowLayout {
+        width: width as usize,
+        targets,
+        compression,
+        global_alpha,
+        grayscale,
+    };
+    core::decode_psd_composite_rows(blob, counts, rows, &layout)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Scanline offsets of an HDR file, for the parallel decode.
 #[wasm_bindgen]
 pub struct HdrScanlinePlanJs {

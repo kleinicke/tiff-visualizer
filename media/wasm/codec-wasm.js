@@ -209,23 +209,17 @@ function getArrayF64FromWasm0(ptr, len) {
     return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 /**
- * Standalone JPEG XR (`.jxr`, `.wdp`, `.hdp`). The TIFF path decodes the same
- * codestream under compression 34934; this reads the pixel format off the
- * codestream itself, there being no TIFF tags to describe it.
- *
- * Present only in the codec module: the decoder is 189 KiB and no other
- * format in the core build needs it.
  * @param {Uint8Array} data
- * @returns {DecodedArray}
+ * @returns {TiffResult}
  */
-export function decode_jpegxr_fast(data) {
+export function decode_tiff_preview(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpegxr_fast(ptr0, len0);
+    const ret = wasm.decode_tiff_preview(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
-    return DecodedArray.__wrap(ret[0]);
+    return TiffResult.__wrap(ret[0]);
 }
 
 /**
@@ -259,52 +253,6 @@ export function remote_tiff_ifd(header, data, offset) {
 
 /**
  * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_npy_display_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_npy_display_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {boolean} top_down
- * @returns {DecodedArray}
- */
-export function decode_pfm_fast(data, top_down) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {string} options_json
- * @returns {DecodedArray}
- */
-export function decode_sdt_fast(data, options_json) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_sdt_fast(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
  * @param {number} frame_index
  * @returns {DecodedArray}
  */
@@ -312,6 +260,80 @@ export function decode_dicom_fast(data, frame_index) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.decode_dicom_fast(ptr0, len0, frame_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {ExrZipPlanJs | undefined}
+ */
+export function exr_zip_f32_plan(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.exr_zip_f32_plan(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] === 0 ? undefined : ExrZipPlanJs.__wrap(ret[0]);
+}
+
+/**
+ * Classify every image in a TIFF's IFD chain without decoding pixels. Used
+ * when a page directory is wanted for a file that was not decoded through
+ * this module (or before deciding which page to decode).
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function tiff_page_directory(data) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.tiff_page_directory(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * # Errors
+ *
+ * Malformed or truncated scanlines.
+ * @param {Uint8Array} blob
+ * @param {number} width
+ * @param {number} rows
+ * @returns {Float32Array}
+ */
+export function decode_hdr_rows(blob, width, rows) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_netcdf_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -342,50 +364,30 @@ export function decode_exr_zip_f32_blocks(blob, counts, rows, width) {
 }
 
 /**
- * `decode_tiff_preview` without pixels or range, for the strip pool.
- *
- * # Errors
- *
- * A TIFF with no bounded preview route.
+ * Whether a page can be served a region at a time, without decoding anything.
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {boolean}
+ */
+export function tiff_region_decode_available(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_region_decode_available(ptr0, len0, page_index);
+    return ret !== 0;
+}
+
+/**
  * @param {Uint8Array} data
  * @returns {TiffResult}
  */
-export function tiff_preview_header(data) {
+export function decode_tiff(data) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_preview_header(ptr0, len0);
+    const ret = wasm.decode_tiff(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {JpegResult}
- */
-export function decode_jpeg_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpeg_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return JpegResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {ExrZipPlanJs | undefined}
- */
-export function exr_zip_f32_plan(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.exr_zip_f32_plan(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] === 0 ? undefined : ExrZipPlanJs.__wrap(ret[0]);
 }
 
 /**
@@ -416,382 +418,19 @@ export function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
 
 /**
  * @param {Uint8Array} data
- * @param {boolean} top_down
- * @returns {DecodedArray}
- */
-export function decode_pfm_display_fast(data, top_down) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
  * @param {string} options_json
  * @returns {DecodedArray}
  */
-export function decode_nd2_fast(data, options_json) {
+export function decode_lif_fast(data, options_json) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_nd2_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_lif_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * # Errors
- *
- * Malformed or truncated scanlines.
- * @param {Uint8Array} blob
- * @param {number} width
- * @param {number} rows
- * @returns {Float32Array}
- */
-export function decode_hdr_rows(blob, width, rows) {
-    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-    return v2;
-}
-
-/**
- * Whether a page can be served a region at a time, without decoding anything.
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {boolean}
- */
-export function tiff_region_decode_available(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_region_decode_available(ptr0, len0, page_index);
-    return ret !== 0;
-}
-
-/**
- * Like `decode_tiff_float_strip_range`, but returns native little-endian
- * sample bytes so the caller can wrap them in the carrier type its pipeline
- * expects with no conversion pass.
- * @param {Uint8Array} blob
- * @param {Uint32Array} counts
- * @param {number} first_strip
- * @param {number} width
- * @param {number} height
- * @param {number} channels
- * @param {number} bits_per_sample
- * @param {number} compression
- * @param {number} rows_per_strip
- * @param {number} predictor
- * @param {number} sample_format
- * @param {boolean} little_endian
- * @param {number} planar_configuration
- * @param {number} orientation
- * @param {number} tile_width
- * @param {number} tile_length
- * @param {number} blocks_across
- * @param {number} lerc_additional_compression
- * @param {number} photometric_interpretation
- * @returns {Uint8Array}
- */
-export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
-    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page_fast(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Decode the units `[first_strip, first_strip + counts.len() / blocks_per_unit)`.
- *
- * `blob` is those units' blocks' compressed bytes concatenated in order;
- * `counts` their individual lengths, one entry per BLOCK. The geometry
- * arguments come from the plan; `tile_width`/`tile_length` are zero for a
- * stripped file, in which case a unit is one strip.
- * @param {Uint8Array} blob
- * @param {Uint32Array} counts
- * @param {number} first_strip
- * @param {number} width
- * @param {number} height
- * @param {number} channels
- * @param {number} bits_per_sample
- * @param {number} compression
- * @param {number} rows_per_strip
- * @param {number} predictor
- * @param {number} sample_format
- * @param {boolean} little_endian
- * @param {number} planar_configuration
- * @param {number} orientation
- * @param {number} tile_width
- * @param {number} tile_length
- * @param {number} blocks_across
- * @param {number} lerc_additional_compression
- * @param {number} photometric_interpretation
- * @returns {Float32Array}
- */
-export function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
-    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-    return v3;
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {number}
- */
-export function tiff_preview_reduction(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_preview_reduction(ptr0, len0);
-    return ret >>> 0;
-}
-
-/**
- * @param {Uint8Array} data
- * @param {string} options_json
- * @returns {DecodedArray}
- */
-export function decode_netcdf_fast(data, options_json) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_netcdf_fast(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Float32Array} data
- * @param {number} width
- * @param {number} height
- * @param {string} pattern
- * @param {string} algorithm
- * @param {number} offset_x
- * @param {number} offset_y
- * @param {number} black
- * @param {number} white
- * @param {boolean} auto_wb
- * @param {number} gain_r
- * @param {number} gain_g
- * @param {number} gain_b
- * @returns {DemosaicResult}
- */
-export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
-    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DemosaicResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_ppm_display_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {TiffFloatStripPlanJs | undefined}
- */
-export function tiff_float_strip_plan(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_float_strip_plan(ptr0, len0);
-    return ret === 0 ? undefined : TiffFloatStripPlanJs.__wrap(ret);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_npy_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_npy_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Standalone JPEG 2000 (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`). The
- * TIFF path decodes the same codestream under compression 34712; this reads
- * the geometry and precision off the codestream itself, there being no TIFF
- * tags to describe them.
- *
- * Present only in the codec module, for the same reason as JPEG XR above: no
- * format in the core build needs the JPEG 2000 decoder.
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_jpeg2000_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_jpeg2000_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * The bounded preview rows of one strip range, decoded unit by unit.
- *
- * # Errors
- *
- * A malformed or truncated range, as a JavaScript string.
- * @param {Uint8Array} blob
- * @param {Uint32Array} counts
- * @param {number} first_strip
- * @param {number} width
- * @param {number} height
- * @param {number} channels
- * @param {number} bits_per_sample
- * @param {number} compression
- * @param {number} rows_per_strip
- * @param {number} predictor
- * @param {number} sample_format
- * @param {boolean} little_endian
- * @param {number} planar_configuration
- * @param {number} orientation
- * @param {number} tile_width
- * @param {number} tile_length
- * @param {number} blocks_across
- * @param {number} lerc_additional_compression
- * @param {number} photometric_interpretation
- * @param {number} reduction
- * @returns {TiffPreviewRangeResult}
- */
-export function decode_tiff_preview_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction) {
-    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_preview_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffPreviewRangeResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {string} options_json
- * @returns {DecodedArray}
- */
-export function decode_czi_fast(data, options_json) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_czi_fast(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {number}
- */
-export function tiff_page_count(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_page_count(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0] >>> 0;
 }
 
 /**
@@ -838,141 +477,15 @@ export function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, wid
 
 /**
  * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_sgi_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_sgi_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {HdrResult}
- */
-export function decode_hdr_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_hdr_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return HdrResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {DecodedArray}
- */
-export function decode_ppm_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_ppm_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {TiffResult}
- */
-export function decode_tiff_preview(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_preview(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
-}
-
-/**
- * Tags and page count for a strip-parallel decode. Parses the IFD only — the
- * pixels come from `decode_tiff_float_strip_range` on the worker pool.
- * @param {Uint8Array} data
- * @returns {TiffStripMetadataJs}
- */
-export function tiff_strip_metadata(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.tiff_strip_metadata(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffStripMetadataJs.__wrap(ret[0]);
-}
-
-/**
- * Classify every image in a TIFF's IFD chain without decoding pixels. Used
- * when a page directory is wanted for a file that was not decoded through
- * this module (or before deciding which page to decode).
- * @param {Uint8Array} data
- * @returns {string}
- */
-export function tiff_page_directory(data) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.tiff_page_directory(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} item_bytes
- * @param {boolean} little
- * @returns {Float64Array}
- */
-export function remote_tiff_index_values(data, item_bytes, little) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.remote_tiff_index_values(ptr0, len0, item_bytes, little);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v2;
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {PngResult}
- */
-export function decode_png16_fast(data) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_png16_fast(ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return PngResult.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
  * @param {string} options_json
  * @returns {DecodedArray}
  */
-export function decode_lif_fast(data, options_json) {
+export function decode_sdt_fast(data, options_json) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_lif_fast(ptr0, len0, ptr1, len1);
+    const ret = wasm.decode_sdt_fast(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -981,54 +494,17 @@ export function decode_lif_fast(data, options_json) {
 
 /**
  * @param {Uint8Array} data
+ * @param {boolean} top_down
  * @returns {DecodedArray}
  */
-export function decode_fits_fast(data) {
+export function decode_pfm_display_fast(data, top_down) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_fits_fast(ptr0, len0);
+    const ret = wasm.decode_pfm_display_fast(ptr0, len0, top_down);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return DecodedArray.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @returns {string}
- */
-export function extract_exif_tags(data) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.extract_exif_tags(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @param {number} x
- * @param {number} y
- * @param {number} width
- * @param {number} height
- * @returns {TiffRegionJs}
- */
-export function decode_tiff_region(data, page_index, x, y, width, height) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_region(ptr0, len0, page_index, x, y, width, height);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffRegionJs.__wrap(ret[0]);
 }
 
 /**
@@ -1054,6 +530,191 @@ export function remote_tiff_header(header) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page_fast(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page_fast(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * The bounded preview rows of one strip range, decoded unit by unit.
+ *
+ * # Errors
+ *
+ * A malformed or truncated range, as a JavaScript string.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {number} bits_per_sample
+ * @param {number} compression
+ * @param {number} rows_per_strip
+ * @param {number} predictor
+ * @param {number} sample_format
+ * @param {boolean} little_endian
+ * @param {number} planar_configuration
+ * @param {number} orientation
+ * @param {number} tile_width
+ * @param {number} tile_length
+ * @param {number} blocks_across
+ * @param {number} lerc_additional_compression
+ * @param {number} photometric_interpretation
+ * @param {number} reduction
+ * @returns {TiffPreviewRangeResult}
+ */
+export function decode_tiff_preview_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_preview_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffPreviewRangeResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {string}
+ */
+export function extract_exif_tags(data) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.extract_exif_tags(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * Standalone JPEG 2000 (`.jp2`, `.jpf`, `.jpx`, `.j2k`, `.j2c`, `.jpc`). The
+ * TIFF path decodes the same codestream under compression 34712; this reads
+ * the geometry and precision off the codestream itself, there being no TIFF
+ * tags to describe them.
+ *
+ * Present only in the codec module, for the same reason as JPEG XR above: no
+ * format in the core build needs the JPEG 2000 decoder.
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_jpeg2000_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_jpeg2000_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_ppm_display_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ppm_display_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_fits_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_fits_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * Tags and page count for a strip-parallel decode. Parses the IFD only — the
+ * pixels come from `decode_tiff_float_strip_range` on the worker pool.
+ * @param {Uint8Array} data
+ * @returns {TiffStripMetadataJs}
+ */
+export function tiff_strip_metadata(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_strip_metadata(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffStripMetadataJs.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffFloatStripPlanJs | undefined}
+ */
+export function tiff_float_strip_plan(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_float_strip_plan(ptr0, len0);
+    return ret === 0 ? undefined : TiffFloatStripPlanJs.__wrap(ret);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} item_bytes
+ * @param {boolean} little
+ * @returns {Float64Array}
+ */
+export function remote_tiff_index_values(data, item_bytes, little) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.remote_tiff_index_values(ptr0, len0, item_bytes, little);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v2;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_czi_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_czi_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
 }
 
 /**
@@ -1089,6 +750,159 @@ export function decode_tiff_fast(data) {
 
 /**
  * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_npy_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_npy_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {PngResult}
+ */
+export function decode_png16_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_png16_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PngResult.__wrap(ret[0]);
+}
+
+/**
+ * # Errors
+ *
+ * Counts that do not match the blob, or a row that does not fill the width.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} width
+ * @param {number} rows
+ * @param {Uint8Array} targets
+ * @param {number} compression
+ * @param {boolean} global_alpha
+ * @param {boolean} grayscale
+ * @returns {Uint8Array}
+ */
+export function decode_psd_composite_rows(blob, counts, width, rows, targets, compression, global_alpha, grayscale) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(targets, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_psd_composite_rows(ptr0, len0, ptr1, len1, width, rows, ptr2, len2, compression, global_alpha, grayscale);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v4;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+export function tiff_page_count(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_page_count(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
+ * Like `decode_tiff_float_strip_range`, but returns native little-endian
+ * sample bytes so the caller can wrap them in the carrier type its pipeline
+ * expects with no conversion pass.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {number} bits_per_sample
+ * @param {number} compression
+ * @param {number} rows_per_strip
+ * @param {number} predictor
+ * @param {number} sample_format
+ * @param {boolean} little_endian
+ * @param {number} planar_configuration
+ * @param {number} orientation
+ * @param {number} tile_width
+ * @param {number} tile_length
+ * @param {number} blocks_across
+ * @param {number} lerc_additional_compression
+ * @param {number} photometric_interpretation
+ * @returns {Uint8Array}
+ */
+export function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * Decode the units `[first_strip, first_strip + counts.len() / blocks_per_unit)`.
+ *
+ * `blob` is those units' blocks' compressed bytes concatenated in order;
+ * `counts` their individual lengths, one entry per BLOCK. The geometry
+ * arguments come from the plan; `tile_width`/`tile_length` are zero for a
+ * stripped file, in which case a unit is one strip.
+ * @param {Uint8Array} blob
+ * @param {Uint32Array} counts
+ * @param {number} first_strip
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {number} bits_per_sample
+ * @param {number} compression
+ * @param {number} rows_per_strip
+ * @param {number} predictor
+ * @param {number} sample_format
+ * @param {boolean} little_endian
+ * @param {number} planar_configuration
+ * @param {number} orientation
+ * @param {number} tile_width
+ * @param {number} tile_length
+ * @param {number} blocks_across
+ * @param {number} lerc_additional_compression
+ * @param {number} photometric_interpretation
+ * @returns {Float32Array}
+ */
+export function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
+    const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
+ * @param {Uint8Array} data
  * @returns {ExrResult}
  */
 export function decode_exr_fast(data) {
@@ -1102,17 +916,322 @@ export function decode_exr_fast(data) {
 }
 
 /**
- * Build the 256-bin histogram of a scalar plane. `step` subsamples for
- * interactive use (pass 1 for the full plane).
- * @param {Float32Array} plane
- * @param {number} step
- * @returns {HistogramResult}
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {string} pattern
+ * @param {string} algorithm
+ * @param {number} offset_x
+ * @param {number} offset_y
+ * @param {number} black
+ * @param {number} white
+ * @param {boolean} auto_wb
+ * @param {number} gain_r
+ * @param {number} gain_g
+ * @param {number} gain_b
+ * @returns {DemosaicResult}
  */
-export function build_histogram_fast(plane, step) {
+export function demosaic(data, width, height, pattern, algorithm, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(algorithm, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.demosaic(ptr0, len0, width, height, ptr1, len1, ptr2, len2, offset_x, offset_y, black, white, auto_wb, gain_r, gain_g, gain_b);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DemosaicResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @returns {TiffResult}
+ */
+export function decode_tiff_page(data, page_index) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {number} page_index
+ * @param {number} x
+ * @param {number} y
+ * @param {number} width
+ * @param {number} height
+ * @returns {TiffRegionJs}
+ */
+export function decode_tiff_region(data, page_index, x, y, width, height) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff_region(ptr0, len0, page_index, x, y, width, height);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffRegionJs.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {boolean} top_down
+ * @returns {DecodedArray}
+ */
+export function decode_pfm_fast(data, top_down) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_pfm_fast(ptr0, len0, top_down);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_nd2_fast(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_nd2_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {number}
+ */
+export function tiff_preview_reduction(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_preview_reduction(ptr0, len0);
+    return ret >>> 0;
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_npy_display_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_npy_display_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {HdrResult}
+ */
+export function decode_hdr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_hdr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return HdrResult.__wrap(ret[0]);
+}
+
+/**
+ * `decode_tiff_preview` without pixels or range, for the strip pool.
+ *
+ * # Errors
+ *
+ * A TIFF with no bounded preview route.
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function tiff_preview_header(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.tiff_preview_header(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
+}
+
+/**
+ * # Errors
+ *
+ * Not an 8-bit RGB or grayscale PSD/PSB with a raw or `PackBits` composite,
+ * or truncated.
+ * @param {Uint8Array} data
+ * @returns {PsdCompositePlanJs}
+ */
+export function psd_composite_plan(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.psd_composite_plan(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return PsdCompositePlanJs.__wrap(ret[0]);
+}
+
+/**
+ * Standalone JPEG XR (`.jxr`, `.wdp`, `.hdp`). The TIFF path decodes the same
+ * codestream under compression 34934; this reads the pixel format off the
+ * codestream itself, there being no TIFF tags to describe it.
+ *
+ * Present only in the codec module: the decoder is 189 KiB and no other
+ * format in the core build needs it.
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_jpegxr_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_jpegxr_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_sgi_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_sgi_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {DecodedArray}
+ */
+export function decode_ppm_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_ppm_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {JpegResult}
+ */
+export function decode_jpeg_fast(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_jpeg_fast(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return JpegResult.__wrap(ret[0]);
+}
+
+/**
+ * Any global auto-threshold method applied per neighbourhood, bilinearly
+ * interpolated between tiles. `min_contrast` uses NaN to mean "use the
+ * method's default (0.25)".
+ * @param {Float32Array} plane
+ * @param {number} width
+ * @param {number} height
+ * @param {string} method
+ * @param {number} radius
+ * @param {boolean} dark_background
+ * @param {number} min_contrast
+ * @returns {Uint8Array}
+ */
+export function local_auto_threshold_mask_fast(plane, width, height, method, radius, dark_background, min_contrast) {
     const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.build_histogram_fast(ptr0, len0, step);
-    return HistogramResult.__wrap(ret);
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.local_auto_threshold_mask_fast(ptr0, len0, width, height, ptr1, len1, radius, dark_background, min_contrast);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v3;
+}
+
+/**
+ * Min/max/mean/std over a uint16 raster. See `compute_image_stats_u8`.
+ * @param {Uint16Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {boolean} rgb_as_24bit
+ * @returns {ImageStats}
+ */
+export function compute_image_stats_u16(data, width, height, channels, rgb_as_24bit) {
+    const ptr0 = passArray16ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_image_stats_u16(ptr0, len0, width, height, channels, rgb_as_24bit);
+    return ImageStats.__wrap(ret);
+}
+
+/**
+ * Min/max/mean/std/valid & non-finite counts over a float32 raster, ported
+ * from `ImageStatsCalculator.calculateFloatStats` (`extended = false`) and
+ * `.calculateExtendedStats` (`extended = true`) in
+ * `media/modules/normalization-helper.ts`. `extended` only changes the
+ * "no valid samples" min/max fallback (+/-Infinity vs NaN) — every other
+ * field is always computed. See `pipeline::stats::compute_image_stats_f32_impl`
+ * for the exact non-finite-handling semantics this must stay bit-identical
+ * to (CLAUDE.md's `!Number.isFinite()` rule).
+ * @param {Float32Array} data
+ * @param {number} width
+ * @param {number} height
+ * @param {number} channels
+ * @param {boolean} extended
+ * @returns {ImageStats}
+ */
+export function compute_image_stats_f32(data, width, height, channels, extended) {
+    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.compute_image_stats_f32(ptr0, len0, width, height, channels, extended);
+    return ImageStats.__wrap(ret);
+}
+
+/**
+ * Apply one auto-threshold method to a 256-bin histogram. Returns a bin
+ * index, or -1 on failure. Unknown method names fall back to Otsu.
+ * @param {Int32Array} counts
+ * @param {string} method
+ * @returns {number}
+ */
+export function auto_threshold_bin_fast(counts, method) {
+    const ptr0 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.auto_threshold_bin_fast(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
 }
 
 /**
@@ -1129,24 +1248,6 @@ export function global_threshold_mask_fast(plane, low, high) {
     var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     return v2;
-}
-
-/**
- * Labels connected runs of non-zero mask entries. `connectivity` is 4 or 8.
- * @param {Uint8Array} mask
- * @param {number} width
- * @param {number} height
- * @param {number} connectivity
- * @returns {LabelResult}
- */
-export function label_components_fast(mask, width, height, connectivity) {
-    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.label_components_fast(ptr0, len0, width, height, connectivity);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return LabelResult.__wrap(ret[0]);
 }
 
 /**
@@ -1168,6 +1269,60 @@ export function subtract_background_fast(plane, width, height, radius, light_bac
     var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
+}
+
+/**
+ * SQUARED Euclidean distance from each set pixel to the nearest background
+ * pixel — the same convention the TypeScript used, so callers that compare
+ * against a squared radius keep working unchanged.
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @returns {Float64Array}
+ */
+export function distance_transform_fast(mask, width, height) {
+    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.distance_transform_fast(ptr0, len0, width, height);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v2;
+}
+
+/**
+ * Fills enclosed holes in a binary mask. Returns a mask of the same size.
+ * @param {Uint8Array} mask
+ * @param {number} width
+ * @param {number} height
+ * @returns {Uint8Array}
+ */
+export function fill_mask_holes_fast(mask, width, height) {
+    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.fill_mask_holes_fast(ptr0, len0, width, height);
+    if (ret[3]) {
+        throw takeFromExternrefTable0(ret[2]);
+    }
+    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v2;
+}
+
+/**
+ * Build the 256-bin histogram of a scalar plane. `step` subsamples for
+ * interactive use (pass 1 for the full plane).
+ * @param {Float32Array} plane
+ * @param {number} step
+ * @returns {HistogramResult}
+ */
+export function build_histogram_fast(plane, step) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.build_histogram_fast(ptr0, len0, step);
+    return HistogramResult.__wrap(ret);
 }
 
 /**
@@ -1212,96 +1367,6 @@ export function compute_image_stats_u8(data, width, height, channels, rgb_as_24b
 }
 
 /**
- * Any global auto-threshold method applied per neighbourhood, bilinearly
- * interpolated between tiles. `min_contrast` uses NaN to mean "use the
- * method's default (0.25)".
- * @param {Float32Array} plane
- * @param {number} width
- * @param {number} height
- * @param {string} method
- * @param {number} radius
- * @param {boolean} dark_background
- * @param {number} min_contrast
- * @returns {Uint8Array}
- */
-export function local_auto_threshold_mask_fast(plane, width, height, method, radius, dark_background, min_contrast) {
-    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.local_auto_threshold_mask_fast(ptr0, len0, width, height, ptr1, len1, radius, dark_background, min_contrast);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
-    }
-    var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v3;
-}
-
-/**
- * Min/max/mean/std/valid & non-finite counts over a float32 raster, ported
- * from `ImageStatsCalculator.calculateFloatStats` (`extended = false`) and
- * `.calculateExtendedStats` (`extended = true`) in
- * `media/modules/normalization-helper.ts`. `extended` only changes the
- * "no valid samples" min/max fallback (+/-Infinity vs NaN) — every other
- * field is always computed. See `pipeline::stats::compute_image_stats_f32_impl`
- * for the exact non-finite-handling semantics this must stay bit-identical
- * to (CLAUDE.md's `!Number.isFinite()` rule).
- * @param {Float32Array} data
- * @param {number} width
- * @param {number} height
- * @param {number} channels
- * @param {boolean} extended
- * @returns {ImageStats}
- */
-export function compute_image_stats_f32(data, width, height, channels, extended) {
-    const ptr0 = passArrayF32ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.compute_image_stats_f32(ptr0, len0, width, height, channels, extended);
-    return ImageStats.__wrap(ret);
-}
-
-/**
- * @param {Float32Array} plane
- * @param {number} width
- * @param {number} height
- * @param {number} histogram_min
- * @param {number} histogram_max
- * @param {number} samples
- * @param {number} max_pixels
- * @param {boolean} dark_background
- * @returns {StabilityCurveResult}
- */
-export function compute_stability_curve_fast(plane, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background) {
-    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.compute_stability_curve_fast(ptr0, len0, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return StabilityCurveResult.__wrap(ret[0]);
-}
-
-/**
- * Apply one auto-threshold method to a 256-bin histogram. Returns a bin
- * index, or -1 on failure. Unknown method names fall back to Otsu.
- * @param {Int32Array} counts
- * @param {string} method
- * @returns {number}
- */
-export function auto_threshold_bin_fast(counts, method) {
-    const ptr0 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(method, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.auto_threshold_bin_fast(ptr0, len0, ptr1, len1);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return ret[0];
-}
-
-/**
  * Per-pixel local threshold surface (Sauvola/Niblack/Phansalkar/mean/median).
  * `r` and `offset` use NaN to mean "use the method's default", matching the
  * TypeScript's optional `r?`/`offset?` fields.
@@ -1331,59 +1396,42 @@ export function local_threshold_mask_fast(plane, width, height, method, radius, 
 }
 
 /**
- * SQUARED Euclidean distance from each set pixel to the nearest background
- * pixel — the same convention the TypeScript used, so callers that compare
- * against a squared radius keep working unchanged.
+ * Labels connected runs of non-zero mask entries. `connectivity` is 4 or 8.
  * @param {Uint8Array} mask
  * @param {number} width
  * @param {number} height
- * @returns {Float64Array}
+ * @param {number} connectivity
+ * @returns {LabelResult}
  */
-export function distance_transform_fast(mask, width, height) {
+export function label_components_fast(mask, width, height, connectivity) {
     const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.distance_transform_fast(ptr0, len0, width, height);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    const ret = wasm.label_components_fast(ptr0, len0, width, height, connectivity);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
     }
-    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
-    return v2;
+    return LabelResult.__wrap(ret[0]);
 }
 
 /**
- * Min/max/mean/std over a uint16 raster. See `compute_image_stats_u8`.
- * @param {Uint16Array} data
+ * @param {Float32Array} plane
  * @param {number} width
  * @param {number} height
- * @param {number} channels
- * @param {boolean} rgb_as_24bit
- * @returns {ImageStats}
+ * @param {number} histogram_min
+ * @param {number} histogram_max
+ * @param {number} samples
+ * @param {number} max_pixels
+ * @param {boolean} dark_background
+ * @returns {StabilityCurveResult}
  */
-export function compute_image_stats_u16(data, width, height, channels, rgb_as_24bit) {
-    const ptr0 = passArray16ToWasm0(data, wasm.__wbindgen_malloc);
+export function compute_stability_curve_fast(plane, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background) {
+    const ptr0 = passArrayF32ToWasm0(plane, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.compute_image_stats_u16(ptr0, len0, width, height, channels, rgb_as_24bit);
-    return ImageStats.__wrap(ret);
-}
-
-/**
- * Fills enclosed holes in a binary mask. Returns a mask of the same size.
- * @param {Uint8Array} mask
- * @param {number} width
- * @param {number} height
- * @returns {Uint8Array}
- */
-export function fill_mask_holes_fast(mask, width, height) {
-    const ptr0 = passArray8ToWasm0(mask, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.fill_mask_holes_fast(ptr0, len0, width, height);
-    if (ret[3]) {
-        throw takeFromExternrefTable0(ret[2]);
+    const ret = wasm.compute_stability_curve_fast(ptr0, len0, width, height, histogram_min, histogram_max, samples, max_pixels, dark_background);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
     }
-    var v2 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
-    return v2;
+    return StabilityCurveResult.__wrap(ret[0]);
 }
 
 const DecodedArrayFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -2506,6 +2554,102 @@ export class PngResult {
 }
 if (Symbol.dispose) PngResult.prototype[Symbol.dispose] = PngResult.prototype.free;
 
+const PsdCompositePlanJsFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_psdcompositeplanjs_free(ptr >>> 0, 1));
+/**
+ * Composite row offsets of an 8-bit RGB or grayscale Photoshop document, for the
+ * parallel decode.
+ */
+export class PsdCompositePlanJs {
+
+    static __wrap(ptr) {
+        ptr = ptr >>> 0;
+        const obj = Object.create(PsdCompositePlanJs.prototype);
+        obj.__wbg_ptr = ptr;
+        PsdCompositePlanJsFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        PsdCompositePlanJsFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_psdcompositeplanjs_free(ptr, 0);
+    }
+    /**
+     * @returns {Uint32Array}
+     */
+    get row_counts() {
+        const ret = wasm.psdcompositeplanjs_row_counts(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
+     * 0 raw, 1 PackBits.
+     * @returns {number}
+     */
+    get compression() {
+        const ret = wasm.psdcompositeplanjs_compression(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * `channels * height` row starts, channel-major.
+     * @returns {Float64Array}
+     */
+    get row_offsets() {
+        const ret = wasm.psdcompositeplanjs_row_offsets(this.__wbg_ptr);
+        var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+        return v1;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get global_alpha() {
+        const ret = wasm.psdcompositeplanjs_global_alpha(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get width() {
+        const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * @returns {number}
+     */
+    get height() {
+        const ret = wasm.pngresult_height(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * The output byte (0-3) each planned channel lands in.
+     * @returns {Uint8Array}
+     */
+    get targets() {
+        const ret = wasm.psdcompositeplanjs_targets(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * @returns {boolean}
+     */
+    get grayscale() {
+        const ret = wasm.psdcompositeplanjs_grayscale(this.__wbg_ptr);
+        return ret !== 0;
+    }
+}
+if (Symbol.dispose) PsdCompositePlanJs.prototype[Symbol.dispose] = PsdCompositePlanJs.prototype.free;
+
 const RawRangeResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_rawrangeresult_free(ptr >>> 0, 1));
@@ -3434,7 +3578,7 @@ export class TiffFloatStripPlanJs {
      * @returns {number}
      */
     get channels() {
-        const ret = wasm.tifffloatstripplanjs_channels(this.__wbg_ptr);
+        const ret = wasm.psdcompositeplanjs_compression(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**

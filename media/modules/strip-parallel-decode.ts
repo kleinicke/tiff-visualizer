@@ -406,6 +406,114 @@ export async function decodeHdrParallel(buffer: ArrayBuffer, wasm: any): Promise
 	return { width, height, exposure, gamma, allTagsJson, data: output, workers: ranges.length, timings };
 }
 
+export interface ParallelPsdResult {
+	width: number;
+	height: number;
+	/** RGBA, byte for byte ag-psd's composite. */
+	data: Uint8ClampedArray;
+	workers: number;
+	timings: { name: string; durationMs: number }[];
+}
+
+/**
+ * The composite of an 8-bit RGB or grayscale PSD/PSB, its rows split across
+ * the pool (see `psd_composite_plan`). Every range's bytes are copied out of
+ * `buffer` before this first awaits a worker, so `onSourceCopied` may hand the
+ * buffer to another thread. Null when the document is not eligible, the pool
+ * is unavailable, or any row fails (ag-psd then decodes it, as before).
+ */
+export async function decodePsdCompositeParallel(
+	buffer: ArrayBuffer,
+	wasm: any,
+	onSourceCopied?: () => void,
+): Promise<ParallelPsdResult | null> {
+	if (typeof wasm?.psd_composite_plan !== 'function') { return null; }
+	const bytes = new Uint8Array(buffer);
+	const planStart = performance.now();
+	let plan: any;
+	try { plan = wasm.psd_composite_plan(bytes); } catch { return null; }
+	const width: number = plan.width;
+	const height: number = plan.height;
+	const targets: Uint8Array = plan.targets;
+	const grayscale: boolean = plan.grayscale;
+	const globalAlpha: boolean = plan.global_alpha;
+	const compression: number = plan.compression;
+	const offsets: Float64Array = plan.row_offsets;
+	const counts: Uint32Array = plan.row_counts;
+	plan.free?.();
+	const timings = [{ name: 'psd-plan', durationMs: performance.now() - planStart }];
+	if (height < MIN_PARALLEL_TIFF_STRIPS || width * height < MIN_PARALLEL_TIFF_PIXELS) { return null; }
+	if (!await pool.ensure() || pool.size < 2) { return null; }
+
+	const channels = targets.length;
+	const workerCount = Math.min(pool.size, height);
+	const rowCost = (y: number) => {
+		let cost = 0.5 * width * 4;
+		for (let c = 0; c < channels; c++) { cost += counts[c * height + y]; }
+		return cost;
+	};
+	let totalCost = 0;
+	for (let y = 0; y < height; y++) { totalCost += rowCost(y); }
+	const target = totalCost / workerCount;
+	const ranges: { first: number; last: number }[] = [];
+	let cursor = 0;
+	for (let workerIndex = 0; workerIndex < workerCount && cursor < height; workerIndex++) {
+		const maxEnd = height - (workerCount - workerIndex - 1);
+		let end = cursor;
+		let cost = 0;
+		while (end < maxEnd && (cost < target || end === cursor)) { cost += rowCost(end++); }
+		if (workerIndex === workerCount - 1) { end = height; }
+		ranges.push({ first: cursor, last: end });
+		cursor = end;
+	}
+
+	const started = performance.now();
+	const jobs = ranges.map(range => {
+		const rows = range.last - range.first;
+		const rangeCounts = new Uint32Array(channels * rows);
+		let total = 0;
+		for (let c = 0; c < channels; c++) {
+			for (let y = 0; y < rows; y++) {
+				const count = counts[c * height + range.first + y];
+				rangeCounts[c * rows + y] = count;
+				total += count;
+			}
+		}
+		const blob = new Uint8Array(total);
+		for (let c = 0, at = 0; c < channels; c++) {
+			for (let y = 0; y < rows; y++) {
+				const offset = offsets[c * height + range.first + y];
+				const count = rangeCounts[c * rows + y];
+				blob.set(bytes.subarray(offset, offset + count), at);
+				at += count;
+			}
+		}
+		return { range, rows, rangeCounts, blob };
+	});
+	timings.push({ name: 'psd-copy-ranges', durationMs: performance.now() - started });
+	onSourceCopied?.();
+	const output = new Uint8ClampedArray(width * height * 4);
+	let slowest = 0;
+	try {
+		await Promise.all(jobs.map(async (job, workerIndex) => {
+			const part = await pool.run({
+				kind: 'psd-rows', blob: job.blob.buffer, counts: job.rangeCounts, width, rows: job.rows,
+				targets, compression, globalAlpha, grayscale,
+			}, [job.blob.buffer, job.rangeCounts.buffer], workerIndex);
+			slowest = Math.max(slowest, Number(part.ms) || 0);
+			output.set(part.rgba, job.range.first * width * 4);
+		}));
+	} catch (error) {
+		console.warn('[StripPool] PSD composite decode failed, falling back:', error);
+		return null;
+	}
+	timings.push({ name: 'psd-workers', durationMs: performance.now() - started });
+	timings.push({ name: 'psd-slowest-worker', durationMs: slowest });
+	// Each worker held only its own band (an eighth of the image), so unlike
+	// the HDR and TIFF paths the pool is kept rather than retired.
+	return { width, height, data: output, workers: ranges.length, timings };
+}
+
 /**
  * The bounded preview of a very large single-page float TIFF (see
  * `tiff_preview_reduction`), decoded across the pool. Each worker decodes its

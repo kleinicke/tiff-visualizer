@@ -12,7 +12,7 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_tiff_float_strip_range, decode_tiff_preview_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_psd_composite_rows, decode_tiff_float_strip_range, decode_tiff_preview_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
 import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
@@ -83,6 +83,14 @@ self.onmessage = async (event: MessageEvent) => {
 		if (job.kind === 'hdr-rows') {
 			const samples = decode_hdr_rows(new Uint8Array(job.blob), job.width, job.rows);
 			(self as any).postMessage({ id: job.id, samples, ms: performance.now() - started }, [samples.buffer]);
+			return;
+		}
+		if (job.kind === 'psd-rows') {
+			const rgba = decode_psd_composite_rows(
+				new Uint8Array(job.blob), new Uint32Array(job.counts), job.width, job.rows,
+				new Uint8Array(job.targets), job.compression, job.globalAlpha, job.grayscale,
+			);
+			(self as any).postMessage({ id: job.id, rgba, ms: performance.now() - started }, [rgba.buffer]);
 			return;
 		}
 		if (job.kind === 'exr-zip') {

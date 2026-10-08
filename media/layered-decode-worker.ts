@@ -24,7 +24,10 @@ self.onmessage = async (event: MessageEvent<any>) => {
 	}
 	const { id, format, buffer, options } = msg;
 	try {
-		const result = await decodeLayeredPreview(format, buffer, options || {});
+		const result: any = await decodeLayeredPreview(format, buffer, options || {});
+		// `returnSource` hands the untouched input back for a later decode of the
+		// same document, so the caller need not read the file again.
+		if (options?.returnSource) { result.sourceBuffer = buffer; }
 		self.postMessage({ id, ok: true, result }, collectTransferables(result));
 	} catch (error) {
 		self.postMessage({ id, ok: false, error: String((error as Error)?.message || error), buffer }, [buffer]);
