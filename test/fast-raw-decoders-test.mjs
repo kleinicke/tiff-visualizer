@@ -75,4 +75,50 @@ assert.equal(
 	lazyStatsDecoded.width * lazyStatsDecoded.height * lazyStatsDecoded.channels,
 	'lazy-stats data remains intact',
 );
-console.log(`✅ Fast raw decoders: ${supported} optimized fixtures, ${fallback} Rust fallbacks`);
+// The NPY fast path's statistics scan must equal the straightforward one it
+// replaced (finite-only min/max, finite/non-finite counts, first-seen wins on
+// a -0/+0 tie) on arrays full of NaN, infinities and signed zeros.
+function npyBytes(height, width, channels, values) {
+	let header = `{'descr': '<f4', 'fortran_order': False, 'shape': (${height}, ${width}${channels > 1 ? `, ${channels}` : ''}), }`;
+	while ((10 + header.length + 1) % 64) header += ' ';
+	header += '\n';
+	const out = new Uint8Array(10 + header.length + values.length * 4);
+	out.set([0x93, 78, 85, 77, 80, 89, 1, 0, header.length & 255, header.length >> 8]);
+	for (let i = 0; i < header.length; i++) out[10 + i] = header.charCodeAt(i);
+	new Float32Array(out.buffer, 10 + header.length).set(values);
+	return out.buffer;
+}
+function referenceRange(data, width, height, channels) {
+	let min = Infinity, max = -Infinity, valid = 0, nonFinite = 0;
+	const scanned = channels >= 3 ? 3 : 1;
+	for (let pixel = 0; pixel < width * height; pixel++) {
+		for (let channel = 0; channel < scanned; channel++) {
+			const value = data[pixel * channels + channel];
+			if (Number.isFinite(value)) {
+				if (value < min) min = value;
+				if (value > max) max = value;
+				valid++;
+			} else nonFinite++;
+		}
+	}
+	return [min, max, valid, nonFinite];
+}
+const specials = [NaN, Infinity, -Infinity, 0, -0, 1e30, -1e30];
+let seed = 12345;
+const random = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 0x100000000);
+for (let trial = 0; trial < 2000; trial++) {
+	const channels = [1, 3, 4][trial % 3];
+	const width = 1 + Math.floor(random() * 9), height = 1 + Math.floor(random() * 7);
+	const values = new Float32Array(width * height * channels);
+	for (let i = 0; i < values.length; i++) {
+		values[i] = random() < 0.25 ? specials[Math.floor(random() * specials.length)] : (random() - 0.5) * 100;
+	}
+	const decoded = decodeNativeF32NpyFast(npyBytes(height, width, channels, values));
+	assert.ok(decoded, `trial ${trial}: fast path declined a native float32 array`);
+	const got = [decoded.stats.min, decoded.stats.max, decoded.validCount, decoded.nonFiniteCount];
+	const expected = referenceRange(values, width, height, channels);
+	assert.ok(got.every((value, index) => Object.is(value, expected[index])),
+		`trial ${trial} (${width}x${height}x${channels}): ${got} != ${expected}`);
+}
+
+console.log(`✅ Fast raw decoders: ${supported} optimized fixtures, ${fallback} Rust fallbacks, 2000 randomized NPY ranges`);

@@ -775,12 +775,97 @@ pub fn decode_exr_zip_f32_blocks(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// `decode_exr_zip_f32_blocks` with the samples' min/max computed in Rust.
+///
+/// # Errors
+///
+/// Malformed or truncated blocks, as a JavaScript string.
+#[wasm_bindgen]
+pub fn decode_exr_zip_f32_blocks_stats(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<RawRangeResult, JsValue> {
+    core::decode_exr_zip_f32_blocks_with_range(blob, counts, rows, width)
+        .map(|core::RawStripRange { data, range }| RawRangeResult {
+            data,
+            planes: Vec::new(),
+            range,
+        })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 #[wasm_bindgen]
 pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, JsValue> {
     prepare();
     core::decode_png16_fast(data)
         .map(|inner| PngResult { inner })
         .map_err(js_error)
+}
+
+/// Scanline offsets of an HDR file, for the parallel decode.
+#[wasm_bindgen]
+pub struct HdrScanlinePlanJs {
+    inner: core::HdrScanlinePlan,
+}
+
+#[wasm_bindgen]
+impl HdrScanlinePlanJs {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn exposure(&self) -> f32 {
+        self.inner.exposure
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn gamma(&self) -> f32 {
+        self.inner.gamma
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn all_tags_json(&self) -> String {
+        self.inner.all_tags_json.clone()
+    }
+    /// `height + 1` scanline start offsets (the last is the end).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // offsets are within a loaded file, far below 2^53
+    pub fn offsets(&self) -> Vec<f64> {
+        self.inner
+            .offsets
+            .iter()
+            .map(|&offset| offset as f64)
+            .collect()
+    }
+}
+
+/// # Errors
+///
+/// The same header and RLE errors as `decode_hdr_fast`.
+#[wasm_bindgen]
+pub fn hdr_scanline_plan(data: &[u8]) -> Result<HdrScanlinePlanJs, JsValue> {
+    core::hdr_scanline_plan(data)
+        .map(|inner| HdrScanlinePlanJs { inner })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// # Errors
+///
+/// Malformed or truncated scanlines.
+#[wasm_bindgen]
+pub fn decode_hdr_rows(blob: &[u8], width: u32, rows: u32) -> Result<Vec<f32>, JsValue> {
+    core::decode_hdr_rows(blob, width, rows).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -1190,16 +1275,17 @@ pub fn decode_tiff_strip_range_raw(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// One strip range's native little-endian sample bytes and their min/max.
+/// A decoded range's native little-endian sample bytes, their min/max and,
+/// optionally, its channel planes (TIFF strip ranges and EXR ZIP blocks).
 #[wasm_bindgen]
-pub struct TiffStripRangeRaw {
+pub struct RawRangeResult {
     data: Vec<u8>,
     planes: Vec<u8>,
     range: Option<(f64, f64)>,
 }
 
 #[wasm_bindgen]
-impl TiffStripRangeRaw {
+impl RawRangeResult {
     /// False when the carrier has no Rust-side scan; the caller then scans.
     #[wasm_bindgen(getter)]
     #[must_use]
@@ -1257,7 +1343,7 @@ pub fn decode_tiff_strip_range_raw_stats(
     lerc_additional_compression: u32,
     photometric_interpretation: u32,
     output_channels: u32,
-) -> Result<TiffStripRangeRaw, JsValue> {
+) -> Result<RawRangeResult, JsValue> {
     let plan = core::TiffFloatStripPlan {
         width,
         height,
@@ -1289,7 +1375,7 @@ pub fn decode_tiff_strip_range_raw_stats(
             } else {
                 Vec::new()
             };
-            TiffStripRangeRaw {
+            RawRangeResult {
                 data,
                 planes,
                 range,

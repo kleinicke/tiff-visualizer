@@ -329,6 +329,83 @@ export interface ExrZipBlockPlan {
 	compressed: Uint8Array;
 }
 
+export interface ParallelHdrResult {
+	width: number;
+	height: number;
+	exposure: number;
+	gamma: number;
+	allTagsJson: string;
+	/** Tightly packed RGB floats, identical to `decode_hdr_fast`. */
+	data: Float32Array;
+	workers: number;
+	timings: { name: string, durationMs: number }[];
+}
+
+/**
+ * Decode a Radiance HDR across the shared pool. Its RLE scanlines are
+ * independent but unindexed, so `hdr_scanline_plan` walks them once without
+ * writing pixels, and each worker decodes a run of scanlines from exactly its
+ * bytes with the same code as the whole-file decode. Returns null when the
+ * image is too small to be worth it or anything fails; the caller then
+ * decodes the file whole.
+ */
+export async function decodeHdrParallel(buffer: ArrayBuffer, wasm: any): Promise<ParallelHdrResult | null> {
+	if (typeof wasm?.hdr_scanline_plan !== 'function') { return null; }
+	const bytes = new Uint8Array(buffer);
+	const planStart = performance.now();
+	let plan: any;
+	try { plan = wasm.hdr_scanline_plan(bytes); } catch { return null; }
+	const width: number = plan.width;
+	const height: number = plan.height;
+	const offsets: Float64Array = plan.offsets;
+	const exposure: number = plan.exposure;
+	const gamma: number = plan.gamma;
+	const allTagsJson: string = plan.all_tags_json;
+	plan.free?.();
+	const timings = [{ name: 'hdr-plan', durationMs: performance.now() - planStart }];
+	if (height < MIN_PARALLEL_TIFF_STRIPS || width * height < MIN_PARALLEL_TIFF_PIXELS) { return null; }
+	if (!await pool.ensure() || pool.size < 2) { return null; }
+
+	// Same cost model as the TIFF strips: compressed plus half the decoded bytes.
+	const workerCount = Math.min(pool.size, height);
+	const rowCost = (y: number) => offsets[y + 1] - offsets[y] + 0.5 * width * 12;
+	let totalCost = 0;
+	for (let y = 0; y < height; y++) { totalCost += rowCost(y); }
+	const target = totalCost / workerCount;
+	const ranges: { first: number; last: number }[] = [];
+	let cursor = 0;
+	for (let workerIndex = 0; workerIndex < workerCount && cursor < height; workerIndex++) {
+		const maxEnd = height - (workerCount - workerIndex - 1);
+		let end = cursor;
+		let cost = 0;
+		while (end < maxEnd && (cost < target || end === cursor)) { cost += rowCost(end++); }
+		if (workerIndex === workerCount - 1) { end = height; }
+		ranges.push({ first: cursor, last: end });
+		cursor = end;
+	}
+
+	const started = performance.now();
+	const output = new Float32Array(width * height * 3);
+	try {
+		await Promise.all(ranges.map(async (range, workerIndex) => {
+			const blob = bytes.slice(offsets[range.first], offsets[range.last]);
+			const part = await pool.run({
+				kind: 'hdr-rows', blob: blob.buffer, width, rows: range.last - range.first,
+			}, [blob.buffer], workerIndex);
+			output.set(part.samples, range.first * width * 3);
+		}));
+	} catch (error) {
+		console.warn('[StripPool] HDR scanline decode failed, falling back:', error);
+		return null;
+	}
+	timings.push({ name: 'hdr-workers', durationMs: performance.now() - started });
+	if (output.byteLength >= 64 * 1024 * 1024) {
+		pool.retire();
+		setTimeout(() => { void pool.ensure(); }, 0);
+	}
+	return { width, height, exposure, gamma, allTagsJson, data: output, workers: ranges.length, timings };
+}
+
 /** Decode independently compressed EXR ZIP16 blocks across the shared pool. */
 export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 	data: Float32Array;

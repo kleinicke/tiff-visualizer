@@ -43,18 +43,21 @@ async function main() {
 			{ file: 'test-samples/strip_pool_rgb8.tif', deferred: true },
 			// A small file the worker decodes itself.
 			{ file: 'test-samples/pred_ref_f32.tif', deferred: false },
+			// A large HDR goes to the page's scanline pool.
+			{ file: 'test-samples/hdr_pool_rgb.hdr', deferred: true },
 		];
 		let id = 1;
 		for (const { file, deferred } of cases) {
 			const original = new Uint8Array(fs.readFileSync(file));
 			for (const returnSource of [true, false]) {
 				const buffer = original.slice().buffer;
+				const hdr = file.endsWith('.hdr');
 				const response = await request(worker, {
-					id: id++, format: 'tiff', buffer,
-					options: { preferParallelTiff: true, returnSource },
+					id: id++, format: hdr ? 'hdr' : 'tiff', buffer,
+					options: hdr ? { preferParallelHdr: true, returnSource } : { preferParallelTiff: true, returnSource },
 				}, [buffer]);
 				assert.equal(response.ok, true, `${file}: ${response.error}`);
-				assert.equal(!!response.result?.deferToParallelTiff, deferred, `${file}: parallel route`);
+				assert.equal(!!(hdr ? response.result?.deferToParallelHdr : response.result?.deferToParallelTiff), deferred, `${file}: parallel route`);
 				if (!returnSource) {
 					assert.equal(response.sourceBuffer, undefined, `${file}: source returned unasked`);
 					continue;
@@ -63,7 +66,7 @@ async function main() {
 				assert.ok(Buffer.from(response.sourceBuffer).equals(Buffer.from(original)), `${file}: returned source differs from the input`);
 			}
 		}
-		console.log(`Decode worker returns the untouched source on request (${cases.length} files, deferred and decoded)`);
+		console.log(`Decode worker returns the untouched source on request (${cases.length} files: TIFF and HDR, deferred and decoded)`);
 	} finally {
 		await worker.terminate();
 	}

@@ -65,6 +65,10 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const tiff_float_strip_plan: any;
 	export const exr_zip_f32_plan: any;
 	export const decode_exr_zip_f32_blocks: any;
+	export const decode_exr_zip_f32_blocks_stats: any;
+	export const decode_tiff_strip_range_raw_stats: any;
+	export const hdr_scanline_plan: any;
+	export const decode_hdr_rows: any;
 	export const tiff_strip_metadata: any;
 	export const compute_image_stats_f32: any;
 	export const compute_image_stats_u8: any;

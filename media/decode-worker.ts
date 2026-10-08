@@ -26,7 +26,7 @@ import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_lif_fast, decode
 import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeSgiWithWasm, decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
-import { shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
+import { MIN_PARALLEL_TIFF_PIXELS, MIN_PARALLEL_TIFF_STRIPS, shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
 
 // This file runs as a Web Worker entry point. The "dom" lib (see
@@ -446,6 +446,18 @@ async function decodeTiffRegion(buffer: ArrayBuffer, options: Record<string, any
  * decode from preempting the much faster strip pool. Files below the shared
  * pool thresholds continue directly into the ordinary worker decoder.
  */
+/**
+ * Whether an HDR is large enough for the page's scanline pool, by the same
+ * gates the pool applies, read off the resolution line of the text header.
+ */
+function hdrWorthParallel(buffer: ArrayBuffer): boolean {
+	const head = new TextDecoder('latin1').decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 8192)));
+	const match = /^-Y (\d+) \+X (\d+)\s*$/m.exec(head);
+	if (!match) { return false; }
+	const height = Number(match[1]), width = Number(match[2]);
+	return height >= MIN_PARALLEL_TIFF_STRIPS && width * height >= MIN_PARALLEL_TIFF_PIXELS;
+}
+
 async function decodeTiffSpeculatively(buffer: ArrayBuffer, pageIndex = 0) {
 	if (pageIndex === 0) {
 		if (tiffWasmInitPromise) {
@@ -839,6 +851,11 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		case 'png16':
 			return decodePng16(buffer);
 		case 'hdr':
+			// A large HDR decodes faster as scanline ranges across the strip
+			// pool, which only the page can drive; hand it back untouched.
+			if (options?.preferParallelHdr && hdrWorthParallel(buffer)) {
+				return { deferToParallelHdr: true, decodeTimings: [] };
+			}
 			return decodeHdr(buffer);
 		case 'jxl':
 			return decodeJxl(buffer);

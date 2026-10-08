@@ -4,6 +4,8 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
+import { decodeHdrParallel } from './strip-parallel-decode.js';
+import { getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { PerfTrace } from './perf-trace.js';
 import parseHdr from 'parse-hdr';
 import { parseAllTagsJson } from './tiff-tag-utils.js';
@@ -27,7 +29,6 @@ export class HdrProcessor {
       return { width, height, restore: () => {
               this._lastRaw = raw;
               this._cachedStats = undefined;
-              this._cachedWebglRgb = null;
               this._isInitialLoad = true;
               this._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height, renderChannels: raw.channels };
           } };
@@ -54,7 +55,6 @@ export class HdrProcessor {
     _cachedStats: Stats | undefined;
     _lastRenderHistogram: any;
     _lastRenderUsedWebGL: boolean;
-    _cachedWebglRgb: { source: Float32Array; data: Float32Array } | null;
     _webglRenderer: WebGL2FloatRenderer;
     loadSignal: AbortSignal | undefined;
     decodeWorker: DecodeWorkerClient | null;
@@ -69,7 +69,6 @@ export class HdrProcessor {
         this._cachedStats = undefined;
         this._lastRenderHistogram = null;
         this._lastRenderUsedWebGL = false;
-        this._cachedWebglRgb = null;
         this._webglRenderer = new WebGL2FloatRenderer();
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
@@ -82,7 +81,30 @@ export class HdrProcessor {
         // Parsed in the decode worker when available, locally otherwise.
         const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'hdr');
         let parsed: any;
-        if (speculative?.ok) {
+        if (speculative?.ok && speculative.result?.deferToParallelHdr && speculative.sourceBuffer instanceof ArrayBuffer) {
+            // Large files: scanline ranges across the strip pool. The source
+            // stays intact (the pool copies each range), so a failed parallel
+            // decode can still decode it whole.
+            const source: ArrayBuffer = speculative.sourceBuffer;
+            const mainWasm = getWasmModuleSync() || await getWasmModule();
+            const parallelStart = performance.now();
+            const parallel = await decodeHdrParallel(source, mainWasm);
+            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+            if (parallel) {
+                PerfTrace.mark('decode-worker(hdr)');
+                for (const timing of parallel.timings) { PerfTrace.detail(timing.name, timing.durationMs); }
+                parsed = {
+                    shape: [parallel.width, parallel.height], channels: 3,
+                    exposure: parallel.exposure, gamma: parallel.gamma,
+                    data: parallel.data, allTagsJson: parallel.allTagsJson,
+                    decodedWith: `rust-hdr-wasm (${parallel.workers} scanline workers)`,
+                    durationMs: performance.now() - parallelStart,
+                };
+            } else {
+                parsed = await DecodeWorkerClient.decodeWithFallback(
+                    this.decodeWorker, 'hdr', source, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
+            }
+        } else if (speculative?.ok) {
             parsed = speculative.result;
         } else {
             const buffer = speculative?.buffer instanceof ArrayBuffer
@@ -103,7 +125,6 @@ export class HdrProcessor {
         const renderChannels = parsed.channels === 3 ? 3 : 4;
 
         this._cachedStats = undefined;
-        this._cachedWebglRgb = null;
         this._lastRaw = { width, height, data, channels: renderChannels };
 
         const canvas = document.createElement('canvas');
@@ -143,24 +164,16 @@ export class HdrProcessor {
             }
         }
         const nanColor = this._getNanColor(settings);
-        // HDR arrives as 3- or 4-channel interleaved floats. The renderer has an
-        // rgba32f path, so the data is uploaded as-is — the RGBA->RGB pack that
-        // previously made the GPU route slower than the CPU one is not needed.
-        // HDR stays on the CPU, and the reason is upload bandwidth, not packing.
-        // The CPU path tone-maps to an 8-bit RGBA ImageData (~105MB at 5120x5120);
-        // the GPU path must upload the full 3-4 channel float texture (~315-419MB)
-        // and tone-map in the shader. Measured at 5120x5120: rgb32f upload ~300ms,
-        // rgba32f ~450-600ms plus a ~150ms widening pass, against ~240ms for the
-        // whole CPU render. Single-channel float formats (EXR/TIFF/NPY/PFM) do win
-        // on the GPU precisely because their r32f upload is no larger than the
-        // 8-bit result. Revisit only if the decoder can hand over RGBA floats with
-        // no extra pass AND the driver's multi-channel float upload gets cheaper.
-        const webglData: Float32Array | null = null;
+        // Three-channel HDR renders on the GPU: the float RGB texture is uploaded
+        // packed as one channel three texels wide (see WebGL2FloatRenderer), which
+        // removed the driver's RGB->RGBA expansion that once made this upload
+        // slower than the whole CPU render. Other strides stay on the CPU.
+        const webglData: Float32Array | null = renderChannels === 3 ? data : null;
         if (webglData && renderOptions.targetCanvas && this._webglRenderer.canRender({
             data: webglData,
             width,
             height,
-            channels: 4,
+            channels: 3,
             isFloat: true,
             settings
         })) {
@@ -168,7 +181,7 @@ export class HdrProcessor {
                 data: webglData,
                 width,
                 height,
-                channels: 4,
+                channels: 3,
                 isFloat: true,
                 min: (stats && Number.isFinite(stats.min)) ? stats.min : 0,
                 max: (stats && Number.isFinite(stats.max)) ? stats.max : 1,
@@ -199,32 +212,6 @@ export class HdrProcessor {
         );
         this._lastRenderHistogram = options.renderHistogramResult || null;
         return imageData;
-    }
-
-    /**
-     * The renderer's rgb32f path is measurably slow (the driver re-packs an
-     * RGB32F texture internally; a 5120x5120 upload cost ~300ms where the
-     * equivalent rgba32f upload costs tens of ms). So 3-channel HDR is widened
-     * to RGBA once, cached, and uploaded through the native rgba32f format.
-     */
-    _getWebglRgbaData(data: Float32Array, width: number, height: number, renderChannels: number): Float32Array | null {
-        if (renderChannels === 4) return data;
-        if (renderChannels !== 3) return null;
-        if (this._cachedWebglRgb?.source === data) {
-            return this._cachedWebglRgb.data;
-        }
-        const start = performance.now();
-        const pixels = width * height;
-        const rgba = new Float32Array(pixels * 4);
-        for (let src = 0, dst = 0; src < data.length; src += 3, dst += 4) {
-            rgba[dst] = data[src];
-            rgba[dst + 1] = data[src + 1];
-            rgba[dst + 2] = data[src + 2];
-            rgba[dst + 3] = 1;
-        }
-        this._cachedWebglRgb = { source: data, data: rgba };
-        PerfTrace.detail('hdr-pack-rgba', performance.now() - start);
-        return rgba;
     }
 
     _getNanColor(settings: ImageSettings): { r: number; g: number; b: number } {

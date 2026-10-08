@@ -12,7 +12,7 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_exr_zip_f32_blocks, decode_tiff_float_strip_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_tiff_float_strip_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
 import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
@@ -65,33 +65,24 @@ self.onmessage = async (event: MessageEvent) => {
 	try {
 		await ready;
 		const started = performance.now();
+		if (job.kind === 'hdr-rows') {
+			const samples = decode_hdr_rows(new Uint8Array(job.blob), job.width, job.rows);
+			(self as any).postMessage({ id: job.id, samples, ms: performance.now() - started }, [samples.buffer]);
+			return;
+		}
 		if (job.kind === 'exr-zip') {
-			const bytes = decode_exr_zip_f32_blocks(
+			// Decoded and scanned for its finite min/max in Rust, while hot.
+			const decoded = decode_exr_zip_f32_blocks_stats(
 				new Uint8Array(job.blob),
 				new Uint32Array(job.counts),
 				new Uint32Array(job.rows),
 				job.width,
 			);
+			const min = decoded.min;
+			const max = decoded.max;
+			const bytes = decoded.take_data();
+			decoded.free();
 			const samples = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4);
-			let min = Infinity;
-			let max = -Infinity;
-			let sawNonFinite = false;
-			for (let index = 0; index < samples.length; index++) {
-				const value = samples[index];
-				if (value < min) { min = value; }
-				if (value > max) { max = value; }
-				if (!Number.isFinite(value)) { sawNonFinite = true; }
-			}
-			if (sawNonFinite || !Number.isFinite(min) || !Number.isFinite(max)) {
-				min = Infinity; max = -Infinity;
-				for (let index = 0; index < samples.length; index++) {
-					const value = samples[index];
-					if (Number.isFinite(value)) {
-						if (value < min) { min = value; }
-						if (value > max) { max = value; }
-					}
-				}
-			}
 			(self as any).postMessage(
 				{ id: job.id, samples, min, max, ms: performance.now() - started },
 				[bytes.buffer],

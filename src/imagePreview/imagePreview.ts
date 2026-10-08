@@ -1383,7 +1383,8 @@ export class ImagePreview extends MediaPreview {
 							options: {
 								computeStats: ${!settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false},
 								preferParallelTiff: speculativeFormat === 'tiff',
-								returnSource: speculativeFormat === 'tiff'
+								preferParallelHdr: speculativeFormat === 'hdr',
+								returnSource: speculativeFormat === 'tiff' || speculativeFormat === 'hdr'
 							}
 						}, [buffer]);
 					} catch (error) {

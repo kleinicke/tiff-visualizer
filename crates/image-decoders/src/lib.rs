@@ -1245,6 +1245,31 @@ pub fn decode_hdr_fast(data: &[u8]) -> Result<HdrResult, DecodeError> {
     decode_hdr_impl(data)
 }
 
+#[cfg(feature = "hdr")]
+pub use formats::hdr::HdrScanlinePlan;
+
+/// Where each scanline of an HDR file starts, for decoding scanline ranges in
+/// parallel with `decode_hdr_rows`.
+///
+/// # Errors
+///
+/// The same header and RLE errors as `decode_hdr_fast`.
+#[cfg(feature = "hdr")]
+pub fn hdr_scanline_plan(data: &[u8]) -> Result<HdrScanlinePlan, DecodeError> {
+    formats::hdr::hdr_scanline_plan(data)
+}
+
+/// Decode `rows` consecutive HDR scanlines (exactly their bytes) to RGB f32,
+/// identical to the same rows of `decode_hdr_fast`.
+///
+/// # Errors
+///
+/// Malformed or truncated scanlines.
+#[cfg(feature = "hdr")]
+pub fn decode_hdr_rows(blob: &[u8], width: u32, rows: u32) -> Result<Vec<f32>, DecodeError> {
+    formats::hdr::decode_hdr_rows(blob, width as usize, rows as usize)
+}
+
 /// Decode a Portable Float Map (PFM). `top_down` requests a vertical flip so
 /// row 0 of the output is the PFM file's last (topmost, in image space) row —
 /// the worker always passes `true` to match the existing TS parser's
@@ -1414,6 +1439,24 @@ pub fn decode_exr_zip_f32_blocks(
     width: u32,
 ) -> Result<Vec<u8>, DecodeError> {
     formats::exr::decode_zip_f32_blocks(blob, counts, rows, width)
+}
+
+/// `decode_exr_zip_f32_blocks` plus the finite min/max of the samples, the
+/// same scan the strip workers used to run in JavaScript.
+///
+/// # Errors
+///
+/// As `decode_exr_zip_f32_blocks`.
+#[cfg(feature = "exr")]
+pub fn decode_exr_zip_f32_blocks_with_range(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+) -> Result<RawStripRange, DecodeError> {
+    let data = decode_exr_zip_f32_blocks(blob, counts, rows, width)?;
+    let range = Some(raw_range_f32_le(&data));
+    Ok(RawStripRange { data, range })
 }
 #[cfg(feature = "fits")]
 pub use decode_fits_fast as decode_fits;
@@ -1648,7 +1691,7 @@ pub fn decode_tiff_strip_range_raw_with_range(
 
 /// A strip range's native little-endian sample bytes and their finite
 /// `(min, max)`, or `None` for a carrier without a Rust-side scan.
-#[cfg(feature = "tiff")]
+#[cfg(any(feature = "tiff", feature = "exr"))]
 pub struct RawStripRange {
     pub data: Vec<u8>,
     pub range: Option<(f64, f64)>,
@@ -1727,7 +1770,7 @@ fn raw_range_u16_le(raster: &[u8]) -> (f64, f64) {
 /// Finite min/max of little-endian f32 samples. Plain `<`/`>` comparisons skip
 /// NaN and vectorize; an infinity that wins either side is corrected by a
 /// second, finite-only pass, which only such (rare) images pay for.
-#[cfg(feature = "tiff")]
+#[cfg(any(feature = "tiff", feature = "exr"))]
 fn raw_range_f32_le(raster: &[u8]) -> (f64, f64) {
     const LANES: usize = 8;
     let mut mins = [f32::INFINITY; LANES];
