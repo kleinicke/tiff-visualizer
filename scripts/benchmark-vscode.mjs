@@ -11,6 +11,12 @@
  *   ONLY=nl_01_depth.tif node scripts/benchmark-vscode.mjs
  *   ITER=5 node scripts/benchmark-vscode.mjs              # more samples
  *   BENCH_DIR=/path/to/files node scripts/benchmark-vscode.mjs
+ *   BATCH=7 node scripts/benchmark-vscode.mjs             # whole corpus, 7 files per window
+ *
+ * Use BATCH for anything longer than a few minutes: a window that has been
+ * open that long gets throttled (every file then reports ~0.7 s, small WebPs
+ * ~1.7 s), and its numbers are worthless. Each batch is a fresh window. Keep
+ * the display awake (`caffeinate -d -i` on macOS) for the same reason.
  *
  * READING THE OUTPUT — cold and warm are reported separately. The cold column
  * is iteration 1; warm columns are medians of iterations 2..N. For a true cold
@@ -70,22 +76,6 @@ async function main() {
 	const totalMb = base.reduce((n, f) => n + f.bytes, 0) / 1048576;
 	console.log(`${base.length} file(s), ${totalMb.toFixed(0)} MB, ${iterations} iteration(s)`);
 
-	// Rotate the order each iteration so warm-up never favours the same sample.
-	const inputs = [];
-	for (let i = 0; i < iterations; i++) {
-		const offset = i % base.length;
-		inputs.push(...base.slice(offset), ...base.slice(0, offset));
-	}
-
-	const userData = path.join(tempRoot, 'user');
-	const resultFile = path.join(tempRoot, 'result.json');
-	fs.mkdirSync(userData, { recursive: true });
-	Object.assign(process.env, {
-		TIFF_PERF_FILES: JSON.stringify(inputs),
-		TIFF_PERF_LOG_ROOT: userData,
-		TIFF_PERF_RESULT: resultFile,
-		TIFF_PERF_VARIANT: 'current',
-	});
 	// From VS Code's integrated terminal these describe the PARENT extension
 	// host; ELECTRON_RUN_AS_NODE in particular makes the downloaded Code binary
 	// treat the workspace path as a Node script.
@@ -103,18 +93,41 @@ async function main() {
 		executable = alternative;
 	}
 
+	const batchSize = Math.max(0, Math.floor(Number(process.env.BATCH || 0)));
+	const batches = [];
+	for (let i = 0; i < base.length; i += batchSize || base.length) batches.push(base.slice(i, i + (batchSize || base.length)));
+	const results = [];
 	try {
-		await runTests({
-			vscodeExecutablePath: executable,
-			extensionDevelopmentPath: root,
-			extensionTestsPath: path.join(root, 'test/vscode-performance/runner.cjs'),
-			launchArgs: [stage, `--user-data-dir=${userData}`, '--disable-workspace-trust', '--skip-welcome'],
-		});
+		for (const [index, batch] of batches.entries()) {
+			// Rotate the order each iteration so warm-up never favours the same sample.
+			const inputs = [];
+			for (let i = 0; i < iterations; i++) {
+				const offset = i % batch.length;
+				inputs.push(...batch.slice(offset), ...batch.slice(0, offset));
+			}
+			// One profile per window, so each run scrapes only its own logs.
+			const userData = path.join(tempRoot, `user-${index}`);
+			const resultFile = path.join(tempRoot, `result-${index}.json`);
+			fs.mkdirSync(userData, { recursive: true });
+			Object.assign(process.env, {
+				TIFF_PERF_FILES: JSON.stringify(inputs),
+				TIFF_PERF_LOG_ROOT: userData,
+				TIFF_PERF_RESULT: resultFile,
+				TIFF_PERF_VARIANT: 'current',
+			});
+			if (batches.length > 1) console.log(`Batch ${index + 1}/${batches.length}: ${batch.length} file(s)`);
+			await runTests({
+				vscodeExecutablePath: executable,
+				extensionDevelopmentPath: root,
+				extensionTestsPath: path.join(root, 'test/vscode-performance/runner.cjs'),
+				launchArgs: [stage, `--user-data-dir=${userData}`, '--disable-workspace-trust', '--skip-welcome'],
+			});
+			results.push(...JSON.parse(fs.readFileSync(resultFile, 'utf8')).results);
+		}
 	} finally {
 		Object.assign(process.env, parentVsCode);
 	}
 
-	const { results } = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
 	// Each run leaves a VS Code profile of 20-140 MB; keep it only on request.
 	if (process.env.KEEP_TEMP !== '1') fs.rmSync(tempRoot, { recursive: true, force: true });
 	const grouped = new Map();
