@@ -19,6 +19,8 @@ const WASM_FETCH_TIMEOUT_MS = 3000;
 
 export interface DecodeWorkerLike {
 	start(): Promise<void>;
+	/** Settles when a boot already in flight does; null when none is. */
+	whenBooting?(): Promise<void> | null;
 	canDecode(format: string): boolean;
 	decode(format: string, buffer: ArrayBuffer, options?: Record<string, any>): Promise<any> | null;
 	retireAfterDecode?(): void;
@@ -101,6 +103,10 @@ export class DecodeWorkerClient {
 			});
 		}
 		return this._startPromise;
+	}
+
+	whenBooting(): Promise<void> | null {
+		return this._startPromise && !this._ready ? this._startPromise : null;
 	}
 
 	async _boot() {
@@ -505,6 +511,14 @@ export class DecodeWorkerClient {
 		options: Record<string, any> = {},
 	) {
 		const workerStart = performance.now();
+		// A source that arrives before its worker has booted (pushed sources
+		// often do) must not fall back to decoding on the main thread.
+		const booting = client && !client.canDecode(format) ? client.whenBooting?.() : null;
+		if (booting) {
+			await booting;
+			PerfTrace.detail(`decode-${format}-await-worker-boot`, performance.now() - workerStart);
+			if (signal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+		}
 		const response = client ? await client.decode(format, buffer, options) : null;
 		const workerDuration = performance.now() - workerStart;
 		if (signal?.aborted) {

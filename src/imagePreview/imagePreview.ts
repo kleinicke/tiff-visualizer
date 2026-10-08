@@ -18,6 +18,7 @@ import type { IImagePreviewManager, LayerExportFormat, LayerExportOption, LayerE
 import type { ImageFormatType, ImageSettings } from './appStateManager';
 import type { DatasetManifest, DatasetPlane, DatasetSeries, WebviewDatasetManifest } from './datasetTypes';
 import { parseOmeDatasetXml, tiffImageDescription } from './omeMetadataFile';
+import { canPushSource, PUSHED_SOURCE_MIN_BYTES, pushSource } from './source-push';
 
 // Extended settings for webview (includes preview-local display settings).
 interface WebviewImageSettings extends ImageSettings {
@@ -93,6 +94,9 @@ export class ImagePreview extends MediaPreview {
 	public readonly onDidExportLayerDocument = this._onDidExportLayerDocument.event;
 
 	private _openTimestamp: number = 0;
+	/** Sizes of the sources the recent pages may request, by page token. */
+	private readonly _pushableSources = new Map<string, number>();
+	private _sourcePushGeneration = 0;
 
 	public setOpenTimestamp(timestamp: number) {
 		this._openTimestamp = timestamp;
@@ -139,6 +143,10 @@ export class ImagePreview extends MediaPreview {
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
+			if (message?.type === 'sourceRequest') {
+				this.onSourceRequest(message);
+				return;
+			}
 			this._messageRouter.handle(message);
 		}));
 
@@ -1218,12 +1226,24 @@ export class ImagePreview extends MediaPreview {
 		// strip pool can start decoding ranges whose bytes have arrived while the
 		// rest is still being read. The size comes from the host because webview
 		// resource responses carry no Content-Length.
+		// Local sources are pushed by the host (see source-push.ts) instead.
 		let streamSourceBytes = 0;
-		if (warmSourceRead && isTiff) {
+		let pushedSourceBytes = 0;
+		const pushable = warmSourceRead && canPushSource(this.resource);
+		if (warmSourceRead && (isTiff || pushable)) {
 			try {
 				const { size } = await vscode.workspace.fs.stat(this.resource);
-				streamSourceBytes = size >= STREAMED_TIFF_MIN_BYTES ? size : 0;
+				streamSourceBytes = isTiff && size >= STREAMED_TIFF_MIN_BYTES ? size : 0;
+				pushedSourceBytes = pushable && size >= PUSHED_SOURCE_MIN_BYTES ? size : 0;
 			} catch { /* stream nothing; the ordinary read still works */ }
+		}
+		if (pushedSourceBytes > 0) {
+			this._pushableSources.set(nonce, pushedSourceBytes);
+			// Only the current page (or one just replaced) can still ask.
+			for (const token of this._pushableSources.keys()) {
+				if (this._pushableSources.size <= 2) { break; }
+				this._pushableSources.delete(token);
+			}
 		}
 		const decoderWarmupScript = warmSourceRead ? /* html */`
 	<script nonce="${nonce}">
@@ -1239,8 +1259,15 @@ export class ImagePreview extends MediaPreview {
 			const streamBytes = ${streamSourceBytes};
 			let releaseImageStream = () => {};
 			const imageStreamReleased = streamBytes > 0 ? new Promise(resolve => { releaseImageStream = resolve; }) : null;
-			const imageStream = streamBytes > 0 ? {
-				total: streamBytes,
+			// Local sources arrive as sourceChunk messages from the host, in file
+			// order, tagged with this page's token.
+			const pushedBytes = ${pushedSourceBytes};
+			const pushToken = ${JSON.stringify(pushedSourceBytes > 0 ? nonce : null)};
+			// acquireVsCodeApi() works once per page; the viewer reuses this one.
+			const vscodeApi = pushedBytes > 0 ? acquireVsCodeApi() : null;
+			if (vscodeApi) window.__tiffVisualizerVsCodeApi = vscodeApi;
+			const createStream = total => ({
+				total,
 				received: 0,
 				bytes: null,
 				error: null,
@@ -1259,8 +1286,66 @@ export class ImagePreview extends MediaPreview {
 						else this.waiters.push(waiter);
 					}
 				}
-			} : null;
+			});
+			const imageStream = streamBytes > 0 ? createStream(streamBytes) : null;
+			const readPushed = stream => new Promise((resolve, reject) => {
+				const bytes = new Uint8Array(stream.total);
+				stream.bytes = bytes;
+				let idle = 0;
+				let retries = 0;
+				const finish = error => {
+					clearTimeout(idle);
+					window.removeEventListener('message', onChunk);
+					if (error) reject(error); else resolve(bytes.buffer);
+				};
+				// Ask from the first missing byte; a request replaces the host's
+				// previous push. Chunks that stop arriving are asked for again.
+				const request = () => {
+					clearTimeout(idle);
+					idle = setTimeout(() => {
+						if (++retries > 3) finish(new Error('pushed image source stalled'));
+						else request();
+					}, 5000);
+					vscodeApi.postMessage({ type: 'sourceRequest', token: pushToken, offset: stream.received });
+				};
+				function onChunk(event) {
+					const chunk = event.data;
+					if (chunk?.type !== 'sourceChunk' || chunk.token !== pushToken) return;
+					if (chunk.error) return finish(new Error(chunk.error));
+					// A chunk of a push this page has since replaced.
+					if (chunk.offset !== stream.received) return;
+					if (stream.received + chunk.bytes.byteLength > bytes.byteLength) {
+						return finish(new Error('pushed image source is larger than announced'));
+					}
+					bytes.set(chunk.bytes, chunk.offset);
+					stream.received += chunk.bytes.byteLength;
+					stream.settle();
+					if (stream.received === bytes.byteLength) finish(null);
+					else { retries = 0; clearTimeout(idle); idle = setTimeout(request, 5000); }
+				}
+				window.addEventListener('message', onChunk);
+				request();
+			});
 			const imageBufferPromise = (async () => {
+				if (pushedBytes > 0) {
+					const readStart = performance.now();
+					try {
+						const buffer = await readPushed(imageStream || createStream(pushedBytes));
+						sourceReadMetrics.responseMs = 0;
+						sourceReadMetrics.arrayBufferMs = performance.now() - readStart;
+						if (imageStream) setTimeout(releaseImageStream, 5000);
+						return buffer;
+					} catch (error) {
+						if (imageStream) {
+							// As for a failed fetch below: the viewer falls back to an ordinary read.
+							imageStream.error = error instanceof Error ? error : new Error(String(error));
+							imageStream.settle();
+							releaseImageStream();
+							throw imageStream.error;
+						}
+						// Otherwise read the resource the ordinary way.
+					}
+				}
 				const responseStart = performance.now();
 				const response = await fetch(imageSourceUri);
 				sourceReadMetrics.responseMs = performance.now() - responseStart;
@@ -1436,7 +1521,7 @@ export class ImagePreview extends MediaPreview {
 		const bootstrapScript = nativeFirstPaint ? /* html */`
 	<script nonce="${nonce}">
 		(function () {
-			const vscode = acquireVsCodeApi();
+			const vscode = window.__tiffVisualizerVsCodeApi || acquireVsCodeApi();
 			const image = document.getElementById('native-fast-preview');
 			const persisted = vscode.getState() || {};
 			const stateAllowsNative = !persisted.colormapConversionState &&
@@ -1541,10 +1626,27 @@ export class ImagePreview extends MediaPreview {
 		try {
 			const content = await this.getWebviewContents();
 			this._webviewEditor.webview.html = content;
+			// The replaced page's push, if any, stops.
+			this._sourcePushGeneration++;
 			this.updateStatusBar();
 		} catch (error) {
 			console.error('TIFF Visualizer render error:', error);
 		}
+	}
+
+	/**
+	 * The page's bootstrap asks for its source once it listens, and again from
+	 * where it stopped if chunks stop arriving (a reloaded page asks afresh).
+	 * Each request replaces the push before it.
+	 */
+	private onSourceRequest(message: { token?: unknown; offset?: unknown }): void {
+		const token = typeof message.token === 'string' ? message.token : '';
+		const size = this._pushableSources.get(token);
+		const offset = Number(message.offset);
+		if (size === undefined || !Number.isSafeInteger(offset) || offset < 0 || offset > size) { return; }
+		const generation = ++this._sourcePushGeneration;
+		void pushSource(this._webviewEditor.webview, this.resource, token, size, offset,
+			() => generation === this._sourcePushGeneration && this.previewState !== PreviewState.Disposed);
 	}
 
 	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri): Promise<string> {

@@ -38,11 +38,15 @@ export type HostToViewerMessage = AutomationRequest | MessageMap<{
   restoreHistogramState: { isVisible: boolean; scaleMode?: 'linear' | 'sqrt'; position?: { left: number; top: number } };
   requestHistogram: Empty; convertColormapToFloat: { colormap: string; min: number; max: number; inverted?: boolean; logarithmic?: boolean };
   revertToOriginal: Empty; setDisplayColormap: { colormap: string }; toggleDebayer: Empty;
+  /** Image source bytes pushed by the host; consumed by the webview bootstrap. */
+  sourceChunk: { token: string; offset: number; bytes?: Uint8Array; error?: string };
 }>;
 
 export type ViewerToHostMessage = MessageMap<{
   automationResult: { id: string; result?: unknown; error?: string };
-  'get-initial-data': Empty; ready: Empty; measureCheckSidecar: Empty; requestInitialLayers: Empty;
+  'get-initial-data': Empty; ready: Empty;
+  /** From the webview bootstrap: push the page's source from `offset` on. */
+  sourceRequest: { token: string; offset: number }; measureCheckSidecar: Empty; requestInitialLayers: Empty;
   restorePeerImage: { peerUri: string }; error: { message: string }; notifyRevert: { message: string }; 'reopen-as-text': Empty;
   'show-loading': Empty; 'comparison-ready': Empty; formatInfo: { value: FormatInfo };
   size: { value: string }; zoom: { value: number | string }; pixelFocus: { value: string }; pixelBlur: Empty;

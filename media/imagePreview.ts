@@ -107,10 +107,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 		return imagejRoiPromise;
 	}
-	// The tiny native-image bootstrap acquires the API before loading this full
-	// application. Reuse it: acquireVsCodeApi() may only be called once.
+	// The tiny native-image bootstrap, or the source-push bootstrap, acquires
+	// the API before this application loads. Reuse it: acquireVsCodeApi() may
+	// only be called once.
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
-	const originalVscode = nativeBootstrap?.vscode || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
+	const originalVscode = nativeBootstrap?.vscode || (window as any).__tiffVisualizerVsCodeApi || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
 	const settingsManager = new SettingsManager();
 	const navigation = new ImageNavigation<FormatInfo>({
 		cancelWorkers: () => {
@@ -3990,6 +3991,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			case 'setDisplayColormap':
 				// Apply (or clear) a render-time pseudocolor colormap.
 				await handleSetDisplayColormap(message.colormap || 'none');
+				break;
+
+			case 'sourceChunk':
+				// Read by the bootstrap script in the webview HTML.
 				break;
 
 			case 'toggleDebayer':

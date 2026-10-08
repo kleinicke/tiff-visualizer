@@ -849,6 +849,8 @@ export class TiffProcessor {
 			// 24-bit grayscale is a post-decode reinterpretation (combine R/G/B
 			// into one value), handled later in renderTiff/ImageRenderer, so the
 			// Rust/WASM decoder can decode these images like any other RGB TIFF.
+			const workerBooting = !wasmResult ? this.decodeWorker?.whenBooting?.() : null;
+			if (workerBooting) { await workerBooting; }
 			if (!wasmResult && this.decodeWorker?.canDecode('tiff')) {
 				const workerStart = performance.now();
 				const workerResponse = await this.decodeWorker.decode('tiff', buffer.slice(0), { pageIndex });

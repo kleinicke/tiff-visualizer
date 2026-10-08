@@ -115,6 +115,8 @@ async function main() {
 	}
 
 	const { results } = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+	// Each run leaves a VS Code profile of 20-140 MB; keep it only on request.
+	if (process.env.KEEP_TEMP !== '1') fs.rmSync(tempRoot, { recursive: true, force: true });
 	const grouped = new Map();
 	for (const row of results) {
 		if (!grouped.has(row.id)) grouped.set(row.id, []);
