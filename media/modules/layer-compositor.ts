@@ -660,12 +660,30 @@ function configuredHueRangeWeight(hue: number, settings: Record<string, number> 
 	return Math.max(0, Math.min(1, weight));
 }
 
+/** One hue/saturation band, with everything that does not depend on the pixel resolved up front. */
+type PreparedHueBand = {
+	hue: number; saturationStep: number; lightnessStep: number;
+	center: number;
+	/** Whether a..d edges are configured (normalized to ascend); otherwise the default band around `center`. */
+	configured: boolean;
+	a: number; b: number; c: number; d: number;
+};
+type PreparedHue = {
+	kind: 'hue';
+	colorize: { hue: number; saturation: number; delta: number } | null;
+	master: PreparedHueBand | null;
+	bands: PreparedHueBand[];
+};
 type PreparedAdjustment = { kind: 'lut'; tables: Float32Array[] }
-	| { kind: 'hue'; value: Extract<LayerAdjustment, { type: 'hue/saturation' }> }
+	| PreparedHue
 	| { kind: 'direct'; value: Exclude<LayerAdjustment, { type: 'levels' | 'curves' | 'hue/saturation' }> };
 const preparedAdjustmentCache = new WeakMap<object, Map<number, PreparedAdjustment>>();
 
 function prepareAdjustment(adjustment: LayerAdjustment, typeMax: number): PreparedAdjustment {
+	// Prepared on every composite, never cached: callers may edit an
+	// adjustment object in place, and this snapshot of its values would go
+	// stale. It runs once per layer, not per pixel, so it costs nothing.
+	if (adjustment.type === 'hue/saturation') { return prepareHueAdjustment(adjustment); }
 	let byMaximum = preparedAdjustmentCache.get(adjustment as object);
 	if (!byMaximum) { byMaximum = new Map(); preparedAdjustmentCache.set(adjustment as object, byMaximum); }
 	const cached = byMaximum.get(typeMax);
@@ -682,10 +700,50 @@ function prepareAdjustment(adjustment: LayerAdjustment, typeMax: number): Prepar
 			return table;
 		});
 		prepared = { kind: 'lut', tables };
-	} else if (adjustment.type === 'hue/saturation') { prepared = { kind: 'hue', value: adjustment }; }
-	else { prepared = { kind: 'direct', value: adjustment }; }
+	} else { prepared = { kind: 'direct', value: adjustment }; }
 	byMaximum.set(typeMax, prepared);
 	return prepared;
+}
+
+function prepareHueBand(settings: Record<string, number> | undefined, center: number): PreparedHueBand | null {
+	if (!settings) { return null; }
+	const configured = ['a', 'b', 'c', 'd'].every(name => Number.isFinite(settings[name]));
+	let a = 0, b = 0, c = 0, d = 0;
+	if (configured) {
+		a = settings.a; b = settings.b; c = settings.c; d = settings.d;
+		while (b < a) { b += 360; } while (c < b) { c += 360; } while (d < c) { d += 360; }
+	}
+	return { hue: settings.hue || 0, saturationStep: (settings.saturation || 0) / 100, lightnessStep: (settings.lightness || 0) / 100, center, configured, a, b, c, d };
+}
+
+function prepareHueAdjustment(adjustment: Extract<LayerAdjustment, { type: 'hue/saturation' }>): PreparedHue {
+	const colorize = adjustment.colorize && adjustment.colorizeEnabled !== false
+		? {
+			hue: (adjustment.colorize.hue + 360) % 360,
+			saturation: Math.max(0, Math.min(1, adjustment.colorize.saturation / 100)),
+			delta: Math.max(-1, Math.min(1, adjustment.colorize.lightness / 100)),
+		}
+		: null;
+	const ranges: [keyof typeof adjustment, number][] = [['reds', 0], ['yellows', 60], ['greens', 120], ['cyans', 180], ['blues', 240], ['magentas', 300]];
+	const bands: PreparedHueBand[] = [];
+	for (const [name, center] of ranges) {
+		const band = prepareHueBand(adjustment[name] as Record<string, number> | undefined, center);
+		if (band) { bands.push(band); }
+	}
+	return { kind: 'hue', colorize, master: prepareHueBand(adjustment.master as Record<string, number> | undefined, 0), bands };
+}
+
+/** `configuredHueRangeWeight` for a prepared band. */
+function preparedBandWeight(hue: number, band: PreparedHueBand): number {
+	if (!band.configured) { return hueRangeWeight(hue, band.center); }
+	const a = band.a, b = band.b, c = band.c, d = band.d;
+	let weight = 0;
+	for (let candidate = hue - 360; candidate <= hue + 720; candidate += 360) {
+		if (candidate < a || candidate > d) { continue; }
+		weight = Math.max(weight, candidate < b ? (candidate - a) / Math.max(1e-6, b - a)
+			: candidate <= c ? 1 : (d - candidate) / Math.max(1e-6, d - c));
+	}
+	return Math.max(0, Math.min(1, weight));
 }
 
 function sampleAdjustmentLut(table: Float32Array, value: number, typeMax: number): number {
@@ -768,31 +826,48 @@ function applyAdjustmentPixel(data: Float32Array, index: number, channels: numbe
 		return;
 	}
 	if (colorChannels >= 3) {
-		const adjustment = prepared.value;
+		// rgbToHsl, the band adjustments and hslToRgb, inlined over locals so a
+		// pixel allocates nothing; the arithmetic is unchanged, term for term.
 		const originalRed = data[index], originalGreen = data[index + 1], originalBlue = data[index + 2];
-		let [hue, saturation, lightness] = rgbToHsl(originalRed / typeMax, originalGreen / typeMax, originalBlue / typeMax);
-		if (adjustment.colorize && adjustment.colorizeEnabled !== false) {
-			hue = (adjustment.colorize.hue + 360) % 360;
-			saturation = Math.max(0, Math.min(1, adjustment.colorize.saturation / 100));
-			const delta = Math.max(-1, Math.min(1, adjustment.colorize.lightness / 100));
-			lightness = delta < 0 ? lightness * (1 + delta) : lightness + (1 - lightness) * delta;
+		const r = originalRed / typeMax, g = originalGreen / typeMax, b = originalBlue / typeMax;
+		const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min;
+		let hue = 0;
+		let lightness = (max + min) / 2;
+		if (delta) { hue = 60 * (max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4); }
+		let saturation = delta ? delta / (1 - Math.abs(2 * lightness - 1)) : 0;
+		hue = (hue + 360) % 360;
+		if (prepared.colorize) {
+			hue = prepared.colorize.hue;
+			saturation = prepared.colorize.saturation;
+			const shift = prepared.colorize.delta;
+			lightness = shift < 0 ? lightness * (1 + shift) : lightness + (1 - lightness) * shift;
 		} else {
 			const sourceHue = hue;
-			const apply = (settings: Record<string, number> | undefined, weight: number) => {
-				if (!settings || weight <= 0) { return; }
-				hue = (hue + (settings.hue || 0) * weight + 360) % 360;
-				saturation = Math.max(0, Math.min(1, saturation + (settings.saturation || 0) / 100 * weight));
-				lightness = Math.max(0, Math.min(1, lightness + (settings.lightness || 0) / 100 * weight));
-			};
-			apply(adjustment.master, 1);
-			const ranges: [keyof typeof adjustment, number][] = [['reds', 0], ['yellows', 60], ['greens', 120], ['cyans', 180], ['blues', 240], ['magentas', 300]];
-			for (const [name, center] of ranges) {
-				const settings = adjustment[name] as Record<string, number> | undefined;
-				apply(settings, configuredHueRangeWeight(sourceHue, settings, center));
+			const master = prepared.master;
+			if (master) {
+				hue = (hue + master.hue * 1 + 360) % 360;
+				saturation = Math.max(0, Math.min(1, saturation + master.saturationStep * 1));
+				lightness = Math.max(0, Math.min(1, lightness + master.lightnessStep * 1));
+			}
+			const bands = prepared.bands;
+			for (let bandIndex = 0; bandIndex < bands.length; bandIndex++) {
+				const band = bands[bandIndex];
+				const weight = preparedBandWeight(sourceHue, band);
+				if (weight <= 0) { continue; }
+				hue = (hue + band.hue * weight + 360) % 360;
+				saturation = Math.max(0, Math.min(1, saturation + band.saturationStep * weight));
+				lightness = Math.max(0, Math.min(1, lightness + band.lightnessStep * weight));
 			}
 		}
-		const rgb = hslToRgb(hue, saturation, lightness);
-		const adjustedRed = rgb[0] * typeMax, adjustedGreen = rgb[1] * typeMax, adjustedBlue = rgb[2] * typeMax;
+		const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation, x = chroma * (1 - Math.abs((hue / 60) % 2 - 1)), m = lightness - chroma / 2;
+		let red: number, green: number, blue: number;
+		if (hue < 60) { red = chroma; green = x; blue = 0; }
+		else if (hue < 120) { red = x; green = chroma; blue = 0; }
+		else if (hue < 180) { red = 0; green = chroma; blue = x; }
+		else if (hue < 240) { red = 0; green = x; blue = chroma; }
+		else if (hue < 300) { red = x; green = 0; blue = chroma; }
+		else { red = chroma; green = 0; blue = x; }
+		const adjustedRed = (red + m) * typeMax, adjustedGreen = (green + m) * typeMax, adjustedBlue = (blue + m) * typeMax;
 		data[index] = originalRed + (adjustedRed - originalRed) * amount;
 		data[index + 1] = originalGreen + (adjustedGreen - originalGreen) * amount;
 		data[index + 2] = originalBlue + (adjustedBlue - originalBlue) * amount;

@@ -6936,6 +6936,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			(format?.kind === 'npy' && lower.endsWith('.npy'));
 		if (fastRawFormat) {
 			void fastRawWorkerClient.start();
+		} else if (format?.kind === 'layered') {
+			// Layered documents decode on their own worker (adopting the one the
+			// page bootstrap already started). Unstarted, every layered decode
+			// fell back to the main thread, including the deferred decode of
+			// all editable layers, which froze the view for seconds after the
+			// preview appeared and delayed the next editor until it finished.
+			void layeredDecodeWorkerClient.start();
 		} else if (format && !localBinaryPgm && !['png', 'tga', 'web-image'].includes(format.kind)) {
 			// Boot alongside the format's file fetch. PNG starts this itself only
 			// after its IHDR confirms that the 16-bit worker path is necessary.

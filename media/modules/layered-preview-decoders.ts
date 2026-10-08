@@ -1366,21 +1366,6 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		layers.push({ node, pixels, effects, type, opacity: props.opacity ?? 1, x: props.offsetX || 0, y: props.offsetY || 0, width: layerWidth, height: layerHeight, mode, parentId: parent?.id, groupPath, groupIds });
 		if (props.group) { groupsByPath.set(itemPath.join('/'), { id: node.id, names: [...groupPath, node.name], ids: [...groupIds, node.id] }); }
 	}
-	const composite = new Uint8Array(width * height * 4);
-	// XCF layer pointers are top-to-bottom; composite bottom-to-top.
-	for (const layer of [...layers].reverse()) {
-		if (!layer.node.visible || !layer.pixels) { continue; }
-		for (let ly = 0; ly < layer.height; ly++) for (let lx = 0; lx < layer.width; lx++) {
-			const dx = layer.x + lx, dy = layer.y + ly;
-			if (dx < 0 || dy < 0 || dx >= width || dy >= height) { continue; }
-			const si = (ly * layer.width + lx) * 4, di = (dy * width + dx) * 4;
-			const sa = (layer.pixels[si + 3] / 255) * layer.opacity, da = composite[di + 3] / 255;
-			const oa = sa + da * (1 - sa);
-			if (oa <= 0) { continue; }
-			for (let c = 0; c < 3; c++) composite[di + c] = Math.round((layer.pixels[si + c] * sa + composite[di + c] * da * (1 - sa)) / oa);
-			composite[di + 3] = Math.round(oa * 255);
-		}
-	}
 	const colorMode = baseType === 0 ? 'RGB' : baseType === 1 ? 'Grayscale' : 'Indexed';
 	const nodesByParent = new Map<string | undefined, LayerNodeSummary[]>();
 	for (const layer of layers) {
