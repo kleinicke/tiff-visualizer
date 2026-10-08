@@ -293,7 +293,7 @@ pub fn compute_image_range_f32(data: &[f32], width: u32, height: u32, channels: 
 /// rather than a branch, and counting finite samples with an integer test of
 /// the exponent bits. The per-sample branch it replaces kept LLVM from
 /// vectorizing and dominated the decode of large float arrays.
-fn finite_range_mono_f32(data: &[f32]) -> (f32, f32, usize) {
+pub(crate) fn finite_range_mono_f32(data: &[f32]) -> (f32, f32, usize) {
     const LANES: usize = 8;
     const EXPONENT: u32 = 0x7f80_0000;
     let mut mins = [f32::INFINITY; LANES];

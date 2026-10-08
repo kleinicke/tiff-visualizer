@@ -761,6 +761,41 @@ impl TiffResult {
         0
     }
 
+    /// The samples split into channel planes, plane after plane, without
+    /// moving them: bytes for carriers 1 (u8) and 3 (u16), empty otherwise or
+    /// for a single channel. Read before `take_data_as_*`.
+    #[must_use]
+    pub fn planes_as_bytes(&self) -> Vec<u8> {
+        let channels = self.channels as usize;
+        match self.sample_kind() {
+            1 if channels > 1 => split_sample_planes(&self.data, channels, 1),
+            3 if channels > 1 => split_sample_planes(&self.data, channels, 2),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The f32 samples split into channel planes (carrier 0), plane after
+    /// plane; empty for a single channel or another carrier.
+    #[must_use]
+    pub fn planes_as_f32(&self) -> Vec<f32> {
+        let channels = self.channels as usize;
+        if channels < 2 || self.sample_kind() != 0 || self.data_f32.is_empty() {
+            return Vec::new();
+        }
+        let pixels = self.data_f32.len() / channels;
+        let mut planes = vec![0f32; pixels * channels];
+        for (channel, plane) in planes
+            .chunks_exact_mut(pixels.max(1))
+            .enumerate()
+            .take(channels)
+        {
+            for (pixel, out) in plane.iter_mut().enumerate() {
+                *out = self.data_f32[pixel * channels + channel];
+            }
+        }
+        planes
+    }
+
     pub fn data_len(&self) -> usize {
         match self.sample_kind() {
             1 => self.data.len(),
@@ -1085,22 +1120,86 @@ pub fn tiff_preview_reduction(data: &[u8]) -> u32 {
     reduction
 }
 
-/// Generate a nearest-sample overview without allocating the full raster.
-/// Full-image finite min/max are accumulated while each stored block is read
-/// once. The original file remains authoritative for region/picker requests.
+/// Everything a bounded preview reports except its pixels and range, with the
+/// plan and reduction that produce them.
 #[cfg(feature = "tiff")]
-pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
-    use formats::tiff::region::{decode_region, TiffRegion};
+fn tiff_preview_shell(
+    data: &[u8],
+) -> Result<(TiffResult, formats::tiff::strips::FloatStripPlan, u32), DecodeError> {
     let reduction = tiff_preview_reduction(data);
     if reduction == 0 {
         return Err(DecodeError::new("TIFF has no bounded preview route"));
     }
-    let plan = formats::tiff::float_strip_plan_for(data).unwrap();
+    let plan = formats::tiff::float_strip_plan_for(data)
+        .ok_or_else(|| DecodeError::new("TIFF has no bounded preview route"))?;
     let width = plan.width.div_ceil(reduction);
     let height = plan.height.div_ceil(reduction);
-    let mut pixels = vec![0.0f32; width as usize * height as usize];
-    let mut min = f64::INFINITY;
-    let mut max = f64::NEG_INFINITY;
+    let meta = formats::tiff::strip_metadata_for(data)?;
+    let directory = format!(
+        "{},{{\"index\":1,\"width\":{},\"height\":{},\"samplesPerPixel\":1,\"kind\":\"overview\",\"parent\":0,\"reduction\":{},\"blockWidth\":{},\"blockHeight\":{},\"generated\":true}}]",
+        meta.page_directory_json.trim_end().trim_end_matches(']'), width, height, reduction, width, height
+    );
+    let result = TiffResult {
+        width,
+        height,
+        channels: 1,
+        bits_per_sample: 32,
+        sample_format: 3,
+        compression: plan.compression,
+        predictor: plan.predictor,
+        photometric_interpretation: 1,
+        planar_configuration: 1,
+        rows_per_strip: plan.rows_per_strip,
+        strip_count: u32::try_from(plan.offsets.len()).unwrap_or(u32::MAX),
+        strip_byte_count_total: plan.counts.iter().sum(),
+        strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
+        tile_width: plan.tile_width,
+        tile_length: plan.tile_length,
+        tile_count: 0,
+        direct_decode: false,
+        data: Vec::new(),
+        data_f32: Vec::new(),
+        min_value: f64::INFINITY,
+        max_value: f64::NEG_INFINITY,
+        timing_metadata_ms: 0.0,
+        timing_decode_ms: 0.0,
+        timing_convert_ms: 0.0,
+        timing_stats_ms: 0.0,
+        timing_pack_ms: 0.0,
+        all_tags_json: meta.all_tags_json,
+        ome_xml: meta.ome_xml,
+        geo_json: meta.geo_json,
+        page_directory_json: directory,
+    };
+    Ok((result, plan, reduction))
+}
+
+/// `decode_tiff_preview` without its pixels and range: what a caller that
+/// decodes those itself (the strip pool, `decode_tiff_preview_range`) reports.
+///
+/// # Errors
+///
+/// A TIFF with no bounded preview route.
+#[cfg(feature = "tiff")]
+pub fn tiff_preview_header(data: &[u8]) -> Result<TiffResult, DecodeError> {
+    tiff_preview_shell(data).map(|(result, _, _)| result)
+}
+
+/// Generate a nearest-sample overview without allocating the full raster.
+/// Full-image finite min/max are accumulated while each stored block is read
+/// once. The original file remains authoritative for region/picker requests.
+///
+/// # Errors
+///
+/// A TIFF with no bounded preview route, or a block that fails to decode.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
+    use formats::tiff::region::{decode_region, TiffRegion};
+    let (mut result, plan, reduction) = tiff_preview_shell(data)?;
+    let width = result.width;
+    let mut pixels = vec![0.0f32; width as usize * result.height as usize];
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
     let bw = if plan.is_tiled() {
         plan.tile_width
     } else {
@@ -1124,11 +1223,12 @@ pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
                     height: bh,
                 },
             )?;
-            for &value in &region.data_f32 {
-                if value.is_finite() {
-                    min = min.min(value as f64);
-                    max = max.max(value as f64);
-                }
+            let (low, high, _) = pipeline::stats::finite_range_mono_f32(&region.data_f32);
+            if low < min {
+                min = low;
+            }
+            if high > max {
+                max = high;
             }
             // Grid anchored at source pixel (0,0), including partial edge blocks.
             for sy in ((y.div_ceil(reduction) * reduction)..y + region.region.height)
@@ -1143,42 +1243,97 @@ pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, DecodeError> {
             }
         }
     }
-    let meta = formats::tiff::strip_metadata_for(data)?;
-    let directory = format!(
-        "{},{{\"index\":1,\"width\":{},\"height\":{},\"samplesPerPixel\":1,\"kind\":\"overview\",\"parent\":0,\"reduction\":{},\"blockWidth\":{},\"blockHeight\":{},\"generated\":true}}]",
-        meta.page_directory_json.trim_end().trim_end_matches(']'), width, height, reduction, width, height
-    );
-    Ok(TiffResult {
-        width,
-        height,
-        channels: 1,
-        bits_per_sample: 32,
-        sample_format: 3,
-        compression: plan.compression,
-        predictor: plan.predictor,
-        photometric_interpretation: 1,
-        planar_configuration: 1,
-        rows_per_strip: plan.rows_per_strip,
-        strip_count: plan.offsets.len() as u32,
-        strip_byte_count_total: plan.counts.iter().sum(),
-        strip_byte_count_max: *plan.counts.iter().max().unwrap_or(&0),
-        tile_width: plan.tile_width,
-        tile_length: plan.tile_length,
-        tile_count: 0,
-        direct_decode: false,
-        data: Vec::new(),
-        data_f32: pixels,
-        min_value: min,
-        max_value: max,
-        timing_metadata_ms: 0.0,
-        timing_decode_ms: 0.0,
-        timing_convert_ms: 0.0,
-        timing_stats_ms: 0.0,
-        timing_pack_ms: 0.0,
-        all_tags_json: meta.all_tags_json,
-        ome_xml: meta.ome_xml,
-        geo_json: meta.geo_json,
-        page_directory_json: directory,
+    result.data_f32 = pixels;
+    result.min_value = f64::from(min);
+    result.max_value = f64::from(max);
+    Ok(result)
+}
+
+/// One strip range's share of a bounded preview: the preview rows that fall in
+/// these units, and the finite min/max of every sample the units hold.
+#[cfg(feature = "tiff")]
+pub struct TiffPreviewRange {
+    pub data: Vec<f32>,
+    pub min: f32,
+    pub max: f32,
+}
+
+/// The bounded preview of the units `[first_strip, ...)`, decoded unit by unit
+/// so a worker never holds more than one unit at full resolution. The same
+/// nearest-sample grid as `decode_tiff_preview`, anchored at source pixel
+/// (0,0); concatenating the ranges in order gives its pixels exactly.
+///
+/// # Errors
+///
+/// A malformed or truncated range.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_preview_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    plan: &TiffFloatStripPlan,
+    reduction: u32,
+) -> Result<TiffPreviewRange, DecodeError> {
+    use formats::tiff::strips::{decode_unit_into, strip_bytes_to_f32};
+    if reduction == 0 || plan.channels != 1 || plan.bits_per_sample != 32 || plan.sample_format != 3
+    {
+        return Err(DecodeError::new(
+            "Preview range: not a single-channel float32 preview",
+        ));
+    }
+    let inner = inner_plan(plan);
+    let width = plan.width as usize;
+    let step = reduction as usize;
+    let row_bytes = inner.row_bytes();
+    let blocks_per_unit = inner.blocks_per_unit().max(1);
+    let units = counts.len() / blocks_per_unit;
+    let mut out = Vec::new();
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    let mut band = Vec::new();
+    let mut in_pos = 0usize;
+    for index in 0..units {
+        let unit = first_strip as usize + index;
+        let rows = inner.rows_in(unit);
+        if rows == 0 {
+            break;
+        }
+        let mut blocks: Vec<&[u8]> = Vec::with_capacity(blocks_per_unit);
+        for block in 0..blocks_per_unit {
+            let count = counts[index * blocks_per_unit + block] as usize;
+            let end = in_pos
+                .checked_add(count)
+                .filter(|end| *end <= blob.len())
+                .ok_or_else(|| {
+                    DecodeError::new("Preview range: compressed blob is shorter than its counts")
+                })?;
+            blocks.push(&blob[in_pos..end]);
+            in_pos = end;
+        }
+        band.clear();
+        band.resize(rows * row_bytes, 0);
+        decode_unit_into(&blocks, &inner, unit, rows, &mut band)?;
+        let samples = strip_bytes_to_f32(&band, &inner);
+        let (low, high, _) = pipeline::stats::finite_range_mono_f32(&samples);
+        if low < min {
+            min = low;
+        }
+        if high > max {
+            max = high;
+        }
+        let first_row = inner.first_row(unit);
+        for local in 0..rows {
+            if !(first_row + local).is_multiple_of(step) {
+                continue;
+            }
+            let row = &samples[local * width..(local + 1) * width];
+            out.extend(row.iter().step_by(step));
+        }
+    }
+    Ok(TiffPreviewRange {
+        data: out,
+        min,
+        max,
     })
 }
 
@@ -1523,6 +1678,9 @@ pub struct TiffFloatStripPlan {
     pub offsets: Vec<u64>,
     /// Compressed length of each block.
     pub counts: Vec<u64>,
+    /// `JPEGTables` (tag 347) for compression 7; empty otherwise. Callers that
+    /// slice blocks for workers complete each block with these.
+    pub jpeg_tables: Vec<u8>,
 }
 
 #[cfg(feature = "tiff")]
@@ -1546,6 +1704,7 @@ pub fn tiff_float_strip_plan(data: &[u8]) -> Option<TiffFloatStripPlan> {
         lerc_additional_compression: plan.lerc_additional_compression,
         offsets: plan.offsets,
         counts: plan.counts,
+        jpeg_tables: plan.jpeg_tables,
     })
 }
 
@@ -1599,6 +1758,7 @@ fn inner_plan(plan: &TiffFloatStripPlan) -> formats::tiff::strips::FloatStripPla
         // table is only needed by the caller doing the slicing.
         offsets: Vec::new(),
         counts: Vec::new(),
+        jpeg_tables: plan.jpeg_tables.clone(),
     }
 }
 

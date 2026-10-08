@@ -47,6 +47,25 @@ const validatedColormapUploads = new Set<string>();
  * It is intentionally narrow. Unsupported settings should fall back to the CPU
  * ImageRenderer path rather than growing hidden behavior differences.
  */
+/**
+ * Shape of a four-channel texture holding `samples` RGB samples back to back,
+ * or null when it does not fit. Prefers an exact shape, so the samples upload
+ * in one call without padding.
+ */
+export function linearRgbTextureShape(samples: number, maxTextureSize: number): { width: number; height: number } | null {
+	const texels = Math.ceil(samples / 4);
+	const minWidth = Math.ceil(texels / maxTextureSize);
+	if (minWidth > maxTextureSize) { return null; }
+	if (samples % 4 === 0) {
+		for (let width = Math.min(maxTextureSize, texels); width >= minWidth; width--) {
+			if (texels % width === 0 && texels / width <= maxTextureSize) { return { width, height: texels / width }; }
+		}
+	}
+	const width = Math.min(maxTextureSize, texels);
+	const height = Math.ceil(texels / width);
+	return height <= maxTextureSize ? { width, height } : null;
+}
+
 export class WebGL2FloatRenderer {
 	canvas: HTMLCanvasElement | null;
 	gl: WebGL2RenderingContext | null;
@@ -60,6 +79,10 @@ export class WebGL2FloatRenderer {
 	textureFormat: TextureFormat;
 	/** Three-channel data uploaded as a one-channel texture three texels wide per pixel. */
 	texturePacked: boolean;
+	/** Three-channel data uploaded back to back into a four-channel texture. */
+	textureLinear: boolean;
+	/** Allows the linear layout; tests turn it off to draw the native RGB reference. */
+	allowLinearRgb: boolean;
 	colormapName: string;
 	textureWidth: number;
 	textureHeight: number;
@@ -79,6 +102,8 @@ export class WebGL2FloatRenderer {
 		this.textureData = null;
 		this.textureFormat = '';
 		this.texturePacked = false;
+		this.textureLinear = false;
+		this.allowLinearRgb = true;
 		this.colormapName = '';
 		this.textureWidth = 0;
 		this.textureHeight = 0;
@@ -186,6 +211,7 @@ export class WebGL2FloatRenderer {
 		this.textureData = null;
 		this.textureFormat = '';
 		this.texturePacked = false;
+		this.textureLinear = false;
 		this.colormapName = '';
 		this.textureWidth = 0;
 		this.textureHeight = 0;
@@ -291,13 +317,41 @@ export class WebGL2FloatRenderer {
 		// for the same 5120x5120 RGB8 bytes uploaded as one channel. Upload them
 		// as a one-channel texture three texels wide per pixel instead; the
 		// shader fetches the three texels. Falls back when that is too wide.
-		const packed = (textureFormat === 'rgb8ui' || textureFormat === 'rgb16ui' || textureFormat === 'rgb32f')
-			&& width * 3 <= (gl.getParameter(gl.MAX_TEXTURE_SIZE) as number);
+		const rgb = textureFormat === 'rgb8ui' || textureFormat === 'rgb16ui' || textureFormat === 'rgb32f';
+		const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+		const packed = rgb && width * 3 <= maxTextureSize;
+		// Wider images keep the samples back to back in a four-channel
+		// texture (native on the GPU, so no expansion either); the shader
+		// fetches the two texels holding a pixel's three samples.
+		const linear = !packed && rgb && this.allowLinearRgb && data.length === width * height * 3
+			? linearRgbTextureShape(data.length, maxTextureSize) : null;
 		if (packed) {
 			const packedFormat = textureFormat === 'rgb8ui' ? [gl.R8UI, gl.RED_INTEGER, gl.UNSIGNED_BYTE]
 				: textureFormat === 'rgb16ui' ? [gl.R16UI, gl.RED_INTEGER, gl.UNSIGNED_SHORT]
 					: [gl.R32F, gl.RED, gl.FLOAT];
 			gl.texImage2D(gl.TEXTURE_2D, 0, packedFormat[0], width * 3, height, 0, packedFormat[1], packedFormat[2], data);
+		} else if (linear) {
+			const [internal, format, type] = textureFormat === 'rgb8ui' ? [gl.RGBA8UI, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE]
+				: textureFormat === 'rgb16ui' ? [gl.RGBA16UI, gl.RGBA_INTEGER, gl.UNSIGNED_SHORT]
+					: [gl.RGBA32F, gl.RGBA, gl.FLOAT];
+			const rowSamples = linear.width * 4;
+			if (linear.width * linear.height * 4 === data.length) {
+				gl.texImage2D(gl.TEXTURE_2D, 0, internal, linear.width, linear.height, 0, format, type, data);
+			} else {
+				// No exact shape: whole rows straight from the samples, then the
+				// last partial row from a small zero-padded copy.
+				gl.texImage2D(gl.TEXTURE_2D, 0, internal, linear.width, linear.height, 0, format, type, null);
+				const fullRows = Math.floor(data.length / rowSamples);
+				if (fullRows > 0) {
+					gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, linear.width, fullRows, format, type, data.subarray(0, fullRows * rowSamples));
+				}
+				if (fullRows < linear.height) {
+					const Carrier = data.constructor as { new(length: number): TypedPixelData };
+					const tail = new Carrier(rowSamples);
+					tail.set(data.subarray(fullRows * rowSamples) as any);
+					gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, fullRows, linear.width, 1, format, type, tail);
+				}
+			}
 		} else {
 			switch (textureFormat) {
 				case 'rgb32f':
@@ -328,9 +382,10 @@ export class WebGL2FloatRenderer {
 					gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
 			}
 		}
-		PerfTrace.detail(`webgl-texImage2D-${textureFormat}${packed ? '-packed' : ''}`, performance.now() - uploadStart);
+		const layoutSuffix = packed ? '-packed' : linear ? '-linear' : '';
+		PerfTrace.detail(`webgl-texImage2D-${textureFormat}${layoutSuffix}`, performance.now() - uploadStart);
 		const pixels = width * height;
-		const validationKey = packed ? `${textureFormat}-packed` : textureFormat;
+		const validationKey = `${textureFormat}${layoutSuffix}`;
 		const validatedPixels = validatedUploadPixelsByFormat.get(validationKey) || 0;
 		if (pixels > validatedPixels) {
 			const errorStart = performance.now();
@@ -348,6 +403,7 @@ export class WebGL2FloatRenderer {
 		this.textureHeight = height;
 		this.textureFormat = textureFormat;
 		this.texturePacked = packed;
+		this.textureLinear = !!linear;
 		PerfTrace.mark('webgl-texture-upload');
 		console.log(`[WebGL2] Float texture upload took ${(performance.now() - start).toFixed(2)}ms`);
 	}
@@ -451,6 +507,7 @@ export class WebGL2FloatRenderer {
 			: (channels >= 3 ? (isUintTexture ? 5 : 3) : (isUintTexture ? 1 : 0));
 		gl.uniform1i(gl.getUniformLocation(program, 'u_renderMode'), renderMode);
 		gl.uniform1i(gl.getUniformLocation(program, 'u_packedRgb'), this.texturePacked ? 1 : 0);
+		gl.uniform1i(gl.getUniformLocation(program, 'u_linearRgb'), this.textureLinear ? 1 : 0);
 		gl.uniform2i(gl.getUniformLocation(program, 'u_imageSize'), this.textureWidth, this.textureHeight);
 		gl.uniform1i(gl.getUniformLocation(program, 'u_useColormap'), !!settings.displayColormap && settings.displayColormap !== 'none' ? 1 : 0);
 		gl.uniform1f(gl.getUniformLocation(program, 'u_rgb24ChannelDivisor'), params.typeMax > 255 ? 257.0 : 1.0);
@@ -503,6 +560,8 @@ uniform float u_nodata;
 uniform bool u_hasNodata;
 // Three-channel data stored three texels wide per pixel (see the upload).
 uniform bool u_packedRgb;
+// Three-channel data stored back to back, four samples per texel.
+uniform bool u_linearRgb;
 uniform ivec2 u_imageSize;
 in vec2 v_texCoord;
 out vec4 outColor;
@@ -510,7 +569,23 @@ out vec4 outColor;
 ivec2 packedPixel(vec2 texCoord) {
 	return clamp(ivec2(floor(texCoord * vec2(u_imageSize))), ivec2(0), u_imageSize - 1);
 }
+// The texel holding linear sample index, in a texture of the given size.
+ivec2 linearTexel(int index, ivec2 size) {
+	int texel = min(index, size.x * size.y - 1);
+	return ivec2(texel % size.x, texel / size.x);
+}
+vec3 pickLinear(vec4 first, vec4 second, int offset) {
+	float samples[8] = float[8](first.r, first.g, first.b, first.a, second.r, second.g, second.b, second.a);
+	return vec3(samples[offset], samples[offset + 1], samples[offset + 2]);
+}
 vec3 sampleFloatRgb(vec2 texCoord) {
+	if (u_linearRgb) {
+		ivec2 p = packedPixel(texCoord);
+		int start = (p.y * u_imageSize.x + p.x) * 3;
+		ivec2 size = textureSize(u_dataFloat, 0);
+		return pickLinear(texelFetch(u_dataFloat, linearTexel(start >> 2, size), 0),
+			texelFetch(u_dataFloat, linearTexel((start >> 2) + 1, size), 0), start & 3);
+	}
 	if (!u_packedRgb) { return texture(u_dataFloat, texCoord).rgb; }
 	ivec2 p = packedPixel(texCoord);
 	int x = p.x * 3;
@@ -519,6 +594,13 @@ vec3 sampleFloatRgb(vec2 texCoord) {
 		texelFetch(u_dataFloat, ivec2(x + 2, p.y), 0).r);
 }
 vec3 sampleUintRgb(vec2 texCoord) {
+	if (u_linearRgb) {
+		ivec2 p = packedPixel(texCoord);
+		int start = (p.y * u_imageSize.x + p.x) * 3;
+		ivec2 size = textureSize(u_dataUint, 0);
+		return pickLinear(vec4(texelFetch(u_dataUint, linearTexel(start >> 2, size), 0)),
+			vec4(texelFetch(u_dataUint, linearTexel((start >> 2) + 1, size), 0)), start & 3);
+	}
 	if (!u_packedRgb) { return vec3(texture(u_dataUint, texCoord).rgb); }
 	ivec2 p = packedPixel(texCoord);
 	int x = p.x * 3;

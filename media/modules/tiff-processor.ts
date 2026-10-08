@@ -5,7 +5,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { resolveNanColor } from './nan-color.js';
 import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
-import { tryStripParallelDecode, tryParallelTiffDetail, tryStreamingStripParallelDecode, type StripParallelResult } from './strip-parallel-decode.js';
+import { tryStripParallelDecode, tryParallelTiffDetail, tryParallelTiffPreview, tryStreamingStripParallelDecode, type StripParallelResult } from './strip-parallel-decode.js';
 import { openRemoteTiff } from './remote-tiff-source.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
@@ -593,6 +593,7 @@ export class TiffProcessor {
 			// bootstrap decode waits for that dispatch to finish before it takes
 			// the buffer, then hands the complete file back as the source.
 			let streamed: StripParallelResult | null = null;
+			let streamedPreview: Record<string, any> | null = null;
 			let streamedMs = 0;
 			if (pageIndex !== 0) {
 				(globalThis as any).__tiffVisualizerDecoderWarmup?.releaseImageStream?.();
@@ -602,9 +603,11 @@ export class TiffProcessor {
 				if (stream) {
 					const streamStart = performance.now();
 					const mainWasm = getWasmModuleSync() || await getWasmModule();
-					streamed = mainWasm
+					const decoded = mainWasm
 						? await tryStreamingStripParallelDecode(stream, mainWasm, () => warmup.releaseImageStream?.())
 						: null;
+					streamed = decoded?.strips ?? null;
+					streamedPreview = decoded?.preview ?? null;
 					warmup.releaseImageStream?.();
 					streamedMs = performance.now() - streamStart;
 					if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
@@ -730,7 +733,7 @@ export class TiffProcessor {
 					const mainWasm = getWasmModuleSync() || await getWasmModule();
 					// A streamed decode already checked, on its single IFD, what the
 					// level choice and preview gate below check on the whole file.
-					if (mainWasm && levelHint && !streamed) {
+					if (mainWasm && levelHint && !streamed && !streamedPreview) {
 						// The plan below describes PAGE 0, so a pyramidal file
 						// whose best level is an overview must not take this
 						// path — it would decode the full-resolution page in
@@ -744,7 +747,27 @@ export class TiffProcessor {
 							this.pageIndex = chosen;
 						}
 					}
-					if (mainWasm && pageIndex === 0 && (streamed || !(mainWasm.tiff_preview_reduction?.(new Uint8Array(buffer)) > 0))) {
+					const previewReduction = streamed || !mainWasm ? 0 : streamedPreview ? 1 : Number(mainWasm.tiff_preview_reduction?.(new Uint8Array(buffer)) || 0);
+					if (mainWasm && pageIndex === 0 && previewReduction > 0) {
+						// Too large to display whole: the bounded preview (page 1 of
+						// the generated pyramid), decoded across the pool rather than
+						// by one worker reading every block of the full image.
+						const previewStart = performance.now() - streamedMs;
+						const preview = streamedPreview ?? await tryParallelTiffPreview(buffer, mainWasm);
+						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+						if (preview) {
+							wasmResult = preview;
+							pageIndex = 1;
+							this.pageIndex = 1;
+							PerfTrace.note('tiff-open-level', 'page 1');
+							decodeInfo = { engine: preview.decodedWith, durationMs: performance.now() - previewStart };
+							PerfTrace.mark('decode-wasm-strip-pool');
+							for (const timing of preview.decodeTimings) {
+								PerfTrace.detail(String(timing.name), Number(timing.durationMs) || 0);
+							}
+						}
+					}
+					if (mainWasm && pageIndex === 0 && previewReduction === 0) {
 						const parallelStart = performance.now() - streamedMs;
 						const parallel = streamed ?? await tryStripParallelDecode(buffer, mainWasm);
 						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }

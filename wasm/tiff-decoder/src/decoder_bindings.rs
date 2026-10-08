@@ -460,6 +460,20 @@ impl TiffResult {
     pub fn take_data_as_u8(&mut self) -> Vec<u8> {
         self.inner.take_data_as_u8()
     }
+
+    /// Channel planes of a u8/u16 result as bytes (empty when not applicable).
+    /// Read before taking the data.
+    #[must_use]
+    pub fn planes_u8(&self) -> Vec<u8> {
+        self.inner.planes_as_bytes()
+    }
+
+    /// Channel planes of an f32 result (empty when not applicable). Read
+    /// before taking the data.
+    #[must_use]
+    pub fn planes_f32(&self) -> Vec<f32> {
+        self.inner.planes_as_f32()
+    }
 }
 
 #[wasm_bindgen]
@@ -685,6 +699,99 @@ pub fn decode_tiff_preview(data: &[u8]) -> Result<TiffResult, JsValue> {
     core::decode_tiff_preview(data)
         .map(|inner| TiffResult { inner })
         .map_err(js_error)
+}
+
+/// `decode_tiff_preview` without pixels or range, for the strip pool.
+///
+/// # Errors
+///
+/// A TIFF with no bounded preview route.
+#[wasm_bindgen]
+pub fn tiff_preview_header(data: &[u8]) -> Result<TiffResult, JsValue> {
+    prepare();
+    core::tiff_preview_header(data)
+        .map(|inner| TiffResult { inner })
+        .map_err(js_error)
+}
+
+/// One strip range's preview rows and the finite range of its samples.
+#[wasm_bindgen]
+pub struct TiffPreviewRangeResult {
+    inner: core::TiffPreviewRange,
+}
+
+#[wasm_bindgen]
+impl TiffPreviewRangeResult {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn min(&self) -> f32 {
+        self.inner.min
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn max(&self) -> f32 {
+        self.inner.max
+    }
+    /// One-shot: the preview samples are moved out.
+    pub fn take_data(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.inner.data)
+    }
+}
+
+/// The bounded preview rows of one strip range, decoded unit by unit.
+///
+/// # Errors
+///
+/// A malformed or truncated range, as a JavaScript string.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_tiff_preview_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    rows_per_strip: u32,
+    predictor: u32,
+    sample_format: u32,
+    little_endian: bool,
+    planar_configuration: u32,
+    orientation: u32,
+    tile_width: u32,
+    tile_length: u32,
+    blocks_across: u32,
+    lerc_additional_compression: u32,
+    photometric_interpretation: u32,
+    reduction: u32,
+) -> Result<TiffPreviewRangeResult, JsValue> {
+    let plan = core::TiffFloatStripPlan {
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        sample_format,
+        planar_configuration,
+        orientation,
+        photometric_interpretation,
+        little_endian,
+        rows_per_strip,
+        tile_width,
+        tile_length,
+        blocks_across,
+        lerc_additional_compression,
+        offsets: Vec::new(),
+        counts: Vec::new(),
+        // Workers receive JPEG blocks already completed with their tables.
+        jpeg_tables: Vec::new(),
+    };
+    core::decode_tiff_preview_range(blob, counts, first_strip, &plan, reduction)
+        .map(|inner| TiffPreviewRangeResult { inner })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 #[wasm_bindgen]
@@ -1028,6 +1135,13 @@ pub struct TiffFloatStripPlanJs {
 
 #[wasm_bindgen]
 impl TiffFloatStripPlanJs {
+    /// `JPEGTables` to complete each JPEG block with before decoding it; empty
+    /// when there are none or the file is not JPEG-compressed.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn jpeg_tables(&self) -> Vec<u8> {
+        self.inner.jpeg_tables.clone()
+    }
     #[wasm_bindgen(getter)]
     pub fn width(&self) -> u32 {
         self.inner.width
@@ -1178,6 +1292,8 @@ pub fn decode_tiff_float_strip_range(
         lerc_additional_compression,
         offsets: Vec::new(),
         counts: Vec::new(),
+        // Workers receive JPEG blocks already completed with their tables.
+        jpeg_tables: Vec::new(),
     };
     core::decode_tiff_float_strip_range(blob, counts, first_strip, &plan)
         .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -1270,6 +1386,8 @@ pub fn decode_tiff_strip_range_raw(
         lerc_additional_compression,
         offsets: Vec::new(),
         counts: Vec::new(),
+        // Workers receive JPEG blocks already completed with their tables.
+        jpeg_tables: Vec::new(),
     };
     core::decode_tiff_strip_range_raw(blob, counts, first_strip, &plan)
         .map_err(|e| JsValue::from_str(&e.to_string()))
@@ -1363,6 +1481,8 @@ pub fn decode_tiff_strip_range_raw_stats(
         lerc_additional_compression,
         offsets: Vec::new(),
         counts: Vec::new(),
+        // Workers receive JPEG blocks already completed with their tables.
+        jpeg_tables: Vec::new(),
     };
     core::decode_tiff_strip_range_raw_with_range(blob, counts, first_strip, &plan)
         .map(|core::RawStripRange { data, range }| {

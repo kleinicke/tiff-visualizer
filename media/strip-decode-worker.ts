@@ -12,7 +12,7 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_tiff_float_strip_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_tiff_float_strip_range, decode_tiff_preview_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
 import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
@@ -65,6 +65,21 @@ self.onmessage = async (event: MessageEvent) => {
 	try {
 		await ready;
 		const started = performance.now();
+		if (job.kind === 'tiff-preview') {
+			const decoded = decode_tiff_preview_range(
+				new Uint8Array(job.blob), new Uint32Array(job.counts), job.firstStrip,
+				job.width, job.height, job.channels, job.bitsPerSample, job.compression, job.rowsPerStrip,
+				job.predictor, job.sampleFormat, job.littleEndian, job.planarConfiguration || 1, job.orientation || 1,
+				job.tileWidth || 0, job.tileLength || 0, job.blocksAcross || 1, job.lercAdditionalCompression || 0,
+				job.photometricInterpretation || 1, job.reduction,
+			);
+			const min = decoded.min;
+			const max = decoded.max;
+			const samples = decoded.take_data();
+			decoded.free();
+			(self as any).postMessage({ id: job.id, samples, min, max, ms: performance.now() - started }, [samples.buffer]);
+			return;
+		}
 		if (job.kind === 'hdr-rows') {
 			const samples = decode_hdr_rows(new Uint8Array(job.blob), job.width, job.rows);
 			(self as any).postMessage({ id: job.id, samples, ms: performance.now() - started }, [samples.buffer]);

@@ -167,28 +167,6 @@ function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
-function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return RawRangeResult.__wrap(ret[0]);
-}
-function decode_hdr_rows(blob, width, rows) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
-  }
-  var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v2;
-}
 function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -214,6 +192,39 @@ function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
     throw takeFromExternrefTable0(ret[1]);
   }
   return RawRangeResult.__wrap(ret[0]);
+}
+function decode_tiff_preview_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_preview_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return TiffPreviewRangeResult.__wrap(ret[0]);
+}
+function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return RawRangeResult.__wrap(ret[0]);
+}
+function decode_hdr_rows(blob, width, rows) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v2;
 }
 var DecodedArrayFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
@@ -2002,7 +2013,7 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get tile_width() {
-    const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
+    const ret = wasm.tifffloatstripplanjs_tile_width(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2017,14 +2028,25 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get compression() {
-    const ret = wasm.pngresult_height(this.__wbg_ptr);
+    const ret = wasm.stabilitycurveresult_plateau_width(this.__wbg_ptr);
     return ret >>> 0;
+  }
+  /**
+   * `JPEGTables` to complete each JPEG block with before decoding it; empty
+   * when there are none or the file is not JPEG-compressed.
+   * @returns {Uint8Array}
+   */
+  get jpeg_tables() {
+    const ret = wasm.tifffloatstripplanjs_jpeg_tables(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
   }
   /**
    * @returns {number}
    */
   get orientation() {
-    const ret = wasm.decodedarray_height(this.__wbg_ptr);
+    const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2039,7 +2061,7 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get tile_length() {
-    const ret = wasm.decodedarray_sample_kind(this.__wbg_ptr);
+    const ret = wasm.tifffloatstripplanjs_tile_length(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2060,21 +2082,21 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get sample_format() {
-    const ret = wasm.exrresult_height(this.__wbg_ptr);
+    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
    * @returns {number}
    */
   get rows_per_strip() {
-    const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
+    const ret = wasm.tifffloatstripplanjs_rows_per_strip(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
    * @returns {number}
    */
   get bits_per_sample() {
-    const ret = wasm.hdrresult_channels(this.__wbg_ptr);
+    const ret = wasm.exrresult_height(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2089,14 +2111,14 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get planar_configuration() {
-    const ret = wasm.stabilitycurveresult_plateau_width(this.__wbg_ptr);
+    const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
    * @returns {number}
    */
   get photometric_interpretation() {
-    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+    const ret = wasm.decodedarray_sample_kind(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2110,7 +2132,7 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get width() {
-    const ret = wasm.hdrscanlineplanjs_width(this.__wbg_ptr);
+    const ret = wasm.hdrresult_channels(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2126,7 +2148,7 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get height() {
-    const ret = wasm.hdrscanlineplanjs_height(this.__wbg_ptr);
+    const ret = wasm.pngresult_height(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2151,11 +2173,58 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get predictor() {
-    const ret = wasm.tifffloatstripplanjs_predictor(this.__wbg_ptr);
+    const ret = wasm.decodedarray_height(this.__wbg_ptr);
     return ret >>> 0;
   }
 };
 if (Symbol.dispose) TiffFloatStripPlanJs.prototype[Symbol.dispose] = TiffFloatStripPlanJs.prototype.free;
+var TiffPreviewRangeResultFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffpreviewrangeresult_free(ptr >>> 0, 1));
+var TiffPreviewRangeResult = class _TiffPreviewRangeResult {
+  static __wrap(ptr) {
+    ptr = ptr >>> 0;
+    const obj = Object.create(_TiffPreviewRangeResult.prototype);
+    obj.__wbg_ptr = ptr;
+    TiffPreviewRangeResultFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    TiffPreviewRangeResultFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_tiffpreviewrangeresult_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get max() {
+    const ret = wasm.tiffpreviewrangeresult_max(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * @returns {number}
+   */
+  get min() {
+    const ret = wasm.tiffpreviewrangeresult_min(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * One-shot: the preview samples are moved out.
+   * @returns {Float32Array}
+   */
+  take_data() {
+    const ret = wasm.tiffpreviewrangeresult_take_data(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+};
+if (Symbol.dispose) TiffPreviewRangeResult.prototype[Symbol.dispose] = TiffPreviewRangeResult.prototype.free;
 var TiffRegionDecoderFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
 } } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffregiondecoder_free(ptr >>> 0, 1));
@@ -2239,7 +2308,7 @@ var TiffRegionJs = class _TiffRegionJs {
    * @returns {number}
    */
   get bits_per_sample() {
-    const ret = wasm.tifffloatstripplanjs_channels(this.__wbg_ptr);
+    const ret = wasm.tiffregionjs_bits_per_sample(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2310,6 +2379,17 @@ var TiffResult = class _TiffResult {
   free() {
     const ptr = this.__destroy_into_raw();
     wasm.__wbg_tiffresult_free(ptr, 0);
+  }
+  /**
+   * Channel planes of an f32 result (empty when not applicable). Read
+   * before taking the data.
+   * @returns {Float32Array}
+   */
+  planes_f32() {
+    const ret = wasm.tiffresult_planes_f32(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
   }
   /**
    * @returns {number}
@@ -2409,7 +2489,7 @@ var TiffResult = class _TiffResult {
    * @returns {number}
    */
   get bits_per_sample() {
-    const ret = wasm.tiffresult_bits_per_sample(this.__wbg_ptr);
+    const ret = wasm.tifffloatstripplanjs_blocks_across(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2524,7 +2604,7 @@ var TiffResult = class _TiffResult {
    * @returns {number}
    */
   get height() {
-    const ret = wasm.tifffloatstripplanjs_lerc_additional_compression(this.__wbg_ptr);
+    const ret = wasm.tifffloatstripplanjs_tile_width(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2586,6 +2666,17 @@ var TiffResult = class _TiffResult {
   get min_value() {
     const ret = wasm.decodedarray_data_min(this.__wbg_ptr);
     return ret;
+  }
+  /**
+   * Channel planes of a u8/u16 result as bytes (empty when not applicable).
+   * Read before taking the data.
+   * @returns {Uint8Array}
+   */
+  planes_u8() {
+    const ret = wasm.tiffresult_planes_u8(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
   }
   /**
    * @returns {number}
@@ -2932,6 +3023,36 @@ self.onmessage = async (event) => {
   try {
     await ready;
     const started = performance.now();
+    if (job.kind === "tiff-preview") {
+      const decoded = decode_tiff_preview_range(
+        new Uint8Array(job.blob),
+        new Uint32Array(job.counts),
+        job.firstStrip,
+        job.width,
+        job.height,
+        job.channels,
+        job.bitsPerSample,
+        job.compression,
+        job.rowsPerStrip,
+        job.predictor,
+        job.sampleFormat,
+        job.littleEndian,
+        job.planarConfiguration || 1,
+        job.orientation || 1,
+        job.tileWidth || 0,
+        job.tileLength || 0,
+        job.blocksAcross || 1,
+        job.lercAdditionalCompression || 0,
+        job.photometricInterpretation || 1,
+        job.reduction
+      );
+      const min2 = decoded.min;
+      const max2 = decoded.max;
+      const samples2 = decoded.take_data();
+      decoded.free();
+      self.postMessage({ id: job.id, samples: samples2, min: min2, max: max2, ms: performance.now() - started }, [samples2.buffer]);
+      return;
+    }
     if (job.kind === "hdr-rows") {
       const samples2 = decode_hdr_rows(new Uint8Array(job.blob), job.width, job.rows);
       self.postMessage({ id: job.id, samples: samples2, ms: performance.now() - started }, [samples2.buffer]);

@@ -406,6 +406,162 @@ export async function decodeHdrParallel(buffer: ArrayBuffer, wasm: any): Promise
 	return { width, height, exposure, gamma, allTagsJson, data: output, workers: ranges.length, timings };
 }
 
+/**
+ * The bounded preview of a very large single-page float TIFF (see
+ * `tiff_preview_reduction`), decoded across the pool. Each worker decodes its
+ * strips one unit at a time and keeps only the preview grid and the range, so
+ * no thread ever holds the full-resolution image; the ranges concatenate to
+ * exactly `decode_tiff_preview`'s pixels. Returns the same fields the decode
+ * worker returns for a generated preview, or null to let it decode instead.
+ */
+export async function tryParallelTiffPreview(
+	buffer: ArrayBuffer | Uint8Array,
+	wasm: any,
+	stream?: TiffImageStream,
+	onDispatched?: () => void,
+): Promise<Record<string, any> | null> {
+	if (typeof wasm?.tiff_preview_header !== 'function' || typeof wasm?.tiff_float_strip_plan !== 'function') { return null; }
+	// With a stream, `buffer` is only the verified IFD prefix; blocks are read
+	// from the stream once they have arrived (see tryStreamingStripParallelDecode).
+	const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+	const planStart = performance.now();
+	const reduction = Number(wasm.tiff_preview_reduction?.(bytes) || 0);
+	if (reduction <= 0) { return null; }
+	let plan: any;
+	let header: any;
+	try {
+		plan = wasm.tiff_float_strip_plan(bytes);
+		header = wasm.tiff_preview_header(bytes);
+	} catch { return null; }
+	if (!plan || !header) { return null; }
+	// Extended codecs need the codec module's pool; leave them to the worker.
+	if (EXTENDED_TIFF_COMPRESSIONS.has(Number(plan.compression))) { return null; }
+	const stripCount: number = plan.strip_count;
+	if (stripCount < 2 || !await pool.ensure(undefined, MAX_WORKERS) || pool.size < 2) { return null; }
+	const timings = [{ name: 'preview-plan', durationMs: performance.now() - planStart }];
+
+	const offsets: Float64Array = plan.offsets;
+	const counts: Float64Array = plan.counts;
+	const blocksPerUnit: number = plan.blocks_per_unit || 1;
+	const tileWidth: number = plan.tile_width || 0;
+	const tileLength: number = plan.tile_length || 0;
+	const rowsPerUnit: number = tileLength > 0 ? tileLength : plan.rows_per_strip;
+	const unitPixels = tileLength > 0 ? (plan.blocks_across || 1) * tileWidth * tileLength : plan.width * plan.rows_per_strip;
+	const unitCost = (i: number) => {
+		let total = 0.5 * unitPixels * 4;
+		for (let b = 0; b < blocksPerUnit; b++) { total += counts[i * blocksPerUnit + b]; }
+		return total;
+	};
+	const workerCount = Math.min(pool.size, stripCount);
+	let totalCost = 0;
+	for (let i = 0; i < stripCount; i++) { totalCost += unitCost(i); }
+	const target = totalCost / workerCount;
+	const ranges: { first: number, last: number }[] = [];
+	let cursor = 0;
+	for (let w = 0; w < workerCount && cursor < stripCount; w++) {
+		const maxEnd = stripCount - (workerCount - w - 1);
+		let end = cursor;
+		let acc = 0;
+		while (end < maxEnd && (acc < target || end === cursor)) { acc += unitCost(end++); }
+		if (w === workerCount - 1) { end = stripCount; }
+		ranges.push({ first: cursor, last: end });
+		cursor = end;
+	}
+
+	if (stream) {
+		for (let i = 0; i < counts.length; i++) {
+			if (offsets[i] + counts[i] > stream.total) { header.free?.(); return null; }
+		}
+	}
+	const previewWidth: number = header.width;
+	const previewHeight: number = header.height;
+	const data = new Float32Array(previewWidth * previewHeight);
+	let dispatched = 0;
+	let min = Infinity;
+	let max = -Infinity;
+	const started = performance.now();
+	try {
+		await Promise.all(ranges.map(async (range, index) => {
+			const firstBlock = range.first * blocksPerUnit;
+			const lastBlock = range.last * blocksPerUnit;
+			let blobLength = 0;
+			let rangeEnd = 0;
+			for (let i = firstBlock; i < lastBlock; i++) {
+				blobLength += counts[i];
+				rangeEnd = Math.max(rangeEnd, offsets[i] + counts[i]);
+			}
+			let source = bytes;
+			if (stream) {
+				await stream.whenAvailable(rangeEnd);
+				source = stream.bytes!;
+				if (source.byteLength === 0) { throw new Error('stream bytes were released'); }
+			}
+			const blob = new Uint8Array(blobLength);
+			const rangeCounts = new Uint32Array(lastBlock - firstBlock);
+			let position = 0;
+			for (let i = firstBlock; i < lastBlock; i++) {
+				blob.set(source.subarray(offsets[i], offsets[i] + counts[i]), position);
+				position += counts[i];
+				rangeCounts[i - firstBlock] = counts[i];
+			}
+			if (++dispatched === ranges.length) { onDispatched?.(); }
+			const part = await pool.run({
+				kind: 'tiff-preview', blob: blob.buffer, counts: rangeCounts.buffer, firstStrip: range.first,
+				width: plan.width, height: plan.height, channels: plan.channels,
+				bitsPerSample: plan.bits_per_sample, compression: plan.compression,
+				rowsPerStrip: plan.rows_per_strip, predictor: plan.predictor, sampleFormat: plan.sample_format,
+				littleEndian: plan.little_endian, planarConfiguration: plan.planar_configuration || 1,
+				orientation: plan.orientation || 1, tileWidth, tileLength, blocksAcross: plan.blocks_across || 1,
+				lercAdditionalCompression: plan.lerc_additional_compression || 0,
+				photometricInterpretation: plan.photometric_interpretation || 1, reduction,
+			}, [blob.buffer, rangeCounts.buffer], index);
+			// This range's first preview row: the grid rows before its first source row.
+			data.set(part.samples, Math.ceil(range.first * rowsPerUnit / reduction) * previewWidth);
+			if (part.min < min) { min = part.min; }
+			if (part.max > max) { max = part.max; }
+		}));
+	} catch (error) {
+		console.warn('[StripPool] Bounded preview decode failed, falling back:', error);
+		header.free?.();
+		return null;
+	}
+	timings.push({ name: 'preview-workers', durationMs: performance.now() - started });
+	const result = {
+		pageIndex: 1,
+		pageCount: 2,
+		width: previewWidth,
+		height: previewHeight,
+		channels: 1,
+		bitsPerSample: header.bits_per_sample,
+		sampleFormat: header.sample_format,
+		sampleKind: Number(header.sample_kind ?? 0),
+		compression: header.compression,
+		predictor: header.predictor,
+		photometricInterpretation: header.photometric_interpretation,
+		planarConfiguration: header.planar_configuration,
+		rowsPerStrip: header.rows_per_strip,
+		stripCount: header.strip_count,
+		stripByteCountTotal: Number(header.strip_byte_count_total || 0),
+		stripByteCountMax: Number(header.strip_byte_count_max || 0),
+		tileWidth: header.tile_width,
+		tileLength: header.tile_length,
+		tileCount: header.tile_count,
+		directDecode: header.direct_decode,
+		data,
+		rasters: [data],
+		min,
+		max,
+		allTagsJson: header.all_tags_json,
+		omeXml: header.ome_xml || undefined,
+		geoJson: header.geo_json || undefined,
+		pageDirectoryJson: header.page_directory_json || undefined,
+		decodedWith: `wasm (bounded preview, ${ranges.length} workers)`,
+		decodeTimings: timings,
+	};
+	header.free?.();
+	return result;
+}
+
 /** Decode independently compressed EXR ZIP16 blocks across the shared pool. */
 export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 	data: Float32Array;
@@ -493,31 +649,55 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 /**
  * Decode a TIFF that is still being read, dispatching each worker's range as
  * soon as its bytes have arrived, so the decode overlaps the read instead of
- * following it. Only for single-image files whose first IFD, with every value
+ * following it. A TIFF too large to display whole yields its bounded preview
+ * (`preview`, the decode worker's result shape); others their strips. Only for single-image files whose first IFD, with every value
  * it points at, can be read from the start of the stream; anything else
  * returns null and the caller waits for the whole file as before.
  *
  * `onDispatched` runs once no range will read the stream any more, after
  * which the bootstrap may hand the buffer to another thread.
  */
+export type StreamedTiffDecode =
+	| { strips: StripParallelResult; preview?: undefined }
+	| { preview: Record<string, any>; strips?: undefined };
+
 export async function tryStreamingStripParallelDecode(
 	stream: TiffImageStream,
 	wasm: any,
 	onDispatched: () => void,
-): Promise<StripParallelResult | null> {
+): Promise<StreamedTiffDecode | null> {
 	try {
 		const prefix = await tiffFirstIfdPrefix(stream);
 		if (!prefix?.singleImage || !stream.bytes) { return null; }
 		await stream.whenAvailable(prefix.needed);
 		const head = stream.bytes.subarray(0, prefix.needed);
-		if (wasm?.tiff_preview_reduction?.(head) > 0) { return null; }
-		return await tryStripParallelDecode(head, wasm, stream, onDispatched);
+		if (wasm?.tiff_preview_reduction?.(head) > 0) {
+			const preview = await tryParallelTiffPreview(head, wasm, stream, onDispatched);
+			return preview ? { preview } : null;
+		}
+		const strips = await tryStripParallelDecode(head, wasm, stream, onDispatched);
+		return strips ? { strips } : null;
 	} catch (error) {
 		console.warn('[StripPool] Streaming decode unavailable, waiting for the whole file:', error);
 		return null;
 	} finally {
 		onDispatched();
 	}
+}
+
+/**
+ * A JPEG block (compression 7) as a complete stream: the shared JPEGTables
+ * without their EOI, then the block without its SOI (TIFF Technote 2), exactly
+ * as the Rust `build_jpeg` assembles it for whole-image and region decodes.
+ */
+function completeJpegBlock(tables: Uint8Array, block: Uint8Array): Uint8Array {
+	const head = tables.length >= 2 && tables[tables.length - 2] === 0xff && tables[tables.length - 1] === 0xd9
+		? tables.subarray(0, tables.length - 2) : tables;
+	const body = block.length >= 2 && block[0] === 0xff && block[1] === 0xd8 ? block.subarray(2) : block;
+	const out = new Uint8Array(head.length + body.length);
+	out.set(head, 0);
+	out.set(body, head.length);
+	return out;
 }
 
 /**
@@ -637,6 +817,8 @@ export async function tryStripParallelDecode(
 		}
 	}
 	const raw = carrierFor(plan.bits_per_sample, plan.sample_format);
+	// JPEG blocks reach the workers as complete streams; they carry no tables.
+	const jpegTables: Uint8Array | null = Number(plan.compression) === 7 && plan.jpeg_tables?.length ? plan.jpeg_tables : null;
 	// Multi-channel callers need per-channel planes as well as the interleaved
 	// buffer. The workers split their own bands; a transposed orientation
 	// cannot be placed band by band, so those are split here afterwards.
@@ -661,15 +843,28 @@ export async function tryStripParallelDecode(
 			// Released and transferred after an earlier range failed.
 			if (source.byteLength === 0) { throw new Error('stream bytes were released'); }
 		}
-		const blob = new Uint8Array(blobLength);
+		let blob = new Uint8Array(blobLength);
 		const rangeCounts = new Uint32Array(lastBlock - firstBlock);
 		let position = 0;
-		for (let i = firstBlock; i < lastBlock; i++) {
-			const offset = offsets[i];
-			const count = counts[i];
-			blob.set(source.subarray(offset, offset + count), position);
-			position += count;
-			rangeCounts[i - firstBlock] = count;
+		if (jpegTables) {
+			const parts: Uint8Array[] = [];
+			for (let i = firstBlock; i < lastBlock; i++) {
+				const part = completeJpegBlock(jpegTables, source.subarray(offsets[i], offsets[i] + counts[i]));
+				parts.push(part);
+				rangeCounts[i - firstBlock] = part.length;
+				position += part.length;
+			}
+			blob = new Uint8Array(position);
+			position = 0;
+			for (const part of parts) { blob.set(part, position); position += part.length; }
+		} else {
+			for (let i = firstBlock; i < lastBlock; i++) {
+				const offset = offsets[i];
+				const count = counts[i];
+				blob.set(source.subarray(offset, offset + count), position);
+				position += count;
+				rangeCounts[i - firstBlock] = count;
+			}
 		}
 		if (++dispatched === ranges.length) { onDispatched?.(); }
 		return activePool.run({
@@ -776,7 +971,9 @@ export async function tryStripParallelDecode(
 		planarConfiguration: plan.planar_configuration || 1,
 		rowsPerStrip,
 		stripCount,
-		photometricInterpretation: meta?.photometric_interpretation ?? 1,
+		// JPEG decodes YCbCr to RGB, as the whole-image path reports it.
+		photometricInterpretation: Number(plan.compression) === 7 && meta?.photometric_interpretation === 6
+			? 2 : meta?.photometric_interpretation ?? 1,
 		pageCount: meta?.page_count ?? 1,
 		allTagsJson: meta?.all_tags_json ?? '[]',
 		omeXml: meta?.ome_xml || undefined,

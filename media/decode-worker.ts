@@ -230,6 +230,17 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLeve
 	const height = result.height;
 	const channels = result.channels;
 	const sampleKind = Number(result.sample_kind ?? 0);
+	// Channel planes are split in Rust, before the data is moved out: the
+	// JavaScript loop below took ~450 ms on a 100M-pixel RGB image.
+	let planeStore: Uint8Array | Float32Array | null = null;
+	if (channels > 1) {
+		if ((sampleKind === 1 || sampleKind === 3) && typeof result.planes_u8 === 'function') {
+			planeStore = result.planes_u8();
+		} else if (sampleKind === 0 && typeof result.planes_f32 === 'function') {
+			planeStore = result.planes_f32();
+		}
+		if (planeStore && planeStore.length === 0) { planeStore = null; }
+	}
 	let data: Float32Array | Uint16Array | Uint8Array;
 	if ((sampleKind === 1 || sampleKind === 3) && typeof result.take_data_as_u8 === 'function') {
 		const bytes = result.take_data_as_u8() as Uint8Array;
@@ -246,10 +257,17 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLeve
 
 	phaseStart = now;
 	const rasters: Array<Float32Array | Uint16Array | Uint8Array> = [];
+	const pixelCount = width * height;
+	const planeCarrier = planeStore && (sampleKind === 3
+		? new Uint16Array(planeStore.buffer, planeStore.byteOffset, planeStore.byteLength / 2)
+		: planeStore);
 	if (channels === 1) {
 		rasters.push(data);
+	} else if (planeCarrier && planeCarrier.length === pixelCount * channels) {
+		for (let c = 0; c < channels; c++) {
+			rasters.push(planeCarrier.subarray(c * pixelCount, (c + 1) * pixelCount));
+		}
 	} else {
-		const pixelCount = width * height;
 		const Carrier = data.constructor as { new(length: number): Float32Array | Uint16Array | Uint8Array };
 		for (let c = 0; c < channels; c++) {
 			const channel = new Carrier(pixelCount);

@@ -76,6 +76,7 @@ function samePlan(a, b) {
 		if (a[key] !== b[key]) return `${key} ${a[key]} != ${b[key]}`;
 	}
 	if (String(a.offsets) !== String(b.offsets) || String(a.counts) !== String(b.counts)) return 'offsets/counts';
+	if (String(a.jpeg_tables) !== String(b.jpeg_tables)) return 'jpeg tables';
 	return '';
 }
 
@@ -88,7 +89,7 @@ async function main() {
 	const wasm = await import('../media/wasm/tiff-wasm.js');
 	await wasm.default({ module_or_path: module });
 	const { tiffFirstIfdPrefix } = await import('../out/media/modules/tiff-stream-prefix.js');
-	const { tryStripParallelDecode, tryStreamingStripParallelDecode } = await import('../out/media/modules/strip-parallel-decode.js');
+	const { tryStripParallelDecode, tryParallelTiffPreview, tryStreamingStripParallelDecode } = await import('../out/media/modules/strip-parallel-decode.js');
 
 	// 1. Prefix equivalence on every TIFF fixture.
 	const tiffs = fs.readdirSync('test-samples').filter(name => /\.tiff?$/i.test(name));
@@ -129,7 +130,7 @@ async function main() {
 		const reference = await tryStripParallelDecode(bytes.slice().buffer, wasm);
 		assert.ok(reference, `${file}: whole-file pool decode declined`);
 		let released = 0;
-		const streamed = await tryStreamingStripParallelDecode(makeStream(bytes, 4096), wasm, () => { released++; });
+		const streamed = (await tryStreamingStripParallelDecode(makeStream(bytes, 4096), wasm, () => { released++; }))?.strips;
 		assert.ok(streamed, `${file}: streaming decode declined`);
 		assert.ok(released >= 1, `${file}: stream never released`);
 		assert.ok(Buffer.from(streamed.data.buffer).equals(Buffer.from(reference.data.buffer)), `${file}: streamed samples differ`);
@@ -141,12 +142,27 @@ async function main() {
 		assert.equal(streamed.max, reference.max, `${file}: max`);
 		assert.equal(streamed.allTagsJson, reference.allTagsJson, `${file}: tags`);
 	}
+	// A TIFF too large to display whole streams into its bounded preview.
+	{
+		const file = 'test-samples/large/preview_pool_f32.tif';
+		const bytes = new Uint8Array(fs.readFileSync(file));
+		const reference = await tryParallelTiffPreview(bytes.slice().buffer, wasm);
+		assert.ok(reference, `${file}: preview pool declined`);
+		let released = 0;
+		const streamed = (await tryStreamingStripParallelDecode(makeStream(bytes, 2048), wasm, () => { released++; }))?.preview;
+		assert.ok(streamed, `${file}: streamed preview declined`);
+		assert.ok(released >= 1, `${file}: stream never released`);
+		assert.ok(Buffer.from(streamed.data.buffer).equals(Buffer.from(reference.data.buffer)), `${file}: streamed preview differs`);
+		for (const key of ['width', 'height', 'min', 'max', 'pageIndex', 'pageCount', 'pageDirectoryJson', 'allTagsJson']) {
+			assert.ok(Object.is(streamed[key], reference[key]), `${file}: ${key} differs`);
+		}
+	}
 	const bytes = new Uint8Array(fs.readFileSync(cases[0]));
 	let released = 0;
 	const failed = await tryStreamingStripParallelDecode(makeStream(bytes, 2048, bytes.length >> 1), wasm, () => { released++; });
 	assert.equal(failed, null, 'a failed read must fall back, not produce pixels');
 	assert.ok(released >= 1, 'a failed read must still release the stream');
-	console.log(`TIFF streaming: prefix plan/metadata identical on ${tiffs.length} fixtures (${single} single-image), ${cases.length} streamed decodes identical, failed read falls back`);
+	console.log(`TIFF streaming: prefix plan/metadata identical on ${tiffs.length} fixtures (${single} single-image), ${cases.length} streamed decodes and a streamed bounded preview identical, failed read falls back`);
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {

@@ -218,7 +218,7 @@ pub(crate) fn decompress_strip_or_tile(
 /// back numbers of a known type; turning those back into a TIFF strip means
 /// writing them in the file's own byte order and width, which the byte-in,
 /// byte-out codecs (LZW, Deflate, ZSTD, LZMA) never need to know.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct BlockCodecInfo {
     pub bits_per_sample: u32,
     /// TIFF SampleFormat: 1 = uint, 2 = int, 3 = float.
@@ -233,6 +233,8 @@ pub(crate) struct BlockCodecInfo {
     /// themselves (JPEG 2000) consult this.
     #[cfg_attr(not(feature = "codec-jpeg2000"), allow(dead_code))]
     pub ycbcr: bool,
+    /// `JPEGTables` for compression 7; empty when the blocks are complete streams.
+    pub jpeg_tables: Vec<u8>,
 }
 
 /// `decompress_strip_or_tile` plus the layout the typed codecs need. Callers
@@ -251,6 +253,7 @@ pub(crate) fn decompress_block(
     match compression {
         1 => Ok(block.to_vec()),
         5 => crate::formats::compression::decode_tiff_lzw(block, expected_len, context),
+        7 => decode_jpeg_block(block, expected_len, context, info),
         8 | 32946 => crate::formats::compression::inflate_zlib(block, expected_len, context),
         // ZSTD, via the pure-Rust ruzstd crate so the WASM build needs no C
         // toolchain. A single strip or tile is one complete zstd frame; GDAL
@@ -435,6 +438,34 @@ fn codec_info<'a>(
             context, codec
         ))
     })
+}
+
+/// Decode one JPEG-compressed strip/tile (compression 7) to interleaved
+/// 8-bit samples. The block is completed with the plan's `JPEGTables` when it
+/// carries any; zune-jpeg converts YCbCr to RGB, as the whole-image path does.
+fn decode_jpeg_block(
+    block: &[u8],
+    expected_len: usize,
+    context: &str,
+    info: Option<&BlockCodecInfo>,
+) -> Result<Vec<u8>, DecodeError> {
+    let tables = info
+        .map(|info| info.jpeg_tables.as_slice())
+        .filter(|tables| !tables.is_empty());
+    let jpeg = super::codecs::build_jpeg(tables, block);
+    let mut decoder = zune_jpeg::JpegDecoder::new(Cursor::new(jpeg));
+    let pixels = decoder
+        .decode()
+        .map_err(|e| DecodeError::new(format!("{context}: JPEG decode failed: {e:?}")))?;
+    if pixels.len() < expected_len {
+        return Err(DecodeError::new(format!(
+            "{}: JPEG block holds {} bytes, expected {}",
+            context,
+            pixels.len(),
+            expected_len
+        )));
+    }
+    Ok(pixels)
 }
 
 /// Decode one PNG-compressed strip/tile. The PNG crate returns 16-bit samples
@@ -1170,6 +1201,7 @@ pub(crate) fn try_decode_general_strips_tiles(
             .get_tag_u32(Tag::PhotometricInterpretation)
             .map(|value| value == 6)
             .unwrap_or(false),
+        jpeg_tables: Vec::new(),
     };
 
     let planes = if planar_configuration == 2 {
@@ -1554,6 +1586,9 @@ pub struct FloatStripPlan {
     pub offsets: Vec<u64>,
     /// Compressed length of each block.
     pub counts: Vec<u64>,
+    /// `JPEGTables` (tag 347) for compression 7: the abbreviated table stream
+    /// each block's frame is completed with. Empty when absent or not JPEG.
+    pub jpeg_tables: Vec<u8>,
 }
 
 impl FloatStripPlan {
@@ -1612,9 +1647,9 @@ impl FloatStripPlan {
             sample_format: self.sample_format,
             little_endian: self.little_endian,
             lerc_additional_compression: self.lerc_additional_compression,
-            // The plan is only handed out for photometric 1 and 2, so a block
-            // reached through it never carries YCbCr.
+            // YCbCr only reaches the plan as JPEG, which converts to RGB itself.
             ycbcr: false,
+            jpeg_tables: self.jpeg_tables.clone(),
         }
     }
 }
@@ -1666,6 +1701,7 @@ pub(crate) fn float_predictor_plan(
     let supported = matches!(
         compression,
         1 | 5
+            | 7
             | 8
             | 32946
             | 50000
@@ -1760,6 +1796,18 @@ pub(crate) fn float_predictor_plan(
         offsets = band_offsets;
         counts = band_counts;
     }
+    // JPEG blocks are abbreviated streams completed with the shared tables.
+    // Only 8-bit unsigned samples without a predictor are JPEG-compressed.
+    let jpeg_tables = if compression == 7 {
+        if bits_per_sample != 8 || sample_format != 1 || predictor != 1 {
+            return None;
+        }
+        decoder
+            .get_tag_u8_vec(Tag::Unknown(347))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     Some(FloatStripPlan {
         width,
         height,
@@ -1783,6 +1831,7 @@ pub(crate) fn float_predictor_plan(
             .unwrap_or(0),
         offsets,
         counts,
+        jpeg_tables,
     })
 }
 

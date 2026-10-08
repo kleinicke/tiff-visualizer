@@ -20,7 +20,7 @@ import initTiffWasm, {
     build_histogram_fast, auto_threshold_bin_fast, global_threshold_mask_fast,
     local_threshold_mask_fast, local_auto_threshold_mask_fast, compute_stability_curve_fast,
     tiff_float_strip_plan, tiff_strip_metadata,
-    exr_zip_f32_plan, hdr_scanline_plan,
+    exr_zip_f32_plan, hdr_scanline_plan, tiff_preview_header,
 } from '../wasm/tiff-wasm.js';
 
 /**
@@ -87,6 +87,8 @@ async function initWasm(): Promise<any> {
                 exr_zip_f32_plan,
                 // Scanline offsets backing the parallel HDR decode.
                 hdr_scanline_plan,
+                // Header of a bounded preview whose pixels the strip pool decodes.
+                tiff_preview_header,
             };
             return wasmModule;
         } catch (error) {
