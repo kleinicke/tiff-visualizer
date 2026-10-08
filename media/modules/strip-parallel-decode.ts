@@ -22,6 +22,7 @@
  * Falls back to `null` for anything it cannot handle; the caller then uses the
  * ordinary single-worker path.
  */
+import { tiffFirstIfdPrefix, type TiffImageStream } from './tiff-stream-prefix.js';
 import {
 	MAX_PARALLEL_TIFF_WORKERS,
 	MIN_PARALLEL_TIFF_PIXELS,
@@ -413,6 +414,36 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 }
 
 /**
+ * Decode a TIFF that is still being read, dispatching each worker's range as
+ * soon as its bytes have arrived, so the decode overlaps the read instead of
+ * following it. Only for single-image files whose first IFD, with every value
+ * it points at, can be read from the start of the stream; anything else
+ * returns null and the caller waits for the whole file as before.
+ *
+ * `onDispatched` runs once no range will read the stream any more, after
+ * which the bootstrap may hand the buffer to another thread.
+ */
+export async function tryStreamingStripParallelDecode(
+	stream: TiffImageStream,
+	wasm: any,
+	onDispatched: () => void,
+): Promise<StripParallelResult | null> {
+	try {
+		const prefix = await tiffFirstIfdPrefix(stream);
+		if (!prefix?.singleImage || !stream.bytes) { return null; }
+		await stream.whenAvailable(prefix.needed);
+		const head = stream.bytes.subarray(0, prefix.needed);
+		if (wasm?.tiff_preview_reduction?.(head) > 0) { return null; }
+		return await tryStripParallelDecode(head, wasm, stream, onDispatched);
+	} catch (error) {
+		console.warn('[StripPool] Streaming decode unavailable, waiting for the whole file:', error);
+		return null;
+	} finally {
+		onDispatched();
+	}
+}
+
+/**
  * Decode `buffer` across the pool, or return `null` when this file is not a
  * shape the parallel path handles (the caller then uses the normal route).
  *
@@ -420,11 +451,16 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
  * `tiff_float_strip_plan` and `tiff_strip_metadata`; both parse the IFD only.
  */
 export async function tryStripParallelDecode(
-	buffer: ArrayBuffer,
+	buffer: ArrayBuffer | Uint8Array,
 	wasm: any,
+	stream?: TiffImageStream,
+	onDispatched?: () => void,
 ): Promise<StripParallelResult | null> {
 	if (!wasm || typeof wasm.tiff_float_strip_plan !== 'function') { return null; }
-	const bytes = new Uint8Array(buffer);
+	// With a stream, `buffer` is only the verified IFD prefix (see
+	// tryStreamingStripParallelDecode); strip bytes are read from the stream
+	// once they have arrived.
+	const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
 
 	const planStart = performance.now();
 	let plan: any;
@@ -518,6 +554,11 @@ export async function tryStripParallelDecode(
 		if (remainingStrips <= remainingWorkers) { /* one strip each from here */ }
 	}
 
+	if (stream) {
+		for (let i = 0; i < counts.length; i++) {
+			if (offsets[i] + counts[i] > stream.total) { return null; }
+		}
+	}
 	const raw = carrierFor(plan.bits_per_sample, plan.sample_format);
 	// Multi-channel callers need per-channel planes as well as the interleaved
 	// buffer. The workers split their own bands; a transposed orientation
@@ -525,22 +566,35 @@ export async function tryStripParallelDecode(
 	const orientationTag = Number(plan.orientation || 1);
 	const wantPlanes = channels > 1 && !(orientationTag >= 5 && orientationTag <= 8);
 	const dispatchStart = performance.now();
-	const jobs = ranges.map((range, index) => {
+	let dispatched = 0;
+	const jobs = ranges.map(async (range, index) => {
 		// Blocks, not units: a tile row contributes `blocksPerUnit` of them.
 		const firstBlock = range.first * blocksPerUnit;
 		const lastBlock = range.last * blocksPerUnit;
 		let blobLength = 0;
-		for (let i = firstBlock; i < lastBlock; i++) { blobLength += counts[i]; }
+		let rangeEnd = 0;
+		for (let i = firstBlock; i < lastBlock; i++) {
+			blobLength += counts[i];
+			rangeEnd = Math.max(rangeEnd, offsets[i] + counts[i]);
+		}
+		let source = bytes;
+		if (stream) {
+			await stream.whenAvailable(rangeEnd);
+			source = stream.bytes!;
+			// Released and transferred after an earlier range failed.
+			if (source.byteLength === 0) { throw new Error('stream bytes were released'); }
+		}
 		const blob = new Uint8Array(blobLength);
 		const rangeCounts = new Uint32Array(lastBlock - firstBlock);
 		let position = 0;
 		for (let i = firstBlock; i < lastBlock; i++) {
 			const offset = offsets[i];
 			const count = counts[i];
-			blob.set(bytes.subarray(offset, offset + count), position);
+			blob.set(source.subarray(offset, offset + count), position);
 			position += count;
 			rangeCounts[i - firstBlock] = count;
 		}
+		if (++dispatched === ranges.length) { onDispatched?.(); }
 		return activePool.run({
 			raw: !!raw,
 			blob: blob.buffer,

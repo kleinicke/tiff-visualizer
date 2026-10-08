@@ -47,6 +47,9 @@ function canUseNativeFirstPaint(settings: ImageSettings, surfaceMode: 'editor' |
 		settings.rgbAs24BitGrayscale !== true;
 }
 
+/** TIFFs at least this large are streamed so decoding can start before the read ends. */
+const STREAMED_TIFF_MIN_BYTES = 8 * 1024 * 1024;
+
 export class ImagePreview extends MediaPreview {
 	private postViewerMessage(message: HostToViewerMessage): Thenable<boolean> {
 		return this._webviewEditor.webview.postMessage(message);
@@ -1211,17 +1214,85 @@ export class ImagePreview extends MediaPreview {
 		// while the viewer and lazy NetPBM processor chunk are loading.
 		const warmSourceRead = !remoteTiffUrl
 			&& (!!warmDecoderUri || lower.endsWith('.pgm') || lower.endsWith('.pbm') || lower.endsWith('.tga'));
+		// Large TIFFs are read as a stream into a buffer of the file's size, so the
+		// strip pool can start decoding ranges whose bytes have arrived while the
+		// rest is still being read. The size comes from the host because webview
+		// resource responses carry no Content-Length.
+		let streamSourceBytes = 0;
+		if (warmSourceRead && isTiff) {
+			try {
+				const { size } = await vscode.workspace.fs.stat(this.resource);
+				streamSourceBytes = size >= STREAMED_TIFF_MIN_BYTES ? size : 0;
+			} catch { /* stream nothing; the ordinary read still works */ }
+		}
 		const decoderWarmupScript = warmSourceRead ? /* html */`
 	<script nonce="${nonce}">
 		(function () {
 			const imageSourceUri = ${JSON.stringify(uri.toString())};
 			const sourceReadMetrics = {};
+			// A progressive view of the source while it is read, for large TIFFs:
+			// the strip pool dispatches each range once its bytes have arrived.
+			// The bootstrap decode below must not take (transfer) the buffer while
+			// the viewer may still be copying ranges out of it, so it waits for
+			// releaseImageStream(), which the viewer calls when it is done or
+			// when it claims that decode.
+			const streamBytes = ${streamSourceBytes};
+			let releaseImageStream = () => {};
+			const imageStreamReleased = streamBytes > 0 ? new Promise(resolve => { releaseImageStream = resolve; }) : null;
+			const imageStream = streamBytes > 0 ? {
+				total: streamBytes,
+				received: 0,
+				bytes: null,
+				error: null,
+				waiters: [],
+				whenAvailable(end) {
+					if (this.error) return Promise.reject(this.error);
+					if (this.received >= Math.min(end, this.total)) return Promise.resolve();
+					return new Promise((resolve, reject) => this.waiters.push({ end, resolve, reject }));
+				},
+				settle() {
+					const pending = this.waiters;
+					this.waiters = [];
+					for (const waiter of pending) {
+						if (this.error) waiter.reject(this.error);
+						else if (this.received >= Math.min(waiter.end, this.total)) waiter.resolve();
+						else this.waiters.push(waiter);
+					}
+				}
+			} : null;
 			const imageBufferPromise = (async () => {
 				const responseStart = performance.now();
 				const response = await fetch(imageSourceUri);
 				sourceReadMetrics.responseMs = performance.now() - responseStart;
 				if (!response.ok) throw new Error('image source warmup failed');
 				const readStart = performance.now();
+				if (imageStream && response.body) {
+					try {
+						const bytes = new Uint8Array(imageStream.total);
+						imageStream.bytes = bytes;
+						const reader = response.body.getReader();
+						for (;;) {
+							const { done, value } = await reader.read();
+							if (done) break;
+							if (imageStream.received + value.byteLength > bytes.byteLength) throw new Error('image grew while it was read');
+							bytes.set(value, imageStream.received);
+							imageStream.received += value.byteLength;
+							imageStream.settle();
+						}
+						if (imageStream.received !== bytes.byteLength) throw new Error('image shrank while it was read');
+						// Safety net: every range has been copied long before this,
+						// even if the viewer never released the stream itself.
+						setTimeout(releaseImageStream, 5000);
+						sourceReadMetrics.arrayBufferMs = performance.now() - readStart;
+						return bytes.buffer;
+					} catch (error) {
+						// Fail every pending range; the viewer falls back to an ordinary read.
+						imageStream.error = error instanceof Error ? error : new Error(String(error));
+						imageStream.settle();
+						releaseImageStream();
+						throw imageStream.error;
+					}
+				}
 				const buffer = await response.arrayBuffer();
 				sourceReadMetrics.arrayBufferMs = performance.now() - readStart;
 				return buffer;
@@ -1284,7 +1355,7 @@ export class ImagePreview extends MediaPreview {
 			const speculativeFormat = ${JSON.stringify(speculativeDecodeFormat)};
 			const speculativeDecodeMetrics = {};
 			const speculativeDecodePromise = speculativeFormat && readyWorkerPromise
-				? Promise.all([readyWorkerPromise, imageBufferPromise]).then(([adopted, buffer]) => new Promise(resolve => {
+				? Promise.all([readyWorkerPromise, imageBufferPromise, imageStreamReleased]).then(([adopted, buffer]) => new Promise(resolve => {
 					const id = 0;
 					// TIFF page navigation and decoder fallback need the source bytes
 					// after the decode. Rather than copying them before the transfer
@@ -1341,6 +1412,8 @@ export class ImagePreview extends MediaPreview {
 				bundleName: ${JSON.stringify(warmDecoderBundleName)},
 				imageSourceUri,
 				imageBufferPromise,
+				imageStream,
+				releaseImageStream: () => releaseImageStream(),
 				sourceReadMetrics,
 				imageBufferClaimed: false,
 				speculativeFormat,

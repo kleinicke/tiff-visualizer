@@ -409,12 +409,16 @@ export class DecodeWorkerClient {
 			speculativeDecodeMetrics?: { durationMs?: number; fileBytes?: number };
 			speculativeDecodeClaimed?: boolean;
 			imageBufferClaimed?: boolean;
+			releaseImageStream?: () => void;
 		} | undefined;
 		if (warmup?.imageSourceUri !== src || warmup.speculativeFormat !== format ||
 			!warmup.speculativeDecodePromise || warmup.speculativeDecodeClaimed) {
 			return null;
 		}
 		warmup.speculativeDecodeClaimed = true;
+		// A streamed TIFF holds the bootstrap decode back until the viewer has
+		// finished reading ranges from the buffer; claiming the decode means it has.
+		warmup.releaseImageStream?.();
 		// The speculative request transferred this buffer. If it cannot return the
 		// bytes, the ordinary fallback must refetch rather than adopt a detached
 		// ArrayBuffer from imageBufferPromise.

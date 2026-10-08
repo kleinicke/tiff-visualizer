@@ -5,7 +5,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { resolveNanColor } from './nan-color.js';
 import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
-import { tryStripParallelDecode, tryParallelTiffDetail } from './strip-parallel-decode.js';
+import { tryStripParallelDecode, tryParallelTiffDetail, tryStreamingStripParallelDecode, type StripParallelResult } from './strip-parallel-decode.js';
 import { openRemoteTiff } from './remote-tiff-source.js';
 import { PerfTrace } from './perf-trace.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
@@ -588,6 +588,28 @@ export class TiffProcessor {
 				this.pageDirectory = [];
 				this.gdalMetadata = null;
 			}
+			// A large TIFF that is still being read decodes while it arrives: the
+			// strip pool dispatches each range once its bytes are in. The
+			// bootstrap decode waits for that dispatch to finish before it takes
+			// the buffer, then hands the complete file back as the source.
+			let streamed: StripParallelResult | null = null;
+			let streamedMs = 0;
+			if (pageIndex !== 0) {
+				(globalThis as any).__tiffVisualizerDecoderWarmup?.releaseImageStream?.();
+			} else {
+				const warmup = (globalThis as any).__tiffVisualizerDecoderWarmup;
+				const stream = warmup?.imageSourceUri === src && !warmup.speculativeDecodeClaimed ? warmup.imageStream : null;
+				if (stream) {
+					const streamStart = performance.now();
+					const mainWasm = getWasmModuleSync() || await getWasmModule();
+					streamed = mainWasm
+						? await tryStreamingStripParallelDecode(stream, mainWasm, () => warmup.releaseImageStream?.())
+						: null;
+					warmup.releaseImageStream?.();
+					streamedMs = performance.now() - streamStart;
+					if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				}
+			}
 			const speculative = pageIndex === 0
 				? await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'tiff')
 				: null;
@@ -706,7 +728,9 @@ export class TiffProcessor {
 			if (!wasmResult && pageIndex === 0 && buffer.byteLength >= 512 * 1024) {
 				try {
 					const mainWasm = getWasmModuleSync() || await getWasmModule();
-					if (mainWasm && levelHint) {
+					// A streamed decode already checked, on its single IFD, what the
+					// level choice and preview gate below check on the whole file.
+					if (mainWasm && levelHint && !streamed) {
 						// The plan below describes PAGE 0, so a pyramidal file
 						// whose best level is an overview must not take this
 						// path — it would decode the full-resolution page in
@@ -720,9 +744,9 @@ export class TiffProcessor {
 							this.pageIndex = chosen;
 						}
 					}
-					if (mainWasm && pageIndex === 0 && !(mainWasm.tiff_preview_reduction?.(new Uint8Array(buffer)) > 0)) {
-						const parallelStart = performance.now();
-						const parallel = await tryStripParallelDecode(buffer, mainWasm);
+					if (mainWasm && pageIndex === 0 && (streamed || !(mainWasm.tiff_preview_reduction?.(new Uint8Array(buffer)) > 0))) {
+						const parallelStart = performance.now() - streamedMs;
+						const parallel = streamed ?? await tryStripParallelDecode(buffer, mainWasm);
 						if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 						if (parallel) {
 							// renderTiff still needs per-channel planes: it takes the
@@ -777,7 +801,7 @@ export class TiffProcessor {
 								omeXml: parallel.omeXml,
 								geoJson: parallel.geoJson,
 								pageDirectoryJson: parallel.pageDirectoryJson,
-								decodedWith: `wasm (${parallel.workers} ${parallel.tileLength ? 'tile-row' : 'strip'} workers)`,
+								decodedWith: `wasm (${parallel.workers} ${parallel.tileLength ? 'tile-row' : 'strip'} workers${streamed ? ', streamed' : ''})`,
 								decodeTimings: parallel.timings,
 							};
 							// localBuffer is cleared after its declaration below.
