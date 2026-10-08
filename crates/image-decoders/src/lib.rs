@@ -1605,7 +1605,8 @@ pub fn decode_tiff_strip_range_raw(
     let mut raster = formats::tiff::strips::decode_unit_range(blob, counts, first_strip, &inner)?;
 
     let bytes_per_sample = (plan.bits_per_sample / 8) as usize;
-    let big_endian = plan.predictor == 3 || !plan.little_endian;
+    // Predictor 3 already yields little-endian samples.
+    let big_endian = plan.predictor != 3 && !plan.little_endian;
     if big_endian && bytes_per_sample > 1 {
         for sample in raster.chunks_exact_mut(bytes_per_sample) {
             sample.reverse();
@@ -1615,6 +1616,171 @@ pub fn decode_tiff_strip_range_raw(
         raster = formats::tiff::convert_cmyk_u8_to_rgb(raster, plan.channels).0;
     }
     Ok(raster)
+}
+
+/// `decode_tiff_strip_range_raw`, plus the range's sample min/max.
+///
+/// The strip workers used to scan every decoded sample in JavaScript for this,
+/// at roughly 2 ns a sample: about a third of the decode itself on a large
+/// float image. The scan has the same semantics here: every sample of every
+/// channel, finite values only, `(inf, -inf)` when there are none. `None` for a
+/// carrier the raw path does not produce, in which case the caller scans.
+///
+/// # Errors
+///
+/// As `decode_tiff_strip_range_raw`: a malformed or truncated strip range.
+#[cfg(feature = "tiff")]
+pub fn decode_tiff_strip_range_raw_with_range(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    plan: &TiffFloatStripPlan,
+) -> Result<RawStripRange, DecodeError> {
+    let data = decode_tiff_strip_range_raw(blob, counts, first_strip, plan)?;
+    let range = match (plan.bits_per_sample, plan.sample_format) {
+        (8, 1) => Some(raw_range_u8(&data)),
+        (16, 1) => Some(raw_range_u16_le(&data)),
+        (32, 3) => Some(raw_range_f32_le(&data)),
+        _ => None,
+    };
+    Ok(RawStripRange { data, range })
+}
+
+/// A strip range's native little-endian sample bytes and their finite
+/// `(min, max)`, or `None` for a carrier without a Rust-side scan.
+#[cfg(feature = "tiff")]
+pub struct RawStripRange {
+    pub data: Vec<u8>,
+    pub range: Option<(f64, f64)>,
+}
+
+/// Split interleaved samples of `bytes_per_sample` bytes into `channels`
+/// planes, laid out plane after plane in one buffer.
+///
+/// The strip workers need per-channel planes as well as the interleaved band;
+/// this is the same gather the JavaScript split did, at a fraction of its cost.
+#[cfg(feature = "tiff")]
+#[must_use]
+pub fn split_sample_planes(
+    interleaved: &[u8],
+    channels: usize,
+    bytes_per_sample: usize,
+) -> Vec<u8> {
+    let mut planes = vec![0u8; interleaved.len()];
+    if channels < 2 || bytes_per_sample == 0 {
+        planes.copy_from_slice(interleaved);
+        return planes;
+    }
+    let pixel_bytes = channels * bytes_per_sample;
+    let pixels = interleaved.len() / pixel_bytes;
+    let plane_bytes = pixels * bytes_per_sample;
+    macro_rules! split {
+        ($n:expr) => {{
+            for (channel, plane) in planes
+                .chunks_exact_mut(plane_bytes)
+                .enumerate()
+                .take(channels)
+            {
+                let offset = channel * $n;
+                for (dst, pixel) in plane
+                    .chunks_exact_mut($n)
+                    .zip(interleaved.chunks_exact(pixel_bytes))
+                {
+                    dst.copy_from_slice(&pixel[offset..offset + $n]);
+                }
+            }
+        }};
+    }
+    match bytes_per_sample {
+        1 => split!(1),
+        2 => split!(2),
+        4 => split!(4),
+        8 => split!(8),
+        _ => planes.copy_from_slice(interleaved),
+    }
+    planes
+}
+
+#[cfg(feature = "tiff")]
+fn raw_range_u8(raster: &[u8]) -> (f64, f64) {
+    match (raster.iter().min(), raster.iter().max()) {
+        (Some(&min), Some(&max)) => (f64::from(min), f64::from(max)),
+        _ => (f64::INFINITY, f64::NEG_INFINITY),
+    }
+}
+
+#[cfg(feature = "tiff")]
+fn raw_range_u16_le(raster: &[u8]) -> (f64, f64) {
+    let mut min = u16::MAX;
+    let mut max = u16::MIN;
+    for pair in raster.chunks_exact(2) {
+        let value = u16::from_le_bytes([pair[0], pair[1]]);
+        min = min.min(value);
+        max = max.max(value);
+    }
+    if raster.len() < 2 {
+        return (f64::INFINITY, f64::NEG_INFINITY);
+    }
+    (f64::from(min), f64::from(max))
+}
+
+/// Finite min/max of little-endian f32 samples. Plain `<`/`>` comparisons skip
+/// NaN and vectorize; an infinity that wins either side is corrected by a
+/// second, finite-only pass, which only such (rare) images pay for.
+#[cfg(feature = "tiff")]
+fn raw_range_f32_le(raster: &[u8]) -> (f64, f64) {
+    const LANES: usize = 8;
+    let mut mins = [f32::INFINITY; LANES];
+    let mut maxs = [f32::NEG_INFINITY; LANES];
+    let mut blocks = raster.chunks_exact(4 * LANES);
+    for block in &mut blocks {
+        for lane in 0..LANES {
+            let at = lane * 4;
+            let value =
+                f32::from_le_bytes([block[at], block[at + 1], block[at + 2], block[at + 3]]);
+            if value < mins[lane] {
+                mins[lane] = value;
+            }
+            if value > maxs[lane] {
+                maxs[lane] = value;
+            }
+        }
+    }
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for lane in 0..LANES {
+        if mins[lane] < min {
+            min = mins[lane];
+        }
+        if maxs[lane] > max {
+            max = maxs[lane];
+        }
+    }
+    for sample in blocks.remainder().chunks_exact(4) {
+        let value = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+        if value < min {
+            min = value;
+        }
+        if value > max {
+            max = value;
+        }
+    }
+    if min.is_infinite() || max.is_infinite() {
+        min = f32::INFINITY;
+        max = f32::NEG_INFINITY;
+        for sample in raster.chunks_exact(4) {
+            let value = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+            if value.is_finite() {
+                if value < min {
+                    min = value;
+                }
+                if value > max {
+                    max = value;
+                }
+            }
+        }
+    }
+    (f64::from(min), f64::from(max))
 }
 
 #[cfg(feature = "tiff")]
@@ -1627,4 +1793,89 @@ pub use formats::tiff::remote::{
 #[cfg(feature = "sgi")]
 pub fn decode_sgi_fast(data: &[u8]) -> Result<DecodedArray, DecodeError> {
     formats::sgi::decode(data)
+}
+
+#[cfg(all(test, feature = "tiff"))]
+mod raw_range_tests {
+    use super::{raw_range_f32_le, raw_range_u16_le, raw_range_u8};
+
+    /// The JavaScript scan the strip workers used: in order, `<`/`>` only,
+    /// redone finite-only when NaN or an infinite extreme turned up.
+    fn js_scan(values: &[f32]) -> (f64, f64) {
+        let (mut min, mut max, mut non_finite) = (f32::INFINITY, f32::NEG_INFINITY, false);
+        for &v in values {
+            if v < min {
+                min = v;
+            }
+            if v > max {
+                max = v;
+            }
+            non_finite |= v.is_nan();
+        }
+        if non_finite || !min.is_finite() || !max.is_finite() {
+            min = f32::INFINITY;
+            max = f32::NEG_INFINITY;
+            for &v in values.iter().filter(|v| v.is_finite()) {
+                if v < min {
+                    min = v;
+                }
+                if v > max {
+                    max = v;
+                }
+            }
+        }
+        (f64::from(min), f64::from(max))
+    }
+
+    fn le(values: &[f32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn f32_range_matches_the_javascript_scan() {
+        let cases: Vec<Vec<f32>> = vec![
+            vec![],
+            vec![f32::NAN],
+            vec![f32::INFINITY, f32::NEG_INFINITY, f32::NAN],
+            vec![3.0],
+            (0..37u8).map(|i| f32::from(i) - 18.5).collect(),
+            (0..64u8)
+                .map(|i| if i % 5 == 0 { f32::NAN } else { f32::from(i) })
+                .collect(),
+            (0..65u8)
+                .map(|i| {
+                    if i == 40 {
+                        f32::INFINITY
+                    } else {
+                        -f32::from(i)
+                    }
+                })
+                .collect(),
+            (0..19u8)
+                .map(|i| {
+                    if i == 3 {
+                        f32::NEG_INFINITY
+                    } else {
+                        f32::from(i) * 0.25
+                    }
+                })
+                .collect(),
+            vec![f32::MAX, f32::MIN, f32::MIN_POSITIVE, -f32::MIN_POSITIVE],
+        ];
+        for case in cases {
+            assert_eq!(raw_range_f32_le(&le(&case)), js_scan(&case), "{case:?}");
+        }
+    }
+
+    #[test]
+    fn integer_ranges_cover_every_sample() {
+        assert_eq!(raw_range_u8(&[]), (f64::INFINITY, f64::NEG_INFINITY));
+        assert_eq!(raw_range_u8(&[7, 255, 0, 9]), (0.0, 255.0));
+        assert_eq!(raw_range_u16_le(&[]), (f64::INFINITY, f64::NEG_INFINITY));
+        let words: Vec<u8> = [513u16, 2, 65535, 40]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        assert_eq!(raw_range_u16_le(&words), (2.0, 65535.0));
+    }
 }

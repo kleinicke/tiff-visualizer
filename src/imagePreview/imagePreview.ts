@@ -1164,6 +1164,7 @@ export class ImagePreview extends MediaPreview {
 		const decodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'decodeWorker.bundle.js'));
 		const fastRawWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'fastRawWorker.bundle.js'));
 		const layeredDecodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layeredDecodeWorker.bundle.js'));
+		const pngDecodeWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'pngDecodeWorker.bundle.js'));
 		const wasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'tiff-wasm.wasm'));
 		// The JPEG XL decoder is a separate module; naming it here costs nothing,
 		// and nothing fetches it until a .jxl is opened.
@@ -1182,6 +1183,7 @@ export class ImagePreview extends MediaPreview {
 				'decodeWorker.bundle.js': decodeWorkerUri.toString(),
 				'fastRawWorker.bundle.js': fastRawWorkerUri.toString(),
 				'layeredDecodeWorker.bundle.js': layeredDecodeWorkerUri.toString(),
+				'pngDecodeWorker.bundle.js': pngDecodeWorkerUri.toString(),
 			},
 			jxlWasm: jxlWasmUri.toString(),
 			codecWasm: codecWasmUri.toString(),
@@ -1284,15 +1286,13 @@ export class ImagePreview extends MediaPreview {
 			const speculativeDecodePromise = speculativeFormat && readyWorkerPromise
 				? Promise.all([readyWorkerPromise, imageBufferPromise]).then(([adopted, buffer]) => new Promise(resolve => {
 					const id = 0;
-					// TIFF page navigation and decoder fallback need immutable source
-					// bytes after the bootstrap transfers its decode copy to the worker.
-					// This is the same single copy processTiff normally keeps, just made
-					// before the viewer bundle has finished parsing.
-					const retainedSourceBuffer = speculativeFormat === 'tiff' ? buffer.slice(0) : null;
+					// TIFF page navigation and decoder fallback need the source bytes
+					// after the decode. Rather than copying them before the transfer
+					// (a full-file copy on the critical path), the worker transfers its
+					// untouched input back as \`sourceBuffer\` (\`returnSource\`).
 					const timeout = setTimeout(() => resolve({
 						ok: false,
-						error: 'speculative decode timed out',
-						...(retainedSourceBuffer ? { sourceBuffer: retainedSourceBuffer } : {})
+						error: 'speculative decode timed out'
 					}), 30000);
 					speculativeDecodeMetrics.start = performance.now();
 					speculativeDecodeMetrics.fileBytes = buffer.byteLength;
@@ -1302,7 +1302,7 @@ export class ImagePreview extends MediaPreview {
 						speculativeDecodeMetrics.end = performance.now();
 						speculativeDecodeMetrics.durationMs = speculativeDecodeMetrics.end - speculativeDecodeMetrics.start;
 						adopted.worker.onmessage = null;
-						resolve(retainedSourceBuffer ? { ...event.data, sourceBuffer: retainedSourceBuffer } : event.data);
+						resolve(event.data);
 					};
 					try {
 						adopted.worker.postMessage({
@@ -1311,7 +1311,8 @@ export class ImagePreview extends MediaPreview {
 							buffer,
 							options: {
 								computeStats: ${!settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false},
-								preferParallelTiff: speculativeFormat === 'tiff'
+								preferParallelTiff: speculativeFormat === 'tiff',
+								returnSource: speculativeFormat === 'tiff'
 							}
 						}, [buffer]);
 					} catch (error) {
@@ -1319,8 +1320,7 @@ export class ImagePreview extends MediaPreview {
 						resolve({
 							ok: false,
 							error: String(error),
-							buffer,
-							...(retainedSourceBuffer ? { sourceBuffer: retainedSourceBuffer } : {})
+							buffer
 						});
 					}
 				}))

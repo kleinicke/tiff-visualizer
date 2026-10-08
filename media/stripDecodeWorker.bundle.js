@@ -163,6 +163,17 @@ function getArrayU32FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
+function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return TiffStripRangeRaw.__wrap(ret[0]);
+}
 function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -174,19 +185,6 @@ function decode_tiff_float_strip_range(blob, counts, first_strip, width, height,
   }
   var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
   wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v3;
-}
-function decode_tiff_strip_range_raw(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_strip_range_raw(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
-  }
-  var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v3;
 }
 function getArrayF64FromWasm0(ptr, len) {
@@ -2544,6 +2542,72 @@ var TiffStripMetadataJs = class _TiffStripMetadataJs {
   }
 };
 if (Symbol.dispose) TiffStripMetadataJs.prototype[Symbol.dispose] = TiffStripMetadataJs.prototype.free;
+var TiffStripRangeRawFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_tiffstriprangeraw_free(ptr >>> 0, 1));
+var TiffStripRangeRaw = class _TiffStripRangeRaw {
+  static __wrap(ptr) {
+    ptr = ptr >>> 0;
+    const obj = Object.create(_TiffStripRangeRaw.prototype);
+    obj.__wbg_ptr = ptr;
+    TiffStripRangeRawFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    TiffStripRangeRawFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_tiffstriprangeraw_free(ptr, 0);
+  }
+  /**
+   * One-shot: the channel planes, plane after plane, when they were asked
+   * for (`output_channels` > 1); empty otherwise.
+   * @returns {Uint8Array}
+   */
+  take_planes() {
+    const ret = wasm.tiffstriprangeraw_take_planes(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+  /**
+   * @returns {number}
+   */
+  get max() {
+    const ret = wasm.tiffstriprangeraw_max(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * @returns {number}
+   */
+  get min() {
+    const ret = wasm.tiffstriprangeraw_min(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * False when the carrier has no Rust-side scan; the caller then scans.
+   * @returns {boolean}
+   */
+  get has_range() {
+    const ret = wasm.tiffstriprangeraw_has_range(this.__wbg_ptr);
+    return ret !== 0;
+  }
+  /**
+   * One-shot: the bytes are moved out.
+   * @returns {Uint8Array}
+   */
+  take_data() {
+    const ret = wasm.tiffstriprangeraw_take_data(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+};
+if (Symbol.dispose) TiffStripRangeRaw.prototype[Symbol.dispose] = TiffStripRangeRaw.prototype.free;
 var EXPECTED_RESPONSE_TYPES = /* @__PURE__ */ new Set(["basic", "cors", "default"]);
 async function __wbg_load(module, imports) {
   if (typeof Response === "function" && module instanceof Response) {
@@ -2746,6 +2810,27 @@ function orientTiffRange(source, width, height, channels, firstRow, orientation)
 
 // media/strip-decode-worker.ts
 var ready = null;
+function splitPlanes(samples, channels) {
+  const pixels = samples.length / channels;
+  const planes = new samples.constructor(samples.length);
+  for (let c = 0; c < channels; c++) {
+    const base = c * pixels;
+    for (let i = 0, j = c; i < pixels; i++, j += channels) {
+      planes[base + i] = samples[j];
+    }
+  }
+  return planes;
+}
+function withPlanes(oriented, job) {
+  const channels = job.outputChannels || job.channels;
+  const transfer = [oriented.samples.buffer];
+  if (!job.planes || channels < 2 || oriented.transposed) {
+    return { message: oriented, transfer };
+  }
+  const planes = splitPlanes(oriented.samples, channels);
+  transfer.push(planes.buffer);
+  return { message: { ...oriented, planes }, transfer };
+}
 self.onmessage = async (event) => {
   const message = event.data;
   if (message?.type === "init") {
@@ -2807,7 +2892,9 @@ self.onmessage = async (event) => {
       return;
     }
     if (job.raw) {
-      const bytes = decode_tiff_strip_range_raw(
+      const outputChannels = job.outputChannels || job.channels;
+      const rustPlanes = !!job.planes && outputChannels > 1 && (job.orientation || 1) === 1;
+      const decoded = decode_tiff_strip_range_raw_stats(
         new Uint8Array(job.blob),
         new Uint32Array(job.counts),
         job.firstStrip,
@@ -2826,35 +2913,45 @@ self.onmessage = async (event) => {
         job.tileLength || 0,
         job.blocksAcross || 1,
         job.lercAdditionalCompression || 0,
-        job.photometricInterpretation || 1
+        job.photometricInterpretation || 1,
+        rustPlanes ? outputChannels : 0
       );
-      const view = job.bitsPerSample === 8 ? bytes : job.sampleFormat === 3 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4) : new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
-      let rmin = Infinity;
-      let rmax = -Infinity;
-      let nonFinite = false;
-      for (let i = 0; i < view.length; i++) {
-        const value = view[i];
-        if (value < rmin) {
-          rmin = value;
-        }
-        if (value > rmax) {
-          rmax = value;
-        }
-        if (value !== value) {
-          nonFinite = true;
-        }
-      }
-      if (nonFinite || !Number.isFinite(rmin) || !Number.isFinite(rmax)) {
+      const hasRange = decoded.has_range;
+      let rmin = decoded.min;
+      let rmax = decoded.max;
+      const bytes = decoded.take_data();
+      const planeBytes = rustPlanes ? decoded.take_planes() : null;
+      decoded.free();
+      const asCarrier = (raw) => job.bitsPerSample === 8 ? raw : job.sampleFormat === 3 ? new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4) : new Uint16Array(raw.buffer, raw.byteOffset, raw.byteLength / 2);
+      const view = asCarrier(bytes);
+      if (!hasRange) {
         rmin = Infinity;
         rmax = -Infinity;
+        let nonFinite = false;
         for (let i = 0; i < view.length; i++) {
           const value = view[i];
-          if (Number.isFinite(value)) {
-            if (value < rmin) {
-              rmin = value;
-            }
-            if (value > rmax) {
-              rmax = value;
+          if (value < rmin) {
+            rmin = value;
+          }
+          if (value > rmax) {
+            rmax = value;
+          }
+          if (value !== value) {
+            nonFinite = true;
+          }
+        }
+        if (nonFinite || !Number.isFinite(rmin) || !Number.isFinite(rmax)) {
+          rmin = Infinity;
+          rmax = -Infinity;
+          for (let i = 0; i < view.length; i++) {
+            const value = view[i];
+            if (Number.isFinite(value)) {
+              if (value < rmin) {
+                rmin = value;
+              }
+              if (value > rmax) {
+                rmax = value;
+              }
             }
           }
         }
@@ -2867,9 +2964,10 @@ self.onmessage = async (event) => {
         job.firstStrip * job.rowsPerStrip,
         job.orientation || 1
       );
+      const { message: message3, transfer: transfer2 } = planeBytes ? { message: { ...oriented2, planes: asCarrier(planeBytes) }, transfer: [oriented2.samples.buffer, planeBytes.buffer] } : withPlanes(oriented2, job);
       self.postMessage(
-        { id: job.id, ...oriented2, min: rmin, max: rmax, ms: performance.now() - started },
-        [oriented2.samples.buffer]
+        { id: job.id, ...message3, min: rmin, max: rmax, ms: performance.now() - started },
+        transfer2
       );
       return;
     }
@@ -2932,9 +3030,10 @@ self.onmessage = async (event) => {
       job.firstStrip * job.rowsPerStrip,
       job.orientation || 1
     );
+    const { message: message2, transfer } = withPlanes(oriented, job);
     self.postMessage(
-      { id: job.id, ...oriented, min, max, ms: performance.now() - started },
-      [oriented.samples.buffer]
+      { id: job.id, ...message2, min, max, ms: performance.now() - started },
+      transfer
     );
   } catch (error) {
     self.postMessage({ id: job.id, error: String(error?.message || error) });

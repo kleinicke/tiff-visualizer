@@ -1190,6 +1190,114 @@ pub fn decode_tiff_strip_range_raw(
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
+/// One strip range's native little-endian sample bytes and their min/max.
+#[wasm_bindgen]
+pub struct TiffStripRangeRaw {
+    data: Vec<u8>,
+    planes: Vec<u8>,
+    range: Option<(f64, f64)>,
+}
+
+#[wasm_bindgen]
+impl TiffStripRangeRaw {
+    /// False when the carrier has no Rust-side scan; the caller then scans.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn has_range(&self) -> bool {
+        self.range.is_some()
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn min(&self) -> f64 {
+        self.range.map_or(f64::INFINITY, |range| range.0)
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn max(&self) -> f64 {
+        self.range.map_or(f64::NEG_INFINITY, |range| range.1)
+    }
+    /// One-shot: the bytes are moved out.
+    pub fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.data)
+    }
+    /// One-shot: the channel planes, plane after plane, when they were asked
+    /// for (`output_channels` > 1); empty otherwise.
+    pub fn take_planes(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.planes)
+    }
+}
+
+/// `decode_tiff_strip_range_raw` with the range's min/max computed in Rust and,
+/// when `output_channels` > 1, the channel planes split out as well. Pass 0 or
+/// 1 to skip the planes.
+///
+/// # Errors
+///
+/// A malformed or truncated strip range, as a JavaScript string.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_tiff_strip_range_raw_stats(
+    blob: &[u8],
+    counts: &[u32],
+    first_strip: u32,
+    width: u32,
+    height: u32,
+    channels: u32,
+    bits_per_sample: u32,
+    compression: u32,
+    rows_per_strip: u32,
+    predictor: u32,
+    sample_format: u32,
+    little_endian: bool,
+    planar_configuration: u32,
+    orientation: u32,
+    tile_width: u32,
+    tile_length: u32,
+    blocks_across: u32,
+    lerc_additional_compression: u32,
+    photometric_interpretation: u32,
+    output_channels: u32,
+) -> Result<TiffStripRangeRaw, JsValue> {
+    let plan = core::TiffFloatStripPlan {
+        width,
+        height,
+        channels,
+        bits_per_sample,
+        compression,
+        predictor,
+        sample_format,
+        planar_configuration,
+        orientation,
+        photometric_interpretation,
+        little_endian,
+        rows_per_strip,
+        tile_width,
+        tile_length,
+        blocks_across,
+        lerc_additional_compression,
+        offsets: Vec::new(),
+        counts: Vec::new(),
+    };
+    core::decode_tiff_strip_range_raw_with_range(blob, counts, first_strip, &plan)
+        .map(|core::RawStripRange { data, range }| {
+            let planes = if output_channels > 1 {
+                core::split_sample_planes(
+                    &data,
+                    output_channels as usize,
+                    (bits_per_sample / 8).max(1) as usize,
+                )
+            } else {
+                Vec::new()
+            };
+            TiffStripRangeRaw {
+                data,
+                planes,
+                range,
+            }
+        })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 #[wasm_bindgen]
 pub fn remote_tiff_header(header: &[u8]) -> Result<String, JsValue> {
     core::remote_tiff_header(header).map_err(js_error)

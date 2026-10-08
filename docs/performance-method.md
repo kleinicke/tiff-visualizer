@@ -138,6 +138,26 @@ that only appeared in a trace:
 Note the shape of the last two: both were a **type or property mismatch causing a
 silent fallback**, not slow algorithms. Look for those first.
 
+The next most common shape is **work outside the traced phase**. When a phase's
+details do not sum to the phase, the missing time is the finding:
+
+- a multi-channel strip-pool decode spent ~157 ms in an untraced main-thread loop
+  splitting the image into channel planes, more than the decode itself
+- the strip workers scanned every sample for min/max in JavaScript at ~2 ns a
+  sample, a third of the decode on a large float image; the same scan in Rust,
+  while the samples are hot, is nearly free
+- RGB textures cost ~2.5x more per byte to upload than one-channel ones: Metal
+  has no three-channel formats, so ANGLE expands RGB to RGBA. Uploading the same
+  bytes as a one-channel texture three times as wide avoids it
+- the pool balanced ranges by compressed bytes, so on high-ratio files one
+  worker got most of the decoded rows. `strip-slowest-worker` against
+  `strip-workers` shows imbalance and dispatch overhead directly
+
+Node is not the browser here: in Node, warming the WASM module halves a fresh
+worker's first decode (baseline Liftoff tier vs optimized code), but in the VS
+Code webview the same experiment showed almost no difference. Confirm a Node
+finding in the real host before building on it.
+
 ## 7. Amdahl is the honest answer
 
 When decode is 85% of a load, a 3x decode win is a 2.3x total win. When decode is

@@ -12,10 +12,40 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_exr_zip_f32_blocks, decode_tiff_float_strip_range, decode_tiff_strip_range_raw } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_exr_zip_f32_blocks, decode_tiff_float_strip_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
 import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
+
+/**
+ * Split an interleaved band into its channel planes, laid out plane after
+ * plane in one buffer. Done here, in parallel across the pool, so the main
+ * thread only has to `set` each plane's band instead of de-interleaving the
+ * whole image in one serial loop.
+ */
+function splitPlanes<T extends Float32Array | Uint16Array | Uint8Array>(samples: T, channels: number): T {
+	const pixels = samples.length / channels;
+	const planes = new (samples.constructor as any)(samples.length) as T;
+	for (let c = 0; c < channels; c++) {
+		const base = c * pixels;
+		for (let i = 0, j = c; i < pixels; i++, j += channels) {
+			planes[base + i] = samples[j];
+		}
+	}
+	return planes;
+}
+
+/** Attach channel planes when the orchestrator asked for them and they can be placed by band. */
+function withPlanes(oriented: { samples: any, transposed: boolean }, job: any): { message: Record<string, unknown>, transfer: ArrayBuffer[] } {
+	const channels = job.outputChannels || job.channels;
+	const transfer: ArrayBuffer[] = [oriented.samples.buffer];
+	if (!job.planes || channels < 2 || oriented.transposed) {
+		return { message: oriented, transfer };
+	}
+	const planes = splitPlanes(oriented.samples, channels);
+	transfer.push(planes.buffer);
+	return { message: { ...oriented, planes }, transfer };
+}
 
 self.onmessage = async (event: MessageEvent) => {
 	const message = event.data as any;
@@ -73,7 +103,11 @@ self.onmessage = async (event: MessageEvent) => {
 		// conversion. Half floats and >16-bit integers still need widening, so
 		// those keep the f32 path.
 		if (job.raw) {
-			const bytes = decode_tiff_strip_range_raw(
+			const outputChannels = job.outputChannels || job.channels;
+			// Rust splits the planes before orientation, so it can only do so
+			// for an image that needs none; the others are split after orienting.
+			const rustPlanes = !!job.planes && outputChannels > 1 && (job.orientation || 1) === 1;
+			const decoded = decode_tiff_strip_range_raw_stats(
 				new Uint8Array(job.blob),
 				new Uint32Array(job.counts),
 				job.firstStrip,
@@ -93,35 +127,50 @@ self.onmessage = async (event: MessageEvent) => {
 				job.blocksAcross || 1,
 				job.lercAdditionalCompression || 0,
 				job.photometricInterpretation || 1,
+				rustPlanes ? outputChannels : 0,
 			);
-			const view = job.bitsPerSample === 8
-				? bytes
+			// The min/max scan runs in Rust while the samples are still hot; it
+			// is the same scan as the JavaScript fallback below.
+			const hasRange = decoded.has_range;
+			let rmin = decoded.min;
+			let rmax = decoded.max;
+			const bytes = decoded.take_data();
+			const planeBytes = rustPlanes ? decoded.take_planes() : null;
+			decoded.free();
+			const asCarrier = (raw: Uint8Array) => job.bitsPerSample === 8
+				? raw
 				: job.sampleFormat === 3
-					? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 4)
-					: new Uint16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
-			let rmin = Infinity;
-			let rmax = -Infinity;
-			let nonFinite = false;
-			for (let i = 0; i < view.length; i++) {
-				const value = view[i];
-				if (value < rmin) { rmin = value; }
-				if (value > rmax) { rmax = value; }
-				if (value !== value) { nonFinite = true; }
-			}
-			if (nonFinite || !Number.isFinite(rmin) || !Number.isFinite(rmax)) {
-				rmin = Infinity; rmax = -Infinity;
+					? new Float32Array(raw.buffer, raw.byteOffset, raw.byteLength / 4)
+					: new Uint16Array(raw.buffer, raw.byteOffset, raw.byteLength / 2);
+			const view = asCarrier(bytes);
+			if (!hasRange) {
+				rmin = Infinity;
+				rmax = -Infinity;
+				let nonFinite = false;
 				for (let i = 0; i < view.length; i++) {
 					const value = view[i];
-					if (Number.isFinite(value)) {
-						if (value < rmin) { rmin = value; }
-						if (value > rmax) { rmax = value; }
+					if (value < rmin) { rmin = value; }
+					if (value > rmax) { rmax = value; }
+					if (value !== value) { nonFinite = true; }
+				}
+				if (nonFinite || !Number.isFinite(rmin) || !Number.isFinite(rmax)) {
+					rmin = Infinity; rmax = -Infinity;
+					for (let i = 0; i < view.length; i++) {
+						const value = view[i];
+						if (Number.isFinite(value)) {
+							if (value < rmin) { rmin = value; }
+							if (value > rmax) { rmax = value; }
+						}
 					}
 				}
 			}
 			const oriented = orientTiffRange(view, job.width, job.height, job.outputChannels || job.channels,
 				job.firstStrip * job.rowsPerStrip, job.orientation || 1);
-			(self as any).postMessage({ id: job.id, ...oriented, min: rmin, max: rmax, ms: performance.now() - started },
-				[oriented.samples.buffer]);
+			const { message, transfer } = planeBytes
+				? { message: { ...oriented, planes: asCarrier(planeBytes) }, transfer: [oriented.samples.buffer, planeBytes.buffer] }
+				: withPlanes(oriented, job);
+			(self as any).postMessage({ id: job.id, ...message, min: rmin, max: rmax, ms: performance.now() - started },
+				transfer);
 			return;
 		}
 		const samples = decode_tiff_float_strip_range(
@@ -171,8 +220,9 @@ self.onmessage = async (event: MessageEvent) => {
 		}
 		const oriented = orientTiffRange(samples, job.width, job.height, job.outputChannels || job.channels,
 			job.firstStrip * job.rowsPerStrip, job.orientation || 1);
-		(self as any).postMessage({ id: job.id, ...oriented, min, max, ms: performance.now() - started },
-			[oriented.samples.buffer]);
+		const { message, transfer } = withPlanes(oriented, job);
+		(self as any).postMessage({ id: job.id, ...message, min, max, ms: performance.now() - started },
+			transfer);
 	} catch (error) {
 		(self as any).postMessage({ id: job.id, error: String((error as Error)?.message || error) });
 	}

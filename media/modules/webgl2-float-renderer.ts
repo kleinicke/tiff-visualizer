@@ -58,6 +58,8 @@ export class WebGL2FloatRenderer {
 	vao: WebGLVertexArrayObject | null;
 	textureData: TypedPixelData | null;
 	textureFormat: TextureFormat;
+	/** Three-channel data uploaded as a one-channel texture three texels wide per pixel. */
+	texturePacked: boolean;
 	colormapName: string;
 	textureWidth: number;
 	textureHeight: number;
@@ -76,6 +78,7 @@ export class WebGL2FloatRenderer {
 		this.vao = null;
 		this.textureData = null;
 		this.textureFormat = '';
+		this.texturePacked = false;
 		this.colormapName = '';
 		this.textureWidth = 0;
 		this.textureHeight = 0;
@@ -182,6 +185,7 @@ export class WebGL2FloatRenderer {
 		this.vao = null;
 		this.textureData = null;
 		this.textureFormat = '';
+		this.texturePacked = false;
 		this.colormapName = '';
 		this.textureWidth = 0;
 		this.textureHeight = 0;
@@ -282,37 +286,52 @@ export class WebGL2FloatRenderer {
 		gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 		PerfTrace.detail('webgl-texture-upload-setup', performance.now() - setupStart);
 		const uploadStart = performance.now();
-		switch (textureFormat) {
-			case 'rgb32f':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB32F, width, height, 0, gl.RGB, gl.FLOAT, data);
-				break;
-			case 'rgba32f':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, data);
-				break;
-			case 'r16ui':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, data);
-				break;
-			case 'rgb16ui':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB16UI, width, height, 0, gl.RGB_INTEGER, gl.UNSIGNED_SHORT, data);
-				break;
-			case 'rgba16ui':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, data);
-				break;
-			case 'r8ui':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, data);
-				break;
-			case 'rgb8ui':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8UI, width, height, 0, gl.RGB_INTEGER, gl.UNSIGNED_BYTE, data);
-				break;
-			case 'rgba8ui':
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, data);
-				break;
-			default:
-				gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
+		// The GPU has no three-channel formats (Metal, via ANGLE): RGB uploads
+		// are expanded to RGBA during upload, which measured 66ms against 28ms
+		// for the same 5120x5120 RGB8 bytes uploaded as one channel. Upload them
+		// as a one-channel texture three texels wide per pixel instead; the
+		// shader fetches the three texels. Falls back when that is too wide.
+		const packed = (textureFormat === 'rgb8ui' || textureFormat === 'rgb16ui' || textureFormat === 'rgb32f')
+			&& width * 3 <= (gl.getParameter(gl.MAX_TEXTURE_SIZE) as number);
+		if (packed) {
+			const packedFormat = textureFormat === 'rgb8ui' ? [gl.R8UI, gl.RED_INTEGER, gl.UNSIGNED_BYTE]
+				: textureFormat === 'rgb16ui' ? [gl.R16UI, gl.RED_INTEGER, gl.UNSIGNED_SHORT]
+					: [gl.R32F, gl.RED, gl.FLOAT];
+			gl.texImage2D(gl.TEXTURE_2D, 0, packedFormat[0], width * 3, height, 0, packedFormat[1], packedFormat[2], data);
+		} else {
+			switch (textureFormat) {
+				case 'rgb32f':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB32F, width, height, 0, gl.RGB, gl.FLOAT, data);
+					break;
+				case 'rgba32f':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, data);
+					break;
+				case 'r16ui':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, data);
+					break;
+				case 'rgb16ui':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB16UI, width, height, 0, gl.RGB_INTEGER, gl.UNSIGNED_SHORT, data);
+					break;
+				case 'rgba16ui':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_SHORT, data);
+					break;
+				case 'r8ui':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, width, height, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, data);
+					break;
+				case 'rgb8ui':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8UI, width, height, 0, gl.RGB_INTEGER, gl.UNSIGNED_BYTE, data);
+					break;
+				case 'rgba8ui':
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8UI, width, height, 0, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, data);
+					break;
+				default:
+					gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, width, height, 0, gl.RED, gl.FLOAT, data);
+			}
 		}
-		PerfTrace.detail(`webgl-texImage2D-${textureFormat}`, performance.now() - uploadStart);
+		PerfTrace.detail(`webgl-texImage2D-${textureFormat}${packed ? '-packed' : ''}`, performance.now() - uploadStart);
 		const pixels = width * height;
-		const validatedPixels = validatedUploadPixelsByFormat.get(textureFormat) || 0;
+		const validationKey = packed ? `${textureFormat}-packed` : textureFormat;
+		const validatedPixels = validatedUploadPixelsByFormat.get(validationKey) || 0;
 		if (pixels > validatedPixels) {
 			const errorStart = performance.now();
 			const error = gl.getError();
@@ -320,7 +339,7 @@ export class WebGL2FloatRenderer {
 			if (error !== gl.NO_ERROR) {
 				throw new Error(`Float texture upload failed: WebGL error ${error}`);
 			}
-			validatedUploadPixelsByFormat.set(textureFormat, pixels);
+			validatedUploadPixelsByFormat.set(validationKey, pixels);
 		} else {
 			PerfTrace.detail('webgl-texture-upload-error-check-skipped', 0);
 		}
@@ -328,6 +347,7 @@ export class WebGL2FloatRenderer {
 		this.textureWidth = width;
 		this.textureHeight = height;
 		this.textureFormat = textureFormat;
+		this.texturePacked = packed;
 		PerfTrace.mark('webgl-texture-upload');
 		console.log(`[WebGL2] Float texture upload took ${(performance.now() - start).toFixed(2)}ms`);
 	}
@@ -430,6 +450,8 @@ export class WebGL2FloatRenderer {
 			? (isUintTexture ? 4 : 2)
 			: (channels >= 3 ? (isUintTexture ? 5 : 3) : (isUintTexture ? 1 : 0));
 		gl.uniform1i(gl.getUniformLocation(program, 'u_renderMode'), renderMode);
+		gl.uniform1i(gl.getUniformLocation(program, 'u_packedRgb'), this.texturePacked ? 1 : 0);
+		gl.uniform2i(gl.getUniformLocation(program, 'u_imageSize'), this.textureWidth, this.textureHeight);
 		gl.uniform1i(gl.getUniformLocation(program, 'u_useColormap'), !!settings.displayColormap && settings.displayColormap !== 'none' ? 1 : 0);
 		gl.uniform1f(gl.getUniformLocation(program, 'u_rgb24ChannelDivisor'), params.typeMax > 255 ? 257.0 : 1.0);
 		const nodata = Number(params.nodataValue);
@@ -479,8 +501,31 @@ uniform vec3 u_nanColor;
 // costs one comparison and changes nothing for files without one.
 uniform float u_nodata;
 uniform bool u_hasNodata;
+// Three-channel data stored three texels wide per pixel (see the upload).
+uniform bool u_packedRgb;
+uniform ivec2 u_imageSize;
 in vec2 v_texCoord;
 out vec4 outColor;
+// The texel NEAREST sampling would pick for texCoord, as an integer coordinate.
+ivec2 packedPixel(vec2 texCoord) {
+	return clamp(ivec2(floor(texCoord * vec2(u_imageSize))), ivec2(0), u_imageSize - 1);
+}
+vec3 sampleFloatRgb(vec2 texCoord) {
+	if (!u_packedRgb) { return texture(u_dataFloat, texCoord).rgb; }
+	ivec2 p = packedPixel(texCoord);
+	int x = p.x * 3;
+	return vec3(texelFetch(u_dataFloat, ivec2(x, p.y), 0).r,
+		texelFetch(u_dataFloat, ivec2(x + 1, p.y), 0).r,
+		texelFetch(u_dataFloat, ivec2(x + 2, p.y), 0).r);
+}
+vec3 sampleUintRgb(vec2 texCoord) {
+	if (!u_packedRgb) { return vec3(texture(u_dataUint, texCoord).rgb); }
+	ivec2 p = packedPixel(texCoord);
+	int x = p.x * 3;
+	return vec3(float(texelFetch(u_dataUint, ivec2(x, p.y), 0).r),
+		float(texelFetch(u_dataUint, ivec2(x + 1, p.y), 0).r),
+		float(texelFetch(u_dataUint, ivec2(x + 2, p.y), 0).r));
+}
 float applyGamma(float value) {
 	float normalized = clamp((value - u_min) * u_invRange, 0.0, 1.0);
 	if (abs(u_gammaExponent - 1.0) > 0.0001) {
@@ -492,8 +537,8 @@ void main() {
 	vec2 texCoord = u_flipY ? vec2(v_texCoord.x, 1.0 - v_texCoord.y) : v_texCoord;
 	if (u_renderMode == 2 || u_renderMode == 4) {
 		vec3 sampleRgb = u_renderMode == 2
-			? texture(u_dataFloat, texCoord).rgb
-			: vec3(texture(u_dataUint, texCoord).rgb);
+			? sampleFloatRgb(texCoord)
+			: sampleUintRgb(texCoord);
 		if (isnan(sampleRgb.r) || isinf(sampleRgb.r) || isnan(sampleRgb.g) || isinf(sampleRgb.g) || isnan(sampleRgb.b) || isinf(sampleRgb.b)
 			|| (u_hasNodata && (sampleRgb.r == u_nodata || sampleRgb.g == u_nodata || sampleRgb.b == u_nodata))) {
 			outColor = vec4(u_nanColor, 1.0);
@@ -509,8 +554,8 @@ void main() {
 	}
 	if (u_renderMode == 3 || u_renderMode == 5) {
 		vec3 sampleRgb = u_renderMode == 3
-			? texture(u_dataFloat, texCoord).rgb
-			: vec3(texture(u_dataUint, texCoord).rgb);
+			? sampleFloatRgb(texCoord)
+			: sampleUintRgb(texCoord);
 		if (isnan(sampleRgb.r) || isinf(sampleRgb.r) || isnan(sampleRgb.g) || isinf(sampleRgb.g) || isnan(sampleRgb.b) || isinf(sampleRgb.b)
 			|| (u_hasNodata && (sampleRgb.r == u_nodata || sampleRgb.g == u_nodata || sampleRgb.b == u_nodata))) {
 			outColor = vec4(u_nanColor, 1.0);

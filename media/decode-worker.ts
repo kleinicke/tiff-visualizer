@@ -960,7 +960,13 @@ self.onmessage = async (event: MessageEvent<any>) => {
 		// `sourceCached` tells the caller it may withhold the bytes next time.
 		// Decoders that opt in must copy out of the source rather than aliasing
 		// it, since the cached buffer outlives the response.
-		self.postMessage({ id, ok: true, result, sourceCached: !!cacheKey, retireWorker }, transferables);
+		// `returnSource` hands the caller's untouched input back, so it need not
+		// copy the file before transferring it here. The decoders copy the bytes
+		// into WebAssembly; a result that aliases the input keeps it instead.
+		const returnSource = !!options?.returnSource && !cacheKey && !servedFromCache
+			&& buffer?.byteLength > 0 && !transferables.includes(buffer);
+		if (returnSource) { transferables.push(buffer); }
+		self.postMessage({ id, ok: true, result, sourceCached: !!cacheKey, retireWorker, ...(returnSource ? { sourceBuffer: buffer } : {}) }, transferables);
 	} catch (error) {
 		const message = String((error instanceof Error ? error.message : error) || 'decode failed');
 		// A failure involving the cache invalidates it: the caller has no bytes

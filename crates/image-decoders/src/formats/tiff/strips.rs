@@ -251,14 +251,7 @@ pub(crate) fn decompress_block(
     match compression {
         1 => Ok(block.to_vec()),
         5 => crate::formats::compression::decode_tiff_lzw(block, expected_len, context),
-        8 | 32946 => {
-            let mut zd = flate2::read::ZlibDecoder::new(block);
-            let mut buf = Vec::new();
-            zd.read_to_end(&mut buf).map_err(|e| {
-                DecodeError::new(format!("{}: Deflate decode failed: {}", context, e))
-            })?;
-            Ok(buf)
-        }
+        8 | 32946 => crate::formats::compression::inflate_zlib(block, expected_len, context),
         // ZSTD, via the pure-Rust ruzstd crate so the WASM build needs no C
         // toolchain. A single strip or tile is one complete zstd frame; GDAL
         // writes exactly one frame per block, but concatenated frames are legal
@@ -1545,7 +1538,7 @@ pub struct FloatStripPlan {
     /// Raw TIFF PhotometricInterpretation tag (1 gray, 2 RGB, 5 CMYK).
     pub photometric_interpretation: u32,
     /// File byte order, which is how predictor 1 and 2 samples are stored.
-    /// Predictor 3 always reassembles to big-endian regardless.
+    /// Predictor 3 always reassembles to little-endian regardless.
     pub little_endian: bool,
     /// Rows covered by one UNIT of work: `RowsPerStrip` for a stripped file,
     /// `TileLength` for a tiled one.
@@ -1859,21 +1852,189 @@ pub(crate) fn decode_block_rows(
 
             // Floating-point predictor: differencing runs over the row's raw
             // bytes, and the row is stored as byte planes (all MSBs, then all
-            // second bytes, ...). Undo the differencing, then de-planarize.
+            // second bytes, ...). Undo the differencing, then de-planarize
+            // straight into LITTLE-endian samples, whatever the file's order.
             _ => {
-                for i in 1..row_bytes {
-                    row_slice[i] = row_slice[i].wrapping_add(row_slice[i - 1]);
-                }
-                for sample in 0..samples_per_row {
-                    for byte in 0..bytes_per_sample {
-                        dst[sample * bytes_per_sample + byte] =
-                            row_slice[byte * samples_per_row + sample];
-                    }
-                }
+                prefix_sum_bytes(row_slice);
+                planes_to_le_samples(row_slice, dst, samples_per_row, bytes_per_sample);
             }
         }
     }
     Ok(())
+}
+
+/// Running wrapping sum over `row`, in place: the inverse of the byte-wise
+/// differencing TIFF predictor 3 applies.
+fn prefix_sum_bytes(row: &mut [u8]) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let start = simd128::prefix_sum_bytes(row);
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    let start = 1;
+    for i in start..row.len() {
+        row[i] = row[i].wrapping_add(row[i - 1]);
+    }
+}
+
+/// De-planarize one predictor-3 row: `planes` holds `bytes_per_sample` planes of
+/// `samples` bytes each, most significant first; `dst` receives the samples in
+/// little-endian byte order.
+fn planes_to_le_samples(planes: &[u8], dst: &mut [u8], samples: usize, bytes_per_sample: usize) {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    let start = simd128::planes_to_le_samples(planes, dst, samples, bytes_per_sample);
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    let start = 0;
+    for sample in start..samples {
+        for byte in 0..bytes_per_sample {
+            dst[sample * bytes_per_sample + (bytes_per_sample - 1 - byte)] =
+                planes[byte * samples + sample];
+        }
+    }
+}
+
+/// WebAssembly SIMD kernels for predictor 3. Each handles a whole number of
+/// 16-byte vectors and returns how far it got; the scalar loops above finish
+/// the row, so both paths always produce identical bytes.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+mod simd128 {
+    use core::arch::wasm32::{i8x16_shuffle, u8x16_add, u8x16_splat, v128, v128_load, v128_store};
+
+    /// Interleave the low halves of `a` and `b` byte by byte: a0 b0 a1 b1 ...
+    #[inline]
+    fn zip_low_bytes(a: v128, b: v128) -> v128 {
+        i8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(a, b)
+    }
+
+    /// Interleave the high halves of `a` and `b` byte by byte: a8 b8 a9 b9 ...
+    #[inline]
+    fn zip_high_bytes(a: v128, b: v128) -> v128 {
+        i8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(a, b)
+    }
+
+    /// Interleave the low halves of `a` and `b` two bytes at a time.
+    #[inline]
+    fn zip_low_pairs(a: v128, b: v128) -> v128 {
+        i8x16_shuffle::<0, 1, 16, 17, 2, 3, 18, 19, 4, 5, 20, 21, 6, 7, 22, 23>(a, b)
+    }
+
+    /// Interleave the high halves of `a` and `b` two bytes at a time.
+    #[inline]
+    fn zip_high_pairs(a: v128, b: v128) -> v128 {
+        i8x16_shuffle::<8, 9, 24, 25, 10, 11, 26, 27, 12, 13, 28, 29, 14, 15, 30, 31>(a, b)
+    }
+
+    /// `v` moved up by N lanes, the vacated low lanes taken from `zero`.
+    #[inline]
+    fn shift_lanes_1(zero: v128, v: v128) -> v128 {
+        i8x16_shuffle::<0, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30>(zero, v)
+    }
+    #[inline]
+    fn shift_lanes_2(zero: v128, v: v128) -> v128 {
+        i8x16_shuffle::<0, 0, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29>(zero, v)
+    }
+    #[inline]
+    fn shift_lanes_4(zero: v128, v: v128) -> v128 {
+        i8x16_shuffle::<0, 0, 0, 0, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27>(zero, v)
+    }
+    #[inline]
+    fn shift_lanes_8(zero: v128, v: v128) -> v128 {
+        i8x16_shuffle::<0, 0, 0, 0, 0, 0, 0, 0, 16, 17, 18, 19, 20, 21, 22, 23>(zero, v)
+    }
+
+    /// In-place running byte sum over whole vectors; returns the first index
+    /// the scalar loop must continue from (always at least 1).
+    pub(super) fn prefix_sum_bytes(row: &mut [u8]) -> usize {
+        let zero = u8x16_splat(0);
+        let mut carry = u8x16_splat(0);
+        let mut chunks = row.chunks_exact_mut(16);
+        for chunk in &mut chunks {
+            // SAFETY: `chunk` is exactly 16 bytes; unaligned v128 access is legal.
+            let mut v = unsafe { v128_load(chunk.as_ptr().cast()) };
+            // Log-step inclusive scan within the vector: lane i gains lane
+            // i-1, then i-2, i-4, i-8 (lanes below the shift take `zero`'s 0).
+            v = u8x16_add(v, shift_lanes_1(zero, v));
+            v = u8x16_add(v, shift_lanes_2(zero, v));
+            v = u8x16_add(v, shift_lanes_4(zero, v));
+            v = u8x16_add(v, shift_lanes_8(zero, v));
+            v = u8x16_add(v, carry);
+            carry = i8x16_shuffle::<15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15>(
+                v, v,
+            );
+            // SAFETY: as above.
+            unsafe { v128_store(chunk.as_mut_ptr().cast(), v) };
+        }
+        let done = row.len() - row.len() % 16;
+        if done > 0 && done < row.len() {
+            row[done] = row[done].wrapping_add(row[done - 1]);
+            done + 1
+        } else {
+            done.max(1)
+        }
+    }
+
+    /// De-planarize whole vectors of 32- or 16-bit samples; returns how many
+    /// samples were written (0 for widths handled only by the scalar loop).
+    pub(super) fn planes_to_le_samples(
+        planes: &[u8],
+        dst: &mut [u8],
+        samples: usize,
+        bytes_per_sample: usize,
+    ) -> usize {
+        let vectors = samples / 16;
+        if planes.len() < samples * bytes_per_sample || dst.len() < samples * bytes_per_sample {
+            return 0;
+        }
+        match bytes_per_sample {
+            4 => planes_to_le_u32(planes, dst, samples, vectors),
+            2 => planes_to_le_u16(planes, dst, samples, vectors),
+            _ => return 0,
+        }
+        vectors * 16
+    }
+
+    fn planes_to_le_u32(planes: &[u8], dst: &mut [u8], samples: usize, vectors: usize) {
+        let src = planes.as_ptr();
+        let out = dst.as_mut_ptr();
+        for i in 0..vectors {
+            let at = i * 16;
+            // SAFETY: plane `b` spans `planes[b * samples..(b + 1) * samples]`
+            // and `at + 16 <= samples`, so every load is in bounds; the stores
+            // write `dst[at * 4..at * 4 + 64]`, inside its `samples * 4` bytes
+            // (both lengths are checked by the caller).
+            unsafe {
+                let p0 = v128_load(src.add(at).cast());
+                let p1 = v128_load(src.add(samples + at).cast());
+                let p2 = v128_load(src.add(2 * samples + at).cast());
+                let p3 = v128_load(src.add(3 * samples + at).cast());
+                // Least significant byte first: (p3, p2) pairs, then (p1, p0).
+                let low_lo = zip_low_bytes(p3, p2);
+                let low_hi = zip_high_bytes(p3, p2);
+                let high_lo = zip_low_bytes(p1, p0);
+                let high_hi = zip_high_bytes(p1, p0);
+                let o = out.add(at * 4);
+                v128_store(o.cast(), zip_low_pairs(low_lo, high_lo));
+                v128_store(o.add(16).cast(), zip_high_pairs(low_lo, high_lo));
+                v128_store(o.add(32).cast(), zip_low_pairs(low_hi, high_hi));
+                v128_store(o.add(48).cast(), zip_high_pairs(low_hi, high_hi));
+            }
+        }
+    }
+
+    fn planes_to_le_u16(planes: &[u8], dst: &mut [u8], samples: usize, vectors: usize) {
+        let src = planes.as_ptr();
+        let out = dst.as_mut_ptr();
+        for i in 0..vectors {
+            let at = i * 16;
+            // SAFETY: as in `planes_to_le_u32`, with two planes and two bytes
+            // per sample.
+            unsafe {
+                let p0 = v128_load(src.add(at).cast());
+                let p1 = v128_load(src.add(samples + at).cast());
+                let o = out.add(at * 2);
+                v128_store(o.cast(), zip_low_bytes(p1, p0));
+                v128_store(o.add(16).cast(), zip_high_bytes(p1, p0));
+            }
+        }
+    }
 }
 
 /// Decode one UNIT of work into `band`, the full-width rows it covers.
@@ -2046,10 +2207,10 @@ fn undo_horizontal_predictor_row(
 
 /// Reassemble decoded sample bytes into f32.
 ///
-/// Predictor 3 leaves samples big-endian (the byte planes are MSB-first by
-/// definition); predictors 1 and 2 leave them in the file's byte order.
+/// Predictor 3 leaves samples little-endian (`planes_to_le_samples`);
+/// predictors 1 and 2 leave them in the file's byte order.
 pub(crate) fn strip_bytes_to_f32(raster: &[u8], plan: &FloatStripPlan) -> Vec<f32> {
-    let big_endian = plan.predictor == 3 || !plan.little_endian;
+    let big_endian = plan.predictor != 3 && !plan.little_endian;
     let bytes_per_sample = plan.bits_per_sample as usize / 8;
 
     macro_rules! map {
@@ -2132,7 +2293,7 @@ pub(crate) fn try_decode_float_predictor_strips(
     // The plan is broader than this function: it also describes predictor 1 and
     // 2 layouts, 16-bit floats, TILED layouts and the block-only codecs, all of
     // which the strip-parallel API handles and the loop below does not — it
-    // walks strips and reads big-endian f32/f64. Anything else must be declined
+    // walks strips and reads predictor-3 f32/f64. Anything else must be declined
     // here or it would silently reinterpret the bytes.
     if plan.predictor != 3 || !matches!(plan.bits_per_sample, 32 | 64) {
         return Ok(None);
@@ -2170,14 +2331,14 @@ pub(crate) fn try_decode_float_predictor_strips(
         DecodingResult::F32(
             raster
                 .chunks_exact(4)
-                .map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                 .collect(),
         )
     } else {
         DecodingResult::F64(
             raster
                 .chunks_exact(8)
-                .map(|b| f64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
+                .map(|b| f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]))
                 .collect(),
         )
     }))

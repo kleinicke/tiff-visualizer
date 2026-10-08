@@ -596,6 +596,10 @@ export class TiffProcessor {
 			if (deferredToParallel) {
 				PerfTrace.note('decode-tiff-bootstrap', `parallel route (${Number(speculative.result?.stripCount || 0)} strips)`);
 			}
+			// `buffer` IS the retained source (`this._sourceBuffer`), not a copy:
+			// the strip pool and the WASM planners only read it, and copying a
+			// 77 MB file here sat on the critical path of every open. Any path that
+			// transfers or hands it to a library takes its own copy below.
 			let buffer: ArrayBuffer;
 			let readDuration = 0;
 			const speculativeSource = speculative?.sourceBuffer instanceof ArrayBuffer
@@ -607,9 +611,9 @@ export class TiffProcessor {
 				// fetch path does.
 				this._sourceBuffer = speculativeSource;
 				this._sourceBufferSrc = src;
-				buffer = speculativeSource.slice(0);
+				buffer = speculativeSource;
 			} else if (this._sourceBufferSrc === src && this._sourceBuffer) {
-				buffer = this._sourceBuffer.slice(0);
+				buffer = this._sourceBuffer;
 				PerfTrace.mark('tiff-source-cache-hit');
 			} else {
 				const readStart = performance.now();
@@ -619,7 +623,7 @@ export class TiffProcessor {
 				// whole TIFF. The per-decode slice can safely be transferred to the worker.
 				this._sourceBuffer = sourceBuffer;
 				this._sourceBufferSrc = src;
-				buffer = sourceBuffer.slice(0);
+				buffer = sourceBuffer;
 			}
 			const megabytes = buffer.byteLength / (1024 * 1024);
 			PerfTrace.note('fetch-tiff-bytes', `${megabytes.toFixed(1)}MB`);
@@ -734,6 +738,8 @@ export class TiffProcessor {
 							const rasters: any[] = [];
 							if (parallel.channels === 1) {
 								rasters.push(parallel.data);
+							} else if (parallel.planes?.length === parallel.channels) {
+								rasters.push(...parallel.planes);
 							} else {
 								for (let c = 0; c < parallel.channels; c++) {
 									const channel = new Carrier(pixelCount);
@@ -798,7 +804,7 @@ export class TiffProcessor {
 			// Rust/WASM decoder can decode these images like any other RGB TIFF.
 			if (!wasmResult && this.decodeWorker?.canDecode('tiff')) {
 				const workerStart = performance.now();
-				const workerResponse = await this.decodeWorker.decode('tiff', buffer, { pageIndex });
+				const workerResponse = await this.decodeWorker.decode('tiff', buffer.slice(0), { pageIndex });
 				if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 				if (workerResponse?.ok) {
 					wasmResult = workerResponse.result;
@@ -1056,7 +1062,7 @@ export class TiffProcessor {
 			let tiff;
 			try {
 				const GeoTIFF = await loadGeoTiff();
-				tiff = await GeoTIFF.fromArrayBuffer(localBuffer);
+				tiff = await GeoTIFF.fromArrayBuffer(localBuffer === this._sourceBuffer ? localBuffer.slice(0) : localBuffer);
 			} catch (fallbackError) {
 				throw new Error(this._lastWasmFailure
 					? `${this._lastWasmFailure} (the geotiff.js fallback also failed: ${fallbackError instanceof Error ? fallbackError.message : fallbackError})`

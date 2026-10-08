@@ -64,7 +64,7 @@ codec-lerc = ["dep:lerc-reader"]
 codec-lzma = ["dep:xz4rust"]
 codec-webp = ["tiff?/webp"]
 
-tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
+tiff = ["demosaic", "dep:tiff", "dep:ruzstd", "dep:weezl", "dep:flate2", "dep:zune-inflate", "dep:zune-jpeg", "dep:hayro-ccitt", "dep:png"]
 exr = ["dep:exr", "dep:zune-inflate"]
 png = ["dep:png"]
 hdr = []

@@ -73,6 +73,8 @@ export interface StripParallelResult {
 	geoJson: string | undefined;
 	pageDirectoryJson: string | undefined;
 	data: Float32Array | Uint16Array | Uint8Array;
+	/** Per-channel planes in `data`'s carrier, when the image has more than one channel. */
+	planes?: Array<Float32Array | Uint16Array | Uint8Array>;
 	min: number;
 	max: number;
 	workers: number;
@@ -351,16 +353,20 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 	}
 	if (totalCompressed !== compressed.byteLength) { return null; }
 
+	// Same cost model as the TIFF strips below: compressed plus half the decoded bytes.
 	const workerCount = Math.min(pool.size, counts.length);
-	const target = totalCompressed / workerCount;
+	const blockCost = (index: number) => counts[index] + 0.5 * rows[index] * width * 4;
+	let totalCost = 0;
+	for (let index = 0; index < counts.length; index++) { totalCost += blockCost(index); }
+	const target = totalCost / workerCount;
 	const ranges: { first: number; last: number }[] = [];
 	let cursor = 0;
 	for (let workerIndex = 0; workerIndex < workerCount && cursor < counts.length; workerIndex++) {
 		const remainingWorkers = workerCount - workerIndex;
 		const maxEnd = counts.length - (remainingWorkers - 1);
 		let end = cursor;
-		let bytes = 0;
-		while (end < maxEnd && (bytes < target || end === cursor)) { bytes += counts[end++]; }
+		let cost = 0;
+		while (end < maxEnd && (cost < target || end === cursor)) { cost += blockCost(end++); }
 		if (workerIndex === workerCount - 1) { end = counts.length; }
 		ranges.push({ first: cursor, last: end });
 		cursor = end;
@@ -478,12 +484,19 @@ export async function tryStripParallelDecode(
 		} catch { return null; }
 	})();
 
-	// Balance by COMPRESSED BYTES rather than strip count: strips vary in cost,
-	// and an even strip split leaves workers idle (160 strips over 8 workers
-	// measured slower than over 6).
+	// Balance by estimated COST, not strip count or compressed bytes alone. A
+	// unit's decode time grows with its compressed bytes (entropy decoding) AND
+	// its decoded bytes (inflate output, predictor, copies). Compressed bytes
+	// alone overloaded one worker on high-ratio files: on a 5120x5120 RGB8
+	// Deflate image the slowest of 8 workers took 23 ms against 14 ms for an
+	// even split. Half a cost unit per decoded byte was the best weight across
+	// the benchmark corpus (Deflate f32/u16/RGB8, predictors 1/2/3, LZW).
 	const workerCount = Math.min(activePool.size, stripCount, desiredWorkers);
+	const unitPixels = tileLength > 0 ? blocksAcross * tileWidth * tileLength : width * rowsPerStrip;
+	const decodedPerUnit = unitPixels * plan.channels * Math.max(1, plan.bits_per_sample / 8);
+	const unitCost = (i: number) => unitBytes(i) + 0.5 * decodedPerUnit;
 	let totalBytes = 0;
-	for (let i = 0; i < stripCount; i++) { totalBytes += unitBytes(i); }
+	for (let i = 0; i < stripCount; i++) { totalBytes += unitCost(i); }
 	const targetPerWorker = totalBytes / workerCount;
 
 	const ranges: { first: number, last: number }[] = [];
@@ -496,7 +509,7 @@ export async function tryStripParallelDecode(
 		// Always leave at least one strip for each remaining worker.
 		const maxEnd = stripCount - (remainingWorkers - 1);
 		while (end < maxEnd && (acc < targetPerWorker || end === cursor)) {
-			acc += unitBytes(end);
+			acc += unitCost(end);
 			end++;
 		}
 		if (w === workerCount - 1) { end = stripCount; }
@@ -506,6 +519,11 @@ export async function tryStripParallelDecode(
 	}
 
 	const raw = carrierFor(plan.bits_per_sample, plan.sample_format);
+	// Multi-channel callers need per-channel planes as well as the interleaved
+	// buffer. The workers split their own bands; a transposed orientation
+	// cannot be placed band by band, so those are split here afterwards.
+	const orientationTag = Number(plan.orientation || 1);
+	const wantPlanes = channels > 1 && !(orientationTag >= 5 && orientationTag <= 8);
 	const dispatchStart = performance.now();
 	const jobs = ranges.map((range, index) => {
 		// Blocks, not units: a tile row contributes `blocksPerUnit` of them.
@@ -541,6 +559,7 @@ export async function tryStripParallelDecode(
 			tileWidth, tileLength, blocksAcross,
 			lercAdditionalCompression,
 			photometricInterpretation: plan.photometric_interpretation || 1,
+			planes: wantPlanes,
 		}, [blob.buffer, rangeCounts.buffer], index);
 	});
 
@@ -556,13 +575,19 @@ export async function tryStripParallelDecode(
 		raw === 'u8' ? new Uint8Array(total)
 			: raw === 'u16' ? new Uint16Array(total)
 				: new Float32Array(total);
+	const planePixels = outputWidth * outputHeight;
+	const planes = wantPlanes
+		? Array.from({ length: channels }, () => new (data.constructor as any)(planePixels) as typeof data)
+		: undefined;
 	let min = Infinity;
 	let max = -Infinity;
 	let copyMs = 0;
+	let slowestWorkerMs = 0;
 	try {
 		await Promise.all(jobs.map(async (job, index) => {
 			const part = await job;
 			const copyStart = performance.now();
+			slowestWorkerMs = Math.max(slowestWorkerMs, Number(part.ms) || 0);
 			if (part.transposed) {
 				const bandWidth = Number(part.bandWidth);
 				const destinationStart = Number(part.destinationStart);
@@ -573,6 +598,13 @@ export async function tryStripParallelDecode(
 				}
 			} else {
 				data.set(part.samples, Number(part.destinationStart) * width * channels);
+				if (planes) {
+					const bandPixels = part.samples.length / channels;
+					const at = Number(part.destinationStart) * width;
+					for (let c = 0; c < channels; c++) {
+						planes[c].set(part.planes.subarray(c * bandPixels, (c + 1) * bandPixels), at);
+					}
+				}
 			}
 			copyMs += performance.now() - copyStart;
 			if (part.min < min) { min = part.min; }
@@ -583,6 +615,9 @@ export async function tryStripParallelDecode(
 		return null;
 	}
 	timings.push({ name: 'strip-workers', durationMs: performance.now() - dispatchStart });
+	// Time the slowest worker spent on its own range; the rest of
+	// `strip-workers` is dispatch, messaging and scheduling.
+	timings.push({ name: 'strip-slowest-worker', durationMs: slowestWorkerMs });
 	// Sum of the copies themselves; most of this is off the critical path now.
 	timings.push({ name: 'strip-assemble', durationMs: copyMs });
 
@@ -617,6 +652,7 @@ export async function tryStripParallelDecode(
 		geoJson: meta?.geo_json || undefined,
 		pageDirectoryJson: meta?.page_directory_json || undefined,
 		data,
+		planes,
 		min, max,
 		workers: ranges.length,
 		timings,
