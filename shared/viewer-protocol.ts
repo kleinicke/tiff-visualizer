@@ -31,7 +31,11 @@ export type HostToViewerMessage = AutomationRequest | MessageMap<{
   setDataset: { manifest: DatasetManifest | null; seriesIndex?: number; coordinates?: Record<string, number> };
   getZoomState: Empty; getComparisonState: Empty; restoreZoomState: { state: ZoomState };
   restoreComparisonState: { state: { peerUris: string[]; isShowingPeer: boolean } };
-  switchToImage: { uri: string; resourceUri: string; formatHint?: string; loadStartTime?: number; zoomState?: ZoomState; collection?: CollectionState };
+  switchToImage: { uri: string; resourceUri: string; formatHint?: string; loadStartTime?: number; zoomState?: ZoomState; collection?: CollectionState;
+    /** The host pushes this local file on a `sourceRequest` carrying `token`. */
+    source?: { token: string; size: number; mtime: number } };
+  /** The collection's next image, pushed on request once the current one has loaded. */
+  prefetchSource: { uri: string; token: string; size: number; mtime: number };
   switchToDatasetPlane: { uri: string; resourceUri: string; formatHint?: string; seriesIndex?: number; coordinates?: Record<string, number>; pageIndex?: number; frameIndex?: number };
   toggleHistogram: Empty; toggleMetadata: Empty; toggleScaleBar: { shown?: boolean }; toggleChannels: Empty; toggleMeasure: Empty;
   measureHint: { text: string }; measureImportResult: { kind: 'imagej' | 'sidecar'; bytes: number[]; fileName?: string; automatic?: boolean };

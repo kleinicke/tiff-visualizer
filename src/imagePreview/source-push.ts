@@ -11,6 +11,8 @@ import * as vscode from 'vscode';
  * an error chunk or repeated stalls.
  */
 export const PUSHED_SOURCE_MIN_BYTES = 1024 * 1024;
+/** The next image of a collection is pushed ahead only up to this size. */
+export const PREFETCH_MAX_BYTES = 256 * 1024 * 1024;
 const PUSHED_SOURCE_CHUNK_BYTES = 8 * 1024 * 1024;
 
 type NodeFs = typeof import('fs');

@@ -12,6 +12,7 @@
  * behavior and performance are then identical to not having a worker at all.
  */
 
+import { takePushedSource } from './pushed-source.js';
 import { PerfTrace } from './perf-trace.js';
 
 const DECODE_TIMEOUT_MS = 30000;
@@ -477,6 +478,20 @@ export class DecodeWorkerClient {
 			} catch (error) {
 				if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) { throw error; }
 				// Optional bootstrap failed; preserve the normal fetch path.
+			}
+		}
+		// A collection switch the host pushes the file for (pushed-source.ts).
+		const pushed = takePushedSource(src, signal);
+		if (pushed) {
+			const pushStart = performance.now();
+			try {
+				const buffer = await pushed;
+				PerfTrace.detail(`fetch-${format}-pushed`, performance.now() - pushStart);
+				PerfTrace.mark(`fetch(${format})`);
+				return buffer;
+			} catch (error) {
+				if (signal?.aborted) { throw error; }
+				// The push failed or was replaced; read the resource instead.
 			}
 		}
 		const responseStart = performance.now();

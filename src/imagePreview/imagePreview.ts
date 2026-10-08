@@ -18,7 +18,7 @@ import type { IImagePreviewManager, LayerExportFormat, LayerExportOption, LayerE
 import type { ImageFormatType, ImageSettings } from './appStateManager';
 import type { DatasetManifest, DatasetPlane, DatasetSeries, WebviewDatasetManifest } from './datasetTypes';
 import { parseOmeDatasetXml, tiffImageDescription } from './omeMetadataFile';
-import { canPushSource, PUSHED_SOURCE_MIN_BYTES, pushSource } from './source-push';
+import { canPushSource, PREFETCH_MAX_BYTES, PUSHED_SOURCE_MIN_BYTES, pushSource } from './source-push';
 
 // Extended settings for webview (includes preview-local display settings).
 interface WebviewImageSettings extends ImageSettings {
@@ -94,9 +94,13 @@ export class ImagePreview extends MediaPreview {
 	public readonly onDidExportLayerDocument = this._onDidExportLayerDocument.event;
 
 	private _openTimestamp: number = 0;
-	/** Sizes of the sources the recent pages may request, by page token. */
-	private readonly _pushableSources = new Map<string, number>();
+	/** The sources the page may still request (its first image, recent switches), by token. */
+	private readonly _pushableSources = new Map<string, { resource: vscode.Uri; size: number }>();
 	private _sourcePushGeneration = 0;
+	private _switchGeneration = 0;
+	/** +1 or -1: the next image in this direction is prefetched. */
+	private _switchDirection = 1;
+	private _lastPrefetchKey = '';
 
 	public setOpenTimestamp(timestamp: number) {
 		this._openTimestamp = timestamp;
@@ -890,6 +894,7 @@ export class ImagePreview extends MediaPreview {
 
 		// Start preloading the image data (async, don't wait)
 		this.preloadImageData(uri);
+		this.offerPrefetch(this._switchGeneration);
 		// Update overlay immediately
 		this.updateImageCollectionOverlay();
 		return true;
@@ -930,6 +935,7 @@ export class ImagePreview extends MediaPreview {
 		this.saveCurrentZoomState();
 
 		// Move to next image (cycle back to 0 if at end)
+		this._switchDirection = 1;
 		this._currentImageIndex = (this._currentImageIndex + 1) % this._imageCollection.length;
 
 		// Update current resource and reload
@@ -945,6 +951,7 @@ export class ImagePreview extends MediaPreview {
 		this.saveCurrentZoomState();
 
 		// Move to previous image (cycle to end if at beginning)
+		this._switchDirection = -1;
 		this._currentImageIndex = (this._currentImageIndex - 1 + this._imageCollection.length) % this._imageCollection.length;
 
 		// Update current resource and reload
@@ -978,18 +985,55 @@ export class ImagePreview extends MediaPreview {
 		const newResource = this._imageCollection[index];
 		const cacheKey = newResource.toString();
 		const cachedData = this._preloadedImageData.get(cacheKey);
+		const loadStartTime = Date.now();
+		const generation = ++this._switchGeneration;
+		void this.sourceOffer(newResource).then(source => {
+			// A later switch has already been sent.
+			if (generation !== this._switchGeneration) { return; }
+			this.postSwitchToImage(newResource, cachedData?.webviewUri, loadStartTime, source);
+			this.offerPrefetch(generation);
+		});
+	}
 
+	/**
+	 * Offers the next collection image in the direction of travel; the viewer
+	 * requests it once the current one has loaded, so the next switch reads
+	 * nothing.
+	 */
+	private offerPrefetch(generation: number): void {
+		const count = this._imageCollection.length;
+		if (count < 2) { return; }
+		const resource = this._imageCollection[(this._currentImageIndex + this._switchDirection + count) % count];
+		void this.pushableStat(resource, PREFETCH_MAX_BYTES).then(stat => {
+			if (!stat || generation !== this._switchGeneration) { return; }
+			// The viewer already holds (or is fetching) this exact file.
+			const key = `${resource.toString()}|${stat.size}|${stat.mtime}`;
+			if (key === this._lastPrefetchKey) { return; }
+			this._lastPrefetchKey = key;
+			const token = getNonce();
+			this.registerPushableSource(token, resource, stat.size);
+			this.postViewerMessage({ type: 'prefetchSource', uri: this.collectionWebviewUri(resource), token, ...stat });
+		});
+	}
+
+	private collectionWebviewUri(resource: vscode.Uri): string {
+		return this._preloadedImageData.get(resource.toString())?.webviewUri
+			|| this._webviewEditor.webview.asWebviewUri(resource).toString();
+	}
+
+	private postSwitchToImage(newResource: vscode.Uri, webviewUri: string | undefined, loadStartTime: number, source: { token: string; size: number; mtime: number } | undefined): void {
 		// Send switch request to webview
 		this.postViewerMessage({
 			type: 'switchToImage',
-			uri: cachedData?.webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
+			uri: webviewUri || this._webviewEditor.webview.asWebviewUri(newResource).toString(),
 			resourceUri: newResource.toString(),
-			loadStartTime: Date.now(),
+			loadStartTime,
 			collection: {
 				currentIndex: this._currentImageIndex,
 				totalImages: this._imageCollection.length,
 				show: this._imageCollection.length > 1
-			}
+			},
+			source,
 		});
 
 		// Update overlay
@@ -1218,10 +1262,7 @@ export class ImagePreview extends MediaPreview {
 				: lower.endsWith('.npy') ? 'npy'
 					: isHdr ? 'hdr'
 							: null;
-		// PGM stays on its cheaper main-thread decoder, but its source can travel
-		// while the viewer and lazy NetPBM processor chunk are loading.
-		const warmSourceRead = !remoteTiffUrl
-			&& (!!warmDecoderUri || lower.endsWith('.pgm') || lower.endsWith('.pbm') || lower.endsWith('.tga'));
+		const warmSourceRead = this.sourceIsReadWhole(this.resource);
 		// Large TIFFs are read as a stream into a buffer of the file's size, so the
 		// strip pool can start decoding ranges whose bytes have arrived while the
 		// rest is still being read. The size comes from the host because webview
@@ -1238,12 +1279,7 @@ export class ImagePreview extends MediaPreview {
 			} catch { /* stream nothing; the ordinary read still works */ }
 		}
 		if (pushedSourceBytes > 0) {
-			this._pushableSources.set(nonce, pushedSourceBytes);
-			// Only the current page (or one just replaced) can still ask.
-			for (const token of this._pushableSources.keys()) {
-				if (this._pushableSources.size <= 2) { break; }
-				this._pushableSources.delete(token);
-			}
+			this.registerPushableSource(nonce, this.resource, pushedSourceBytes);
 		}
 		const decoderWarmupScript = warmSourceRead ? /* html */`
 	<script nonce="${nonce}">
@@ -1626,8 +1662,9 @@ export class ImagePreview extends MediaPreview {
 		try {
 			const content = await this.getWebviewContents();
 			this._webviewEditor.webview.html = content;
-			// The replaced page's push, if any, stops.
+			// The replaced page's push, if any, stops; the new page holds no prefetch.
 			this._sourcePushGeneration++;
+			this._lastPrefetchKey = '';
 			this.updateStatusBar();
 		} catch (error) {
 			console.error('TIFF Visualizer render error:', error);
@@ -1641,12 +1678,62 @@ export class ImagePreview extends MediaPreview {
 	 */
 	private onSourceRequest(message: { token?: unknown; offset?: unknown }): void {
 		const token = typeof message.token === 'string' ? message.token : '';
-		const size = this._pushableSources.get(token);
+		const source = this._pushableSources.get(token);
 		const offset = Number(message.offset);
-		if (size === undefined || !Number.isSafeInteger(offset) || offset < 0 || offset > size) { return; }
+		if (!source || !Number.isSafeInteger(offset) || offset < 0 || offset > source.size) { return; }
 		const generation = ++this._sourcePushGeneration;
-		void pushSource(this._webviewEditor.webview, this.resource, token, size, offset,
+		void pushSource(this._webviewEditor.webview, source.resource, token, source.size, offset,
 			() => generation === this._sourcePushGeneration && this.previewState !== PreviewState.Disposed);
+	}
+
+	private registerPushableSource(token: string, resource: vscode.Uri, size: number): void {
+		this._pushableSources.set(token, { resource, size });
+		// The page's first image, the latest switch and prefetch are all it can still ask for.
+		for (const oldest of this._pushableSources.keys()) {
+			if (this._pushableSources.size <= 4) { break; }
+			this._pushableSources.delete(oldest);
+		}
+	}
+
+	/**
+	 * Whether the viewer reads this file whole (rather than through an image
+	 * element or in ranges): the formats the page bootstrap warms a decoder and
+	 * the source read for, plus PGM, PBM and TGA, whose cheaper decoders run on
+	 * the page itself.
+	 */
+	private sourceIsReadWhole(resource: vscode.Uri): boolean {
+		const lower = resource.path.toLowerCase();
+		const formatHint = this._manager.getResourceFormatHint(resource);
+		const isTiff = formatHint
+			? /^(?:tiff|tif|tf2|tf8|btf)$/i.test(formatHint)
+			: /\.(?:tif|tiff|tf2|tf8|btf)$/.test(lower);
+		if (isTiff) {
+			// Remote TIFFs are read in ranges.
+			return !/^(?:https?)$/.test(resource.scheme);
+		}
+		return /\.(?:ppm|pgm|pbm|pfm|npy|npz|exr|hdr|tga)$/.test(lower)
+			|| /\.(?:rgb|rgba|sgi|bw|fits|fit|fts|dcm|dicom|nc|cdf|czi)$/.test(lower)
+			|| /\.(?:ora|kra|psd|psb|xcf|afphoto|af)$/.test(lower);
+	}
+
+	/** Offers a collection image for pushing, when it is local and read whole. */
+	private async sourceOffer(resource: vscode.Uri): Promise<{ token: string; size: number; mtime: number } | undefined> {
+		const stat = await this.pushableStat(resource);
+		if (!stat) { return undefined; }
+		const token = getNonce();
+		this.registerPushableSource(token, resource, stat.size);
+		return { token, ...stat };
+	}
+
+	/** Size and mtime of a local, whole-read file worth pushing (1 MB to `maxBytes`). */
+	private async pushableStat(resource: vscode.Uri, maxBytes = Infinity): Promise<{ size: number; mtime: number } | undefined> {
+		if (!canPushSource(resource) || !this.sourceIsReadWhole(resource)) { return undefined; }
+		try {
+			const { size, mtime } = await vscode.workspace.fs.stat(resource);
+			return size >= PUSHED_SOURCE_MIN_BYTES && size <= maxBytes ? { size, mtime } : undefined;
+		} catch {
+			return undefined;
+		}
 	}
 
 	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri): Promise<string> {

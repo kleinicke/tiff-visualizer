@@ -72,6 +72,7 @@ import { OmeAxis, omeCoordinatesToIfd, omeIfdToCoordinates } from './modules/ome
 import { installRangeDoubleClickReset, datasetAxisSignature } from './modules/range-controls.js';
 import type { LayerExportFormat } from './modules/layer-document-writers.js';
 import { LayeredPreviewProcessor } from './modules/layered-preview-processor.js';
+import { offerPrefetch, offerPushedSource, setPushedSourceChannel, startPrefetch } from './modules/pushed-source.js';
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
 import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-registry.js';
 import { PyramidScene } from './modules/pyramid-scene.js';
@@ -112,6 +113,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// only be called once.
 	// @ts-ignore - acquireVsCodeApi is injected by VS Code at runtime, not declared globally
 	const originalVscode = nativeBootstrap?.vscode || (window as any).__tiffVisualizerVsCodeApi || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
+	setPushedSourceChannel(originalVscode);
 	const settingsManager = new SettingsManager();
 	const navigation = new ImageNavigation<FormatInfo>({
 		cancelWorkers: () => {
@@ -1197,6 +1199,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	function logLoadPerformance(label: string, webviewMs: string, totalMs: string | number): void {
+		// The image has loaded: a prefetch of the collection's next one may start.
+		startPrefetch();
 		// Capture phase totals immediately; PerfTrace may be reused by another
 		// navigation before the paint callback runs.
 		const summary = formatLoadPerf(label, webviewMs, totalMs);
@@ -3838,6 +3842,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					}
 					_pendingZoomState = message.zoomState || liveZoom;
 				}
+				if (message.source) { offerPushedSource(message.uri, message.source.token, message.source.size, message.source.mtime); }
 				switchToNewImage(message.uri, message.resourceUri, {
 					formatHint: message.formatHint,
 				});
@@ -3994,7 +3999,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				break;
 
 			case 'sourceChunk':
-				// Read by the bootstrap script in the webview HTML.
+				// Read by the bootstrap script in the webview HTML, or pushed-source.ts.
+				break;
+
+			case 'prefetchSource':
+				offerPrefetch(message.uri, message.token, message.size, message.mtime);
+				// Already idle: the current image finished before the offer arrived.
+				if (!_imageTransitionActive && document.body.classList.contains('ready')) { startPrefetch(); }
 				break;
 
 			case 'toggleDebayer':
