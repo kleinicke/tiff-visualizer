@@ -34,7 +34,24 @@ function assertDimensions(width: number, height: number, bytesPerPixel = 4): voi
 	}
 }
 
+type PngRgbaDecoder = (bytes: Uint8Array) => { width: number; height: number; data: Uint8Array } | null;
+let fastPngRgba: PngRgbaDecoder | null = null;
+
+/**
+ * Where the core WebAssembly is loaded (the layered decode worker), embedded
+ * PNGs decode in Rust, ~3.5x faster and byte for byte UPNG's `toRGBA8`; the
+ * decoder returns null for the PNGs it leaves to UPNG.
+ */
+export function setFastPngRgbaDecoder(decoder: PngRgbaDecoder | null): void {
+	fastPngRgba = decoder;
+}
+
 function decodePngRgba(bytes: Uint8Array): { width: number; height: number; data: Uint8Array } {
+	const fast = fastPngRgba?.(bytes);
+	if (fast) {
+		assertDimensions(fast.width, fast.height, 4);
+		return fast;
+	}
 	const encoded = new Uint8Array(bytes.byteLength);
 	encoded.set(bytes);
 	const png = UPNG.decode(encoded.buffer);

@@ -1391,6 +1391,21 @@ pub fn decode_exr_fast(data: &[u8]) -> Result<ExrResult, DecodeError> {
 }
 
 #[cfg(feature = "png")]
+pub use formats::png::PngRgba8;
+
+/// A PNG as 8-bit RGBA, identical to UPNG's `toRGBA8` for every PNG it
+/// accepts (see the format module).
+///
+/// # Errors
+///
+/// Malformed PNGs, animated PNGs, and grayscale or interlaced images below
+/// 8 bits.
+#[cfg(feature = "png")]
+pub fn decode_png_rgba8(data: &[u8]) -> Result<PngRgba8, DecodeError> {
+    formats::png::decode_png_rgba8_impl(data)
+}
+
+#[cfg(feature = "png")]
 pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, DecodeError> {
     decode_png16_impl(data)
 }

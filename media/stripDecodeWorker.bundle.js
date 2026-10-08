@@ -178,43 +178,6 @@ function decode_tiff_preview_range(blob, counts, first_strip, width, height, cha
   }
   return TiffPreviewRangeResult.__wrap(ret[0]);
 }
-function decode_hdr_rows(blob, width, rows) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
-  }
-  var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v2;
-}
-function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
-  }
-  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v3;
-}
-function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
-  const len2 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_exr_zip_f32_blocks_stats(ptr0, len0, ptr1, len1, ptr2, len2, width);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return RawRangeResult.__wrap(ret[0]);
-}
 function decode_psd_composite_rows(blob, counts, width, rows, targets, compression, global_alpha, grayscale) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -230,12 +193,49 @@ function decode_psd_composite_rows(blob, counts, width, rows, targets, compressi
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v4;
 }
+function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_float_strip_range(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v3;
+}
 function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
   const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
   const len1 = WASM_VECTOR_LEN;
   const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return RawRangeResult.__wrap(ret[0]);
+}
+function decode_hdr_rows(blob, width, rows) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
+  }
+  var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v2;
+}
+function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_zip_f32_blocks_stats(ptr0, len0, ptr1, len1, ptr2, len2, width);
   if (ret[2]) {
     throw takeFromExternrefTable0(ret[1]);
   }
@@ -1284,6 +1284,53 @@ var PngResult = class _PngResult {
   }
 };
 if (Symbol.dispose) PngResult.prototype[Symbol.dispose] = PngResult.prototype.free;
+var PngRgba8JsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_pngrgba8js_free(ptr >>> 0, 1));
+var PngRgba8Js = class _PngRgba8Js {
+  static __wrap(ptr) {
+    ptr = ptr >>> 0;
+    const obj = Object.create(_PngRgba8Js.prototype);
+    obj.__wbg_ptr = ptr;
+    PngRgba8JsFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    PngRgba8JsFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_pngrgba8js_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get width() {
+    const ret = wasm.demosaicresult_width(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * @returns {number}
+   */
+  get height() {
+    const ret = wasm.demosaicresult_height(this.__wbg_ptr);
+    return ret >>> 0;
+  }
+  /**
+   * The RGBA bytes; moved out, so a second call returns an empty array.
+   * @returns {Uint8Array}
+   */
+  take_data() {
+    const ret = wasm.pngrgba8js_take_data(this.__wbg_ptr);
+    var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    return v1;
+  }
+};
+if (Symbol.dispose) PngRgba8Js.prototype[Symbol.dispose] = PngRgba8Js.prototype.free;
 var PsdCompositePlanJsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
 } } : new FinalizationRegistry((ptr) => wasm.__wbg_psdcompositeplanjs_free(ptr >>> 0, 1));

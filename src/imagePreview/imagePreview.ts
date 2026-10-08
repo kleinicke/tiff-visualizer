@@ -1422,7 +1422,9 @@ export class ImagePreview extends MediaPreview {
 				if (!response.ok) throw new Error('decode worker warmup failed');
 				return response.text();
 			})` : 'null'};
-			const wasmResourcePromise = ${warmGeneralDecoder ? `fetch(${JSON.stringify(wasmUri.toString())}).then(response => {
+			// Layered documents use it too: embedded PNGs decode in Rust on their
+			// worker, and a PSD composite on the strip pool.
+			const wasmResourcePromise = ${warmGeneralDecoder || isLayeredDocument ? `fetch(${JSON.stringify(wasmUri.toString())}).then(response => {
 				if (!response.ok) throw new Error('decoder WASM warmup failed');
 				return { compileResponse: response.clone(), bytesResponse: response };
 			})` : 'null'};

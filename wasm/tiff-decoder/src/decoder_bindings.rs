@@ -911,6 +911,41 @@ pub fn decode_png16_fast(data: &[u8]) -> Result<PngResult, JsValue> {
         .map_err(js_error)
 }
 
+/// A PNG decoded to 8-bit RGBA.
+#[wasm_bindgen]
+pub struct PngRgba8Js {
+    inner: core::PngRgba8,
+}
+
+#[wasm_bindgen]
+impl PngRgba8Js {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.inner.width
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.inner.height
+    }
+    /// The RGBA bytes; moved out, so a second call returns an empty array.
+    pub fn take_data(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.inner.data)
+    }
+}
+
+/// # Errors
+///
+/// Malformed PNGs, animated PNGs, and grayscale or interlaced images below
+/// 8 bits.
+#[wasm_bindgen]
+pub fn decode_png_rgba8(data: &[u8]) -> Result<PngRgba8Js, JsValue> {
+    core::decode_png_rgba8(data)
+        .map(|inner| PngRgba8Js { inner })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Composite row offsets of an 8-bit RGB or grayscale Photoshop document, for the
 /// parallel decode.
 #[wasm_bindgen]
