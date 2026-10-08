@@ -126,12 +126,13 @@ function passArray8ToWasm0(arg, malloc) {
 }
 /**
  * @param {Uint8Array} data
+ * @param {number} page_index
  * @returns {TiffResult}
  */
-export function decode_tiff(data) {
+export function decode_tiff_page(data, page_index) {
     const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff(ptr0, len0);
+    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -164,6 +165,20 @@ export function decode_jxl_fast(data) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return JxlDecoded.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
+ * @returns {TiffResult}
+ */
+export function decode_tiff(data) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_tiff(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return TiffResult.__wrap(ret[0]);
 }
 
 /**
@@ -208,21 +223,6 @@ export function decode_dicom_fast(data, frame_index) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return JxlDecoded.__wrap(ret[0]);
-}
-
-/**
- * @param {Uint8Array} data
- * @param {number} page_index
- * @returns {TiffResult}
- */
-export function decode_tiff_page(data, page_index) {
-    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.decode_tiff_page(ptr0, len0, page_index);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return TiffResult.__wrap(ret[0]);
 }
 
 const JxlDecodedFinalization = (typeof FinalizationRegistry === 'undefined')
