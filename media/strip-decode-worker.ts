@@ -12,7 +12,7 @@
  * (compiled once, instantiated N times) because this runs from a blob URL and
  * cannot fetch webview-resource URLs itself.
  */
-import initTiffWasm, { decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_psd_composite_rows, decode_tiff_float_strip_range, decode_tiff_preview_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_czi_region, decode_exr_zip_f32_blocks_selected, decode_exr_zip_f32_blocks_stats, decode_hdr_rows, decode_psd_composite_rows, decode_tiff_float_strip_range, decode_tiff_preview_range, decode_tiff_strip_range_raw_stats } from './wasm/tiff-wasm.js';
 import { orientTiffRange } from './modules/tiff-orientation-range.js';
 
 let ready: Promise<unknown> | null = null;
@@ -80,6 +80,18 @@ self.onmessage = async (event: MessageEvent) => {
 			(self as any).postMessage({ id: job.id, samples, min, max, ms: performance.now() - started }, [samples.buffer]);
 			return;
 		}
+		if (job.kind === 'czi-tile') {
+			// One CZI subblock into the output pixels it covers (czi-source.ts merges).
+			const decoded = decode_czi_region(new Uint8Array(job.directory), job.optionsJson,
+				new Uint8Array(job.blob), Uint32Array.of(0));
+			const width = decoded.width;
+			const height = decoded.height;
+			const channels = decoded.channels;
+			const samples = decoded.take_data_as_f32();
+			decoded.free();
+			(self as any).postMessage({ id: job.id, samples, width, height, channels, ms: performance.now() - started }, [samples.buffer]);
+			return;
+		}
 		if (job.kind === 'hdr-rows') {
 			const samples = decode_hdr_rows(new Uint8Array(job.blob), job.width, job.rows);
 			(self as any).postMessage({ id: job.id, samples, ms: performance.now() - started }, [samples.buffer]);
@@ -91,6 +103,19 @@ self.onmessage = async (event: MessageEvent) => {
 				new Uint8Array(job.targets), job.compression, job.globalAlpha, job.grayscale,
 			);
 			(self as any).postMessage({ id: job.id, rgba, ms: performance.now() - started }, [rgba.buffer]);
+			return;
+		}
+		if (job.kind === 'exr-zip' && job.selection) {
+			// Several channels: the displayed ones interleaved, and their range.
+			const decoded = decode_exr_zip_f32_blocks_selected(
+				new Uint8Array(job.blob), new Uint32Array(job.counts), new Uint32Array(job.rows),
+				job.width, new Uint32Array(job.kinds), new Int32Array(job.selection),
+			);
+			const min = decoded.min;
+			const max = decoded.max;
+			const samples = decoded.take_data();
+			decoded.free();
+			(self as any).postMessage({ id: job.id, samples, min, max, ms: performance.now() - started }, [samples.buffer]);
 			return;
 		}
 		if (job.kind === 'exr-zip') {

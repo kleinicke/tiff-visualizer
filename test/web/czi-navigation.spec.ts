@@ -6,7 +6,7 @@ test('CZI keeps the latest requested plane while decoding and clears its loading
     const NativeWorker = window.Worker;
     window.Worker = class extends NativeWorker {
       postMessage(message: any, transfer: any) {
-        if (message?.format === 'czi') {
+        if (String(message?.format || '').startsWith('czi')) {
           setTimeout(() => super.postMessage(message, transfer), 400);
         } else super.postMessage(message, transfer);
       }

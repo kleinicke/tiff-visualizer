@@ -1,16 +1,13 @@
 import { imageRaster, type ActiveImage } from './active-image.js';
+import { bootstrapImageFor } from './bootstrap-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
+import { DecodeWorkerClient } from './decode-worker-client.js';
+import { decodeBmp24 } from './bmp-fast.js';
 import type { Stats } from './types.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
-
-function bootstrapImageFor(src: string): HTMLImageElement | null {
-    const image = (window as any).__tiffVisualizerBootstrap?.nativeImage;
-    if (!(image instanceof HTMLImageElement)) return null;
-    return image.src === src || image.currentSrc === src ? image : null;
-}
 
 /**
  * Web Image Processor for TIFF Visualizer.
@@ -61,7 +58,8 @@ export class WebImageProcessor {
     }
 
     async load(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData | null; canvasAlreadyRendered?: boolean; displayElement?: HTMLElement }> {
-        const lower = src.toLowerCase();
+        // The resource name, not `src`: the standalone viewer loads blob: URLs.
+        const lower = String(this.settingsManager.settings.resourceUri || src).toLowerCase();
         let formatName = 'WebP';
         let formatType = 'webp';
         if (lower.includes('.avif')) { formatName = 'AVIF'; formatType = 'avif'; }
@@ -70,6 +68,13 @@ export class WebImageProcessor {
 
         this._cachedStats = undefined;
 
+        // Read 24-bit BMP rows directly, even behind a native first paint:
+        // waiting for Chromium's <img> decode of a large BMP is far slower
+        // (over a second for 75 MB in VS Code) than reading the rows here.
+        if (formatType === 'bmp') {
+            const direct = await this._loadBmpDirect(src);
+            if (direct) return direct;
+        }
         const bootstrapImage = bootstrapImageFor(src);
         const image = bootstrapImage || new Image();
         const canvas = document.createElement('canvas');
@@ -120,19 +125,7 @@ export class WebImageProcessor {
                         return;
                     }
 
-                    if (this._isInitialLoad) {
-                        this._postFormatInfo(canvas.width, canvas.height, hasAlpha ? 4 : 3, 8, formatName, formatType);
-                        this._pendingRenderData = true;
-                        resolve({ canvas, imageData: new ImageData(canvas.width, canvas.height) });
-                        return;
-                    }
-
-                    this._postFormatInfo(canvas.width, canvas.height, hasAlpha ? 4 : 3, 8, formatName, formatType);
-                    const processedImageData = this._renderToImageData();
-                    if (this.vscode) {
-                        this.vscode.postMessage({ type: 'refresh-status' });
-                    }
-                    resolve({ canvas, imageData: processedImageData });
+                    resolve(this._finishDecoded(canvas, hasAlpha, formatName, formatType));
                 } catch (error) {
                     reject(error);
                 }
@@ -155,6 +148,44 @@ export class WebImageProcessor {
                 image.src = src;
             }
         });
+    }
+
+    async _loadBmpDirect(src: string): Promise<{ canvas: HTMLCanvasElement; imageData: ImageData | null } | null> {
+        const loadSignal = this.loadSignal;
+        const buffer = await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'bmp');
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        const decoded = decodeBmp24(buffer);
+        if (!decoded) return null;
+        const { width, height } = decoded;
+        const imageData = new ImageData(decoded.data as Uint8ClampedArray<ArrayBuffer>, width, height);
+        this._lastRaw = {
+            width,
+            height,
+            data: imageData.data,
+            channels: 4,
+            bitDepth: 8,
+            maxValue: 255,
+            hasAlpha: false,
+            originalImageData: imageData,
+        };
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        return this._finishDecoded(canvas, false, 'BMP', 'bmp');
+    }
+
+    /** Format info, then the deferred placeholder or the rendered image, for `_lastRaw`. */
+    _finishDecoded(canvas: HTMLCanvasElement, hasAlpha: boolean, formatName: string, formatType: string): { canvas: HTMLCanvasElement; imageData: ImageData } {
+        this._postFormatInfo(canvas.width, canvas.height, hasAlpha ? 4 : 3, 8, formatName, formatType);
+        if (this._isInitialLoad) {
+            this._pendingRenderData = true;
+            return { canvas, imageData: new ImageData(1, 1) };
+        }
+        const processedImageData = this._renderToImageData();
+        if (this.vscode) {
+            this.vscode.postMessage({ type: 'refresh-status' });
+        }
+        return { canvas, imageData: processedImageData };
     }
 
     _renderToImageData(): ImageData {

@@ -34,8 +34,12 @@ export class FastRawWorkerClient implements DecodeWorkerLike {
 			bundleName?: string;
 			sourcePromise?: Promise<string>;
 			workerPromise?: Promise<{ worker: Worker; blobUrl: string }>;
+			workerAdopted?: boolean;
 		} | undefined;
-		if (warmup?.bundleName === 'fastRawWorker.bundle.js' && warmup.workerPromise) {
+		// Adopted once: after a cancelled decode terminated it, a new boot must
+		// not take the dead worker again (see DecodeWorkerClient._boot).
+		if (warmup?.bundleName === 'fastRawWorker.bundle.js' && warmup.workerPromise && !warmup.workerAdopted) {
+			warmup.workerAdopted = true;
 			try {
 				const adopted = await warmup.workerPromise;
 				this.worker = adopted.worker;

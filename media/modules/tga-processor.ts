@@ -1,6 +1,7 @@
 import { imageRaster, type ActiveImage } from './active-image.js';
 "use strict";
 import TgaLoader from 'tga-js';
+import { expandTgaPixels } from './tga-fast.js';
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
@@ -75,7 +76,9 @@ export class TgaProcessor {
 
             // tga-js always decodes into RGBA ImageData
             const imageData = new ImageData(width, height);
-            tga.getImageData(imageData);
+            if (!expandTgaPixels(tga.header, tga.imageData, imageData.data)) {
+                tga.getImageData(imageData);
+            }
 
             // Determine if the source image actually carries an alpha channel.
             // 32-bit color TGA = RGBA (8 bits per channel).

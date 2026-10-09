@@ -297,6 +297,45 @@ export function decodeCziWithWasm(
 }
 
 /**
+ * A decoder run on part of a file (Rust `SparseFile`): `buffer` holds the
+ * pieces read so far back to back, `options.rangedOffsets`/`rangedLengths`
+ * where each came from, `options.fileSize` the whole file's size. A decoder
+ * that needs more throws `[need-range:OFFSET:LENGTH]` (see ranged-source.ts).
+ */
+export function decodeRangedWithWasm(
+	decodeRanged: (blob: Uint8Array, offsets: Float64Array, lengths: Uint32Array, fileSize: number, optionsJson: string) => any,
+	format: string,
+	buffer: ArrayBuffer,
+	options: Record<string, any>,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const { rangedOffsets, rangedLengths, fileSize, ...rest } = options || {};
+	const result = decodeRanged(new Uint8Array(buffer), new Float64Array(rangedOffsets || []), new Uint32Array(rangedLengths || []),
+		Number(fileSize) || 0, JSON.stringify(rest));
+	return assembleDecoded<Float32Array>(result, format, context, startedAt);
+}
+
+/**
+ * One region of a CZI plane from only the subblocks it needs (ranged access,
+ * see `media/modules/czi-source.ts`). `blob` holds the planned byte ranges in
+ * plan order, `offsets` where each starts. The plane's metadata comes from
+ * the layout step, so the result's own metadata is empty.
+ */
+export function decodeCziRegionWithWasm(
+	decodeCziRegion: (directory: Uint8Array, optionsJson: string, blob: Uint8Array, offsets: Uint32Array) => any,
+	directory: Uint8Array,
+	options: Record<string, any>,
+	blob: ArrayBuffer,
+	offsets: Uint32Array,
+	context: DecodeContext,
+) {
+	const startedAt = performance.now();
+	const result = decodeCziRegion(directory, JSON.stringify(options || {}), new Uint8Array(blob), offsets);
+	return assembleDecoded<Float32Array>(result, 'czi', context, startedAt);
+}
+
+/**
  * Nikon ND2. `decode_nd2_fast` reads the chunk map, resolves `options.indices`
  * (T/P/Z/C) against the experiment loop structure and returns that one frame.
  * Legacy (pre-2012) containers and Nikon's compressed modes are rejected with

@@ -13,6 +13,11 @@ declare module '*/wasm/tiff-wasm.js' {
     const initTiffWasm: any;
     export default initTiffWasm;
     export const decode_czi_fast: any;
+    export const czi_layout: any;
+    export const decode_nd2_ranged: any;
+    export const decode_lif_ranged: any;
+    export const czi_region_plan: any;
+    export const decode_czi_region: any;
     export const decode_nd2_fast: any;
     export const decode_lif_fast: any;
     export const decode_sgi_fast: any;
@@ -66,6 +71,7 @@ declare module '*/wasm/tiff-wasm.js' {
 	export const exr_zip_f32_plan: any;
 	export const decode_exr_zip_f32_blocks: any;
 	export const decode_exr_zip_f32_blocks_stats: any;
+	export const decode_exr_zip_f32_blocks_selected: any;
 	export const decode_tiff_strip_range_raw_stats: any;
 	export const hdr_scanline_plan: any;
 	export const decode_hdr_rows: any;
@@ -114,5 +120,10 @@ declare module '*/wasm/codec-wasm.js' {
     export const decode_dicom_fast: any;
     export const decode_jpeg2000_fast: any;
     export const decode_czi_fast: any;
+    export const czi_layout: any;
+    export const decode_nd2_ranged: any;
+    export const decode_lif_ranged: any;
+    export const czi_region_plan: any;
+    export const decode_czi_region: any;
     export const decode_jpegxr_fast: any;
 }

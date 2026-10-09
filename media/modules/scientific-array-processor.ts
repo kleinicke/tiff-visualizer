@@ -3,6 +3,8 @@ import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-im
 
 import { PfmProcessor } from './pfm-processor.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
+import { RangedFile } from './ranged-source.js';
+import { PerfTrace } from './perf-trace.js';
 import type { SettingsManager } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
 import type { ScientificDecodedImage } from './types.js';
@@ -17,6 +19,12 @@ export interface ScientificArrayProcessorConfig {
 	 * only safe when the parser copies out of the buffer instead of aliasing it.
 	 */
 	cacheSourceInWorker?: boolean;
+	/**
+	 * Decode from partial reads (`ranged-source.ts`) with the worker's
+	 * `<ranged>-ranged` format: only the parts of the file a plane needs are
+	 * read. Falls back to reading the file whole when ranges are unavailable.
+	 */
+	ranged?: 'nd2' | 'lif';
 	formatLabel: string;
 	formatType: 'sgi' | 'fits' | 'dicom' | 'netcdf' | 'czi' | 'nd2' | 'lif' | 'sdt' | 'jxr' | 'jp2' | 'jxl';
 	/**
@@ -88,8 +96,15 @@ export class ScientificArrayProcessor extends PfmProcessor {
 		this.config = config;
 	}
 
+	_rangedFile: RangedFile | null = null;
+	_rangedTried = '';
+
 	async load(src: string, decodeOptions: Record<string, any> = {}) {
 		const signal = this.loadSignal;
+		if (this.config.ranged && this.decodeWorker) {
+			const decoded = await this._loadRanged(src, decodeOptions);
+			if (decoded) { return this._adoptDecoded(decoded); }
+		}
 		// When the worker still holds this file, send no bytes at all: refetching
 		// a large stack per plane costs far more than the decode does. On a miss
 		// the worker fails the request and decodeWithFallback refetches.
@@ -119,6 +134,40 @@ export class ScientificArrayProcessor extends PfmProcessor {
 			throw error;
 		}
 		this._workerCachedSource = cacheKey;
+		return this._adoptDecoded(decoded);
+	}
+
+	/** The ranged decode of `src`, or null to read it whole instead. */
+	async _loadRanged(src: string, decodeOptions: Record<string, any>): Promise<ScientificDecodedImage | null> {
+		const signal = this.loadSignal;
+		const worker = this.decodeWorker!;
+		const booting = worker.whenBooting?.();
+		if (booting) { await booting; }
+		if (!worker.canDecode(`${this.config.ranged}-ranged`)) { return null; }
+		if (this._rangedTried !== src) {
+			this._rangedTried = src;
+			this._rangedFile = await RangedFile.open(src, signal);
+		}
+		const file = this._rangedFile;
+		if (!file) { return null; }
+		const started = performance.now();
+		const readBefore = file.bytesRead;
+		try {
+			const decoded = await file.decode(worker, this.config.ranged!, decodeOptions, signal);
+			PerfTrace.detail(`${this.config.ranged}-ranged-read+decode`, performance.now() - started);
+			PerfTrace.note(`${this.config.ranged}-ranged-bytes`, `${((file.bytesRead - readBefore) / 1048576).toFixed(1)}MB of ${(file.size / 1048576).toFixed(0)}MB in ${file.lastRoundTrips} reads`);
+			this._workerCachedSource = '';
+			return decoded;
+		} catch (error) {
+			if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) { throw error; }
+			console.warn(`[${this.config.formatLabel}] ranged read failed, reading the file whole:`, error);
+			this._rangedFile = null;
+			return null;
+		}
+	}
+
+	/** Keep a decoded plane and hand the viewer its canvas (deferred on first load). */
+	_adoptDecoded(decoded: ScientificDecodedImage, formatInfoSize?: { width: number, height: number }) {
 		this._cachedStats = undefined;
 		this._decodedStats = decoded.stats;
 		this.metadata = decoded.metadata || {};
@@ -133,7 +182,7 @@ export class ScientificArrayProcessor extends PfmProcessor {
 		const canvas = document.createElement('canvas');
 		canvas.width = decoded.width;
 		canvas.height = decoded.height;
-		this._postScientificFormatInfo(decoded);
+		this._postScientificFormatInfo(formatInfoSize ? { ...decoded, ...formatInfoSize } : decoded);
 
 		if (this._isInitialLoad) {
 			this._pendingRenderData = {

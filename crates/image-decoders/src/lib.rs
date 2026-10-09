@@ -42,7 +42,9 @@ pub use formats::tiff::region::{TiffRegion, TiffRegionResult};
 pub use pipeline::stats;
 
 #[cfg(feature = "czi")]
-use formats::czi::decode_czi_impl;
+use formats::czi::{
+    czi_header_json, czi_layout_json, czi_region_plan_json, decode_czi_impl, decode_czi_region_impl,
+};
 #[cfg(feature = "dicom")]
 use formats::dicom::decode_dicom_impl;
 #[cfg(feature = "exr")]
@@ -52,9 +54,9 @@ use formats::fits::decode_fits_impl;
 #[cfg(feature = "hdr")]
 use formats::hdr::decode_hdr_impl;
 #[cfg(feature = "lif")]
-use formats::lif::decode_lif_impl;
+use formats::lif::{decode_lif_impl, decode_lif_sparse};
 #[cfg(feature = "nd2")]
-use formats::nd2::decode_nd2_impl;
+use formats::nd2::{decode_nd2_impl, decode_nd2_sparse};
 #[cfg(feature = "netcdf")]
 use formats::netcdf::decode_netcdf_impl;
 #[cfg(feature = "netpbm")]
@@ -156,6 +158,14 @@ pub struct ExrZipPlan {
     pub height: u32,
     pub data_y: i32,
     pub channel_name: String,
+    /// Every channel, in the file's (block) order.
+    pub channel_names: Vec<String>,
+    /// Each channel's pixel type: 0 u32, 1 half, 2 float.
+    pub channel_kinds: Vec<u32>,
+    /// The displayed channels as indices into `channel_names` (-1: absent,
+    /// shown as 1.0), as `decode_exr_fast` selects them.
+    pub selection: Vec<i32>,
+    pub displayed_names: Vec<String>,
     pub compressed: Vec<u8>,
     pub counts: Vec<u32>,
     pub y_coordinates: Vec<i32>,
@@ -1590,6 +1600,48 @@ pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
     Ok(decode_czi_impl(data, options_json)?.into())
 }
 
+/// Ranged CZI access, step 1: the directory and metadata positions, from
+/// the file's first 512 bytes. See `czi_layout`.
+#[cfg(feature = "czi")]
+pub fn czi_header(head: &[u8]) -> Result<String, DecodeError> {
+    czi_header_json(head)
+}
+
+/// Ranged CZI access, step 2: from the ZISRAWDIRECTORY and ZISRAWMETADATA
+/// segments (each from its segment header; metadata may be empty), the plane
+/// `options_json` selects: size, channels, numeric domain, stored pyramid
+/// `factors` (1 first), `needsJpegXr` and the plane's `metadataJson`.
+#[cfg(feature = "czi")]
+pub fn czi_layout(
+    directory: &[u8],
+    metadata: &[u8],
+    options_json: &str,
+) -> Result<String, DecodeError> {
+    czi_layout_json(directory, metadata, options_json)
+}
+
+/// Ranged CZI access, step 3: the subblock byte ranges a region needs.
+/// `options_json` adds to the plane indices `factor` (output pixel spacing in
+/// full-resolution pixels), `rect` (full-resolution, from the plane's
+/// top-left; the whole plane when absent), `fileSize` and `boundaries`
+/// (other known segment starts, e.g. directory and metadata).
+#[cfg(feature = "czi")]
+pub fn czi_region_plan(directory: &[u8], options_json: &str) -> Result<String, DecodeError> {
+    czi_region_plan_json(directory, options_json)
+}
+
+/// Ranged CZI access, step 4: decode the planned region from the planned
+/// ranges, concatenated in `blob` with each one's start in `offsets`.
+#[cfg(feature = "czi")]
+pub fn decode_czi_region(
+    directory: &[u8],
+    options_json: &str,
+    blob: &[u8],
+    offsets: &[u32],
+) -> Result<DecodedArray, DecodeError> {
+    Ok(decode_czi_region_impl(directory, options_json, blob, offsets)?.into())
+}
+
 /// Decode one plane of a Nikon ND2. `options_json` is the same
 /// `{ indices?: Record<string, number> }` shape CZI uses, selecting the
 /// T/P/Z/C coordinate. Only modern (chunk-based) uncompressed ND2 decodes;
@@ -1605,6 +1657,77 @@ pub fn decode_nd2_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, 
 #[cfg(feature = "lif")]
 pub fn decode_lif_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, DecodeError> {
     Ok(decode_lif_impl(data, options_json)?.into())
+}
+
+/// The pieces of a partially read file as a `SparseFile`: `blob` holds them
+/// back to back, `lengths[i]` bytes each, read from file offset `offsets[i]`.
+#[cfg(any(feature = "nd2", feature = "lif"))]
+fn sparse_pieces<'a>(
+    blob: &'a [u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+) -> Result<formats::scientific_common::SparseFile<'a>, DecodeError> {
+    let as_usize = |value: f64, what: &str| -> Result<usize, DecodeError> {
+        if value.is_finite() && value >= 0.0 && value <= usize::MAX as f64 && value.fract() == 0.0 {
+            // Checked just above: a non-negative integer within usize.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            Ok(value as usize)
+        } else {
+            Err(DecodeError::new(format!(
+                "Ranged read: invalid {what} {value}"
+            )))
+        }
+    };
+    if offsets.len() != lengths.len() {
+        return Err(DecodeError::new(
+            "Ranged read: offsets and lengths disagree",
+        ));
+    }
+    let mut pieces = Vec::with_capacity(offsets.len());
+    let mut at = 0usize;
+    for (&offset, &length) in offsets.iter().zip(lengths) {
+        let length =
+            usize::try_from(length).map_err(|_| DecodeError::new("Ranged read: piece too long"))?;
+        let end = at
+            .checked_add(length)
+            .filter(|&end| end <= blob.len())
+            .ok_or_else(|| DecodeError::new("Ranged read: pieces exceed the buffer"))?;
+        pieces.push((as_usize(offset, "offset")?, &blob[at..end]));
+        at = end;
+    }
+    Ok(formats::scientific_common::SparseFile::new(
+        as_usize(file_size, "file size")?,
+        pieces,
+    ))
+}
+
+/// `decode_nd2_fast` on a partially read file (see `sparse_pieces`). A plane
+/// needing bytes not supplied fails with `[need-range:OFFSET:LENGTH]`; the
+/// page reads that range and retries (media/modules/ranged-source.ts).
+#[cfg(feature = "nd2")]
+pub fn decode_nd2_ranged(
+    blob: &[u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+    options_json: &str,
+) -> Result<DecodedArray, DecodeError> {
+    let file = sparse_pieces(blob, offsets, lengths, file_size)?;
+    Ok(decode_nd2_sparse(&file, options_json)?.into())
+}
+
+/// `decode_lif_fast` on a partially read file; see `decode_nd2_ranged`.
+#[cfg(feature = "lif")]
+pub fn decode_lif_ranged(
+    blob: &[u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+    options_json: &str,
+) -> Result<DecodedArray, DecodeError> {
+    let file = sparse_pieces(blob, offsets, lengths, file_size)?;
+    Ok(decode_lif_sparse(&file, options_json)?.into())
 }
 
 /// Decode a Becker & Hickl SDT TCSPC histogram image. `options_json` selects
@@ -1641,6 +1764,25 @@ pub fn decode_exr_zip_f32_blocks(
     width: u32,
 ) -> Result<Vec<u8>, DecodeError> {
     formats::exr::decode_zip_f32_blocks(blob, counts, rows, width)
+}
+
+/// Rows of a multi-channel ZIP16 EXR (channel pixel types `kinds`), the
+/// plan's `selection` interleaved as `decode_exr_fast` returns it, and their
+/// display range.
+///
+/// # Errors
+///
+/// Malformed or truncated blocks, or a selection outside the channels.
+#[cfg(feature = "exr")]
+pub fn decode_exr_zip_f32_blocks_selected(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+    kinds: &[u32],
+    selection: &[i32],
+) -> Result<(Vec<f32>, f64, f64), DecodeError> {
+    formats::exr::decode_zip_f32_blocks_selected(blob, counts, rows, width, kinds, selection)
 }
 
 /// `decode_exr_zip_f32_blocks` plus the finite min/max of the samples, the

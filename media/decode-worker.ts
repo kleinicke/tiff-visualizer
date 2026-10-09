@@ -18,14 +18,15 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_nd2_ranged, decode_lif_ranged, czi_layout, czi_region_plan, decode_czi_region, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
 // The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
 // few KB of bundle; the ~2.2 MB payload is fetched by `initJxlWasm` below only
 // for standalone JXL worker jobs. Embedded JXL takes the main-thread module
 // retry path after the core container parser identifies it.
 import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
+import initCodecWasm, { czi_layout as codec_czi_layout, czi_region_plan as codec_czi_region_plan, decode_czi_region as codec_decode_czi_region } from './wasm/codec-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { decodeSgiWithWasm, decodeCziWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeSgiWithWasm, decodeCziWithWasm, decodeCziRegionWithWasm, decodeRangedWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { MIN_PARALLEL_TIFF_PIXELS, MIN_PARALLEL_TIFF_STRIPS, shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
 
@@ -591,6 +592,10 @@ function planExrZip(buffer: ArrayBuffer) {
 		height: plan.height,
 		dataY: plan.data_y,
 		channelName: plan.channel_name,
+		channelNames: Array.from(plan.channel_names as string[]),
+		channelKinds: plan.channel_kinds,
+		selection: plan.selection,
+		displayedChannels: Array.from(plan.displayed_names as string[]),
 		counts: plan.counts,
 		yCoordinates: plan.y_coordinates,
 		allTagsJson: plan.all_tags_json,
@@ -847,6 +852,73 @@ async function decodeCzi(buffer: ArrayBuffer, options: Record<string, any>) {
 	return decodeCziWithWasm(decode_czi_fast, buffer, options, 'worker');
 }
 
+/**
+ * Ranged CZI access (media/modules/czi-source.ts). The page reads the
+ * directory once and only the subblocks each view needs; the worker keeps the
+ * directory per file and answers the layout, the byte plan and the region
+ * decode. JPEG XR subblocks need the heavy-codec module, which the page sends
+ * as `codec-module` before the first such request.
+ */
+let codecWasmCompiled: WebAssembly.Module | null = null;
+let codecWasmInitPromise: Promise<void> | null = null;
+const cziDirectories = new Map<string, { directory: Uint8Array, metadata: Uint8Array }>();
+
+async function requireCodecWasm(): Promise<void> {
+	if (!codecWasmInitPromise) {
+		if (!codecWasmCompiled) { throw new Error('The heavy-codec module was not provided to the decode worker'); }
+		codecWasmInitPromise = initCodecWasm({ module_or_path: codecWasmCompiled }).then((): void => undefined);
+		codecWasmInitPromise.catch((): void => { codecWasmInitPromise = null; });
+	}
+	await codecWasmInitPromise;
+}
+
+async function cziFunctions(options: Record<string, any>) {
+	if (options.codec) {
+		await requireCodecWasm();
+		return { layout: codec_czi_layout, plan: codec_czi_region_plan, region: codec_decode_czi_region };
+	}
+	await requireWasm('CZI');
+	return { layout: czi_layout, plan: czi_region_plan, region: decode_czi_region };
+}
+
+function cziDirectory(options: Record<string, any>) {
+	const key = String(options.key || '');
+	if (options.directory instanceof ArrayBuffer) {
+		cziDirectories.delete(key);
+		cziDirectories.set(key, {
+			directory: new Uint8Array(options.directory),
+			metadata: options.metadata instanceof ArrayBuffer ? new Uint8Array(options.metadata) : new Uint8Array(0),
+		});
+		while (cziDirectories.size > 4) { cziDirectories.delete(cziDirectories.keys().next().value as string); }
+	}
+	const entry = cziDirectories.get(key);
+	if (!entry) { throw new Error('CZI directory is not cached in the decode worker'); }
+	return entry;
+}
+
+function cziRangedOptions(options: Record<string, any>) {
+	const { key: _key, directory: _directory, metadata: _metadata, codec: _codec, offsets: _offsets, ...rest } = options;
+	return rest;
+}
+
+async function cziLayout(options: Record<string, any>) {
+	const { directory, metadata } = cziDirectory(options);
+	const fns = await cziFunctions(options);
+	return JSON.parse(fns.layout(directory, metadata, JSON.stringify(cziRangedOptions(options))));
+}
+
+async function cziPlan(options: Record<string, any>) {
+	const { directory } = cziDirectory(options);
+	const fns = await cziFunctions(options);
+	return JSON.parse(fns.plan(directory, JSON.stringify(cziRangedOptions(options))));
+}
+
+async function cziRegion(buffer: ArrayBuffer, options: Record<string, any>) {
+	const { directory } = cziDirectory(options);
+	const fns = await cziFunctions(options);
+	return decodeCziRegionWithWasm(fns.region, directory, cziRangedOptions(options), buffer, new Uint32Array(options.offsets || []), 'worker');
+}
+
 
 async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record<string, any> = {}) {
 	switch (format) {
@@ -889,6 +961,18 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 			return decodeNetcdf(buffer, options);
 		case 'czi':
 			return decodeCzi(buffer, options);
+		case 'czi-layout':
+			return cziLayout(options);
+		case 'czi-plan':
+			return cziPlan(options);
+		case 'czi-region':
+			return cziRegion(buffer, options);
+		case 'nd2-ranged':
+			await requireWasm('ND2');
+			return decodeRangedWithWasm(decode_nd2_ranged, 'nd2', buffer, options, 'worker');
+		case 'lif-ranged':
+			await requireWasm('LIF');
+			return decodeRangedWithWasm(decode_lif_ranged, 'lif', buffer, options, 'worker');
 		case 'nd2':
 			return decodeNd2(buffer, options);
 		case 'lif':
@@ -944,6 +1028,10 @@ self.onmessage = async (event: MessageEvent<any>) => {
 	// .jxl that prompted it is already queued behind this one.
 	if (msg.type === 'jxl-module') {
 		jxlWasmModule = msg.jxlModule;
+		return;
+	}
+	if (msg.type === 'codec-module') {
+		codecWasmCompiled = msg.codecModule;
 		return;
 	}
 	if (msg.type === 'init') {

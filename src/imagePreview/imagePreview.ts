@@ -631,10 +631,24 @@ export class ImagePreview extends MediaPreview {
 			vscode.window.showWarningMessage('No image plane is available at that dataset position.');
 			return;
 		}
+		const previous = safeSeriesIndex === this._datasetSeriesIndex ? this._datasetCoordinates : undefined;
 		this._datasetSeriesIndex = safeSeriesIndex;
 		this._datasetCoordinates = safeCoordinates;
 		this._datasetCurrentResource = vscode.Uri.parse(plane.resourceUri);
 		this.sendDatasetPlane(plane);
+		// A series of one file per slice: offer the next slice along the axis
+		// just stepped, so stepping on reads nothing (as collections do).
+		const axis = previous && series.axes.find(candidate => (previous[candidate.key] ?? 0) !== safeCoordinates[candidate.key]);
+		if (axis && previous) {
+			const step = Math.sign(safeCoordinates[axis.key] - (previous[axis.key] ?? 0));
+			const wanted = { ...safeCoordinates, [axis.key]: safeCoordinates[axis.key] + step };
+			const next = series.planes.find(candidate =>
+				series.axes.every(a => (candidate.coordinates[a.key] || 0) === wanted[a.key]));
+			if (next && next.resourceUri !== plane.resourceUri) {
+				const resource = vscode.Uri.parse(next.resourceUri);
+				this.offerPrefetchOf(resource, this._webviewEditor.webview.asWebviewUri(resource).toString(), this._switchGeneration);
+			}
+		}
 	}
 
 	public async registerOmeDataset(description: any): Promise<void> {
@@ -1004,6 +1018,11 @@ export class ImagePreview extends MediaPreview {
 		const count = this._imageCollection.length;
 		if (count < 2) { return; }
 		const resource = this._imageCollection[(this._currentImageIndex + this._switchDirection + count) % count];
+		this.offerPrefetchOf(resource, this.collectionWebviewUri(resource), generation);
+	}
+
+	/** Offer `resource` (shown at `uri`) for the viewer to read while it is idle. */
+	private offerPrefetchOf(resource: vscode.Uri, uri: string, generation: number): void {
 		void this.pushableStat(resource, PREFETCH_MAX_BYTES).then(stat => {
 			if (!stat || generation !== this._switchGeneration) { return; }
 			// The viewer already holds (or is fetching) this exact file.
@@ -1012,7 +1031,7 @@ export class ImagePreview extends MediaPreview {
 			this._lastPrefetchKey = key;
 			const token = getNonce();
 			this.registerPushableSource(token, resource, stat.size);
-			this.postViewerMessage({ type: 'prefetchSource', uri: this.collectionWebviewUri(resource), token, ...stat });
+			this.postViewerMessage({ type: 'prefetchSource', uri, token, ...stat });
 		});
 	}
 
@@ -1471,7 +1490,9 @@ export class ImagePreview extends MediaPreview {
 					resolve({ worker, blobUrl, caps: event.data.caps || {}, wasmModule });
 				};
 				const wasmBuffer = wasmModule || !wasmBytes ? null : wasmBytes.slice(0);
-				const initMessage = { type: 'init', tiffWasmModule: wasmModule, tiffWasmBuffer: wasmBuffer };
+				// An XCF preview composites in bands on the layered worker's own
+				// workers; they boot while the file arrives.
+				const initMessage = { type: 'init', tiffWasmModule: wasmModule, tiffWasmBuffer: wasmBuffer, prewarmBands: ${lower.endsWith('.xcf')} };
 				worker.postMessage(initMessage, wasmBuffer ? [wasmBuffer] : []);
 				});
 			}) : null;
@@ -1701,7 +1722,8 @@ export class ImagePreview extends MediaPreview {
 	 * Whether the viewer reads this file whole (rather than through an image
 	 * element or in ranges): the formats the page bootstrap warms a decoder and
 	 * the source read for, plus PGM, PBM and TGA, whose cheaper decoders run on
-	 * the page itself.
+	 * the page itself, and the codestream and microscopy formats the decode
+	 * worker reads on demand (JPEG XL/XR/2000, ND2, LIF, SDT).
 	 */
 	private sourceIsReadWhole(resource: vscode.Uri): boolean {
 		const lower = resource.path.toLowerCase();
@@ -1713,8 +1735,11 @@ export class ImagePreview extends MediaPreview {
 			// Remote TIFFs are read in ranges.
 			return !/^(?:https?)$/.test(resource.scheme);
 		}
+		// CZI, ND2 and LIF are absent: the page reads only the parts of them a
+		// plane needs (czi-source.ts, ranged-source.ts), never the whole file.
 		return /\.(?:ppm|pgm|pbm|pfm|npy|npz|exr|hdr|tga)$/.test(lower)
-			|| /\.(?:rgb|rgba|sgi|bw|fits|fit|fts|dcm|dicom|nc|cdf|czi)$/.test(lower)
+			|| /\.(?:rgb|rgba|sgi|bw|fits|fit|fts|dcm|dicom|nc|cdf|sdt)$/.test(lower)
+			|| /\.(?:jxl|jxr|wdp|hdp|jp2|jpf|jpx|j2k|j2c|jpc)$/.test(lower)
 			|| /\.(?:ora|kra|psd|psb|xcf|afphoto|af)$/.test(lower);
 	}
 

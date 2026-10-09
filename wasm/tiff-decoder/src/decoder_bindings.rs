@@ -844,6 +844,25 @@ impl ExrZipPlanJs {
     pub fn channel_name(&self) -> String {
         self.inner.channel_name.clone()
     }
+    /// Every channel, in the file's (block) order.
+    #[wasm_bindgen(getter)]
+    pub fn channel_names(&self) -> Vec<String> {
+        self.inner.channel_names.clone()
+    }
+    /// Each channel's pixel type: 0 u32, 1 half, 2 float.
+    #[wasm_bindgen(getter)]
+    pub fn channel_kinds(&self) -> Vec<u32> {
+        self.inner.channel_kinds.clone()
+    }
+    /// The displayed channels as indices into `channel_names` (-1: shown as 1.0).
+    #[wasm_bindgen(getter)]
+    pub fn selection(&self) -> Vec<i32> {
+        self.inner.selection.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn displayed_names(&self) -> Vec<String> {
+        self.inner.displayed_names.clone()
+    }
     #[wasm_bindgen(getter)]
     pub fn counts(&self) -> Vec<u32> {
         self.inner.counts.clone()
@@ -884,6 +903,49 @@ pub fn decode_exr_zip_f32_blocks(
 
 /// `decode_exr_zip_f32_blocks` with the samples' min/max computed in Rust.
 ///
+/// Displayed samples of a multi-channel ZIP16 range and their range.
+#[wasm_bindgen]
+pub struct ExrSelectedBlocks {
+    data: Vec<f32>,
+    min: f64,
+    max: f64,
+}
+
+#[wasm_bindgen]
+impl ExrSelectedBlocks {
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn min(&self) -> f64 {
+        self.min
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn max(&self) -> f64 {
+        self.max
+    }
+    /// The samples; moved out, so a second call returns an empty array.
+    pub fn take_data(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.data)
+    }
+}
+
+/// # Errors
+///
+/// Malformed or truncated blocks, or a selection outside the channels.
+#[wasm_bindgen]
+pub fn decode_exr_zip_f32_blocks_selected(
+    blob: &[u8],
+    counts: &[u32],
+    rows: &[u32],
+    width: u32,
+    kinds: &[u32],
+    selection: &[i32],
+) -> Result<ExrSelectedBlocks, JsValue> {
+    core::decode_exr_zip_f32_blocks_selected(blob, counts, rows, width, kinds, selection)
+        .map(|(data, min, max)| ExrSelectedBlocks { data, min, max })
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// # Errors
 ///
 /// Malformed or truncated blocks, as a JavaScript string.
@@ -1221,6 +1283,69 @@ pub fn decode_dicom_fast(data: &[u8], frame_index: u32) -> Result<DecodedArray, 
 pub fn decode_czi_fast(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
     prepare();
     core::decode_czi_fast(data, options_json)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_nd2_ranged(
+    blob: &[u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+    options_json: &str,
+) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_nd2_ranged(blob, offsets, lengths, file_size, options_json)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_lif_ranged(
+    blob: &[u8],
+    offsets: &[f64],
+    lengths: &[u32],
+    file_size: f64,
+    options_json: &str,
+) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_lif_ranged(blob, offsets, lengths, file_size, options_json)
+        .map(Into::into)
+        .map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn czi_header(head: &[u8]) -> Result<String, JsValue> {
+    prepare();
+    core::czi_header(head).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn czi_layout(
+    directory: &[u8],
+    metadata: &[u8],
+    options_json: &str,
+) -> Result<String, JsValue> {
+    prepare();
+    core::czi_layout(directory, metadata, options_json).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn czi_region_plan(directory: &[u8], options_json: &str) -> Result<String, JsValue> {
+    prepare();
+    core::czi_region_plan(directory, options_json).map_err(js_error)
+}
+
+#[wasm_bindgen]
+pub fn decode_czi_region(
+    directory: &[u8],
+    options_json: &str,
+    blob: &[u8],
+    offsets: &[u32],
+) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::decode_czi_region(directory, options_json, blob, offsets)
         .map(Into::into)
         .map_err(js_error)
 }

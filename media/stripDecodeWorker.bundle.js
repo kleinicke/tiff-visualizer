@@ -163,6 +163,16 @@ function getArrayU32FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
+function getArrayJsValueFromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  const mem = getDataViewMemory0();
+  const result = [];
+  for (let i = ptr; i < ptr + 4 * len; i += 4) {
+    result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+  }
+  wasm.__externref_drop_slice(ptr, len);
+  return result;
+}
 function getArrayF64FromWasm0(ptr, len) {
   ptr = ptr >>> 0;
   return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
@@ -177,6 +187,19 @@ function decode_tiff_preview_range(blob, counts, first_strip, width, height, cha
     throw takeFromExternrefTable0(ret[1]);
   }
   return TiffPreviewRangeResult.__wrap(ret[0]);
+}
+function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_zip_f32_blocks_stats(ptr0, len0, ptr1, len1, ptr2, len2, width);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return RawRangeResult.__wrap(ret[0]);
 }
 function decode_psd_composite_rows(blob, counts, width, rows, targets, compression, global_alpha, grayscale) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
@@ -193,6 +216,49 @@ function decode_psd_composite_rows(blob, counts, width, rows, targets, compressi
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v4;
 }
+function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return RawRangeResult.__wrap(ret[0]);
+}
+function decode_exr_zip_f32_blocks_selected(blob, counts, rows, width, kinds, selection) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ptr3 = passArray32ToWasm0(kinds, wasm.__wbindgen_malloc);
+  const len3 = WASM_VECTOR_LEN;
+  const ptr4 = passArray32ToWasm0(selection, wasm.__wbindgen_malloc);
+  const len4 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_zip_f32_blocks_selected(ptr0, len0, ptr1, len1, ptr2, len2, width, ptr3, len3, ptr4, len4);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return ExrSelectedBlocks.__wrap(ret[0]);
+}
+function decode_czi_region(directory, options_json, blob, offsets) {
+  const ptr0 = passArray8ToWasm0(directory, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ptr3 = passArray32ToWasm0(offsets, wasm.__wbindgen_malloc);
+  const len3 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_czi_region(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return DecodedArray.__wrap(ret[0]);
+}
 function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -206,17 +272,6 @@ function decode_tiff_float_strip_range(blob, counts, first_strip, width, height,
   wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
   return v3;
 }
-function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return RawRangeResult.__wrap(ret[0]);
-}
 function decode_hdr_rows(blob, width, rows) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -227,19 +282,6 @@ function decode_hdr_rows(blob, width, rows) {
   var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
   wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
   return v2;
-}
-function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
-  const len2 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_exr_zip_f32_blocks_stats(ptr0, len0, ptr1, len1, ptr2, len2, width);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return RawRangeResult.__wrap(ret[0]);
 }
 var DecodedArrayFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
@@ -705,6 +747,53 @@ var ExrResult = class _ExrResult {
   }
 };
 if (Symbol.dispose) ExrResult.prototype[Symbol.dispose] = ExrResult.prototype.free;
+var ExrSelectedBlocksFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
+}, unregister: () => {
+} } : new FinalizationRegistry((ptr) => wasm.__wbg_exrselectedblocks_free(ptr >>> 0, 1));
+var ExrSelectedBlocks = class _ExrSelectedBlocks {
+  static __wrap(ptr) {
+    ptr = ptr >>> 0;
+    const obj = Object.create(_ExrSelectedBlocks.prototype);
+    obj.__wbg_ptr = ptr;
+    ExrSelectedBlocksFinalization.register(obj, obj.__wbg_ptr, obj);
+    return obj;
+  }
+  __destroy_into_raw() {
+    const ptr = this.__wbg_ptr;
+    this.__wbg_ptr = 0;
+    ExrSelectedBlocksFinalization.unregister(this);
+    return ptr;
+  }
+  free() {
+    const ptr = this.__destroy_into_raw();
+    wasm.__wbg_exrselectedblocks_free(ptr, 0);
+  }
+  /**
+   * @returns {number}
+   */
+  get max() {
+    const ret = wasm.decodedarray_type_max(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * @returns {number}
+   */
+  get min() {
+    const ret = wasm.decodedarray_type_min(this.__wbg_ptr);
+    return ret;
+  }
+  /**
+   * The samples; moved out, so a second call returns an empty array.
+   * @returns {Float32Array}
+   */
+  take_data() {
+    const ret = wasm.exrselectedblocks_take_data(this.__wbg_ptr);
+    var v1 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+};
+if (Symbol.dispose) ExrSelectedBlocks.prototype[Symbol.dispose] = ExrSelectedBlocks.prototype.free;
 var ExrZipPlanJsFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
 } } : new FinalizationRegistry((ptr) => wasm.__wbg_exrzipplanjs_free(ptr >>> 0, 1));
@@ -757,11 +846,40 @@ var ExrZipPlanJs = class _ExrZipPlanJs {
     }
   }
   /**
+   * Each channel's pixel type: 0 u32, 1 half, 2 float.
+   * @returns {Uint32Array}
+   */
+  get channel_kinds() {
+    const ret = wasm.exrzipplanjs_channel_kinds(this.__wbg_ptr);
+    var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * Every channel, in the file's (block) order.
+   * @returns {string[]}
+   */
+  get channel_names() {
+    const ret = wasm.exrzipplanjs_channel_names(this.__wbg_ptr);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
    * @returns {Int32Array}
    */
   get y_coordinates() {
     const ret = wasm.exrzipplanjs_y_coordinates(this.__wbg_ptr);
     var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
+  }
+  /**
+   * @returns {string[]}
+   */
+  get displayed_names() {
+    const ret = wasm.exrzipplanjs_displayed_names(this.__wbg_ptr);
+    var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v1;
   }
@@ -803,8 +921,18 @@ var ExrZipPlanJs = class _ExrZipPlanJs {
    * @returns {number}
    */
   get height() {
-    const ret = wasm.decodedarray_bits_per_sample(this.__wbg_ptr);
+    const ret = wasm.exrzipplanjs_height(this.__wbg_ptr);
     return ret >>> 0;
+  }
+  /**
+   * The displayed channels as indices into `channel_names` (-1: shown as 1.0).
+   * @returns {Int32Array}
+   */
+  get selection() {
+    const ret = wasm.exrzipplanjs_selection(this.__wbg_ptr);
+    var v1 = getArrayI32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v1;
   }
 };
 if (Symbol.dispose) ExrZipPlanJs.prototype[Symbol.dispose] = ExrZipPlanJs.prototype.free;
@@ -1503,7 +1631,7 @@ var RgbaLayerCompositor = class {
    * @returns {number}
    */
   get covered_count() {
-    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+    const ret = wasm.rgbalayercompositor_covered_count(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2196,7 +2324,7 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get orientation() {
-    const ret = wasm.exrzipplanjs_data_y(this.__wbg_ptr);
+    const ret = wasm.tifffloatstripplanjs_orientation(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2232,7 +2360,7 @@ var TiffFloatStripPlanJs = class _TiffFloatStripPlanJs {
    * @returns {number}
    */
   get sample_format() {
-    const ret = wasm.exrzipplanjs_width(this.__wbg_ptr);
+    const ret = wasm.rgbalayercompositor_covered_count(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -2625,7 +2753,7 @@ var TiffResult = class _TiffResult {
    * @returns {number}
    */
   get rows_per_strip() {
-    const ret = wasm.tiffresult_rows_per_strip(this.__wbg_ptr);
+    const ret = wasm.exrzipplanjs_height(this.__wbg_ptr);
     return ret >>> 0;
   }
   /**
@@ -3203,6 +3331,21 @@ self.onmessage = async (event) => {
       self.postMessage({ id: job.id, samples: samples2, min: min2, max: max2, ms: performance.now() - started }, [samples2.buffer]);
       return;
     }
+    if (job.kind === "czi-tile") {
+      const decoded = decode_czi_region(
+        new Uint8Array(job.directory),
+        job.optionsJson,
+        new Uint8Array(job.blob),
+        Uint32Array.of(0)
+      );
+      const width = decoded.width;
+      const height = decoded.height;
+      const channels = decoded.channels;
+      const samples2 = decoded.take_data_as_f32();
+      decoded.free();
+      self.postMessage({ id: job.id, samples: samples2, width, height, channels, ms: performance.now() - started }, [samples2.buffer]);
+      return;
+    }
     if (job.kind === "hdr-rows") {
       const samples2 = decode_hdr_rows(new Uint8Array(job.blob), job.width, job.rows);
       self.postMessage({ id: job.id, samples: samples2, ms: performance.now() - started }, [samples2.buffer]);
@@ -3220,6 +3363,22 @@ self.onmessage = async (event) => {
         job.grayscale
       );
       self.postMessage({ id: job.id, rgba, ms: performance.now() - started }, [rgba.buffer]);
+      return;
+    }
+    if (job.kind === "exr-zip" && job.selection) {
+      const decoded = decode_exr_zip_f32_blocks_selected(
+        new Uint8Array(job.blob),
+        new Uint32Array(job.counts),
+        new Uint32Array(job.rows),
+        job.width,
+        new Uint32Array(job.kinds),
+        new Int32Array(job.selection)
+      );
+      const min2 = decoded.min;
+      const max2 = decoded.max;
+      const samples2 = decoded.take_data();
+      decoded.free();
+      self.postMessage({ id: job.id, samples: samples2, min: min2, max: max2, ms: performance.now() - started }, [samples2.buffer]);
       return;
     }
     if (job.kind === "exr-zip") {

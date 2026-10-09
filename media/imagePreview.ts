@@ -274,19 +274,20 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				hdrProcessor = installProcessor(new HdrProcessor(settingsManager, vscode));
 
 			} else if (family === 'scientific') {
-				const [{ ScientificArrayProcessor }, decoders] = await Promise.all([
+				const [{ ScientificArrayProcessor }, { CziProcessor }, decoders] = await Promise.all([
 					import('./modules/scientific-array-processor.js'),
+					import('./modules/czi-processor.js'),
 					import('./modules/main-thread-decode.js'),
 				]);
 				fitsProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'fits', formatLabel: 'FITS', formatType: 'fits', parse: decoders.decodeFitsLocal }));
 				jxrProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'jxr', formatLabel: 'JPEG XR', formatType: 'jxr', parse: decoders.decodeJxrLocal }));
 				jp2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'jp2', formatLabel: 'JPEG 2000', formatType: 'jp2', parse: decoders.decodeJp2Local }));
 				jxlProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'jxl', formatLabel: 'JPEG XL', formatType: 'jxl', formatTypeFor: domain => (domain.sampleFormat === 3 ? 'jxl-float' : 'jxl'), parse: decoders.decodeJxlLocal }));
-				dicomProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) }));
+				dicomProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'dicom', formatLabel: 'DICOM', formatType: 'dicom', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeDicomLocal(buffer, { frameIndex: Number(options?.frameIndex || 0) }) }));
 				netcdfProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'netcdf', formatLabel: 'NetCDF', formatType: 'netcdf', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNetcdfLocal(buffer, options || {}) }));
-				cziProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeCziLocal(buffer, options || {}) }));
-				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
-				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
+				cziProcessor = installProcessor(new CziProcessor(settingsManager, vscode, { workerFormat: 'czi', formatLabel: 'CZI', formatType: 'czi', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeCziLocal(buffer, options || {}) }));
+				nd2Processor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'nd2', formatLabel: 'ND2', formatType: 'nd2', cacheSourceInWorker: true, ranged: 'nd2', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeNd2Local(buffer, options || {}) }));
+				lifProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'lif', formatLabel: 'LIF', formatType: 'lif', cacheSourceInWorker: true, ranged: 'lif', parse: (buffer: ArrayBuffer, options: any) => decoders.decodeLifLocal(buffer, options || {}) }));
 				sdtProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sdt', formatLabel: 'SDT', formatType: 'sdt', cacheSourceInWorker: true, parse: (buffer: ArrayBuffer, options: any) => decoders.decodeSdtLocal(buffer, options || {}) }));
 				sgiProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sgi', formatLabel: 'SGI RGB', formatType: 'sgi', parse: (buffer: ArrayBuffer) => decoders.decodeSgiLocal(buffer) }));
 				scientificProcessors = [sgiProcessor, fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
@@ -297,8 +298,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		processorFamilyLoads.set(family, load);
 		return load;
 	}
+	// Started after the first image is shown (logLoadPerformance), or by the
+	// first composite that needs it: booting it at page start fetched its
+	// bundle, a worker and WebAssembly while the first image was decoding.
 	const layerCompositorWorker = new LayerCompositorWorkerClient();
-	layerCompositorWorker.start();
 	const layerGpuCompositor = new WebGL2LayerCompositor();
 	const layerWebGpuCompositor = new WebGPULayerCompositor();
 	pngProcessor.decodeWorker = pngDecodeWorkerClient;
@@ -1199,6 +1202,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	function logLoadPerformance(label: string, webviewMs: string, totalMs: string | number): void {
+		setTimeout(() => { void layerCompositorWorker.start(); }, 0);
 		// The image has loaded: a prefetch of the collection's next one may start.
 		startPrefetch();
 		// Capture phase totals immediately; PerfTrace may be reused by another
@@ -1369,6 +1373,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let datasetSeriesIndex = 0;
 	let datasetCoordinates: Record<string, number> = {};
 	let datasetLoading = false;
+	// One dataset plane request in flight; see requestDatasetNavigation.
+	let datasetRequestInFlight = false;
+	let pendingDatasetRequest: { seriesIndex: number; coordinates: Record<string, number> } | null = null;
+	let datasetRequestTimer: ReturnType<typeof setTimeout> | undefined;
 	let omeDatasetRequestKey = '';
 	let filenameBadge: HTMLElement | null = null;
 	let activeCounterInput: HTMLInputElement | null = null;
@@ -1786,32 +1794,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			ctx.canvas.height = imageData.height;
 		}
 		const start = performance.now();
-		const pixelCount = imageData.width * imageData.height;
-		if (pixelCount > 25_000_000) {
-			if (shouldDraw()) { ctx.putImageData(imageData, 0, 0); }
-			console.log(`[Canvas] putImageData upload took ${(performance.now() - start).toFixed(2)}ms`);
-			PerfTrace.mark('canvas-upload');
-			return;
-		}
-		try {
-			const bitmap = await createImageBitmap(imageData);
-			if (shouldDraw()) {
-				// A rendered frame is a replacement, not another translucent layer.
-				// source-over would leave pixels from the previous frame visible where
-				// the new layer composite is transparent after hiding a layer.
-				ctx.save();
-				ctx.globalCompositeOperation = 'copy';
-				ctx.drawImage(bitmap, 0, 0);
-				ctx.restore();
-			}
-			bitmap.close(); // Release memory
-			console.log(`[Canvas] ImageBitmap upload took ${(performance.now() - start).toFixed(2)}ms`);
-		} catch (e) {
-			console.error("Error creating ImageBitmap, falling back to putImageData", e);
-			const fallbackStart = performance.now();
-			if (shouldDraw()) { ctx.putImageData(imageData, 0, 0); }
-			console.log(`[Canvas] putImageData fallback took ${(performance.now() - fallbackStart).toFixed(2)}ms`);
-		}
+		// putImageData replaces the pixels outright (as the 'copy' operation
+		// would) and leaves the same canvas bytes as createImageBitmap +
+		// drawImage, also for translucent pixels, at a third of the cost in the
+		// VS Code webview (25 MP: ~20 instead of ~60 ms).
+		if (shouldDraw()) { ctx.putImageData(imageData, 0, 0); }
+		console.log(`[Canvas] putImageData upload took ${(performance.now() - start).toFixed(2)}ms`);
 		PerfTrace.mark('canvas-upload');
 	}
 
@@ -1982,6 +1970,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 	function onImageError(message: string = '') {
 		navigation.markFailed(navigation.generation);
+		if (datasetRequestInFlight) { datasetRequestSettled(); }
 		PerfTrace.cancel();
 		hasLoadedImage = true;
 		signalTiffCanvasReady();
@@ -2202,7 +2191,15 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				updateNetCdfOverlay(processor.metadata, false);
 			}
 			if (!await installLoadedImage(processor, result, gen)) return;
+			// A CZI mosaic too large to hold whole shows a stored level inside the
+			// pyramid scene large TIFFs use; finer levels stream in on zoom.
+			const cziScene = processor === cziProcessor && cziProcessor.isScene;
+			if (cziScene && !processor._pendingRenderData) {
+				installPyramidSceneIfNeeded();
+				configureTiffMouseReadout();
+			}
 			if (!processor._pendingRenderData) { finalizeImageSetup(); }
+			if (cziScene && !processor._pendingRenderData) { void updateDetailPatch(); }
 			// Start the trailing decode only after this canvas has been installed.
 			// The next load yields to paint and keeps this frame visible while busy.
 			if (isPlaneNavProcessor(processor)) { onPlaneLoadSettled(); }
@@ -3245,6 +3242,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		datasetLoading = false;
 		updateDatasetOverlay(false);
 		updateTiffPageOverlay(false);
+		if (datasetRequestInFlight) { datasetRequestSettled(); }
 	}
 
 	function getDisplayedImageElement(): HTMLElement | null {
@@ -3671,13 +3669,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 						}
 
 						// Canvas now has real pixels — swap out old canvas and finalize
-						if (currentLoadFormat === 'TIFF') {
+						const cziScene = currentLoadFormat === 'CZI' && cziProcessor?.isScene;
+						if (currentLoadFormat === 'TIFF' || cziScene) {
 							installPyramidSceneIfNeeded();
 							configureTiffMouseReadout();
 						}
 						finalizeImageSetup();
 						if (currentLoadFormat === 'TIFF') {
 							updateTiffPageOverlay();
+							void updateDetailPatch();
+						} else if (cziScene) {
 							void updateDetailPatch();
 						}
 						// Deferred render is done — clear loading indicators now
@@ -3849,10 +3850,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				break;
 
 			case 'switchToDatasetPlane':
-				datasetSeriesIndex = Number(message.seriesIndex || 0);
-				datasetCoordinates = { ...(message.coordinates || {}) };
+				// A newer slider position is waiting: keep showing it on the controls.
+				if (!pendingDatasetRequest) {
+					datasetSeriesIndex = Number(message.seriesIndex || 0);
+					datasetCoordinates = { ...(message.coordinates || {}) };
+				}
 				datasetLoading = true;
 				updateDatasetOverlay(true);
+				// The step started here, not at the host's original open: time it from
+				// switchToNewImage instead of reporting the time since the file opened.
+				extensionLoadStartTime = 0;
 				switchToNewImage(message.uri, message.resourceUri, {
 					formatHint: message.formatHint,
 					pageIndex: message.pageIndex,
@@ -5433,11 +5440,37 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return best ? { ...best } : desired;
 	}
 
+	/**
+	 * Dataset navigation keeps at most one plane request in flight. A slider
+	 * dragged across a study asks for a plane on every step; sent straight
+	 * through, each one cancelled the decode before it (restarting the worker)
+	 * or queued behind it, so the plane it was dropped on appeared only after
+	 * every plane passed on the way. Now the newest position waits while one
+	 * plane loads and is sent the moment it is shown: the view keeps updating
+	 * during the drag and lands on the final plane one load later.
+	 */
 	function requestDatasetNavigation(seriesIndex: number, coordinates: Record<string, number>) {
 		if (!datasetManifest) { return; }
 		datasetLoading = true;
 		updateDatasetOverlay(true);
+		if (datasetRequestInFlight) {
+			pendingDatasetRequest = { seriesIndex, coordinates: { ...coordinates } };
+			return;
+		}
+		datasetRequestInFlight = true;
+		// A position without a plane gets no answer; do not wait forever.
+		clearTimeout(datasetRequestTimer);
+		datasetRequestTimer = setTimeout(datasetRequestSettled, 3000);
 		vscode.postMessage({ type: 'navigateDataset', seriesIndex, coordinates });
+	}
+
+	/** The plane in flight was shown (or failed): send the newest waiting position. */
+	function datasetRequestSettled() {
+		clearTimeout(datasetRequestTimer);
+		datasetRequestInFlight = false;
+		const next = pendingDatasetRequest;
+		pendingDatasetRequest = null;
+		if (next) { requestDatasetNavigation(next.seriesIndex, next.coordinates); }
 	}
 
 	function updateDatasetOverlay(loading = datasetLoading) {
@@ -6135,20 +6168,32 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let _levelRefineRequestedAt = 0;
 
 
+	/**
+	 * The processor a pyramid scene reads its levels and regions from: the
+	 * CZI processor while it shows a mosaic too large to hold whole, the TIFF
+	 * processor otherwise. Both answer the same members (see czi-processor.ts).
+	 */
+	function sceneSource(): any {
+		return currentLoadFormat === 'CZI' && cziProcessor?.isScene ? cziProcessor : tiffProcessor;
+	}
+
 	/** How many stored pixels each displayed pixel stands for. 1 at full size. */
 	function currentLevelReduction(): number {
-		const directory = tiffProcessor.pageDirectory;
+		const source = sceneSource();
+		const directory = source.pageDirectory;
 		if (!isPyramidal(directory)) { return 1; }
-		const current = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		const current = directory.find((entry: TiffPageEntry) => entry.index === source.pageIndex);
 		return current ? Math.max(1, current.reduction) : 1;
 	}
 
 	function streamedSceneLevels(): TiffPageEntry[] {
-		const directory = tiffProcessor.pageDirectory;
-		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+		const source = sceneSource();
+		const directory = source.pageDirectory;
+		const page = pageOwningIfd(directory, source.pageIndex);
 		const levels = levelsForPage(directory, page);
 		const full = levels[0];
 		if (!full) { return []; }
+		if (source !== tiffProcessor) { return levels; }
 		// A metadata-only remote base must always acquire a scene that can ask
 		// for its blocks—even if the TIFF has no reduced overview IFDs. Without
 		// this path a large, single-level tiled TIFF remains a blank canvas.
@@ -6173,26 +6218,27 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	function configureTiffMouseReadout(): void {
+		const source = sceneSource();
 		if (_pyramidScene) {
 
 			mouseHandler.setCoordinateScale(1);
 			mouseHandler.setStoredValueResolver(
-				(x: number, y: number) => tiffProcessor.readFullResolutionPixel(x, y),
+				(x: number, y: number) => source.readFullResolutionPixel(x, y),
 				{
 					exactOnly: true,
 					// Stored pyramids report resident samples. Generated previews also
 					// request an original block on hover so decimation never replaces
 					// the exact scalar readout; later positions reuse that block.
-					upgradeApproximate: tiffProcessor.hasGeneratedPreview,
+					upgradeApproximate: source.hasGeneratedPreview,
 					immediateResolver: (x: number, y: number) =>
-						tiffProcessor.readCachedScenePixel(x, y),
+						source.readCachedScenePixel(x, y),
 				},
 			);
 			return;
 		}
 
 		mouseHandler.setCoordinateScale(currentLevelReduction());
-		mouseHandler.setStoredValueResolver((x: number, y: number) => tiffProcessor.readStoredPixel(x, y));
+		mouseHandler.setStoredValueResolver((x: number, y: number) => source.readStoredPixel(x, y));
 	}
 
 	// --- Detail patch -----------------------------------------------------
@@ -6349,13 +6395,14 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const scene = _pyramidScene;
 		if (!scene || !hasLoadedImage || _imageTransitionActive) { return; }
 		if (_pyramidTileLoadPending) { _pyramidTileLoadQueued = true; return; }
-		const directory = scenePageDirectory(tiffProcessor.pageDirectory);
-		const page = pageOwningIfd(directory, tiffProcessor.pageIndex);
+		const provider = sceneSource();
+		const directory = scenePageDirectory(provider.pageDirectory);
+		const page = pageOwningIfd(directory, provider.pageIndex);
 		const levels = levelsForPage(directory, page);
-		const base = directory.find((entry: TiffPageEntry) => entry.index === tiffProcessor.pageIndex);
+		const base = directory.find((entry: TiffPageEntry) => entry.index === provider.pageIndex);
 		const wanted = levelForDisplayWidth(directory, page, displayedImageWidthPx());
 		if (!base || !wanted) { return; }
-		const streamingBase = tiffProcessor.isProgressiveRemoteBase && wanted.index === base.index;
+		const streamingBase = provider.isProgressiveRemoteBase && wanted.index === base.index;
 		if (wanted.width <= base.width && !streamingBase) {
 			// Retained detail is the bridge across a gesture, not a permanent
 			// patchwork. Once the overview is the chosen level, converge to it.
@@ -6433,7 +6480,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 		// Generated previews stream independent strips center-first, like remote
 		// COG blocks. Each result can paint while the next strips decode.
-		const streamBlocks = tiffProcessor.isRemoteSource || (tiffProcessor.hasGeneratedPreview
+		const streamBlocks = provider.isRemoteSource || (provider.hasGeneratedPreview
 			&& wanted.blockWidth === wanted.width && wanted.blockWidth * wanted.blockHeight <= 8_000_000);
 		const requests = streamBlocks ? missing : [{
 			x: Math.min(...missing.map(rect => rect.x)),
@@ -6460,13 +6507,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					const sourceRect = { x: rect.x * factor, y: rect.y * factor,
 						width: Math.min(rect.width * factor, source.width - rect.x * factor),
 						height: Math.min(rect.height * factor, source.height - rect.y * factor) };
-					const original = await tiffProcessor.renderRegion(source.index, sourceRect, requestController.signal);
+					const original = await provider.renderRegion(source.index, sourceRect, requestController.signal);
 					rendered = original && !requestController.signal.aborted
 						? resizeDetailForDisplay(original, rect.width, rect.height) : null;
 				} else {
-					rendered = tiffProcessor.isRemoteSource
-						? await tiffProcessor.renderRegionCanvas(wanted.index, rect, requestController.signal)
-						: await tiffProcessor.renderRegion(wanted.index, rect, requestController.signal);
+					rendered = provider.isRemoteSource
+						? await provider.renderRegionCanvas(wanted.index, rect, requestController.signal)
+						: await provider.renderRegion(wanted.index, rect, requestController.signal);
 				}
 				// A block remains useful after a pan because its scene position is
 				// absolute. A different image, however, must never receive it.
@@ -6487,7 +6534,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			};
 			// Establish one normalization range before parallel tiles begin. This
 			// keeps auto-normalized blocks visually identical at their boundaries.
-			if (streamingBase && !tiffProcessor._lastStatistics && requests.length) {
+			if (streamingBase && !provider._lastStatistics && requests.length) {
 				await paintRect(requests[nextRequest++]);
 			}
 			const paintNext = async (): Promise<void> => {
@@ -6498,7 +6545,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			};
 			// Match the remote decoder pool: enough parallel ranges to fill the
 			// connection without waiting for every block before the first paint.
-			const streams = Math.min(requests.length, tiffProcessor.isRemoteSource
+			const streams = Math.min(requests.length, provider.isRemoteSource
 				? remoteTileConcurrency(wanted.blockWidth, wanted.blockHeight, wanted.samplesPerPixel)
 				: streamBlocks ? 4 : 1);
 			await Promise.all(Array.from({ length: streams }, () => paintNext()));

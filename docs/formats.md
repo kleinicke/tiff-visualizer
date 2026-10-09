@@ -211,6 +211,11 @@ holds, let you pick one, then treat it as an image with extra dimensions.
   through the same arithmetic. `.lifext` sidecars hold derived data such as
   histograms and are not needed to read pixels.
 
+  ND2 and LIF files are read in parts: the chunk map, the metadata and the
+  one frame (ND2), or the XML header, the memory-block headers and the bytes
+  of the shown plane (LIF). A large file opens without being read whole, and
+  stepping through planes reads only each new plane.
+
 - **CZI** — Zeiss microscopy (ZISRAW). Each plane is stored as its own
   subblock, so the overlay gives one slider per non-spatial axis (Z, C, T, ...)
   and mosaic tiles are assembled into the full frame. Arrow keys step through Z
@@ -219,6 +224,11 @@ holds, let you pick one, then treat it as an image with extra dimensions.
   reported in micrometres. Uncompressed, JPEG, LZW, JPEG XR, Zstd-0/Zstd-1,
   and experimental CHUNKED subblocks decode. CHUNKED supports both zstd and
   LZ4 chunks plus the optional 16-bit hi-lo preprocessing.
+  Only the file's directory and the subblocks a view needs are read, so a
+  plane of a large stack opens without reading the whole file. Mosaics above
+  50 megapixels open at the stored pyramid level that fits the window and
+  load finer levels for the visible region while zooming, like large TIFF
+  pyramids; a mosaic without stored levels is reduced from its tiles.
 
 - **SDT** — Becker & Hickl FLIM/TCSPC measurements. Each spatial pixel stores
   a photon-arrival histogram rather than one intensity. The `Mode` control

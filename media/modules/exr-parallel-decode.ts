@@ -20,7 +20,7 @@ export interface ParallelExrResult {
 	decodeTimings: { name: string; durationMs: number }[];
 }
 
-/** Decode guarded one-channel Float32 ZIP16 scanline EXRs across workers. */
+/** Decode guarded ZIP16 scanline EXRs (any channels, half or float) across workers. */
 export async function tryParallelExrDecode(
 	buffer: ArrayBuffer,
 	worker: DecodeWorkerLike | null | undefined,
@@ -42,6 +42,8 @@ export async function tryParallelExrDecode(
 		counts: plan.counts,
 		yCoordinates: plan.yCoordinates,
 		compressed: plan.compressed,
+		channelKinds: plan.channelKinds instanceof Uint32Array ? plan.channelKinds : undefined,
+		selection: plan.selection instanceof Int32Array ? plan.selection : undefined,
 	});
 	if (!decoded) { return { result: null, source }; }
 	worker.retireAfterDecode?.();
@@ -49,6 +51,9 @@ export async function tryParallelExrDecode(
 	PerfTrace.detail('decode-exr-zip-plan', Number(plan.planMs || 0));
 	PerfTrace.detail('decode-exr-zip-workers', decoded.durationMs);
 	const channelName = String(plan.channelName || 'Y');
+	// As decode_exr_fast reports them: every channel, and the displayed ones.
+	const channelNames: string[] = Array.isArray(plan.channelNames) ? plan.channelNames.map(String) : [channelName];
+	const displayedChannels: string[] = Array.isArray(plan.displayedChannels) ? plan.displayedChannels.map(String) : [channelName];
 	return {
 		// The parallel result is complete; do not retain the original 44-100MB
 		// source through deferred rendering.
@@ -57,14 +62,14 @@ export async function tryParallelExrDecode(
 			width: Number(plan.width),
 			height: Number(plan.height),
 			data: decoded.data,
-			format: 1028,
+			format: decoded.channels === 1 ? 1028 : 1023,
 			type: 1015,
-			channelNames: [channelName],
-			displayedChannels: [channelName],
+			channelNames,
+			displayedChannels,
 			flipY: false,
 			allTagsJson: String(plan.allTagsJson || '[]'),
 			stats: { min: decoded.min, max: decoded.max },
-			channels: 1,
+			channels: decoded.channels,
 			decodedWith: `wasm (${decoded.workers} EXR ZIP workers)`,
 			decodeTimings: [
 				{ name: 'decode-exr-zip-plan', durationMs: Number(plan.planMs || 0) },

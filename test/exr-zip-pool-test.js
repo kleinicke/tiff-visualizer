@@ -1,8 +1,11 @@
 /**
- * The EXR ZIP pool (decodeExrZipBlocks) splits a one-channel float scanline
- * EXR into block ranges across workers. Through the real worker bundle, its
- * samples must be byte-identical to the single-threaded decode (NaN included)
- * and its min/max must be the finite-only range of those samples.
+ * The EXR ZIP pool (decodeExrZipBlocks) splits a float scanline EXR into
+ * block ranges across workers. Through the real worker bundle, its samples
+ * must be byte-identical to the single-threaded decode (NaN included) and its
+ * min/max must be the finite-only range of those samples. For several
+ * channels, each range interleaves the channels decode_exr_fast displays
+ * (here R, G, B, A of A/B/G/R/Z, and of half A/B/G/R plus a u32 id), and the
+ * ranges' display ranges merge into that decode's range.
  */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -72,7 +75,56 @@ async function main() {
  }
  assert.equal(decoded.min, min, `${file}: min`);
  assert.equal(decoded.max, max, `${file}: max`);
- console.log(`EXR ZIP pool: ${expected.length} samples identical across ${decoded.workers} workers, range ${min}..${max}`);
+ // Several channels, decoded in three block ranges like three workers:
+ // float RGBA + Z, and half RGBA + a u32 id channel that is not shown.
+ const multiSummaries = [];
+ for (const multiFile of ['test-samples/exr_zip_rgbaz_f32.exr', 'test-samples/exr_zip_rgba_half_id.exr']) {
+  const multi = new Uint8Array(fs.readFileSync(multiFile));
+  const multiPlan = wasm.exr_zip_f32_plan(multi);
+  assert.ok(multiPlan, `${multiFile}: not eligible for the EXR ZIP pool`);
+  const channelNames = Array.from(multiPlan.channel_names);
+  const kinds = multiPlan.channel_kinds;
+  const selection = multiPlan.selection;
+  const displayed = Array.from(multiPlan.displayed_names);
+  const width = multiPlan.width, height = multiPlan.height, dataY = multiPlan.data_y;
+  const counts = multiPlan.counts, yCoordinates = multiPlan.y_coordinates, compressed = multiPlan.take_compressed();
+  multiPlan.free();
+  const whole = wasm.decode_exr_fast(multi);
+  const wholeData = whole.take_data_as_f32();
+  const multiReference = {
+   channels: whole.channels, min: whole.data_min, max: whole.data_max,
+   names: whole.channel_names_csv.split(','), displayed: whole.displayed_channels_csv.split(','),
+  };
+  whole.free();
+  assert.deepEqual(channelNames, multiReference.names, `${multiFile}: channel names`);
+  assert.deepEqual(displayed, multiReference.displayed, `${multiFile}: displayed channels`);
+  assert.equal(selection.length, multiReference.channels, `${multiFile}: displayed channel count`);
+  const offsets = [];
+  for (let i = 0, at = 0; i < counts.length; i++) { offsets.push(at); at += counts[i]; }
+  const cuts = [0, 5, 11, counts.length];
+  const parts = [];
+  let rangeMin = Infinity, rangeMax = -Infinity;
+  for (let r = 0; r < 3; r++) {
+   const first = cuts[r], last = cuts[r + 1];
+   const blob = compressed.slice(offsets[first], offsets[last - 1] + counts[last - 1]);
+   const rows = Uint32Array.from({ length: last - first }, (_, i) => Math.min(16, height - (yCoordinates[first + i] - dataY)));
+   const part = wasm.decode_exr_zip_f32_blocks_selected(blob, counts.slice(first, last), rows, width, kinds, selection);
+   parts.push(part.take_data());
+   rangeMin = Math.min(rangeMin, part.min);
+   rangeMax = Math.max(rangeMax, part.max);
+   part.free();
+  }
+  const joined = new Float32Array(parts.reduce((n, part) => n + part.length, 0));
+  parts.reduce((at, part) => { joined.set(part, at); return at + part.length; }, 0);
+  assert.ok(Buffer.from(joined.buffer).equals(Buffer.from(wholeData.buffer, wholeData.byteOffset, wholeData.byteLength)),
+   `${multiFile}: selected samples differ from the whole-file decode`);
+  assert.ok(Object.is(rangeMin, multiReference.min) && Object.is(rangeMax, multiReference.max),
+   `${multiFile}: range ${rangeMin}..${rangeMax}, whole-file ${multiReference.min}..${multiReference.max}`);
+  multiSummaries.push(`${displayed.join('')} of ${channelNames.join('')}`);
+ }
+
+ console.log(`EXR ZIP pool: ${expected.length} samples identical across ${decoded.workers} workers, range ${min}..${max}; `
+  + `${multiSummaries.join(', ')} identical in three ranges`);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
  global.fetch = nativeFetch;

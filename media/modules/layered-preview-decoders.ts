@@ -164,16 +164,27 @@ function documentBlend8(below: number, source: number, mode: string): number {
 	}
 }
 
+const DOCUMENT_BLEND8_MODES = new Set(['multiply', 'screen', 'overlay', 'darken', 'lighten', 'difference', 'exclusion']);
+
 function compositeRgbaOver(destination: Uint8Array, source: Uint8Array, opacity: number, mode = 'normal'): void {
 	const pixelCount = Math.min(destination.length, source.length) / 4;
+	// Every other mode blends to the source value (documentBlend8's default).
+	const plain = !DOCUMENT_BLEND8_MODES.has(mode);
 	for (let pixel = 0; pixel < pixelCount; pixel++) {
 		const i = pixel * 4;
 		const sa = (source[i + 3] / 255) * opacity;
 		if (sa <= 0) { continue; }
 		const da = destination[i + 3] / 255;
 		const oa = sa + da * (1 - sa);
+		// Over nothing, or opaque over anything: the formula below evaluates to
+		// the source value within ~1e-13, which rounds to exactly that value.
+		if (plain && (da === 0 || sa === 1)) {
+			destination[i] = source[i]; destination[i + 1] = source[i + 1]; destination[i + 2] = source[i + 2];
+			destination[i + 3] = Math.round(oa * 255);
+			continue;
+		}
 		for (let channel = 0; channel < 3; channel++) {
-			const s = source[i + channel], d = destination[i + channel], blended = documentBlend8(d, s, mode);
+			const s = source[i + channel], d = destination[i + channel], blended = plain ? s : documentBlend8(d, s, mode);
 			destination[i + channel] = oa > 0
 				? Math.round(((1 - sa) * da * d + (1 - da) * sa * s + da * sa * blended) / oa)
 				: 0;
@@ -184,11 +195,14 @@ function compositeRgbaOver(destination: Uint8Array, source: Uint8Array, opacity:
 
 function placeOraLayer(canvas: Uint8Array, canvasWidth: number, canvasHeight: number, asset: LayeredRasterAsset): Uint8Array {
 	const placed = new Uint8Array(canvas.length);
-	for (let y = 0; y < asset.height; y++) for (let x = 0; x < asset.width; x++) {
-		const dx = asset.x + x, dy = asset.y + y;
-		if (dx < 0 || dy < 0 || dx >= canvasWidth || dy >= canvasHeight) { continue; }
-		const source = (y * asset.width + x) * 4, destination = (dy * canvasWidth + dx) * 4;
-		placed.set(asset.data.subarray(source, source + 4), destination);
+	// The part of each row that lands on the canvas, copied at once.
+	const firstX = Math.max(0, -asset.x), lastX = Math.min(asset.width, canvasWidth - asset.x);
+	if (lastX <= firstX) { return placed; }
+	for (let y = 0; y < asset.height; y++) {
+		const dy = asset.y + y;
+		if (dy < 0 || dy >= canvasHeight) { continue; }
+		const source = (y * asset.width + firstX) * 4;
+		placed.set(asset.data.subarray(source, source + (lastX - firstX) * 4), (dy * canvasWidth + asset.x + firstX) * 4);
 	}
 	return placed;
 }
@@ -486,10 +500,13 @@ function decodeKraLzf(input: Uint8Array, expectedLength: number): Uint8Array {
 	return output;
 }
 
+// One decoder for every line: Krita streams have a header line per tile.
+const ASCII_DECODER = new TextDecoder('ascii');
+
 function readAsciiLine(bytes: Uint8Array, state: { offset: number }): string {
 	const start = state.offset;
 	while (state.offset < bytes.length && bytes[state.offset] !== 10) { state.offset++; }
-	const line = new TextDecoder('ascii').decode(bytes.subarray(start, state.offset)).replace(/\r$/, '');
+	const line = ASCII_DECODER.decode(bytes.subarray(start, state.offset)).replace(/\r$/, '');
 	if (state.offset < bytes.length) { state.offset++; }
 	return line;
 }
@@ -508,11 +525,16 @@ function decodeKraPaintDevice(bytes: Uint8Array, width: number, height: number, 
 	const outputChannels = expectedPixelSize === 4 ? 4 : 1;
 	const output = new Uint8Array(width * height * outputChannels);
 	if (defaultPixel?.length) {
-		for (let i = 0; i < width * height; i++) {
-			if (expectedPixelSize === 4) {
-				output[i * 4] = defaultPixel[2] || 0; output[i * 4 + 1] = defaultPixel[1] || 0;
-				output[i * 4 + 2] = defaultPixel[0] || 0; output[i * 4 + 3] = defaultPixel[3] || 0;
-			} else { output[i] = defaultPixel[0] || 0; }
+		// Every pixel starts as the device's default (BGRA stored, RGBA out):
+		// written once, then doubled. Zero needs no writing.
+		const pixel = expectedPixelSize === 4
+			? [defaultPixel[2] || 0, defaultPixel[1] || 0, defaultPixel[0] || 0, defaultPixel[3] || 0]
+			: [defaultPixel[0] || 0];
+		if (output.length && pixel.some(value => value)) {
+			output.set(pixel, 0);
+			for (let filled = pixel.length; filled < output.length; filled *= 2) {
+				output.copyWithin(filled, 0, Math.min(filled, output.length - filled));
+			}
 		}
 	}
 	const tileBytes = tileWidth * tileHeight * pixelSize;
@@ -534,15 +556,19 @@ function decodeKraPaintDevice(bytes: Uint8Array, width: number, height: number, 
 			planar = decodeKraLzf(payload.subarray(1), tileBytes);
 		} else { throw new Error(`Unsupported Krita tile compression flag: ${payload[0]}`); }
 		const planeSize = tileWidth * tileHeight;
-		for (let y = 0; y < tileHeight; y++) for (let x = 0; x < tileWidth; x++) {
-			const dx = tileX + x, dy = tileY + y;
-			if (dx < 0 || dy < 0 || dx >= width || dy >= height) { continue; }
-			const sourcePixel = y * tileWidth + x, destination = (dy * width + dx) * outputChannels;
-			if (pixelSize === 4) {
-				// Krita's RGBA/U8 paint device stores pixels as BGRA on little-endian platforms.
-				output[destination] = planar[2 * planeSize + sourcePixel]; output[destination + 1] = planar[planeSize + sourcePixel];
-				output[destination + 2] = planar[sourcePixel]; output[destination + 3] = planar[3 * planeSize + sourcePixel];
-			} else { output[destination] = planar[sourcePixel]; }
+		// The tile's columns that land on the image, the same for every row.
+		const firstX = Math.max(0, -tileX), lastX = Math.min(tileWidth, width - tileX);
+		for (let y = 0; y < tileHeight; y++) {
+			const dy = tileY + y;
+			if (dy < 0 || dy >= height) { continue; }
+			for (let x = firstX; x < lastX; x++) {
+				const sourcePixel = y * tileWidth + x, destination = (dy * width + tileX + x) * outputChannels;
+				if (pixelSize === 4) {
+					// Krita's RGBA/U8 paint device stores pixels as BGRA on little-endian platforms.
+					output[destination] = planar[2 * planeSize + sourcePixel]; output[destination + 1] = planar[planeSize + sourcePixel];
+					output[destination + 2] = planar[sourcePixel]; output[destination + 3] = planar[3 * planeSize + sourcePixel];
+				} else { output[destination] = planar[sourcePixel]; }
+			}
 		}
 	}
 	return output;
@@ -1240,27 +1266,38 @@ function decodeXcfEffect(reader: XcfReader, pointer: number): XcfEffect {
 }
 
 function decodeXcfRle(reader: XcfReader, start: number, pixelCount: number, bpp: number): Uint8Array {
+	// Reads the bytes directly (not through reader.u8, ~10x slower per byte)
+	// with the same bounds checks and errors.
 	const output = new Uint8Array(pixelCount * bpp);
+	const bytes = reader.bytes, end = bytes.length;
+	const outside = () => new Error('XCF structure points outside the file');
+	if (!Number.isSafeInteger(start) || start < 0) { throw outside(); }
 	let input = start;
 	for (let channel = 0; channel < bpp; channel++) {
 		let written = 0;
 		while (written < pixelCount) {
-			const opcode = reader.u8(input++);
+			if (input >= end) { throw outside(); }
+			const opcode = bytes[input++];
 			if (opcode <= 126) {
-				const length = opcode + 1, value = reader.u8(input++);
+				if (input >= end) { throw outside(); }
+				const length = opcode + 1, value = bytes[input++];
 				if (written + length > pixelCount) { throw new Error('Invalid XCF RLE run'); }
 				for (let i = 0; i < length; i++) { output[(written++ * bpp) + channel] = value; }
 			} else if (opcode === 127) {
-				const length = reader.u8(input) * 256 + reader.u8(input + 1); input += 2;
-				const value = reader.u8(input++);
+				if (input + 2 >= end) { throw outside(); }
+				const length = bytes[input] * 256 + bytes[input + 1]; input += 2;
+				const value = bytes[input++];
 				if (length <= 0 || written + length > pixelCount) { throw new Error('Invalid XCF long RLE run'); }
 				for (let i = 0; i < length; i++) { output[(written++ * bpp) + channel] = value; }
 			} else {
-				const length = opcode === 128 ? reader.u8(input) * 256 + reader.u8(input + 1) : 256 - opcode;
-				if (opcode === 128) { input += 2; }
+				let length = 256 - opcode;
+				if (opcode === 128) {
+					if (input + 1 >= end) { throw outside(); }
+					length = bytes[input] * 256 + bytes[input + 1]; input += 2;
+				}
 				if (length <= 0 || written + length > pixelCount) { throw new Error('Invalid XCF RLE literal'); }
 				reader.check(input, length);
-				for (let i = 0; i < length; i++) { output[(written++ * bpp) + channel] = reader.u8(input++); }
+				for (let i = 0; i < length; i++) { output[(written++ * bpp) + channel] = bytes[input++]; }
 			}
 		}
 	}
@@ -1281,11 +1318,35 @@ function decodeXcfTile(reader: XcfReader, pointer: number, pixelCount: number, b
 	throw new Error(`Unsupported XCF compression: ${compression}`);
 }
 
-function xcfPixelToRgba(raw: Uint8Array, base: number, type: number, colormap?: Uint8Array): [number, number, number, number] {
-	if (type === 0 || type === 1) { return [raw[base], raw[base + 1], raw[base + 2], type === 1 ? raw[base + 3] : 255]; }
-	if (type === 2 || type === 3) { const v = raw[base]; return [v, v, v, type === 3 ? raw[base + 1] : 255]; }
-	const index = raw[base] * 3;
-	return [colormap?.[index] || 0, colormap?.[index + 1] || 0, colormap?.[index + 2] || 0, type === 5 ? raw[base + 1] : 255];
+/**
+ * A decoded tile's pixels as RGBA in the layer: RGB(A) (types 0, 1), gray
+ * (2, 3) or indexed (4, 5; missing colormap entries are black), with alpha
+ * from the odd types and 255 otherwise.
+ */
+function writeXcfTileRgba(pixels: Uint8Array, raw: Uint8Array, tx: number, ty: number, tw: number, th: number, layerWidth: number, bpp: number, type: number, colormap?: Uint8Array): void {
+	const hasAlpha = type === 1 || type === 3 || type === 5;
+	for (let y = 0; y < th; y++) {
+		let source = y * tw * bpp, dest = ((ty + y) * layerWidth + tx) * 4;
+		for (let x = 0; x < tw; x++, source += bpp, dest += 4) {
+			if (type === 0 || type === 1) {
+				pixels[dest] = raw[source]; pixels[dest + 1] = raw[source + 1]; pixels[dest + 2] = raw[source + 2];
+				pixels[dest + 3] = hasAlpha ? raw[source + 3] : 255;
+			} else if (type === 2 || type === 3) {
+				const v = raw[source];
+				pixels[dest] = v; pixels[dest + 1] = v; pixels[dest + 2] = v;
+				pixels[dest + 3] = hasAlpha ? raw[source + 1] : 255;
+			} else {
+				const index = raw[source] * 3;
+				pixels[dest] = colormap?.[index] || 0; pixels[dest + 1] = colormap?.[index + 1] || 0; pixels[dest + 2] = colormap?.[index + 2] || 0;
+				pixels[dest + 3] = hasAlpha ? raw[source + 1] : 255;
+			}
+		}
+	}
+}
+
+/** A composite sample as a display byte: rounded and clamped, non-finite as 0. */
+function compositeByte(value: number): number {
+	return Number.isFinite(value) ? Math.max(0, Math.min(255, Math.round(value))) : 0;
 }
 
 function xcfBlendMode(mode: number): string {
@@ -1293,7 +1354,22 @@ function xcfBlendMode(mode: number): string {
 	return legacy[mode] || `gimp-${mode}`;
 }
 
+type CompositeLayers = typeof compositeLayers;
+
+/** An XCF up to its composite: the reconstructed preview needs `finish(composite(stack))`. */
+interface PreparedXcf {
+	stack: Layer[];
+	width: number;
+	height: number;
+	finish(rendered: ReturnType<CompositeLayers>): DecodedLayeredPreview;
+}
+
 function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
+	const prepared = prepareXcfPreview(buffer);
+	return prepared.finish(compositeLayers(prepared.stack, prepared.width, prepared.height));
+}
+
+function prepareXcfPreview(buffer: ArrayBuffer): PreparedXcf {
 	const signature = new TextDecoder('ascii').decode(new Uint8Array(buffer, 0, Math.min(14, buffer.byteLength)));
 	if (!signature.startsWith('gimp xcf ')) { throw new Error('Invalid XCF signature'); }
 	const tag = signature.slice(9, 13);
@@ -1368,11 +1444,7 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 				const tx = (tile % tilesAcross) * 64, ty = Math.floor(tile / tilesAcross) * 64;
 				const tw = Math.min(64, layerWidth - tx), th = Math.min(64, layerHeight - ty);
 				const raw = decodeXcfTile(reader, tilePointers[tile], tw * th, bpp, compression, tilePointers[tile + 1]);
-				for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
-					const rgba = xcfPixelToRgba(raw, (y * tw + x) * bpp, type, imageProps.colormap);
-					const dest = ((ty + y) * layerWidth + tx + x) * 4;
-					pixels.set(rgba, dest);
-				}
+				writeXcfTileRgba(pixels, raw, tx, ty, tw, th, layerWidth, bpp, type, imageProps.colormap);
 			}
 		}
 		if (blendMode.startsWith('gimp-') && !props.group) { warnings.push(`Layer “${node.name}” blend mode ${mode} is approximated as normal`); }
@@ -1449,30 +1521,61 @@ function decodeXcfPreview(buffer: ArrayBuffer): DecodedLayeredPreview {
 		parentId: asset.parentId,
 		clipped: asset.clipped,
 	}));
-	const rendered = compositeLayers(previewStack, width, height);
-	const reconstructed = new Uint8Array(width * height * 4);
-	for (let pixel = 0; pixel < width * height; pixel++) {
-		const source = pixel * rendered.channels, destination = pixel * 4;
-		const sample = (channel: number): number => {
-			const value = Number(rendered.data[source + Math.min(channel, rendered.channels - 1)]);
-			return Number.isFinite(value) ? Math.max(0, Math.min(255, Math.round(value))) : 0;
-		};
-		if (rendered.channels === 1) {
-			reconstructed[destination] = reconstructed[destination + 1] = reconstructed[destination + 2] = sample(0);
-			reconstructed[destination + 3] = Number.isFinite(rendered.data[source]) ? 255 : 0;
-		} else {
-			reconstructed[destination] = sample(0);
-			reconstructed[destination + 1] = sample(1);
-			reconstructed[destination + 2] = sample(2);
-			reconstructed[destination + 3] = rendered.channels >= 4 ? sample(3) : 255;
+	const finish = (rendered: ReturnType<CompositeLayers>): DecodedLayeredPreview => {
+		const reconstructed = new Uint8Array(width * height * 4);
+		const channels = rendered.channels, data = rendered.data;
+		for (let pixel = 0; pixel < width * height; pixel++) {
+			const source = pixel * channels, destination = pixel * 4;
+			if (channels === 1) {
+				reconstructed[destination] = reconstructed[destination + 1] = reconstructed[destination + 2] = compositeByte(data[source]);
+				reconstructed[destination + 3] = Number.isFinite(data[source]) ? 255 : 0;
+			} else {
+				reconstructed[destination] = compositeByte(data[source]);
+				reconstructed[destination + 1] = compositeByte(data[source + Math.min(1, channels - 1)]);
+				reconstructed[destination + 2] = compositeByte(data[source + Math.min(2, channels - 1)]);
+				reconstructed[destination + 3] = channels >= 4 ? compositeByte(data[source + 3]) : 255;
+			}
 		}
-	}
-	return {
-		width, height, channels: 4, bitDepth: 8, sampleFormat: 1, data: reconstructed,
-		formatLabel: 'GIMP XCF reconstructed preview', formatType: 'xcf', document, layerAssets,
-		layerOrder: 'bottom-to-top',
-		metadata: { xcfVersion: version, colorMode, precision, compression, layerCount: layers.length, previewAuthoritative: document.previewIsAuthoritative },
+		return {
+			width, height, channels: 4, bitDepth: 8, sampleFormat: 1, data: reconstructed,
+			formatLabel: 'GIMP XCF reconstructed preview', formatType: 'xcf', document, layerAssets,
+			layerOrder: 'bottom-to-top',
+			metadata: { xcfVersion: version, colorMode, precision, compression, layerCount: layers.length, previewAuthoritative: document.previewIsAuthoritative },
+		};
 	};
+	return { stack: previewStack, width, height, finish };
+}
+
+type BandCompositor = (stack: Layer[], width: number, height: number) => Promise<ReturnType<CompositeLayers> | null>;
+let bandCompositor: BandCompositor | null = null;
+
+/**
+ * Where workers are available (the layered decode worker), an XCF preview's
+ * composite runs in row bands on several of them (layer-compositor-bands.ts),
+ * identical to the single composite; null keeps it on this thread.
+ */
+export function setBandCompositor(compositor: BandCompositor | null): void {
+	bandCompositor = compositor;
+}
+
+/** `decodeLayeredPreview`, with an XCF preview composited by the band compositor when one is set. */
+export async function decodeLayeredPreviewAsync(
+	format: string,
+	buffer: ArrayBuffer,
+	options: { previewOnly?: boolean; layersOnly?: boolean; skipComposite?: boolean } = {},
+): Promise<DecodedLayeredPreview> {
+	if (format !== 'xcf' || !bandCompositor) { return decodeLayeredPreview(format, buffer, options); }
+	const started = performance.now();
+	const prepared = prepareXcfPreview(buffer);
+	const prepareMs = performance.now() - started;
+	const rendered = await bandCompositor(prepared.stack, prepared.width, prepared.height)
+		?? compositeLayers(prepared.stack, prepared.width, prepared.height);
+	const result = prepared.finish(rendered);
+	result.decodeTimings = [
+		{ name: 'decode-xcf-preview', durationMs: performance.now() - started },
+		{ name: 'decode-xcf-layers', durationMs: prepareMs },
+	];
+	return result;
 }
 
 export function decodeLayeredPreview(

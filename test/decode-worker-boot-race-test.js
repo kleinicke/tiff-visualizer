@@ -36,7 +36,40 @@ async function main() {
 	controller.abort();
 	await assert.rejects(pending, error => error.name === 'AbortError', 'a load superseded while waiting is dropped');
 
-	console.log('Decode worker boot race: booting worker awaited, absent worker falls back, superseded load aborts');
+	// After a cancelled decode terminates the adopted warm worker, a new boot
+	// must not adopt that terminated worker again.
+	for (const [label, bundleName, Client] of [
+		['decode worker', 'decodeWorker.bundle.js', DecodeWorkerClient],
+		['fast raw worker', 'fastRawWorker.bundle.js', (await import('../out/media/modules/fast-raw-worker-client.js')).FastRawWorkerClient],
+	]) {
+		let adoptions = 0;
+		const terminated = new Set();
+		// A client adopting the worker installs its message handler on it.
+		const fakeWorker = {
+			postMessage() {}, terminate() { terminated.add(this); }, addEventListener() {}, removeEventListener() {},
+			set onmessage(handler) { if (handler) adoptions++; }, get onmessage() { return null; },
+		};
+		globalThis.__tiffVisualizerDecoderWarmup = {
+			bundleName,
+			workerPromise: Promise.resolve({ worker: fakeWorker, blobUrl: 'blob:warm', caps: {} }),
+		};
+		const realFetch = globalThis.fetch;
+		globalThis.fetch = async () => new Response('', { status: 404 });
+		const client = bundleName === 'decodeWorker.bundle.js' ? new Client(bundleName, false) : new Client();
+		await client.start();
+		assert.equal(adoptions, 1, `${label}: the warm worker is adopted`);
+		// A pending decode, then the navigation cancels it.
+		const decoding = client.decode('npy', new ArrayBuffer(8));
+		client.cancelActiveDecodes();
+		await decoding;
+		assert.ok(terminated.has(fakeWorker), `${label}: cancelling terminates the worker`);
+		await client.start();
+		assert.equal(adoptions, 1, `${label}: the terminated warm worker is not adopted again`);
+		globalThis.fetch = realFetch;
+		delete globalThis.__tiffVisualizerDecoderWarmup;
+	}
+
+	console.log('Decode worker boot race: booting worker awaited, absent worker falls back, superseded load aborts, terminated warm workers are not re-adopted');
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

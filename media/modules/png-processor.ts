@@ -1,4 +1,5 @@
 import { imageRaster, type ActiveImage, type DecodedSnapshot } from './active-image.js';
+import { bootstrapImageFor } from './bootstrap-image.js';
 "use strict";
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
@@ -34,12 +35,6 @@ interface LazyNativeReadback {
     width: number;
     height: number;
     format: string;
-}
-
-function bootstrapImageFor(src: string): HTMLImageElement | null {
-    const image = (window as any).__tiffVisualizerBootstrap?.nativeImage;
-    if (!(image instanceof HTMLImageElement)) return null;
-    return image.src === src || image.currentSrc === src ? image : null;
 }
 
 /**

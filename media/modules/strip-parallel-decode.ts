@@ -23,6 +23,7 @@
  * ordinary single-worker path.
  */
 import { tiffFirstIfdPrefix, type TiffImageStream } from './tiff-stream-prefix.js';
+import { cziTileJobs, mergeCziTile } from './czi-tile-merge.js';
 import {
 	MAX_PARALLEL_TIFF_WORKERS,
 	MIN_PARALLEL_TIFF_PIXELS,
@@ -327,6 +328,10 @@ export interface ExrZipBlockPlan {
 	counts: Uint32Array;
 	yCoordinates: Int32Array;
 	compressed: Uint8Array;
+	/** Each channel's pixel type in the blocks (0 u32, 1 half, 2 float); one float when absent. */
+	channelKinds?: Uint32Array;
+	/** Displayed channels as indices into the block's channels (-1: 1.0), interleaved per pixel. */
+	selection?: Int32Array;
 }
 
 export interface ParallelHdrResult {
@@ -677,10 +682,20 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 	max: number;
 	workers: number;
 	durationMs: number;
+	channels: number;
 } | null> {
 	const { width, height, dataY, counts, yCoordinates, compressed } = plan;
+	const kinds = plan.channelKinds ?? Uint32Array.of(2);
+	const channelCount = kinds.length;
+	// One float channel shown as it is stored keeps the plain path; anything
+	// else is selected, converted and interleaved by the workers.
+	const plain = channelCount === 1 && kinds[0] === 2 && (!plan.selection || (plan.selection.length === 1 && plan.selection[0] === 0));
+	const selection = plain ? null : plan.selection ?? Int32Array.of(0);
+	const rowBytes = Array.from(kinds).reduce((sum, kind) => sum + (kind === 1 ? 2 : 4), 0) * width;
+	const outChannels = selection ? selection.length : 1;
+	// Work follows the stored samples: every channel of every pixel is inflated.
 	if (counts.length < MIN_PARALLEL_TIFF_STRIPS || counts.length !== yCoordinates.length
-		|| width * height < MIN_PARALLEL_TIFF_PIXELS) { return null; }
+		|| width * height * (plan.channelKinds?.length ?? 1) < MIN_PARALLEL_TIFF_PIXELS) { return null; }
 	if (!await pool.ensure() || pool.size < 2) { return null; }
 
 	const rows = new Uint32Array(counts.length);
@@ -697,7 +712,7 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 
 	// Same cost model as the TIFF strips below: compressed plus half the decoded bytes.
 	const workerCount = Math.min(pool.size, counts.length);
-	const blockCost = (index: number) => counts[index] + 0.5 * rows[index] * width * 4;
+	const blockCost = (index: number) => counts[index] + 0.5 * rows[index] * rowBytes;
 	let totalCost = 0;
 	for (let index = 0; index < counts.length; index++) { totalCost += blockCost(index); }
 	const target = totalCost / workerCount;
@@ -728,17 +743,19 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 			counts: rangeCounts.buffer,
 			rows: rangeRows.buffer,
 			width,
+			kinds: selection ? Array.from(kinds) : undefined,
+			selection: selection ? Array.from(selection) : undefined,
 		}, [blob.buffer, rangeCounts.buffer, rangeRows.buffer], workerIndex);
 	});
 
-	const output = new Float32Array(width * height);
+	const output = new Float32Array(width * height * outChannels);
 	let min = Infinity;
 	let max = -Infinity;
 	try {
 		await Promise.all(jobs.map(async (job, index) => {
 			const part = await job;
 			const row = yCoordinates[ranges[index].first] - dataY;
-			output.set(part.samples, row * width);
+			output.set(part.samples, row * width * outChannels);
 			if (part.min < min) { min = part.min; }
 			if (part.max > max) { max = part.max; }
 		}));
@@ -751,7 +768,67 @@ export async function decodeExrZipBlocks(plan: ExrZipBlockPlan): Promise<{
 		pool.retire();
 		setTimeout(() => { void pool.ensure(); }, 0);
 	}
-	return { data: output, min, max, workers: ranges.length, durationMs };
+	return { data: output, min, max, workers: ranges.length, durationMs, channels: outChannels };
+}
+
+/**
+ * The tiles of one CZI region (czi-source.ts) decoded one per job across the
+ * pool. Each job decodes a single subblock into exactly the output pixels it
+ * covers; copying them into the region in plan (directory) order lets later
+ * tiles overwrite earlier ones where a mosaic overlaps, as the single-worker
+ * composition does, so the result is identical. Null when the pool is not
+ * worth it or unavailable; the caller then decodes in one worker.
+ */
+export async function decodeCziTilesParallel(request: {
+	directory: ArrayBuffer;
+	options: Record<string, any>;
+	codec: boolean;
+	region: { x: number; y: number };
+	factor: number;
+	width: number;
+	height: number;
+	tiles: { position: number; bytes: Uint8Array; rect: [number, number, number, number] }[];
+}): Promise<{ data: Float32Array; channels: number; workers: number } | null> {
+	const { tiles, factor, width, height, region } = request;
+	if (tiles.length < 2) { return null; }
+	let activePool = pool;
+	try {
+		if (request.codec) {
+			const { codecWasmModule } = await import('./codec-wasm-wrapper.js');
+			activePool = codecPool;
+			if (!await activePool.ensure(await codecWasmModule())) { return null; }
+		} else if (!await activePool.ensure()) { return null; }
+	} catch { return null; }
+	if (activePool.size < 2) { return null; }
+
+	const tileJobs = cziTileJobs(region, factor, width, height, tiles.map(tile => tile.rect));
+	const jobs = tiles.map((tile, index) => {
+		const job = tileJobs[index];
+		if (!job) { return null; }
+		const options = { ...request.options, factor, rect: job.rect, positions: [tile.position] };
+		const blob = tile.bytes.slice().buffer;
+		return { job, result: activePool.run({ kind: 'czi-tile', directory: request.directory, optionsJson: JSON.stringify(options), blob }, [blob], index) };
+	});
+	let output: Float32Array | null = null;
+	let channels = 0;
+	try {
+		// Settle all, then merge strictly in plan order.
+		const parts = await Promise.all(jobs.map(entry => entry?.result ?? null));
+		for (let index = 0; index < parts.length; index++) {
+			const part = parts[index];
+			const entry = jobs[index];
+			if (!part || !entry) { continue; }
+			if (!output) {
+				channels = part.channels;
+				output = new Float32Array(width * height * channels);
+			}
+			if (!mergeCziTile(output, width, channels, entry.job, part)) { return null; }
+		}
+	} catch (error) {
+		console.warn('[StripPool] CZI tile failed, decoding in one worker:', error);
+		return null;
+	}
+	return output ? { data: output, channels, workers: Math.min(activePool.size, tiles.length) } : null;
 }
 
 /**

@@ -123,9 +123,15 @@ export class DecodeWorkerClient {
 				caps: { tiff?: boolean; tiffWasm?: boolean };
 				wasmModule?: WebAssembly.Module | null;
 			}>;
+			workerAdopted?: boolean;
 		} | undefined;
 		const matchingWarmup = warmup?.bundleName === this._workerBundleName ? warmup : undefined;
-		if (matchingWarmup?.workerPromise) {
+		// The page's warm worker is adopted once. A later boot (after a
+		// cancelled decode terminated it) must start a new worker, not take the
+		// terminated one again: every decode posted to it would wait for the
+		// 30 s timeout.
+		if (matchingWarmup?.workerPromise && !matchingWarmup.workerAdopted) {
+			matchingWarmup.workerAdopted = true;
 			try {
 				const adopted = await matchingWarmup.workerPromise;
 				this._worker = adopted.worker;
@@ -299,6 +305,21 @@ export class DecodeWorkerClient {
 		return true;
 	}
 
+	_codecModuleWorker: Worker | null = null;
+
+	/**
+	 * Hand the heavy-codec module (JPEG XR, JPEG 2000, ...) to `worker`, once
+	 * per worker instance. Ranged CZI requests marked `codec` need it.
+	 */
+	async _ensureCodecModule(worker: Worker): Promise<void> {
+		if (this._codecModuleWorker === worker) { return; }
+		const { codecWasmModule } = await import('./codec-wasm-wrapper.js');
+		const compiled = await codecWasmModule();
+		if (this._worker !== worker) { return; }
+		worker.postMessage({ type: 'codec-module', codecModule: compiled });
+		this._codecModuleWorker = worker;
+	}
+
 	/**
 	 * Decode off-thread. Ownership of `buffer` is transferred to the worker.
 	 * Resolves to {ok:true, result} on success or {ok:false, error, buffer?}
@@ -329,6 +350,8 @@ export class DecodeWorkerClient {
 			try {
 				if (format === 'jxl') {
 					this._ensureExtraModule('jxl', worker).then(send, send);
+				} else if (options.codec && format.startsWith('czi-')) {
+					this._ensureCodecModule(worker).then(send, send);
 				} else {
 					send();
 				}
