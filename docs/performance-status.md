@@ -1,7 +1,7 @@
 # Load-performance status and next steps
 
 Handoff notes from the load-speed work on branch `perf/tiff-load-speed`
-(2026-10-08, three rounds), so later work can resume without rediscovering
+(2026-10-08/09, five rounds), so later work can resume without rediscovering
 the state. Read
 `performance-method.md` first; everything here was measured that way: warm
 median in a real VS Code (`scripts/benchmark-vscode.mjs`), pixels verified
@@ -12,6 +12,91 @@ Machine caveat: M1 Pro, 16 GB, heavy swap, and background load averages of
 ±15 %; the per-phase `[Perf]` numbers (decode, upload) are steadier than
 end-to-end times. Long single-window runs get throttled (see the practical
 notes); compare batched runs only.
+
+## Round 5: the remaining idea list, each tried and measured
+
+The machine was busy throughout (load averages 5–40: Spotlight indexing
+and the main VS Code window), so numbers are alternating A/B runs of the
+same build pair.
+
+| Idea | Outcome | Commit |
+| --- | --- | --- |
+| ND2/LIF ranged reads | 395 MB ND2: cold 7494 → 442 ms, warm 2667 → 466 ms (1.1 MB read); 605 MB LIF cold 5926 → 952 ms (5 MB, 19 reads); 138 MB ND2 warm 357 → 296 ms | a6fe9e9 |
+| CZI detail tiles on the strip pool | 1/4 level 212 → 162 ms, full resolution 229 → 184 ms (1.4 GB: 379 → 203 ms) | a6fe9e9 |
+| Native first paint (a6fe9e9), measured | 25 MP PNG webview work 307–344 → 248 ms, total 552–594 → 517–571 ms; large JPEGs unchanged (already lazy) | — |
+| DICOM series: prefetch the next slice | one ~10 ms read saved per step | a6fe9e9 |
+| Cold opens | see below; the layer compositor worker now starts after the first image (nl_01_depth.tif warm 221–248 → 208–213 ms) | a6fe9e9 |
+| Upload before the settings round trip | rejected: the round trip is ~2 ms (`await-settings` is a phase mark covering everything since load start, not a wait) | — |
+| EXR streaming into the ZIP pool | rejected: warm opens got slower (303–412 vs 264–286 ms, three rounds); only 14–29 ms of reading remains when the viewer starts, and copying block ranges on the main thread competes with the arriving chunks. Kept as `target/perf-exp/exr-streaming-rejected.patch` (stream plan, block cutter and its exactness test: 21 files identical) | — |
+| Statistics while the source arrives | not built: same limit as EXR streaming (the file has mostly arrived before the viewer starts) and it would duplicate the Rust statistics conventions in the bootstrap | — |
+
+Notes:
+
+- **Ranged reads** are generic: Rust `SparseFile` (scientific_common.rs)
+  holds the pieces read so far and a decoder that needs more answers
+  `[need-range:OFFSET:LENGTH]`; `ranged-source.ts` reads and retries, keeping
+  small pieces per file. A Range request through the VS Code webview costs
+  ~8 ms; the pushed whole-file read is faster only for small, page-cached
+  files, and ranged wins as soon as the file is large or not cached.
+- **Cold opens**: resource timings show the extra ~250–300 ms of a first open
+  is VS Code creating the webview (time origin 175–199 ms after the host's
+  open, against 23–26 ms warm) plus compiling our bundles (~60 ms). The
+  extension itself activates on startup, outside the measured path.
+- LIF needs one read per memory block header before the plane (no index in
+  the format); 19 reads for the 605 MB file. Reading the XML's block sizes
+  instead would need the block order, which the format does not promise.
+
+## Round 4: layered documents, DICOM, EXR, TGA/BMP, scrubbing
+
+The machine was too loaded for a full batched corpus run at the end of this
+round (load averages 10–16 from an unrelated VS Code window and Spotlight;
+one cold open took 90 s), so these are per-file numbers from the commits,
+each measured against the build before it.
+
+| Change | Before | After | Commit |
+| --- | --- | --- | --- |
+| XCF preview (`eagle.layers_2.xcf`): composite in row bands on nested workers, direct RLE tile reads | ~1300 ms | ~510 ms | a6fe9e9 |
+| ORA / KRA editable layers (Node decode): row copies, `copyWithin` default fill | ~480 / ~390 ms | ~420 / ~225 ms | a6fe9e9 |
+| Collection burst ending on a warm-worker format | 30 s timeout | 80–950 ms | a6fe9e9 (bug) |
+| JPEG XL 7.4 MB read (now pushed, also JXR/JP2/ND2/LIF/SDT) | ~46 ms | ~13 ms | a6fe9e9 |
+| PSD 5000² canvas upload (`putImageData` at every size) | ~60 ms | ~20 ms | a6fe9e9 |
+| DICOM decode, 79 files (8/16-bit lookup table in Rust) | 2167 ms | 919 ms | a6fe9e9 |
+| EXR ZIP on the pool for any channel count and type, warm open: RGB 2736² float / RGBA 1600² / 13-channel render | 641 / 223 / 284 ms | 282 / 132 / 172 ms | a6fe9e9 |
+| Same, decode only: half-float RGB 2736² | 193 ms | 104 ms | a6fe9e9 |
+| DICOM multi-frame step (50 MB MR study, standalone) | ~60 ms | ~21 ms | a6fe9e9 |
+| TGA 75 MB (standalone, warm) | ~165 ms | ~125 ms | a6fe9e9 |
+| BMP 75 MB (standalone, warm) | ~300 ms | ~140 ms | a6fe9e9 |
+| 16-bit PNG in VS Code: duplicate render beside the native first paint | ~530 ms | 0 | a6fe9e9 (bug) |
+| CZI 126 MB z-stack (VS Code, warm): reads one plane's subblocks | 330 ms | 137 ms | a6fe9e9 |
+| CZI 505 MB / 1.4 GB JPEG XR mosaics | error (plane too large) | ~200–400 ms standalone, overview + detail on zoom | a6fe9e9 |
+
+Notes:
+
+- **Dataset slider scrubbing** (a6fe9e9) was a responsiveness bug rather
+  than a decode cost. Every slider step posted `navigateDataset`, and each
+  answer started a file load that either terminated the worker busy with
+  the previous plane (the next one then paid a cold boot) or queued behind
+  it. The plane the slider was dropped on appeared only after every
+  intermediate plane. Now one plane request is in flight at a time and the
+  newest position waits. DICOM frames of one file also keep the file in
+  the decode worker (`cacheSourceInWorker`, as CZI/ND2/LIF/SDT did). Before
+  that, every step re-read the whole file, which in VS Code meant a webview
+  resource fetch of the full study.
+- **Native first paint was never adopted in VS Code** (a6fe9e9).
+  `bootstrapImageFor` compared the bootstrap `<img>`'s DOM-normalized
+  `src` (`file+.vscode-resource…`) with the host's `Uri.toString()`
+  (`file%2B…`), so PNG/JPEG/WebP/AVIF/ICO always decoded a second time
+  beside the painted image. The native-display paths had never run in VS
+  Code. They are now covered by a standalone simulation
+  (`test/web/native-first-paint.spec.ts`: identical readouts) and adoption
+  is one-shot.
+- **BMP** (24-bit, sRGB/default headers) is always read directly, also
+  behind a native first paint: waiting for Chromium's own `<img>` decode
+  of a 75 MB BMP took over a second in VS Code.
+- The standalone viewer labelled every BMP/AVIF/ICO as WebP (format taken
+  from the `blob:` URL); fixed with the BMP change.
+- Dataset steps reported their `[Perf]` total from the original file open;
+  they now time from the step.
 
 ## Round 3: transport, PSD, layered PNGs (warm, batched corpus)
 
@@ -112,7 +197,8 @@ arrives before the switch reads its source.
 ## Tried and rejected (do not repeat without a new angle)
 
 - **wasm-opt -O3/-O4**: no speed change, only −9 % size.
-- **png 0.18, zune-png**: no gain on 16-bit PNG; serial inflate dominates.
+- **png 0.18, zune-png**: no gain on 16-bit PNG; serial inflate dominates
+  (zune-png retried in round 4: ~15 % on the inflate at best).
 - **zlib-rs**: same speed as zune-inflate, +39 KB.
 - **JIT warm-up of workers**: halves the first decode in Node, no effect in
   the VS Code webview.
@@ -142,6 +228,14 @@ arrives before the switch reads its source.
   A worker-side `createImageBitmap` + `OffscreenCanvas` readback keeps the
   data but needs proof that alpha PNGs read back identically.
 
+- **HDR as RGBE expanded in the shader** (idea 1 of round 3): GLSL does not
+  promise a correctly rounded `mantissa × scale` (the driver may fuse or
+  reorder), so bit-exactness against the CPU decode cannot be guaranteed.
+  Shelved unless displayed values may differ in the last ulp.
+- **A faster tga-js-style byte loop** for TGA: ~48 ms; whole-word reads via
+  `DataView` reach ~30 ms, where the 100 MB output's first-touch page faults
+  (~10 ms) are a large share.
+
 ## Where the remaining time goes
 
 From `target/perf-exp/corpus6.txt`:
@@ -152,11 +246,10 @@ From `target/perf-exp/corpus6.txt`:
 - **Large raw arrays (100 MB NPY/PFM/FITS): ~230–290 ms.** The read is now
   ~1 GB/s; statistics (~45–60 ms, serial JS or Rust after the read) and the
   float texture upload (~30–40 ms) remain.
-- **XCF: ~1.3 s**, unchanged: JavaScript compositing of GIMP adjustments
-  (`applyAdjustmentPixel` ~330 ms per decode), the composite itself
-  (~450 ms over several functions) and tile decoding (~215 ms).
-- **BMP 75 MB: ~490 ms** (visible at ~200 ms): browser decode, then
-  `drawImage` + `getImageData` on the main thread.
+- **XCF: ~510 ms** (was ~1.3 s): the banded composite on 8 workers; the
+  per-band work is still JavaScript GIMP adjustments and blending.
+- **BMP 75 MB: ~140 ms** in the standalone viewer (direct row read,
+  also in VS Code).
 - **HDR 21 MB: ~380 ms**: decoding is ~100 ms on the pool; uploading
   5120² × RGB float (314 MB) takes ~125 ms and cannot shrink without
   changing the displayed precision.
@@ -174,7 +267,8 @@ From `target/perf-exp/corpus6.txt`:
 
 ## Ideas with potential, roughly by expected value
 
-1. **HDR as RGBE on the GPU**: a 5120² HDR decodes to 314 MB of RGB float
+1. **HDR as RGBE on the GPU** (shelved in round 4, see rejected: exactness
+   cannot be guaranteed in GLSL): a 5120² HDR decodes to 314 MB of RGB float
    whose upload alone takes ~125 ms. Uploading the RLE-decoded RGBE bytes
    (4 bytes per pixel) and expanding them in the shader would cut upload and
    pool output to a third. The decoder computes `mantissa × scale[e]` with
@@ -184,27 +278,12 @@ From `target/perf-exp/corpus6.txt`:
    promise correctly rounded arithmetic). The CPU float raster (stats,
    histogram, inspection, measurements) would then be derived lazily — a
    larger change to the HDR processor.
-2. **Statistics while the source arrives**: chunks reach the bootstrap
-   before the viewer is ready; a worker could compute finite min/max of
-   NPY/PFM/FITS float data per chunk. ~45–60 ms per 100 MB.
-3. **XCF compositing in parallel**: every adjustment and blend is
-   per-pixel, so row bands could be composited on several workers (the
-   layered worker would need its own pool). The compositor is shared with
-   PSD/ORA/KRA reconstruction, so exactness tests must cover all four.
-4. **BMP/TGA in Rust on a worker**: uncompressed BMP is a row copy with
-   BGR→RGB; TGA decodes on the main thread in tga-js (~100 ms for 75 MB).
-   Moving TGA to the fast-raw worker is the cheap half.
-5. **Upload before the settings round trip**: for big float textures the
-   upload (~125 ms for 314 MB) could start when the decode finishes, not
-   after the host's settings arrive; the texture does not depend on them.
-6. **EXR streaming**: the ZIP block pool exists; feeding it from the pushed
-   stream like TIFF would overlap decode and read.
-7. **Wide single-channel images** (> MAX_TEXTURE_SIZE): the linear texture
+2. **Wide single-channel images** (> MAX_TEXTURE_SIZE): the linear texture
    layout from 842fa80 generalizes to one-channel data.
-8. **Cold opens**: the first open of a format per session pays for worker
-   and WebAssembly compilation (PSD cold ~800 ms vs warm ~405 ms). VS Code
-   webview resources are probably not code-cached; worth checking whether
-   `compileStreaming` responses can be cached at all there.
+3. **Cold opens** (mostly outside our control, see round 5): smaller main
+   bundle (628 KB) or deferring more of it would trim the ~60 ms compile.
+4. **LIF block walk**: if a corpus shows the XML lists memory blocks in file
+   order, their sizes would give every block offset in one read.
 
 ## Practical notes for the next session
 
@@ -232,6 +311,12 @@ From `target/perf-exp/corpus6.txt`:
 - Node profiling of JS decoders: `node --cpu-prof` on a small driver script
   importing `out/media/modules/*.js`. Unstripped WASM with symbols is in
   `wasm/*/pkg/*_bg.wasm` after a build.
+- Browser-only timing without VS Code (useful when VS Code itself is the
+  noise): a throwaway Playwright spec under `target/perf-exp/webspec/` that
+  opens a file through `#web-file-input` and collects `[Perf]` console
+  lines, with `web/playwright.config.ts` reused (`open-one.spec.ts`,
+  `dicom-steps.spec.ts`). Use Node 24 first on `PATH`; Homebrew's newer
+  Node breaks Playwright's config loader.
 - Scientific conformance has two DICOM cases without goldens ("MRT OSG
   Februar 2023 …"); they are pre-existing and fail `test:rust-scientific`
   independently of this work.
