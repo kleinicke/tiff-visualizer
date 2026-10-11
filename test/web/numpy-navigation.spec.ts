@@ -261,3 +261,45 @@ test('navigation survives a Keyboard API without EventTarget and denied layout l
   await expect(page.locator('.histogram-tooltip')).toHaveCSS('position', 'absolute');
   await expect(page.locator('.histogram-labels')).toHaveCSS('display', 'flex');
 });
+
+async function depthPlane(page: Page) {
+  return page.evaluate(() => new Promise<any>((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const listener = (event: Event) => {
+      const message = (event as CustomEvent).detail;
+      if (message.type !== 'depthPlaneResult' || message.id !== id) return;
+      clearTimeout(timer); window.removeEventListener('__numpyMessage', listener);
+      resolve({ error: message.error, bytes: message.bytes ? Array.from(message.bytes) : undefined });
+    };
+    const timer = setTimeout(() => { window.removeEventListener('__numpyMessage', listener); reject(new Error('Depth export timed out')); }, 5000);
+    window.addEventListener('__numpyMessage', listener);
+    window.postMessage({type:'requestDepthPlane',id},location.origin);
+  }));
+}
+
+test('depth handoff exports the selected raw array and slice and rejects RGB', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles({ name:'depth.npz',mimeType:'application/octet-stream',buffer:npz([
+    ['first',npy([3,5,6],{value:()=>1})],
+    ['depth',npy([3,5,6],{value:(_,c)=>1000+c[0]*100+c[1]*6+c[2]})],
+    ['rgb',npy([5,6,3])],
+  ]) });
+  const overlay=page.locator('.dataset-overlay');
+  await expect(overlay).toBeVisible();
+  await overlay.locator('select').first().selectOption('1');
+  await expect.poll(()=>pixel(page)).toEqual([1000]);
+  await overlay.locator('input[type=range]').fill('2');
+  await overlay.locator('input[type=range]').dispatchEvent('input');
+  await expect.poll(()=>pixel(page)).toEqual([1200]);
+  await expect(overlay).not.toHaveClass(/dataset-overlay--loading/);
+  const result=await depthPlane(page);
+  expect(result.error).toBeUndefined();
+  const bytes=Buffer.from(result.bytes);
+  const offset=10+bytes.readUInt16LE(8);
+  expect(bytes.subarray(10,offset).toString()).toContain("'shape': (5, 6)");
+  expect(Array.from({length:30},(_,i)=>bytes.readDoubleLE(offset+i*8))).toEqual(Array.from({length:30},(_,i)=>1200+i));
+  await overlay.locator('select').first().selectOption('2');
+  await expect.poll(()=>pixel(page)).toEqual([0,1,2]);
+  await expect(overlay).not.toHaveClass(/dataset-overlay--loading/);
+  expect((await depthPlane(page)).error).toContain('single-channel');
+});

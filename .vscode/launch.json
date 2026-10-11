@@ -12,6 +12,22 @@
                 "${workspaceFolder}/out/**/*.js"
             ],
             "preLaunchTask": "npm: compile:quick"
+        },
+        {
+            "name": "Run Extension (Isolated)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--user-data-dir=${workspaceFolder}/.vscode-test/isolated-user-data",
+                "--extensions-dir=${workspaceFolder}/.vscode-test/isolated-extensions",
+                "--disable-extensions",
+                "--skip-welcome"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/out/**/*.js"
+            ],
+            "preLaunchTask": "npm: compile:quick"
         }
     ]
-} 
+}

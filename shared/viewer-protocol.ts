@@ -19,6 +19,7 @@ export type AutomationOperation = 'inspect' | 'pixel' | 'region' | 'capture' | '
 export type AutomationRequest = { type: 'automationRequest'; id: string; operation: AutomationOperation; args: AutomationArguments };
 
 export type HostToViewerMessage = AutomationRequest | MessageMap<{
+  requestDepthPlane: { id: string };
   clearImage: Empty; setScale: { scale: number | string };
   addLayerImages: { images: { src: string; resourceUri: string }[] };
   layerUrisResolved: { map: Record<string, string> }; setActive: { value: boolean };
@@ -47,6 +48,7 @@ export type HostToViewerMessage = AutomationRequest | MessageMap<{
 }>;
 
 export type ViewerToHostMessage = MessageMap<{
+  depthPlaneResult: { id: string; bytes?: Uint8Array; error?: string };
   automationResult: { id: string; result?: unknown; error?: string };
   'get-initial-data': Empty; ready: Empty;
   /** From the webview bootstrap: push the page's source from `offset` on. */

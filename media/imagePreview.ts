@@ -1,3 +1,4 @@
+import { encodeDepthPlane } from './modules/depth-plane.js';
 import { NavigationKeys } from './modules/navigation-shortcuts.js';
 import type { ActiveImageProcessor } from './modules/active-image.js';
 import { parseAutomationRequest, type HostToViewerMessage, type ViewerToHostMessage, type FormatInfo, type DatasetManifest, type DatasetSeries, type DatasetAxis, type DatasetPlane } from '../shared/viewer-protocol';
@@ -3336,6 +3337,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	async function handleVSCodeMessage(message: HostToViewerMessage) {
 		switch (message.type) {
+			case 'requestDepthPlane': {
+				try {
+					if (!document.body.classList.contains('ready') || planeLoadInFlight || datasetLoading) throw new Error('Wait for the selected image to finish loading before opening it as a point cloud.');
+					if (layerManager.active || settingsManager.settings.surfaceMode === 'layers' || isShowingPeer) throw new Error('Open the depth image in its own image view before converting it to a point cloud.');
+					vscode.postMessage({ type: 'depthPlaneResult', id: message.id, bytes: encodeDepthPlane(getActiveImage()) });
+				} catch (error) {
+					vscode.postMessage({ type: 'depthPlaneResult', id: message.id, error: error instanceof Error ? error.message : String(error) });
+				}
+				break;
+			}
 			case 'automationRequest': {
 				try {
 					const deadline=performance.now()+14000;

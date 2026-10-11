@@ -48,6 +48,7 @@ export interface IImagePreview {
 	zoomIn(): void;
 	zoomOut(): void;
 	copyImage(): void;
+	requestDepthPlane(): Promise<Uint8Array>;
 	resetZoom(): void;
 	getLayerExportCompatibility(): Promise<LayerExportOption[] | undefined>;
 	exportLayerDocument(format: LayerExportFormat): Promise<LayerExportResult | undefined>;

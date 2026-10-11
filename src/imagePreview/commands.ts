@@ -1,3 +1,4 @@
+import { openSelectedDepth } from './pointCloud';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { Utils } from 'vscode-uri';
@@ -1984,7 +1985,17 @@ export function registerImagePreviewCommands(
 
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.openAsPointCloud', async (resource?: vscode.Uri) => {
 		logCommand('openAsPointCloud', 'start');
-		const uri = resource ?? previewManager.activePreview?.resource;
+		const preview = previewManager.activePreview;
+		if (preview && (!resource || resource.toString() === preview.getCurrentImage().toString() || resource.toString() === preview.resource.toString())) {
+			try {
+				await openSelectedDepth(context, preview);
+				logCommand('openAsPointCloud', 'success', 'Opened selected depth plane');
+			} catch (error) {
+				vscode.window.showErrorMessage(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+		const uri = resource;
 		if (!uri) {
 			vscode.window.showErrorMessage('No image file to open as point cloud.');
 			return;

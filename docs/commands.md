@@ -118,6 +118,7 @@ letters select tools — see [measurement](./measure.md).
 
 | Setting | Default | Description |
 | --- | --- | --- |
+| `tiffVisualizer.navigationShortcuts` | `{}` |  |
 | `tiffVisualizer.gpuAcceleration` | `true` | Use GPU acceleration via WebGPU or WebGL2 for supported image rendering paths. Disable this if a GPU/driver causes incorrect output or slower rendering. |
 | `tiffVisualizer.experimentalRegionDecode` | `false` | Experimental: use rectangle reads for images that have NO resolution pyramid, so the cost of a view follows the window rather than the file. Pyramidal images (Cloud-Optimized GeoTIFF, whole-slide) do this already whenever their level is set to Auto, and are unaffected by this setting. Nothing uses it yet for images without a pyramid: drawing those a region at a time needs the canvas to become a window onto the image, which is not implemented. |
 

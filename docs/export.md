@@ -50,10 +50,24 @@ ImageJ `.roi` and `RoiSet.zip`.
 
 ## Point clouds
 
-**Open as Point Cloud** passes a depth image (TIFF, PFM or NPY) to the
-[3D Point Cloud and Mesh Visualizer](https://marketplace.visualstudio.com/items?itemName=kleinicke.ply-visualizer)
-extension, which must be installed separately. If it is not installed the
-command explains that rather than failing silently.
+**Open as Point Cloud** sends the currently selected single-channel image plane
+as an NPY file to the **3D Point Cloud and Mesh Visualizer** extension
+(`kleinicke.ply-visualizer`), which must be installed separately. It uses the
+selected array, slice or frame and the decoded sample values, without display
+normalization, gamma or colormaps. Any source format exposing a scalar decoded
+plane can use this handoff; it is not limited to the 3D viewer's depth formats.
+
+RGB images, channel composites, layer blends, unavailable original samples and
+in-progress loads are rejected. Samples are written as float64 to preserve their
+existing decoded precision, at the decoded plane's resolution. Camera intrinsics,
+pose and matching RGB are not transferred; the 3D viewer retains its usual
+camera-parameter workflow.
+
+The intermediate file is kept in the extension's cache while the 3D tab is open
+and removed when that tab closes in the same session. Files retained across an
+editor shutdown remain available for restoring the tab. Invoking the command
+with a file outside the active image preview retains the original format-specific
+handoff.
 
 ## Paste Position
 

@@ -53,6 +53,18 @@ function canUseNativeFirstPaint(settings: ImageSettings, surfaceMode: 'editor' |
 const STREAMED_TIFF_MIN_BYTES = 8 * 1024 * 1024;
 
 export class ImagePreview extends MediaPreview {
+	private readonly depthRequests = new Map<string, { resolve: (bytes: Uint8Array) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+
+	public requestDepthPlane(): Promise<Uint8Array> {
+		if (this.previewState !== PreviewState.Active) return Promise.reject(new Error('Focus the depth image before opening it as a point cloud.'));
+		const id = getNonce();
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => { this.depthRequests.delete(id); reject(new Error('The image viewer did not respond to the depth export request.')); }, 30000);
+			this.depthRequests.set(id, { resolve, reject, timer });
+			this.postViewerMessage({ type: 'requestDepthPlane', id });
+		});
+	}
+
 	private postViewerMessage(message: HostToViewerMessage): Thenable<boolean> {
 		return this._webviewEditor.webview.postMessage(message);
 	}
@@ -148,6 +160,15 @@ export class ImagePreview extends MediaPreview {
 		this._messageRouter = new MessageRouter(this._sizeStatusBarEntry, this);
 
 		this._register(webviewEditor.webview.onDidReceiveMessage(message => {
+			if (message?.type === 'depthPlaneResult') {
+				const request = this.depthRequests.get(message.id);
+				if (!request) return;
+				this.depthRequests.delete(message.id); clearTimeout(request.timer);
+				if (message.error) request.reject(new Error(String(message.error)));
+				else if (!(message.bytes instanceof Uint8Array) || message.bytes.length < 10) request.reject(new Error('The viewer returned invalid depth data.'));
+				else request.resolve(message.bytes);
+				return;
+			}
 			if (message?.type === 'sourceRequest') {
 				this.onSourceRequest(message);
 				return;
@@ -228,6 +249,10 @@ export class ImagePreview extends MediaPreview {
 		}));
 
 		this._register(webviewEditor.onDidDispose(() => {
+			for (const request of this.depthRequests.values()) {
+				clearTimeout(request.timer); request.reject(new Error('The image preview was closed during depth export.'));
+			}
+			this.depthRequests.clear();
 			if (this.previewState === PreviewState.Active) {
 				this._sizeStatusBarEntry.hide(this);
 				this._zoomStatusBarEntry.hide(this);

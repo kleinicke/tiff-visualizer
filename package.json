@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "Scientific Image Visualizer",
   "description": "Rust-based decoding and GPU rendering for more than 25 integer and floating-point image formats, with precise pixel inspection, multidimensional navigation, interactive visualization, comparison, and layer compositing.",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "packageManager": "npm@11.17.0",
   "publisher": "kleinicke",
   "icon": "icon.png",
@@ -152,7 +152,7 @@
       },
       {
         "command": "tiffVisualizer.exportLayers",
-        "title": "Export\u2026",
+        "title": "Export…",
         "category": "Scientific Image Visualizer"
       },
       {
