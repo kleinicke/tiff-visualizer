@@ -32,6 +32,7 @@ import {
 	decodeJxlWithWasm,
 	decodeNetcdfWithWasm,
 	decodeNpyWithWasm,
+	decodeNumpySelectedWithWasm,
 	decodePfmWithWasm,
 	decodePpmWithWasm,
 } from './wasm-decoders.js';
@@ -178,4 +179,9 @@ export async function decodeCziLocal(buffer: ArrayBuffer, options: Record<string
 export async function decodeSgiLocal(buffer: ArrayBuffer) {
 	const wasm = await requireWasm('SGI RGB');
 	return decodeSgiWithWasm(wasm.decode_sgi_fast, buffer, 'main');
+}
+
+export async function decodeNumpySelectedLocal(buffer: ArrayBuffer, options: Record<string, any> = {}) {
+    const wasm = await requireWasm('NumPy');
+    return decodeNumpySelectedWithWasm(json => wasm.decode_numpy_selected(new Uint8Array(buffer), json), options, 'main');
 }

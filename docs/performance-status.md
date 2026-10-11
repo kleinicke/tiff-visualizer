@@ -13,6 +13,29 @@ Machine caveat: M1 Pro, 16 GB, heavy swap, and background load averages of
 end-to-end times. Long single-window runs get throttled (see the practical
 notes); compare batched runs only.
 
+## NumPy dataset navigation (2026-10-11)
+
+NPY/NPZ now feeds the shared dataset selectors. An indexed Rust session retains
+source bytes and one inflated member, converts only the requested plane, and
+returns native u8/u16 storage where possible. Ordinary C-order 2D float32 NPY
+keeps its existing speculative zero-copy path. The compatibility raster API and
+its goldens are unchanged.
+
+A synthetic stored NPZ with eight 1024 × 1024 float32 arrays (32 MiB) was opened
+five times per build in real VS Code. The first open was discarded from warm
+medians. Baseline: cold 387 ms; four warm opens median 153 ms, range 147–190 ms;
+warm decode median 26 ms. Current: cold 480 ms; warm median 143 ms, range
+120–210 ms; decode 15 ms. Load averages were 4.56 and 7.10 respectively. These
+ranges overlap: **no demonstrated end-to-end speedup**, despite less decode work.
+The selected plane's 1,048,576 samples matched the baseline exactly, as did the
+existing f32, u8 RGB and u16 NPY fixtures. No goldens were recaptured.
+
+Browser tests verify that array/layout/slice selection uses the existing panel,
+slice requests transfer zero source bytes, compressed and Fortran data retain
+correct values, and the no-worker fallback works. The full numerical suite was
+attempted; the external DICOM conformance set lacks the golden for
+`dicom-fixture-external-mrt-osg-februar-2023-series-4-and-6-anonymized-dcm`.
+
 ## Round 5: the remaining idea list, each tried and measured
 
 The machine was busy throughout (load averages 5–40: Spotlight indexing

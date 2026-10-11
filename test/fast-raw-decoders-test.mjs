@@ -121,4 +121,18 @@ for (let trial = 0; trial < 2000; trial++) {
 		`trial ${trial} (${width}x${height}x${channels}): ${got} != ${expected}`);
 }
 
+// The dataset path must not let a raster accelerator swallow navigation or
+// treat Fortran samples as C-order. Ordinary 2D C-order stays zero-copy.
+{
+    const { npy } = require('./lib/numpy-dataset-fixtures.cjs');
+    for (const shape of [[2, 5, 6], [5, 6, 3], [2, 5, 6, 3]]) {
+        assert.equal(decodeNativeF32NpyFast(bufferToArrayBuffer(npy(shape)), true, true), null);
+    }
+    assert.equal(decodeNativeF32NpyFast(bufferToArrayBuffer(npy([5, 6], { fortran: true })), true, true), null);
+    const buffer = bufferToArrayBuffer(npy([5, 6]));
+    const image = decodeNativeF32NpyFast(buffer, true, true);
+    assert.equal(image.data.buffer, buffer);
+    assert.equal(image.data[29], 29);
+}
+
 console.log(`✅ Fast raw decoders: ${supported} optimized fixtures, ${fallback} Rust fallbacks, 2000 randomized NPY ranges`);

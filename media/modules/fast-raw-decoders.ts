@@ -106,7 +106,7 @@ function parseNpyHeader(buffer: ArrayBuffer) {
 	const shape = /'shape':\s*\(([^)]+)\)/.exec(header)?.[1]
 		.split(',').map(value => value.trim()).filter(Boolean).map(Number);
 	if (!dtype || !shape || !shape.every(value => Number.isSafeInteger(value) && value >= 0)) throw new Error('Invalid NPY header');
-	return { dtype, shape, dataOffset: headerStart + headerLength };
+	return { dtype, shape, fortran: /'fortran_order':\s*True/.test(header), dataOffset: headerStart + headerLength };
 }
 
 /**
@@ -155,12 +155,12 @@ function finiteRange(data: Float32Array, stride: number, scanned: number) {
 	return { min, max, validCount: scannedSamples - nonFinite, nonFiniteCount: nonFinite };
 }
 
-export function decodeNativeF32NpyFast(buffer: ArrayBuffer, computeStats = true) {
+export function decodeNativeF32NpyFast(buffer: ArrayBuffer, computeStats = true, datasetMode = false) {
 	if (!IS_LITTLE_ENDIAN) return null;
 	const started = performance.now();
 	if (buffer.byteLength < 6 || new Uint8Array(buffer, 0, 6)[0] !== 0x93) return null;
 	const parsed = parseNpyHeader(buffer);
-	if (!parsed || (parsed.dtype !== '<f4' && parsed.dtype !== '=f4') || (parsed.shape.length !== 2 && parsed.shape.length !== 3)) return null;
+	if (!parsed || parsed.fortran || (datasetMode && (parsed.shape.length !== 2 || parsed.shape.some(d => d === 0))) || (parsed.dtype !== '<f4' && parsed.dtype !== '=f4') || (parsed.shape.length !== 2 && parsed.shape.length !== 3)) return null;
 	const [height, width, shapeChannels = 1] = parsed.shape;
 	if (shapeChannels !== 1 && shapeChannels !== 3 && shapeChannels !== 4) return null;
 	const samples = width * height * shapeChannels;

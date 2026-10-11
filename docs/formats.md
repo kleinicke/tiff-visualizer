@@ -173,13 +173,32 @@ and the normalization range to explore them.
 
 ### NPY / NPZ
 
-Native NumPy parsing, no Python required. Handles `f2`, `f4`, `f8` and the
-integer types `u1 u2 u4 u8 i1 i2 i4 i8`. Shape is interpreted as
-`(H, W)`, `(H, W, C)` for 1, 3 or 4 channels. NPZ archives expose their member
-arrays for selection.
+Native NumPy parsing, no Python required. Open `.npy` or `.npz` directly with
+Scientific Image Visualizer. NPZ supports stored and Deflate-compressed members
+(including `numpy.savez_compressed`), ZIP64 sizes and data descriptors.
 
-This is usually the shortest path from a research script to a picture: save an
-intermediate tensor with `np.save`, click it in the Explorer.
+The shared dataset controls provide an **Array** dropdown for archive members,
+**Layout** choices where channel interpretation is ambiguous, and sliders for
+extra dimensions. Defaults interpret `(H, W)` as grayscale, `(N, H, W)` as a
+stack, and `(N, H, W, 3/4)` as an RGB/RGBA batch. A trailing dimension of 1, 3 or
+4 defaults to channels; choose **Grayscale / stack** if it represents a spatial
+dimension instead. Choose **Channels first** for `(C, H, W)` or `(N, C, H, W)`.
+Axis numbers refer to the original NumPy shape and slice indices start at zero.
+
+C-order and Fortran-order arrays, little/big-endian samples, and NPY versions
+1–3 are supported. Numeric dtypes include `f2 f4 f8`, `u1 u2 u4 u8`,
+`i1 i2 i4 i8`, and booleans. Scalars and vectors are displayed as a single pixel
+or row. Unsupported object/string/structured arrays are skipped during image
+selection; their names and reasons remain in array metadata. Pickle is never
+executed. Image-sized members are preferred over small calibration matrices.
+
+Only the selected plane is converted and scanned for display statistics. The
+worker retains the source and the active inflated NPZ member for slice changes.
+Ordinary C-order 2D float32 NPY files retain the zero-copy loading path. Uint8
+and uint16 planes retain their integer storage; other types use the existing
+float32 display carrier, so float64 and large integers can lose precision.
+
+See [multi-dimensional datasets](./datasets.md#numpy-npy--npz) for an example.
 
 ### FITS, DICOM, NetCDF, CZI, ND2, LIF and SDT
 

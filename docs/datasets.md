@@ -10,6 +10,29 @@ dimension controls, rather than as a folder of files sorted by name.
 Navigate the primary dimension with `←` and `→`; the remaining dimensions get
 their own controls in the viewer.
 
+## NumPy (NPY / NPZ)
+
+NumPy uses the same navigation panel as the microscopy formats. There is no
+conversion or Python environment to configure.
+
+For an NPZ containing depth predictions shaped `(3, 480, 640)`, RGB shaped
+`(3, 480, 640, 3)`, and camera matrices:
+
+1. Open the `.npz` with Scientific Image Visualizer.
+2. Use **Array** to choose a prediction, ground truth, or RGB.
+3. Use **Axis 0** to select view 0, 1 or 2. Each depth view is 640 × 480;
+   each RGB view has three color channels.
+4. Calibration matrices and `view_ids` are selectable numeric arrays too.
+   Names such as `view_ids` do not automatically assign semantic axis labels.
+
+**Layout** lets you correct ambiguous shapes, including channel-first images.
+Switching arrays preserves slice positions on matching axes and selects the new
+array's default layout. If an axis is shorter, its position is clamped to the last
+available slice. Changing layout also retains axes that remain navigable.
+Unsupported members do not stop other numeric arrays from opening. Only the
+active member is fully decompressed, and its decompressed bytes are reused
+while moving between slices.
+
 ## OME-TIFF
 
 Reads OME-XML and exposes **image/series**, **channel (C)**, **Z slice** and
@@ -138,3 +161,40 @@ Numeric HDUs are listed for selection and then behave like any other image, with
 full float support and the usual normalization controls — which matter here more
 than most places, since astronomical dynamic range rarely survives a naive 0–255
 mapping.
+
+### Keyboard layouts and preferred navigation keys
+
+Navigation uses physical key positions across all formats. The defaults are the
+US bracket positions for control 1, left/right arrows for control 2,
+Shift+comma/period for control 3, and Shift+bracket positions for control 4.
+A lone slice slider uses control 2's keys; a lone dropdown keeps control 1's keys.
+Literal `[ ]`, `< >`, `{ }` and PageUp/PageDown remain alternatives for the
+corresponding default bindings. File collections keep the left/right arrows.
+
+The hints display the active bindings using the keyboard layout where the host
+supports layout lookup. For example, German bracket-position hints become
+`Ü +`, and the shifted pair becomes `Shift+Ü Shift++`. If layout lookup is
+unavailable, familiar symbols (such as `[ ]`) are shown until an unmodified key is pressed;
+its observed label then updates the hint. Layout lookup failure never disables
+navigation.
+
+In VS Code/Cursor, set **Scientific Image Visualizer: Navigation Shortcuts**
+(`tiffVisualizer.navigationShortcuts`) in user settings to choose preferred keys:
+
+```json
+"tiffVisualizer.navigationShortcuts": {
+  "1": ["KeyJ", "KeyK"],
+  "2": ["ArrowLeft", "ArrowRight"],
+  "3": ["Shift+KeyJ", "Shift+KeyK"]
+}
+```
+
+Each pair is previous/next for that control position. Physical codes such as
+`KeyJ` follow key positions; single characters such as `j` or `ü` follow the
+character. `Shift+` is supported. Ctrl/Command/Alt combinations are reserved for
+host shortcuts. Hints update immediately with setting changes. Custom pairs
+replace the defaults and their aliases for that position; remove a pair to
+restore its defaults. Invalid pairs fall back to defaults. Avoid duplicate
+bindings and shortcuts already used by other viewer tools. These preferences
+apply to all image formats, and VS Code persists them in the settings scope you
+choose. Other hosts use the same automatic layout-aware defaults.

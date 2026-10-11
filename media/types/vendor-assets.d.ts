@@ -43,6 +43,12 @@ declare module '*/wasm/tiff-wasm.js' {
     export const decode_netcdf_fast: any;
     export const decode_npy_fast: any;
     export const decode_npy_display_fast: any;
+    export const decode_numpy_selected: any;
+    export class NumpyDataset {
+        constructor(data: Uint8Array);
+        decode(options: string): any;
+        free(): void;
+    }
     export const decode_pfm_fast: any;
     export const decode_pfm_display_fast: any;
     export const decode_png16_fast: any;

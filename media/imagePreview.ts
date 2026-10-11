@@ -1,3 +1,4 @@
+import { NavigationKeys } from './modules/navigation-shortcuts.js';
 import type { ActiveImageProcessor } from './modules/active-image.js';
 import { parseAutomationRequest, type HostToViewerMessage, type ViewerToHostMessage, type FormatInfo, type DatasetManifest, type DatasetSeries, type DatasetAxis, type DatasetPlane } from '../shared/viewer-protocol';
 import { ImageNavigation, type CachedImage } from './modules/image-navigation';
@@ -115,6 +116,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	const originalVscode = nativeBootstrap?.vscode || (window as any).__tiffVisualizerVsCodeApi || acquireVsCodeApi() as { postMessage: (message: any) => any, setState: (state: any) => void, getState: () => any };
 	setPushedSourceChannel(originalVscode);
 	const settingsManager = new SettingsManager();
+	const navigationKeys = new NavigationKeys(() => settingsManager.settings.navigationShortcuts, () => {
+		if (navigationView) {
+			navigationModel = { ...navigationModel, hints: navKeyHints(navControls) };
+			navigationView.update(navigationModel);
+		}
+	});
 	const navigation = new ImageNavigation<FormatInfo>({
 		cancelWorkers: () => {
 			for (const worker of [decodeWorkerClient, pngDecodeWorkerClient, layeredDecodeWorkerClient, fastRawWorkerClient]) worker.cancelActiveDecodes();
@@ -260,6 +267,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			} else if (family === 'npy') {
 				const { NpyProcessor } = await import('./modules/npy-processor.js');
 				npyProcessor = installProcessor(new NpyProcessor(settingsManager, vscode), fastRawWorkerClient);
+				planeNavProcessors.push(npyProcessor);
 
 			} else if (family === 'pfm') {
 				const { PfmProcessor } = await import('./modules/pfm-processor.js');
@@ -292,7 +300,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				sgiProcessor = installProcessor(new ScientificArrayProcessor(settingsManager, vscode, { workerFormat: 'sgi', formatLabel: 'SGI RGB', formatType: 'sgi', parse: (buffer: ArrayBuffer) => decoders.decodeSgiLocal(buffer) }));
 				scientificProcessors = [sgiProcessor, fitsProcessor, jxrProcessor, jp2Processor, jxlProcessor, dicomProcessor, netcdfProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 
-				planeNavProcessors = [cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
+				planeNavProcessors = [npyProcessor, cziProcessor, nd2Processor, lifProcessor, sdtProcessor];
 			}
 		})();
 		processorFamilyLoads.set(family, load);
@@ -3521,6 +3529,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const updateApplyStart = performance.now();
 				const changes = settingsManager.updateSettings(message.settings);
+				if (navigationView) {
+					navigationModel = { ...navigationModel, hints: navKeyHints(navControls) };
+					navigationView.update(navigationModel);
+				}
 				const updateApplyDuration = performance.now() - updateApplyStart;
 				const newResourceUri = settingsManager.settings.resourceUri;
 				// The scale bar is a SESSION preference held by the host, so it
@@ -5021,20 +5033,27 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// has navigable controls AND it is the only image open. A multi-image
 			// collection keeps the arrows for switching files, which is the one
 			// case where stepping between FILES outranks stepping within one.
-			const arrowsBelongToControls = imageCollection.totalImages <= 1;
-			const arrowPosition = (navControls.length === 1 && !navControls[0]?.isChoice) ? 0 : 1;
-			const arrowControl = arrowsBelongToControls ? navControlAt(arrowPosition) : undefined;
-			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) && arrowControl) {
-				e.preventDefault();
-				e.stopPropagation();
-				stepNavControl(arrowControl, isRightArrow ? 1 : -1);
-				return;
+			const collectionArrow = imageCollection.totalImages > 1 && isPlainKey && (isRightArrow || isLeftArrow);
+			if (!isTyping && !collectionArrow) {
+				navigationKeys.observe(e);
+				// Physical bindings win over legacy symbols if a layout maps a
+				// physical key to another row's old punctuation shortcut.
+				for (const legacy of [false, true]) {
+					for (let position = 0; position < Math.min(navControls.length, 4); position++) {
+						const binding = navControls.length === 1 && !navControls[0]?.isChoice ? 1 : position;
+						const delta = legacy ? navigationKeys.legacyStep(e, binding) : navigationKeys.step(e, binding);
+						if (!delta) continue;
+						e.preventDefault(); e.stopPropagation();
+						stepNavControl(navControlAt(position), delta);
+						return;
+					}
+				}
 			}
 			const logicalTiffPages = isPyramidal(tiffProcessor.pageDirectory)
 				? imagePages(tiffProcessor.pageDirectory).length
 				: tiffProcessor.pageCount;
 			if (!isTyping && isPlainKey && (isRightArrow || isLeftArrow) &&
-				(imageCollection.totalImages > 1 || logicalTiffPages > 1)) {
+				(imageCollection.totalImages > 1 || (logicalTiffPages > 1 && navControls.length === 0))) {
 				e.preventDefault();
 				e.stopPropagation();
 				if (imageCollection.totalImages > 1) {
@@ -5044,40 +5063,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				}
 				return;
 			}
-			if (!isTyping && navControls.length > 1) {
-				// Positions 0, 2 and 3 — position 1 is the arrows, handled above
-				// so it can defer to collection navigation. Identical for every
-				// format, because `navControls` is format-neutral.
-				const PAIRS: [number, string, string][] = [
-					[0, '[', ']'],
-					[2, '<', '>'],
-					[3, '{', '}'],
-				];
-				for (const [position, previous, next] of PAIRS) {
-					const control = navControlAt(position);
-					if (!control) { continue; }
-					if (e.key === next || (position === 0 && e.code === 'PageDown')) {
-						e.preventDefault();
-						stepNavControl(control, 1);
-						return;
-					}
-					if (e.key === previous || (position === 0 && e.code === 'PageUp')) {
-						e.preventDefault();
-						stepNavControl(control, -1);
-						return;
-					}
-				}
-			}
 			if (!isTyping && tiffProcessor.pageCount > 1) {
-				if (e.key === ']' || e.code === 'PageDown') {
-					e.preventDefault();
-					void navigateTiffPage(1);
-					return;
-				} else if (e.key === '[' || e.code === 'PageUp') {
-					e.preventDefault();
-					void navigateTiffPage(-1);
-					return;
-				}
+				const delta = navigationKeys.step(e, 0) || navigationKeys.legacyStep(e, 0);
+				if (delta) { e.preventDefault(); void navigateTiffPage(delta); }
 			}
 		}, true);
 
@@ -5255,9 +5243,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/**
 	 * Keys per control position.
 	 *
-	 * A lone control gets the ARROWS rather than the brackets: arrows are the
-	 * obvious default and with only one thing to step there is no ambiguity to
-	 * resolve. From two controls up, the dropdown sits at position 1 with
+	 * A lone slider gets the ARROWS; a lone dropdown keeps the brackets even
+	 * when selecting an item removes all additional axes. From two controls
+	 * up, the dropdown sits at the first position with
 	 * `[ ]` and the first slider keeps the arrows — which is exactly what
 	 * DICOM already did, so its muscle memory survives unchanged.
 	 */
@@ -5265,8 +5253,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// A single SLIDER gets the arrows: it is the obvious default and there is
 		// nothing to disambiguate. Everything else — a dropdown, or more than one
 		// control — starts at `[ ]` so the ordering is uniform.
-		if (controls.length === 1 && !controls[0]?.isChoice) { return ['← →']; }
-		return ['[ ]', '← →', '< >', '{ }'];
+		if (controls.length === 1 && !controls[0]?.isChoice) { return [navigationKeys.hint(1)]; }
+		return [0, 1, 2, 3].map(position => navigationKeys.hint(position));
 	}
 
 	/** The control a given shortcut pair drives, if there is one. */
@@ -5618,7 +5606,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			value: Number(planeSelection.indices[selector.name] ?? selector.value) || 0,
 		}));
 		return controlsFromSelectors('sel', selectors, (selector, index) => {
-			planeSelection.indices = { ...planeSelection.indices, [selector.name]: index };
+			const resets = (metadata.selectorResets || {})[selector.name];
+			const retained = { ...planeSelection.indices };
+			if (Array.isArray(resets)) { for (const name of resets) { delete retained[String(name)]; } }
+			planeSelection.indices = { ...retained, [selector.name]: index };
 			requestPlaneReload();
 		});
 	}
@@ -5860,6 +5851,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
       held: () => navControlHeld, hold: () => { navControlHeld = true; },
     };
     navigationView = mountView(Navigation, navigationModel);
+    navigationKeys.watchLayout();
     makeOverlayDraggable(navOverlay!, 'plane', toggle);
     applyNavOverlayCollapsedState();
   }
@@ -6891,6 +6883,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	function switchToNewImage(uri: string, resourceUri: string, options: { formatHint?: string, pageIndex?: number, frameIndex?: number, netcdfOptions?: Record<string, any>, planeOptions?: Record<string, any>, planeChange?: boolean } = {}) {
 		const planeChange = !!options.planeChange;
+		if (!planeChange && resourceUri !== settingsManager.settings.resourceUri) {
+			planeSelection = { indices: {} };
+			planeLoadPending = false;
+			planeLoadInFlight = false;
+			planeNavProcessor = null;
+		}
 		resetVisibleTiming();
 		initialLoadStartTime = performance.now();
 		let switchName = resourceUri.split('/').pop() || 'image';
@@ -6989,7 +6987,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// overlay is driven by a host message (a DICOM manifest) they could stay
 		// gone entirely. Only a format that can never navigate clears it, and it
 		// is cleared as soon as the format is known rather than on every load.
-		const NAVIGABLE_KINDS = ['tiff', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt'];
+		const NAVIGABLE_KINDS = ['npy', 'tiff', 'dicom', 'netcdf', 'czi', 'nd2', 'lif', 'sdt'];
 		if (!format || !NAVIGABLE_KINDS.includes(format.kind)) {
 			hideNavOverlay();
 		}
@@ -7024,7 +7022,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		} else if (format?.kind === 'png') {
 			handleImageLoad(pngProcessor, 'PNG/JPEG', uri, gen);
 		} else if (format?.kind === 'npy') {
-			handleImageLoad(npyProcessor, 'NPY/NPZ', uri, gen);
+			handleScientificArray(npyProcessor, uri, gen, planeOptions || planeSelection);
 		} else if (format?.kind === 'hdr') {
 			handleImageLoad(hdrProcessor, 'HDR', uri, gen);
 		} else if (format?.kind === 'tga') {

@@ -1111,6 +1111,23 @@ export function decode_ppm_display_fast(data) {
 
 /**
  * @param {Uint8Array} data
+ * @param {string} options_json
+ * @returns {DecodedArray}
+ */
+export function decode_numpy_selected(data, options_json) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.decode_numpy_selected(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedArray.__wrap(ret[0]);
+}
+
+/**
+ * @param {Uint8Array} data
  * @param {number} item_bytes
  * @param {boolean} little
  * @returns {Float64Array}
@@ -2719,6 +2736,55 @@ export class LabelResult {
     }
 }
 if (Symbol.dispose) LabelResult.prototype[Symbol.dispose] = LabelResult.prototype.free;
+
+const NumpyDatasetFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_numpydataset_free(ptr >>> 0, 1));
+/**
+ * Persistent NumPy source: index once, inflate the active member once.
+ */
+export class NumpyDataset {
+
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        NumpyDatasetFinalization.unregister(this);
+        return ptr;
+    }
+
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_numpydataset_free(ptr, 0);
+    }
+    /**
+     * @param {Uint8Array} data
+     */
+    constructor(data) {
+        const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.numpydataset_new(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        NumpyDatasetFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {string} options_json
+     * @returns {DecodedArray}
+     */
+    decode(options_json) {
+        const ptr0 = passStringToWasm0(options_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.numpydataset_decode(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return DecodedArray.__wrap(ret[0]);
+    }
+}
+if (Symbol.dispose) NumpyDataset.prototype[Symbol.dispose] = NumpyDataset.prototype.free;
 
 const PngResultFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }

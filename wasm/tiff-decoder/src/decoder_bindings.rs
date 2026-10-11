@@ -1787,3 +1787,34 @@ pub fn decode_sgi_fast(data: &[u8]) -> Result<DecodedArray, JsValue> {
         .map(Into::into)
         .map_err(js_error)
 }
+
+/// Persistent NumPy source: index once, inflate the active member once.
+#[wasm_bindgen]
+pub struct NumpyDataset {
+    inner: core::NumpyDataset,
+}
+#[wasm_bindgen]
+impl NumpyDataset {
+    #[wasm_bindgen(constructor)]
+    pub fn new(data: &[u8]) -> Result<NumpyDataset, JsValue> {
+        prepare();
+        Ok(Self {
+            inner: core::NumpyDataset::new(data.to_vec()).map_err(js_error)?,
+        })
+    }
+    pub fn decode(&mut self, options_json: &str) -> Result<DecodedArray, JsValue> {
+        self.inner
+            .decode(options_json)
+            .map(Into::into)
+            .map_err(js_error)
+    }
+}
+
+#[wasm_bindgen]
+pub fn decode_numpy_selected(data: &[u8], options_json: &str) -> Result<DecodedArray, JsValue> {
+    prepare();
+    core::NumpyDataset::new(data.to_vec())
+        .and_then(|mut dataset| dataset.decode(options_json))
+        .map(Into::into)
+        .map_err(js_error)
+}

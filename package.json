@@ -354,6 +354,50 @@
     "configuration": {
       "title": "Scientific Image Visualizer",
       "properties": {
+        "tiffVisualizer.navigationShortcuts": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": false,
+          "properties": {
+            "1": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              },
+              "description": "Previous and next keys for navigation control 1."
+            },
+            "2": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              },
+              "description": "Previous and next keys for navigation control 2."
+            },
+            "3": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              },
+              "description": "Previous and next keys for navigation control 3."
+            },
+            "4": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "string"
+              },
+              "description": "Previous and next keys for navigation control 4."
+            }
+          },
+          "markdownDescription": "Override shared image navigation keys by control position (1–4). Each pair is [previous, next]. Use physical codes such as `KeyJ`, `KeyK`, `BracketLeft`, or `Shift+Comma`; a single character such as `j` or `ü` follows the layout. Example: `{\"1\": [\"KeyJ\", \"KeyK\"]}`. Omitted/invalid pairs use defaults. A lone slice slider uses pair 2. Hints show the active bindings. Shortcuts apply while the preview has focus; avoid keys used by other viewer tools."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,
@@ -418,7 +462,7 @@
     "test:channels": "node test/channel-composite-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",
-    "test:control-behavior": "node test/control-behavior-test.js && node test/channel-controls-test.js",
+    "test:control-behavior": "node test/control-behavior-test.js && node test/channel-controls-test.js && node test/navigation-shortcuts-test.mjs",
     "test:wasm": "node test/wasm-tiff-decode-test.js",
     "test:tiff-detail-workers": "node test/tiff-detail-workers-test.js",
     "test:strip-pool-planes": "node test/strip-pool-planes-test.js",
@@ -431,7 +475,7 @@
     "test:strip-parallel": "node test/strip-parallel-conformance-test.js",
     "test:tiff-layout": "node test/tiff-bitdepth-matrix-test.js",
     "test:rust-netpbm": "node test/rust-netpbm-conformance-test.js",
-    "test:rust-npy": "node test/rust-npy-conformance-test.js",
+    "test:rust-npy": "node test/rust-npy-conformance-test.js && node test/numpy-dataset-test.cjs",
     "test:fast-raw": "node test/fast-raw-decoders-test.mjs",
     "test:wasm-buffer-reuse": "node test/wasm-buffer-reuse-test.mjs",
     "test:rust-scientific": "node test/rust-scientific-conformance-test.js",

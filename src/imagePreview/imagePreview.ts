@@ -25,6 +25,7 @@ interface WebviewImageSettings extends ImageSettings {
 	nanColor: NanColorName;
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
+	navigationShortcuts: Record<string, string[]>;
 	/** Experimental rectangle reads; see the setting's description. */
 	experimentalRegionDecode: boolean;
 }
@@ -199,6 +200,7 @@ export class ImagePreview extends MediaPreview {
 				colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 				nanColor: this._manager.settingsManager.getNanColor(),
 				showScaleBar: this._manager.settingsManager.getShowScaleBar(),
+				navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 				gpuAcceleration: this.getGpuAccelerationEnabled(),
 				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};
@@ -218,7 +220,8 @@ export class ImagePreview extends MediaPreview {
 			}
 		}));
 		this._register(vscode.workspace.onDidChangeConfiguration(e => {
-			if (e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
+			if (e.affectsConfiguration('tiffVisualizer.navigationShortcuts')
+				|| e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
 				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')) {
 				updateSettings('configuration-changed');
 			}
@@ -371,6 +374,7 @@ export class ImagePreview extends MediaPreview {
 			nanColor: this._manager.settingsManager.getNanColor(),
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
+			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
 			experimentalRegionDecode: this.getRegionDecodeEnabled()
 		};
@@ -1207,6 +1211,7 @@ export class ImagePreview extends MediaPreview {
 			colorPickerShowModified: this._manager.settingsManager.getColorPickerShowModified(),
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer'),
+			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled()
 		};
 
@@ -1525,6 +1530,7 @@ export class ImagePreview extends MediaPreview {
 							format: speculativeFormat,
 							buffer,
 							options: {
+								numpyDataset: speculativeFormat === 'npy',
 								computeStats: ${!settings.normalization?.gammaMode && settings.normalization?.autoNormalize !== false},
 								preferParallelTiff: speculativeFormat === 'tiff',
 								preferParallelHdr: speculativeFormat === 'hdr',

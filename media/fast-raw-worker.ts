@@ -13,7 +13,7 @@ self.onmessage = (event: MessageEvent<any>) => {
 	const { id, format, buffer, options } = message;
 	try {
 		const result = format === 'ppm' ? decodeBinaryNetpbmFast(buffer)
-			: format === 'npy' ? decodeNativeF32NpyFast(buffer, options?.computeStats !== false)
+			: format === 'npy' ? decodeNativeF32NpyFast(buffer, options?.computeStats !== false, options?.numpyDataset === true)
 				: format === 'pfm' ? decodeNativePfmFast(buffer)
 				: null;
 		if (!result) {

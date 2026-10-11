@@ -18,7 +18,7 @@
 
 import './modules/worker-shims.js';
 import parseHdr from 'parse-hdr';
-import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_nd2_ranged, decode_lif_ranged, czi_layout, czi_region_plan, decode_czi_region, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
+import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_nd2_ranged, decode_lif_ranged, czi_layout, czi_region_plan, decode_czi_region, decode_lif_fast, decode_nd2_fast, decode_sdt_fast, decode_dicom_fast, decode_exr_fast, exr_zip_f32_plan, decode_fits_fast, decode_hdr_fast, decode_netcdf_fast, decode_npy_display_fast, decode_pfm_display_fast, decode_png16_fast, decode_ppm_display_fast, decode_tiff, decode_tiff_fast, decode_tiff_page, decode_tiff_page_fast, decode_tiff_region, decode_tiff_preview, tiff_preview_reduction, TiffRegionDecoder, NumpyDataset, tiff_float_strip_plan, tiff_page_count, tiff_page_directory } from './wasm/tiff-wasm.js';
 // The JPEG XL decoder is its own wasm-pack module. Importing the glue costs a
 // few KB of bundle; the ~2.2 MB payload is fetched by `initJxlWasm` below only
 // for standalone JXL worker jobs. Embedded JXL takes the main-thread module
@@ -26,7 +26,7 @@ import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_nd2_ranged, deco
 import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
 import initCodecWasm, { czi_layout as codec_czi_layout, czi_region_plan as codec_czi_region_plan, decode_czi_region as codec_decode_czi_region } from './wasm/codec-wasm.js';
 import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
-import { decodeSgiWithWasm, decodeCziWithWasm, decodeCziRegionWithWasm, decodeRangedWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
+import { decodeSgiWithWasm, decodeCziWithWasm, decodeCziRegionWithWasm, decodeRangedWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodeNumpySelectedWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { MIN_PARALLEL_TIFF_PIXELS, MIN_PARALLEL_TIFF_STRIPS, shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
 
@@ -933,6 +933,13 @@ async function decodeFormat(format: string, buffer: ArrayBuffer, options: Record
 		case 'exr-zip-plan':
 			return planExrZip(buffer);
 		case 'npy':
+			if (options?.numpyDataset) {
+				if (!numpyDataset || numpyDataset.key !== options.sourceCacheKey) {
+					numpyDataset?.decoder.free();
+					numpyDataset = { key: options.sourceCacheKey, decoder: new NumpyDataset(new Uint8Array(buffer)) };
+				}
+				return decodeNumpySelectedWithWasm(json => numpyDataset!.decoder.decode(json), options, 'worker');
+			}
 			return decodeNpy(buffer);
 		case 'pfm':
 			return decodePfm(buffer);
@@ -1019,6 +1026,7 @@ function collectTransferables(value: any, buffers: Set<ArrayBuffer> = new Set(),
  * the user steps Z, and refetching plus re-transferring it dominates the decode
  * itself. Only one entry is kept, so a different file simply evicts it.
  */
+let numpyDataset: { key: string, decoder: NumpyDataset } | null = null;
 let sourceCache: { key: string, buffer: ArrayBuffer } | null = null;
 let tiffRegionDecoder: { key: string, decoder: TiffRegionDecoder } | null = null;
 
@@ -1046,10 +1054,15 @@ self.onmessage = async (event: MessageEvent<any>) => {
 	let servedFromCache = false;
 	try {
 		let source: ArrayBuffer = buffer;
+		if (numpyDataset && (format !== 'npy' || !options?.numpyDataset || numpyDataset.key !== cacheKey || buffer?.byteLength)) {
+			numpyDataset.decoder.free();
+			numpyDataset = null;
+		}
+		const cachedNumpy = format === 'npy' && options?.numpyDataset && numpyDataset?.key === cacheKey;
 		const cachedTiffRegion = format === 'tiff-region'
 			&& !!cacheKey
 			&& tiffRegionDecoder?.key === cacheKey;
-		if (cacheKey && format !== 'tiff-region') {
+		if (cacheKey && format !== 'tiff-region' && !options?.numpyDataset) {
 			if (tiffRegionDecoder?.key !== cacheKey) {
 				tiffRegionDecoder?.decoder.free();
 				tiffRegionDecoder = null;
@@ -1065,10 +1078,14 @@ self.onmessage = async (event: MessageEvent<any>) => {
 				throw new Error('Source bytes are not cached in the decode worker');
 			}
 		} else if (cacheKey) {
-			// The WASM-owned decoder is the cache for viewport TIFFs; retaining
-			// the transferred ArrayBuffer as well would double large-file memory.
+			// TIFF regions and NumPy datasets own their source in WASM. Keeping
+			// the transferred ArrayBuffer too would double large-file memory.
+			if (options?.numpyDataset && tiffRegionDecoder) {
+				tiffRegionDecoder.decoder.free();
+				tiffRegionDecoder = null;
+			}
 			sourceCache = null;
-			if (!source?.byteLength && !cachedTiffRegion) {
+			if (!source?.byteLength && !cachedTiffRegion && !cachedNumpy) {
 				throw new Error('Source bytes are not cached in the decode worker');
 			}
 		}
@@ -1095,6 +1112,8 @@ self.onmessage = async (event: MessageEvent<any>) => {
 		// A failure involving the cache invalidates it: the caller has no bytes
 		// of its own to fall back on and must refetch.
 		if (cacheKey) {
+			numpyDataset?.decoder.free();
+			numpyDataset = null;
 			sourceCache = null;
 			if (tiffRegionDecoder?.key === cacheKey) {
 				tiffRegionDecoder.decoder.free();

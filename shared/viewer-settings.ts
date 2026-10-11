@@ -27,6 +27,7 @@ export interface ImageSettings extends Partial<DisplaySettings> {
   /** Session-wide idle scale bar visibility, owned by the extension host. */
   showScaleBar?: boolean;
   gpuAcceleration?: boolean;
+  navigationShortcuts?: Record<string, string[]>;
   /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
   experimentalRegionDecode?: boolean;
   plyVisualizerInstalled?: boolean;

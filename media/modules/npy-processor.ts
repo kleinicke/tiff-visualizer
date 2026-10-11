@@ -4,8 +4,7 @@ import type { LayerInput } from './layer-manager';
 import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './normalization-helper.js';
 import { resolveNanColor } from './nan-color.js';
 import { DecodeWorkerClient, type DecodeWorkerLike } from './decode-worker-client.js';
-import { decodeNpyLocal } from './main-thread-decode.js';
-import { decodeNativeF32NpyFast } from './fast-raw-decoders.js';
+import { decodeNumpySelectedLocal } from './main-thread-decode.js';
 import { WebGL2FloatRenderer } from './webgl2-float-renderer.js';
 import type { SettingsManager, ImageSettings } from './settings-manager.js';
 import type { DeferredRenderOptions } from './types.js';
@@ -26,14 +25,14 @@ interface NumericDomain {
 interface RawImageData {
     width: number;
     height: number;
-    data: Float32Array;
+    data: Float32Array | Uint8Array | Uint16Array;
     dtype: string;
     numericDomain: NumericDomain;
     channels: number;
 }
 
 interface PendingRenderData {
-    data: Float32Array;
+    data: Float32Array | Uint8Array | Uint16Array;
     width: number;
     height: number;
 }
@@ -43,23 +42,29 @@ interface PendingRenderData {
  * Parses NumPy .npy and .npz files and renders them to ImageData
  */
 export class NpyProcessor {
+    readonly config = { formatLabel: 'NPY/NPZ' };
+    metadata: Record<string, any> = {};
+    private _workerCachedSource = '';
+
   captureDecoded(): DecodedSnapshot | null {
       const raw = this._lastRaw;
-      if (!raw?.data)
-          return null;
-      const { width, height } = raw;
+      if (!raw || this.metadata?.selectors?.length) { return null; }
+      const metadata = this.metadata || {};
       const decodedStats = this._decodedStats;
-      return { width, height, restore: () => {
-              this._lastRaw = raw;
-              this._decodedStats = decodedStats;
-              this._cachedStats = undefined;
-              this._cachedStatsRgb24Mode = false;
-              this._isInitialLoad = true;
-              this._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height };
-          } };
+      return { width: raw.width, height: raw.height, restore: () => {
+          this._lastRaw = raw;
+          this.metadata = metadata;
+          this._decodedStats = decodedStats;
+          this._cachedStats = undefined;
+          this._cachedStatsRgb24Mode = false;
+          this._isInitialLoad = true;
+          this._pendingRenderData = { data: raw.data, width: raw.width, height: raw.height };
+      } };
   }
 
   resetForNewFile(): void {
+    this._workerCachedSource = '';
+    this.metadata = {};
     this._isInitialLoad = true;
     this._pendingRenderData = null;
     this._lastRaw = null;
@@ -72,7 +77,7 @@ export class NpyProcessor {
 
     settingsManager: SettingsManager;
     vscode: VsCodeApi;
-    _lastRaw: RawImageData | null; // { width, height, data: Float32Array, dtype: string, numericDomain, channels }
+    _lastRaw: RawImageData | null; // { width, height, data: Float32Array | Uint8Array | Uint16Array, dtype: string, numericDomain, channels }
     _pendingRenderData: PendingRenderData | null; // Store data waiting for format-specific settings
     _isInitialLoad: boolean; // Track if this is the first render
     _cachedStats: { min: number, max: number } | undefined; // Cache for min/max stats (only used in stats mode)
@@ -105,34 +110,39 @@ export class NpyProcessor {
         this.decodeWorker = null;
     }
 
-    async load(src: string) {
+    async load(src: string, decodeOptions: Record<string, any> = {}) {
         const loadSignal = this.loadSignal;
-        // Invalidate stats cache for new image
         this._cachedStats = undefined;
         this._cachedStatsRgb24Mode = false;
-
         const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'npy');
-        let parsed: any;
-        if (speculative?.ok) {
-            parsed = speculative.result;
-        } else {
-            const buffer = speculative?.buffer instanceof ArrayBuffer
+        const reuseSource = this._workerCachedSource === src && this.decodeWorker?.canDecode('npy');
+        const buffer = speculative?.ok || reuseSource
+            ? new ArrayBuffer(0)
+            : speculative?.buffer instanceof ArrayBuffer
                 ? speculative.buffer
                 : await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'npy');
-            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-
-            // Decode in the worker when available, on this thread otherwise. The
-            // Rust decoder dispatches between plain .npy and .npz internally.
-            parsed = await DecodeWorkerClient.decodeWithFallback(
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        const options = { ...decodeOptions, numpyDataset: true, sourceCacheKey: src,
+            computeStats: NormalizationHelper.needsStats(this.settingsManager.settings) };
+        let parsed;
+        try {
+            parsed = speculative?.ok ? speculative.result : await DecodeWorkerClient.decodeWithFallback(
                 this.decodeWorker, 'npy', buffer, src, loadSignal,
-                (b: ArrayBuffer, options?: Record<string, any>) => decodeNativeF32NpyFast(b, options?.computeStats !== false) || decodeNpyLocal(b),
-                { computeStats: NormalizationHelper.needsStats(this.settingsManager.settings) });
+                (bytes: ArrayBuffer, opts?: Record<string, any>) => decodeNumpySelectedLocal(bytes, opts), options);
+        } catch (error) {
+            this._workerCachedSource = '';
+            throw error;
         }
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        this._workerCachedSource = parsed.metadata?.arrays ? src : '';
+        this.metadata = parsed.metadata || {};
         const { data, width, height, metadata, numericDomain, channels, stats } = parsed;
         // The numpy dtype string (e.g. "<f4") is user-visible display info,
         // not part of the DecodedArray schema — it travels through
         // `metadata.dtype` (see crates/image-decoders/src/formats/npy.rs).
         const dtype: string = (metadata && metadata.dtype) || '';
+        const previous = this._lastRaw?.numericDomain;
+        if (previous && (previous.sampleFormat !== numericDomain.sampleFormat || previous.bitsPerSample !== numericDomain.bitsPerSample)) { this._isInitialLoad = true; }
         this._lastRaw = { width, height, data, dtype, numericDomain, channels };
         // Stats computed once inside the Rust decoder (DecodedArray::finalize_stats).
         // Only valid for the plain (non-rgbAs24BitGrayscale) render — see
@@ -144,8 +154,8 @@ export class NpyProcessor {
         canvas.height = height;
 
         // Send format info BEFORE rendering (for deferred rendering)
+        this._postFormatInfo(width, height, 'NPY/NPZ');
         if (this._isInitialLoad) {
-            this._postFormatInfo(width, height, 'NPY');
             this._pendingRenderData = { data, width, height };
             // Return placeholder
             const placeholderImageData = new ImageData(width, height);
@@ -158,7 +168,7 @@ export class NpyProcessor {
         return { canvas, imageData };
     }
 
-    _toImageDataFloat(data: Float32Array, width: number, height: number, renderOptions: DeferredRenderOptions = {}): ImageData {
+    _toImageDataFloat(data: Float32Array | Uint8Array | Uint16Array, width: number, height: number, renderOptions: DeferredRenderOptions = {}): ImageData {
         this._lastRenderHistogram = null;
         this._lastRenderUsedWebGL = false;
         const channels = this._lastRaw?.channels || 1;
@@ -184,7 +194,9 @@ export class NpyProcessor {
                 stats = ImageStatsCalculator.calculateIntegerStats(data as any, width, height, channels, true);
             } else {
                 // Already computed once inside the Rust decoder.
-                stats = this._decodedStats || ImageStatsCalculator.calculateFloatStats(data, width, height, channels);
+                stats = this._decodedStats || (data instanceof Float32Array
+                    ? ImageStatsCalculator.calculateFloatStats(data, width, height, channels)
+                    : ImageStatsCalculator.calculateIntegerStats(data, width, height, channels, false));
             }
             this._cachedStats = stats;
             this._cachedStatsRgb24Mode = rgbAs24BitMode;
@@ -221,7 +233,8 @@ export class NpyProcessor {
                 typeMax: effectiveTypeMax,
                 settings,
                 nanColor,
-                channels
+                channels,
+                isFloat
             });
             if (rendered) {
                 this._lastRenderUsedWebGL = true;
@@ -243,7 +256,7 @@ export class NpyProcessor {
             width,
             height,
             channels,
-            true, // Always true since NPY stores everything as Float32Array
+            isFloat,
             stats || { min: 0, max: 1 },
             settings,
             options
@@ -311,12 +324,7 @@ export class NpyProcessor {
             // Check if normalized float mode is enabled for uint images
             if (normalizedFloatMode && dtype && !dtype.includes('f') && Number.isFinite(value)) {
                 // Convert uint to normalized float (0-1)
-                let maxValue = 255;
-                if (dtype.includes('u2') || dtype.includes('i2')) {
-                    maxValue = dtype.includes('u') ? 65535 : 32767;
-                } else if (dtype.includes('u4') || dtype.includes('i4')) {
-                    maxValue = dtype.includes('u') ? 4294967295 : 2147483647;
-                }
+                const maxValue = this._lastRaw.numericDomain?.typeMax ?? 255;
                 const normalized = value / maxValue;
                 return formatNumber(normalized);
             }
@@ -363,6 +371,8 @@ export class NpyProcessor {
                 samplesPerPixel: channels,
                 bitsPerSample,
                 sampleFormat,
+                ...this.metadata,
+                floatCarrier: this._lastRaw?.data instanceof Float32Array,
                 formatLabel,
                 formatType, // For per-format settings: 'npy-float' or 'npy-uint'
                 isInitialLoad: this._isInitialLoad // Signal that this is the first load

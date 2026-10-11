@@ -925,6 +925,10 @@ body img {
 }
 
 .histogram-labels {
+	display: flex;
+	justify-content: space-between;
+	font-size: 10px;
+	color: #cccccc;
 	width: 300px;
 	margin: 0 12px 8px;
 	box-sizing: border-box;
@@ -2855,4 +2859,16 @@ body img {
 	margin-top: 4px;
 	font-size: 10px;
 	padding: 2px 6px;
+}
+
+.histogram-tooltip {
+	position: absolute;
+	display: none;
+	background-color: rgba(0, 0, 0, 0.8);
+	color: white;
+	padding: 4px 8px;
+	border-radius: 4px;
+	font-size: 11px;
+	pointer-events: none;
+	z-index: 1000;
 }

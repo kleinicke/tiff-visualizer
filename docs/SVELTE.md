@@ -54,3 +54,14 @@ Measurement controls publish snapshots from `MeasurePanel`. Numerical jobs and
 stale-result cancellation belong to `measure/analysis.ts`; row computation,
 frame coalescing and per-file provenance belong to `measure/results.ts`. These
 services do not import Svelte or manipulate DOM elements.
+
+### Dataset selector dependencies
+
+Dataset decoders emit the shared `selectors` / `selectedIndices` metadata.
+Named choices use `labels`; dimensions without labels use sliders. Keep format
+knowledge in the decoder, rather than adding format-specific navigation widgets.
+A decoder may additionally emit `selectorResets: { [selectorName]: string[] }`:
+when that choice changes, the shared navigation removes those dependent indices
+before requesting another plane. NumPy uses this to reset layout when changing
+arrays; slice indices are retained and clamped by the decoder instead of being
+reset.

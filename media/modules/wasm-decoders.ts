@@ -386,3 +386,14 @@ export function decodeSgiWithWasm(
 	const startedAt = performance.now();
 	return assembleDecoded<Float32Array>(decodeSgiFast(new Uint8Array(buffer)), 'sgi', context, startedAt);
 }
+
+/** Dataset navigation owns its source; never overwrite or transfer that cache. */
+export function decodeNumpySelectedWithWasm(
+    decode: (options: string) => any,
+    options: Record<string, any>,
+    context: DecodeContext,
+) {
+    const startedAt = performance.now();
+    return assembleDecoded<Float32Array | Uint8Array | Uint16Array>(
+        decode(JSON.stringify(options)), 'npy', context, startedAt);
+}
