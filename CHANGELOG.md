@@ -4,6 +4,7 @@
 
 - Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
 - Improve NumPy npy and npz dataset loading and navigation
+- rearrange right click menu
 
 ## 1.11.0 (2026-09-06)
 

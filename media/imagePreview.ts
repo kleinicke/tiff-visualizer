@@ -4806,7 +4806,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (isEditableEventTarget(e.target)) { return; }
 			e.preventDefault();
 
-			const fileItems: MenuItem[] = [], displayItems: MenuItem[] = [], inspectItems: MenuItem[] = [], measureItems: MenuItem[] = [], layerItems: MenuItem[] = [];
+			const fileItems: MenuItem[] = [], displayItems: MenuItem[] = [], inspectItems: MenuItem[] = [], measureItems: MenuItem[] = [];
 			const createMenuItem = (label: string, action: () => void): MenuItem => ({ label, action: () => { setTimeout(action, 0); } });
 
 			// Add Copy option (triggers command via extension for logging)
@@ -4912,7 +4912,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 
 			// Layers compositing view
-			layerItems.push(createMenuItem('Open Layers View', () => {
+			fileItems.push(createMenuItem('Open Layers View', () => {
 				vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleLayers' });
 			}));
 
@@ -4947,9 +4947,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			}
 			const items: MenuItem[] = [
 				{ heading: true, label: 'Display' }, ...displayItems,
-				{ heading: true, label: 'Inspect' }, ...inspectItems,
-				{ heading: true, label: 'Measure' }, ...measureItems,
-				{ heading: true, label: 'Layers' }, ...layerItems,
+				{ heading: true, label: 'Inspect' }, ...inspectItems, ...measureItems,
 				{ heading: true, label: 'File' }, ...fileItems,
 			];
 

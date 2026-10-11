@@ -202,7 +202,7 @@ test('image actions are grouped by task and stay reachable in a narrow view', as
   await page.locator('#web-status-options').click();
   const menu = page.locator('.custom-context-menu');
   await expect(menu).toBeVisible();
-  await expect(menu.locator('.context-menu-heading')).toHaveText(['Display', 'Inspect', 'Measure', 'Layers', 'File']);
+  await expect(menu.locator('.context-menu-heading')).toHaveText(['Display', 'Inspect', 'File']);
   await expect(menu.getByRole('menuitem', { name: 'Toggle Histogram', exact: true })).toBeVisible();
   const bounds = await menu.boundingBox();
   expect(bounds!.x).toBeGreaterThanOrEqual(0);
