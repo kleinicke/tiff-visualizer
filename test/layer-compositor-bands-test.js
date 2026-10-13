@@ -94,7 +94,12 @@ async function main() {
 			assert.equal(merged.coveredCount, expected.coveredCount, `seed ${seed}, ${bandCount} bands: covered count`);
 			const a = Buffer.from(merged.data.buffer), b = Buffer.from(expected.data.buffer);
 			if (!a.equals(b)) {
-				let first = 0; while (merged.data[first] === expected.data[first] || (Number.isNaN(merged.data[first]) && Number.isNaN(expected.data[first]))) first++;
+				// NaN payload/sign bits may differ across WASM and JS without a
+				// numeric difference. Bound the scan even when every sample agrees.
+				assert.equal(merged.data.length, expected.data.length);
+				let first = 0;
+				while (first < expected.data.length && (Object.is(merged.data[first], expected.data[first]) || (Number.isNaN(merged.data[first]) && Number.isNaN(expected.data[first])))) first++;
+				if (first < expected.data.length)
 				assert.fail(`seed ${seed}, ${bandCount} bands: sample ${first} (row ${Math.floor(first / expected.channels / width)}) is ${merged.data[first]}, full composite ${expected.data[first]}`);
 			}
 			assert.ok(Object.is(merged.stats.min, expected.stats.min) && Object.is(merged.stats.max, expected.stats.max), `seed ${seed}, ${bandCount} bands: band stats ${JSON.stringify(bands.map(x => [x.stats.min, x.stats.max, x.coveredCount]))} stats ${merged.stats.min}..${merged.stats.max} vs ${expected.stats.min}..${expected.stats.max}, channels ${expected.channels}, covered ${expected.coveredCount}`);

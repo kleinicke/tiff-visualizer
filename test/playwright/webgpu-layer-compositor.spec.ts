@@ -337,3 +337,56 @@ test('WebGPU renders a native 5000×5000 byte document within the interactive ba
 		await new Promise<void>(resolve => server.close(() => resolve()));
 	}
 });
+
+test('WebGPU availability waits for pipelines and completed work, and reset releases stale devices', async ({ page }) => {
+	const bundle = buildSync({ entryPoints: [path.join(__dirname, '../../media/modules/webgpu-layer-compositor.ts')], bundle: true,
+		write: false, format: 'iife', globalName: 'LifecycleTest', platform: 'browser' }).outputFiles[0].text;
+	await page.addScriptTag({ content: bundle });
+	const result = await page.evaluate(async () => {
+		let release: () => void = () => {};
+		let gate = new Promise<void>(resolve => { release = resolve; });
+		let failSubmission = false;
+		const devices: any[] = [];
+		const makeDevice = () => {
+			const device = { destroyed: false, destroy() { this.destroyed = true; }, lost: new Promise(() => {}), addEventListener() {},
+				queue: { writeTexture() {}, submit() {}, async onSubmittedWorkDone() { if (failSubmission) { throw new Error('submission failed'); } } },
+				createTexture: () => ({ destroy() {}, createView: () => ({}) }), createCommandEncoder: () => ({ finish: () => ({}), beginRenderPass: () => ({ end() {} }) }) };
+			devices.push(device); return device;
+		};
+		let requestGate = Promise.resolve();
+		Object.defineProperty(navigator, 'gpu', { configurable: true, value: {
+			requestAdapter: async () => ({ requestDevice: async () => { const device = makeDevice(); await requestGate; return device; } }),
+			getPreferredCanvasFormat: () => 'rgba8unorm',
+		} });
+		const original = HTMLCanvasElement.prototype.getContext;
+		HTMLCanvasElement.prototype.getContext = function (type: string, ...args: any[]) {
+			return type === 'webgpu' ? { configure() {} } : original.call(this, type as any, ...args);
+		} as any;
+		const C = (window as any).LifecycleTest.WebGPULayerCompositor;
+		const compositor = new C();
+		compositor.createPipelines = async () => { await gate; return [{}, {}]; };
+		compositor.createPipeline = compositor.createReductionPipeline = async () => { await gate; return {}; };
+		let settled = 0;
+		const first = compositor.isAvailable().then((value: boolean) => { settled++; return value; });
+		await new Promise(resolve => setTimeout(resolve, 0));
+		const second = compositor.isAvailable().then((value: boolean) => { settled++; return value; });
+		await new Promise(resolve => setTimeout(resolve, 0));
+		const settledBeforePipelines = settled;
+		release(); const concurrent = await Promise.all([first, second]);
+		compositor.dispose(); failSubmission = true;
+		const failed = await compositor.isAvailable();
+		const failedDeviceDestroyed = devices[devices.length - 1].destroyed;
+		failSubmission = false; compositor.retry();
+		const recovered = await compositor.isAvailable(); compositor.dispose();
+		requestGate = new Promise<void>(resolve => { release = resolve; });
+		const stale = compositor.isAvailable(); await new Promise(resolve => setTimeout(resolve, 0));
+		const staleDevice = devices[devices.length - 1]; compositor.dispose();
+		requestGate = Promise.resolve(); const current = await compositor.isAvailable();
+		release(); const staleResult = await stale;
+		const currentSurvived = compositor.device === devices[devices.length - 1] && !compositor.device.destroyed;
+		compositor.dispose();
+		return { settledBeforePipelines, concurrent, failed, failedDeviceDestroyed, recovered, current, staleResult, staleDestroyed: staleDevice.destroyed, currentSurvived };
+	});
+	expect(result).toEqual({ settledBeforePipelines: 0, concurrent: [true, true], failed: false, failedDeviceDestroyed: true,
+		recovered: true, current: true, staleResult: false, staleDestroyed: true, currentSurvived: true });
+});

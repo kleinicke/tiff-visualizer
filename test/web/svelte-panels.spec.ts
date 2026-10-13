@@ -101,6 +101,7 @@ test('embedded JetBrains controls use the Svelte forms and narrow panels stay re
   await expect(page.locator('#web-status-gamma')).toContainText('1.0→2.2');
   await command(page, 'toggleMetadata');
   const panel = page.locator('.metadata-panel');
+  await expect(panel).toBeVisible();
   const box = await panel.boundingBox();
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
@@ -212,3 +213,56 @@ test('image actions are grouped by task and stay reachable in a narrow view', as
   await menu.getByRole('menuitem', { name: 'Toggle Histogram', exact: true }).click();
   await expect(page.locator('.histogram-overlay')).toBeVisible();
 });
+
+for (const backend of ['auto', 'gpu']) {
+  test(`a failed layer GPU render ${backend === 'auto' ? 'falls back automatically' : 'reports a forced-backend error'}`, async ({ page }) => {
+    const errors: string[] = [], logs: string[] = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => logs.push(message.text()));
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'gpu', { configurable: true, value: undefined });
+      const original = HTMLCanvasElement.prototype.getContext;
+      const wrapped = new WeakSet<object>();
+      HTMLCanvasElement.prototype.getContext = function (type: string, ...args: any[]) {
+        const context = original.call(this, type as any, ...args) as any;
+        if (type === 'webgl2' && context && !wrapped.has(context)) {
+          wrapped.add(context);
+          const finish = context.finish.bind(context);
+          context.finish = () => {
+            if ((window as any).failNextLayerRender) {
+              (window as any).failNextLayerRender = false;
+              throw new Error('Injected GPU submission failure');
+            }
+            finish();
+          };
+        }
+        return context;
+      } as typeof original;
+    });
+    await open(page);
+    test.skip(!await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2')), 'Requires a usable WebGL context to inject a runtime failure');
+    await page.locator('#web-file-input').evaluate((input: HTMLInputElement) => { input.dataset.mode = 'layers'; });
+    await page.locator('#web-file-input').setInputFiles({ name: 'failure-probe.ppm', mimeType: 'application/octet-stream',
+      buffer: Buffer.concat([Buffer.from('P6\n4 4\n255\n'), Buffer.alloc(4 * 4 * 3, 255)]) });
+    const panel = page.locator('.layers-panel');
+    await expect(panel.locator('.layer-row')).toHaveCount(2);
+    await panel.getByText('Rendering diagnostics', { exact: true }).click();
+    await panel.locator('.layers-compositor-select').selectOption(backend);
+    await expect(panel.locator('.layers-diagnostics small')).toContainText('Active: gpu');
+    await expect.poll(() => logs.some(line => line.includes('webgl2 native'))).toBe(true);
+    const readPixel = () => page.locator('body > canvas:not(.measure-overlay)').first().evaluate((canvas: HTMLCanvasElement) =>
+      Array.from(canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data).join(','));
+    const before = await readPixel();
+    await page.evaluate(() => { (window as any).failNextLayerRender = true; });
+    await panel.locator('.layer-opacity').first().fill('60');
+    if (backend === 'auto') {
+      await expect(panel.locator('.layers-diagnostics small')).toContainText(/Active: (wasm|javascript)/);
+      await expect.poll(readPixel).not.toBe(before);
+      expect(errors).toEqual([]);
+    } else {
+      await expect.poll(() => errors.some(message => message.includes('Injected GPU submission failure'))).toBe(true);
+      await expect(panel.locator('.layers-diagnostics small')).toContainText('Active: gpu');
+      expect(logs.some(line => line.includes('selecting a fallback'))).toBe(false);
+    }
+  });
+}

@@ -235,6 +235,8 @@ export class WebGL2FloatRenderer {
 			return false;
 		}
 
+		// Dithering changes scientific display pixels by one level on hardware GPUs.
+		gl.disable(gl.DITHER);
 		const program = this._createProgram(gl);
 		const vao = gl.createVertexArray();
 		const texture = gl.createTexture();
@@ -670,7 +672,10 @@ void main() {
 		outColor = vec4(texture(u_colormap, vec2(normalized, 0.5)).rgb, 1.0);
 		return;
 	}
-	outColor = vec4(vec3(normalized), 1.0);
+	// Match the CPU's Math.round before the driver converts to UNORM8.
+	// Hardware conversion may round intermediate values differently.
+	float byteValue = floor(normalized * 255.0 + 0.5);
+	outColor = vec4(vec3(byteValue / 255.0), 1.0);
 }`);
 		if (!vertex || !fragment) { return null; }
 		const program = gl.createProgram();

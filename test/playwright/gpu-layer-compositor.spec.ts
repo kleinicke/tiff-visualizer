@@ -656,3 +656,74 @@ test('WebGL2 renders a native 1600px three-channel adjustment document promptly'
 		`reused ${result.cachedNativeMs.toFixed(1)} ms, one-stack edit ${result.changedNativeMs.toFixed(1)} ms`,
 	);
 });
+
+test('WebGL2 caches display-only edits and invalidates every composition input', async ({ page }) => {
+	const bundle = buildSync({ entryPoints: [path.join(__dirname, '../../media/modules/webgl2-layer-compositor.ts')], bundle: true,
+		write: false, format: 'iife', globalName: 'CacheTest', platform: 'browser' }).outputFiles[0].text;
+	await page.addScriptTag({ content: bundle });
+	const result = await page.evaluate(() => {
+		const C = (window as any).CacheTest.WebGL2LayerCompositor;
+		const compositor = new C();
+		let draws = 0;
+		const draw = compositor.drawStack.bind(compositor);
+		compositor.drawStack = (...args: any[]) => { draws++; return draw(...args); };
+		const settings: any = { gpuAcceleration: true, normalization: { min: 0, max: 255, autoNormalize: false, gammaMode: true },
+			gamma: { in: 1, out: 1 }, brightness: { offset: 0 }, displayColormap: 'none' };
+		const layers: any[] = [
+			{ id: 'base', data: new Uint8Array([20, 40, 60, 255, 80, 100, 120, 255]), width: 2, height: 1, channels: 4, typeMax: 255 },
+			{ id: 'top', data: new Uint8Array([150, 20, 60, 255]), width: 1, height: 1, channels: 4, typeMax: 255, opacity: 0.5 },
+		];
+		const pixels = (c: any, scale = 1, width = 2, height = 1): number[] => {
+			const canvas = c.render(layers, width, height, scale, settings, { r: 255, g: 0, b: 255 }, true);
+			const copy = document.createElement('canvas'); copy.width = canvas.width; copy.height = canvas.height;
+			const ctx = copy.getContext('2d')!; ctx.drawImage(canvas, 0, 0);
+			return Array.from(ctx.getImageData(0, 0, copy.width, copy.height).data);
+		};
+		pixels(compositor);
+		const initialDraws = draws;
+		const surfaces = compositor.outputTextures.length;
+		settings.gamma.out = 2.2; settings.normalization.autoNormalize = true;
+		pixels(compositor);
+		const displayDraws = draws;
+		const checks: { cached: number[]; fresh: number[]; invalidated: boolean }[] = [];
+		const changes = [
+			() => { layers[1].opacity = 0.7; },
+			() => { layers[1].offsetX = 1; },
+			() => { layers[1].blendMode = 'screen'; },
+			() => { layers[1].visible = false; },
+			() => { layers[1].visible = true; layers[1].data = new Uint8Array([30, 200, 20, 255]); },
+			() => { layers[1].rasterMask = { data: new Uint8Array([90]), width: 1, height: 1, channels: 1, typeMax: 255 }; },
+			() => { layers[1].rasterMask.invert = true; },
+			() => { layers.reverse(); },
+			() => { layers.push({ id: 'filter', kind: 'adjustment', adjustment: { type: 'invert' }, width: 2, height: 1, channels: 4, typeMax: 255 }); },
+			() => { layers[2].adjustment = { type: 'exposure', exposure: 0.2, gamma: 1 }; },
+			() => { layers[2].adjustment.exposure = 0.4; },
+			() => { layers[2].clipped = true; },
+			() => { layers.push({ id: 'group', kind: 'group', width: 2, height: 1, channels: 4, typeMax: 255 }); layers[0].parentId = 'group'; },
+			() => { layers[3].offsetX = 1; },
+		];
+		for (const [index, change] of changes.entries()) {
+			try {
+				const before = draws; change(); const cached = pixels(compositor);
+				const fresh = new C(); checks.push({ cached, fresh: pixels(fresh), invalidated: draws > before }); fresh.dispose();
+			} catch (error) { throw new Error(`Cache edit ${index}: ${String(error)}`); }
+		}
+		pixels(compositor, 0.5);
+		const before = draws; const restored = pixels(compositor);
+		const restoredWithoutDraw = draws === before;
+		const fresh = new C(); const expected = pixels(fresh);
+		pixels(compositor, 0.5);
+		const beforeCollision = draws; const resized = pixels(compositor, 1, 1, 1);
+		const scaleInvalidated = draws > beforeCollision;
+		const resizedExpected = pixels(fresh, 1, 1, 1);
+		fresh.dispose(); compositor.dispose();
+		return { initialDraws, displayDraws, surfaces, checks, restored, expected, restoredWithoutDraw, scaleInvalidated, resized, resizedExpected };
+	});
+	expect(result.displayDraws).toBe(result.initialDraws);
+	expect(result.surfaces).toBe(2);
+	for (const check of result.checks) { expect(check.invalidated).toBe(true); expect(check.cached).toEqual(check.fresh); }
+	expect(result.restoredWithoutDraw).toBe(true);
+	expect(result.restored).toEqual(result.expected);
+	expect(result.scaleInvalidated).toBe(true);
+	expect(result.resized).toEqual(result.resizedExpected);
+});
