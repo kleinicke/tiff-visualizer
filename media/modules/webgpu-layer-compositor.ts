@@ -75,6 +75,7 @@ export class WebGPULayerCompositor {
 	private device: any = null;
 	private canvasFormat = 'bgra8unorm';
 	private initPromise: Promise<void> | null = null;
+	private initializationFailure: unknown = null;
 	private blendPipeline: any = null;
 	private blendFloatPipeline: any = null;
 	private blendBytePipeline: any = null;
@@ -104,7 +105,7 @@ export class WebGPULayerCompositor {
 	setLogger(logger: (message: string) => void): void { this.logger = logger; }
 
 	retry(): void {
-		if (!this.device) { this.initPromise = null; }
+		if (!this.device) { this.initPromise = null; this.initializationFailure = null; }
 	}
 
 	async isAvailable(): Promise<boolean> {
@@ -447,16 +448,26 @@ export class WebGPULayerCompositor {
 	}
 
 	private async ensureDevice(): Promise<void> {
-		if (this.device) { return; }
+		// A device exists before pipeline compilation has finished. Concurrent
+		// callers must await the same complete initialization, never use it early.
 		if (this.initPromise) { return this.initPromise; }
-		this.initPromise = (async () => {
+		if (this.initializationFailure) { throw this.initializationFailure; }
+		if (this.device) { return; }
+		const generation = this.generation;
+		let initializingDevice: any = null;
+		const checkGeneration = (): void => {
+			if (generation !== this.generation) { throw new DOMException('Compositor initialization was reset', 'AbortError'); }
+		};
+		const initialization = (async () => {
 			const gpu = (navigator as any).gpu;
 			if (!gpu) { throw new Error('navigator.gpu is unavailable'); }
 			const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
 			if (!adapter) { throw new Error('No WebGPU adapter is available'); }
+			checkGeneration();
 			// Source textures are fetched with textureLoad, so rgba32float input
 			// does not require the optional float32-filterable feature.
-			const device = await adapter.requestDevice();
+			const device = initializingDevice = await adapter.requestDevice();
+			checkGeneration();
 			const canvas = document.createElement('canvas');
 			const context = canvas.getContext('webgpu') as any;
 			if (!context) { throw new Error('Could not create a WebGPU canvas context'); }
@@ -472,6 +483,7 @@ export class WebGPULayerCompositor {
 				if (this.device !== device) { return; }
 				this.logger(`[LayerCompositor] WebGPU device lost: ${info?.message || info?.reason || 'unknown reason'}`);
 				this.dispose();
+				this.initializationFailure = new Error('WebGPU device was lost');
 			});
 			device.addEventListener?.('uncapturederror', (event: any) =>
 				this.logger(`[LayerCompositor] WebGPU validation error: ${event.error?.message || event.error}`));
@@ -486,6 +498,7 @@ export class WebGPULayerCompositor {
 				this.createPipeline(DISPLAY_SHADER, 'display', format),
 				this.createReductionPipeline(),
 			]);
+			checkGeneration();
 			[this.blendFloatPipeline, this.blendBytePipeline] = blendPipelines;
 			[this.adjustmentFloatPipeline, this.adjustmentBytePipeline] = adjustmentPipelines;
 			this.blendPipeline = this.blendFloatPipeline;
@@ -497,9 +510,27 @@ export class WebGPULayerCompositor {
 				{ texture: this.dummyTexture }, new Uint8Array([0, 0, 0, 0]),
 				{ bytesPerRow: 4, rowsPerImage: 1 }, { width: 1, height: 1 },
 			);
+			// Advertising an adapter is insufficient (some software drivers fail
+			// on submission). Verify a completed queue before choosing this backend.
+			const probe = device.createTexture({ size: [1, 1], format: 'rgba8unorm', usage: TEXTURE_USAGE.RENDER_ATTACHMENT });
+			try {
+				const encoder = device.createCommandEncoder();
+				encoder.beginRenderPass({ colorAttachments: [{ view: probe.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] }).end();
+				device.queue.submit([encoder.finish()]);
+				await device.queue.onSubmittedWorkDone();
+			} finally { probe.destroy(); }
+			checkGeneration();
 		})();
-		try { await this.initPromise; }
-		catch (error) { this.initPromise = null; throw error; }
+		this.initPromise = initialization;
+		try { await initialization; }
+		catch (error) {
+			initializingDevice?.destroy();
+			if (generation === this.generation) {
+				this.dispose();
+				this.initializationFailure = error;
+			}
+			throw error;
+		}
 	}
 
 	private async createPipeline(code: string, entryPoint: string, format: string): Promise<any> {

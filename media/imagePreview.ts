@@ -1708,7 +1708,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	layerGpuCompositor.setLogger(logLayerPerformance);
 	layerWebGpuCompositor.setLogger(logLayerPerformance);
 
+	const failedAutomaticBackends = new Set<LayerCompositorBackend>();
+
 	function coldResetLayerCompositorBackends(): void {
+		failedAutomaticBackends.clear();
 		_automaticBackendGeneration++;
 		layerCompositorWorker.dispose();
 		layerGpuCompositor.dispose();
@@ -1741,9 +1744,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	async function selectAutomaticLayerBackend(rerender: boolean, forceColdRender = false): Promise<void> {
 		const generation = ++_automaticBackendGeneration;
 		let backend: LayerCompositorBackend = 'javascript';
-		if (settingsManager.settings.gpuAcceleration !== false && await layerWebGpuCompositor.isAvailable()) {
+		if (!failedAutomaticBackends.has('webgpu') && settingsManager.settings.gpuAcceleration !== false && await layerWebGpuCompositor.isAvailable()) {
 			backend = 'webgpu';
-		} else if (settingsManager.settings.gpuAcceleration !== false && layerGpuCompositor.isAvailable()) {
+		} else if (!failedAutomaticBackends.has('gpu') && settingsManager.settings.gpuAcceleration !== false && layerGpuCompositor.isAvailable()) {
 			backend = 'gpu';
 		} else if (await layerCompositorWorker.isWasmAvailable()) {
 			backend = 'wasm';
@@ -2678,6 +2681,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				}
 			}).catch(error => {
 				if (stateRevision !== _layerStateRevision) { return; }
+				if (recoverAutomaticBackend('webgpu', error)) { return; }
 				reportStrictCompositorFailure('WebGPU', error, stateRevision);
 				setTimeout(() => { throw error; }, 0);
 			});
@@ -2697,6 +2701,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					true,
 				) as HTMLCanvasElement;
 			} catch (error) {
+				if (recoverAutomaticBackend('gpu', error)) { return true; }
 				reportStrictCompositorFailure('GPU', error, stateRevision);
 				throw error;
 			}
@@ -2812,6 +2817,16 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const error = new Error(`${workerBackend} compositor worker is unavailable`);
 		reportStrictCompositorFailure(workerBackend === 'wasm' ? 'Rust/Wasm' : 'JavaScript', error, stateRevision);
 		throw error;
+	}
+
+	function recoverAutomaticBackend(backend: LayerCompositorBackend, error: unknown): boolean {
+		if (_layerCompositorSelection !== 'auto') { return false; }
+		failedAutomaticBackends.add(backend);
+		logLayerPerformance(`[LayerCompositor] ${backend} failed; selecting a fallback: ${String(error)}`);
+		if (backend === 'webgpu') { layerWebGpuCompositor.dispose(); }
+		if (backend === 'gpu') { layerGpuCompositor.dispose(); }
+		void selectAutomaticLayerBackend(true);
+		return true;
 	}
 
 	function reportStrictCompositorFailure(backend: string, error: unknown, stateRevision: number): void {

@@ -33,6 +33,8 @@ test('viewer protocol validates automation and measures the active decoded sourc
   await page.goto('/');
   await page.locator('#web-file-input').setInputFiles(path.resolve('test-samples/pred_ref_rgb8.tif'));
   await expect(page.locator('body')).toHaveClass(/ready/);
+  // The bootstrap frame is ready before the selected file has decoded.
+  await expect.poll(async () => (await request(page, 'inspect')).result?.channels).toBe(3);
   const original = await request(page,'inspect');
   expect(original.error).toBeUndefined();
   expect(original.result.channels).toBe(3);

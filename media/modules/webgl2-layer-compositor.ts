@@ -16,7 +16,10 @@ type TextureEntry = {
 	encoding: 0 | 1 | 2;
 	nativeMaximum: number;
 };
-type SurfaceSet = { textures: WebGLTexture[]; framebuffers: WebGLFramebuffer[] };
+type SurfaceSet = {
+	textures: WebGLTexture[]; framebuffers: WebGLFramebuffer[];
+	compositionSignature?: string; finalSurface?: number;
+};
 type IsolatedStackCacheEntry = {
 	signature: string;
 	texture: WebGLTexture;
@@ -64,6 +67,7 @@ export class WebGL2LayerCompositor {
 	private outputTextures: WebGLTexture[] | null = null;
 	private framebuffers: WebGLFramebuffer[] | null = null;
 	private surfaceCache = new Map<string, SurfaceSet>();
+	private currentSurfaceSet: SurfaceSet | null = null;
 	private isolatedStackCache = new WeakMap<object, Map<string, IsolatedStackCacheEntry>>();
 	private cachedFramebuffers = new Set<WebGLFramebuffer>();
 	private objectIds = new WeakMap<object, number>();
@@ -204,11 +208,17 @@ export class WebGL2LayerCompositor {
 				}
 				maximumDepth = Math.max(maximumDepth, depth);
 			}
-			const surfaceCount = (maximumDepth + 1) * 2 + 3;
+			const needsIsolatedScratch = renderLayers.some(layer => layer.kind === 'group' || layer.clipped === true);
+			const surfaceCount = (maximumDepth + 1) * 2 + (needsIsolatedScratch ? 3 : 0);
 			this.ensureOutputSurfaces(width, height, usesFloat, surfaceCount);
 			this.compositionTypeMax = renderLayers.find(layer => layer.visible !== false && (layer.opacity ?? 1) > 0 && layer.data)?.typeMax || 1;
 
-			const previous = this.drawStack(renderLayers, undefined, scale, 0, new Set<string>());
+			// Source buffers are immutable; display-only edits can reuse the exact
+			// composite. Each resolution/format owns its own cached surface.
+			const signature = `${documentWidth}x${documentHeight}@${scale}:${this.compositionSignature(renderLayers)}`;
+			const surfaceSet = this.currentSurfaceSet!;
+			const cacheHit = surfaceSet.compositionSignature === signature && surfaceSet.finalSurface !== undefined;
+			const previous = cacheHit ? surfaceSet.finalSurface! : this.drawStack(renderLayers, undefined, scale, 0, new Set<string>());
 			this.drawDisplay(previous, settings, layers, nanColor);
 			// The WebGL canvas is copied immediately into a separate 2D canvas.
 			// Finish the command stream first: a flush only submits work and can
@@ -219,7 +229,10 @@ export class WebGL2LayerCompositor {
 			if (error !== gl.NO_ERROR || gl.isContextLost()) {
 				throw new Error(`GPU composition did not complete (${error})`);
 			}
-			if (scale === 1) { this.validateNativeSamples(layers, documentWidth, documentHeight, previous); }
+			if (scale === 1 && !cacheHit) { this.validateNativeSamples(layers, documentWidth, documentHeight, previous); }
+			// Publish only after successful completion and validation.
+			surfaceSet.compositionSignature = signature;
+			surfaceSet.finalSurface = previous;
 			return this.canvas;
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
@@ -381,6 +394,7 @@ export class WebGL2LayerCompositor {
 		this.outputTextures = null;
 		this.framebuffers = null;
 		this.surfaceCache.clear();
+		this.currentSurfaceSet = null;
 		this.isolatedStackCache = new WeakMap();
 		this.cachedFramebuffers.clear();
 		this.objectIds = new WeakMap();
@@ -482,6 +496,7 @@ export class WebGL2LayerCompositor {
 		const key = `${width}x${height}:${usesFloat ? 'float' : 'byte'}:${surfaceCount}`;
 		const cached = this.surfaceCache.get(key);
 		if (cached) {
+			this.currentSurfaceSet = cached;
 			this.outputTextures = cached.textures;
 			this.framebuffers = cached.framebuffers;
 			this.outputWidth = width;
@@ -496,15 +511,17 @@ export class WebGL2LayerCompositor {
 			this.ownedTextures.add(texture);
 			gl.bindTexture(gl.TEXTURE_2D, texture);
 			this.configureTexture();
+			// Half-float intermediates round scientific arithmetic before display.
+			// Keep full float precision through compositing and parity validation.
 			gl.texImage2D(
 				gl.TEXTURE_2D,
 				0,
-				usesFloat ? gl.RGBA16F : gl.RGBA8,
+				usesFloat ? gl.RGBA32F : gl.RGBA8,
 				width,
 				height,
 				0,
 				gl.RGBA,
-				usesFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE,
+				usesFloat ? gl.FLOAT : gl.UNSIGNED_BYTE,
 				null,
 			);
 			gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -516,7 +533,8 @@ export class WebGL2LayerCompositor {
 		}
 		this.outputTextures = textures;
 		this.framebuffers = framebuffers;
-		this.surfaceCache.set(key, { textures, framebuffers });
+		this.currentSurfaceSet = { textures, framebuffers };
+		this.surfaceCache.set(key, this.currentSurfaceSet);
 		this.outputWidth = width; this.outputHeight = height;
 		this.outputUsesFloat = usesFloat;
 	}
@@ -642,6 +660,39 @@ export class WebGL2LayerCompositor {
 		return destination;
 	}
 
+	private compositionSignature(layers: Layer[]): string {
+		return JSON.stringify(layers.map(layer => ({
+			id: layer.id,
+			kind: layer.kind || 'raster',
+			parentId: layer.parentId,
+			adjustment: layer.adjustment,
+			data: layer.data ? this.objectId(layer.data as object) : 0,
+			width: layer.width,
+			height: layer.height,
+			channels: layer.channels,
+			isFloat: !!layer.isFloat,
+			typeMax: layer.typeMax,
+			offsetX: layer.offsetX || 0,
+			offsetY: layer.offsetY || 0,
+			opacity: layer.opacity ?? 1,
+			blendMode: layer.blendMode || 'normal',
+			visible: layer.visible !== false,
+			clipped: !!layer.clipped,
+			maskCondition: layer.maskCondition,
+			rasterMask: layer.rasterMask ? {
+				data: this.objectId(layer.rasterMask.data as object),
+				width: layer.rasterMask.width,
+				height: layer.rasterMask.height,
+				channels: layer.rasterMask.channels,
+				typeMax: layer.rasterMask.typeMax,
+				offsetX: layer.rasterMask.offsetX,
+				offsetY: layer.rasterMask.offsetY,
+				invert: !!layer.rasterMask.invert,
+			} : null,
+		})));
+	}
+
+
 	private objectId(value: object | undefined): number {
 		if (!value) { return 0; }
 		let id = this.objectIds.get(value);
@@ -671,7 +722,7 @@ export class WebGL2LayerCompositor {
 		// into its parent stack, so those UI edits can reuse the cached filters.
 		baseDescription.opacity = 1;
 		baseDescription.blendMode = 'normal';
-		return JSON.stringify([baseDescription, ...effects.map(effect => describe(effect, true))]);
+		return JSON.stringify([scale, baseDescription, ...effects.map(effect => describe(effect, true))]);
 	}
 
 	private retainIsolatedStack(base: Layer, key: string, signature: string, sourceSurface: number): WebGLTexture {
@@ -685,9 +736,9 @@ export class WebGL2LayerCompositor {
 			this.ownedTextures.add(texture); this.cachedFramebuffers.add(framebuffer);
 			gl.bindTexture(gl.TEXTURE_2D, texture); this.configureTexture();
 			gl.texImage2D(
-				gl.TEXTURE_2D, 0, this.outputUsesFloat ? gl.RGBA16F : gl.RGBA8,
+				gl.TEXTURE_2D, 0, this.outputUsesFloat ? gl.RGBA32F : gl.RGBA8,
 				this.outputWidth, this.outputHeight, 0, gl.RGBA,
-				this.outputUsesFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null,
+				this.outputUsesFloat ? gl.FLOAT : gl.UNSIGNED_BYTE, null,
 			);
 			gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
 			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
