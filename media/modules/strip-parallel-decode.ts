@@ -400,14 +400,23 @@ export async function decodeHdrParallel(buffer: ArrayBuffer, wasm: any): Promise
 
 	const started = performance.now();
 	const output = new Float32Array(width * height * 3);
+	const jobs = ranges.map(async (range, workerIndex) => {
+		const blob = bytes.slice(offsets[range.first], offsets[range.last]);
+		const part = await pool.run({
+			kind: 'hdr-rows', blob: blob.buffer, width, rows: range.last - range.first,
+		}, [blob.buffer], workerIndex);
+		output.set(part.samples, range.first * width * 3);
+	});
+	// Every range is dispatched and no result can arrive before this task
+	// ends, so commit the output's pages while the workers decode (see the
+	// TIFF strips' prefault).
+	if (output.byteLength >= PREFAULT_MIN_BYTES) {
+		const prefaultStart = performance.now();
+		prefaultPages(output);
+		timings.push({ name: 'hdr-prefault', durationMs: performance.now() - prefaultStart });
+	}
 	try {
-		await Promise.all(ranges.map(async (range, workerIndex) => {
-			const blob = bytes.slice(offsets[range.first], offsets[range.last]);
-			const part = await pool.run({
-				kind: 'hdr-rows', blob: blob.buffer, width, rows: range.last - range.first,
-			}, [blob.buffer], workerIndex);
-			output.set(part.samples, range.first * width * 3);
-		}));
+		await Promise.all(jobs);
 	} catch (error) {
 		console.warn('[StripPool] HDR scanline decode failed, falling back:', error);
 		return null;
@@ -1113,6 +1122,30 @@ export async function tryStripParallelDecode(
 		if (planes) { for (const plane of planes) { prefaultPages(plane); } }
 		timings.push({ name: 'strip-prefault', durationMs: performance.now() - prefaultStart });
 	}
+	// A streamed read dispatches as bytes arrive and the main thread is mostly
+	// waiting for them, so commit the pages a slice at a time between chunks.
+	// Copies land in arbitrary order, so slices already copied into are skipped.
+	const copiedBands: Array<[number, number]> = [];
+	let assembled = false;
+	let prefaultMs = 0;
+	if (dispatched < ranges.length && !transposed && data.byteLength >= PREFAULT_MIN_BYTES && Number(plan.compression) !== 1) {
+		const sliceElements = (4 * 1024 * 1024) / data.BYTES_PER_ELEMENT;
+		const arrays = [data, ...(planes || [])];
+		void (async () => {
+			for (const array of arrays) {
+				const scale = array === data ? 1 : channels;
+				for (let start = 0; start < array.length && !assembled; start += sliceElements) {
+					const end = Math.min(array.length, start + sliceElements);
+					if (!copiedBands.some(([from, to]) => from < end * scale && to > start * scale)) {
+						const sliceStart = performance.now();
+						prefaultPages(array.subarray(start, end));
+						prefaultMs += performance.now() - sliceStart;
+					}
+					await new Promise(resolve => setTimeout(resolve, 0));
+				}
+			}
+		})();
+	}
 	let min = Infinity;
 	let max = -Infinity;
 	let copyMs = 0;
@@ -1131,7 +1164,9 @@ export async function tryStripParallelDecode(
 					data.set(part.samples.subarray(sourceStart, sourceStart + bandWidth * channels), destination);
 				}
 			} else {
-				data.set(part.samples, Number(part.destinationStart) * width * channels);
+				const bandStart = Number(part.destinationStart) * width * channels;
+				copiedBands.push([bandStart, bandStart + part.samples.length]);
+				data.set(part.samples, bandStart);
 				if (planes) {
 					const bandPixels = part.samples.length / channels;
 					const at = Number(part.destinationStart) * width;
@@ -1147,7 +1182,10 @@ export async function tryStripParallelDecode(
 	} catch (error) {
 		console.warn('[StripPool] Range decode failed, falling back:', error);
 		return null;
+	} finally {
+		assembled = true;
 	}
+	if (prefaultMs > 0) { timings.push({ name: 'strip-prefault-streamed', durationMs: prefaultMs }); }
 	timings.push({ name: 'strip-workers', durationMs: performance.now() - dispatchStart });
 	// Time the slowest worker spent on its own range; the rest of
 	// `strip-workers` is dispatch, messaging and scheduling.
