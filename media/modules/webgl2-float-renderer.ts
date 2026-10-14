@@ -40,6 +40,17 @@ type TextureFormat = 'r32f' | 'rgb32f' | 'rgba32f' | 'r16ui' | 'rgb16ui' | 'rgba
 const validatedUploadPixelsByFormat = new Map<string, number>();
 const validatedColormapUploads = new Set<string>();
 
+let lateFailureHandler: (() => void) | null = null;
+
+/**
+ * Called when the deferred upload check finds that the GPU rejected an image
+ * already reported as rendered. The renderer has disabled the failing path by
+ * then, so rendering again takes the CPU path.
+ */
+export function setWebGLLateFailureHandler(handler: (() => void) | null): void {
+	lateFailureHandler = handler;
+}
+
 /**
  * Small WebGL2 renderer for the hot scientific-image paths:
  * scalar/float RGB/uint16 data rendered directly to the visible canvas.
@@ -89,6 +100,8 @@ export class WebGL2FloatRenderer {
 	failed: boolean;
 	rgb32fFailed: boolean;
 	uintTextureFailed: boolean;
+	/** Upload whose error check waits until after the frame (see `_scheduleUploadCheck`). */
+	pendingUploadCheck: { validationKey: string; pixels: number } | null;
 
 	constructor() {
 		this.canvas = null;
@@ -110,6 +123,7 @@ export class WebGL2FloatRenderer {
 		this.failed = false;
 		this.rgb32fFailed = false;
 		this.uintTextureFailed = false;
+		this.pendingUploadCheck = null;
 	}
 
 	canRender(params: CanRenderParams): boolean {
@@ -171,23 +185,60 @@ export class WebGL2FloatRenderer {
 			this._uploadColormapIfNeeded(params.settings?.displayColormap || 'none');
 			this._draw(params);
 			PerfTrace.mark('render-webgl');
+			if (this.pendingUploadCheck) { this._scheduleUploadCheck(params); }
 			return true;
 		} catch (error) {
-			const textureFormat = this._getTextureFormat(params);
-			if (textureFormat.endsWith('ui')) {
-				this.uintTextureFailed = true;
-				console.warn('[WebGL2FloatRenderer] Disabled uint16 GPU path after render failure:', error);
-				return false;
-			}
-			if (params.settings?.rgbAs24BitGrayscale && params.channels === 3) {
-				this.rgb32fFailed = true;
-				console.warn('[WebGL2FloatRenderer] Disabled RGB24 GPU path after render failure:', error);
-				return false;
-			}
-			this.failed = true;
-			console.warn('[WebGL2FloatRenderer] Disabled after render failure:', error);
+			this.pendingUploadCheck = null;
+			this._disableAfterFailure(params, error);
 			return false;
 		}
+	}
+
+	_disableAfterFailure(params: { channels?: number; isFloat?: boolean; settings?: any; data?: TypedPixelData }, error: unknown): void {
+		const textureFormat = this._getTextureFormat(params);
+		if (textureFormat.endsWith('ui')) {
+			this.uintTextureFailed = true;
+			console.warn('[WebGL2FloatRenderer] Disabled uint16 GPU path after render failure:', error);
+			return;
+		}
+		if (params.settings?.rgbAs24BitGrayscale && params.channels === 3) {
+			this.rgb32fFailed = true;
+			console.warn('[WebGL2FloatRenderer] Disabled RGB24 GPU path after render failure:', error);
+			return;
+		}
+		this.failed = true;
+		console.warn('[WebGL2FloatRenderer] Disabled after render failure:', error);
+	}
+
+	/**
+	 * Checks a new upload size for errors once the frame has been produced.
+	 * `getError()` is a synchronous round trip that waits for the GPU process
+	 * to finish the upload: 29 ms for 100 MB and 125 ms for 400 MB on an RTX
+	 * GPU, all of it on the first-paint path when checked straight away.
+	 */
+	_scheduleUploadCheck(params: RenderParams): void {
+		const check = this.pendingUploadCheck as { validationKey: string; pixels: number };
+		this.pendingUploadCheck = null;
+		const gl = this.gl as WebGL2RenderingContext;
+		const settings = params.settings;
+		const failureParams = { channels: params.channels, isFloat: params.isFloat, settings, data: params.data };
+		let done = false;
+		const run = () => {
+			if (done) { return; }
+			done = true;
+			if (this.gl !== gl || gl.isContextLost()) { return; }
+			const error = gl.getError();
+			if (error === gl.NO_ERROR) {
+				validatedUploadPixelsByFormat.set(check.validationKey, Math.max(check.pixels, validatedUploadPixelsByFormat.get(check.validationKey) || 0));
+				return;
+			}
+			this._disableAfterFailure(failureParams, new Error(`Float texture upload failed: WebGL error ${error}`));
+			this.textureData = null;
+			lateFailureHandler?.();
+		};
+		// After the next frame; hidden webviews may get no animation frames.
+		requestAnimationFrame(() => setTimeout(run, 0));
+		setTimeout(run, 250);
 	}
 
 	dispose(): void {
@@ -390,13 +441,8 @@ export class WebGL2FloatRenderer {
 		const validationKey = `${textureFormat}${layoutSuffix}`;
 		const validatedPixels = validatedUploadPixelsByFormat.get(validationKey) || 0;
 		if (pixels > validatedPixels) {
-			const errorStart = performance.now();
-			const error = gl.getError();
-			PerfTrace.detail('webgl-texture-upload-error-check', performance.now() - errorStart);
-			if (error !== gl.NO_ERROR) {
-				throw new Error(`Float texture upload failed: WebGL error ${error}`);
-			}
-			validatedUploadPixelsByFormat.set(validationKey, pixels);
+			this.pendingUploadCheck = { validationKey, pixels };
+			PerfTrace.detail('webgl-texture-upload-error-check-deferred', 0);
 		} else {
 			PerfTrace.detail('webgl-texture-upload-error-check-skipped', 0);
 		}

@@ -53,6 +53,15 @@ function carrierFor(bitsPerSample: number, sampleFormat: number): 'u8' | 'u16' |
 	return null;
 }
 
+/** Below this the page faults are too cheap to be worth moving. */
+const PREFAULT_MIN_BYTES = 16 * 1024 * 1024;
+
+/** Commits a fresh buffer's pages by writing zero (its current value) once per page. */
+function prefaultPages(array: Float32Array | Uint16Array | Uint8Array): void {
+	const stride = 4096 / array.BYTES_PER_ELEMENT;
+	for (let i = 0; i < array.length; i += stride) { array[i] = 0; }
+}
+
 export interface StripParallelResult {
 	width: number;
 	height: number;
@@ -1090,6 +1099,20 @@ export async function tryStripParallelDecode(
 	const planes = wantPlanes
 		? Array.from({ length: channels }, () => new (data.constructor as any)(planePixels) as typeof data)
 		: undefined;
+	// A fresh large buffer is committed page by page on first write, and those
+	// faults, not the copy, were most of `strip-assemble`: 400 MB took ~235 ms
+	// to fill fresh against ~35 ms once committed. The main thread is idle
+	// while the workers decode, so commit the pages now. Nothing has been
+	// copied in yet (results arrive on later tasks); only when every range was
+	// dispatched synchronously, so a streamed read is never held up.
+	// Uncompressed ranges finish before the faults would (43 ms against 54 ms
+	// on 100 MB), which would put them back on the critical path.
+	if (dispatched === ranges.length && data.byteLength >= PREFAULT_MIN_BYTES && Number(plan.compression) !== 1) {
+		const prefaultStart = performance.now();
+		prefaultPages(data);
+		if (planes) { for (const plane of planes) { prefaultPages(plane); } }
+		timings.push({ name: 'strip-prefault', durationMs: performance.now() - prefaultStart });
+	}
 	let min = Infinity;
 	let max = -Infinity;
 	let copyMs = 0;

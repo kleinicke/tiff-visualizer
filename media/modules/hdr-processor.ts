@@ -15,6 +15,9 @@ import type { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any };
 
+/** Below this a file cannot reach the pool's pixel gate, so skip loading the page's WASM for it. */
+const PARALLEL_HDR_MIN_BYTES = 1024 * 1024;
+
 /**
  * HDR (Radiance RGBE) Processor for TIFF Visualizer.
  * Rust returns tightly packed RGB. The parse-hdr fallback returns RGBA with
@@ -58,6 +61,8 @@ export class HdrProcessor {
     _webglRenderer: WebGL2FloatRenderer;
     loadSignal: AbortSignal | undefined;
     decodeWorker: DecodeWorkerClient | null;
+    /** Engine for the [Perf] line; set only when the scanline pool decoded the file. */
+    _lastDecodeInfo: { engine: string; durationMs: number } | null;
 
     constructor(settingsManager: SettingsManager, vscode: VsCodeApi) {
         this.settingsManager = settingsManager;
@@ -72,38 +77,19 @@ export class HdrProcessor {
         this._webglRenderer = new WebGL2FloatRenderer();
         this.loadSignal = undefined; // Set before each load; aborts the fetch when a newer image switch supersedes it
         this.decodeWorker = null; // Off-thread decoder, set by imagePreview.js; null falls back to local decoding
+        this._lastDecodeInfo = null;
     }
 
     async load(src: string) {
         const loadSignal = this.loadSignal;
+        this._lastDecodeInfo = null;
         // parse-hdr returns { shape:[width,height], exposure, gamma, data:Float32Array }
         // data is RGBA stride-4, alpha is always 1.0
         // Parsed in the decode worker when available, locally otherwise.
         const speculative = await DecodeWorkerClient.takeSpeculativeDecode(src, loadSignal, 'hdr');
         let parsed: any;
         if (speculative?.ok && speculative.result?.deferToParallelHdr && speculative.sourceBuffer instanceof ArrayBuffer) {
-            // Large files: scanline ranges across the strip pool. The source
-            // stays intact (the pool copies each range), so a failed parallel
-            // decode can still decode it whole.
-            const source: ArrayBuffer = speculative.sourceBuffer;
-            const mainWasm = getWasmModuleSync() || await getWasmModule();
-            const parallelStart = performance.now();
-            const parallel = await decodeHdrParallel(source, mainWasm);
-            if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-            if (parallel) {
-                PerfTrace.mark('decode-worker(hdr)');
-                for (const timing of parallel.timings) { PerfTrace.detail(timing.name, timing.durationMs); }
-                parsed = {
-                    shape: [parallel.width, parallel.height], channels: 3,
-                    exposure: parallel.exposure, gamma: parallel.gamma,
-                    data: parallel.data, allTagsJson: parallel.allTagsJson,
-                    decodedWith: `rust-hdr-wasm (${parallel.workers} scanline workers)`,
-                    durationMs: performance.now() - parallelStart,
-                };
-            } else {
-                parsed = await DecodeWorkerClient.decodeWithFallback(
-                    this.decodeWorker, 'hdr', source, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
-            }
+            parsed = await this._decodeParallelOrWhole(speculative.sourceBuffer, src, loadSignal);
         } else if (speculative?.ok) {
             parsed = speculative.result;
         } else {
@@ -111,8 +97,12 @@ export class HdrProcessor {
                 ? speculative.buffer
                 : await DecodeWorkerClient.fetchArrayBuffer(src, loadSignal, 'hdr');
             if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
-            parsed = await DecodeWorkerClient.decodeWithFallback(
-                this.decodeWorker, 'hdr', buffer, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
+            // Without a bootstrap decode (the standalone viewer, or no speculation),
+            // large files still go to the scanline pool; the pool applies its own size gates.
+            parsed = buffer.byteLength >= PARALLEL_HDR_MIN_BYTES
+                ? await this._decodeParallelOrWhole(buffer, src, loadSignal)
+                : await DecodeWorkerClient.decodeWithFallback(
+                    this.decodeWorker, 'hdr', buffer, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
         }
         const width = parsed.shape[0];
         const height = parsed.shape[1];
@@ -143,6 +133,33 @@ export class HdrProcessor {
             this.vscode.postMessage({ type: 'refresh-status' });
         }
         return { canvas, imageData };
+    }
+
+    /**
+     * Scanline ranges across the strip pool. The source stays intact (the pool
+     * copies each range), so a declined or failed parallel decode can still
+     * decode it whole.
+     */
+    async _decodeParallelOrWhole(source: ArrayBuffer, src: string, loadSignal: AbortSignal | undefined): Promise<any> {
+        const mainWasm = getWasmModuleSync() || await getWasmModule();
+        const parallelStart = performance.now();
+        const parallel = await decodeHdrParallel(source, mainWasm);
+        if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+        if (!parallel) {
+            return DecodeWorkerClient.decodeWithFallback(
+                this.decodeWorker, 'hdr', source, src, loadSignal, (b: ArrayBuffer) => parseHdr(b));
+        }
+        PerfTrace.mark('decode-worker(hdr)');
+        for (const timing of parallel.timings) { PerfTrace.detail(timing.name, timing.durationMs); }
+        const decodedWith = `rust-hdr-wasm (${parallel.workers} scanline workers)`;
+        const durationMs = performance.now() - parallelStart;
+        this._lastDecodeInfo = { engine: decodedWith, durationMs };
+        return {
+            shape: [parallel.width, parallel.height], channels: 3,
+            exposure: parallel.exposure, gamma: parallel.gamma,
+            data: parallel.data, allTagsJson: parallel.allTagsJson,
+            decodedWith, durationMs,
+        };
     }
 
     /**

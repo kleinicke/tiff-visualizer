@@ -67,6 +67,7 @@ import type {
 import { WebGL2LayerCompositor } from './modules/webgl2-layer-compositor.js';
 import { WebGPULayerCompositor } from './modules/webgpu-layer-compositor.js';
 import { PerfTrace } from './modules/perf-trace.js';
+import { setWebGLLateFailureHandler } from './modules/webgl2-float-renderer.js';
 import { LayerManager, BLEND_MODES } from './modules/layer-manager.js';
 import type { LayerInput } from './modules/layer-manager.js';
 import { LayersPanel } from './modules/layers-panel.js';
@@ -1765,6 +1766,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		console.log(message);
 		logToOutput(message);
 	});
+
+	// A GPU upload rejected after the image was reported as drawn: the renderer
+	// has disabled that path, so draw the current image again on the CPU.
+	setWebGLLateFailureHandler(() => { void updateImageWithNewSettings(); });
 
 	/**
 	 * Start a detailed trace for a direct image load. Collection switches and

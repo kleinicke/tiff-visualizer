@@ -25,6 +25,9 @@ export async function tryParallelExrDecode(
 	buffer: ArrayBuffer,
 	worker: DecodeWorkerLike | null | undefined,
 ): Promise<{ result: ParallelExrResult | null; source: ArrayBuffer }> {
+	// A source that arrives before the worker has booted (a file picked in the
+	// standalone viewer does) would otherwise skip the parallel path entirely.
+	if (worker && !worker.canDecode('exr-zip-plan')) { await worker.whenBooting?.(); }
 	if (!worker?.canDecode('exr-zip-plan') || buffer.byteLength === 0) {
 		return { result: null, source: buffer };
 	}

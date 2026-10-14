@@ -82,7 +82,7 @@ async function run() {
 		const started = performance.now();
 		await vscode.commands.executeCommand(
 			'vscode.openWith', vscode.Uri.file(input.file), 'tiffVisualizer.previewEditor',
-			{ preview: false, viewColumn: vscode.ViewColumn.One },
+			{ preview: process.env.TIFF_PERF_REPLACE === '1', viewColumn: vscode.ViewColumn.One },
 		);
 		let perf;
 		let trace = '';
@@ -109,9 +109,9 @@ async function run() {
 			console.log('REFINEMENT', JSON.stringify(refinement || 'timeout'));
 		}
 		results.push({ refinement, id: input.id, file: input.file, wallMs: performance.now() - started, ...perf, trace });
-		await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+		if (process.env.TIFF_PERF_REPLACE !== '1') await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
 		// Let the closed editor release its webview before the next open.
-		await new Promise(resolve => setTimeout(resolve, 250));
+		await new Promise(resolve => setTimeout(resolve, Number(process.env.TIFF_PERF_CLOSE_WAIT_MS || 250)));
 	}
 	fs.writeFileSync(resultFile, JSON.stringify({ variant: process.env.TIFF_PERF_VARIANT, results }, null, 2));
 }

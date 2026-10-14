@@ -99,33 +99,15 @@ function getDataViewMemory0() {
   }
   return cachedDataViewMemory0;
 }
-function passArray8ToWasm0(arg, malloc) {
-  const ptr = malloc(arg.length * 1, 1) >>> 0;
-  getUint8ArrayMemory0().set(arg, ptr / 1);
-  WASM_VECTOR_LEN = arg.length;
-  return ptr;
-}
-function takeFromExternrefTable0(idx) {
-  const value = wasm.__wbindgen_externrefs.get(idx);
-  wasm.__externref_table_dealloc(idx);
-  return value;
-}
 function passArrayF32ToWasm0(arg, malloc) {
   const ptr = malloc(arg.length * 4, 4) >>> 0;
   getFloat32ArrayMemory0().set(arg, ptr / 4);
   WASM_VECTOR_LEN = arg.length;
   return ptr;
 }
-var cachedFloat64ArrayMemory0 = null;
-function getFloat64ArrayMemory0() {
-  if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
-    cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
-  }
-  return cachedFloat64ArrayMemory0;
-}
-function passArrayF64ToWasm0(arg, malloc) {
-  const ptr = malloc(arg.length * 8, 8) >>> 0;
-  getFloat64ArrayMemory0().set(arg, ptr / 8);
+function passArray8ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 1, 1) >>> 0;
+  getUint8ArrayMemory0().set(arg, ptr / 1);
   WASM_VECTOR_LEN = arg.length;
   return ptr;
 }
@@ -134,6 +116,22 @@ function passArray16ToWasm0(arg, malloc) {
   getUint16ArrayMemory0().set(arg, ptr / 2);
   WASM_VECTOR_LEN = arg.length;
   return ptr;
+}
+function takeFromExternrefTable0(idx) {
+  const value = wasm.__wbindgen_externrefs.get(idx);
+  wasm.__externref_table_dealloc(idx);
+  return value;
+}
+var cachedFloat64ArrayMemory0 = null;
+function getFloat64ArrayMemory0() {
+  if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
+    cachedFloat64ArrayMemory0 = new Float64Array(wasm.memory.buffer);
+  }
+  return cachedFloat64ArrayMemory0;
+}
+function getArrayF64FromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
 }
 var cachedUint32ArrayMemory0 = null;
 function getUint32ArrayMemory0() {
@@ -148,35 +146,6 @@ function passArray32ToWasm0(arg, malloc) {
   WASM_VECTOR_LEN = arg.length;
   return ptr;
 }
-var cachedInt32ArrayMemory0 = null;
-function getInt32ArrayMemory0() {
-  if (cachedInt32ArrayMemory0 === null || cachedInt32ArrayMemory0.byteLength === 0) {
-    cachedInt32ArrayMemory0 = new Int32Array(wasm.memory.buffer);
-  }
-  return cachedInt32ArrayMemory0;
-}
-function getArrayI32FromWasm0(ptr, len) {
-  ptr = ptr >>> 0;
-  return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
-}
-function getArrayU32FromWasm0(ptr, len) {
-  ptr = ptr >>> 0;
-  return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
-}
-function getArrayJsValueFromWasm0(ptr, len) {
-  ptr = ptr >>> 0;
-  const mem = getDataViewMemory0();
-  const result = [];
-  for (let i = ptr; i < ptr + 4 * len; i += 4) {
-    result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
-  }
-  wasm.__externref_drop_slice(ptr, len);
-  return result;
-}
-function getArrayF64FromWasm0(ptr, len) {
-  ptr = ptr >>> 0;
-  return getFloat64ArrayMemory0().subarray(ptr / 8, ptr / 8 + len);
-}
 function decode_tiff_preview_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, reduction) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -187,19 +156,6 @@ function decode_tiff_preview_range(blob, counts, first_strip, width, height, cha
     throw takeFromExternrefTable0(ret[1]);
   }
   return TiffPreviewRangeResult.__wrap(ret[0]);
-}
-function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
-  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
-  const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
-  const len2 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_exr_zip_f32_blocks_stats(ptr0, len0, ptr1, len1, ptr2, len2, width);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return RawRangeResult.__wrap(ret[0]);
 }
 function decode_psd_composite_rows(blob, counts, width, rows, targets, compression, global_alpha, grayscale) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
@@ -216,16 +172,16 @@ function decode_psd_composite_rows(blob, counts, width, rows, targets, compressi
   wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
   return v4;
 }
-function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
+function decode_hdr_rows(blob, width, rows) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
-  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
-  const len1 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
+  const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
+  if (ret[3]) {
+    throw takeFromExternrefTable0(ret[2]);
   }
-  return RawRangeResult.__wrap(ret[0]);
+  var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+  return v2;
 }
 function decode_exr_zip_f32_blocks_selected(blob, counts, rows, width, kinds, selection) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
@@ -244,6 +200,19 @@ function decode_exr_zip_f32_blocks_selected(blob, counts, rows, width, kinds, se
   }
   return ExrSelectedBlocks.__wrap(ret[0]);
 }
+function decode_exr_zip_f32_blocks_stats(blob, counts, rows, width) {
+  const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
+  const len0 = WASM_VECTOR_LEN;
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ptr2 = passArray32ToWasm0(rows, wasm.__wbindgen_malloc);
+  const len2 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_exr_zip_f32_blocks_stats(ptr0, len0, ptr1, len1, ptr2, len2, width);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
+  }
+  return RawRangeResult.__wrap(ret[0]);
+}
 function decode_czi_region(directory, options_json, blob, offsets) {
   const ptr0 = passArray8ToWasm0(directory, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -259,6 +228,12 @@ function decode_czi_region(directory, options_json, blob, offsets) {
   }
   return DecodedArray.__wrap(ret[0]);
 }
+function passArrayF64ToWasm0(arg, malloc) {
+  const ptr = malloc(arg.length * 8, 8) >>> 0;
+  getFloat64ArrayMemory0().set(arg, ptr / 8);
+  WASM_VECTOR_LEN = arg.length;
+  return ptr;
+}
 function decode_tiff_float_strip_range(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
@@ -272,16 +247,41 @@ function decode_tiff_float_strip_range(blob, counts, first_strip, width, height,
   wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
   return v3;
 }
-function decode_hdr_rows(blob, width, rows) {
+function decode_tiff_strip_range_raw_stats(blob, counts, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels) {
   const ptr0 = passArray8ToWasm0(blob, wasm.__wbindgen_malloc);
   const len0 = WASM_VECTOR_LEN;
-  const ret = wasm.decode_hdr_rows(ptr0, len0, width, rows);
-  if (ret[3]) {
-    throw takeFromExternrefTable0(ret[2]);
+  const ptr1 = passArray32ToWasm0(counts, wasm.__wbindgen_malloc);
+  const len1 = WASM_VECTOR_LEN;
+  const ret = wasm.decode_tiff_strip_range_raw_stats(ptr0, len0, ptr1, len1, first_strip, width, height, channels, bits_per_sample, compression, rows_per_strip, predictor, sample_format, little_endian, planar_configuration, orientation, tile_width, tile_length, blocks_across, lerc_additional_compression, photometric_interpretation, output_channels);
+  if (ret[2]) {
+    throw takeFromExternrefTable0(ret[1]);
   }
-  var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
-  wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
-  return v2;
+  return RawRangeResult.__wrap(ret[0]);
+}
+function getArrayU32FromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  return getUint32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+var cachedInt32ArrayMemory0 = null;
+function getInt32ArrayMemory0() {
+  if (cachedInt32ArrayMemory0 === null || cachedInt32ArrayMemory0.byteLength === 0) {
+    cachedInt32ArrayMemory0 = new Int32Array(wasm.memory.buffer);
+  }
+  return cachedInt32ArrayMemory0;
+}
+function getArrayI32FromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
+}
+function getArrayJsValueFromWasm0(ptr, len) {
+  ptr = ptr >>> 0;
+  const mem = getDataViewMemory0();
+  const result = [];
+  for (let i = ptr; i < ptr + 4 * len; i += 4) {
+    result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+  }
+  wasm.__externref_drop_slice(ptr, len);
+  return result;
 }
 var DecodedArrayFinalization = typeof FinalizationRegistry === "undefined" ? { register: () => {
 }, unregister: () => {
