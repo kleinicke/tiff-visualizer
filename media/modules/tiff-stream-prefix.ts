@@ -79,3 +79,54 @@ export async function tiffFirstIfdPrefix(stream: TiffImageStream): Promise<{ nee
 	if (readOffset(ifdEnd - valueBytes) !== 0) { singleImage = false; }
 	return { needed, singleImage };
 }
+
+/**
+ * Read a response body into one buffer of `total` bytes, exposing it as a
+ * TiffImageStream while it arrives. `done` resolves with the whole file, or
+ * rejects (after failing every pending range) if the body ends early, grows
+ * or errors.
+ */
+export function readResponseAsStream(body: ReadableStream<Uint8Array>, total: number): { stream: TiffImageStream; done: Promise<ArrayBuffer> } {
+	const waiters: { end: number; resolve: () => void; reject: (error: Error) => void }[] = [];
+	const stream: TiffImageStream = {
+		total,
+		received: 0,
+		bytes: new Uint8Array(total),
+		error: null,
+		whenAvailable(end: number) {
+			if (this.error) { return Promise.reject(this.error); }
+			if (this.received >= Math.min(end, this.total)) { return Promise.resolve(); }
+			return new Promise((resolve, reject) => waiters.push({ end, resolve, reject }));
+		},
+	};
+	const settle = () => {
+		for (let i = waiters.length - 1; i >= 0; i--) {
+			const waiter = waiters[i];
+			if (stream.error) { waiter.reject(stream.error); }
+			else if (stream.received >= Math.min(waiter.end, total)) { waiter.resolve(); }
+			else { continue; }
+			waiters.splice(i, 1);
+		}
+	};
+	const done = (async () => {
+		const bytes = stream.bytes!;
+		try {
+			const reader = body.getReader();
+			for (;;) {
+				const { done: finished, value } = await reader.read();
+				if (finished) { break; }
+				if (stream.received + value.byteLength > total) { throw new Error('image grew while it was read'); }
+				bytes.set(value, stream.received);
+				stream.received += value.byteLength;
+				settle();
+			}
+			if (stream.received !== total) { throw new Error('image shrank while it was read'); }
+			return bytes.buffer as ArrayBuffer;
+		} catch (error) {
+			stream.error = error instanceof Error ? error : new Error(String(error));
+			settle();
+			throw stream.error;
+		}
+	})();
+	return { stream, done };
+}

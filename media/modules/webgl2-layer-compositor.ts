@@ -581,7 +581,10 @@ export class WebGL2LayerCompositor {
 			encoding = 2; nativeMaximum = 1;
 		}
 		const upload = data instanceof Float64Array ? Float32Array.from(data) : data;
-		gl.texImage2D(gl.TEXTURE_2D, 0, internal, width, height, 0, format, type, upload as any);
+		// Allocate, then fill: 2-2.6x faster than texImage2D with data (see
+		// WebGL2FloatRenderer._uploadTextureIfNeeded).
+		gl.texImage2D(gl.TEXTURE_2D, 0, internal, width, height, 0, format, type, null);
+		gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, format, type, upload as any);
 		const error = gl.getError();
 		if (error !== gl.NO_ERROR) { throw new Error(`Layer texture upload failed (${error})`); }
 		const entry = { texture, width, height, channels, encoding, nativeMaximum };

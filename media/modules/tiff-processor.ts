@@ -5,6 +5,7 @@ import { NormalizationHelper, ImageRenderer, ImageStatsCalculator } from './norm
 import { resolveNanColor } from './nan-color.js';
 import { TiffWasmProcessor, getWasmModule, getWasmModuleSync } from './tiff-wasm-wrapper.js';
 import { announceCfaDetection, isDeclaredCfa } from './debayer.js';
+import { readResponseAsStream } from './tiff-stream-prefix.js';
 import { tryStripParallelDecode, tryParallelTiffDetail, tryParallelTiffPreview, tryStreamingStripParallelDecode, type StripParallelResult } from './strip-parallel-decode.js';
 import { openRemoteTiff } from './remote-tiff-source.js';
 import { PerfTrace } from './perf-trace.js';
@@ -56,6 +57,8 @@ interface CachedRegionSamples {
 // another 32 MP of visible detail, which is ~61 MiB in the same source format.
 // This fits both while remaining bounded for multi-band or exceptional scenes.
 const REGION_SAMPLE_CACHE_MAX_BYTES = 160 * 1024 * 1024;
+/** A local file at least this large is decoded while it is read (as VS Code does). */
+const STREAMED_TIFF_MIN_BYTES = 8 * 1024 * 1024;
 
 /**
  * Typed array used to carry interleaved TIFF pixel data. See
@@ -595,6 +598,9 @@ export class TiffProcessor {
 			let streamed: StripParallelResult | null = null;
 			let streamedPreview: Record<string, any> | null = null;
 			let streamedMs = 0;
+			/** The whole file, when the standalone viewer read it as a stream. */
+			let streamedSource: ArrayBuffer | null = null;
+			let streamedReadMs = 0;
 			if (pageIndex !== 0) {
 				(globalThis as any).__tiffVisualizerDecoderWarmup?.releaseImageStream?.();
 			} else {
@@ -610,6 +616,26 @@ export class TiffProcessor {
 					streamedPreview = decoded?.preview ?? null;
 					warmup.releaseImageStream?.();
 					streamedMs = performance.now() - streamStart;
+					if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
+				} else if (!warmup && src.startsWith('blob:') && this._sourceBufferSrc !== src) {
+					// A local file in the standalone viewer: read it the same way,
+					// so decoding overlaps the read instead of following it.
+					const readStart = performance.now();
+					const response = await fetch(src, { signal: loadSignal });
+					const total = Number(response.headers.get('Content-Length') || 0);
+					if (response.body && total >= STREAMED_TIFF_MIN_BYTES) {
+						const local = readResponseAsStream(response.body, total);
+						const mainWasm = getWasmModuleSync() || await getWasmModule();
+						const decoded = mainWasm ? await tryStreamingStripParallelDecode(local.stream, mainWasm, () => {}) : null;
+						streamedSource = await local.done;
+						streamedReadMs = performance.now() - readStart;
+						streamed = decoded?.strips ?? null;
+						streamedPreview = decoded?.preview ?? null;
+						streamedMs = performance.now() - readStart;
+					} else {
+						streamedSource = await response.arrayBuffer();
+						streamedReadMs = performance.now() - readStart;
+					}
 					if (loadSignal?.aborted) { throw new DOMException('Load superseded', 'AbortError'); }
 				}
 			}
@@ -637,6 +663,11 @@ export class TiffProcessor {
 				this._sourceBuffer = speculativeSource;
 				this._sourceBufferSrc = src;
 				buffer = speculativeSource;
+			} else if (streamedSource) {
+				this._sourceBuffer = streamedSource;
+				this._sourceBufferSrc = src;
+				buffer = streamedSource;
+				readDuration = streamedReadMs;
 			} else if (this._sourceBufferSrc === src && this._sourceBuffer) {
 				buffer = this._sourceBuffer;
 				PerfTrace.mark('tiff-source-cache-hit');

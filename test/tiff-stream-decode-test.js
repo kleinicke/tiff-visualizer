@@ -88,7 +88,7 @@ async function main() {
 	global.__tiffVisualizerDecoderWarmup = { wasmModulePromise: Promise.resolve(module) };
 	const wasm = await import('../media/wasm/tiff-wasm.js');
 	await wasm.default({ module_or_path: module });
-	const { tiffFirstIfdPrefix } = await import('../out/media/modules/tiff-stream-prefix.js');
+	const { tiffFirstIfdPrefix, readResponseAsStream } = await import('../out/media/modules/tiff-stream-prefix.js');
 	const { tryStripParallelDecode, tryParallelTiffPreview, tryStreamingStripParallelDecode } = await import('../out/media/modules/strip-parallel-decode.js');
 
 	// 1. Prefix equivalence on every TIFF fixture.
@@ -162,7 +162,36 @@ async function main() {
 	const failed = await tryStreamingStripParallelDecode(makeStream(bytes, 2048, bytes.length >> 1), wasm, () => { released++; });
 	assert.equal(failed, null, 'a failed read must fall back, not produce pixels');
 	assert.ok(released >= 1, 'a failed read must still release the stream');
-	console.log(`TIFF streaming: prefix plan/metadata identical on ${tiffs.length} fixtures (${single} single-image), ${cases.length} streamed decodes and a streamed bounded preview identical, failed read falls back`);
+	// 3. The standalone viewer's reader: a response body, in uneven chunks.
+	const body = (file, chunk, length = file.length) => {
+		let at = 0;
+		return new ReadableStream({
+			async pull(controller) {
+				await new Promise(resolve => setTimeout(resolve, 0));
+				if (at >= length) { controller.close(); return; }
+				const next = Math.min(length, at + chunk);
+				controller.enqueue(file.slice(at, next));
+				at = next;
+			},
+		});
+	};
+	for (const file of cases) {
+		const bytes = new Uint8Array(fs.readFileSync(file));
+		const reference = await tryStripParallelDecode(bytes.slice().buffer, wasm);
+		const read = readResponseAsStream(body(bytes, 3001), bytes.length);
+		const streamed = (await tryStreamingStripParallelDecode(read.stream, wasm, () => {}))?.strips;
+		assert.ok(streamed, `${file}: response-stream decode declined`);
+		assert.ok(Buffer.from(streamed.data.buffer).equals(Buffer.from(reference.data.buffer)), `${file}: response-streamed samples differ`);
+		assert.ok(Buffer.from(await read.done).equals(Buffer.from(bytes)), `${file}: response-streamed source differs`);
+	}
+	{
+		const short = readResponseAsStream(body(bytes, 3001, bytes.length >> 1), bytes.length);
+		assert.equal(await tryStreamingStripParallelDecode(short.stream, wasm, () => {}), null, 'a truncated body must fall back');
+		await assert.rejects(short.done, /shrank/, 'a truncated body must fail the read');
+		const long = readResponseAsStream(body(bytes, 3001), bytes.length - 1);
+		await assert.rejects(long.done, /grew/, 'a longer body must fail the read');
+	}
+	console.log(`TIFF streaming: prefix plan/metadata identical on ${tiffs.length} fixtures (${single} single-image), ${cases.length} streamed decodes (bootstrap and response streams) and a streamed bounded preview identical, failed and truncated reads fall back`);
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
