@@ -26,17 +26,7 @@ const extensionBuildOptions = {
 };
 
 // Build extension for browser (web)
-const extensionWebBuildOptions = {
-  entryPoints: ['src/extension.ts'],
-  bundle: true,
-  outfile: 'out/extension.web.js',
-  platform: 'browser',
-  target: 'es2020',
-  external: ['vscode', 'path', 'fs'],
-  sourcemap: true,
-  format: 'iife',
-  globalName: 'TIFFVisualizerExtension'
-};
+const extensionWebBuildOptions = require('./scripts/extension-web-build.cjs');
 
 // Build AppStateManager separately for testing
 const appStateManagerBuildOptions = {

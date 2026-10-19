@@ -602,7 +602,10 @@ export function registerImagePreviewCommands(
 				logCommand('exportLayers', 'error', result.error || 'No payload');
 				return;
 			}
-			await vscode.workspace.fs.writeFile(saveUri, Buffer.from(result.payload, 'base64'));
+			const binary = atob(result.payload);
+			const bytes = new Uint8Array(binary.length);
+			for (let i = 0; i < binary.length; i++) { bytes[i] = binary.charCodeAt(i); }
+			await vscode.workspace.fs.writeFile(saveUri, bytes);
 			if (result.warnings.length) {
 				const preview = result.warnings.slice(0, 3).join('; ');
 				vscode.window.showWarningMessage(`${selected.format.toUpperCase()} exported with ${result.warnings.length} approximation${result.warnings.length === 1 ? '' : 's'}: ${preview}${result.warnings.length > 3 ? '; …' : ''}`);

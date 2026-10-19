@@ -28,6 +28,9 @@ jobs:
     - name: Check TypeScript and Svelte
       run: npm run typecheck
 
+    - name: Test VS Code web extension compatibility
+      run: npm run test:extension-web
+
     - name: Build extension
       run: npm run compile:quick
 
