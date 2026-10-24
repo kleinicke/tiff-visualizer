@@ -27,9 +27,9 @@ it, which is how you get two people looking at the same pixel of the same file.
 
 ## Zoom and pan
 
-Wheel or pinch to zoom, drag to pan, click the zoom status bar entry to fit the
-image again. **Zoom In**, **Zoom Out** and **Reset Zoom** are also commands, so
-they can be bound to your own keys.
+Wheel or pinch (trackpad or touch screen) to zoom, drag to pan, click the zoom
+status bar entry to fit the image again. **Zoom In**, **Zoom Out** and
+**Reset Zoom** are also commands, so they can be bound to your own keys.
 
 Beyond a certain magnification the viewer stops interpolating and draws hard
 pixel edges. Individual samples stay countable, which matters when you are

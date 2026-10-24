@@ -26,8 +26,10 @@
 File extensions registered by the extension:
 `tif tiff tf2 tf8 btf exr pfm npy npz ppm pgm pbm hdr tga rgb rgba sgi bw jxl jxr wdp hdp
 jp2 jpf jpx j2k j2c jpc fits fit fts dcm dicom nc cdf czi nd2 lif sdt ora
-kra psd psb xcf afphoto af` open automatically;
-`png jpeg jpg bmp ico webp avif` are available via **Open With…**.
+kra psd psb xcf afphoto af` open automatically, as do
+`png jpeg jpg bmp ico webp avif`. If another extension or an earlier choice
+already owns one of these types, use **Open With… → Configure default editor →
+Scientific Image Visualizer** (see [Getting started](./getting-started.md)).
 
 ## How decoding works
 

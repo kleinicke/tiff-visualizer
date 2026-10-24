@@ -26,6 +26,7 @@ export class ZoomController {
 	 */
 	onScaleChanged: (() => void) | null = null;
 	private gestureScale: number | null = null;
+	private touchPinch: { distance: number, scale: number, x: number, y: number } | null = null;
 
 	private viewport() {
 		const style = getComputedStyle(this.container);
@@ -97,7 +98,7 @@ export class ZoomController {
 	/**
 	 * Update scale with new value
 	 */
-	updateScale(newScale: number | string) {
+	updateScale(newScale: number | string, anchor?: { x: number, y: number }) {
 		if (!this.imageElement || !this.hasLoadedImage || !this.imageElement.parentElement) {
 			return;
 		}
@@ -108,8 +109,10 @@ export class ZoomController {
 			this.container.classList.toggle('web-image-zoomed', newScale !== 'fit');
 		}
 		const viewport = this.viewport();
-		const centerX = viewport.left + viewport.width / 2;
-		const centerY = viewport.top + viewport.height / 2;
+		// Viewport point that keeps its image content in place; the view center
+		// unless a caller (touch pinch) zooms about another point.
+		const centerX = anchor?.x ?? viewport.left + viewport.width / 2;
+		const centerY = anchor?.y ?? viewport.top + viewport.height / 2;
 
 		if (newScale === 'fit') {
 			this.scale = 'fit';
@@ -320,6 +323,46 @@ export class ZoomController {
 		if (this.gestureScale !== null && Number.isFinite(event.scale) && event.scale! > 0) {
 			this.updateScale(this.gestureScale * event.scale!);
 		}
+	}
+
+	/**
+	 * Two-finger pinch on touch screens. The image point under the fingers'
+	 * midpoint stays under it, so dragging both fingers pans while pinching.
+	 * One-finger drags stay with native scrolling.
+	 */
+	handleTouch(event: TouchEvent) {
+		// Safari reports the same pinch as gesture events; those own it there.
+		if (!this.imageElement || !this.hasLoadedImage || this.gestureScale !== null) { return; }
+		const touches = Array.from(event.touches);
+		if (touches.length !== 2 || !touches.every(touch => this.isImageSurface(touch.target))) {
+			this.touchPinch = null;
+			return;
+		}
+		const [a, b] = touches;
+		const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+		if (!(distance > 0)) { return; }
+		if (event.cancelable) { event.preventDefault(); }
+		const x = (a.clientX + b.clientX) / 2, y = (a.clientY + b.clientY) / 2;
+		if (event.type === 'touchstart' || !this.touchPinch) {
+			if (this.scale === 'fit') { this.firstZoom(); }
+			this.touchPinch = { distance, scale: this.scale as number, x, y };
+			return;
+		}
+		const pinch = this.touchPinch;
+		this.updateScale(pinch.scale * distance / pinch.distance, { x: pinch.x, y: pinch.y });
+		// A move that cannot be cancelled means the browser already started a
+		// native scroll, which pans with the fingers on its own.
+		if (event.cancelable) { window.scrollBy(pinch.x - x, pinch.y - y); }
+		pinch.x = x;
+		pinch.y = y;
+	}
+
+	/** Touches on panels, toolbars and controls must not zoom the image behind them. */
+	private isImageSurface(target: EventTarget | null) {
+		const element = target as Element | null;
+		return !!element && (
+			element === this.container || element === document.documentElement ||
+			!!this.imageElement?.contains(element) || !!element.closest?.('.measure-overlay'));
 	}
 
 	/**
