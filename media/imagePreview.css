@@ -24,6 +24,8 @@ body img {
 	padding: 0;
 	display: flex;
 	box-sizing: border-box;
+	/* Pinch is handled by ZoomController; leave one-finger pan to the browser. */
+	touch-action: pan-x pan-y;
 }
 
 .container.image img {

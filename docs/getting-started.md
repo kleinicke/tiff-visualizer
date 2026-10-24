@@ -61,7 +61,7 @@ brightness prompts for values.
 
 | Action | Input |
 | --- | --- |
-| Zoom | Mouse wheel, trackpad pinch, or **Zoom In** / **Zoom Out** |
+| Zoom | Mouse wheel, trackpad or touch-screen pinch, or **Zoom In** / **Zoom Out** |
 | Reset zoom to fit | Click the zoom status bar entry, or **Reset Zoom** |
 | Pan | Click and drag |
 | Inspect a pixel | Hover — the value appears in the status bar |

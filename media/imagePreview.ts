@@ -4698,6 +4698,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				container.addEventListener(type, event => zoomController.handleGesture(event), { passive: false });
 			}
 		}
+		for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+			container.addEventListener(type, event => zoomController.handleTouch(event as TouchEvent), { passive: false });
+		}
 		// Wheel zoom handling
 		container.addEventListener('wheel', (e) => {
 			// Prevent pinch to zoom

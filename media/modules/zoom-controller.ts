@@ -26,6 +26,7 @@ export class ZoomController {
 	 */
 	onScaleChanged: (() => void) | null = null;
 	private gestureScale: number | null = null;
+	private touchPinch: { distance: number, scale: number } | null = null;
 
 	private viewport() {
 		const style = getComputedStyle(this.container);
@@ -320,6 +321,28 @@ export class ZoomController {
 		if (this.gestureScale !== null && Number.isFinite(event.scale) && event.scale! > 0) {
 			this.updateScale(this.gestureScale * event.scale!);
 		}
+	}
+
+	/**
+	 * Two-finger pinch on touch screens. One-finger drags stay with native
+	 * scrolling, so panning a zoomed image keeps working without extra code.
+	 */
+	handleTouch(event: TouchEvent) {
+		if (!this.imageElement || !this.hasLoadedImage) { return; }
+		if (event.touches.length !== 2) {
+			this.touchPinch = null;
+			return;
+		}
+		const [a, b] = [event.touches[0], event.touches[1]];
+		const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+		if (!(distance > 0)) { return; }
+		if (event.cancelable) { event.preventDefault(); }
+		if (event.type === 'touchstart' || !this.touchPinch) {
+			if (this.scale === 'fit') { this.firstZoom(); }
+			this.touchPinch = { distance, scale: this.scale as number };
+			return;
+		}
+		this.updateScale(this.touchPinch.scale * distance / this.touchPinch.distance);
 	}
 
 	/**
