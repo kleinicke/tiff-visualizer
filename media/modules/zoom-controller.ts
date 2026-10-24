@@ -26,7 +26,7 @@ export class ZoomController {
 	 */
 	onScaleChanged: (() => void) | null = null;
 	private gestureScale: number | null = null;
-	private touchPinch: { distance: number, scale: number } | null = null;
+	private touchPinch: { distance: number, scale: number, x: number, y: number } | null = null;
 
 	private viewport() {
 		const style = getComputedStyle(this.container);
@@ -98,7 +98,7 @@ export class ZoomController {
 	/**
 	 * Update scale with new value
 	 */
-	updateScale(newScale: number | string) {
+	updateScale(newScale: number | string, anchor?: { x: number, y: number }) {
 		if (!this.imageElement || !this.hasLoadedImage || !this.imageElement.parentElement) {
 			return;
 		}
@@ -109,8 +109,10 @@ export class ZoomController {
 			this.container.classList.toggle('web-image-zoomed', newScale !== 'fit');
 		}
 		const viewport = this.viewport();
-		const centerX = viewport.left + viewport.width / 2;
-		const centerY = viewport.top + viewport.height / 2;
+		// Viewport point that keeps its image content in place; the view center
+		// unless a caller (touch pinch) zooms about another point.
+		const centerX = anchor?.x ?? viewport.left + viewport.width / 2;
+		const centerY = anchor?.y ?? viewport.top + viewport.height / 2;
 
 		if (newScale === 'fit') {
 			this.scale = 'fit';
@@ -324,8 +326,9 @@ export class ZoomController {
 	}
 
 	/**
-	 * Two-finger pinch on touch screens. One-finger drags stay with native
-	 * scrolling, so panning a zoomed image keeps working without extra code.
+	 * Two-finger pinch on touch screens. The image point under the fingers'
+	 * midpoint stays under it, so dragging both fingers pans while pinching.
+	 * One-finger drags stay with native scrolling.
 	 */
 	handleTouch(event: TouchEvent) {
 		if (!this.imageElement || !this.hasLoadedImage) { return; }
@@ -337,12 +340,17 @@ export class ZoomController {
 		const distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 		if (!(distance > 0)) { return; }
 		if (event.cancelable) { event.preventDefault(); }
+		const x = (a.clientX + b.clientX) / 2, y = (a.clientY + b.clientY) / 2;
 		if (event.type === 'touchstart' || !this.touchPinch) {
 			if (this.scale === 'fit') { this.firstZoom(); }
-			this.touchPinch = { distance, scale: this.scale as number };
+			this.touchPinch = { distance, scale: this.scale as number, x, y };
 			return;
 		}
-		this.updateScale(this.touchPinch.scale * distance / this.touchPinch.distance);
+		const pinch = this.touchPinch;
+		this.updateScale(pinch.scale * distance / pinch.distance, { x: pinch.x, y: pinch.y });
+		window.scrollBy(pinch.x - x, pinch.y - y);
+		pinch.x = x;
+		pinch.y = y;
 	}
 
 	/**

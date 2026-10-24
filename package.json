@@ -81,7 +81,9 @@
     "affinity photo",
     "afphoto",
     "layered image",
-    "layers"
+    "layers",
+    "avif",
+    "webp"
   ],
   "extensionKind": [
     "ui",
