@@ -4,6 +4,9 @@
   import { COLORMAP_NAMES } from '../../media/modules/colormaps';
   import { panelGestures } from '../panel-gestures';
   let { model }: { model: Writable<ChannelsModel> } = $props();
+  let unfolded = $state<number[]>([]);
+  function toggleFold(plane: number) { unfolded = unfolded.includes(plane) ? unfolded.filter(entry => entry !== plane) : [...unfolded, plane]; }
+  function foldAll(fold: boolean) { unfolded = fold ? [] : $model.planes.map(plane => plane.index); }
   function short(value: number): string {
     if (!Number.isFinite(value)) return '—';
     const magnitude = Math.abs(value);
@@ -23,15 +26,17 @@
     <button class="measure-close" title="Close the channels panel" onclick={$model.close}>×</button>
   </div>
   {#if $model.planes.length >= 2}
-    <div class="channels-global">
-      <div class="channels-section-title">Global</div>
+    <details class="channels-global" open>
+      <summary class="channels-section-title">Global</summary>
       <div class="channels-toolbar">
         <button class="measure-button" title="Switch every channel on" onclick={$model.selectAll}>Select all</button>
         <button class="measure-button" title="Switch every channel off" onclick={$model.deselectAll}>Deselect all</button>
         <button class="measure-button" title="Percentile range for every channel" onclick={() => $model.range(null, true)}>Auto range all</button>
         <button class="measure-button" title="True minimum to maximum for every channel" onclick={() => $model.range(null, false)}>Full range all</button>
+        <button class="measure-button" title="Collapse every channel to its first row" onclick={() => foldAll(true)}>Fold all</button>
+        <button class="measure-button" title="Show the sliders of every channel" onclick={() => foldAll(false)}>Unfold all</button>
       </div>
-    </div>
+    </details>
   {/if}
   <div class="channels-body">
     {#if $model.planes.length < 2}<div class="measure-note">{$model.status ?? 'This image has a single channel.'}</div>
@@ -56,27 +61,31 @@
       {/if}
       {#each $model.planes as plane, index (plane.index)}
         {@const setting = $model.settings[index]}
+        {@const isFolded = !unfolded.includes(plane.index)}
         <div class="channel-row" class:dimmed={$model.composite && $model.solo !== null && $model.solo !== plane.index} class:current={$model.current === plane.index}>
           <div class="channel-row-top">
+            <button class="channel-fold" aria-expanded={!isFolded} title={isFolded ? 'Show this channel\'s sliders' : 'Hide this channel\'s sliders'} onclick={() => toggleFold(plane.index)}>{isFolded ? '▸' : '▾'}</button>
             <input type="checkbox" checked={setting.visible} title="Include this channel in the composite" onchange={e => $model.update(index, { visible: e.currentTarget.checked })}>
             <input type="color" class="channel-swatch" value={setting.color} title="Channel tint" oninput={e => $model.update(index, { color: e.currentTarget.value }, true)} onchange={e => $model.update(index, { color: e.currentTarget.value })}>
             <span class="channel-name" title={plane.name}>{plane.name}</span>
             <button class="measure-chip channel-solo" class:active={$model.composite ? $model.solo === plane.index : $model.current === plane.index} title={$model.composite ? 'Show only this channel, switching it on if it is off. The other channels keep their settings.' : 'Show this channel on its own. The channel selector follows.'} onclick={() => $model.setSolo(plane.index)}>{$model.composite ? 'Solo' : 'Show'}</button>
           </div>
-          <div class="channel-range">
-            {#each ['min', 'max'] as key}
-              {@const which = key as 'min' | 'max'}
-              <input type="range" min="0" max="1000" step="1" class="channel-slider" title={which === 'min' ? 'Black point' : 'White point'} value={Math.round((setting[which] - plane.min) / (plane.max - plane.min || 1) * 1000)} oninput={e => range(index, which, e.currentTarget.value, true)} onchange={e => range(index, which, e.currentTarget.value, false)}>
-            {/each}
-          </div>
-          <div class="channel-readout">{short(setting.min)} – {short(setting.max)}</div>
-          <div class="channel-controls">
-            <input type="range" min="0" max="100" value={Math.round(setting.opacity * 100)} class="channel-slider" title="Channel opacity" oninput={e => $model.update(index, { opacity: Number(e.currentTarget.value) / 100 }, true)} onchange={e => $model.update(index, { opacity: Number(e.currentTarget.value) / 100 })}>
-            <select class="measure-select channel-colormap" title="Use a colormap instead of a flat tint" value={setting.colormap || 'none'} onchange={e => $model.update(index, { colormap: e.currentTarget.value })}>
-              {#each ['none', ...COLORMAP_NAMES] as name}<option value={name}>{name === 'none' ? 'Tint' : name}</option>{/each}
-            </select>
-          </div>
-          <button class="measure-button channel-auto" onclick={() => $model.range(index, true)}>Auto</button>
+          {#if !isFolded}
+            <div class="channel-range">
+              {#each ['min', 'max'] as key}
+                {@const which = key as 'min' | 'max'}
+                <input type="range" min="0" max="1000" step="1" class="channel-slider" title={which === 'min' ? 'Black point' : 'White point'} value={Math.round((setting[which] - plane.min) / (plane.max - plane.min || 1) * 1000)} oninput={e => range(index, which, e.currentTarget.value, true)} onchange={e => range(index, which, e.currentTarget.value, false)}>
+              {/each}
+            </div>
+            <div class="channel-readout">{short(setting.min)} – {short(setting.max)}</div>
+            <div class="channel-controls">
+              <input type="range" min="0" max="100" value={Math.round(setting.opacity * 100)} class="channel-slider" title="Channel opacity" oninput={e => $model.update(index, { opacity: Number(e.currentTarget.value) / 100 }, true)} onchange={e => $model.update(index, { opacity: Number(e.currentTarget.value) / 100 })}>
+              <select class="measure-select channel-colormap" title="Use a colormap instead of a flat tint" value={setting.colormap || 'none'} onchange={e => $model.update(index, { colormap: e.currentTarget.value })}>
+                {#each ['none', ...COLORMAP_NAMES] as name}<option value={name}>{name === 'none' ? 'Tint' : name}</option>{/each}
+              </select>
+            </div>
+            <button class="measure-button channel-auto" onclick={() => $model.range(index, true)}>Auto</button>
+          {/if}
         </div>
       {/each}
       <div class="measure-note">{$model.composite ? `Channels are added together, each scaled by its own range — the way emission combines at the detector. Compositing on ${$model.backend === 'webgpu' ? 'the GPU (WebGPU)' : 'the CPU'}.` : 'Composite is off; the image is shown as decoded. Turn it on to blend the channels.'}</div>

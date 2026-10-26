@@ -93,8 +93,12 @@ One row per channel:
 
 The actions that apply to every channel sit in a **Global** section at the top of
 the panel, which stays in view while the list scrolls: **Select all**, **Deselect all**,
-**Auto range all** and **Full range all**. Select all and Deselect all also clear
-any Solo, so the result is what the button says.
+**Auto range all**, **Full range all**, **Fold all** and **Unfold all**. Select all
+and Deselect all also clear any Solo, so the result is what the button says.
+
+The Global section folds away by clicking its title. Each channel folds too: the
+arrow before its name collapses it to its first row (checkbox, colour, name, Solo)
+or expands it to show the sliders. Fold all and Unfold all do this for every channel. Channels start folded.
 
 ### Groups
 
