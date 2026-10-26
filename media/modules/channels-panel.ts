@@ -14,6 +14,8 @@ export interface ChannelsPanelHost {
 	onChange: (options?: { interactive?: boolean }) => void;
 	/** Which backend drew the last composite, for the status line. */
 	getBackend?: () => 'webgpu' | 'cpu';
+	/** Progress or failure text while the planes are not (all) available. */
+	getStatus?: () => string | null;
 }
 
 
@@ -24,6 +26,7 @@ export interface ChannelsModel {
   solo: number | null;
   composite: boolean;
   backend: string;
+  status: string | null;
   close: () => void;
   toggleComposite: () => void;
   setSolo: (index: number) => void;
@@ -49,7 +52,7 @@ export class ChannelsPanel {
       // Only small UI descriptors cross the bridge, never reactive pixel buffers.
       planes: this.planeDescriptors,
       settings: this.host.getSettings(), solo: this.host.getSolo(), composite: this.host.isComposite(),
-      backend: this.host.getBackend?.() ?? 'cpu', close: () => this.hide(),
+      backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null, close: () => this.hide(),
       toggleComposite: () => { this.host.setComposite(!this.host.isComposite()); this.render(); },
       setSolo: index => { this.host.setSolo(this.host.getSolo() === index ? null : index); this.host.onChange(); this.render(); },
       update: (index, patch, interactive) => {

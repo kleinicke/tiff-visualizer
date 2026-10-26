@@ -23,7 +23,7 @@
     <button class="measure-close" title="Close the channels panel" onclick={$model.close}>×</button>
   </div>
   <div class="channels-body">
-    {#if $model.planes.length < 2}<div class="measure-note">This image has a single channel.</div>
+    {#if $model.planes.length < 2}<div class="measure-note">{$model.status ?? 'This image has a single channel.'}</div>
     {:else}
       {#each $model.planes as plane, index (plane.index)}
         {@const setting = $model.settings[index]}
