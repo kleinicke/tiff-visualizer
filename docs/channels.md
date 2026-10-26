@@ -98,6 +98,26 @@ percent of the range. Auto clips a thousandth at each end, which is what every
 acquisition package does and why "auto" looks right there and wrong with a naive
 implementation. **Full range all** gives you true min/max when you want it.
 
+## The channel selector and the panel
+
+Stacks where each channel is its own page (OME-TIFF, ImageJ) and TIFFs with
+several bands also show a selector overlay (a slider, or a dropdown when the
+channels have names). The two controls share one idea of the "current channel":
+
+- **Composite off.** The selector decides which channel is shown. The panel
+  highlights that channel, and its button reads **Show**: clicking it moves the
+  selector to that channel. Moving the selector moves the highlight.
+- **Composite on.** The image contains every channel, so the selector's channel
+  control and **Solo** are the same thing. Moving the selector solos that channel
+  in the composite, and soloing a channel in the panel moves the selector to it.
+  Clearing Solo (click it again, or **Show all**) shows every channel again and
+  leaves the selector where it was. Turning the composite off shows the channel
+  the selector is on. Z and T keep working, and the composite is rebuilt for the
+  new plane.
+
+Images without a channel selector (for example multi-channel EXR or NumPy) have
+nothing to link to, so there the panel works as described above.
+
 ## Non-finite samples
 
 A channel that is `NaN` or `±Inf` at a pixel contributes nothing there — it is

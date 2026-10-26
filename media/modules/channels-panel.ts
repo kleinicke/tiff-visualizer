@@ -16,6 +16,13 @@ export interface ChannelsPanelHost {
 	getBackend?: () => 'webgpu' | 'cpu';
 	/** Progress or failure text while the planes are not (all) available. */
 	getStatus?: () => string | null;
+	/**
+	 * The channel the selector overlay is showing, when the image has one and
+	 * the composite is off; null when there is no such link.
+	 */
+	getCurrentChannel?: () => number | null;
+	/** Show one channel through the selector overlay. False when there is no selector to drive. */
+	selectChannel?: (index: number) => boolean;
 }
 
 
@@ -27,6 +34,8 @@ export interface ChannelsModel {
   composite: boolean;
   backend: string;
   status: string | null;
+  /** The channel the selector shows (single-channel view), or null. */
+  current: number | null;
   close: () => void;
   toggleComposite: () => void;
   setSolo: (index: number) => void;
@@ -52,9 +61,14 @@ export class ChannelsPanel {
       // Only small UI descriptors cross the bridge, never reactive pixel buffers.
       planes: this.planeDescriptors,
       settings: this.host.getSettings(), solo: this.host.getSolo(), composite: this.host.isComposite(),
-      backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null, close: () => this.hide(),
+      backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null,
+      current: readHost && !this.host.isComposite() ? this.host.getCurrentChannel?.() ?? null : null, close: () => this.hide(),
       toggleComposite: () => { this.host.setComposite(!this.host.isComposite()); this.render(); },
-      setSolo: index => { this.host.setSolo(this.host.getSolo() === index ? null : index); this.host.onChange(); this.render(); },
+      setSolo: index => {
+        // Without the composite there is nothing to solo: the button chooses
+        // which channel the selector shows, so panel and selector agree.
+        if (!this.host.isComposite() && this.host.selectChannel?.(index)) { this.render(); return; }
+        this.host.setSolo(this.host.getSolo() === index ? null : index); this.host.onChange(); this.render(); },
       update: (index, patch, interactive) => {
         const settings = this.host.getSettings().slice();
         settings[index] = { ...settings[index], ...patch };

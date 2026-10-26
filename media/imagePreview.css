@@ -2801,6 +2801,12 @@ body img {
 	opacity: 0.45;
 }
 
+/* The channel the selector overlay is showing while the composite is off. */
+.channel-row.current {
+	box-shadow: inset 3px 0 0 var(--vscode-focusBorder, #007fd4);
+	padding-left: 6px;
+}
+
 .channel-row-top {
 	display: flex;
 	align-items: center;

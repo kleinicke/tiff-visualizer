@@ -345,6 +345,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let channelPlanes: ChannelPlane[] = [];
 	let channelSettings: ChannelSettings[] = [];
 	let channelSolo: number | null = null;
+	// The channel the selector overlay shows while the composite is on. It
+	// follows Solo and survives clearing it, so the slider does not jump back.
+	let compositeSelectorChannel: number | null = null;
+	let channelSoloResource: string | null = null;
 	let compositeEnabled = false;
 	// `tiffVisualizer.channels.autoComposite` turns compositing on for images
 	// whose channels come from metadata. Once the user switches it either way,
@@ -358,6 +362,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// reports this rather than "single channel", which is what it would
 	// otherwise say for the whole time the pages are still arriving.
 	let channelStatus: string | null = null;
+	// Which file/Z/T the loaded OME planes belong to. They contain every
+	// channel, so moving the C selector must not throw them away.
+	let channelPlanesKey: string | null = null;
 	let compositeRenderHandle = 0;
 	// WebGPU is tried first and the CPU compositor is the fallback and the
 	// correctness reference. There is deliberately no WebGL2 variant: both paths
@@ -380,6 +387,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function rebuildChannelPlanes(): void {
 		if (channelGeneration === navigation.generation) { return; }
 		channelGeneration = navigation.generation;
+		// Same file, Z and T: the planes already hold every channel.
+		if (channelPlanes.length >= 2 && channelPlanesKey !== null && channelPlanesKey === omePlaneKey()) { return; }
 		// Tints and opacities the user chose should survive stepping to the next
 		// image of a series; the display ranges belong to the data and are
 		// recomputed. Carrying either across a change in channel count would be
@@ -387,7 +396,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const previousSettings = channelSettings;
 		channelPlanes = [];
 		channelSettings = [];
-		channelSolo = null;
 		channelStatus = null;
 
 		const source = getMeasurementSource();
@@ -437,6 +445,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (!ome || !src) { return; }
 
 		const current = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+		const planesKey = omePlaneKey();
 		const planes: ChannelPlane[] = [];
 		const failed: number[] = [];
 		const setStatus = (text: string | null) => {
@@ -499,6 +508,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 		channelStatus = failed.length ? `${failed.length} of ${channelCount} channels could not be decoded and are omitted.` : null;
 		channelPlanes = planes;
+		channelPlanesKey = planesKey;
 		channelSettings = adoptChannelSettings(planes, channelSettings, {
 			colors: ome.channels?.map((channel: any) => channel?.colorCss),
 		});
@@ -577,20 +587,35 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			compositeChosenByUser = true;
 			compositeAuto = false;
 			if (enabled) {
+				// The selector shows the soloed channel, or the loaded page's if none.
+				compositeSelectorChannel = channelSolo;
 				rebuildChannelPlanes();
 				renderComposite();
+			} else if (compositeSelectorChannel !== null && currentChannelIndex() !== null
+				&& currentChannelIndex() !== compositeSelectorChannel) {
+				// The selector was left on a channel other than the loaded page;
+				// show that channel, so the two agree.
+				selectChannelThroughSelector(compositeSelectorChannel);
 			} else {
 				// Leaving composite mode re-renders the image exactly as it was
 				// decoded, so the mode is genuinely a view and not a conversion.
 				void updateImageWithNewSettings();
 			}
+			updateTiffPageOverlay();
 			scheduleSaveState();
 		},
 		getSolo: () => channelSolo,
-		setSolo: index => { channelSolo = index; },
+		setSolo: index => {
+			channelSolo = index;
+			if (index !== null) { compositeSelectorChannel = index; }
+			// The selector follows Solo.
+			updateTiffPageOverlay();
+		},
 		onChange: () => { scheduleCompositeRender(); scheduleSaveState(); },
 		getBackend: () => (channelGpuCompositor.isReady() ? channelBackend : 'cpu'),
 		getStatus: () => channelStatus,
+		getCurrentChannel: () => currentChannelIndex(),
+		selectChannel: index => selectChannelThroughSelector(index),
 	});
 
 	/**
@@ -617,6 +642,62 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			opacity: previous[index].opacity,
 			colormap: previous[index].colormap,
 		}));
+	}
+
+	/** Identifies the plane set an OME stack's channel planes were built from. */
+	function omePlaneKey(): string | null {
+		const ome = tiffProcessor.omeMetadata;
+		if (!ome || !(ome.sizeC > 1)) { return null; }
+		const at = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
+		return `${settingsManager.settings.resourceUri || settingsManager.settings.src || ''}|z${at.z}|t${at.t}`;
+	}
+
+	/** True when each channel is its own page, chosen with the selector's C control. */
+	function channelsAreSeparatePages(): boolean {
+		const ome = tiffProcessor.omeMetadata;
+		return currentLoadFormat === 'TIFF' && !!ome && ome.sizeC > 1 && (getMeasurementSource()?.channels || 1) === 1;
+	}
+
+	/**
+	 * The channel the selector overlay is showing, for the panel to highlight.
+	 * Null when the image has no selector for channels (the panel then behaves
+	 * as it always did).
+	 */
+	function currentChannelIndex(): number | null {
+		if (currentLoadFormat !== 'TIFF') { return null; }
+		const ome = tiffProcessor.omeMetadata;
+		if (ome && channelsAreSeparatePages()) { return omeIfdToCoordinates(ome, tiffProcessor.pageIndex).c; }
+		if (tiffProcessor.selectableBandCount > 1 && !tiffProcessor.displayRgbBands) { return tiffProcessor.displayBand; }
+		return null;
+	}
+
+	/** Show one channel by driving the selector, so the two controls cannot disagree. */
+	function selectChannelThroughSelector(index: number): boolean {
+		if (currentChannelIndex() === null) { return false; }
+		if (channelsAreSeparatePages()) { void navigateOmeAxis('C', index); } else { void selectTiffBand(index); }
+		return true;
+	}
+
+	/**
+	 * The selector's channel control while the composite is on: solo that
+	 * channel instead of loading its page. The composite stays on.
+	 */
+	function soloFromSelector(index: number): void {
+		channelSolo = index;
+		compositeSelectorChannel = index;
+		scheduleCompositeRender();
+		scheduleSaveState();
+		updateTiffPageOverlay();
+	}
+
+	/** True when the selector's channel control should solo rather than load a page. */
+	function selectorSolosChannels(): boolean {
+		return compositeEnabled && channelPlanes.length >= 2;
+	}
+
+	/** Keep the Channels panel in step with the selector overlay. */
+	function syncChannelPanel(): void {
+		if (channelsPanel.isVisible()) { channelsPanel.render(); }
 	}
 
 	/**
@@ -839,9 +920,19 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// Build them only for a feature that consumes them; opening the Channels
 		// panel also calls rebuildChannelPlanes through its getPlanes callback.
 		channelGeneration = -1;
-		channelPlanes = [];
-		channelStatus = null;
-		channelSolo = null;
+		if (!(channelPlanes.length >= 2 && channelPlanesKey !== null && channelPlanesKey === omePlaneKey())) {
+			channelPlanes = [];
+			channelPlanesKey = null;
+			channelStatus = null;
+		}
+		// Solo and the selector position belong to the file; stepping Z or T
+		// within it keeps them.
+		const soloResource = settingsManager.settings.resourceUri || settingsManager.settings.src || '';
+		if (soloResource !== channelSoloResource) {
+			channelSoloResource = soloResource;
+			channelSolo = null;
+			compositeSelectorChannel = null;
+		}
 		applyAutoComposite();
 		if (compositeEnabled || channelsPanel.isVisible()) { rebuildChannelPlanes(); }
 		if (compositeEnabled) { scheduleCompositeRender(); }
@@ -1392,7 +1483,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (Array.isArray(persistedState.channelSettings)) {
 			channelSettings = persistedState.channelSettings;
 		}
-		if (typeof persistedState.channelSolo === 'number') { channelSolo = persistedState.channelSolo; }
+		if (typeof persistedState.channelSolo === 'number') { channelSolo = persistedState.channelSolo; compositeSelectorChannel = channelSolo; }
 		compositeEnabled = persistedState.compositeEnabled === true;
 		compositeChosenByUser = persistedState.compositeChosenByUser === true;
 		compositeAuto = persistedState.compositeAuto === true;
@@ -5816,9 +5907,14 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			});
 		const selectors = rgb
 			? ['Red', 'Green', 'Blue'].map((name, i) => ({ name, size: count, value: rgb[i], labels }))
-			: [{ name: 'Band', size: count, value: Math.min(count - 1, Math.max(0, tiffProcessor.displayBand)), labels }];
+			: [{ name: 'Band', size: count, labels,
+				value: Math.min(count - 1, Math.max(0, selectorSolosChannels() && compositeSelectorChannel !== null
+					? compositeSelectorChannel : tiffProcessor.displayBand)) }];
 		return [...mode, ...controlsFromSelectors('tiff', selectors, (selector, index) => {
-			if (!rgb) { void selectTiffBand(index); return; }
+			if (!rgb) {
+				if (selectorSolosChannels()) { soloFromSelector(index); } else { void selectTiffBand(index); }
+				return;
+			}
 			const next: [number, number, number] = [rgb[0], rgb[1], rgb[2]];
 			next[['Red', 'Green', 'Blue'].indexOf(selector.name)] = index;
 			if (tiffProcessor.setDisplayRgbBands(next)) void refreshTiffBandView();
@@ -5884,10 +5980,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const selectors: Selector[] = (['C', 'Z', 'T'] as OmeAxis[]).map(axis => ({
 			name: axis,
 			size: sizes[axis],
-			value: current[axis],
+			// While the composite is on, the C control shows the soloed channel.
+			value: axis === 'C' && selectorSolosChannels() && compositeSelectorChannel !== null
+				? compositeSelectorChannel : current[axis],
 			labels: axis === 'C' && named ? channelNames : undefined,
 		}));
 		return [...controlsFromSelectors('ome', selectors, (selector, index) => {
+			if (selector.name === 'C' && selectorSolosChannels()) { soloFromSelector(index); return; }
 			void navigateOmeAxis(selector.name as OmeAxis, index);
 		}), ...bandControls];
 	}
@@ -6140,7 +6239,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			controls: tiffControls(),
 			loading: loading || _levelSwitchPending || _tiffViewportLoadCount > 0,
 			resolution: tiffResolutionStatus(),
-		});
+		});		syncChannelPanel();
 	}
 
 	function beginTiffViewportLoad(): void {
@@ -6254,7 +6353,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (axis === 'C') { coordinates.c = value; }
 		else if (axis === 'Z') { coordinates.z = value; }
 		else { coordinates.t = value; }
-		await navigateTiffToPage(omeCoordinatesToIfd(ome, coordinates));
+		const target = omeCoordinatesToIfd(ome, coordinates);
+		await navigateTiffToPage(target);
 	}
 
 	// --- Pyramid level selection ------------------------------------------

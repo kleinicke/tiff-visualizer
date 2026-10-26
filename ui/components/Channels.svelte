@@ -27,12 +27,12 @@
     {:else}
       {#each $model.planes as plane, index (plane.index)}
         {@const setting = $model.settings[index]}
-        <div class="channel-row" class:dimmed={$model.solo !== null && $model.solo !== plane.index}>
+        <div class="channel-row" class:dimmed={$model.composite && $model.solo !== null && $model.solo !== plane.index} class:current={$model.current === plane.index}>
           <div class="channel-row-top">
             <input type="checkbox" checked={setting.visible} title="Include this channel in the composite" onchange={e => $model.update(index, { visible: e.currentTarget.checked })}>
             <input type="color" class="channel-swatch" value={setting.color} title="Channel tint" oninput={e => $model.update(index, { color: e.currentTarget.value }, true)} onchange={e => $model.update(index, { color: e.currentTarget.value })}>
             <span class="channel-name" title={plane.name}>{plane.name}</span>
-            <button class="measure-chip channel-solo" class:active={$model.solo === plane.index} title="Show only this channel. Solo is a view, not a change to the settings." onclick={() => $model.setSolo(plane.index)}>Solo</button>
+            <button class="measure-chip channel-solo" class:active={$model.composite ? $model.solo === plane.index : $model.current === plane.index} title={$model.composite ? 'Show only this channel. Solo is a view, not a change to the settings.' : 'Show this channel on its own. The channel selector follows.'} onclick={() => $model.setSolo(plane.index)}>{$model.composite ? 'Solo' : 'Show'}</button>
           </div>
           <div class="channel-range">
             {#each ['min', 'max'] as key}
