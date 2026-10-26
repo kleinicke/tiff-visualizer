@@ -2848,6 +2848,18 @@ body img {
 	padding: 2px 0 4px;
 }
 
+.channel-search {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 0 6px;
+}
+
+.channel-search input {
+	flex: 1;
+	min-width: 0;
+}
+
 .channel-group-row {
 	display: flex;
 	align-items: center;
@@ -2857,6 +2869,33 @@ body img {
 
 .channel-group-row.disabled {
 	opacity: 0.45;
+}
+
+.group-filter {
+	display: inline-flex;
+	align-items: center;
+	background: none;
+	border: 1px solid transparent;
+	border-radius: 3px;
+	color: inherit;
+	cursor: pointer;
+	padding: 2px 4px;
+	opacity: 0.6;
+}
+
+.group-filter:hover:not(:disabled) {
+	opacity: 1;
+}
+
+.group-filter.active {
+	opacity: 1;
+	background: var(--vscode-button-background, #0e639c);
+	color: var(--vscode-button-foreground, #fff);
+}
+
+.group-filter:disabled {
+	opacity: 0.25;
+	cursor: default;
 }
 
 .channel-group-count {

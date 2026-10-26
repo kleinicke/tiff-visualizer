@@ -117,6 +117,19 @@ switches it on if it was off, until the solo is cleared. The selector keeps its 
 several channels. Groups are available only while Composite is on, because they
 describe a set of channels shown together.
 
+### Filtering channels
+
+The **Filter channels** box above the list shows only channels whose name contains
+the text (case-insensitive), updating as you type. It only hides rows: hidden
+channels stay in the composite, and the Global actions and groups still apply to
+every channel.
+
+Each group row also has a funnel button that limits the list to that group's
+channels. Several groups can be active at once, and the filters combine like this:
+a channel is listed if it is in **any** of the active groups (union) **and** it
+matches the text (intersection). Group filters work whether or not Composite is
+on. **Clear** removes every filter at once.
+
 ### Why ranges are per channel
 
 A bright nuclear stain and a dim reporter share no useful scale. Normalising

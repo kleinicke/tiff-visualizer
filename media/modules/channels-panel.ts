@@ -37,6 +37,8 @@ export interface ChannelGroupRow {
   /** How many of the matched channels are switched on. */
   on: number;
   missing: string[];
+  /** Positions of the matched channels, for filtering the list. */
+  positions: number[];
   /** Of the matched channels: all, some or none are switched on. */
   state: 'all' | 'some' | 'none';
   soloed: boolean;
@@ -82,7 +84,7 @@ export class ChannelsPanel {
     const groups: ChannelGroupRow[] = (readHost ? this.host.getGroups?.() ?? [] : []).map(group => {
       const on = group.positions.filter(position => settings[position]?.visible).length;
       return {
-        name: group.name, total: group.total, found: group.positions.length, on, missing: group.missing,
+        name: group.name, total: group.total, found: group.positions.length, on, missing: group.missing, positions: group.positions,
         state: on === 0 ? 'none' : on === group.positions.length ? 'all' : 'some',
         soloed: groupSolo === group.name,
       };
