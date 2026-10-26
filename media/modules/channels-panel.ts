@@ -60,9 +60,10 @@ export interface ChannelsModel {
   toggleComposite: () => void;
   setSolo: (index: number) => void;
   update: (index: number, patch: Partial<ChannelSettings>, interactive?: boolean) => void;
-  range: (index: number | null, auto: boolean) => void;
-  selectAll: () => void;
-  deselectAll: () => void;
+  /** `only` limits a whole-panel action to these channel positions (the listed ones while filtering). */
+  range: (index: number | null, auto: boolean, only?: number[]) => void;
+  selectAll: (only?: number[]) => void;
+  deselectAll: (only?: number[]) => void;
   toggleGroup: (name: string) => void;
   soloGroup: (name: string) => void;
 }
@@ -107,17 +108,18 @@ export class ChannelsPanel {
         settings[index] = { ...settings[index], ...patch };
         this.host.setSettings(settings); this.host.onChange({ interactive }); this.render();
       },
-      range: (index, auto) => {
+      range: (index, auto, only) => {
         const planes = this.host.getPlanes();
         this.host.setSettings(this.host.getSettings().map((setting, i) => {
           if (index !== null && index !== i) return setting;
+          if (only && !only.includes(i)) return setting;
           const range = auto ? autoRange(planes[i]) : channelStats(planes[i]);
           return { ...setting, min: range.min, max: range.max };
         }));
         this.host.onChange(); this.render();
       },
-      selectAll: () => this.setAllVisible(true),
-      deselectAll: () => this.setAllVisible(false),
+      selectAll: only => this.setAllVisible(true, only),
+      deselectAll: only => this.setAllVisible(false, only),
       toggleGroup: name => {
         // From "none" or "some" everything in the group goes on; from "all" it goes off.
         const group = this.host.getGroups?.().find(entry => entry.name === name);
@@ -133,11 +135,11 @@ export class ChannelsPanel {
       },
     };
   }
-  /** Switch every channel on or off, and drop any solo so the result is what it says. */
-  private setAllVisible(visible: boolean): void {
+  /** Switch every channel (or just those in `only`) on or off, and drop any solo so the result is what it says. */
+  private setAllVisible(visible: boolean, only?: number[]): void {
     this.host.setSolo(null);
     this.host.setGroupSolo?.(null);
-    this.host.setSettings(this.host.getSettings().map(setting => ({ ...setting, visible })));
+    this.host.setSettings(this.host.getSettings().map((setting, position) => !only || only.includes(position) ? { ...setting, visible } : setting));
     this.host.onChange(); this.render();
   }
   show(): void { this.visible = true; this.render(); }

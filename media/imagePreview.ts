@@ -6336,7 +6336,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			controls: tiffControls(),
 			loading: loading || _levelSwitchPending || _tiffViewportLoadCount > 0,
 			resolution: tiffResolutionStatus(),
-		});		syncChannelPanel();
+		});
+		syncChannelPanel();
 	}
 
 	function beginTiffViewportLoad(): void {
@@ -6450,8 +6451,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (axis === 'C') { coordinates.c = value; }
 		else if (axis === 'Z') { coordinates.z = value; }
 		else { coordinates.t = value; }
-		const target = omeCoordinatesToIfd(ome, coordinates);
-		await navigateTiffToPage(target);
+		await navigateTiffToPage(omeCoordinatesToIfd(ome, coordinates));
 	}
 
 	// --- Pyramid level selection ------------------------------------------

@@ -20,7 +20,12 @@
   function clearFilters() { query = ''; filterGroups = []; }
   let unfolded = $state<number[]>([]);
   function toggleFold(plane: number) { unfolded = unfolded.includes(plane) ? unfolded.filter(entry => entry !== plane) : [...unfolded, plane]; }
-  function foldAll(fold: boolean) { unfolded = fold ? [] : $model.planes.map(plane => plane.index); }
+  // Positions the whole-panel actions apply to: every channel, or the listed ones while filtering.
+  const scope = () => filtering() ? $model.planes.flatMap((plane, position) => shows(position, plane.name) ? [position] : []) : undefined;
+  function foldAll(fold: boolean) {
+    const listed = new Set((scope() ?? $model.planes.map((_plane, position) => position)).map(position => $model.planes[position].index));
+    unfolded = fold ? unfolded.filter(entry => !listed.has(entry)) : [...new Set([...unfolded, ...listed])];
+  }
   function short(value: number): string {
     if (!Number.isFinite(value)) return '—';
     const magnitude = Math.abs(value);
@@ -41,14 +46,14 @@
   </div>
   {#if $model.planes.length >= 2}
     <details class="channels-global" open>
-      <summary class="channels-section-title">Global</summary>
+      <summary class="channels-section-title">{filtering() ? `Listed channels (${shownCount()}/${$model.planes.length})` : 'All channels'}</summary>
       <div class="channels-toolbar">
-        <button class="measure-button" title="Switch every channel on" onclick={$model.selectAll}>Select all</button>
-        <button class="measure-button" title="Switch every channel off" onclick={$model.deselectAll}>Deselect all</button>
-        <button class="measure-button" title="Percentile range for every channel" onclick={() => $model.range(null, true)}>Auto range all</button>
-        <button class="measure-button" title="True minimum to maximum for every channel" onclick={() => $model.range(null, false)}>Full range all</button>
-        <button class="measure-button" title="Collapse every channel to its first row" onclick={() => foldAll(true)}>Fold all</button>
-        <button class="measure-button" title="Show the sliders of every channel" onclick={() => foldAll(false)}>Unfold all</button>
+        <button class="measure-button" title={filtering() ? 'Switch the listed channels on' : 'Switch every channel on'} onclick={() => $model.selectAll(scope())}>Select all</button>
+        <button class="measure-button" title={filtering() ? 'Switch the listed channels off' : 'Switch every channel off'} onclick={() => $model.deselectAll(scope())}>Deselect all</button>
+        <button class="measure-button" title={filtering() ? 'Percentile range for the listed channels' : 'Percentile range for every channel'} onclick={() => $model.range(null, true, scope())}>Auto range all</button>
+        <button class="measure-button" title={filtering() ? 'True minimum to maximum for the listed channels' : 'True minimum to maximum for every channel'} onclick={() => $model.range(null, false, scope())}>Full range all</button>
+        <button class="measure-button" title={filtering() ? 'Collapse the listed channels to their first row' : 'Collapse every channel to its first row'} onclick={() => foldAll(true)}>Fold all</button>
+        <button class="measure-button" title={filtering() ? 'Show the sliders of the listed channels' : 'Show the sliders of every channel'} onclick={() => foldAll(false)}>Unfold all</button>
       </div>
     </details>
   {/if}

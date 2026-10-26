@@ -91,14 +91,14 @@ One row per channel:
 | Tint / colormap | A flat tint is the microscopy convention; a colormap suits a single ratiometric channel. A colormap *replaces* the tint — its colour already encodes the value |
 | **Auto** | Percentile range for this channel alone |
 
-The actions that apply to every channel sit in a **Global** section at the top of
+The actions that apply to every channel sit in an **All channels** section at the top of
 the panel, which stays in view while the list scrolls: **Select all**, **Deselect all**,
 **Auto range all**, **Full range all**, **Fold all** and **Unfold all**. Select all
 and Deselect all also clear any Solo, so the result is what the button says.
 
-The Global section folds away by clicking its title. Each channel folds too: the
+The section folds away by clicking its title. Each channel folds too: the
 arrow before its name collapses it to its first row (checkbox, colour, name, Solo)
-or expands it to show the sliders. Fold all and Unfold all do this for every channel. Channels start folded.
+or expands it to show the sliders. Fold all and Unfold all do this for every channel (or just the listed ones, see below). Channels start folded.
 
 ### Groups
 
@@ -121,8 +121,10 @@ describe a set of channels shown together.
 
 The **Filter channels** box above the list shows only channels whose name contains
 the text (case-insensitive), updating as you type. It only hides rows: hidden
-channels stay in the composite, and the Global actions and groups still apply to
-every channel.
+channels stay in the composite and groups still apply to every channel. The
+section of whole-panel actions follows the filter: while one is active it is titled
+**Listed channels** and Select all, Deselect all, Auto range all, Full range all,
+Fold all and Unfold all act only on the channels in the list.
 
 Each group row also has a funnel button that limits the list to that group's
 channels. Several groups can be active at once, and the filters combine like this:
