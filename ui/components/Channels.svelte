@@ -50,6 +50,7 @@
           <button class="measure-button channel-auto" onclick={() => $model.range(index, true)}>Auto</button>
         </div>
       {/each}
+      {#if $model.status}<div class="measure-note">{$model.status}</div>{/if}
       <div class="measure-button-row">
         <button class="measure-button" onclick={() => $model.range(null, true)}>Auto range all</button>
         <button class="measure-button" onclick={() => $model.range(null, false)}>Full range all</button>

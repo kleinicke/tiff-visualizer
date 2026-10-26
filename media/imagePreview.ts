@@ -617,7 +617,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	function hasCompositableChannels(): boolean {
 		if (channelPlanes.length >= 2) { return true; }
-		const ome = tiffProcessor.rawTiffData?.ome || tiffProcessor.omeMetadata;
+		const ome = tiffProcessor.rawTiffData?.ome || null;
 		const source = getMeasurementSource();
 		if (!source) { return false; }
 		const sourceChannels = source.channels || 1;
