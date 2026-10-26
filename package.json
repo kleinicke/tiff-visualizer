@@ -426,6 +426,15 @@
           },
           "description": "Channel tints by channel number as shown in the Channels panel (starting at 1), for example {\"1\": \"#00ff00\"}. Takes precedence over colours stored in the file."
         },
+        "tiffVisualizer.channels.groups": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": ["string", "integer"] }
+          },
+          "description": "Named groups of channels for the Channels panel, for example {\"T Cells\": [\"CD3e\", \"CD8\", \"CD4\"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,

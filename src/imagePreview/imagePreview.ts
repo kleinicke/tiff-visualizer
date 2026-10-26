@@ -425,6 +425,7 @@ export class ImagePreview extends MediaPreview {
 			autoComposite: config.get<boolean>('autoComposite', false),
 			colorsByName: config.get<Record<string, string>>('colorsByName', {}),
 			colorsByNumber: config.get<Record<string, string>>('colorsByNumber', {}),
+			groups: config.get<Record<string, unknown>>('groups', {}),
 		};
 	}
 

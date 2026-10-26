@@ -27,6 +27,8 @@ export interface ChannelDefaults {
     colorsByName?: Record<string, string>;
     /** Tint by 1-based channel number, as the panel labels them, e.g. { "1": "#00ff00" }. */
     colorsByNumber?: Record<string, string>;
+    /** Named channel groups; members are channel names or 1-based numbers. Validated by the viewer. */
+    groups?: Record<string, unknown>;
 }
 
 export interface ImageSettings extends Partial<DisplaySettings> {

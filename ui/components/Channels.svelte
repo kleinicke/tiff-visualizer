@@ -22,9 +22,38 @@
     <button class="measure-chip" class:active={$model.composite} title="Show all visible channels at once, additively blended (C)" onclick={$model.toggleComposite}>Composite</button>
     <button class="measure-close" title="Close the channels panel" onclick={$model.close}>×</button>
   </div>
+  {#if $model.planes.length >= 2}
+    <div class="channels-global">
+      <div class="channels-section-title">Global</div>
+      <div class="channels-toolbar">
+        <button class="measure-button" title="Switch every channel on" onclick={$model.selectAll}>Select all</button>
+        <button class="measure-button" title="Switch every channel off" onclick={$model.deselectAll}>Deselect all</button>
+        <button class="measure-button" title="Percentile range for every channel" onclick={() => $model.range(null, true)}>Auto range all</button>
+        <button class="measure-button" title="True minimum to maximum for every channel" onclick={() => $model.range(null, false)}>Full range all</button>
+      </div>
+    </div>
+  {/if}
   <div class="channels-body">
     {#if $model.planes.length < 2}<div class="measure-note">{$model.status ?? 'This image has a single channel.'}</div>
     {:else}
+      {#if $model.groups.length}
+        <details class="channel-groups" open>
+          <summary>Groups ({$model.groups.length})</summary>
+          {#each $model.groups as group (group.name)}
+            {@const unusable = !$model.composite || group.found === 0}
+            <div class="channel-group-row" class:disabled={!$model.composite} class:soloed={group.soloed}>
+              <input type="checkbox" disabled={unusable} checked={group.state === 'all'} indeterminate={group.state === 'some'}
+                title={group.state === 'all' ? 'Switch this group off' : 'Switch every channel in this group on'} onchange={() => $model.toggleGroup(group.name)}>
+              <span class="channel-name" title={group.name}>{group.name}</span>
+              <span class="channel-group-count" title={`${group.on} of ${group.found} channels on${group.missing.length ? `. Not found: ${group.missing.join(', ')}` : ''}`}>{group.on}/{group.found}</span>
+              <button class="measure-chip channel-solo" class:active={group.soloed} disabled={unusable}
+                title="Show only the channels in this group, switching them on if they are off. The other channels keep their settings." onclick={() => $model.soloGroup(group.name)}>Solo</button>
+            </div>
+            {#if group.missing.length}<div class="measure-note">{group.name}: not found — {group.missing.join(', ')}</div>{/if}
+          {/each}
+          {#if !$model.composite}<div class="measure-note">Turn on Composite to use groups.</div>{/if}
+        </details>
+      {/if}
       {#each $model.planes as plane, index (plane.index)}
         {@const setting = $model.settings[index]}
         <div class="channel-row" class:dimmed={$model.composite && $model.solo !== null && $model.solo !== plane.index} class:current={$model.current === plane.index}>
@@ -32,7 +61,7 @@
             <input type="checkbox" checked={setting.visible} title="Include this channel in the composite" onchange={e => $model.update(index, { visible: e.currentTarget.checked })}>
             <input type="color" class="channel-swatch" value={setting.color} title="Channel tint" oninput={e => $model.update(index, { color: e.currentTarget.value }, true)} onchange={e => $model.update(index, { color: e.currentTarget.value })}>
             <span class="channel-name" title={plane.name}>{plane.name}</span>
-            <button class="measure-chip channel-solo" class:active={$model.composite ? $model.solo === plane.index : $model.current === plane.index} title={$model.composite ? 'Show only this channel. Solo is a view, not a change to the settings.' : 'Show this channel on its own. The channel selector follows.'} onclick={() => $model.setSolo(plane.index)}>{$model.composite ? 'Solo' : 'Show'}</button>
+            <button class="measure-chip channel-solo" class:active={$model.composite ? $model.solo === plane.index : $model.current === plane.index} title={$model.composite ? 'Show only this channel, switching it on if it is off. The other channels keep their settings.' : 'Show this channel on its own. The channel selector follows.'} onclick={() => $model.setSolo(plane.index)}>{$model.composite ? 'Solo' : 'Show'}</button>
           </div>
           <div class="channel-range">
             {#each ['min', 'max'] as key}
@@ -50,12 +79,6 @@
           <button class="measure-button channel-auto" onclick={() => $model.range(index, true)}>Auto</button>
         </div>
       {/each}
-      {#if $model.status}<div class="measure-note">{$model.status}</div>{/if}
-      <div class="measure-button-row">
-        <button class="measure-button" onclick={() => $model.range(null, true)}>Auto range all</button>
-        <button class="measure-button" onclick={() => $model.range(null, false)}>Full range all</button>
-        <button class="measure-button" onclick={$model.showAll}>Show all</button>
-      </div>
       <div class="measure-note">{$model.composite ? `Channels are added together, each scaled by its own range — the way emission combines at the detector. Compositing on ${$model.backend === 'webgpu' ? 'the GPU (WebGPU)' : 'the CPU'}.` : 'Composite is off; the image is shown as decoded. Turn it on to blend the channels.'}</div>
     {/if}
   </div>

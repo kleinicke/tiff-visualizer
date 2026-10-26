@@ -6,6 +6,7 @@
 - Improve NumPy npy and npz dataset loading and navigation
 - rearrange right click menu
 - Add `tiffVisualizer.channels.autoComposite`, `colorsByName` and `colorsByNumber` settings: open OME-TIFF and ImageJ channel stacks in the composite view and tint channels by name or number
+- Add channel groups (`tiffVisualizer.channels.groups`): switch a named set of channels on or off, or solo it, from a Groups section in the Channels panel; add Deselect all and move the whole-panel actions to the top
 - Read channel names from ImageJ TIFF metadata (slice labels), so ImageJ stacks show the same channel names as their OME-TIFF equivalent
 - Fix the Channels menu entry missing on first open of multi-page OME-TIFF and ImageJ stacks, and show loading progress in the Channels panel
 

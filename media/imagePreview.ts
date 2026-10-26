@@ -42,6 +42,8 @@ import {
 	compositeChannels,
 	defaultChannelSettings,
 	planesFromInterleaved,
+	parseChannelGroups,
+	resolveChannelGroups,
 	suggestedChannelColors,
 	type ChannelPlane,
 	type ChannelSettings,
@@ -345,6 +347,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let channelPlanes: ChannelPlane[] = [];
 	let channelSettings: ChannelSettings[] = [];
 	let channelSolo: number | null = null;
+	// A configured group isolated as a whole. Exclusive with `channelSolo`.
+	let channelGroupSolo: string | null = null;
+	// Channels a Solo switched on because they were off. Clearing the solo
+	// switches them off again, so pressing Solo twice leaves things as they were.
+	let soloShownPositions: number[] = [];
 	// The channel the selector overlay shows while the composite is on. It
 	// follows Solo and survives clearing it, so the slider does not jump back.
 	let compositeSelectorChannel: number | null = null;
@@ -365,6 +372,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// Which file/Z/T the loaded OME planes belong to. They contain every
 	// channel, so moving the C selector must not throw them away.
 	let channelPlanesKey: string | null = null;
+	// `tiffVisualizer.channels.groups`: named sets of channels for the panel.
+	let channelGroups = parseChannelGroups(settingsManager.settings.channelDefaults?.groups);
+	let channelGroupsKey = JSON.stringify(settingsManager.settings.channelDefaults?.groups ?? null);
 	let compositeRenderHandle = 0;
 	// WebGPU is tried first and the CPU compositor is the fallback and the
 	// correctness reference. There is deliberately no WebGL2 variant: both paths
@@ -396,6 +406,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		const previousSettings = channelSettings;
 		channelPlanes = [];
 		channelSettings = [];
+		soloShownPositions = [];
 		channelStatus = null;
 
 		const source = getMeasurementSource();
@@ -525,7 +536,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// falls back to black here rather than silently becoming invisible.
 		const resolved = resolveNanColor(settingsManager.settings);
 		const nanColor: [number, number, number] = [resolved.r, resolved.g, resolved.b];
-		const options = { soloIndex: channelSolo, nanColor };
+		const options = { soloIndex: activeSolo(), nanColor };
 
 		// Kick off device creation once, in the background. The first composite
 		// therefore lands on the CPU rather than waiting on an adapter, and every
@@ -580,7 +591,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	const channelsPanel = new ChannelsPanel({
 		getPlanes: () => { rebuildChannelPlanes(); return channelPlanes; },
 		getSettings: () => channelSettings,
-		setSettings: settings => { channelSettings = settings; },
+		setSettings: settings => {
+			channelSettings = settings;
+			// A channel the user switches off by hand is theirs to decide about.
+			soloShownPositions = soloShownPositions.filter(position => settings[position]?.visible);
+		},
 		isComposite: () => compositeEnabled,
 		setComposite: enabled => {
 			compositeEnabled = enabled;
@@ -604,10 +619,31 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			updateTiffPageOverlay();
 			scheduleSaveState();
 		},
+		getGroups: () => resolveChannelGroups(channelGroups, channelPlanes),
+		getGroupSolo: () => channelGroupSolo,
+		setGroupSolo: name => {
+			channelGroupSolo = name;
+			// One solo at a time. The selector keeps its position: a group is
+			// several channels, which a single slider cannot show.
+			if (name !== null) {
+				channelSolo = null;
+				// Soloing a group switches all its channels on.
+				soloShowChannels(resolveChannelGroups(channelGroups, channelPlanes).find(group => group.name === name)?.positions ?? []);
+			} else {
+				soloRestoreChannels();
+			}
+		},
 		getSolo: () => channelSolo,
 		setSolo: index => {
 			channelSolo = index;
-			if (index !== null) { compositeSelectorChannel = index; }
+			if (index !== null) {
+				compositeSelectorChannel = index;
+				channelGroupSolo = null;
+				// Soloing a channel that is switched off turns it on.
+				soloShowChannels(channelPlanes.flatMap((plane, position) => plane.index === index ? [position] : []));
+			} else {
+				soloRestoreChannels();
+			}
 			// The selector follows Solo.
 			updateTiffPageOverlay();
 		},
@@ -659,6 +695,44 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	}
 
 	/**
+	 * A solo is starting: first undo what the previous solo switched on, then
+	 * switch on whichever of these channels are off, remembering them.
+	 */
+	function soloShowChannels(positions: readonly number[]): void {
+		soloRestoreChannels();
+		const off = positions.filter(position => channelSettings[position] && !channelSettings[position].visible);
+		if (!off.length) { return; }
+		channelSettings = channelSettings.map((setting, position) => off.includes(position) ? { ...setting, visible: true } : setting);
+		soloShownPositions = off;
+	}
+
+	/** The solo ended: switch off the channels it had switched on. */
+	function soloRestoreChannels(): void {
+		if (!soloShownPositions.length) { return; }
+		const shown = soloShownPositions;
+		soloShownPositions = [];
+		channelSettings = channelSettings.map((setting, position) => shown.includes(position) ? { ...setting, visible: false } : setting);
+	}
+
+	/**
+	 * What the composite is restricted to: the soloed group's channels, the
+	 * single soloed channel, or null for no restriction. A group that matches no
+	 * channel is ignored rather than blanking the image.
+	 */
+	function activeSolo(): number | number[] | null {
+		if (channelGroupSolo !== null) {
+			const group = resolveChannelGroups(channelGroups, channelPlanes).find(entry => entry.name === channelGroupSolo);
+			if (group && group.positions.length) { return group.positions.map(position => channelPlanes[position].index); }
+		}
+		return channelSolo;
+	}
+
+	function soloAllows(planeIndex: number): boolean {
+		const solo = activeSolo();
+		return solo === null || (typeof solo === 'number' ? solo === planeIndex : solo.includes(planeIndex));
+	}
+
+	/**
 	 * The channel the selector overlay is showing, for the panel to highlight.
 	 * Null when the image has no selector for channels (the panel then behaves
 	 * as it always did).
@@ -684,6 +758,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	function soloFromSelector(index: number): void {
 		channelSolo = index;
+		channelGroupSolo = null;
+		soloShowChannels(channelPlanes.flatMap((plane, position) => plane.index === index ? [position] : []));
 		compositeSelectorChannel = index;
 		scheduleCompositeRender();
 		scheduleSaveState();
@@ -698,6 +774,18 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	/** Keep the Channels panel in step with the selector overlay. */
 	function syncChannelPanel(): void {
 		if (channelsPanel.isVisible()) { channelsPanel.render(); }
+	}
+
+	/** React to an edit of `tiffVisualizer.channels.groups` without reopening the image. */
+	function applyChannelGroups(raw: unknown): void {
+		const key = JSON.stringify(raw ?? null);
+		if (key === channelGroupsKey) { return; }
+		channelGroupsKey = key;
+		channelGroups = parseChannelGroups(raw);
+		if (channelGroupSolo !== null && !channelGroups.some(group => group.name === channelGroupSolo)) { channelGroupSolo = null; }
+		soloShownPositions = [];
+		if (compositeEnabled) { scheduleCompositeRender(); }
+		channelsPanel.render();
 	}
 
 	/**
@@ -931,6 +1019,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (soloResource !== channelSoloResource) {
 			channelSoloResource = soloResource;
 			channelSolo = null;
+			channelGroupSolo = null;
+			soloShownPositions = [];
 			compositeSelectorChannel = null;
 		}
 		applyAutoComposite();
@@ -1484,6 +1574,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			channelSettings = persistedState.channelSettings;
 		}
 		if (typeof persistedState.channelSolo === 'number') { channelSolo = persistedState.channelSolo; compositeSelectorChannel = channelSolo; }
+		if (typeof persistedState.channelGroupSolo === 'string') { channelGroupSolo = persistedState.channelGroupSolo; }
 		compositeEnabled = persistedState.compositeEnabled === true;
 		compositeChosenByUser = persistedState.compositeChosenByUser === true;
 		compositeAuto = persistedState.compositeAuto === true;
@@ -1588,6 +1679,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			compositeAuto,
 			channelSettings,
 			channelSolo,
+			channelGroupSolo,
 			// ROIs and their calibration ride along with the webview state.
 			// The JSON sidecar is the durable store, but a webview can be
 			// reloaded for reasons the user never asked for — moving the tab,
@@ -3736,6 +3828,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const updateApplyStart = performance.now();
 				const changes = settingsManager.updateSettings(message.settings);
+				if (message.settings && 'channelDefaults' in message.settings) {
+					applyChannelGroups(message.settings.channelDefaults?.groups);
+				}
 				if (navigationView) {
 					navigationModel = { ...navigationModel, hints: navKeyHints(navControls) };
 					navigationView.update(navigationModel);
@@ -4564,7 +4659,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					min: channelSettings[index]?.min ?? 0,
 					max: channelSettings[index]?.max ?? 1,
 					visible: (channelSettings[index]?.visible ?? true)
-						&& (channelSolo === null || channelSolo === plane.index),
+						&& soloAllows(plane.index),
 					data: plane.data,
 				})));
 				return;
@@ -5937,6 +6032,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		compositeChosenByUser = true;
 		compositeAuto = false;
 		channelSolo = null;
+		channelGroupSolo = null;
+		soloShownPositions = [];
 		await updateImageWithNewSettings();
 		channelsPanel.render();
 		updateTiffPageOverlay();

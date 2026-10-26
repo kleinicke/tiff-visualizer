@@ -60,7 +60,7 @@ test('Svelte channels retain slider identity, solo and composite state', async (
   });
   await expect(slider).toHaveValue('40');
   expect(await slider.evaluate(element => element === (window as any).channelSlider)).toBe(true);
-  await panel.getByRole('button', { name: 'Show all', exact: true }).click();
+  await panel.getByRole('button', { name: 'Select all', exact: true }).click();
   await expect(panel.locator('.channel-row.dimmed')).toHaveCount(0);
 });
 

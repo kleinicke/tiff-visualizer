@@ -360,6 +360,40 @@ async function main() {
 		assert.deepStrictEqual(composite.suggestedChannelColors(planes, undefined, undefined), [undefined, undefined]);
 	});
 
+	test('groups are parsed, bad entries dropped, and members matched by name or number', () => {
+		const groups = composite.parseChannelGroups({
+			'T Cells': ['CD3e', 'cd8', 'CD4', 'CD3'],
+			Numbers: [1, '3', 9, 0, 1.5, ''],
+			Empty: [],
+			Broken: 'CD3e',
+			' ': ['CD3e'],
+		});
+		assert.deepStrictEqual(groups.map(group => group.name), ['T Cells', 'Numbers']);
+		const planes = ['DAPI', 'CD3e', 'CD8', 'CD4'].map((name, index) => plane(index, name, [1], 1, 1));
+		const [tCells, numbers] = composite.resolveChannelGroups(groups, planes);
+		assert.deepStrictEqual(tCells.positions, [1, 2, 3], 'names match case-insensitively and exactly');
+		assert.deepStrictEqual(tCells.missing, ['CD3'], 'a name that matches nothing is reported, not guessed');
+		assert.strictEqual(tCells.total, 4);
+		assert.deepStrictEqual(numbers.positions, [0, 2], 'numbers are 1-based; 9 is out of range');
+		assert.deepStrictEqual(numbers.missing, ['9']);
+		assert.deepStrictEqual(composite.parseChannelGroups({}), []);
+		assert.deepStrictEqual(composite.parseChannelGroups(undefined), []);
+	});
+
+	test('solo accepts several channels at once', () => {
+		const planes = [0, 1, 2].map(index => plane(index, `C${index}`, [1], 1, 1));
+		const settings = planes.map(() => ({ visible: true, color: '#ffffff', opacity: 1, min: 0, max: 1 }));
+		const indices = options => composite.prepareChannels(planes, settings, 1, 1, options).length;
+		assert.strictEqual(indices({ solo: [0, 2] }), 2);
+		assert.strictEqual(indices({ solo: [] }), 0);
+		assert.strictEqual(indices({ solo: 1 }), 1);
+		assert.strictEqual(indices({ solo: null }), 3);
+		settings[2].visible = false;
+		assert.strictEqual(indices({ solo: [0, 2] }), 1, 'solo is a view over the visible channels');
+		const image = composite.compositeChannels(planes, settings, 1, 1, { soloIndex: [0, 1] });
+		assert.strictEqual(image.data[0], 255);
+	});
+
 	console.log('\n' + '─'.repeat(60));
 	if (failed === 0) {
 		console.log(`🎉 All ${passed} channel compositing tests passed.`);

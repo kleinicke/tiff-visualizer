@@ -2786,6 +2786,69 @@ body img {
 	min-height: 0;
 }
 
+/* Whole-panel actions stay put while the channel list scrolls. */
+.channels-global {
+	padding: 8px 12px 10px;
+	border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.channels-section-title,
+.channel-groups > summary {
+	text-align: left;
+	font-weight: 600;
+}
+
+.channels-section-title {
+	padding: 0 0 6px;
+}
+
+.channels-toolbar {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 5px;
+}
+
+/* Outlined, like the Solo chips, so they read as buttons in every theme. */
+.channels-toolbar .measure-button {
+	width: 100%;
+	white-space: nowrap;
+	background: transparent;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+	margin: 0;
+}
+
+.channels-toolbar .measure-button:hover:not(:disabled) {
+	background: var(--vscode-toolbar-hoverBackground, #ffffff14);
+}
+
+.channel-groups {
+	text-align: left;
+	margin: 0 0 6px;
+	padding-bottom: 6px;
+	border-bottom: 1px solid var(--vscode-panel-border, #33333380);
+}
+
+.channel-groups > summary {
+	cursor: pointer;
+	padding: 2px 0 4px;
+}
+
+.channel-group-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 3px 0;
+}
+
+.channel-group-row.disabled {
+	opacity: 0.45;
+}
+
+.channel-group-count {
+	opacity: 0.65;
+	font-size: 0.9em;
+}
+
 .channel-row {
 	padding: 6px 0;
 	border-bottom: 1px solid var(--vscode-panel-border, #33333380);
