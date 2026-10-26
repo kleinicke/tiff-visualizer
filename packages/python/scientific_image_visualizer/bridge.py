@@ -97,11 +97,11 @@ class BrowserBridge:
             return (
                 "closed"
                 if self.closed
+                else "awaiting_renderer"
+                if not self.last_seen
                 else "connected"
                 if time.monotonic() - self.last_seen < 45
                 else "disconnected"
-                if self.last_seen
-                else "awaiting_renderer"
             )
 
     def close(self):
