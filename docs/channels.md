@@ -37,7 +37,8 @@ Two storage layouts, handled the same way:
   appears immediately and the composite fills in.
 
 Channel names and tints come from OME `Channel/@Name` and `Channel/@Color`
-where the file provides them: the acquisition software knows which fluorophore
+where the file provides them (for ImageJ stacks, the names are the slice
+labels stored in the file's ImageJ metadata): the acquisition software knows which fluorophore
 this is and we do not. Files without that metadata get a distinguishable
 fallback palette, and RGB images get "Red", "Green", "Blue".
 

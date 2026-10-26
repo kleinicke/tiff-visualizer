@@ -27,12 +27,52 @@ async function main() {
 		parseOmeXml,
 		parseOmeXmlImages,
 		parseImageJMetadata,
+		parseImageJLabels,
 	} = await import(path.join('..', 'out', 'media', 'modules', 'ome-tiff.js').replace(/\\/g, '/'));
 	const imageJ = parseImageJMetadata('ImageJ=1.11a\nimages=120\nchannels=2\nslices=60\nhyperstack=true\n', 256, 256, 120);
 	assert.ok(imageJ);
 	assert.equal(omeCoordinatesToIfd(imageJ, { c: 1, z: 12, t: 0 }), 25);
 	assert.deepEqual(omeIfdToCoordinates(imageJ, 119), { c: 1, z: 59, t: 0 });
 	assert.equal(parseImageJMetadata('ImageJ=1.11a\nimages=120\nchannels=2\nslices=60', 256, 256, 119), null);
+
+	// ImageJ keeps channel names as slice labels in private tags 50838 (byte
+	// counts) and 50839 (data). Build both the way ImageJ and tifffile write them.
+	function imageJTags(labels, littleEndian) {
+		const text = value => {
+			const out = [];
+			for (const character of value) { out.push(littleEndian ? [character.charCodeAt(0) & 255, character.charCodeAt(0) >> 8] : [character.charCodeAt(0) >> 8, character.charCodeAt(0) & 255]); }
+			return out.flat();
+		};
+		const code = value => (littleEndian ? [...value].reverse().join('') : value);
+		const word = value => (littleEndian ? [value & 255, 0, 0, 0] : [0, 0, 0, value]);
+		const header = [...Buffer.from(code('IJIJ')), ...Buffer.from(code('info')), ...word(1), ...Buffer.from(code('labl')), ...word(labels.length)];
+		const info = text('x=1');
+		const records = labels.map(text);
+		const data = [...header, ...info, ...records.flat()];
+		const counts = [header.length, info.length, ...records.map(record => record.length)];
+		return [
+			{ tag: 50838, name: 'Unknown(50838)', group: 'TIFF', value: counts.join(', ') },
+			{ tag: 50839, name: 'Unknown(50839)', group: 'TIFF', value: data.join(', ') },
+		];
+	}
+	for (const littleEndian of [true, false]) {
+		const labels = ['DAPI', 'Granzyme B', 'CD3e'];
+		assert.deepEqual(parseImageJLabels(imageJTags(labels, littleEndian)), labels, `labels (${littleEndian ? 'II' : 'MM'})`);
+	}
+	assert.deepEqual(parseImageJLabels(imageJTags(['Ünï', ''], true)), ['Ünï', '']);
+	assert.deepEqual(parseImageJLabels([]), []);
+	assert.deepEqual(parseImageJLabels([{ tag: 50838, name: '', group: '', value: '4, 8' }, { tag: 50839, name: '', group: '', value: '1, 2, 3, 4' }]), [], 'wrong magic');
+	const truncated = imageJTags(['DAPI', 'CD44'], true);
+	truncated[1].value = truncated[1].value.split(', ').slice(0, 36).join(', ');
+	assert.deepEqual(parseImageJLabels(truncated), ['DAPI'], 'truncated data keeps the records that are complete');
+
+	const named = parseImageJMetadata('ImageJ=1.53v\nimages=3\nchannels=3\nmode=color\n', 8, 8, 3, ['DAPI', 'GFP', 'RFP']);
+	assert.deepEqual(named.channels.map(channel => channel.name), ['DAPI', 'GFP', 'RFP']);
+	// One label per plane of a hyperstack: the first C name the channels.
+	const perPlane = parseImageJMetadata('ImageJ=1.53v\nimages=4\nchannels=2\nslices=2\n', 8, 8, 4, ['A', 'B', 'A', 'B']);
+	assert.deepEqual(perPlane.channels.map(channel => channel.name), ['A', 'B']);
+	assert.deepEqual(parseImageJMetadata('ImageJ=1.53v\nimages=3\nchannels=3\n', 8, 8, 3, ['only', 'two']).channels.map(channel => channel.name), ['', '', ''], 'a label count that fits neither is ignored');
+	assert.deepEqual(parseImageJMetadata('ImageJ=1.53v\nimages=2\nchannels=2\n', 8, 8, 2, ['', '']).channels.map(channel => channel.name), ['', ''], 'all-empty labels are not names');
 
 	const xml = `<?xml version="1.0" encoding="UTF-8"?>
 	<ome:OME xmlns:ome="http://www.openmicroscopy.org/Schemas/OME/2016-06" Creator="Unit &amp; Integration">

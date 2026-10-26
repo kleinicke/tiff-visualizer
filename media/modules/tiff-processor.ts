@@ -18,7 +18,7 @@ import { parseGeoReference, type GeoReference } from './geo-reference.js';
 import { SettingsManager, ImageSettings } from './settings-manager.js';
 import { DeferredRenderOptions, RenderOptions, Stats } from './types.js';
 import { DecodeWorkerClient } from './decode-worker-client.js';
-import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml, parseImageJMetadata } from './ome-tiff.js';
+import { findOmeXmlInTags, OmeBinaryOnly, OmeMetadata, parseOmeBinaryOnly, parseOmeXml, parseImageJLabels, parseImageJMetadata } from './ome-tiff.js';
 import { loadGeoTiff } from './lazy-vendor-loader.js';
 import { tiffFormatTypeFor, tiffNeedsFloatCarrier, tiffTypeMax } from './tiff-format-utils.js';
 export { tiffFormatTypeFor, tiffNeedsFloatCarrier, tiffTypeMax } from './tiff-format-utils.js';
@@ -466,7 +466,8 @@ export class TiffProcessor {
 		if (ome) { this.omeXml = description; this.omeMetadata = ome; return; }
 		const dimension = (id: number, name: string) => Number(this._lastAllTags.find(tag => tag.tag === id || tag.name === name)?.value);
 		this.omeMetadata = this.omeMetadata || parseImageJMetadata(description,
-			dimension(256, 'ImageWidth'), dimension(257, 'ImageLength'), this.pageCount);
+			dimension(256, 'ImageWidth'), dimension(257, 'ImageLength'), this.pageCount,
+			parseImageJLabels(this._lastAllTags));
 	}
 
 	/**
