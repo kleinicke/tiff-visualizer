@@ -70,7 +70,9 @@ export const CHANNEL_PALETTE = [
 export function defaultChannelColor(index: number, suggested?: string): string {
 	// OME `Channel/@Color` is authoritative when the file provides it: the
 	// acquisition software knows which fluorophore this is and we do not.
-	if (suggested && /^#[0-9a-f]{6}$/i.test(suggested)) { return suggested; }
+	// OME writes RGBA, so the file colour arrives as #rrggbbaa; alpha is not a tint.
+	const opaque = suggested && /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(suggested);
+	if (opaque) { return `#${opaque[1]}`; }
 	return CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
 }
 

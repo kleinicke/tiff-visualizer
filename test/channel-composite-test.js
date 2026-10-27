@@ -332,6 +332,13 @@ async function main() {
 
 	console.log('\n🎨 Configured channel colours');
 
+	test('an OME file colour (#rrggbbaa) tints the channel, without its alpha', () => {
+		assert.strictEqual(composite.defaultChannelColor(0, '#00ff00ff'), '#00ff00');
+		assert.strictEqual(composite.defaultChannelColor(0, '#0000FF80'), '#0000FF');
+		assert.strictEqual(composite.defaultChannelColor(0, '#abc'), composite.CHANNEL_PALETTE[0], 'a malformed colour falls back to the palette');
+		assert.strictEqual(composite.defaultChannelColor(1), composite.CHANNEL_PALETTE[1]);
+	});
+
 	test('a name match beats a number match, which beats the file colour', () => {
 		const planes = [plane(0, 'GFP', [0], 1, 1), plane(1, 'DAPI', [0], 1, 1), plane(2, 'RFP', [0], 1, 1)];
 		const colors = composite.suggestedChannelColors(
