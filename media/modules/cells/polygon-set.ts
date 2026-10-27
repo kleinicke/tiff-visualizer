@@ -97,3 +97,44 @@ export function meanPolygonSize(set: PolygonSet): number {
 	}
 	return sum / seen;
 }
+
+/**
+ * Polygons from typed vertex arrays grouped by a numeric label (consecutive
+ * vertices share a label). `rowOfLabel` maps a label to a table row; scene
+ * pixels are the file's units times `scale`.
+ */
+export function buildPolygonSetFromLabels(
+	labels: Int32Array,
+	xs: ArrayLike<number>,
+	ys: ArrayLike<number>,
+	rowOfLabel: (label: number) => number,
+	scale: number,
+): PolygonSet {
+	const total = labels.length;
+	let count = 0;
+	for (let index = 0; index < total; index++) { if (index === 0 || labels[index] !== labels[index - 1]) { count++; } }
+	const offsets = new Uint32Array(count + 1);
+	const xy = new Float32Array(total * 2);
+	const bounds = new Float32Array(count * 4);
+	const rows = new Int32Array(count);
+	let polygon = -1;
+	for (let index = 0; index < total; index++) {
+		if (index === 0 || labels[index] !== labels[index - 1]) {
+			polygon++;
+			offsets[polygon] = index;
+			rows[polygon] = rowOfLabel(labels[index]);
+			bounds[polygon * 4] = bounds[polygon * 4 + 1] = Infinity;
+			bounds[polygon * 4 + 2] = bounds[polygon * 4 + 3] = -Infinity;
+		}
+		const x = xs[index] * scale, y = ys[index] * scale;
+		xy[index * 2] = x;
+		xy[index * 2 + 1] = y;
+		const at = polygon * 4;
+		if (x < bounds[at]) { bounds[at] = x; }
+		if (y < bounds[at + 1]) { bounds[at + 1] = y; }
+		if (x > bounds[at + 2]) { bounds[at + 2] = x; }
+		if (y > bounds[at + 3]) { bounds[at + 3] = y; }
+	}
+	offsets[count] = total;
+	return { count, offsets, xy, bounds, rows };
+}

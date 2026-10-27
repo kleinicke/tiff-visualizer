@@ -15,11 +15,12 @@ const compressors = {
 };
 
 /** Read the named columns (all when omitted) as plain arrays, in file order. */
-export async function readParquetColumns(buffer: ArrayBuffer, columns?: string[]): Promise<Map<string, unknown[]>> {
+export async function readParquetColumns(buffer: ArrayBuffer, columns?: string[], rowEnd?: number): Promise<Map<string, unknown[]>> {
 	const chunks = new Map<string, Chunk[]>();
 	await parquetRead({
 		file: buffer,
 		columns,
+		rowEnd,
 		compressors,
 		onChunk: (chunk: { columnName: string; columnData: ArrayLike<unknown>; rowStart: number }) => {
 			const list = chunks.get(chunk.columnName) ?? [];

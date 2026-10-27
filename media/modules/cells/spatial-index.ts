@@ -31,10 +31,10 @@ export class SpatialIndex {
 		this.minY = minY;
 		this.stamp = new Uint32Array(set.count);
 		const counts = new Uint32Array(this.columns * this.rowsCount + 1);
-		const spans: number[] = [];
+		const spans = new Int32Array(set.count * 4);
 		for (let polygon = 0; polygon < set.count; polygon++) {
 			const [c0, r0, c1, r1] = this.span(set.bounds[polygon * 4], set.bounds[polygon * 4 + 1], set.bounds[polygon * 4 + 2], set.bounds[polygon * 4 + 3]);
-			spans.push(c0, r0, c1, r1);
+			spans[polygon * 4] = c0; spans[polygon * 4 + 1] = r0; spans[polygon * 4 + 2] = c1; spans[polygon * 4 + 3] = r1;
 			for (let r = r0; r <= r1; r++) { for (let c = c0; c <= c1; c++) { counts[r * this.columns + c + 1]++; } }
 		}
 		for (let i = 1; i < counts.length; i++) { counts[i] += counts[i - 1]; }

@@ -45,6 +45,16 @@ When the bundle has `cells.parquet` and `cell_boundaries.parquet` (and optionall
 
 Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-patch.js` fixes a one-byte over-read in hyparquet's bit-packed decoder that breaks `cells.parquet`; the build fails loudly if hyparquet changes under it.
 
+### Whole-slide performance
+
+Everything is CPU-only (Canvas2D, no WebGL), so it works on a node without a GPU.
+
+- **Tile pyramid.** Zoomed out, cells are drawn into cached 256 px tiles (power-of-two levels, 640-tile LRU). Detail follows the cell size on screen: dots, then boxes, then simplified polygons, then full outlines. Dots are thinned when cells are denser than pixels. Tiles are painted within an 8 ms budget per frame; missing tiles fall back to a stale, parent or child tile while they fill.
+- **Live vector drawing** is used only when cells are at least 40 px across and at most 600 are visible.
+- **Fast Parquet path.** `parquet-fast.ts` decodes plain/ZSTD pages straight into typed arrays, and boundaries are grouped by `label_id` (validated against `cell_id`). Anything unexpected falls back to the general hyparquet reader.
+
+Synthetic benchmark in headless software Chromium, 1M cells: warm frames under 0.2 ms, tile-filling and pan frames 8-16 ms. Loading 500k cells (12M vertices) took about 2.5-8 s depending on the machine. These are not real whole-slide or HPC measurements.
+
 ### Reusing it for other overlays
 
 `media/modules/cells/` and `ui/components/cells/` know nothing about Xenium. A viewer needs a `PolygonSet` (with a table row per polygon) and a `CellTable`, then:

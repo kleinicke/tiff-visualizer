@@ -100,5 +100,38 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 			assert.ok(Math.abs(measured - area[cells.rows[polygon]]) / area[cells.rows[polygon]] < 0.05, `polygon ${polygon} area`);
 		}
 	}
+	{
+		const { buildPolygonSetFromLabels } = await load('cells/polygon-set');
+		const set = buildPolygonSetFromLabels(Int32Array.from([1, 1, 1, 2, 2, 2]), [0, 2, 2, 5, 7, 7], [0, 0, 2, 5, 5, 7], label => label - 1, 2);
+		assert.strictEqual(set.count, 2);
+		assert.deepStrictEqual(Array.from(set.offsets), [0, 3, 6]);
+		assert.deepStrictEqual(Array.from(set.rows), [0, 1]);
+		assert.deepStrictEqual(Array.from(set.bounds), [0, 0, 4, 4, 10, 10, 14, 14]);
+	}
+	{
+		const { TileCache } = await load('cells/cells-tiles');
+		assert.ok(TileCache.levelFor(1) === 0);
+		assert.strictEqual(TileCache.levelFor(0.5), -1);
+		assert.strictEqual(TileCache.levelFor(0.3), -1);
+		assert.strictEqual(TileCache.levelFor(3), 2);
+		assert.ok(TileCache.levelFor(0.26) < TileCache.levelFor(0.6));
+	}
+	if (fs.existsSync(path.join(sample, 'cells.parquet'))) {
+		const read = file => { const b = fs.readFileSync(path.join(sample, file)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+		const outfile = path.join(os.tmpdir(), `parquet-fast-${process.pid}.mjs`);
+		await esbuild.build({
+			entryPoints: [path.join(__dirname, '..', 'media', 'modules', 'cells', 'parquet-fast.ts')],
+			bundle: true, format: 'esm', platform: 'node', outfile, plugins: [patchHyparquetEncoding()], logLevel: 'silent',
+		});
+		const { readPlainColumns } = await import(pathToFileURL(outfile).href);
+		const { readParquetColumns } = await bundledReader();
+		const file = read('cell_boundaries.parquet');
+		const fast = readPlainColumns(file, ['vertex_x', 'vertex_y', 'label_id']);
+		const slow = await readParquetColumns(file, ['vertex_x', 'vertex_y', 'label_id']);
+		for (const name of ['vertex_x', 'vertex_y', 'label_id']) {
+			assert.strictEqual(fast.get(name).length, slow.get(name).length);
+			assert.ok(Array.from(fast.get(name)).every((value, index) => value === Number(slow.get(name)[index])), name);
+		}
+	}
 	console.log('xenium cells tests passed');
 })().catch(error => { console.error(error); process.exit(1); });
