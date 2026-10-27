@@ -49,7 +49,7 @@ Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-pat
 
 Everything is CPU-only (Canvas2D, no WebGL), so it works on a node without a GPU.
 
-- **Tile pyramid.** Zoomed out, cells are drawn into cached 256 px tiles (power-of-two levels, 640-tile LRU). Detail follows the cell size on screen: dots, then boxes, then simplified polygons, then full outlines. Dots are thinned when cells are denser than pixels. Tiles are painted within an 8 ms budget per frame; missing tiles fall back to a stale, parent or child tile while they fill.
+- **Tile pyramid.** Zoomed out, cells are drawn into cached 256 px tiles (power-of-two levels, 640-tile LRU). Detail follows the cell size on screen: centroid dots, then simplified polygons, then full outlines. Dots are thinned when cells are denser than pixels. Tiles are painted within an 8 ms budget per frame; missing tiles fall back to a stale, parent or child tile while they fill.
 - **Live vector drawing** is used only when cells are at least 40 px across and at most 600 are visible.
 - **Fast Parquet path.** `parquet-fast.ts` decodes plain/ZSTD pages straight into typed arrays, and boundaries are grouped by `label_id` (validated against `cell_id`). Anything unexpected falls back to the general hyparquet reader.
 

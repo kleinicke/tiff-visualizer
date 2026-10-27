@@ -21,17 +21,15 @@ const SELECTED_OUTLINE = '#ffd400';
 const LIVE_MIN_PX = 40;
 const LIVE_MAX_POLYGONS = 600;
 /**
- * How a tile draws a cell by its width in tile pixels: a dot, a box the size of
- * its bounds, a polygon cut to a few corners, then the full outline. Building a
+ * How a tile draws a cell by its width in tile pixels: a centroid dot, a polygon cut to a few corners, then the full outline. Building a
  * path costs per corner, so detail is spent only where cells are few per tile.
  */
-const DOT_PX = 2;
-const BOX_PX = 8;
-const FULL_PX = 16;
+const DOT_PX = 6;
+const FULL_PX = 12;
 const SIMPLE_VERTICES = 8;
 /** Time a frame may spend painting new tiles. */
 const TILE_BUDGET_MS = 8;
-type Detail = 'dots' | 'boxes' | 'simple' | 'full';
+type Detail = 'dots' | 'simple' | 'full';
 
 export interface CellsLayerOptions {
 	cells: PolygonSet;
@@ -138,7 +136,7 @@ export class CellsLayer {
 		const polygons = primary.index.visible(rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad, []);
 		context.lineJoin = 'round';
 		const pixels = primary.meanSize * scale;
-		const detail: Detail = pixels < DOT_PX ? 'dots' : pixels < BOX_PX ? 'boxes' : pixels < FULL_PX ? 'simple' : 'full';
+		const detail: Detail = pixels < DOT_PX ? 'dots' : pixels < FULL_PX ? 'simple' : 'full';
 		this.paint(context, primary, polygons, scale, detail, detail === 'full' && this.show === 'both' ? this.nuclei : null, [rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad]);
 	}
 
@@ -164,7 +162,7 @@ export class CellsLayer {
 		const isNucleus = primary.set === this.nuclei?.set;
 		const outline = isNucleus ? NUCLEUS_OUTLINE : CELL_OUTLINE;
 		if (detail === 'dots') {
-			const size = Math.max(2 / scale, primary.meanSize * 0.6);
+			const size = (pixelsPerCell < 4 ? 2 : 3) / scale;
 			context.globalAlpha = fills ? Math.max(this.opacity, 0.8) : 0.9;
 			for (const [bucket, members] of groups) {
 				context.fillStyle = fills ? this.plan.colors[bucket - 1] : outline;
@@ -174,24 +172,6 @@ export class CellsLayer {
 					context.rect((primary.set.bounds[at] + primary.set.bounds[at + 2]) / 2 - size / 2, (primary.set.bounds[at + 1] + primary.set.bounds[at + 3]) / 2 - size / 2, size, size);
 				}
 				context.fill();
-			}
-		} else if (detail === 'boxes') {
-			context.lineWidth = 1 / scale;
-			for (const [bucket, members] of groups) {
-				const path = new Path2D();
-				for (const polygon of members) {
-					const at = polygon * 4, b = primary.set.bounds;
-					path.rect(b[at], b[at + 1], Math.max(b[at + 2] - b[at], 1 / scale), Math.max(b[at + 3] - b[at + 1], 1 / scale));
-				}
-				if (fills) {
-					context.globalAlpha = this.opacity;
-					context.fillStyle = this.plan.colors[bucket - 1];
-					context.fill(path);
-				} else {
-					context.globalAlpha = 0.9;
-					context.strokeStyle = outline;
-					context.stroke(path);
-				}
 			}
 		} else {
 			context.lineWidth = 1 / scale;
