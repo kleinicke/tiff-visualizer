@@ -346,6 +346,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let channelSolo: number | null = null;
 	let compositeEnabled = false;
 	let channelGeneration = -1;
+	// Sibling pages of an OME/ImageJ stack decode in the background. The panel
+	// reports this rather than "single channel", which is what it would
+	// otherwise say for the whole time the pages are still arriving.
+	let channelStatus: string | null = null;
 	let compositeRenderHandle = 0;
 	// WebGPU is tried first and the CPU compositor is the fallback and the
 	// correctness reference. There is deliberately no WebGL2 variant: both paths
@@ -376,9 +380,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		channelPlanes = [];
 		channelSettings = [];
 		channelSolo = null;
+		channelStatus = null;
 
 		const source = getMeasurementSource();
-		if (!source) { return; }
+		// Nothing decoded yet: leave the generation unconsumed so the next
+		// caller retries instead of seeing "no channels" for the whole load.
+		if (!source) { channelGeneration = -1; return; }
 
 		const ome = tiffProcessor.rawTiffData?.ome || null;
 		const omeChannelCount = ome?.sizeC || 0;
@@ -423,10 +430,21 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 
 		const current = omeIfdToCoordinates(ome, tiffProcessor.pageIndex);
 		const planes: ChannelPlane[] = [];
+		const failed: number[] = [];
+		const setStatus = (text: string | null) => {
+			if (generation !== navigation.generation) { return; }
+			channelStatus = text;
+			channelsPanel.render();
+		};
+		// One read of the file serves every channel. The worker hands the bytes
+		// back untouched (`returnSource`), so a 41-channel stack costs one fetch
+		// rather than 41 full downloads of the whole file.
+		let fileBytes: ArrayBuffer | null = null;
 
 		for (let c = 0; c < channelCount; c++) {
 			if (generation !== navigation.generation) { return; }
 			const ifd = omeCoordinatesToIfd(ome, { ...current, c });
+			setStatus(`Loading channel ${c + 1} of ${channelCount}…`);
 
 			let decoded: { data?: ArrayLike<number>; width?: number; height?: number; channels?: number } | null = null;
 			if (ifd === tiffProcessor.pageIndex && tiffProcessor.rawTiffData?.data) {
@@ -440,16 +458,19 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				};
 			} else {
 				try {
-					const response = await fetch(src);
-					const buffer = await response.arrayBuffer();
-					const result = await decodeWorkerClient.decode('tiff', buffer, { pageIndex: ifd });
+					if (!fileBytes) { fileBytes = await (await fetch(src)).arrayBuffer(); }
+					const pending = decodeWorkerClient.decode('tiff', fileBytes, { pageIndex: ifd, returnSource: true });
+					fileBytes = null;
+					const result = pending ? await pending : null;
+					if (result?.sourceBuffer?.byteLength) { fileBytes = result.sourceBuffer; }
 					if (result?.ok && result.result?.data) { decoded = result.result; }
+					else { console.warn('[Channels] Decode of channel page failed', ifd, result?.error); }
 				} catch (error) {
 					console.warn('[Channels] Could not decode channel page', ifd, error);
 				}
 			}
 
-			if (!decoded?.data || !decoded.width || !decoded.height) { continue; }
+			if (!decoded?.data || !decoded.width || !decoded.height) { failed.push(c); continue; }
 			const pixels = decoded.width * decoded.height;
 			const stride = decoded.channels || 1;
 			const plane = new Float32Array(pixels);
@@ -463,7 +484,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			});
 		}
 
-		if (generation !== navigation.generation || planes.length < 2) { return; }
+		if (generation !== navigation.generation) { return; }
+		if (planes.length < 2) {
+			setStatus(`Could not load the channels of this image (${failed.length} of ${channelCount} pages failed to decode).`);
+			return;
+		}
+		channelStatus = failed.length ? `${failed.length} of ${channelCount} channels could not be decoded and are omitted.` : null;
 		channelPlanes = planes;
 		channelSettings = adoptChannelSettings(planes, channelSettings, {
 			colors: ome.channels?.map((channel: any) => channel?.colorCss),
@@ -554,6 +580,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		setSolo: index => { channelSolo = index; },
 		onChange: () => { scheduleCompositeRender(); scheduleSaveState(); },
 		getBackend: () => (channelGpuCompositor.isReady() ? channelBackend : 'cpu'),
+		getStatus: () => channelStatus,
 	});
 
 	/**
@@ -579,10 +606,23 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}));
 	}
 
-	/** True when the current image has channels worth compositing. */
+	/**
+	 * True when the current image has several channels, judged from metadata.
+	 *
+	 * Deliberately does not need the planes: OME and ImageJ stacks store each
+	 * channel as its own page, and those planes are fetched and decoded in the
+	 * background only once someone asks for them. Gating the menu entry on the
+	 * planes meant the first right-click started the load and showed no entry,
+	 * and the entry only appeared on a later click once decoding had finished.
+	 */
 	function hasCompositableChannels(): boolean {
-		rebuildChannelPlanes();
-		return channelPlanes.length >= 2;
+		if (channelPlanes.length >= 2) { return true; }
+		const ome = tiffProcessor.rawTiffData?.ome || null;
+		const source = getMeasurementSource();
+		if (!source) { return false; }
+		const sourceChannels = source.channels || 1;
+		if ((ome?.sizeC || 0) > 1 && sourceChannels === 1) { return true; }
+		return sourceChannels >= 2 && !!source.data;
 	}
 
 	// --- measurement subsystem ----------------------------------------------
@@ -761,6 +801,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// panel also calls rebuildChannelPlanes through its getPlanes callback.
 		channelGeneration = -1;
 		channelPlanes = [];
+		channelStatus = null;
 		channelSolo = null;
 		if (compositeEnabled || channelsPanel.isVisible()) { rebuildChannelPlanes(); }
 		if (compositeEnabled) { scheduleCompositeRender(); }

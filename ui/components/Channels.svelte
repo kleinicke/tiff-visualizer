@@ -23,7 +23,7 @@
     <button class="measure-close" title="Close the channels panel" onclick={$model.close}>×</button>
   </div>
   <div class="channels-body">
-    {#if $model.planes.length < 2}<div class="measure-note">This image has a single channel.</div>
+    {#if $model.planes.length < 2}<div class="measure-note">{$model.status ?? 'This image has a single channel.'}</div>
     {:else}
       {#each $model.planes as plane, index (plane.index)}
         {@const setting = $model.settings[index]}
@@ -50,6 +50,7 @@
           <button class="measure-button channel-auto" onclick={() => $model.range(index, true)}>Auto</button>
         </div>
       {/each}
+      {#if $model.status}<div class="measure-note">{$model.status}</div>{/if}
       <div class="measure-button-row">
         <button class="measure-button" onclick={() => $model.range(null, true)}>Auto range all</button>
         <button class="measure-button" onclick={() => $model.range(null, false)}>Full range all</button>
