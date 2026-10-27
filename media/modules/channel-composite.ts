@@ -1,6 +1,7 @@
 "use strict";
 
 import { getColormapLut } from './colormaps.js';
+import type { ChannelDefaults } from '../../shared/viewer-settings';
 
 /**
  * Multi-channel compositing — the scientific "Composite" / "Display Adjustment"
@@ -66,11 +67,119 @@ export const CHANNEL_PALETTE = [
 	'#ffffff',
 ];
 
-export function defaultChannelColor(index: number, suggested?: string): string {
+/**
+ * Tints for the channels of an ordinary RGB(A) image, found by the names
+ * `defaultChannelName` gives them. Red should look red; the palette is for
+ * fluorescence stacks, where its first entries are green and magenta-red.
+ */
+const RGB_NAME_TINTS: Readonly<Record<string, string>> = {
+	red: '#ff0000',
+	green: '#00ff00',
+	blue: '#0000ff',
+	alpha: '#ffffff',
+};
+
+export function defaultChannelColor(index: number, suggested?: string, name?: string): string {
 	// OME `Channel/@Color` is authoritative when the file provides it: the
 	// acquisition software knows which fluorophore this is and we do not.
-	if (suggested && /^#[0-9a-f]{6}$/i.test(suggested)) { return suggested; }
-	return CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
+	// OME writes RGBA, so the file colour arrives as #rrggbbaa; alpha is not a tint.
+	const opaque = suggested && /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(suggested);
+	if (opaque) { return `#${opaque[1]}`; }
+	const tint = name ? RGB_NAME_TINTS[name.trim().toLowerCase()] : undefined;
+	return tint ?? CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
+}
+
+/** A named set of channels: members are channel names or 1-based numbers. */
+export interface ChannelGroupConfig {
+	name: string;
+	members: (string | number)[];
+}
+
+/**
+ * Validate `tiffVisualizer.channels.groups`. Settings files are edited by hand,
+ * so malformed entries are dropped rather than thrown: one bad group must not
+ * stop the others, or the image, from working.
+ */
+export function parseChannelGroups(raw: unknown): ChannelGroupConfig[] {
+	const groups: ChannelGroupConfig[] = [];
+	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { return groups; }
+	for (const [rawName, list] of Object.entries(raw as Record<string, unknown>)) {
+		const name = rawName.trim();
+		if (!name || !Array.isArray(list)) { continue; }
+		const members = list.filter((member): member is string | number =>
+			(typeof member === 'string' && member.trim() !== '') || (Number.isInteger(member) && (member as number) >= 1));
+		if (members.length) { groups.push({ name, members }); }
+	}
+	return groups;
+}
+
+/**
+ * The tint each plane should start with, before the built-in palette.
+ *
+ * A colour the user configured is a standing decision about a fluorophore, so
+ * it beats the file's OME colour: a name match first, because names survive a
+ * change in channel order, then the 1-based channel number the panel shows.
+ * Invalid entries are ignored rather than rendered as white. `fileColors` is
+ * indexed by channel, like OME `Channel` elements.
+ */
+export function suggestedChannelColors(
+	planes: ChannelPlane[],
+	fileColors: (string | undefined)[] | undefined,
+	defaults: ChannelDefaults | undefined,
+): (string | undefined)[] {
+	const valid = (color: unknown): color is string =>
+		typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color);
+	const byName = new Map<string, string>();
+	for (const [name, color] of Object.entries(defaults?.colorsByName || {})) {
+		if (valid(color)) { byName.set(name.trim().toLowerCase(), color); }
+	}
+	const byNumber = defaults?.colorsByNumber || {};
+	// Keyed by `plane.index`, not array position: an OME page that failed to
+	// decode leaves a gap, and the later planes keep their own channel's colour.
+	return planes.map(plane => {
+		const named = byName.get(plane.name.trim().toLowerCase());
+		if (named) { return named; }
+		const numbered = byNumber[String(plane.index + 1)];
+		if (valid(numbered)) { return numbered; }
+		return fileColors?.[plane.index];
+	});
+}
+
+/** A configured group as it applies to the channels of the current image. */
+export interface ResolvedChannelGroup {
+	name: string;
+	/** How many members the setting lists. */
+	total: number;
+	/** Members that matched no channel, as written. */
+	missing: string[];
+	/** Positions (0-based, ascending) in `planes` of the channels that matched. */
+	positions: number[];
+}
+
+/**
+ * Match each group's members against the channels. A string matches a channel
+ * name exactly (ignoring case); failing that, a numeric string or a number is a
+ * 1-based channel number, the same rule as `colorsByNumber`. Names that match nothing
+ * are reported rather than dropped silently, since a typo here otherwise just
+ * looks like a group that is one channel short.
+ */
+export function resolveChannelGroups(groups: readonly ChannelGroupConfig[], planes: ChannelPlane[]): ResolvedChannelGroup[] {
+	return groups.map(group => {
+		const positions = new Set<number>();
+		const missing: string[] = [];
+		for (const member of group.members) {
+			let position = -1;
+			if (typeof member === 'string') {
+				const key = member.trim().toLowerCase();
+				position = planes.findIndex(plane => plane.name.trim().toLowerCase() === key);
+				if (position < 0 && /^\d+$/.test(key)) { position = Number(key) - 1; }
+			} else {
+				position = member - 1;
+			}
+			if (position >= 0 && position < planes.length) { positions.add(position); } else { missing.push(String(member)); }
+		}
+		return { name: group.name, total: group.members.length, missing, positions: [...positions].sort((a, b) => a - b) };
+	});
 }
 
 /** Parse "#rrggbb" into 0..255 components. */
@@ -161,7 +270,7 @@ export interface CompositeOptions {
 	 * Grey out everything but one channel. Solo is a view, not a settings
 	 * change, so it is passed per render rather than stored per channel.
 	 */
-	soloIndex?: number | null;
+	soloIndex?: number | readonly number[] | null;
 }
 
 /** Number of steps in the per-channel colour lookup table. */
@@ -190,18 +299,19 @@ export function prepareChannels(
 	settings: ChannelSettings[],
 	width: number,
 	height: number,
-	options: { gamma?: number; solo?: number | null; identityGamma?: boolean } = {},
+	options: { gamma?: number; solo?: number | readonly number[] | null; identityGamma?: boolean } = {},
 ): PreparedChannel[] {
 	const gamma = options.gamma && options.gamma > 0 ? options.gamma : 1;
 	const identityGamma = options.identityGamma ?? Math.abs(gamma - 1) < 1e-6;
-	const solo = options.solo ?? null;
+	const soloOption = options.solo ?? null;
+	const solo = soloOption === null ? null : typeof soloOption === 'number' ? [soloOption] : soloOption;
 	const prepared: PreparedChannel[] = [];
 
 	for (let i = 0; i < planes.length; i++) {
 		const plane = planes[i];
 		const setting = settings[i];
 		if (!setting || !setting.visible) { continue; }
-		if (solo !== null && plane.index !== solo) { continue; }
+		if (solo !== null && !solo.includes(plane.index)) { continue; }
 		if (plane.width !== width || plane.height !== height) { continue; }
 
 		const range = setting.max - setting.min;
@@ -358,7 +468,7 @@ export function defaultChannelSettings(
 			// Alpha is data, not a colour to add: showing it as a fourth emission
 			// channel would wash out the composite.
 			visible: !(planes.length === 4 && index === 3),
-			color: defaultChannelColor(index, options.colors?.[index]),
+			color: defaultChannelColor(index, options.colors?.[index], plane.name),
 			opacity: 1,
 			min: range.min,
 			max: range.max,

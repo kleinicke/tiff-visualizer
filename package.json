@@ -400,6 +400,46 @@
           },
           "markdownDescription": "Override shared image navigation keys by control position (1–4). Each pair is [previous, next]. Use physical codes such as `KeyJ`, `KeyK`, `BracketLeft`, or `Shift+Comma`; a single character such as `j` or `ü` follows the layout. Example: `{\"1\": [\"KeyJ\", \"KeyK\"]}`. Omitted/invalid pairs use defaults. A lone slice slider uses pair 2. Hints show the active bindings. Shortcuts apply while the preview has focus; avoid keys used by other viewer tools."
         },
+        "tiffVisualizer.channels.autoComposite": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open images whose channels are described by OME-TIFF or ImageJ metadata (fluorescence stacks, hyperstacks) in composite mode. Ordinary RGB images are not affected. Turning composite off by hand keeps it off for that preview."
+        },
+        "tiffVisualizer.channels.autoOpenPanel": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the Channels panel when an image whose channels are described by OME-TIFF or ImageJ metadata opens. For multi-page stacks it opens before the other channels have decoded, so the loading progress is visible. Applies once per file; ordinary RGB images are not affected."
+        },
+        "tiffVisualizer.channels.colorsByName": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "description": "Channel tints by channel name, matched case-insensitively, for example {\"DAPI\": \"#3399ff\", \"GFP\": \"#00ff00\"}. Takes precedence over colorsByNumber and over colours stored in the file."
+        },
+        "tiffVisualizer.channels.colorsByNumber": {
+          "type": "object",
+          "default": {},
+          "propertyNames": {
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "description": "Channel tints by channel number as shown in the Channels panel (starting at 1), for example {\"1\": \"#00ff00\"}. Takes precedence over colours stored in the file."
+        },
+        "tiffVisualizer.channels.groups": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": ["string", "integer"] }
+          },
+          "description": "Named groups of channels for the Channels panel, for example {\"T Cells\": [\"CD3e\", \"CD8\", \"CD4\"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,
@@ -440,7 +480,7 @@
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
     "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
-    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels",
+    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures",
     "test:unit": "npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:format-defaults": "node test/format-defaults-test.js",
@@ -463,6 +503,7 @@
     "test:measurement": "node test/measurement-test.js",
     "test:rust-measure": "node test/rust-measure-conformance-test.js",
     "test:channels": "node test/channel-composite-test.js",
+    "test:channel-fixtures": "node test/channel-fixtures-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",
     "test:touch-pinch": "node test/touch-pinch-test.cjs",

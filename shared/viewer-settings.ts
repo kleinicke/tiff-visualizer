@@ -19,6 +19,20 @@ export interface DebayerSettings {
     whiteLevel: number;
 }
 
+/** User defaults for the Channels panel (`tiffVisualizer.channels.*`). */
+export interface ChannelDefaults {
+    /** Open images whose channels come from OME/ImageJ metadata in composite mode. */
+    autoComposite?: boolean;
+    /** Open the Channels panel for images whose channels come from OME/ImageJ metadata. */
+    autoOpenPanel?: boolean;
+    /** Tint by channel name, matched case-insensitively, e.g. { "DAPI": "#3399ff" }. */
+    colorsByName?: Record<string, string>;
+    /** Tint by 1-based channel number, as the panel labels them, e.g. { "1": "#00ff00" }. */
+    colorsByNumber?: Record<string, string>;
+    /** Named channel groups; members are channel names or 1-based numbers. Validated by the viewer. */
+    groups?: Record<string, unknown>;
+}
+
 export interface ImageSettings extends Partial<DisplaySettings> {
   nanColor?: string;
   displayColormap?: string;
@@ -28,6 +42,7 @@ export interface ImageSettings extends Partial<DisplaySettings> {
   showScaleBar?: boolean;
   gpuAcceleration?: boolean;
   navigationShortcuts?: Record<string, string[]>;
+  channelDefaults?: ChannelDefaults;
   /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
   experimentalRegionDecode?: boolean;
   plyVisualizerInstalled?: boolean;

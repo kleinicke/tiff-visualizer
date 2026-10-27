@@ -330,6 +330,87 @@ async function main() {
 			gpu.MAX_GPU_CHANNELS + 1);
 	});
 
+	console.log('\n🎨 Configured channel colours');
+
+	test('Red, Green and Blue channels are tinted red, green and blue', () => {
+		const planes = ['Red', 'Green', 'Blue', 'Alpha'].map((name, index) => plane(index, name, [0, 1], 2, 1));
+		const colors = composite.defaultChannelSettings(planes).map(setting => setting.color);
+		assert.deepStrictEqual(colors, ['#ff0000', '#00ff00', '#0000ff', '#ffffff']);
+		const named = ['Channel 1', 'Channel 2'].map((name, index) => plane(index, name, [0, 1], 2, 1));
+		assert.deepStrictEqual(composite.defaultChannelSettings(named).map(setting => setting.color), composite.CHANNEL_PALETTE.slice(0, 2));
+		const fromFile = composite.defaultChannelSettings(planes, { colors: ['#123456'] });
+		assert.strictEqual(fromFile[0].color, '#123456', 'a file or configured colour still wins');
+	});
+
+	test('an OME file colour (#rrggbbaa) tints the channel, without its alpha', () => {
+		assert.strictEqual(composite.defaultChannelColor(0, '#00ff00ff'), '#00ff00');
+		assert.strictEqual(composite.defaultChannelColor(0, '#0000FF80'), '#0000FF');
+		assert.strictEqual(composite.defaultChannelColor(0, '#abc'), composite.CHANNEL_PALETTE[0], 'a malformed colour falls back to the palette');
+		assert.strictEqual(composite.defaultChannelColor(1), composite.CHANNEL_PALETTE[1]);
+	});
+
+	test('a name match beats a number match, which beats the file colour', () => {
+		const planes = [plane(0, 'GFP', [0], 1, 1), plane(1, 'DAPI', [0], 1, 1), plane(2, 'RFP', [0], 1, 1)];
+		const colors = composite.suggestedChannelColors(
+			planes,
+			['#111111', '#222222', '#333333'],
+			{ colorsByName: { dapi: '#3399ff' }, colorsByNumber: { 2: '#00ff00', 3: '#ff0000' } },
+		);
+		assert.deepStrictEqual(colors, ['#111111', '#3399ff', '#ff0000']);
+	});
+
+	test('numbers are 1-based and follow the channel, not the array position', () => {
+		// Channel 2 failed to decode, so the second plane is channel 3.
+		const planes = [plane(0, 'Channel 1', [0], 1, 1), plane(2, 'Channel 3', [0], 1, 1)];
+		const colors = composite.suggestedChannelColors(
+			planes, ['#111111', '#222222', '#333333'], { colorsByNumber: { 1: '#00ff00' } },
+		);
+		assert.deepStrictEqual(colors, ['#00ff00', '#333333']);
+	});
+
+	test('invalid configured colours are ignored, and no settings change nothing', () => {
+		const planes = [plane(0, 'A', [0], 1, 1), plane(1, 'B', [0], 1, 1)];
+		const colors = composite.suggestedChannelColors(
+			planes, ['#111111', undefined], { colorsByName: { A: 'green' }, colorsByNumber: { 2: '#12345' } },
+		);
+		assert.deepStrictEqual(colors, ['#111111', undefined]);
+		assert.deepStrictEqual(composite.suggestedChannelColors(planes, undefined, undefined), [undefined, undefined]);
+	});
+
+	test('groups are parsed, bad entries dropped, and members matched by name or number', () => {
+		const groups = composite.parseChannelGroups({
+			'T Cells': ['CD3e', 'cd8', 'CD4', 'CD3'],
+			Numbers: [1, '3', 9, 0, 1.5, ''],
+			Empty: [],
+			Broken: 'CD3e',
+			' ': ['CD3e'],
+		});
+		assert.deepStrictEqual(groups.map(group => group.name), ['T Cells', 'Numbers']);
+		const planes = ['DAPI', 'CD3e', 'CD8', 'CD4'].map((name, index) => plane(index, name, [1], 1, 1));
+		const [tCells, numbers] = composite.resolveChannelGroups(groups, planes);
+		assert.deepStrictEqual(tCells.positions, [1, 2, 3], 'names match case-insensitively and exactly');
+		assert.deepStrictEqual(tCells.missing, ['CD3'], 'a name that matches nothing is reported, not guessed');
+		assert.strictEqual(tCells.total, 4);
+		assert.deepStrictEqual(numbers.positions, [0, 2], 'numbers are 1-based; 9 is out of range');
+		assert.deepStrictEqual(numbers.missing, ['9']);
+		assert.deepStrictEqual(composite.parseChannelGroups({}), []);
+		assert.deepStrictEqual(composite.parseChannelGroups(undefined), []);
+	});
+
+	test('solo accepts several channels at once', () => {
+		const planes = [0, 1, 2].map(index => plane(index, `C${index}`, [1], 1, 1));
+		const settings = planes.map(() => ({ visible: true, color: '#ffffff', opacity: 1, min: 0, max: 1 }));
+		const indices = options => composite.prepareChannels(planes, settings, 1, 1, options).length;
+		assert.strictEqual(indices({ solo: [0, 2] }), 2);
+		assert.strictEqual(indices({ solo: [] }), 0);
+		assert.strictEqual(indices({ solo: 1 }), 1);
+		assert.strictEqual(indices({ solo: null }), 3);
+		settings[2].visible = false;
+		assert.strictEqual(indices({ solo: [0, 2] }), 1, 'solo is a view over the visible channels');
+		const image = composite.compositeChannels(planes, settings, 1, 1, { soloIndex: [0, 1] });
+		assert.strictEqual(image.data[0], 255);
+	});
+
 	console.log('\n' + '─'.repeat(60));
 	if (failed === 0) {
 		console.log(`🎉 All ${passed} channel compositing tests passed.`);

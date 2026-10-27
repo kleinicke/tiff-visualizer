@@ -23,6 +23,7 @@ async function main() {
     const nav = {
         currentLoadFormat: 'PNG/JPEG', tiffProcessor: {}, datasetManifest: null,
         controlsFromSelectors: (_namespace, selectors) => selectors, bandDescription: () => null,
+        selectorSolosChannels: () => false, soloFromSelector: () => {}, compositeSelectorChannel: null, syncChannelPanel: () => {},
         hideNavOverlay: () => {}, renderNavOverlay: () => { throw new Error('Non-TIFF must not populate TIFF overlay'); },
     };
     run(extract('media/imagePreview.ts', ['tiffBandControls', 'updateTiffPageOverlay']), nav);

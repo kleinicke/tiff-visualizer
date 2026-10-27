@@ -384,8 +384,61 @@ export function parseOmeXml(xml: string | undefined | null): OmeMetadata | null 
 	return images[0];
 }
 
-/** ImageJ hyperstacks store channel-fastest C/Z/T planes in TIFF IFD order. */
-export function parseImageJMetadata(description: string, width: number, height: number, pageCount: number): OmeMetadata | null {
+/**
+ * The slice labels ImageJ keeps in its private IJMetadata tags.
+ *
+ * Tag 50839 holds the data: a header (magic plus one `type, count` pair per
+ * kind of record) followed by the records, and tag 50838 lists the byte length
+ * of the header and then of every record in order. A `labl` record is a UTF-16
+ * string, in the file's byte order. In a hyperstack the labels are those of the
+ * first Z/T plane's channels, which is where ImageJ users put channel names.
+ *
+ * Anything malformed yields an empty list rather than an error: names are a
+ * convenience and the image must open without them.
+ */
+export function parseImageJLabels(tags: ReadonlyArray<{ tag: number | null; name: string; value: string }>): string[] {
+	const find = (id: number) => (tags || []).find(entry => entry?.tag === id || entry?.name === `Unknown(${id})`);
+	const numbers = (value: string | undefined) => (String(value || '').match(/\d+/g) || []).map(Number);
+	const counts = numbers(find(50838)?.value);
+	const bytes = Uint8Array.from(numbers(find(50839)?.value));
+	if (counts.length < 2 || bytes.length < 4) { return []; }
+	const magic = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]);
+	// "IJIJ" read as a big-endian integer; a little-endian file stores it reversed.
+	const littleEndian = magic === 'JIJI';
+	if (magic !== 'IJIJ' && !littleEndian) { return []; }
+
+	const headerSize = counts[0];
+	if (headerSize < 12 || (headerSize - 4) % 8 !== 0 || headerSize > bytes.length) { return []; }
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const labels: string[] = [];
+	let countIndex = 1;
+	let offset = headerSize;
+	for (let position = 4; position < headerSize; position += 8) {
+		const code = String.fromCharCode(bytes[position], bytes[position + 1], bytes[position + 2], bytes[position + 3]);
+		const type = littleEndian ? [...code].reverse().join('') : code;
+		const records = view.getUint32(position + 4, littleEndian);
+		for (let record = 0; record < records; record++) {
+			const length = counts[countIndex++];
+			if (!Number.isInteger(length) || offset + length > bytes.length) { return labels; }
+			if (type === 'labl') {
+				let text = '';
+				for (let at = offset; at + 1 < offset + length; at += 2) {
+					text += String.fromCharCode(view.getUint16(at, littleEndian));
+				}
+				labels.push(text.replace(/\0+$/, '').trim());
+			}
+			offset += length;
+		}
+	}
+	return labels;
+}
+
+/**
+ * ImageJ hyperstacks store channel-fastest C/Z/T planes in TIFF IFD order.
+ * `labels` are its slice labels (see `parseImageJLabels`); the first `C` of
+ * them name the channels when there is one label per plane, or per channel.
+ */
+export function parseImageJMetadata(description: string, width: number, height: number, pageCount: number, labels: readonly string[] = []): OmeMetadata | null {
 	if (!description.startsWith('ImageJ=')) { return null; }
 	const fields = Object.fromEntries(description.replace(/\0/g, '').split(/\r?\n/).map(line => {
 		const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)];
@@ -395,10 +448,12 @@ export function parseImageJMetadata(description: string, width: number, height: 
 	const planes = c * z * t;
 	if (![c, z, t, width, height].every(value => Number.isSafeInteger(value) && value > 0)
 		|| planes !== pageCount || Number(fields.images) !== planes) { return null; }
+	const usable = labels.length === planes || labels.length === c;
+	const channelNames = usable && labels.slice(0, c).some(label => !!label) ? labels.slice(0, c) : [];
 	return {
 		metadataFormat: 'ImageJ', xml: '', dimensionOrder: 'XYCZT',
 		sizeX: width, sizeY: height, sizeC: c, planeSizeC: c, sizeZ: z, sizeT: t,
-		channels: Array.from({ length: c }, () => ({ name: '', samplesPerPixel: 1 })),
+		channels: Array.from({ length: c }, (_unused, index) => ({ name: channelNames[index] || '', samplesPerPixel: 1 })),
 		tiffData: [], expectedPlaneCount: planes,
 		coordinateToIfd: {}, ifdToCoordinate: {}, coordinateToPlane: {},
 	};
