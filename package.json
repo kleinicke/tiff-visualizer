@@ -453,8 +453,15 @@
         "tiffVisualizer.cells.cellsParquet": {
           "type": "object",
           "default": {},
-          "additionalProperties": { "type": "string" },
-          "description": "Extra cell tables for Xenium bundles, as name → path, for example {\"segtraq\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\"}. Each file needs a cell_id column; its columns are merged into the active segmentation, keyed by cell_id. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. Tables are listed in the Cells section and loaded when you click Load."
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Path of the table, for example segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet." },
+              "parent": { "type": "string", "description": "Name of the one cell set the table belongs to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundariesParquet." }
+            },
+            "required": ["path", "parent"]
+          },
+          "description": "Extra cell tables for Xenium bundles, as name → {path, parent}, for example {\"xenium_segtraq\": {\"path\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\", \"parent\": \"Xenium cells\"}}. Each file needs a cell_id column. It is listed under its parent cell set only, and its columns are merged into that set by cell_id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundariesParquet. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder."
         },
         "tiffVisualizer.cells.cellBoundariesParquet": {
           "type": "object",

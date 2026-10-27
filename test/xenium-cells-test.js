@@ -162,7 +162,9 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		};
 		const workspace = new CellsWorkspace(host, 0.2125);
 		workspace.addConfigured([
-			{ name: 'segtraq', kind: 'table', path: 'tab', found: true, src: 'tab' },
+			{ name: 'segtraq', kind: 'table', path: 'tab', found: true, src: 'tab', parent: 'Xenium cells' },
+			{ name: 'sam2_default', kind: 'table', path: 'tab', found: true, src: 'tab', parent: 'sam2' },
+			{ name: 'orphan', kind: 'table', path: 'tab', found: true, src: 'tab', parent: 'nobody' },
 			{ name: 'sam2', kind: 'boundaries', path: 'seg', found: true, src: 'seg' },
 			{ name: 'gone', kind: 'boundaries', path: 'nowhere', found: false },
 		]);
@@ -170,19 +172,22 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		let panel = workspace.snapshot(null);
 		assert.deepStrictEqual(panel.sets.map(set => set.name), ['Xenium cells']);
 		assert.deepStrictEqual(panel.pending.map(row => [row.name, row.state]), [['sam2', 'available'], ['gone', 'missing']]);
-		assert.deepStrictEqual(panel.sets[0].tables.map(table => [table.name, table.state]), [['segtraq', 'available']]);
-		panel.sets[0].loadTable(panel.sets[0].tables[0].id);
+		assert.deepStrictEqual(panel.sets[0].tables.map(table => [table.name, table.state]), [['cells', 'loaded'], ['segtraq', 'available']]);
+		const segtraq = () => workspace.snapshot(null).sets[0].tables.find(table => table.name === 'segtraq');
+		panel.sets[0].loadTable(segtraq().id);
 		await tick(); await tick();
 		panel = workspace.snapshot(null);
-		assert.strictEqual(panel.sets[0].tables[0].state, 'loaded');
+		assert.strictEqual(segtraq().state, 'loaded');
 		assert.ok(panel.sets[0].view.metrics.some(metric => metric.name === 'segtraq · score'));
-		assert.ok(panel.sets[0].tables[0].detail.includes('2 of 3'));
+		assert.ok(segtraq().detail.includes('2 of 3'));
+		panel.sets[0].removeTable(panel.sets[0].tables[0].id);
+		assert.strictEqual(workspace.snapshot(null).sets[0].tables[0].name, 'cells');
 		panel.sets[0].addTable('other');
 		await tick(); await tick();
 		panel = workspace.snapshot(null);
 		assert.strictEqual(panel.sets[0].tables.find(table => table.name === 'other').state, 'error');
 		panel.sets[0].view.setMetric('segtraq · score');
-		panel.sets[0].removeTable(panel.sets[0].tables[0].id);
+		panel.sets[0].removeTable(segtraq().id);
 		panel = workspace.snapshot(null);
 		assert.strictEqual(panel.sets[0].view.metric, null);
 		assert.ok(!panel.sets[0].view.metrics.some(metric => metric.name.startsWith('segtraq')));
@@ -191,7 +196,7 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		panel = workspace.snapshot(null);
 		assert.deepStrictEqual(panel.sets.map(set => set.name), ['Xenium cells', 'sam2']);
 		assert.strictEqual(overlays.size, 2);
-		assert.strictEqual(panel.sets[1].tables.length, 1);
+		assert.deepStrictEqual(panel.sets[1].tables.map(table => table.name), ['sam2_default']);
 		assert.deepStrictEqual(panel.pending.map(row => row.name), ['gone']);
 		panel.sets[1].remove();
 		panel = workspace.snapshot(null);

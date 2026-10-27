@@ -17,7 +17,7 @@
       <span class="cells-source-detail">{table.detail}</span>
       {#if table.state === 'available'}<button class="measure-chip" title="Merge this table into {set.name}" onclick={() => set.loadTable(table.id)}>Load</button>
       {:else if table.state === 'error'}<button class="measure-chip" title="Try again" onclick={() => set.loadTable(table.id)}>Retry</button>{/if}
-      {#if table.state === 'loaded' || table.state === 'error' || table.origin === 'added'}
+      {#if table.origin !== 'native' && (table.state === 'loaded' || table.state === 'error' || table.origin === 'added')}
         <button class="cells-source-remove" title={table.origin === 'added' ? 'Remove this table' : 'Unload this table'} aria-label="Remove {table.name}" onclick={() => set.removeTable(table.id)}>×</button>
       {/if}
     </div>

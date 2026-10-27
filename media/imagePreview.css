@@ -2800,10 +2800,10 @@ body img {
 	text-align: left;
 	overflow-y: auto;
 	max-height: 50vh;
-	padding: 8px 12px;
+	padding: 8px 12px 12px;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 10px;
 }
 
 .cells-toggle {
@@ -2833,7 +2833,7 @@ body img {
 .cells-legend-tools {
 	display: flex;
 	gap: 4px;
-	margin-bottom: 4px;
+	margin-bottom: 6px;
 }
 
 .cells-legend-list {
@@ -3192,8 +3192,9 @@ body img {
 
 .cells-add {
 	display: flex;
-	gap: 4px;
+	gap: 6px;
 	align-items: center;
+	margin-top: 2px;
 }
 
 .cells-add .measure-input {
@@ -3303,7 +3304,7 @@ body img {
 
 .cell-set {
 	border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
-	padding: 6px 0;
+	padding: 12px 0 10px;
 }
 
 .cell-set.dimmed .cell-set-body {
@@ -3319,22 +3320,23 @@ body img {
 .cell-set-body {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
-	margin-top: 6px;
+	gap: 10px;
+	margin-top: 10px;
 	padding-left: 4px;
 }
 
 .cells-tables {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
+	gap: 6px;
 }
 
 .cells-table-row {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 6px;
 	font-size: 11px;
+	min-height: 22px;
 	min-width: 0;
 }
 

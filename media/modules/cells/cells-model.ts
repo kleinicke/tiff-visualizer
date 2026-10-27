@@ -35,7 +35,7 @@ export interface CellsTableRow {
 	name: string;
 	/** Where it comes from, for the tooltip. */
 	path: string;
-	origin: 'settings' | 'added';
+	origin: 'native' | 'settings' | 'added';
 	state: 'available' | 'loading' | 'loaded' | 'missing' | 'error';
 	/** Columns added and cells matched, or the reason for a failure. */
 	detail: string;

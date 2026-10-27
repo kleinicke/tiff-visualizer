@@ -16,7 +16,7 @@ import { escapeAttribute, getNonce } from '../util/dom';
  * webview cannot: read the manifest and list the folder, then hand over the
  * channel files as webview URIs.
  */
-interface ConfiguredSource { name: string; kind: 'table' | 'boundaries'; path: string; uri?: vscode.Uri }
+interface ConfiguredSource { name: string; kind: 'table' | 'boundaries'; path: string; parent?: string; uri?: vscode.Uri }
 
 export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider {
 	public static readonly viewType = 'tiffVisualizer.xeniumViewer';
@@ -81,7 +81,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			const toSrc = (relativePath: string) => webview.asWebviewUri(Utils.joinPath(bundleFolder, ...relativePath.split('/'))).toString();
 			const rootEntries = await vscode.workspace.fs.readDirectory(bundleFolder);
 			manifest.cells = discoverCellFiles(rootEntries.filter(([, type]) => (type & vscode.FileType.File) !== 0).map(([name]) => name), toSrc);
-			manifest.cellSources = await Promise.all(configured.map(entry => this.specFor(entry.name, entry.kind, entry.path, entry.uri, webview, roots, false)));
+			manifest.cellSources = await Promise.all(configured.map(async entry => ({ ...await this.specFor(entry.name, entry.kind, entry.path, entry.uri, webview, roots, false), parent: entry.parent })));
 			await webview.postMessage({ type: 'scene', manifest });
 		} catch (error) {
 			await webview.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) });
@@ -105,11 +105,15 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		const out: ConfiguredSource[] = [];
 		for (const [setting, kind] of [['cellsParquet', 'table'], ['cellBoundariesParquet', 'boundaries']] as const) {
 			const entries = config.get<Record<string, unknown>>(setting, {});
-			for (const [name, template] of Object.entries(entries)) {
+			for (const [name, value] of Object.entries(entries)) {
+				// Tables name the one cell set they belong to; boundaries are just a path.
+				const template = kind === 'table' ? (value as { path?: unknown } | null)?.path : value;
+				const parent = kind === 'table' ? (value as { parent?: unknown } | null)?.parent : undefined;
 				if (typeof template !== 'string' || !template.trim()) { continue; }
+				if (kind === 'table' && (typeof parent !== 'string' || !parent.trim())) { continue; }
 				const uri = this.locate(template, bundleFolder);
 				const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
-				out.push({ name, kind, path: expandSampleName(template.trim(), Utils.basename(bundleFolder)), uri: exists ? uri : undefined });
+				out.push({ name, kind, path: expandSampleName(template.trim(), Utils.basename(bundleFolder)), parent: typeof parent === 'string' ? parent.trim() : undefined, uri: exists ? uri : undefined });
 			}
 		}
 		return out;

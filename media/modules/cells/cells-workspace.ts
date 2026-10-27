@@ -21,6 +21,8 @@ export interface WorkspaceFile {
 	kind: 'table' | 'boundaries' | 'unknown';
 	path: string;
 	found: boolean;
+	/** For a configured table: the name of the one cell set it belongs to. */
+	parent?: string;
 	src?: string;
 	bytes?: ArrayBuffer;
 }
@@ -56,7 +58,7 @@ interface TableEntry {
 	id: string;
 	name: string;
 	file: WorkspaceFile;
-	origin: 'settings' | 'added';
+	origin: 'native' | 'settings' | 'added';
 	state: State;
 	detail: string;
 	columns: string[];
@@ -104,10 +106,10 @@ export class CellsWorkspace {
 		return entry;
 	}
 
-	private makeTable(entry: Entry, file: WorkspaceFile, origin: TableEntry['origin']): TableEntry {
+	private makeTable(entry: Entry, file: WorkspaceFile, origin: TableEntry['origin'], state?: { state: State; detail: string }): TableEntry {
 		const table: TableEntry = {
 			id: `table-${++this.counter}`, name: this.uniqueName(file.name, entry.tables.map(candidate => candidate.name)), file, origin,
-			state: file.found ? 'available' : 'missing', detail: file.found ? '' : missing(file), columns: [],
+			state: state?.state ?? (file.found ? 'available' : 'missing'), detail: state?.detail ?? (file.found ? '' : missing(file)), columns: [],
 		};
 		entry.tables.push(table);
 		return table;
@@ -124,7 +126,7 @@ export class CellsWorkspace {
 		this.entries.unshift(entry);
 	}
 
-	/** Files from the settings: boundaries are listed to load; tables are offered in every cell set. */
+	/** Files from the settings: boundaries are listed to load; each table is offered under its parent cell set only. */
 	addConfigured(files: readonly WorkspaceFile[]): void {
 		for (const file of files) {
 			if (file.kind === 'table') { this.configuredTables.push(file); }
@@ -145,7 +147,10 @@ export class CellsWorkspace {
 		const controller: CellsController = new CellsController(table, layer, () => this.host.notify(), restored);
 		entry.segmentation = { table, layer, controller };
 		entry.tables = [];
-		for (const file of this.configuredTables) { this.makeTable(entry, file, 'settings'); }
+		if (entry.origin === 'native') {
+			this.makeTable(entry, { name: 'cells', kind: 'table', path: 'cells.parquet', found: true }, 'native', { state: 'loaded', detail: `${table.count.toLocaleString()} cells` });
+		}
+		for (const file of this.configuredTables) { if (file.parent === entry.name) { this.makeTable(entry, file, 'settings'); } }
 		layer.setHidden(!entry.visible);
 		this.host.addOverlay(layer);
 	}
@@ -166,8 +171,8 @@ export class CellsWorkspace {
 			sources: this.entries.filter(entry => entry.file && entry.origin !== 'native').map(entry => ({
 				path: entry.file!.path, origin: entry.origin as 'settings' | 'added', loaded: entry.state === 'loaded',
 			})),
-			tables: this.entries.flatMap(entry => entry.tables.map(table => ({
-				set: entry.name, path: table.file.path, origin: table.origin, loaded: table.state === 'loaded',
+			tables: this.entries.flatMap(entry => entry.tables.filter(table => table.origin !== 'native').map(table => ({
+				set: entry.name, path: table.file.path, origin: table.origin as 'settings' | 'added', loaded: table.state === 'loaded',
 			}))),
 		};
 	}
@@ -254,7 +259,7 @@ export class CellsWorkspace {
 
 	private removeTable(entry: Entry, tableId: string): void {
 		const table = entry.tables.find(candidate => candidate.id === tableId);
-		if (!table) { return; }
+		if (!table || table.origin === 'native') { return; }
 		this.unloadTable(entry, table);
 		if (table.origin === 'added') { entry.tables.splice(entry.tables.indexOf(table), 1); }
 		this.host.notify();
