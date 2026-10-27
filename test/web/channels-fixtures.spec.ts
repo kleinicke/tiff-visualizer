@@ -94,3 +94,13 @@ test('extra samples without channel metadata are left alone', async ({ page }) =
   await expect(panel.locator('.channel-row')).toHaveCount(7, { timeout: 15_000 });
   await expect(composite(panel)).not.toHaveClass(/active/);
 });
+
+test('the channels of an RGB image are tinted red, green and blue', async ({ page }) => {
+  const panel = await open(page, 'pred_ref_rgb8.tif', {});
+  await page.evaluate(() => window.postMessage({ type: 'toggleChannels' }, '*'));
+  await expect(panel.locator('.channel-row .channel-name')).toHaveText(['Red', 'Green', 'Blue']);
+  const swatch = panel.locator('.channel-swatch');
+  await expect(swatch.nth(0)).toHaveValue('#ff0000');
+  await expect(swatch.nth(1)).toHaveValue('#00ff00');
+  await expect(swatch.nth(2)).toHaveValue('#0000ff');
+});
