@@ -3,6 +3,7 @@
   import type { ChannelsModel } from '../../media/modules/channels-panel';
   import { COLORMAP_NAMES } from '../../media/modules/colormaps';
   import { panelGestures } from '../panel-gestures';
+  import CellsSection from './cells/CellsSection.svelte';
   let { model }: { model: Writable<ChannelsModel> } = $props();
   let query = $state('');
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
@@ -121,4 +122,5 @@
       <div class="measure-note">{$model.composite ? `Channels are added together, each scaled by its own range — the way emission combines at the detector. Compositing on ${$model.backend === 'webgpu' ? 'the GPU (WebGPU)' : 'the CPU'}.` : 'Composite is off; the image is shown as decoded. Turn it on to blend the channels.'}</div>
     {/if}
   </div>
+  {#if $model.cells}<CellsSection cells={$model.cells} />{/if}
 </div>
