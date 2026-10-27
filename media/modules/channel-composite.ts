@@ -67,13 +67,26 @@ export const CHANNEL_PALETTE = [
 	'#ffffff',
 ];
 
-export function defaultChannelColor(index: number, suggested?: string): string {
+/**
+ * Tints for the channels of an ordinary RGB(A) image, found by the names
+ * `defaultChannelName` gives them. Red should look red; the palette is for
+ * fluorescence stacks, where its first entries are green and magenta-red.
+ */
+const RGB_NAME_TINTS: Readonly<Record<string, string>> = {
+	red: '#ff0000',
+	green: '#00ff00',
+	blue: '#0000ff',
+	alpha: '#ffffff',
+};
+
+export function defaultChannelColor(index: number, suggested?: string, name?: string): string {
 	// OME `Channel/@Color` is authoritative when the file provides it: the
 	// acquisition software knows which fluorophore this is and we do not.
 	// OME writes RGBA, so the file colour arrives as #rrggbbaa; alpha is not a tint.
 	const opaque = suggested && /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/i.exec(suggested);
 	if (opaque) { return `#${opaque[1]}`; }
-	return CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
+	const tint = name ? RGB_NAME_TINTS[name.trim().toLowerCase()] : undefined;
+	return tint ?? CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
 }
 
 /** A named set of channels: members are channel names or 1-based numbers. */
@@ -455,7 +468,7 @@ export function defaultChannelSettings(
 			// Alpha is data, not a colour to add: showing it as a fourth emission
 			// channel would wash out the composite.
 			visible: !(planes.length === 4 && index === 3),
-			color: defaultChannelColor(index, options.colors?.[index]),
+			color: defaultChannelColor(index, options.colors?.[index], plane.name),
 			opacity: 1,
 			min: range.min,
 			max: range.max,

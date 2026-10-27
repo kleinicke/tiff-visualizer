@@ -332,6 +332,16 @@ async function main() {
 
 	console.log('\n🎨 Configured channel colours');
 
+	test('Red, Green and Blue channels are tinted red, green and blue', () => {
+		const planes = ['Red', 'Green', 'Blue', 'Alpha'].map((name, index) => plane(index, name, [0, 1], 2, 1));
+		const colors = composite.defaultChannelSettings(planes).map(setting => setting.color);
+		assert.deepStrictEqual(colors, ['#ff0000', '#00ff00', '#0000ff', '#ffffff']);
+		const named = ['Channel 1', 'Channel 2'].map((name, index) => plane(index, name, [0, 1], 2, 1));
+		assert.deepStrictEqual(composite.defaultChannelSettings(named).map(setting => setting.color), composite.CHANNEL_PALETTE.slice(0, 2));
+		const fromFile = composite.defaultChannelSettings(planes, { colors: ['#123456'] });
+		assert.strictEqual(fromFile[0].color, '#123456', 'a file or configured colour still wins');
+	});
+
 	test('an OME file colour (#rrggbbaa) tints the channel, without its alpha', () => {
 		assert.strictEqual(composite.defaultChannelColor(0, '#00ff00ff'), '#00ff00');
 		assert.strictEqual(composite.defaultChannelColor(0, '#0000FF80'), '#0000FF');
