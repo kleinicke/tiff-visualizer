@@ -139,6 +139,67 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		assert.strictEqual(sourceNameFromPath('/a/b/S1.segtraq_cells.parquet'), 'S1.segtraq_cells');
 	}
 	{
+		const { CellsWorkspace } = await load('cells/cells-workspace');
+		const { buildCellTable } = await load('cells/cell-table');
+		const { buildPolygonSet } = await load('cells/polygon-set');
+		const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+		const made = (ids) => {
+			const table = buildCellTable(new Map([['cell_id', ids], ['area', ids.map((_id, index) => index + 1)]]));
+			const vertices = ids.flatMap((id, index) => square(id, index * 10, 0));
+			return { table, cells: buildPolygonSet(vertices.map(v => v.id), vertices.map(v => v.vx), vertices.map(v => v.vy), id => table.rowOfId.get(id) ?? -1, 1) };
+		};
+		const overlays = new Set();
+		const host = {
+			load: async file => {
+				if (file.path === 'tab') { return { kind: 'table', table: buildCellTable(new Map([['cell_id', ['a', 'b', 'zz']], ['score', [1, 2, 3]]])) }; }
+				if (file.path === 'other') { return { kind: 'table', table: buildCellTable(new Map([['cell_id', ['nope']], ['x', [1]]])) }; }
+				return { kind: 'boundaries', ...made(['p', 'q', 'r']) };
+			},
+			resolve: async text => ({ name: text, kind: 'unknown', path: text, found: true, src: text }),
+			browse: async () => null,
+			addOverlay: layer => overlays.add(layer), removeOverlay: layer => overlays.delete(layer),
+			requestRender: () => undefined, notify: () => undefined,
+		};
+		const workspace = new CellsWorkspace(host, 0.2125);
+		workspace.addConfigured([
+			{ name: 'segtraq', kind: 'table', path: 'tab', found: true, src: 'tab' },
+			{ name: 'sam2', kind: 'boundaries', path: 'seg', found: true, src: 'seg' },
+			{ name: 'gone', kind: 'boundaries', path: 'nowhere', found: false },
+		]);
+		workspace.addNative('Xenium cells', { ...made(['a', 'b', 'c']), nuclei: null });
+		let panel = workspace.snapshot(null);
+		assert.deepStrictEqual(panel.sets.map(set => set.name), ['Xenium cells']);
+		assert.deepStrictEqual(panel.pending.map(row => [row.name, row.state]), [['sam2', 'available'], ['gone', 'missing']]);
+		assert.deepStrictEqual(panel.sets[0].tables.map(table => [table.name, table.state]), [['segtraq', 'available']]);
+		panel.sets[0].loadTable(panel.sets[0].tables[0].id);
+		await tick(); await tick();
+		panel = workspace.snapshot(null);
+		assert.strictEqual(panel.sets[0].tables[0].state, 'loaded');
+		assert.ok(panel.sets[0].view.metrics.some(metric => metric.name === 'segtraq · score'));
+		assert.ok(panel.sets[0].tables[0].detail.includes('2 of 3'));
+		panel.sets[0].addTable('other');
+		await tick(); await tick();
+		panel = workspace.snapshot(null);
+		assert.strictEqual(panel.sets[0].tables.find(table => table.name === 'other').state, 'error');
+		panel.sets[0].view.setMetric('segtraq · score');
+		panel.sets[0].removeTable(panel.sets[0].tables[0].id);
+		panel = workspace.snapshot(null);
+		assert.strictEqual(panel.sets[0].view.metric, null);
+		assert.ok(!panel.sets[0].view.metrics.some(metric => metric.name.startsWith('segtraq')));
+		panel.loadSource(panel.pending[0].id);
+		await tick(); await tick();
+		panel = workspace.snapshot(null);
+		assert.deepStrictEqual(panel.sets.map(set => set.name), ['Xenium cells', 'sam2']);
+		assert.strictEqual(overlays.size, 2);
+		assert.strictEqual(panel.sets[1].tables.length, 1);
+		assert.deepStrictEqual(panel.pending.map(row => row.name), ['gone']);
+		panel.sets[1].remove();
+		panel = workspace.snapshot(null);
+		assert.strictEqual(overlays.size, 1);
+		assert.deepStrictEqual(panel.pending.map(row => row.name), ['sam2', 'gone']);
+		assert.strictEqual(workspace.getState().tables.some(entry => entry.set === 'Xenium cells' && entry.path === 'other'), true);
+	}
+	{
 		const { TileCache } = await load('cells/cells-tiles');
 		assert.ok(TileCache.levelFor(1) === 0);
 		assert.strictEqual(TileCache.levelFor(0.5), -1);

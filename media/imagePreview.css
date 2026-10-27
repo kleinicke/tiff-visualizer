@@ -3300,3 +3300,45 @@ body img {
 .cells-source-remove:hover {
 	color: var(--vscode-foreground, #ccc);
 }
+
+.cell-set {
+	border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+	padding: 6px 0;
+}
+
+.cell-set.dimmed .cell-set-body {
+	opacity: 0.55;
+}
+
+.cell-set-top {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.cell-set-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 6px;
+	padding-left: 4px;
+}
+
+.cells-tables {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.cells-table-row {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11px;
+	min-width: 0;
+}
+
+.cells-table-row.unavailable .cells-source-name,
+.cells-table-row.unavailable .cells-source-detail {
+	opacity: 0.6;
+}

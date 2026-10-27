@@ -1,7 +1,7 @@
 import { autoRange, channelHistogram, channelStats, type ChannelPlane, type ChannelSettings, type ResolvedChannelGroup } from './channel-composite.js';
 import Channels from '../../ui/components/Channels.svelte';
 import { mountView } from '../../ui/mount.js';
-import type { CellsModel } from './cells/cells-model.js';
+import type { CellsPanelModel } from './cells/cells-model.js';
 
 const HISTOGRAM_BINS = 64;
 
@@ -30,7 +30,7 @@ export interface ChannelsPanelHost {
 	getGroups?: () => ResolvedChannelGroup[];
 	getGroupSolo?: () => string | null;
 	/** The Cells section, for viewers that have cell outlines; null or absent hides it. */
-	getCells?: () => CellsModel | null;
+	getCells?: () => CellsPanelModel | null;
 	/** Solo a whole group (or clear it with null). Exclusive with a single-channel solo. */
 	setGroupSolo?: (name: string | null) => void;
 }
@@ -61,7 +61,7 @@ export interface ChannelsModel {
   /** The channel the selector shows (single-channel view), or null. */
   current: number | null;
   groups: ChannelGroupRow[];
-  cells: CellsModel | null;
+  cells: CellsPanelModel | null;
   close: () => void;
   toggleComposite: () => void;
   setSolo: (index: number) => void;

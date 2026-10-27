@@ -8,25 +8,8 @@ export interface CellsDiscreteRow { label: string; count: number; color: string;
 
 export interface CellsSelectionRow { label: string; value: string }
 
-/** One entry in the Segmentations list: a segmentation, or a table merged into one. */
-export interface CellsSourceRow {
-	id: string;
-	name: string;
-	kind: 'segmentation' | 'table';
-	/** Where it comes from, for the tooltip. */
-	path: string;
-	origin: 'native' | 'settings' | 'added';
-	state: 'available' | 'loading' | 'loaded' | 'missing' | 'error';
-	/** Cell count, match count or the reason for a failure. */
-	detail: string;
-	visible: boolean;
-	active: boolean;
-	color: string;
-}
-
+/** The display controls of one cell set: outlines, Colour by, legend or range, and the selection. */
 export interface CellsModel {
-	/** Progress or failure text while there is nothing to control yet. */
-	status: string | null;
 	count: number;
 	hasNuclei: boolean;
 	show: CellShow;
@@ -36,16 +19,6 @@ export interface CellsModel {
 	discrete: { rows: CellsDiscreteRow[]; more: number } | null;
 	continuous: { min: number; max: number; low: number; high: number; histogram: number[]; colormap: string; colormaps: string[] } | null;
 	selection: { count: number; title: string; rows: CellsSelectionRow[] } | null;
-	sources: CellsSourceRow[];
-	/** The last failure to add a file by path, or null. */
-	sourceMessage: string | null;
-	addSource: (text: string) => void;
-	browseSource: () => void;
-	loadSource: (id: string) => void;
-	removeSource: (id: string) => void;
-	activateSource: (id: string) => void;
-	showSource: (id: string, visible: boolean) => void;
-	colorSource: (id: string, color: string) => void;
 	setShow: (show: CellShow) => void;
 	setMetric: (name: string | null) => void;
 	setOpacity: (opacity: number) => void;
@@ -56,17 +29,61 @@ export interface CellsModel {
 	clearSelection: () => void;
 }
 
-const nothing = (): void => undefined;
+/** A table file belonging to one cell set. */
+export interface CellsTableRow {
+	id: string;
+	name: string;
+	/** Where it comes from, for the tooltip. */
+	path: string;
+	origin: 'settings' | 'added';
+	state: 'available' | 'loading' | 'loaded' | 'missing' | 'error';
+	/** Columns added and cells matched, or the reason for a failure. */
+	detail: string;
+}
 
-/** A section with nothing to control: loading, or the reason it is unavailable. */
-export function statusCellsModel(status: string): CellsModel {
-	return {
-		status, count: 0, hasNuclei: false, show: 'cells', metric: null, metrics: [], opacity: 0.55,
-		discrete: null, continuous: null, selection: null,
-		sources: [], sourceMessage: null,
-		addSource: nothing, browseSource: nothing, loadSource: nothing, removeSource: nothing,
-		activateSource: nothing, showSource: nothing, colorSource: nothing,
-		setShow: nothing, setMetric: nothing, setOpacity: nothing, setCategory: nothing,
-		setAllCategories: nothing, setRange: nothing, setColormap: nothing, clearSelection: nothing,
-	};
+/** One loaded cell set: a panel of its own, like a channel. */
+export interface CellSetModel {
+	id: string;
+	name: string;
+	/** Where it comes from, for the tooltip. */
+	path: string;
+	origin: 'native' | 'settings' | 'added';
+	color: string;
+	visible: boolean;
+	count: number;
+	tables: CellsTableRow[];
+	/** The last failure to add a table by path, or null. */
+	tableMessage: string | null;
+	view: CellsModel;
+	setVisible: (visible: boolean) => void;
+	setColor: (color: string) => void;
+	remove: () => void;
+	addTable: (text: string) => void;
+	browseTable: () => void;
+	loadTable: (tableId: string) => void;
+	removeTable: (tableId: string) => void;
+}
+
+/** A boundaries file that is listed but not loaded (yet). */
+export interface CellsPendingRow {
+	id: string;
+	name: string;
+	path: string;
+	origin: 'settings' | 'added';
+	state: 'available' | 'loading' | 'missing' | 'error';
+	detail: string;
+}
+
+/** The whole Cells section. */
+export interface CellsPanelModel {
+	/** Progress or failure text for the bundle's own cells, shown while there are no cell sets. */
+	status: string | null;
+	sets: CellSetModel[];
+	pending: CellsPendingRow[];
+	/** The last failure to add a file by path, or null. */
+	sourceMessage: string | null;
+	addSource: (text: string) => void;
+	browseSource: () => void;
+	loadSource: (id: string) => void;
+	removeSource: (id: string) => void;
 }

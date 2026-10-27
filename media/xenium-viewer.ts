@@ -147,7 +147,7 @@ async function loadCells(manifest: SceneManifest, active: CellsWorkspace, restor
 			cellsStatus = `Cells could not be loaded: ${error instanceof Error ? error.message : String(error)}`;
 		}
 	}
-	await active.restore(restored?.added ?? []);
+	await active.restore(restored);
 	panel?.render();
 }
 

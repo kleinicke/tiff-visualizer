@@ -49,14 +49,14 @@ When the bundle has `cells.parquet` and `cell_boundaries.parquet` (and optionall
 
 Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-patch.js` fixes a one-byte over-read in hyparquet's bit-packed decoder that breaks `cells.parquet`; the build fails loudly if hyparquet changes under it.
 
-### More than one segmentation
+### More than one cell set
 
-The Cells section starts with a path field, a **Browse…** button and a list of everything loaded.
+Each cell set (a segmentation with its own table) is a foldable panel in the Cells section, like a channel. A panel has a visibility checkbox, an outline-colour swatch, its name and cell count, and under it:
 
-- A **boundaries file** (a Xenium-style `cell_boundaries.parquet` with `cell_id`, `vertex_x`, `vertex_y` in microns) becomes another segmentation, drawn in its own outline colour. Its table holds the outline area, perimeter and circularity. The checkbox hides it, the swatch sets the outline colour, and clicking the name (or a cell in it) makes it the active one for Colour by and measurements.
-- A **table file** (a `cell_id` column plus metrics, such as `segtraq_cells.parquet`) is merged into the active segmentation by `cell_id`. Its columns appear in Colour by as `name · column`, and the row says how many cells matched. Removing the table removes the columns.
+- **Tables:** the table files merged into this set, each with its column count and how many cells matched, a remove button, and an Add field with Browse… for another one. A table is a `.parquet` with a `cell_id` column plus metrics (such as `segtraq_cells.parquet`); its columns appear in this set's Colour by as `name · column`.
+- **Display:** Cells / Nucleus / Both / None, Colour by, the legend or range slider with histogram, fill opacity, and the selection's measurements. Colour by always refers to the panel it is in, and clicking a cell selects in that set only.
 
-The file kind is read from the columns, so the field accepts either. Typed paths may use `{sample_name}` and relative paths start at the workspace folder.
+Below the panels, a field with Browse… adds another set from a Xenium-style `cell_boundaries.parquet` (`cell_id`, `vertex_x`, `vertex_y` in microns). Its table holds the outline area, perimeter and circularity. Typed paths may use `{sample_name}`, and relative paths start at the workspace folder.
 
 To list files for every sample without typing, name them in `settings.json`. `{sample_name}` is the name of the folder that holds `experiment.xenium`, and relative paths start at the workspace folder containing the bundle:
 
@@ -69,7 +69,7 @@ To list files for every sample without typing, name them in `settings.json`. `{s
 }
 ```
 
-Listed files load when you click **Load**; a file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
+Boundaries files are listed below the cell sets and load when you click **Load**. Table files are offered in every cell set's Tables list, and load into that set when you click **Load** there. A file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
 
 ### Whole-slide performance
 
