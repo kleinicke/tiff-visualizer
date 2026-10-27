@@ -21,7 +21,7 @@
   {#if open}
     <div class="cells-body">
       {#if cells.status && cells.sets.length === 0}<div class="measure-note">{cells.status}</div>{/if}
-      {#each cells.sets as set (set.id)}<CellSet {set} />{/each}
+      {#if cells.sets.length}<div class="cell-sets">{#each cells.sets as set (set.id)}<CellSet {set} />{/each}</div>{/if}
       {#if cells.sets.length === 0 && !cells.status}<div class="measure-note">No cells are loaded. Add a cell_boundaries.parquet below.</div>{/if}
       {#each cells.pending as row (row.id)}
         <div class="cells-table-row" class:unavailable={row.state === 'missing' || row.state === 'error'} title={row.detail ? `${row.path}\n${row.detail}` : row.path}>

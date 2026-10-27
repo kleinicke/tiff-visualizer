@@ -22,8 +22,8 @@
   </div>
   {#if open}
     <div class="cell-set-body">
-      <CellsTables {set} />
       <CellsDisplayToggle show={view.show} hasNuclei={view.hasNuclei} onchange={view.setShow} />
+      <CellsTables {set} />
       <label class="cells-field">
         <span>Colour by</span>
         <select class="measure-select" value={view.metric ?? ''} title="Table column that sets the fill colour" onchange={e => view.setMetric(e.currentTarget.value || null)}>
