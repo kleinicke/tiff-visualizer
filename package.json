@@ -450,6 +450,18 @@
           },
           "description": "Named groups of channels for the Channels panel, for example {\"T Cells\": [\"CD3e\", \"CD8\", \"CD4\"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit."
         },
+        "tiffVisualizer.cells.cellsParquet": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "description": "Extra cell tables for Xenium bundles, as name → path, for example {\"segtraq\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\"}. Each file needs a cell_id column; its columns are merged into the active segmentation, keyed by cell_id. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. Tables are listed in the Cells section and loaded when you click Load."
+        },
+        "tiffVisualizer.cells.cellBoundariesParquet": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "description": "Extra cell segmentations for Xenium bundles, as name → path, for example {\"sam2\": \"sam2/{sample_name}/cell_boundaries.parquet\"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns). {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. Segmentations are listed in the Cells section and loaded when you click Load."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,

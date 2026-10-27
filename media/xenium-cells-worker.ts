@@ -4,13 +4,15 @@
  *
  *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }   (file contents as ArrayBuffers)
  *     -> { table, cells, nuclei }
+ *   source { buffer, kind, pixelSizeUm }   (one more file: a metrics table or a boundaries file)
+ *     -> { kind: 'table', table } | { kind: 'boundaries', table, cells }
  *
  * The files are fetched by the page, not here: webview resources are served
  * through the page's service worker, which does not answer requests made from
  * a blob worker.
  */
 
-import { readParquetColumns } from './modules/cells/parquet-reader.js';
+import { parquetColumnNames, readParquetColumns } from './modules/cells/parquet-reader.js';
 import { toFloat64, toStrings } from './modules/cells/column-values.js';
 import { buildCellTable } from './modules/cells/cell-table.js';
 import { buildPolygonSet, buildPolygonSetFromLabels, type PolygonSet } from './modules/cells/polygon-set.js';
@@ -57,9 +59,70 @@ function transferables(set: PolygonSet | null): ArrayBuffer[] {
 	return set ? [set.offsets.buffer as ArrayBuffer, set.xy.buffer as ArrayBuffer, set.bounds.buffer as ArrayBuffer, set.rows.buffer as ArrayBuffer] : [];
 }
 
+/**
+ * A boundaries file with no table of its own: the cells are the distinct ids
+ * in file order, and the table holds only what the outlines can tell.
+ */
+async function standaloneBoundaries(file: ArrayBuffer, scale: number): Promise<{ table: CellTable; cells: PolygonSet }> {
+	const ids = toStrings((await readParquetColumns(file, ['cell_id'])).get('cell_id') ?? []);
+	if (ids.length === 0) { throw new Error('The boundary file has no vertices.'); }
+	let cells: PolygonSet | null = null;
+	try {
+		const columns = readPlainColumns(file, ['label_id', 'vertex_x', 'vertex_y']);
+		const labels = columns.get('label_id') as Int32Array;
+		let consistent = labels.length === ids.length;
+		for (let index = 1; consistent && index < labels.length; index++) {
+			if ((labels[index] !== labels[index - 1]) !== (ids[index] !== ids[index - 1]) || labels[index] < labels[index - 1]) { consistent = false; }
+		}
+		if (consistent) {
+			const rowOfLabel = new Map<number, number>();
+			for (let index = 0; index < labels.length; index++) { if (index === 0 || labels[index] !== labels[index - 1]) { rowOfLabel.set(labels[index], rowOfLabel.size); } }
+			cells = buildPolygonSetFromLabels(labels, columns.get('vertex_x')!, columns.get('vertex_y')!, label => rowOfLabel.get(label) ?? -1, scale);
+		}
+	} catch { cells = null; }
+	if (!cells) {
+		const columns = await readParquetColumns(file, ['vertex_x', 'vertex_y']);
+		const rowOfId = new Map<string, number>();
+		cells = buildPolygonSet(ids, toFloat64(columns.get('vertex_x') ?? []), toFloat64(columns.get('vertex_y') ?? []), id => {
+			let row = rowOfId.get(id);
+			if (row === undefined) { row = rowOfId.size; rowOfId.set(id, row); }
+			return row;
+		}, scale);
+	}
+	const polygonIds = new Array<string>(cells.count);
+	for (let polygon = 0; polygon < cells.count; polygon++) { polygonIds[polygon] = ids[cells.offsets[polygon]]; }
+	return { table: { count: cells.count, ids: polygonIds, columns: [], rowOfId: new Map() }, cells };
+}
+
+function columnBuffers(table: CellTable): ArrayBuffer[] {
+	return table.columns.map(column => (column.kind === 'continuous' ? column.values : column.codes).buffer as ArrayBuffer);
+}
+
+async function readSource(buffer: ArrayBuffer, declared: string, pixelSizeUm: number): Promise<{ result: Record<string, unknown>; buffers: ArrayBuffer[] }> {
+	const names = parquetColumnNames(buffer);
+	const kind = names.includes('vertex_x') && names.includes('vertex_y') ? 'boundaries' : 'table';
+	if (declared !== 'unknown' && declared !== kind) {
+		throw new Error(kind === 'boundaries' ? 'This file has vertex_x and vertex_y columns, so it is a boundaries file, not a table.' : 'This file has no vertex_x and vertex_y columns, so it is a table, not a boundaries file.');
+	}
+	if (!names.includes('cell_id')) { throw new Error('The file has no cell_id column.'); }
+	if (kind === 'table') {
+		const table = buildCellTable(await readParquetColumns(buffer));
+		return { result: { kind, table: { count: table.count, ids: table.ids, columns: table.columns } }, buffers: columnBuffers(table) };
+	}
+	const { table, cells } = await standaloneBoundaries(buffer, 1 / pixelSizeUm);
+	addShapeColumns(table, cells, pixelSizeUm);
+	return { result: { kind, table: { count: table.count, ids: table.ids, columns: table.columns }, cells }, buffers: [...transferables(cells), ...columnBuffers(table)] };
+}
+
 self.onmessage = async (event: MessageEvent): Promise<void> => {
 	const { id, type } = event.data ?? {};
 	try {
+		if (type === 'source') {
+			const { buffer, kind, pixelSizeUm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number };
+			const { result, buffers } = await readSource(buffer, kind, pixelSizeUm);
+			(self as unknown as Worker).postMessage({ id, ok: true, ...result }, buffers);
+			return;
+		}
 		if (type !== 'load') { throw new Error(`unknown message ${String(type)}`); }
 		const { cells, cellBoundaries, nucleusBoundaries, pixelSizeUm } = event.data as {
 			cells: ArrayBuffer; cellBoundaries: ArrayBuffer; nucleusBoundaries?: ArrayBuffer; pixelSizeUm: number;

@@ -19,11 +19,8 @@ import {
 	type ChannelPlane, type ChannelSettings,
 } from './modules/channel-composite.js';
 import { TiffChannelSource } from './modules/scene/channel-source.js';
-import { CellsController, type CellsControllerState } from './modules/cells/cells-controller.js';
-import { CellsLayer } from './modules/cells/cells-layer.js';
-import { statusCellsModel, type CellsModel } from './modules/cells/cells-model.js';
-import { findColumn, formatValue } from './modules/cells/cell-table.js';
-import { loadXeniumCells } from './modules/scene/xenium-cells.js';
+import { CellsWorkspace, type CellsWorkspaceHost, type CellsWorkspaceState, type WorkspaceFile } from './modules/cells/cells-workspace.js';
+import { loadCellSource, loadXeniumCells } from './modules/scene/xenium-cells.js';
 import { SceneViewer } from './modules/scene/scene-viewer.js';
 import type { Camera } from './modules/scene/pyramid.js';
 import { omeChannelHints, purposeTint, type SceneManifest } from './modules/scene/xenium-manifest.js';
@@ -35,7 +32,7 @@ interface PersistedState {
 	names: string[];
 	channelSettings: ChannelSettings[];
 	camera?: Camera;
-	cells?: CellsControllerState;
+	cells?: CellsWorkspaceState;
 }
 
 const vscode = acquireVsCodeApi();
@@ -45,9 +42,9 @@ const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.s
 let viewer: SceneViewer | null = null;
 let pixelSizeUm = 1;
 let panel: ChannelsPanel | null = null;
-let cellsStatus: CellsModel | null = null;
-let cellsController: CellsController | null = null;
-let cellsLayer: CellsLayer | null = null;
+let workspace: CellsWorkspace | null = null;
+/** Progress or failure of the bundle's own cells, shown while no segmentation is loaded. */
+let cellsStatus: string | null = null;
 let settings: ChannelSettings[] = [];
 let soloChannel: number | null = null;
 let soloGroup: string | null = null;
@@ -102,38 +99,55 @@ function planes(): ChannelPlane[] { return viewer?.overviewPlanes ?? []; }
 
 function persist(): void {
 	if (!viewer) { return; }
-	const state: PersistedState = { names: planes().map(plane => plane.name), channelSettings: settings, camera: viewer.currentCamera, cells: cellsController?.getState() };
+	const state: PersistedState = { names: planes().map(plane => plane.name), channelSettings: settings, camera: viewer.currentCamera, cells: workspace?.getState() };
 	vscode.setState(state);
 }
 
 // --- cells ------------------------------------------------------------------
 
-/** Load outlines and the cell table after the image is up, then add the layer and its section. */
-async function loadCells(manifest: SceneManifest, restored: CellsControllerState | undefined): Promise<void> {
-	if (!manifest.cells || !viewer) { return; }
-	const scene = viewer;
-	cellsStatus = statusCellsModel('Loading cells…');
-	panel?.render();
-	try {
-		const loaded = await loadXeniumCells(manifest.cells, manifest.pixelSizeUm);
-		const layer = new CellsLayer({
-			cells: loaded.cells,
-			nuclei: loaded.nuclei,
-			rowCount: loaded.table.count,
-			invalidate: () => scene.requestRender(),
-			onSelectionChange: () => panel?.render(),
-			describeRow: row => {
-				const column = findColumn(loaded.table, cellsController?.getState().metric ?? null);
-				return column ? `${loaded.table.ids[row]} · ${column.name} ${formatValue(column, row)}` : loaded.table.ids[row];
-			},
-		});
-		cellsLayer = layer;
-		cellsController = new CellsController(loaded.table, layer, () => { panel?.render(); persist(); }, restored);
-		scene.addOverlay(layer);
-		cellsStatus = null;
-	} catch (error) {
-		cellsStatus = statusCellsModel(`Cells could not be loaded: ${error instanceof Error ? error.message : String(error)}`);
+const pendingRequests = new Map<number, { resolve: (file: WorkspaceFile | null) => void; reject: (error: Error) => void }>();
+let requestCounter = 0;
+
+/** Ask the extension host to locate a cell file: typed text, or (null) the file dialog. */
+function askHost(type: 'resolveCell' | 'browseCell', text?: string): Promise<WorkspaceFile | null> {
+	return new Promise((resolve, reject) => {
+		const requestId = ++requestCounter;
+		pendingRequests.set(requestId, { resolve, reject });
+		vscode.postMessage({ type, requestId, text });
+	});
+}
+
+function createWorkspace(scene: SceneViewer, pixelSize: number): CellsWorkspace {
+	const host: CellsWorkspaceHost = {
+		load: file => loadCellSource({ src: file.src, bytes: file.bytes, kind: file.kind }, pixelSize),
+		resolve: async text => {
+			const file = await askHost('resolveCell', text);
+			if (!file) { throw new Error('Cancelled'); }
+			return file;
+		},
+		browse: () => askHost('browseCell'),
+		addOverlay: layer => scene.addOverlay(layer),
+		removeOverlay: layer => scene.removeOverlay(layer),
+		requestRender: () => scene.requestRender(),
+		notify: () => { panel?.render(); persist(); },
+	};
+	return new CellsWorkspace(host, pixelSize);
+}
+
+/** Load the bundle's own outlines and cell table after the image is up. */
+async function loadCells(manifest: SceneManifest, active: CellsWorkspace, restored: CellsWorkspaceState | undefined): Promise<void> {
+	if (manifest.cells) {
+		cellsStatus = 'Loading cells…';
+		panel?.render();
+		try {
+			const loaded = await loadXeniumCells(manifest.cells, manifest.pixelSizeUm);
+			active.addNative('Xenium cells', loaded, restored?.native);
+			cellsStatus = null;
+		} catch (error) {
+			cellsStatus = `Cells could not be loaded: ${error instanceof Error ? error.message : String(error)}`;
+		}
 	}
+	await active.restore(restored?.added ?? []);
 	panel?.render();
 }
 
@@ -196,7 +210,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 			getSolo: () => soloChannel,
 			setSolo: index => { soloChannel = index; soloGroup = null; applySolo(index === null ? null : [index]); },
 			onChange: () => { viewer?.invalidate(); persist(); },
-			getCells: () => cellsController ? cellsController.snapshot() : cellsStatus,
+			getCells: () => workspace?.snapshot(cellsStatus) ?? null,
 			getGroups: () => resolveChannelGroups(parseChannelGroups(startup.channelDefaults?.groups), planes()),
 			getGroupSolo: () => soloGroup,
 			setGroupSolo: name => {
@@ -208,7 +222,10 @@ async function start(manifest: SceneManifest): Promise<void> {
 		panel.show();
 		hideStatus();
 		viewer.invalidate();
-		if (manifest.cells) { void loadCells(manifest, restorable?.cells); }
+		workspace = createWorkspace(viewer, manifest.pixelSizeUm);
+		workspace.addConfigured(manifest.cellSources ?? []);
+		panel.render();
+		void loadCells(manifest, workspace, restorable?.cells);
 	} catch (error) {
 		started = false;
 		showStatus(error instanceof Error ? error.message : String(error), true);
@@ -221,6 +238,13 @@ window.addEventListener('message', event => {
 	if (message?.type === 'scene' && message.manifest) { void start(message.manifest as SceneManifest); }
 	else if (message?.type === 'error') { showStatus(String(message.message || 'The bundle could not be opened.'), true); }
 	else if (message?.type === 'toggleChannels') { panel?.toggle(); }
+	else if (message?.type === 'cellSource') {
+		const pending = pendingRequests.get(message.requestId);
+		pendingRequests.delete(message.requestId);
+		if (!pending) { return; }
+		if (message.error) { pending.reject(new Error(String(message.error))); }
+		else { pending.resolve(message.spec ? message.spec as WorkspaceFile : null); }
+	}
 });
 
 document.addEventListener('contextmenu', event => {
@@ -249,7 +273,7 @@ document.addEventListener('contextmenu', event => {
 window.addEventListener('keydown', event => {
 	const target = event.target as HTMLElement | null;
 	if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) { return; }
-	if (event.key === 'Escape') { cellsLayer?.clearSelection(); }
+	if (event.key === 'Escape') { workspace?.clearSelection(); }
 	if ((event.key === 'c' || event.key === 'C') && !event.metaKey && !event.ctrlKey && !event.altKey) { panel?.toggle(); }
 });
 

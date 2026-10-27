@@ -4,6 +4,7 @@
   import CellsDiscreteLegend from './CellsDiscreteLegend.svelte';
   import CellsDisplayToggle from './CellsDisplayToggle.svelte';
   import CellsSelection from './CellsSelection.svelte';
+  import CellsSources from './CellsSources.svelte';
   let { cells }: { cells: CellsModel } = $props();
   let open = $state(true);
   const discreteMetrics = $derived(cells.metrics.filter(metric => metric.kind === 'discrete'));
@@ -17,6 +18,7 @@
   </div>
   {#if open}
     <div class="cells-body">
+      <CellsSources {cells} />
       {#if cells.status}<div class="measure-note">{cells.status}</div>
       {:else}
         <CellsDisplayToggle show={cells.show} hasNuclei={cells.hasNuclei} onchange={cells.setShow} />

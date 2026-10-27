@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
 import type { ChannelDefaults } from '../../shared/viewer-settings';
-import { buildSceneManifest, discoverCellFiles, discoverChannelFiles, folderOf, parseExperiment } from '../../media/modules/scene/xenium-manifest';
+import {
+	buildSceneManifest, discoverCellFiles, discoverChannelFiles, expandSampleName, folderOf, isAbsolutePath, parseExperiment, sourceNameFromPath,
+	type CellSourceSpec,
+} from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
 
 /**
@@ -13,6 +16,8 @@ import { escapeAttribute, getNonce } from '../util/dom';
  * webview cannot: read the manifest and list the folder, then hand over the
  * channel files as webview URIs.
  */
+interface ConfiguredSource { name: string; kind: 'table' | 'boundaries'; path: string; uri?: vscode.Uri }
+
 export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider {
 	public static readonly viewType = 'tiffVisualizer.xeniumViewer';
 
@@ -24,15 +29,26 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 
 	public async resolveCustomEditor(document: vscode.CustomDocument, panel: vscode.WebviewPanel): Promise<void> {
 		const bundleFolder = Utils.dirname(document.uri).with({ query: '', fragment: '' });
-		panel.webview.options = {
-			enableScripts: true,
-			localResourceRoots: [bundleFolder, this.extensionRoot],
-		};
+		// Files named in the settings are served to the webview directly, so their
+		// folders must be among its resource roots; roots cannot change later.
+		const configured = await this.configuredSources(bundleFolder);
+		const roots = [
+			bundleFolder, this.extensionRoot,
+			...(vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri),
+			...configured.filter(entry => entry.uri).map(entry => Utils.dirname(entry.uri!)),
+		];
+		panel.webview.options = { enableScripts: true, localResourceRoots: roots };
 		panel.webview.html = this.html(panel.webview);
 		panel.webview.onDidReceiveMessage(async message => {
 			switch (message?.type) {
 				case 'ready':
-					await this.sendScene(document.uri, bundleFolder, panel.webview);
+					await this.sendScene(document.uri, bundleFolder, panel.webview, configured, roots);
+					break;
+				case 'resolveCell':
+					await this.answerCell(panel.webview, message.requestId, bundleFolder, roots, typeof message.text === 'string' ? message.text : '');
+					break;
+				case 'browseCell':
+					await this.answerCell(panel.webview, message.requestId, bundleFolder, roots, null);
 					break;
 				case 'openAsText':
 					await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default');
@@ -44,7 +60,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		});
 	}
 
-	private async sendScene(manifestUri: vscode.Uri, bundleFolder: vscode.Uri, webview: vscode.Webview): Promise<void> {
+	private async sendScene(
+		manifestUri: vscode.Uri, bundleFolder: vscode.Uri, webview: vscode.Webview,
+		configured: ConfiguredSource[], roots: vscode.Uri[],
+	): Promise<void> {
 		try {
 			const experiment = parseExperiment(new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(manifestUri)));
 			const imageFolder = experiment.morphologyFocusPath ? folderOf(experiment.morphologyFocusPath) : '';
@@ -62,9 +81,77 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			const toSrc = (relativePath: string) => webview.asWebviewUri(Utils.joinPath(bundleFolder, ...relativePath.split('/'))).toString();
 			const rootEntries = await vscode.workspace.fs.readDirectory(bundleFolder);
 			manifest.cells = discoverCellFiles(rootEntries.filter(([, type]) => (type & vscode.FileType.File) !== 0).map(([name]) => name), toSrc);
+			manifest.cellSources = await Promise.all(configured.map(entry => this.specFor(entry.name, entry.kind, entry.path, entry.uri, webview, roots, false)));
 			await webview.postMessage({ type: 'scene', manifest });
 		} catch (error) {
 			await webview.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+		}
+	}
+
+	/** Where relative cell paths start: the workspace folder holding the bundle. */
+	private baseFolder(bundleFolder: vscode.Uri): vscode.Uri {
+		return vscode.workspace.getWorkspaceFolder(bundleFolder)?.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri ?? Utils.dirname(bundleFolder);
+	}
+
+	/** Turn a typed or configured path (with `{sample_name}`) into a location. */
+	private locate(text: string, bundleFolder: vscode.Uri): vscode.Uri {
+		const expanded = expandSampleName(text.trim(), Utils.basename(bundleFolder));
+		if (isAbsolutePath(expanded)) { return bundleFolder.scheme === 'file' ? vscode.Uri.file(expanded) : bundleFolder.with({ path: expanded }); }
+		return Utils.joinPath(this.baseFolder(bundleFolder), ...expanded.split(/[\\/]/).filter(Boolean));
+	}
+
+	private async configuredSources(bundleFolder: vscode.Uri): Promise<ConfiguredSource[]> {
+		const config = vscode.workspace.getConfiguration('tiffVisualizer.cells');
+		const out: ConfiguredSource[] = [];
+		for (const [setting, kind] of [['cellsParquet', 'table'], ['cellBoundariesParquet', 'boundaries']] as const) {
+			const entries = config.get<Record<string, unknown>>(setting, {});
+			for (const [name, template] of Object.entries(entries)) {
+				if (typeof template !== 'string' || !template.trim()) { continue; }
+				const uri = this.locate(template, bundleFolder);
+				const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
+				out.push({ name, kind, path: expandSampleName(template.trim(), Utils.basename(bundleFolder)), uri: exists ? uri : undefined });
+			}
+		}
+		return out;
+	}
+
+	private isReachable(uri: vscode.Uri, roots: readonly vscode.Uri[]): boolean {
+		return roots.some(root => root.scheme === uri.scheme && root.authority === uri.authority && (uri.path === root.path || uri.path.startsWith(root.path.replace(/\/$/, '') + '/')));
+	}
+
+	/** A resolved cell file: a webview URI when the webview can read it, else (when allowed) its bytes. */
+	private async specFor(
+		name: string, kind: CellSourceSpec['kind'], path: string, uri: vscode.Uri | undefined,
+		webview: vscode.Webview, roots: readonly vscode.Uri[], allowBytes: boolean,
+	): Promise<CellSourceSpec> {
+		if (!uri) { return { name, kind, path, found: false }; }
+		if (this.isReachable(uri, roots)) { return { name, kind, path, found: true, src: webview.asWebviewUri(uri).toString() }; }
+		if (!allowBytes) { return { name, kind, path, found: false }; }
+		const data = await vscode.workspace.fs.readFile(uri);
+		return { name, kind, path, found: true, bytes: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer };
+	}
+
+	/** Reply to the webview's request to add a cell file: `text` is a typed path, null opens the file dialog. */
+	private async answerCell(webview: vscode.Webview, requestId: unknown, bundleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null): Promise<void> {
+		try {
+			let uri: vscode.Uri | undefined;
+			if (text === null) {
+				const picked = await vscode.window.showOpenDialog({
+					canSelectMany: false, defaultUri: this.baseFolder(bundleFolder), openLabel: 'Add cells',
+					filters: { Parquet: ['parquet'], 'All files': ['*'] },
+				});
+				if (!picked?.length) { await webview.postMessage({ type: 'cellSource', requestId, cancelled: true }); return; }
+				uri = picked[0];
+			} else {
+				if (!text.trim()) { throw new Error('Enter a path first.'); }
+				uri = this.locate(text, bundleFolder);
+				if (!await vscode.workspace.fs.stat(uri).then(() => true, () => false)) { throw new Error(`Not found: ${uri.fsPath || uri.path}`); }
+			}
+			const shown = uri.scheme === 'file' ? uri.fsPath : uri.path;
+			const spec = await this.specFor(sourceNameFromPath(shown), 'unknown', shown, uri, webview, roots, true);
+			await webview.postMessage({ type: 'cellSource', requestId, spec });
+		} catch (error) {
+			await webview.postMessage({ type: 'cellSource', requestId, error: error instanceof Error ? error.message : String(error) });
 		}
 	}
 

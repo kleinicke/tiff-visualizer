@@ -52,6 +52,39 @@ export interface SceneManifest {
 	channels: SceneChannelSource[];
 	/** Cell table and outlines, when the bundle has them. */
 	cells?: { cells: string; cellBoundaries: string; nucleusBoundaries?: string };
+	/** Extra cell files named in the settings, resolved by the host. */
+	cellSources?: CellSourceSpec[];
+}
+
+/**
+ * A cell file the host resolved. `kind` is what the setting declared, or
+ * 'unknown' for a file the user typed or picked (the loader reads the columns
+ * to decide). Exactly one of `src` (a webview URI) and `bytes` (a file outside
+ * the webview's reachable folders, read by the host) is set when `found`.
+ */
+export interface CellSourceSpec {
+	name: string;
+	kind: 'table' | 'boundaries' | 'unknown';
+	/** Path as shown to the user. */
+	path: string;
+	found: boolean;
+	src?: string;
+	bytes?: ArrayBuffer;
+}
+
+/** Fill `{sample_name}` in a path template. */
+export function expandSampleName(template: string, sampleName: string): string {
+	return template.replace(/\{sample_name\}/g, sampleName);
+}
+
+export function isAbsolutePath(path: string): boolean {
+	return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\');
+}
+
+/** Short display name for a path typed or picked by the user: the file name without .parquet. */
+export function sourceNameFromPath(path: string): string {
+	const file = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+	return file.replace(/\.parquet$/i, '') || path;
 }
 
 function text(value: unknown): string | undefined {

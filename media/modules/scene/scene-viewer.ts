@@ -161,6 +161,10 @@ export class SceneViewer {
 	}
 
 	addOverlay(overlay: SceneOverlay): void { this.overlays.push(overlay); this.requestRender(); }
+	removeOverlay(overlay: SceneOverlay): void {
+		const at = this.overlays.indexOf(overlay);
+		if (at >= 0) { this.overlays.splice(at, 1); this.requestRender(); }
+	}
 
 	get currentCamera(): Camera { return { ...this.camera }; }
 
@@ -433,7 +437,8 @@ export class SceneViewer {
 		this.pressed = null;
 		if (pressed && event.type === 'pointerup' && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 4) {
 			const point = this.sceneAt(event.clientX, event.clientY);
-			if (point) { for (const overlay of this.overlays) { if (overlay.onClick?.(point, event)) { break; } } }
+			// Topmost overlay first: it is the one the user sees.
+			if (point) { for (let at = this.overlays.length - 1; at >= 0; at--) { if (this.overlays[at].onClick?.(point, event)) { break; } } }
 		}
 	}
 

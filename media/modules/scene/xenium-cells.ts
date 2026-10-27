@@ -50,3 +50,31 @@ export async function loadXeniumCells(files: XeniumCellFiles, pixelSizeUm: numbe
 		});
 	} finally { worker.terminate(); }
 }
+
+export type LoadedSource =
+	| { kind: 'table'; table: CellTable }
+	| { kind: 'boundaries'; table: CellTable; cells: PolygonSet };
+
+/** A metrics table or a boundaries file: from a webview URI, or from bytes the host already read. */
+export async function loadCellSource(
+	input: { src?: string; bytes?: ArrayBuffer; kind: 'table' | 'boundaries' | 'unknown' },
+	pixelSizeUm: number,
+): Promise<LoadedSource> {
+	const buffer = input.bytes?.slice(0) ?? (input.src ? await fetchBuffer(input.src) : null);
+	if (!buffer) { throw new Error('There is nothing to read.'); }
+	const worker = await createWorker();
+	try {
+		return await new Promise<LoadedSource>((resolve, reject) => {
+			worker.onerror = event => reject(new Error(event.message || 'The cell loader failed.'));
+			worker.onmessage = (event: MessageEvent) => {
+				const data = event.data;
+				if (!data?.ok) { reject(new Error(String(data?.error ?? 'The file could not be read.'))); return; }
+				const rowOfId = new Map<string, number>();
+				(data.table.ids as string[]).forEach((id, row) => rowOfId.set(id, row));
+				const table: CellTable = { ...data.table, rowOfId };
+				resolve(data.kind === 'boundaries' ? { kind: 'boundaries', table, cells: data.cells } : { kind: 'table', table });
+			};
+			worker.postMessage({ id: 1, type: 'source', buffer, kind: input.kind, pixelSizeUm }, [buffer]);
+		});
+	} finally { worker.terminate(); }
+}

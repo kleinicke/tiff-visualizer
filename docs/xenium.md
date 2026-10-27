@@ -49,6 +49,28 @@ When the bundle has `cells.parquet` and `cell_boundaries.parquet` (and optionall
 
 Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-patch.js` fixes a one-byte over-read in hyparquet's bit-packed decoder that breaks `cells.parquet`; the build fails loudly if hyparquet changes under it.
 
+### More than one segmentation
+
+The Cells section starts with a path field, a **Browse…** button and a list of everything loaded.
+
+- A **boundaries file** (a Xenium-style `cell_boundaries.parquet` with `cell_id`, `vertex_x`, `vertex_y` in microns) becomes another segmentation, drawn in its own outline colour. Its table holds the outline area, perimeter and circularity. The checkbox hides it, the swatch sets the outline colour, and clicking the name (or a cell in it) makes it the active one for Colour by and measurements.
+- A **table file** (a `cell_id` column plus metrics, such as `segtraq_cells.parquet`) is merged into the active segmentation by `cell_id`. Its columns appear in Colour by as `name · column`, and the row says how many cells matched. Removing the table removes the columns.
+
+The file kind is read from the columns, so the field accepts either. Typed paths may use `{sample_name}` and relative paths start at the workspace folder.
+
+To list files for every sample without typing, name them in `settings.json`. `{sample_name}` is the name of the folder that holds `experiment.xenium`, and relative paths start at the workspace folder containing the bundle:
+
+```json
+"tiffVisualizer.cells.cellsParquet": {
+  "segtraq": "segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet"
+},
+"tiffVisualizer.cells.cellBoundariesParquet": {
+  "sam2": "sam2/{sample_name}/cell_boundaries.parquet"
+}
+```
+
+Listed files load when you click **Load**; a file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
+
 ### Whole-slide performance
 
 Everything is CPU-only (Canvas2D, no WebGL), so it works on a node without a GPU.

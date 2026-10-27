@@ -12,7 +12,7 @@ import { TileCache, type TilePainter } from './cells-tiles.js';
 import { planNone } from './cell-style.js';
 
 const NUCLEUS_OUTLINE = '#6cc8ff';
-const CELL_OUTLINE = '#ffffff';
+export const CELL_OUTLINE = '#ffffff';
 const SELECTED_OUTLINE = '#ffd400';
 /**
  * Cells at least this wide on screen, with few in view, are drawn live as
@@ -40,6 +40,8 @@ export interface CellsLayerOptions {
 	onSelectionChange?: () => void;
 	/** Extra text for the cursor readout, for a row. */
 	describeRow?: (row: number) => string;
+	/** Outline colour of the cells; white when absent. */
+	outline?: string;
 	/** Canvas factory for tiles (tests, or an offscreen canvas). */
 	createTileCanvas?: () => HTMLCanvasElement | OffscreenCanvas;
 }
@@ -58,12 +60,15 @@ export class CellsLayer {
 	private show: CellShow = 'cells';
 	private plan: BucketPlan;
 	private opacity = 0.55;
+	private outlineColor: string;
+	private hidden = false;
 	private readonly selected = new Set<number>();
 	private readonly scratch: number[] = [];
 	private readonly tiles: TileCache;
 	private lastStats = { drawn: 0, painted: 0, pending: 0, fallback: 0 };
 
 	constructor(private readonly options: CellsLayerOptions) {
+		this.outlineColor = options.outline ?? CELL_OUTLINE;
 		this.cells = prepare(options.cells);
 		this.nuclei = options.nuclei && options.nuclei.count > 0 ? prepare(options.nuclei) : null;
 		this.plan = planNone(options.rowCount);
@@ -78,6 +83,9 @@ export class CellsLayer {
 	getShow(): CellShow { return this.show; }
 	setShow(show: CellShow): void { this.show = show; this.tiles.invalidate(); this.options.invalidate(); }
 	setPlan(plan: BucketPlan): void { this.plan = plan; this.tiles.invalidate(); this.options.invalidate(); }
+	setOutline(color: string): void { this.outlineColor = color; this.tiles.invalidate(); this.options.invalidate(); }
+	setHidden(hidden: boolean): void { this.hidden = hidden; this.options.invalidate(); }
+	isHidden(): boolean { return this.hidden; }
 	setOpacity(opacity: number): void { this.opacity = opacity; this.tiles.invalidate(); this.options.invalidate(); }
 	selectedRows(): number[] { return [...this.selected]; }
 
@@ -96,7 +104,7 @@ export class CellsLayer {
 	}
 
 	private primary(): Prepared | null {
-		if (this.show === 'none') { return null; }
+		if (this.show === 'none' || this.hidden) { return null; }
 		if (this.show === 'nucleus') { return this.nuclei ?? this.cells; }
 		return this.cells;
 	}
@@ -160,7 +168,7 @@ export class CellsLayer {
 		}
 		const fills = this.plan.fill;
 		const isNucleus = primary.set === this.nuclei?.set;
-		const outline = isNucleus ? NUCLEUS_OUTLINE : CELL_OUTLINE;
+		const outline = isNucleus ? NUCLEUS_OUTLINE : this.outlineColor;
 		if (detail === 'dots') {
 			const size = (pixelsPerCell < 4 ? 2 : 3) / scale;
 			context.globalAlpha = fills ? Math.max(this.opacity, 0.8) : 0.9;

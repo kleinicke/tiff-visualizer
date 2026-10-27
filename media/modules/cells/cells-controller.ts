@@ -10,6 +10,12 @@ import { categoryColor, planContinuous, planDiscrete, planNone, type CellShow } 
 import type { CellsLayer } from './cells-layer.js';
 import type { CellsModel, CellsSelectionRow } from './cells-model.js';
 
+const noSources: Pick<CellsModel, 'sources' | 'sourceMessage' | 'addSource' | 'browseSource' | 'loadSource' | 'removeSource' | 'activateSource' | 'showSource' | 'colorSource'> = {
+	sources: [], sourceMessage: null,
+	addSource: (): void => undefined, browseSource: (): void => undefined, loadSource: (): void => undefined, removeSource: (): void => undefined,
+	activateSource: (): void => undefined, showSource: (): void => undefined, colorSource: (): void => undefined,
+};
+
 const MAX_LEGEND_ROWS = 60;
 const MAX_SELECTION_ROWS = 60;
 const HISTOGRAM_BINS = 40;
@@ -43,6 +49,12 @@ export class CellsController {
 		this.layer.setShow(this.show);
 		this.layer.setOpacity(this.opacity);
 		this.apply();
+	}
+
+	/** Stop colouring by a column that is being removed. */
+	forgetMetrics(names: readonly string[]): void {
+		for (const name of names) { this.discrete.delete(name); this.continuous.delete(name); }
+		if (this.metric !== null && names.includes(this.metric)) { this.metric = null; this.change(); }
 	}
 
 	getState(): CellsControllerState { return { show: this.show, metric: this.metric, opacity: this.opacity }; }
@@ -120,6 +132,7 @@ export class CellsController {
 			status: null, count: this.table.count, hasNuclei: this.layer.hasNuclei(), show: this.show, metric: this.metric,
 			metrics: this.table.columns.map(entry => ({ name: entry.name, kind: entry.kind })), opacity: this.opacity, discrete, continuous,
 			selection: this.selectionSummary(),
+			...noSources,
 			setShow: show => { this.show = show; this.layer.setShow(show); this.notify(); },
 			setMetric: name => { this.metric = name; this.change(); },
 			setOpacity: opacity => { this.opacity = opacity; this.layer.setOpacity(opacity); this.notify(); },

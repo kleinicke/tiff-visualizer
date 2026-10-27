@@ -5,7 +5,7 @@
  * objects are built for the (very long) boundary tables.
  */
 
-import { parquetRead } from 'hyparquet';
+import { parquetMetadata, parquetRead } from 'hyparquet';
 import { decompress } from 'fzstd';
 
 interface Chunk { rowStart: number; data: ArrayLike<unknown> }
@@ -40,4 +40,9 @@ export async function readParquetColumns(buffer: ArrayBuffer, columns?: string[]
 		result.set(name, merged);
 	}
 	return result;
+}
+
+/** Names of the leaf columns, from the file footer only. */
+export function parquetColumnNames(buffer: ArrayBuffer): string[] {
+	return parquetMetadata(buffer).schema.slice(1).filter(entry => !entry.num_children).map(entry => entry.name);
 }

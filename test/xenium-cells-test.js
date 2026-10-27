@@ -115,6 +115,30 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		assert.deepStrictEqual(channelHistogram(plane, 5, 5, 3), [0, 0, 0]);
 	}
 	{
+		const { buildCellTable } = await load('cells/cell-table');
+		const { mergeTable, dropColumns } = await load('cells/cells-merge');
+		const target = buildCellTable(new Map([['cell_id', ['a', 'b', 'c']], ['area', [1, 2, 3]]]));
+		const extra = buildCellTable(new Map([['cell_id', ['c', 'a', 'z']], ['score', [0.5, 0.25, 9]], ['type', ['T', 'B', 'T']]]));
+		const merged = mergeTable(target, extra, 'segtraq');
+		assert.deepStrictEqual(merged.added, ['segtraq · score', 'segtraq · type']);
+		assert.strictEqual(merged.matched, 2);
+		assert.strictEqual(merged.total, 3);
+		const score = target.columns.find(c => c.name === 'segtraq · score');
+		assert.deepStrictEqual([score.values[0], Number.isNaN(score.values[1]), score.values[2]], [0.25, true, 0.5]);
+		const type = target.columns.find(c => c.name === 'segtraq · type');
+		assert.deepStrictEqual(Array.from(type.codes).map(code => code < 0 ? null : type.labels[code]), ['B', null, 'T']);
+		dropColumns(target, merged.added);
+		assert.strictEqual(target.columns.length, 1);
+		const none = mergeTable(target, buildCellTable(new Map([['cell_id', ['q']], ['x', [1]]])), 'other');
+		assert.deepStrictEqual([none.added.length, none.matched], [0, 0]);
+	}
+	{
+		const { expandSampleName, isAbsolutePath, sourceNameFromPath } = await load('scene/xenium-manifest');
+		assert.strictEqual(expandSampleName('segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet', 'S1'), 'segtraq/S1/S1.segtraq_cells.parquet');
+		assert.ok(isAbsolutePath('/data/x.parquet') && isAbsolutePath('C:\\data\\x.parquet') && !isAbsolutePath('sam2/x.parquet'));
+		assert.strictEqual(sourceNameFromPath('/a/b/S1.segtraq_cells.parquet'), 'S1.segtraq_cells');
+	}
+	{
 		const { TileCache } = await load('cells/cells-tiles');
 		assert.ok(TileCache.levelFor(1) === 0);
 		assert.strictEqual(TileCache.levelFor(0.5), -1);
