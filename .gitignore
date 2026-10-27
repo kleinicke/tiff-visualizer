@@ -38,6 +38,10 @@ wasm/jxl-decoder/target/
 media/chunks/
 media/imagePreview.bundle.js
 media/imagePreview.bundle.js.map
+media/xeniumViewer.bundle.js
+media/xeniumViewer.bundle.js.map
+media/xeniumTileWorker.bundle.js
+media/xeniumTileWorker.bundle.js.map
 media/decodeWorker.bundle.js
 media/decodeWorker.bundle.js.map
 media/pngDecodeWorker.bundle.js
@@ -68,3 +72,6 @@ __pycache__/
 packages/python/build/
 packages/python/dist/
 packages/python/scientific_image_visualizer/_assets/
+
+# Claude 
+.e2e-stage

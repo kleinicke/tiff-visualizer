@@ -57,6 +57,30 @@ const webviewBuildOptions = {
   minify: !isWatch,
 };
 
+const xeniumViewerBuildOptions = {
+  plugins: [sveltePlugin()],
+  conditions: ['browser'],
+  entryPoints: ['media/xenium-viewer.ts'],
+  bundle: true,
+  outdir: 'media',
+  entryNames: 'xeniumViewer.bundle',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+  minify: !isWatch,
+};
+
+const xeniumTileWorkerBuildOptions = {
+  entryPoints: ['media/xenium-tile-worker.ts'],
+  bundle: true,
+  outfile: 'media/xeniumTileWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+};
+
 // Build the decode worker (runs format decoders off the webview UI thread).
 // ESM preserves import.meta.url used by bundled WASM/worker dependencies.
 const decodeWorkerBuildOptions = {
@@ -196,6 +220,8 @@ function findMediaTsFiles(dir) {
 const mediaModuleTsFiles = [
   ...findMediaTsFiles('media/modules'),
   'media/imagePreview.ts',
+  'media/xenium-viewer.ts',
+  'media/xenium-tile-worker.ts',
   'media/decode-worker.ts',
   'media/png-decode-worker.ts',
   'media/layered-decode-worker.ts',
@@ -308,6 +334,12 @@ async function buildAll() {
     // Build webview scripts
     await build(webviewBuildOptions);
     console.log('Webview scripts built successfully');
+
+    await build(xeniumViewerBuildOptions);
+    console.log('Xenium viewer built successfully');
+
+    await build(xeniumTileWorkerBuildOptions);
+    console.log('Xenium tile worker built successfully');
 
     // Build decode worker
     await build(decodeWorkerBuildOptions);
