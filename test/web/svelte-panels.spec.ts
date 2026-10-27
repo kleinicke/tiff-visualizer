@@ -53,6 +53,8 @@ test('Svelte channels retain slider identity, solo and composite state', async (
   await first.getByRole('button', { name: 'Solo' }).click();
   await expect(first.getByRole('button', { name: 'Solo' })).toHaveClass(/active/);
   await expect(panel.locator('.channel-row.dimmed')).toHaveCount(2);
+  // Channels start folded to their first row; the sliders are in the unfolded part.
+  await first.locator('.channel-fold').click();
   const slider = first.getByTitle('Channel opacity');
   await slider.evaluate((element: HTMLInputElement) => {
     (window as any).channelSlider = element;
