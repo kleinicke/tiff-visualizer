@@ -1,0 +1,65 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { pathToFileURL } = require('url');
+
+const sceneDir = path.join(__dirname, '..', 'out', 'media', 'modules', 'scene');
+const sample = path.join(__dirname, '..', 'test-samples', 'scientific', 'xenium', 'Xenium_V1_MultiCellSeg_Human_Ovary_tiny_outs');
+const load = name => import(pathToFileURL(path.join(sceneDir, name)).href);
+
+function classicTiff(subOffsets) {
+	const b = Buffer.alloc(512);
+	b.write('II');
+	b.writeUInt16LE(42, 2);
+	b.writeUInt32LE(8, 4);
+	b.writeUInt16LE(1, 8);
+	b.writeUInt16LE(330, 10);
+	b.writeUInt16LE(4, 12);
+	b.writeUInt32LE(subOffsets.length, 14);
+	b.writeUInt32LE(100, 18);
+	b.writeUInt32LE(0, 22);
+	subOffsets.forEach((o, i) => b.writeUInt32LE(o, 100 + i * 4));
+	subOffsets.forEach(o => { b.writeUInt16LE(0, o); b.writeUInt32LE(0, o + 2); });
+	return new Uint8Array(b);
+}
+
+(async () => {
+	const subifd = await load('tiff-subifd.js');
+	const manifest = await load('xenium-manifest.js');
+	const pyramid = await load('pyramid.js');
+
+	const bytes = classicTiff([200, 300, 400]);
+	const info = subifd.inspectTiffRoot(bytes);
+	assert.deepStrictEqual(Array.from(info.subIfdOffsets), [200, 300, 400]);
+	subifd.chainSubIfds(bytes);
+	const view = new DataView(bytes.buffer);
+	assert.strictEqual(view.getUint32(8 + 2 + 12, true), 200);
+	assert.strictEqual(view.getUint32(200 + 2, true), 300);
+	assert.strictEqual(view.getUint32(300 + 2, true), 400);
+	assert.strictEqual(view.getUint32(400 + 2, true), 0);
+
+	assert.throws(() => manifest.parseExperiment('{"images":{}}'));
+	assert.throws(() => manifest.parseExperiment('not json'));
+
+	const cam = pyramid.fitCamera({ width: 1000, height: 500 }, { width: 500, height: 500 });
+	assert.ok(cam.scale > 0);
+
+	if (fs.existsSync(path.join(sample, 'experiment.xenium'))) {
+		const exp = manifest.parseExperiment(fs.readFileSync(path.join(sample, 'experiment.xenium'), 'utf8'));
+		assert.ok(exp.pixelSizeUm > 0);
+		const listing = fs.readdirSync(path.join(sample, 'morphology_focus'));
+		const files = manifest.discoverChannelFiles(exp, listing);
+		assert.strictEqual(files.length, 4);
+		const first = fs.readFileSync(path.join(sample, 'morphology_focus', listing.sort()[0]));
+		const real = new Uint8Array(first.buffer, first.byteOffset, first.byteLength);
+		const root = subifd.inspectTiffRoot(real);
+		assert.ok(root.subIfdOffsets.length >= 3);
+		const xml = root.description;
+		const hints = manifest.omeChannelHints(xml);
+		assert.strictEqual(hints.length, 4);
+		assert.ok(hints.every(h => h.name));
+		assert.ok(manifest.purposeTint(hints[0].purpose));
+		subifd.chainSubIfds(real);
+	}
+	console.log('xenium scene tests passed');
+})().catch(error => { console.error(error); process.exit(1); });
