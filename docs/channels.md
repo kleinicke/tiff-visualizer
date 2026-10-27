@@ -44,17 +44,19 @@ fallback palette, and RGB images get "Red", "Green", "Blue".
 
 ## Settings
 
-Four VS Code settings make the panel start the way you usually set it up:
+Five VS Code settings make the panel start the way you usually set it up:
 
 | Setting | Effect |
 | --- | --- |
 | `tiffVisualizer.channels.autoComposite` | Open images whose channels come from OME-TIFF or ImageJ metadata in composite mode. Ordinary RGB images are not affected |
+| `tiffVisualizer.channels.autoOpenPanel` | Open the Channels panel for the same images, once per file. For multi-page stacks it opens before the other channels have decoded, so the loading progress is visible |
 | `tiffVisualizer.channels.colorsByName` | Tints by channel name, matched case-insensitively |
 | `tiffVisualizer.channels.colorsByNumber` | Tints by channel number as the panel shows it, starting at 1 |
 | `tiffVisualizer.channels.groups` | Named sets of channels that can be switched on or soloed together from the Groups section of the panel |
 
 ```json
 "tiffVisualizer.channels.autoComposite": true,
+"tiffVisualizer.channels.autoOpenPanel": true,
 "tiffVisualizer.channels.colorsByName": { "DAPI": "#3399ff", "GFP": "#00ff00" },
 "tiffVisualizer.channels.colorsByNumber": { "1": "#00ff00" },
 "tiffVisualizer.channels.groups": { "T Cells": ["CD3e", "CD8", "CD4"] }
@@ -68,7 +70,9 @@ Names come first because they survive a change in channel order.
 Switching composite on or off by hand wins over `autoComposite` for the rest
 of that preview. A composite the setting switched on turns itself off again
 for an image it does not apply to, such as an RGB photo later in the folder.
-A changed `autoComposite` applies from the next image. Changed colours apply
+`autoOpenPanel` applies once per file, so closing the panel is not undone as
+you step through Z or T. A changed `autoComposite` or `autoOpenPanel` applies
+from the next image. Changed colours apply
 to previews opened afterwards, because an open preview keeps the tints it is
 already using.
 

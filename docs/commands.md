@@ -120,6 +120,7 @@ letters select tools — see [measurement](./measure.md).
 | --- | --- | --- |
 | `tiffVisualizer.navigationShortcuts` | `{}` |  |
 | `tiffVisualizer.channels.autoComposite` | `false` | Open images whose channels are described by OME-TIFF or ImageJ metadata (fluorescence stacks, hyperstacks) in composite mode. Ordinary RGB images are not affected. Turning composite off by hand keeps it off for that preview. |
+| `tiffVisualizer.channels.autoOpenPanel` | `false` | Open the Channels panel when an image whose channels are described by OME-TIFF or ImageJ metadata opens. For multi-page stacks it opens before the other channels have decoded, so the loading progress is visible. Applies once per file; ordinary RGB images are not affected. |
 | `tiffVisualizer.channels.colorsByName` | `{}` | Channel tints by channel name, matched case-insensitively, for example {"DAPI": "#3399ff", "GFP": "#00ff00"}. Takes precedence over colorsByNumber and over colours stored in the file. |
 | `tiffVisualizer.channels.colorsByNumber` | `{}` | Channel tints by channel number as shown in the Channels panel (starting at 1), for example {"1": "#00ff00"}. Takes precedence over colours stored in the file. |
 | `tiffVisualizer.channels.groups` | `{}` | Named groups of channels for the Channels panel, for example {"T Cells": ["CD3e", "CD8", "CD4"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit. |

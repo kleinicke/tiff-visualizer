@@ -405,6 +405,11 @@
           "default": false,
           "description": "Open images whose channels are described by OME-TIFF or ImageJ metadata (fluorescence stacks, hyperstacks) in composite mode. Ordinary RGB images are not affected. Turning composite off by hand keeps it off for that preview."
         },
+        "tiffVisualizer.channels.autoOpenPanel": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the Channels panel when an image whose channels are described by OME-TIFF or ImageJ metadata opens. For multi-page stacks it opens before the other channels have decoded, so the loading progress is visible. Applies once per file; ordinary RGB images are not affected."
+        },
         "tiffVisualizer.channels.colorsByName": {
           "type": "object",
           "default": {},

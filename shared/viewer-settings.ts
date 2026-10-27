@@ -23,6 +23,8 @@ export interface DebayerSettings {
 export interface ChannelDefaults {
     /** Open images whose channels come from OME/ImageJ metadata in composite mode. */
     autoComposite?: boolean;
+    /** Open the Channels panel for images whose channels come from OME/ImageJ metadata. */
+    autoOpenPanel?: boolean;
     /** Tint by channel name, matched case-insensitively, e.g. { "DAPI": "#3399ff" }. */
     colorsByName?: Record<string, string>;
     /** Tint by 1-based channel number, as the panel labels them, e.g. { "1": "#00ff00" }. */

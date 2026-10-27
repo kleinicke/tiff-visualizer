@@ -363,6 +363,9 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// composite the setting switched on, so an image it does not apply to (an
 	// RGB photo later in the folder) goes back to the decoded view.
 	let compositeChosenByUser = false;
+	// The file `tiffVisualizer.channels.autoOpenPanel` last opened the panel for,
+	// so closing the panel, or stepping through Z/T, is not undone.
+	let autoPanelResource: string | null = null;
 	let compositeAuto = false;
 	let channelGeneration = -1;
 	// Sibling pages of an OME/ImageJ stack decode in the background. The panel
@@ -981,8 +984,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	function applyAutoComposite(): void {
 		if (compositeChosenByUser) { return; }
-		const metadataChannels = (tiffProcessor.rawTiffData?.ome?.sizeC || 0) > 1
-			&& hasCompositableChannels();
+		const metadataChannels = hasMetadataChannels();
 		const wanted = settingsManager.settings.channelDefaults?.autoComposite === true && metadataChannels;
 		if (wanted && !compositeEnabled) {
 			compositeEnabled = true;
@@ -994,6 +996,27 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			return;
 		}
 		channelsPanel.render();
+		scheduleSaveState();
+	}
+
+	/** True when OME or ImageJ metadata describes several channels, as opposed to an ordinary RGB image. */
+	function hasMetadataChannels(): boolean {
+		return (tiffProcessor.rawTiffData?.ome?.sizeC || 0) > 1 && hasCompositableChannels();
+	}
+
+	/**
+	 * Apply `tiffVisualizer.channels.autoOpenPanel`: open the Channels panel once
+	 * per file for images whose channels come from metadata. Runs right after the
+	 * first frame is committed, which for OME and ImageJ stacks is before the
+	 * other channels' pages have decoded, so the panel shows the loading progress
+	 * instead of appearing at the end.
+	 */
+	function applyAutoOpenPanel(): void {
+		if (settingsManager.settings.channelDefaults?.autoOpenPanel !== true || !hasMetadataChannels()) { return; }
+		const resource = settingsManager.settings.resourceUri || settingsManager.settings.src || '';
+		if (autoPanelResource === resource) { return; }
+		autoPanelResource = resource;
+		channelsPanel.show();
 		scheduleSaveState();
 	}
 
@@ -1024,6 +1047,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			compositeSelectorChannel = null;
 		}
 		applyAutoComposite();
+		applyAutoOpenPanel();
 		if (compositeEnabled || channelsPanel.isVisible()) { rebuildChannelPlanes(); }
 		if (compositeEnabled) { scheduleCompositeRender(); }
 		// Ask whether this image has ROIs saved beside it. Cheap, silent when
@@ -1577,6 +1601,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		if (typeof persistedState.channelGroupSolo === 'string') { channelGroupSolo = persistedState.channelGroupSolo; }
 		compositeEnabled = persistedState.compositeEnabled === true;
 		compositeChosenByUser = persistedState.compositeChosenByUser === true;
+		autoPanelResource = typeof persistedState.autoPanelResource === 'string' ? persistedState.autoPanelResource : null;
 		compositeAuto = persistedState.compositeAuto === true;
 		if (persistedState.isChannelsPanelVisible) { channelsPanel.show(); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
@@ -1676,6 +1701,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// choices are worth persisting.
 			compositeEnabled,
 			compositeChosenByUser,
+			autoPanelResource,
 			compositeAuto,
 			channelSettings,
 			channelSolo,

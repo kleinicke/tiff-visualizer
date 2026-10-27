@@ -423,6 +423,7 @@ export class ImagePreview extends MediaPreview {
 		const config = vscode.workspace.getConfiguration('tiffVisualizer.channels');
 		return {
 			autoComposite: config.get<boolean>('autoComposite', false),
+			autoOpenPanel: config.get<boolean>('autoOpenPanel', false),
 			colorsByName: config.get<Record<string, string>>('colorsByName', {}),
 			colorsByNumber: config.get<Record<string, string>>('colorsByNumber', {}),
 			groups: config.get<Record<string, unknown>>('groups', {}),
