@@ -50,6 +50,8 @@ export interface SceneManifest {
 	pixelSizeUm: number;
 	run?: { name?: string; region?: string; cells?: number };
 	channels: SceneChannelSource[];
+	/** Cell table and outlines, when the bundle has them. */
+	cells?: { cells: string; cellBoundaries: string; nucleusBoundaries?: string };
 }
 
 function text(value: unknown): string | undefined {
@@ -115,6 +117,20 @@ export function discoverChannelFiles(experiment: XeniumExperiment, listing: read
 	return found.map(({ fileName, described }) => ({
 		index: described.index, fileName, relativePath: `${prefix}${fileName}`, fallbackName: described.fallbackName,
 	}));
+}
+
+/** Cell files at the top of the bundle, by name. */
+export function discoverCellFiles(
+	rootListing: readonly string[],
+	toSrc: (relativePath: string) => string,
+): SceneManifest['cells'] | undefined {
+	const has = (name: string) => rootListing.includes(name);
+	if (!has('cells.parquet') || !has('cell_boundaries.parquet')) { return undefined; }
+	return {
+		cells: toSrc('cells.parquet'),
+		cellBoundaries: toSrc('cell_boundaries.parquet'),
+		nucleusBoundaries: has('nucleus_boundaries.parquet') ? toSrc('nucleus_boundaries.parquet') : undefined,
+	};
 }
 
 export function buildSceneManifest(

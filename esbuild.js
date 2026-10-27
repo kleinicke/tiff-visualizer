@@ -1,5 +1,6 @@
 const { build: esbuild, context } = require('esbuild');
 const sveltePlugin = require('./scripts/svelte-plugin.cjs');
+const { patchHyparquetEncoding } = require('./esbuild-hyparquet-patch.js');
 async function build(config) {
   if (isWatch) {
     const ctx = await context(config);
@@ -69,6 +70,17 @@ const xeniumViewerBuildOptions = {
   sourcemap: true,
   format: 'esm',
   minify: !isWatch,
+};
+
+const xeniumCellsWorkerBuildOptions = {
+  entryPoints: ['media/xenium-cells-worker.ts'],
+  bundle: true,
+  outfile: 'media/xeniumCellsWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+  plugins: [patchHyparquetEncoding()],
 };
 
 const xeniumTileWorkerBuildOptions = {
@@ -222,6 +234,7 @@ const mediaModuleTsFiles = [
   'media/imagePreview.ts',
   'media/xenium-viewer.ts',
   'media/xenium-tile-worker.ts',
+  'media/xenium-cells-worker.ts',
   'media/decode-worker.ts',
   'media/png-decode-worker.ts',
   'media/layered-decode-worker.ts',
@@ -340,6 +353,9 @@ async function buildAll() {
 
     await build(xeniumTileWorkerBuildOptions);
     console.log('Xenium tile worker built successfully');
+
+    await build(xeniumCellsWorkerBuildOptions);
+    console.log('Xenium cells worker built successfully');
 
     // Build decode worker
     await build(decodeWorkerBuildOptions);

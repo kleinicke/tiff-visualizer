@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
 import type { ChannelDefaults } from '../../shared/viewer-settings';
-import { buildSceneManifest, discoverChannelFiles, folderOf, parseExperiment } from '../../media/modules/scene/xenium-manifest';
+import { buildSceneManifest, discoverCellFiles, discoverChannelFiles, folderOf, parseExperiment } from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
 
 /**
@@ -59,6 +59,9 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 				relativePath => webview.asWebviewUri(Utils.joinPath(bundleFolder, ...relativePath.split('/'))).toString(),
 				Utils.basename(bundleFolder),
 			);
+			const toSrc = (relativePath: string) => webview.asWebviewUri(Utils.joinPath(bundleFolder, ...relativePath.split('/'))).toString();
+			const rootEntries = await vscode.workspace.fs.readDirectory(bundleFolder);
+			manifest.cells = discoverCellFiles(rootEntries.filter(([, type]) => (type & vscode.FileType.File) !== 0).map(([name]) => name), toSrc);
 			await webview.postMessage({ type: 'scene', manifest });
 		} catch (error) {
 			await webview.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) });
@@ -78,7 +81,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		const nonce = getNonce();
 		const asset = (...parts: string[]) => webview.asWebviewUri(vscode.Uri.joinPath(this.extensionRoot, 'media', ...parts)).toString();
 		const vendorAssets = {
-			workers: { 'xeniumTileWorker.bundle.js': asset('xeniumTileWorker.bundle.js') },
+			workers: {
+				'xeniumTileWorker.bundle.js': asset('xeniumTileWorker.bundle.js'),
+				'xeniumCellsWorker.bundle.js': asset('xeniumCellsWorker.bundle.js'),
+			},
 			codecWasm: asset('wasm', 'codec-wasm.wasm'),
 			nonce,
 		};

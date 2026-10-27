@@ -41,6 +41,8 @@ media/imagePreview.bundle.js.map
 media/xeniumViewer.bundle.js
 media/xeniumViewer.bundle.js.map
 media/xeniumTileWorker.bundle.js
+media/xeniumCellsWorker.bundle.js
+media/xeniumCellsWorker.bundle.js.map
 media/xeniumTileWorker.bundle.js.map
 media/decodeWorker.bundle.js
 media/decodeWorker.bundle.js.map

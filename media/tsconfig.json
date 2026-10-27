@@ -23,6 +23,7 @@
         "./comparisonPanel.ts",
         "./xenium-viewer.ts",
         "./xenium-tile-worker.ts",
+        "./xenium-cells-worker.ts",
         "./modules/**/*.ts",
         "./types/**/*.d.ts"
     ],

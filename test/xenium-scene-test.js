@@ -3,9 +3,19 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const sceneDir = path.join(__dirname, '..', 'out', 'media', 'modules', 'scene');
 const sample = path.join(__dirname, '..', 'test-samples', 'scientific', 'xenium', 'Xenium_V1_MultiCellSeg_Human_Ovary_tiny_outs');
-const load = name => import(pathToFileURL(path.join(sceneDir, name)).href);
+const esbuild = require('esbuild');
+const os = require('os');
+
+/** Bundle a media module for the test, so other tests that emit CommonJS into out/ cannot interfere. */
+async function load(relative) {
+	const outfile = path.join(os.tmpdir(), `${relative.replace(/[\\/]/g, '-')}-${process.pid}.mjs`);
+	await esbuild.build({
+		entryPoints: [path.join(__dirname, '..', 'media', 'modules', `${relative}.ts`)],
+		bundle: true, format: 'esm', platform: 'node', outfile, logLevel: 'silent',
+	});
+	return import(pathToFileURL(outfile).href);
+}
 
 function classicTiff(subOffsets) {
 	const b = Buffer.alloc(512);
@@ -24,9 +34,9 @@ function classicTiff(subOffsets) {
 }
 
 (async () => {
-	const subifd = await load('tiff-subifd.js');
-	const manifest = await load('xenium-manifest.js');
-	const pyramid = await load('pyramid.js');
+	const subifd = await load('scene/tiff-subifd');
+	const manifest = await load('scene/xenium-manifest');
+	const pyramid = await load('scene/pyramid');
 
 	const bytes = classicTiff([200, 300, 400]);
 	const info = subifd.inspectTiffRoot(bytes);

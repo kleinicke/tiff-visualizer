@@ -32,6 +32,10 @@ import {
 export interface SceneOverlay {
 	/** `context` maps scene pixels to device pixels; `scale` is device pixels per scene pixel. */
 	draw(context: CanvasRenderingContext2D, camera: Camera, scale: number): void;
+	/** A click that was not a drag, in scene pixels. Return true when the overlay used it. */
+	onClick?(point: { x: number; y: number }, event: PointerEvent): boolean;
+	/** Text for the cursor readout at a scene point. */
+	describe?(point: { x: number; y: number }): string | undefined;
 }
 
 export interface SceneViewerOptions {
@@ -93,6 +97,7 @@ export class SceneViewer {
 	private clock = 0;
 	private cursor: { x: number; y: number } | null = null;
 	private drag: { x: number; y: number } | null = null;
+	private pressed: { x: number; y: number } | null = null;
 	private disposed = false;
 	private cameraTimer = 0;
 	private loadingTiles = 0;
@@ -405,6 +410,7 @@ export class SceneViewer {
 		this.canvas.setPointerCapture(event.pointerId);
 		this.canvas.focus();
 		this.drag = { x: event.clientX, y: event.clientY };
+		this.pressed = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
 		this.canvas.classList.add('dragging');
 	}
 
@@ -423,6 +429,12 @@ export class SceneViewer {
 		if (this.canvas.hasPointerCapture(event.pointerId)) { this.canvas.releasePointerCapture(event.pointerId); }
 		this.drag = null;
 		this.canvas.classList.remove('dragging');
+		const pressed = this.pressed;
+		this.pressed = null;
+		if (pressed && event.type === 'pointerup' && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 4) {
+			const point = this.sceneAt(event.clientX, event.clientY);
+			if (point) { for (const overlay of this.overlays) { if (overlay.onClick?.(point, event)) { break; } } }
+		}
 	}
 
 	private onKey(event: KeyboardEvent): void {
@@ -454,6 +466,10 @@ export class SceneViewer {
 				const micron = this.options.pixelSizeUm;
 				parts.push(`x ${Math.floor(point.x)}, y ${Math.floor(point.y)} px`);
 				parts.push(`${(point.x * micron).toFixed(1)}, ${(point.y * micron).toFixed(1)} µm`);
+				for (const overlay of this.overlays) {
+					const text = overlay.describe?.(point);
+					if (text) { parts.push(text); }
+				}
 			}
 		}
 		parts.push(`${Math.round(this.camera.scale * 1000) / 10}%`);
