@@ -18,7 +18,19 @@ async function createWorker(): Promise<Worker> {
 	return worker;
 }
 
+async function fetchBuffer(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
+	const response = await fetch(url, { signal });
+	if (!response.ok) { throw new Error(`Could not read ${decodeURIComponent(url.split('/').pop() ?? url)} (${response.status})`); }
+	return response.arrayBuffer();
+}
+
 export async function loadXeniumCells(files: XeniumCellFiles, pixelSizeUm: number, signal?: AbortSignal): Promise<LoadedCells> {
+	// Fetched here, on the page, then handed over: see the note in the worker.
+	const [cells, cellBoundaries, nucleusBoundaries] = await Promise.all([
+		fetchBuffer(files.cells, signal),
+		fetchBuffer(files.cellBoundaries, signal),
+		files.nucleusBoundaries ? fetchBuffer(files.nucleusBoundaries, signal).catch((): undefined => undefined) : Promise.resolve(undefined),
+	]);
 	const worker = await createWorker();
 	try {
 		return await new Promise<LoadedCells>((resolve, reject) => {
@@ -33,7 +45,8 @@ export async function loadXeniumCells(files: XeniumCellFiles, pixelSizeUm: numbe
 				(data.table.ids as string[]).forEach((id, row) => rowOfId.set(id, row));
 				resolve({ table: { ...data.table, rowOfId }, cells: data.cells, nuclei: data.nuclei });
 			};
-			worker.postMessage({ id: 1, type: 'load', ...files, pixelSizeUm });
+			const transfer = [cells, cellBoundaries, ...(nucleusBoundaries ? [nucleusBoundaries] : [])];
+			worker.postMessage({ id: 1, type: 'load', cells, cellBoundaries, nucleusBoundaries, pixelSizeUm }, transfer);
 		});
 	} finally { worker.terminate(); }
 }

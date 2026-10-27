@@ -2,8 +2,12 @@
  * Reads a Xenium bundle's cell table and outlines off the UI thread and
  * hands back typed arrays.
  *
- *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }
+ *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }   (file contents as ArrayBuffers)
  *     -> { table, cells, nuclei }
+ *
+ * The files are fetched by the page, not here: webview resources are served
+ * through the page's service worker, which does not answer requests made from
+ * a blob worker.
  */
 
 import { readParquetColumns } from './modules/cells/parquet-reader.js';
@@ -12,14 +16,8 @@ import { buildCellTable } from './modules/cells/cell-table.js';
 import { buildPolygonSet, type PolygonSet } from './modules/cells/polygon-set.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';
 
-async function fetchBuffer(url: string): Promise<ArrayBuffer> {
-	const response = await fetch(url);
-	if (!response.ok) { throw new Error(`Could not read ${url.split('/').pop()} (${response.status})`); }
-	return response.arrayBuffer();
-}
-
-async function boundaries(url: string, rowOfId: (id: string) => number, scale: number): Promise<PolygonSet> {
-	const columns = await readParquetColumns(await fetchBuffer(url), ['cell_id', 'vertex_x', 'vertex_y']);
+async function boundaries(file: ArrayBuffer, rowOfId: (id: string) => number, scale: number): Promise<PolygonSet> {
+	const columns = await readParquetColumns(file, ['cell_id', 'vertex_x', 'vertex_y']);
 	const ids = columns.get('cell_id'), xs = columns.get('vertex_x'), ys = columns.get('vertex_y');
 	if (!ids || !xs || !ys) { throw new Error('The boundary file has no cell_id, vertex_x and vertex_y columns.'); }
 	return buildPolygonSet(toStrings(ids), toFloat64(xs), toFloat64(ys), rowOfId, scale);
@@ -34,9 +32,9 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 	try {
 		if (type !== 'load') { throw new Error(`unknown message ${String(type)}`); }
 		const { cells, cellBoundaries, nucleusBoundaries, pixelSizeUm } = event.data as {
-			cells: string; cellBoundaries: string; nucleusBoundaries?: string; pixelSizeUm: number;
+			cells: ArrayBuffer; cellBoundaries: ArrayBuffer; nucleusBoundaries?: ArrayBuffer; pixelSizeUm: number;
 		};
-		const table = buildCellTable(await readParquetColumns(await fetchBuffer(cells)));
+		const table = buildCellTable(await readParquetColumns(cells));
 		const rowOfId = (cellId: string): number => table.rowOfId.get(cellId) ?? -1;
 		const scale = 1 / pixelSizeUm;
 		const cellSet = await boundaries(cellBoundaries, rowOfId, scale);
