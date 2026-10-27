@@ -11,6 +11,7 @@
  * shares none of its load pipeline.
  */
 
+import { openContextMenu, type MenuItem } from '../ui/context-menu';
 import { ChannelsPanel } from './modules/channels-panel.js';
 import { codecWasmModule } from './modules/codec-wasm-wrapper.js';
 import {
@@ -36,6 +37,7 @@ const root = document.getElementById('scene-root')!;
 const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { channelDefaults?: ChannelDefaults };
 
 let viewer: SceneViewer | null = null;
+let pixelSizeUm = 1;
 let panel: ChannelsPanel | null = null;
 let settings: ChannelSettings[] = [];
 let soloChannel: number | null = null;
@@ -121,6 +123,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 			? persisted : undefined;
 
 		showStatus('Reading the overview…');
+		pixelSizeUm = manifest.pixelSizeUm;
 		viewer = await SceneViewer.create({
 			container: root,
 			sources,
@@ -176,6 +179,29 @@ window.addEventListener('message', event => {
 	if (message?.type === 'scene' && message.manifest) { void start(message.manifest as SceneManifest); }
 	else if (message?.type === 'error') { showStatus(String(message.message || 'The bundle could not be opened.'), true); }
 	else if (message?.type === 'toggleChannels') { panel?.toggle(); }
+});
+
+document.addEventListener('contextmenu', event => {
+	const target = event.target as HTMLElement | null;
+	if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) { return; }
+	event.preventDefault();
+	const defer = (label: string, action: () => void): MenuItem => ({ label, action: () => { setTimeout(action, 0); } });
+	const point = viewer?.sceneAt(event.clientX, event.clientY) ?? null;
+	const micron = pixelSizeUm;
+	const items: MenuItem[] = [{ heading: true, label: 'Display' }];
+	items.push(defer('Fit to View', () => viewer?.fit()));
+	items.push(defer('Toggle Channels Panel', () => panel?.toggle()));
+	items.push({ heading: true, label: 'Inspect' });
+	if (point) {
+		const px = `${Math.floor(point.x)}, ${Math.floor(point.y)}`;
+		items.push(defer('Copy Position (px)', () => { void navigator.clipboard?.writeText(px).catch((): void => undefined); }));
+		items.push(defer('Copy Position (µm)', () => {
+			void navigator.clipboard?.writeText(`${(point.x * micron).toFixed(1)}, ${(point.y * micron).toFixed(1)}`).catch((): void => undefined);
+		}));
+	}
+	items.push({ heading: true, label: 'File' });
+	items.push(defer('Open as Text', () => vscode.postMessage({ type: 'openAsText' })));
+	openContextMenu(items, event.clientX, event.clientY);
 });
 
 window.addEventListener('keydown', event => {

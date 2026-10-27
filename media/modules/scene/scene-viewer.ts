@@ -439,6 +439,13 @@ export class SceneViewer {
 		event.preventDefault();
 	}
 
+	/** Scene pixel under a client position, or null outside the slide. */
+	sceneAt(clientX: number, clientY: number): { x: number; y: number } | null {
+		const rect = this.canvas.getBoundingClientRect();
+		const point = screenToScene(this.camera, clientX - rect.left, clientY - rect.top);
+		return point.x >= 0 && point.y >= 0 && point.x < this.scene.width && point.y < this.scene.height ? point : null;
+	}
+
 	private updateHud(levelPosition = chooseLevel(this.levels, this.camera.scale)): void {
 		const parts: string[] = [];
 		if (this.cursor) {
