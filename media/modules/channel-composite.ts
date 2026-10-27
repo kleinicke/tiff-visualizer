@@ -1,6 +1,7 @@
 "use strict";
 
 import { getColormapLut } from './colormaps.js';
+import type { ChannelDefaults } from '../../shared/viewer-settings';
 
 /**
  * Multi-channel compositing — the scientific "Composite" / "Display Adjustment"
@@ -71,6 +72,38 @@ export function defaultChannelColor(index: number, suggested?: string): string {
 	// acquisition software knows which fluorophore this is and we do not.
 	if (suggested && /^#[0-9a-f]{6}$/i.test(suggested)) { return suggested; }
 	return CHANNEL_PALETTE[index % CHANNEL_PALETTE.length];
+}
+
+/**
+ * The tint each plane should start with, before the built-in palette.
+ *
+ * A colour the user configured is a standing decision about a fluorophore, so
+ * it beats the file's OME colour: a name match first, because names survive a
+ * change in channel order, then the 1-based channel number the panel shows.
+ * Invalid entries are ignored rather than rendered as white. `fileColors` is
+ * indexed by channel, like OME `Channel` elements.
+ */
+export function suggestedChannelColors(
+	planes: ChannelPlane[],
+	fileColors: (string | undefined)[] | undefined,
+	defaults: ChannelDefaults | undefined,
+): (string | undefined)[] {
+	const valid = (color: unknown): color is string =>
+		typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color);
+	const byName = new Map<string, string>();
+	for (const [name, color] of Object.entries(defaults?.colorsByName || {})) {
+		if (valid(color)) { byName.set(name.trim().toLowerCase(), color); }
+	}
+	const byNumber = defaults?.colorsByNumber || {};
+	// Keyed by `plane.index`, not array position: an OME page that failed to
+	// decode leaves a gap, and the later planes keep their own channel's colour.
+	return planes.map(plane => {
+		const named = byName.get(plane.name.trim().toLowerCase());
+		if (named) { return named; }
+		const numbered = byNumber[String(plane.index + 1)];
+		if (valid(numbered)) { return numbered; }
+		return fileColors?.[plane.index];
+	});
 }
 
 /** Parse "#rrggbb" into 0..255 components. */

@@ -330,6 +330,36 @@ async function main() {
 			gpu.MAX_GPU_CHANNELS + 1);
 	});
 
+	console.log('\n🎨 Configured channel colours');
+
+	test('a name match beats a number match, which beats the file colour', () => {
+		const planes = [plane(0, 'GFP', [0], 1, 1), plane(1, 'DAPI', [0], 1, 1), plane(2, 'RFP', [0], 1, 1)];
+		const colors = composite.suggestedChannelColors(
+			planes,
+			['#111111', '#222222', '#333333'],
+			{ colorsByName: { dapi: '#3399ff' }, colorsByNumber: { 2: '#00ff00', 3: '#ff0000' } },
+		);
+		assert.deepStrictEqual(colors, ['#111111', '#3399ff', '#ff0000']);
+	});
+
+	test('numbers are 1-based and follow the channel, not the array position', () => {
+		// Channel 2 failed to decode, so the second plane is channel 3.
+		const planes = [plane(0, 'Channel 1', [0], 1, 1), plane(2, 'Channel 3', [0], 1, 1)];
+		const colors = composite.suggestedChannelColors(
+			planes, ['#111111', '#222222', '#333333'], { colorsByNumber: { 1: '#00ff00' } },
+		);
+		assert.deepStrictEqual(colors, ['#00ff00', '#333333']);
+	});
+
+	test('invalid configured colours are ignored, and no settings change nothing', () => {
+		const planes = [plane(0, 'A', [0], 1, 1), plane(1, 'B', [0], 1, 1)];
+		const colors = composite.suggestedChannelColors(
+			planes, ['#111111', undefined], { colorsByName: { A: 'green' }, colorsByNumber: { 2: '#12345' } },
+		);
+		assert.deepStrictEqual(colors, ['#111111', undefined]);
+		assert.deepStrictEqual(composite.suggestedChannelColors(planes, undefined, undefined), [undefined, undefined]);
+	});
+
 	console.log('\n' + '─'.repeat(60));
 	if (failed === 0) {
 		console.log(`🎉 All ${passed} channel compositing tests passed.`);

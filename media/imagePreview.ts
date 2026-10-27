@@ -42,6 +42,7 @@ import {
 	compositeChannels,
 	defaultChannelSettings,
 	planesFromInterleaved,
+	suggestedChannelColors,
 	type ChannelPlane,
 	type ChannelSettings,
 } from './modules/channel-composite.js';
@@ -345,6 +346,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let channelSettings: ChannelSettings[] = [];
 	let channelSolo: number | null = null;
 	let compositeEnabled = false;
+	// `tiffVisualizer.channels.autoComposite` turns compositing on for images
+	// whose channels come from metadata. Once the user switches it either way,
+	// that choice wins for the rest of this preview. `compositeAuto` marks a
+	// composite the setting switched on, so an image it does not apply to (an
+	// RGB photo later in the folder) goes back to the decoded view.
+	let compositeChosenByUser = false;
+	let compositeAuto = false;
 	let channelGeneration = -1;
 	// Sibling pages of an OME/ImageJ stack decode in the background. The panel
 	// reports this rather than "single channel", which is what it would
@@ -566,6 +574,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		isComposite: () => compositeEnabled,
 		setComposite: enabled => {
 			compositeEnabled = enabled;
+			compositeChosenByUser = true;
+			compositeAuto = false;
 			if (enabled) {
 				rebuildChannelPlanes();
 				renderComposite();
@@ -588,14 +598,17 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 *
 	 * Ranges come from the new data — a different exposure needs a different
 	 * black point — while tint, visibility and opacity are decisions about how
-	 * the user wants to look at the series and should persist across it.
+	 * the user wants to look at the series and should persist across it. Fresh
+	 * tints come from `tiffVisualizer.channels.*`, then the file, then the palette.
 	 */
 	function adoptChannelSettings(
 		planes: ChannelPlane[],
 		previous: ChannelSettings[],
 		options: { colors?: (string | undefined)[] },
 	): ChannelSettings[] {
-		const fresh = defaultChannelSettings(planes, options);
+		const fresh = defaultChannelSettings(planes, {
+			colors: suggestedChannelColors(planes, options.colors, settingsManager.settings.channelDefaults),
+		});
 		if (previous.length !== planes.length) { return fresh; }
 		return fresh.map((setting, index) => ({
 			...setting,
@@ -789,6 +802,32 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		return out;
 	}
 
+	/**
+	 * Apply `tiffVisualizer.channels.autoComposite` to the image just shown.
+	 *
+	 * Only channels described by OME or ImageJ metadata count: a fluorescence
+	 * stack is meant to be viewed as a composite, an RGB photo is not. Runs after
+	 * the frame is committed, so the first channel still appears immediately and
+	 * the composite fills in once the sibling planes have loaded.
+	 */
+	function applyAutoComposite(): void {
+		if (compositeChosenByUser) { return; }
+		const metadataChannels = (tiffProcessor.rawTiffData?.ome?.sizeC || 0) > 1
+			&& hasCompositableChannels();
+		const wanted = settingsManager.settings.channelDefaults?.autoComposite === true && metadataChannels;
+		if (wanted && !compositeEnabled) {
+			compositeEnabled = true;
+			compositeAuto = true;
+		} else if (!wanted && compositeAuto) {
+			compositeEnabled = false;
+			compositeAuto = false;
+		} else {
+			return;
+		}
+		channelsPanel.render();
+		scheduleSaveState();
+	}
+
 	/** Drop measurement caches when the displayed image changes. */
 	function invalidateMeasurementForNewImage(): void {
 		measurementSourceCache = null;
@@ -803,6 +842,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		channelPlanes = [];
 		channelStatus = null;
 		channelSolo = null;
+		applyAutoComposite();
 		if (compositeEnabled || channelsPanel.isVisible()) { rebuildChannelPlanes(); }
 		if (compositeEnabled) { scheduleCompositeRender(); }
 		// Ask whether this image has ROIs saved beside it. Cheap, silent when
@@ -1354,6 +1394,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 		if (typeof persistedState.channelSolo === 'number') { channelSolo = persistedState.channelSolo; }
 		compositeEnabled = persistedState.compositeEnabled === true;
+		compositeChosenByUser = persistedState.compositeChosenByUser === true;
+		compositeAuto = persistedState.compositeAuto === true;
 		if (persistedState.isChannelsPanelVisible) { channelsPanel.show(); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
@@ -1451,6 +1493,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// Channel planes are re-derived from the image; only the user's
 			// choices are worth persisting.
 			compositeEnabled,
+			compositeChosenByUser,
+			compositeAuto,
 			channelSettings,
 			channelSolo,
 			// ROIs and their calibration ride along with the webview state.
@@ -5794,6 +5838,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		// compositor was active, leaving it in charge of the canvas would make the
 		// dropdown appear to do nothing.
 		compositeEnabled = false;
+		compositeChosenByUser = true;
+		compositeAuto = false;
 		channelSolo = null;
 		await updateImageWithNewSettings();
 		channelsPanel.render();
