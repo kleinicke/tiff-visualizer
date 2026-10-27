@@ -41,6 +41,34 @@ where the file provides them: the acquisition software knows which fluorophore
 this is and we do not. Files without that metadata get a distinguishable
 fallback palette, and RGB images get "Red", "Green", "Blue".
 
+## Settings
+
+Three VS Code settings make the panel start the way you usually set it up:
+
+| Setting | Effect |
+| --- | --- |
+| `tiffVisualizer.channels.autoComposite` | Open images whose channels come from OME-TIFF or ImageJ metadata in composite mode. Ordinary RGB images are not affected |
+| `tiffVisualizer.channels.colorsByName` | Tints by channel name, matched case-insensitively |
+| `tiffVisualizer.channels.colorsByNumber` | Tints by channel number as the panel shows it, starting at 1 |
+
+```json
+"tiffVisualizer.channels.autoComposite": true,
+"tiffVisualizer.channels.colorsByName": { "DAPI": "#3399ff", "GFP": "#00ff00" },
+"tiffVisualizer.channels.colorsByNumber": { "1": "#00ff00" }
+```
+
+A tint is chosen in this order: a colour you picked in the panel (kept while
+you step through a series with the same channel count), then a name match,
+then a number match, then the file's OME colour, then the fallback palette.
+Names come first because they survive a change in channel order.
+
+Switching composite on or off by hand wins over `autoComposite` for the rest
+of that preview. A composite the setting switched on turns itself off again
+for an image it does not apply to, such as an RGB photo later in the folder.
+A changed `autoComposite` applies from the next image. Changed colours apply
+to previews opened afterwards, because an open preview keeps the tints it is
+already using.
+
 ## The panel
 
 One row per channel:

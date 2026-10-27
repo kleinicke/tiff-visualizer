@@ -400,6 +400,32 @@
           },
           "markdownDescription": "Override shared image navigation keys by control position (1–4). Each pair is [previous, next]. Use physical codes such as `KeyJ`, `KeyK`, `BracketLeft`, or `Shift+Comma`; a single character such as `j` or `ü` follows the layout. Example: `{\"1\": [\"KeyJ\", \"KeyK\"]}`. Omitted/invalid pairs use defaults. A lone slice slider uses pair 2. Hints show the active bindings. Shortcuts apply while the preview has focus; avoid keys used by other viewer tools."
         },
+        "tiffVisualizer.channels.autoComposite": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open images whose channels are described by OME-TIFF or ImageJ metadata (fluorescence stacks, hyperstacks) in composite mode. Ordinary RGB images are not affected. Turning composite off by hand keeps it off for that preview."
+        },
+        "tiffVisualizer.channels.colorsByName": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "description": "Channel tints by channel name, matched case-insensitively, for example {\"DAPI\": \"#3399ff\", \"GFP\": \"#00ff00\"}. Takes precedence over colorsByNumber and over colours stored in the file."
+        },
+        "tiffVisualizer.channels.colorsByNumber": {
+          "type": "object",
+          "default": {},
+          "propertyNames": {
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$"
+          },
+          "description": "Channel tints by channel number as shown in the Channels panel (starting at 1), for example {\"1\": \"#00ff00\"}. Takes precedence over colours stored in the file."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,

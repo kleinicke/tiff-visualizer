@@ -1,4 +1,5 @@
 import type { HostToViewerMessage } from '../../shared/viewer-protocol';
+import type { ChannelDefaults } from '../../shared/viewer-settings';
 import * as vscode from 'vscode';
 import type { NanColorName } from './imageSettings';
 import { Utils } from 'vscode-uri';
@@ -26,6 +27,7 @@ interface WebviewImageSettings extends ImageSettings {
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
 	navigationShortcuts: Record<string, string[]>;
+	channelDefaults: ChannelDefaults;
 	/** Experimental rectangle reads; see the setting's description. */
 	experimentalRegionDecode: boolean;
 }
@@ -223,6 +225,7 @@ export class ImagePreview extends MediaPreview {
 				showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 				navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 				gpuAcceleration: this.getGpuAccelerationEnabled(),
+				channelDefaults: this.getChannelDefaults(),
 				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};
 
@@ -243,7 +246,8 @@ export class ImagePreview extends MediaPreview {
 		this._register(vscode.workspace.onDidChangeConfiguration(e => {
 			if (e.affectsConfiguration('tiffVisualizer.navigationShortcuts')
 				|| e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
-				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')) {
+				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')
+				|| e.affectsConfiguration('tiffVisualizer.channels')) {
 				updateSettings('configuration-changed');
 			}
 		}));
@@ -401,6 +405,7 @@ export class ImagePreview extends MediaPreview {
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
+			channelDefaults: this.getChannelDefaults(),
 			experimentalRegionDecode: this.getRegionDecodeEnabled()
 		};
 
@@ -412,6 +417,15 @@ export class ImagePreview extends MediaPreview {
 		return vscode.workspace
 			.getConfiguration('tiffVisualizer')
 			.get<boolean>('gpuAcceleration', true);
+	}
+
+	private getChannelDefaults(): ChannelDefaults {
+		const config = vscode.workspace.getConfiguration('tiffVisualizer.channels');
+		return {
+			autoComposite: config.get<boolean>('autoComposite', false),
+			colorsByName: config.get<Record<string, string>>('colorsByName', {}),
+			colorsByNumber: config.get<Record<string, string>>('colorsByNumber', {}),
+		};
 	}
 
 	private getRegionDecodeEnabled(): boolean {
@@ -1237,7 +1251,8 @@ export class ImagePreview extends MediaPreview {
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer'),
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
-			gpuAcceleration: this.getGpuAccelerationEnabled()
+			gpuAcceleration: this.getGpuAccelerationEnabled(),
+			channelDefaults: this.getChannelDefaults()
 		};
 
 		const nonce = getNonce();
