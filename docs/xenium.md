@@ -35,6 +35,10 @@ Controls: wheel to zoom, drag to pan, double-click or `0` to fit, `+`/`-` and ar
 
 `SceneViewer.addOverlay` is the extension point for overlays; cells use it today and transcripts are planned.
 
+## Range sliders
+
+Channel black/white points and the continuous Cells colour range use one two-handle slider (`ui/components/RangeSlider.svelte`). A histogram sits directly above the track and shares its width, so a bin lines up with the slider position for that value; bins outside the selected range are dimmed. The Log button switches the histogram's count axis between linear and log. Channel histograms are computed from a sample of up to about 200k pixels of the overview plane. Handles also respond to the arrow keys (Shift for larger steps).
+
 ## Cells
 
 When the bundle has `cells.parquet` and `cell_boundaries.parquet` (and optionally `nucleus_boundaries.parquet`), the outlines load automatically after the image appears and a Cells section is added to the Channels window, under the same kind of header.

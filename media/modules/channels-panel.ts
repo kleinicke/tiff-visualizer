@@ -1,7 +1,9 @@
-import { autoRange, channelStats, type ChannelPlane, type ChannelSettings, type ResolvedChannelGroup } from './channel-composite.js';
+import { autoRange, channelHistogram, channelStats, type ChannelPlane, type ChannelSettings, type ResolvedChannelGroup } from './channel-composite.js';
 import Channels from '../../ui/components/Channels.svelte';
 import { mountView } from '../../ui/mount.js';
 import type { CellsModel } from './cells/cells-model.js';
+
+const HISTOGRAM_BINS = 64;
 
 export interface ChannelsPanelHost {
 	getPlanes: () => ChannelPlane[];
@@ -50,7 +52,7 @@ export interface ChannelGroupRow {
 
 export interface ChannelsModel {
   visible: boolean;
-  planes: { index: number; name: string; min: number; max: number }[];
+  planes: { index: number; name: string; min: number; max: number; histogram: number[] }[];
   settings: ChannelSettings[];
   solo: number | null;
   composite: boolean;
@@ -81,8 +83,11 @@ export class ChannelsPanel {
     const planes = readHost ? this.host.getPlanes() : [];
     if (planes !== this.sourcePlanes) {
       this.sourcePlanes = planes;
-      this.planeDescriptors = planes.map(plane => ({ index: plane.index, name: plane.name,
-        ...channelStats(plane, Math.max(1, Math.floor(plane.data.length / 200_000))) }));
+      this.planeDescriptors = planes.map(plane => {
+        const step = Math.max(1, Math.floor(plane.data.length / 200_000));
+        const { min, max } = channelStats(plane, step);
+        return { index: plane.index, name: plane.name, min, max, histogram: channelHistogram(plane, min, max, HISTOGRAM_BINS, step) };
+      });
     }
     const settings = this.host.getSettings();
     const groupSolo = readHost ? this.host.getGroupSolo?.() ?? null : null;

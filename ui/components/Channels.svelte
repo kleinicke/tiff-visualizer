@@ -3,6 +3,7 @@
   import type { ChannelsModel } from '../../media/modules/channels-panel';
   import { COLORMAP_NAMES } from '../../media/modules/colormaps';
   import { panelGestures } from '../panel-gestures';
+  import RangeSlider from './RangeSlider.svelte';
   import CellsSection from './cells/CellsSection.svelte';
   let { model }: { model: Writable<ChannelsModel> } = $props();
   let query = $state('');
@@ -32,11 +33,6 @@
     const magnitude = Math.abs(value);
     if (magnitude !== 0 && (magnitude < 0.01 || magnitude >= 100000)) return value.toExponential(2);
     return String(Math.round(value * 100) / 100);
-  }
-  function range(index: number, which: 'min' | 'max', value: string, interactive: boolean) {
-    const plane = $model.planes[index], setting = $model.settings[index];
-    const raw = plane.min + Number(value) / 1000 * (plane.max - plane.min || 1);
-    $model.update(index, which === 'min' ? { min: Math.min(raw, setting.max) } : { max: Math.max(raw, setting.min) }, interactive);
   }
 </script>
 <div class="channels-panel" style:display={$model.visible ? 'flex' : 'none'} use:panelGestures={'channels-header'}>
@@ -101,13 +97,9 @@
             <button class="measure-chip channel-solo" class:active={$model.composite ? $model.solo === plane.index : $model.current === plane.index} title={$model.composite ? 'Show only this channel, switching it on if it is off. The other channels keep their settings.' : 'Show this channel on its own. The channel selector follows.'} onclick={() => $model.setSolo(plane.index)}>{$model.composite ? 'Solo' : 'Show'}</button>
           </div>
           {#if !isFolded}
-            <div class="channel-range">
-              {#each ['min', 'max'] as key}
-                {@const which = key as 'min' | 'max'}
-                <input type="range" min="0" max="1000" step="1" class="channel-slider" title={which === 'min' ? 'Black point' : 'White point'} value={Math.round((setting[which] - plane.min) / (plane.max - plane.min || 1) * 1000)} oninput={e => range(index, which, e.currentTarget.value, true)} onchange={e => range(index, which, e.currentTarget.value, false)}>
-              {/each}
-            </div>
-            <div class="channel-readout">{short(setting.min)} – {short(setting.max)}</div>
+            <RangeSlider min={plane.min} max={plane.max} low={setting.min} high={setting.max} histogram={plane.histogram}
+              readout="{short(setting.min)} – {short(setting.max)}" lowTitle="Black point" highTitle="White point"
+              onchange={(low, high, interactive) => $model.update(index, { min: low, max: high }, interactive)} />
             <div class="channel-controls">
               <input type="range" min="0" max="100" value={Math.round(setting.opacity * 100)} class="channel-slider" title="Channel opacity" oninput={e => $model.update(index, { opacity: Number(e.currentTarget.value) / 100 }, true)} onchange={e => $model.update(index, { opacity: Number(e.currentTarget.value) / 100 })}>
               <select class="measure-select channel-colormap" title="Use a colormap instead of a flat tint" value={setting.colormap || 'none'} onchange={e => $model.update(index, { colormap: e.currentTarget.value })}>

@@ -109,6 +109,12 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		assert.deepStrictEqual(Array.from(set.bounds), [0, 0, 4, 4, 10, 10, 14, 14]);
 	}
 	{
+		const { channelHistogram } = await load('channel-composite');
+		const plane = { index: 0, name: 'a', data: Float32Array.from([0, 1, 1, 2, 9, 10, NaN]) };
+		assert.deepStrictEqual(channelHistogram(plane, 0, 10, 2), [4, 2]);
+		assert.deepStrictEqual(channelHistogram(plane, 5, 5, 3), [0, 0, 0]);
+	}
+	{
 		const { TileCache } = await load('cells/cells-tiles');
 		assert.ok(TileCache.levelFor(1) === 0);
 		assert.strictEqual(TileCache.levelFor(0.5), -1);

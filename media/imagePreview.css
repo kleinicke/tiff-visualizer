@@ -2845,13 +2845,6 @@ body img {
 	opacity: 0.5;
 }
 
-.cells-histogram {
-	width: 100%;
-	height: 36px;
-	color: var(--vscode-descriptionForeground, #9d9d9d);
-	display: block;
-}
-
 .cells-colormap {
 	width: 100%;
 	margin-top: 4px;
@@ -3117,4 +3110,82 @@ body img {
 	font-size: 11px;
 	pointer-events: none;
 	z-index: 1000;
+}
+
+.range-slider {
+	margin-top: 4px;
+	--range-thumb: 10px;
+}
+
+.range-body {
+	padding: 0 calc(var(--range-thumb) / 2);
+}
+
+.range-histogram {
+	display: block;
+	width: 100%;
+	height: 32px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.range-track {
+	position: relative;
+	height: 16px;
+	cursor: pointer;
+	touch-action: none;
+}
+
+.range-rail,
+.range-fill {
+	position: absolute;
+	top: 6px;
+	height: 4px;
+	border-radius: 2px;
+}
+
+.range-rail {
+	left: 0;
+	right: 0;
+	background: var(--vscode-input-background, #3c3c3c);
+}
+
+.range-fill {
+	background: var(--vscode-button-background, #0e639c);
+}
+
+.range-handle {
+	position: absolute;
+	top: 1px;
+	width: var(--range-thumb);
+	height: 14px;
+	margin-left: calc(var(--range-thumb) / -2);
+	box-sizing: border-box;
+	border-radius: 3px;
+	background: var(--vscode-button-foreground, #fff);
+	border: 2px solid var(--vscode-button-background, #0e639c);
+	cursor: ew-resize;
+}
+
+.range-handle:focus-visible,
+.range-handle.active {
+	outline: 1px solid var(--vscode-focusBorder, #007fd4);
+}
+
+.range-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	margin-top: 2px;
+}
+
+.range-readout {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.range-log {
+	font-size: 10px;
+	padding: 1px 6px;
 }
