@@ -29,10 +29,12 @@ export interface CellsModel {
 	clearSelection: () => void;
 }
 
-/** A table file belonging to one cell set. */
+/** A table or nucleus file belonging to one cell set. */
 export interface CellsTableRow {
 	id: string;
 	name: string;
+	/** A metrics table, or nucleus outlines. */
+	kind: 'table' | 'nuclei';
 	/** Where it comes from, for the tooltip. */
 	path: string;
 	origin: 'native' | 'settings' | 'added';

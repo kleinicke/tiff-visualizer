@@ -469,6 +469,19 @@
           "additionalProperties": { "type": "string" },
           "description": "Extra cell segmentations for Xenium bundles, as name → path, for example {\"sam2\": \"sam2/{sample_name}/cell_boundaries.parquet\"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns). {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. Segmentations are listed in the Cells section and loaded when you click Load."
         },
+        "tiffVisualizer.cells.nucleusBoundariesParquet": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Path of the nucleus boundaries file, for example sam2/{sample_name}/nucleus_boundaries.parquet." },
+              "parent": { "type": "string", "description": "Name of the one cell set the nuclei belong to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundariesParquet." }
+            },
+            "required": ["path", "parent"]
+          },
+          "description": "Extra nucleus outlines for Xenium bundles, as name → {path, parent}, for example {\"sam2_nuclei\": {\"path\": \"sam2/{sample_name}/nucleus_boundaries.parquet\", \"parent\": \"sam2\"}}. Each file is a Xenium-style nucleus_boundaries.parquet (cell_id, vertex_x, vertex_y in microns) whose cell ids match its parent. It is listed under its parent cell set only and loaded when you click Load; a cell set shows one nucleus file at a time, so loading one replaces the previous. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,

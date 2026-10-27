@@ -141,7 +141,8 @@ async function loadCells(manifest: SceneManifest, active: CellsWorkspace, restor
 		panel?.render();
 		try {
 			const loaded = await loadXeniumCells(manifest.cells, manifest.pixelSizeUm);
-			active.addNative('Xenium cells', loaded, restored?.native);
+			active.addNative('Xenium cells', loaded, restored?.native, manifest.cells.nucleusBoundaries
+				? { name: 'nucleus_boundaries', kind: 'boundaries', path: 'nucleus_boundaries.parquet', found: true, src: manifest.cells.nucleusBoundaries } : undefined);
 			cellsStatus = null;
 		} catch (error) {
 			cellsStatus = `Cells could not be loaded: ${error instanceof Error ? error.message : String(error)}`;

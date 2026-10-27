@@ -152,6 +152,7 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		const host = {
 			load: async file => {
 				if (file.path === 'tab') { return { kind: 'table', table: buildCellTable(new Map([['cell_id', ['a', 'b', 'zz']], ['score', [1, 2, 3]]])) }; }
+				if (file.path === 'nuc') { return { kind: 'boundaries', ...made(['a', 'b', 'zz']) }; }
 				if (file.path === 'other') { return { kind: 'table', table: buildCellTable(new Map([['cell_id', ['nope']], ['x', [1]]])) }; }
 				return { kind: 'boundaries', ...made(['p', 'q', 'r']) };
 			},
@@ -165,14 +166,16 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 			{ name: 'segtraq', kind: 'table', path: 'tab', found: true, src: 'tab', parent: 'Xenium cells' },
 			{ name: 'sam2_default', kind: 'table', path: 'tab', found: true, src: 'tab', parent: 'sam2' },
 			{ name: 'orphan', kind: 'table', path: 'tab', found: true, src: 'tab', parent: 'nobody' },
+			{ name: 'nuc', kind: 'boundaries', path: 'nuc', found: true, src: 'nuc', parent: 'Xenium cells' },
 			{ name: 'sam2', kind: 'boundaries', path: 'seg', found: true, src: 'seg' },
 			{ name: 'gone', kind: 'boundaries', path: 'nowhere', found: false },
 		]);
-		workspace.addNative('Xenium cells', { ...made(['a', 'b', 'c']), nuclei: null });
+		const native = made(['a', 'b', 'c']);
+		workspace.addNative('Xenium cells', { ...native, nuclei: made(['a', 'b', 'c']).cells });
 		let panel = workspace.snapshot(null);
 		assert.deepStrictEqual(panel.sets.map(set => set.name), ['Xenium cells']);
 		assert.deepStrictEqual(panel.pending.map(row => [row.name, row.state]), [['sam2', 'available'], ['gone', 'missing']]);
-		assert.deepStrictEqual(panel.sets[0].tables.map(table => [table.name, table.state]), [['cells', 'loaded'], ['segtraq', 'available']]);
+		assert.deepStrictEqual(panel.sets[0].tables.map(table => [table.name, table.state]), [['cells', 'loaded'], ['nucleus_boundaries', 'loaded'], ['segtraq', 'available'], ['nuc', 'available']]);
 		const segtraq = () => workspace.snapshot(null).sets[0].tables.find(table => table.name === 'segtraq');
 		panel.sets[0].loadTable(segtraq().id);
 		await tick(); await tick();
@@ -182,6 +185,17 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 		assert.ok(segtraq().detail.includes('2 of 3'));
 		panel.sets[0].removeTable(panel.sets[0].tables[0].id);
 		assert.strictEqual(workspace.snapshot(null).sets[0].tables[0].name, 'cells');
+		assert.strictEqual(panel.sets[0].view.hasNuclei, true);
+		const nuc = () => workspace.snapshot(null).sets[0].tables.find(table => table.name === 'nuc');
+		panel.sets[0].loadTable(nuc().id);
+		await tick(); await tick();
+		assert.strictEqual(nuc().state, 'loaded');
+		assert.strictEqual(nuc().kind, 'nuclei');
+		assert.ok(nuc().detail.includes('2 matched'));
+		assert.strictEqual(workspace.snapshot(null).sets[0].tables.find(table => table.name === 'nucleus_boundaries').state, 'available');
+		panel.sets[0].removeTable(nuc().id);
+		assert.strictEqual(workspace.snapshot(null).sets[0].view.hasNuclei, false);
+		assert.strictEqual(nuc().state, 'available');
 		panel.sets[0].addTable('other');
 		await tick(); await tick();
 		panel = workspace.snapshot(null);

@@ -56,7 +56,7 @@ function prepare(set: PolygonSet): Prepared {
 
 export class CellsLayer {
 	private readonly cells: Prepared;
-	private readonly nuclei: Prepared | null;
+	private nuclei: Prepared | null;
 	private show: CellShow = 'cells';
 	private plan: BucketPlan;
 	private opacity = 0.55;
@@ -83,6 +83,12 @@ export class CellsLayer {
 	getShow(): CellShow { return this.show; }
 	setShow(show: CellShow): void { this.show = show; this.tiles.invalidate(); this.options.invalidate(); }
 	setPlan(plan: BucketPlan): void { this.plan = plan; this.tiles.invalidate(); this.options.invalidate(); }
+	/** Replace the nucleus outlines (null removes them). */
+	setNuclei(set: PolygonSet | null): void {
+		this.nuclei = set && set.count > 0 ? prepare(set) : null;
+		this.tiles.invalidate();
+		this.options.invalidate();
+	}
 	setOutline(color: string): void { this.outlineColor = color; this.tiles.invalidate(); this.options.invalidate(); }
 	setHidden(hidden: boolean): void { this.hidden = hidden; this.options.invalidate(); }
 	isHidden(): boolean { return this.hidden; }

@@ -53,7 +53,7 @@ Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-pat
 
 Each cell set (a segmentation with its own table) is a foldable panel in the Cells section, like a channel. A panel has a visibility checkbox, an outline-colour swatch, its name and cell count, and under it:
 
-- **Tables:** the table files merged into this set, each with its column count and how many cells matched, a remove button, and an Add field with Browse… for another one. A table is a `.parquet` with a `cell_id` column plus metrics (such as `segtraq_cells.parquet`); its columns appear in this set's Colour by as `name · column`.
+- **Tables and nuclei:** the files that belong to this set, each with a summary, a remove button, and an Add field with Browse… for another one. The bundle's `cells.parquet` and `nucleus_boundaries.parquet` are listed first, already loaded. A table is a `.parquet` with a `cell_id` column plus metrics (such as `segtraq_cells.parquet`); its columns appear in this set's Colour by as `name · column`. A nucleus file is a Xenium-style `nucleus_boundaries.parquet` whose cell ids match the set; a set shows one nucleus file at a time, so loading another replaces the current one (it can be loaded again from its row). The Add field reads the file's columns to tell the two apart.
 - **Display:** Cells / Nucleus / Both / None, Colour by, the legend or range slider with histogram, fill opacity, and the selection's measurements. Colour by always refers to the panel it is in, and clicking a cell selects in that set only.
 
 Below the panels, a field with Browse… adds another set from a Xenium-style `cell_boundaries.parquet` (`cell_id`, `vertex_x`, `vertex_y` in microns). Its table holds the outline area, perimeter and circularity. Typed paths may use `{sample_name}`, and relative paths start at the workspace folder.
@@ -73,10 +73,16 @@ To list files for every sample without typing, name them in `settings.json`. `{s
     "path": "sam2/{sample_name}/cells.parquet",
     "parent": "sam2"
   }
+},
+"tiffVisualizer.cells.nucleusBoundariesParquet": {
+  "sam2_nuclei": {
+    "path": "sam2/{sample_name}/nucleus_boundaries.parquet",
+    "parent": "sam2"
+  }
 }
 ```
 
-Each table names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundariesParquet`. It is listed under that cell set only, and a table whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
+Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundariesParquet`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
 
 Boundaries files are listed below the cell sets and load when you click **Load**. Table files are listed in their parent's Tables list and load into that set when you click **Load** there. A file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
 

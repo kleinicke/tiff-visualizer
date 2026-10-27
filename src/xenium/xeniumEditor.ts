@@ -103,14 +103,14 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 	private async configuredSources(bundleFolder: vscode.Uri): Promise<ConfiguredSource[]> {
 		const config = vscode.workspace.getConfiguration('tiffVisualizer.cells');
 		const out: ConfiguredSource[] = [];
-		for (const [setting, kind] of [['cellsParquet', 'table'], ['cellBoundariesParquet', 'boundaries']] as const) {
+		for (const [setting, kind, parented] of [['cellsParquet', 'table', true], ['cellBoundariesParquet', 'boundaries', false], ['nucleusBoundariesParquet', 'boundaries', true]] as const) {
 			const entries = config.get<Record<string, unknown>>(setting, {});
 			for (const [name, value] of Object.entries(entries)) {
-				// Tables name the one cell set they belong to; boundaries are just a path.
-				const template = kind === 'table' ? (value as { path?: unknown } | null)?.path : value;
-				const parent = kind === 'table' ? (value as { parent?: unknown } | null)?.parent : undefined;
+				// Tables and nucleus files name the one cell set they belong to; cell boundaries are just a path.
+				const template = parented ? (value as { path?: unknown } | null)?.path : value;
+				const parent = parented ? (value as { parent?: unknown } | null)?.parent : undefined;
 				if (typeof template !== 'string' || !template.trim()) { continue; }
-				if (kind === 'table' && (typeof parent !== 'string' || !parent.trim())) { continue; }
+				if (parented && (typeof parent !== 'string' || !parent.trim())) { continue; }
 				const uri = this.locate(template, bundleFolder);
 				const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
 				out.push({ name, kind, path: expandSampleName(template.trim(), Utils.basename(bundleFolder)), parent: typeof parent === 'string' ? parent.trim() : undefined, uri: exists ? uri : undefined });

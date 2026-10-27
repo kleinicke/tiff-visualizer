@@ -21,7 +21,7 @@ export interface WorkspaceFile {
 	kind: 'table' | 'boundaries' | 'unknown';
 	path: string;
 	found: boolean;
-	/** For a configured table: the name of the one cell set it belongs to. */
+	/** For a configured table or nucleus file: the name of the one cell set it belongs to. */
 	parent?: string;
 	src?: string;
 	bytes?: ArrayBuffer;
@@ -45,7 +45,7 @@ export interface CellsWorkspaceHost {
 }
 
 export interface PersistedCellSource { path: string; origin: 'settings' | 'added'; loaded: boolean }
-export interface PersistedCellTable { set: string; path: string; origin: 'settings' | 'added'; loaded: boolean }
+export interface PersistedCellTable { set: string; path: string; origin: 'settings' | 'added'; loaded: boolean; kind?: 'table' | 'nuclei' | 'unknown' }
 export interface CellsWorkspaceState { native?: CellsControllerState; sources?: PersistedCellSource[]; tables?: PersistedCellTable[] }
 
 const PALETTE = ['#ff9f43', '#1dd1a1', '#ff6b9d', '#a29bfe', '#feca57', '#48dbfb'];
@@ -57,6 +57,8 @@ interface Segmentation { table: CellTable; layer: CellsLayer; controller: CellsC
 interface TableEntry {
 	id: string;
 	name: string;
+	/** 'unknown' for a file the user added, until it has been read. */
+	kind: 'table' | 'nuclei' | 'unknown';
 	file: WorkspaceFile;
 	origin: 'native' | 'settings' | 'added';
 	state: State;
@@ -83,6 +85,7 @@ const missing = (file: WorkspaceFile): string => `Not found: ${file.path}`;
 export class CellsWorkspace {
 	private readonly entries: Entry[] = [];
 	private readonly configuredTables: WorkspaceFile[] = [];
+	private readonly configuredNuclei: WorkspaceFile[] = [];
 	private counter = 0;
 	private message: string | null = null;
 
@@ -106,9 +109,9 @@ export class CellsWorkspace {
 		return entry;
 	}
 
-	private makeTable(entry: Entry, file: WorkspaceFile, origin: TableEntry['origin'], state?: { state: State; detail: string }): TableEntry {
+	private makeTable(entry: Entry, file: WorkspaceFile, origin: TableEntry['origin'], kind: TableEntry['kind'], state?: { state: State; detail: string }): TableEntry {
 		const table: TableEntry = {
-			id: `table-${++this.counter}`, name: this.uniqueName(file.name, entry.tables.map(candidate => candidate.name)), file, origin,
+			id: `table-${++this.counter}`, kind, name: this.uniqueName(file.name, entry.tables.map(candidate => candidate.name)), file, origin,
 			state: state?.state ?? (file.found ? 'available' : 'missing'), detail: state?.detail ?? (file.found ? '' : missing(file)), columns: [],
 		};
 		entry.tables.push(table);
@@ -116,20 +119,35 @@ export class CellsWorkspace {
 	}
 
 	/** The cell set the bundle itself provides. */
-	addNative(name: string, loaded: { table: CellTable; cells: PolygonSet; nuclei: PolygonSet | null }, restored?: CellsControllerState): void {
+	addNative(
+		name: string, loaded: { table: CellTable; cells: PolygonSet; nuclei: PolygonSet | null }, restored?: CellsControllerState,
+		/** The bundle's nucleus file, so it can be loaded again after another replaces it. */
+		nucleusFile?: WorkspaceFile,
+	): void {
 		const entry = this.makeEntry(null, name, 'native');
 		entry.color = CELL_OUTLINE;
 		entry.state = 'loaded';
 		this.attach(entry, loaded.table, loaded.cells, loaded.nuclei, restored);
+		if (loaded.nuclei) {
+			const nucleus = this.makeTable(entry, nucleusFile ?? { name: 'nucleus_boundaries', kind: 'boundaries', path: 'nucleus_boundaries.parquet', found: true }, 'native', 'nuclei',
+				{ state: 'loaded', detail: `${loaded.nuclei.count.toLocaleString()} nuclei` });
+			entry.tables.splice(entry.tables.indexOf(nucleus), 1);
+			entry.tables.splice(1, 0, nucleus);
+		}
 		// The native set goes first in the list however late it finishes loading.
 		this.entries.splice(this.entries.indexOf(entry), 1);
 		this.entries.unshift(entry);
 	}
 
-	/** Files from the settings: boundaries are listed to load; each table is offered under its parent cell set only. */
+	/**
+	 * Files from the settings. Boundaries with no parent are listed to load as
+	 * cell sets; tables, and boundaries with a parent (nucleus outlines), are
+	 * offered under their parent cell set only.
+	 */
 	addConfigured(files: readonly WorkspaceFile[]): void {
 		for (const file of files) {
 			if (file.kind === 'table') { this.configuredTables.push(file); }
+			else if (file.parent) { this.configuredNuclei.push(file); }
 			else { this.makeEntry(file, file.name, 'settings'); }
 		}
 	}
@@ -148,9 +166,10 @@ export class CellsWorkspace {
 		entry.segmentation = { table, layer, controller };
 		entry.tables = [];
 		if (entry.origin === 'native') {
-			this.makeTable(entry, { name: 'cells', kind: 'table', path: 'cells.parquet', found: true }, 'native', { state: 'loaded', detail: `${table.count.toLocaleString()} cells` });
+			this.makeTable(entry, { name: 'cells', kind: 'table', path: 'cells.parquet', found: true }, 'native', 'table', { state: 'loaded', detail: `${table.count.toLocaleString()} cells` });
 		}
-		for (const file of this.configuredTables) { if (file.parent === entry.name) { this.makeTable(entry, file, 'settings'); } }
+		for (const file of this.configuredTables) { if (file.parent === entry.name) { this.makeTable(entry, file, 'settings', 'table'); } }
+		for (const file of this.configuredNuclei) { if (file.parent === entry.name) { this.makeTable(entry, file, 'settings', 'nuclei'); } }
 		layer.setHidden(!entry.visible);
 		this.host.addOverlay(layer);
 	}
@@ -172,7 +191,7 @@ export class CellsWorkspace {
 				path: entry.file!.path, origin: entry.origin as 'settings' | 'added', loaded: entry.state === 'loaded',
 			})),
 			tables: this.entries.flatMap(entry => entry.tables.filter(table => table.origin !== 'native').map(table => ({
-				set: entry.name, path: table.file.path, origin: table.origin as 'settings' | 'added', loaded: table.state === 'loaded',
+				set: entry.name, path: table.file.path, origin: table.origin as 'settings' | 'added', loaded: table.state === 'loaded', kind: table.kind,
 			}))),
 		};
 	}
@@ -196,7 +215,7 @@ export class CellsWorkspace {
 				let table = entry.tables.find(candidate => candidate.file.path === item.path);
 				if (!table && item.origin === 'added') {
 					const file = await this.host.resolve(item.path);
-					table = this.makeTable(entry, { ...file, kind: 'table' }, 'added');
+					table = this.makeTable(entry, file, 'added', item.kind ?? 'unknown');
 				}
 				if (table && item.loaded) { await this.loadTable(entry, table); }
 			} catch { /* as above */ }
@@ -233,13 +252,34 @@ export class CellsWorkspace {
 		table.detail = 'Loading…';
 		this.host.notify();
 		try {
-			const loaded = await this.host.load({ ...table.file, kind: 'table' });
-			if (loaded.kind !== 'table') { throw new Error('This file is a boundaries file, not a table.'); }
-			const result = mergeTable(entry.segmentation.table, loaded.table, table.name);
-			if (result.matched === 0) { throw new Error(`None of its ${result.total.toLocaleString()} cell ids match ${entry.name}.`); }
-			table.columns = result.added;
-			table.state = 'loaded';
-			table.detail = `${result.added.length} columns · ${result.matched.toLocaleString()} of ${result.total.toLocaleString()} cells matched`;
+			const declared = table.kind === 'nuclei' ? 'boundaries' : table.kind === 'table' ? 'table' : 'unknown';
+			const loaded = await this.host.load({ ...table.file, kind: declared });
+			const segmentation = entry.segmentation;
+			if (!segmentation) { throw new Error('This cell set was removed.'); }
+			if (loaded.kind === 'table') {
+				table.kind = 'table';
+				const result = mergeTable(segmentation.table, loaded.table, table.name);
+				if (result.matched === 0) { throw new Error(`None of its ${result.total.toLocaleString()} cell ids match ${entry.name}.`); }
+				table.columns = result.added;
+				table.state = 'loaded';
+				table.detail = `${result.added.length} columns · ${result.matched.toLocaleString()} of ${result.total.toLocaleString()} cells matched`;
+			} else {
+				// Nucleus outlines: tie each polygon to this set's table row by cell id.
+				table.kind = 'nuclei';
+				const nuclei = loaded.cells;
+				let matched = 0;
+				for (let polygon = 0; polygon < nuclei.count; polygon++) {
+					const row = segmentation.table.rowOfId.get(loaded.table.ids[polygon]) ?? -1;
+					nuclei.rows[polygon] = row;
+					if (row >= 0) { matched++; }
+				}
+				if (matched === 0) { throw new Error(`None of its ${nuclei.count.toLocaleString()} cell ids match ${entry.name}.`); }
+				// A set has one nucleus layer: a newly loaded file replaces the previous one.
+				for (const other of entry.tables) { if (other !== table && other.kind === 'nuclei' && other.state === 'loaded') { this.unloadTable(entry, other); } }
+				segmentation.layer.setNuclei(nuclei);
+				table.state = 'loaded';
+				table.detail = `${nuclei.count.toLocaleString()} nuclei · ${matched.toLocaleString()} matched`;
+			}
 		} catch (error) {
 			table.state = 'error';
 			table.detail = error instanceof Error ? error.message : String(error);
@@ -248,6 +288,7 @@ export class CellsWorkspace {
 	}
 
 	private unloadTable(entry: Entry, table: TableEntry): void {
+		if (entry.segmentation && table.kind === 'nuclei' && table.state === 'loaded') { entry.segmentation.layer.setNuclei(null); }
 		if (entry.segmentation && table.columns.length) {
 			dropColumns(entry.segmentation.table, table.columns);
 			entry.segmentation.controller.forgetMetrics(table.columns);
@@ -293,7 +334,7 @@ export class CellsWorkspace {
 		try {
 			const file = await promise;
 			if (!file) { return; }
-			const table = this.makeTable(entry, { ...file, kind: 'table' }, 'added');
+			const table = this.makeTable(entry, file, 'added', 'unknown');
 			this.host.notify();
 			await this.loadTable(entry, table);
 		} catch (error) {
@@ -305,7 +346,7 @@ export class CellsWorkspace {
 	// --- what the panel sees ---------------------------------------------------
 
 	private tableRows(entry: Entry): CellsTableRow[] {
-		return entry.tables.map(table => ({ id: table.id, name: table.name, path: table.file.path, origin: table.origin, state: table.state, detail: table.detail }));
+		return entry.tables.map(table => ({ id: table.id, name: table.name, kind: table.kind === 'nuclei' ? 'nuclei' : 'table', path: table.file.path, origin: table.origin, state: table.state, detail: table.detail }));
 	}
 
 	private setModel(entry: Entry): CellSetModel {

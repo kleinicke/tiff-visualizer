@@ -3303,8 +3303,8 @@ body img {
 }
 
 .cell-set {
-	border-top: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
-	padding: 12px 0 10px;
+	border-top: 1px solid var(--vscode-panel-border, #33333380);
+	padding: 6px 0;
 }
 
 .cell-set.dimmed .cell-set-body {
@@ -3315,6 +3315,7 @@ body img {
 	display: flex;
 	align-items: center;
 	gap: 6px;
+	min-height: 19px;
 }
 
 .cell-set-body {
@@ -3322,7 +3323,7 @@ body img {
 	flex-direction: column;
 	gap: 10px;
 	margin-top: 10px;
-	padding-left: 4px;
+	padding: 0 0 6px 4px;
 }
 
 .cells-tables {

@@ -68,7 +68,7 @@ export interface CellSourceSpec {
 	/** Path as shown to the user. */
 	path: string;
 	found: boolean;
-	/** For a configured table: the name of the one cell set it belongs to. */
+	/** For a configured table or nucleus file: the name of the one cell set it belongs to. */
 	parent?: string;
 	src?: string;
 	bytes?: ArrayBuffer;
