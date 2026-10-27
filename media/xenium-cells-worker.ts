@@ -6,7 +6,8 @@
  *     -> { table, cells, nuclei }
  */
 
-import { readParquetColumns, toFloat64, toStrings } from './modules/cells/parquet-reader.js';
+import { readParquetColumns } from './modules/cells/parquet-reader.js';
+import { toFloat64, toStrings } from './modules/cells/column-values.js';
 import { buildCellTable } from './modules/cells/cell-table.js';
 import { buildPolygonSet, type PolygonSet } from './modules/cells/polygon-set.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';

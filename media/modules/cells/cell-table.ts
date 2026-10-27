@@ -1,6 +1,6 @@
 /** One row per cell, with named columns that are either categories or numbers. */
 
-import { columnKind, toFloat64, toStrings } from './parquet-reader.js';
+import { columnKind, toFloat64, toStrings } from './column-values.js';
 
 export interface DiscreteColumn {
 	kind: 'discrete';
