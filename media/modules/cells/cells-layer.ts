@@ -21,15 +21,32 @@ const SELECTED_OUTLINE = '#ffd400';
 const LIVE_MIN_PX = 40;
 const LIVE_MAX_POLYGONS = 600;
 /**
- * How a tile draws a cell by its width in tile pixels: a centroid dot, a polygon cut to a few corners, then the full outline. Building a
- * path costs per corner, so detail is spent only where cells are few per tile.
+ * A tile draws a cell narrower than DOT_PX (in tile pixels) as a centroid dot
+ * and anything wider as its outline. Both are sized so the layer's brightness
+ * does not change from one level to the next:
+ *
+ *  - Outlines are one pixel wide, which covers 4 / width of the area. Below
+ *    the width where that reaches OUTLINE_INK the line is thinned to keep the
+ *    coverage at OUTLINE_INK instead of climbing towards solid white.
+ *  - A dot carries the ink the outline would (OUTLINE_INK x the cell's area, or
+ *    the fill opacity when colouring). Cells beyond MAX_DOTS_PER_TILE are
+ *    thinned at random, and each survivor takes the ink of the cells it stands
+ *    for, so thinning changes the speckle but not the brightness.
  */
-const DOT_PX = 6;
-const FULL_PX = 12;
-const SIMPLE_VERTICES = 8;
+const DOT_PX = 4;
+/** Nucleus outlines need room: below this width they are not drawn. */
+const NUCLEUS_MIN_PX = 12;
+const OUTLINE_INK = 0.18;
+const MAX_DOTS_PER_TILE = 6000;
+/** A tile with more cells than this falls back to dots, whatever their width, so one tile stays within a frame's budget. */
+const MAX_OUTLINES_PER_TILE = 1500;
+const DOT_ALPHA = 0.9;
+/** A tile is drawn 0.71-1x its size on screen; this is the mean, used to keep line weight steady. */
+const TILE_DOWNSCALE = 0.85;
+/** Vertices closer than this (tile pixels) to the last one kept change nothing visible. */
+const MIN_VERTEX_GAP_PX = 0.7;
 /** Time a frame may spend painting new tiles. */
 const TILE_BUDGET_MS = 8;
-type Detail = 'dots' | 'simple' | 'full';
 
 export interface CellsLayerOptions {
 	cells: PolygonSet;
@@ -72,7 +89,7 @@ export class CellsLayer {
 		this.cells = prepare(options.cells);
 		this.nuclei = options.nuclei && options.nuclei.count > 0 ? prepare(options.nuclei) : null;
 		this.plan = planNone(options.rowCount);
-		const painter: TilePainter = { paint: (context, level, rect) => this.paintTile(context, level, rect) };
+		const painter: TilePainter = { paint: (context, scale, rect) => this.paintTile(context, scale, rect) };
 		this.tiles = new TileCache(painter, 640, options.createTileCanvas);
 	}
 
@@ -131,7 +148,7 @@ export class CellsLayer {
 		context.lineJoin = 'round';
 		const polygons = primary.meanSize * scale >= LIVE_MIN_PX ? primary.index.visible(visible[0], visible[1], visible[2], visible[3], this.scratch) : null;
 		if (polygons && polygons.length <= LIVE_MAX_POLYGONS) {
-			this.paint(context, primary, polygons, scale, 'full', this.show === 'both' ? this.nuclei : null);
+			this.paintOutlines(context, primary, polygons, scale, 1 / scale, 0, this.show === 'both' ? this.nuclei : null);
 			this.lastStats = { drawn: 0, painted: 0, pending: 0, fallback: 0 };
 		} else {
 			this.lastStats = this.tiles.draw(context, scale, visible, TILE_BUDGET_MS);
@@ -141,68 +158,79 @@ export class CellsLayer {
 		context.restore();
 	}
 
-	/** Paint one pyramid tile. The context maps scene pixels to tile pixels. */
-	private paintTile(context: CanvasRenderingContext2D, level: number, rect: [number, number, number, number]): void {
+	/** Paint one pyramid tile. The context maps scene pixels to tile pixels; `scale` is tile pixels per scene pixel. */
+	private paintTile(context: CanvasRenderingContext2D, scale: number, rect: [number, number, number, number]): void {
 		const primary = this.primary();
 		if (!primary) { return; }
-		const scale = 2 ** level;
-		const pad = 2 / scale;
-		const polygons = primary.index.visible(rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad, []);
+		const pad = 3 / scale;
+		const window: [number, number, number, number] = [rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad];
+		const polygons = primary.index.visible(window[0], window[1], window[2], window[3], []);
 		context.lineJoin = 'round';
-		const pixels = primary.meanSize * scale;
-		const detail: Detail = pixels < DOT_PX ? 'dots' : pixels < FULL_PX ? 'simple' : 'full';
-		this.paint(context, primary, polygons, scale, detail, detail === 'full' && this.show === 'both' ? this.nuclei : null, [rect[0] - pad, rect[1] - pad, rect[2] + pad, rect[3] + pad]);
+		const width = primary.meanSize * scale;
+		if (width < DOT_PX || polygons.length > MAX_OUTLINES_PER_TILE) { this.paintDots(context, primary, polygons, scale, width); return; }
+		const lineWidth = Math.min(1 / TILE_DOWNSCALE, OUTLINE_INK * width / 4) / scale;
+		this.paintOutlines(context, primary, polygons, scale, lineWidth, Math.min(2, Math.max(MIN_VERTEX_GAP_PX, width / 10)) / scale, width >= NUCLEUS_MIN_PX && this.show === 'both' ? this.nuclei : null, window);
 	}
 
-	/** Draw polygons grouped by colour bucket: one fill and one stroke per bucket. */
-	private paint(
-		context: CanvasRenderingContext2D, primary: Prepared, polygons: ArrayLike<number>, scale: number, detail: Detail,
-		nuclei: Prepared | null, nucleusWindow?: [number, number, number, number],
-	): void {
+	/** Polygons grouped by colour bucket; hidden ones (bucket 0) are left out. */
+	private groupByBucket(primary: Prepared, polygons: ArrayLike<number>, keep: number): Map<number, number[]> {
 		const groups = new Map<number, number[]>();
-		// Several cells to a pixel add nothing: draw an even share of them.
-		const pixelsPerCell = (primary.meanSize * scale) ** 2;
-		const stride = detail === 'dots' ? Math.max(1, Math.floor(2 / pixelsPerCell)) : 1;
+		const limit = keep * 4294967296;
 		for (let at = 0; at < polygons.length; at++) {
 			const polygon = polygons[at];
-			if (stride > 1 && polygon % stride !== 0) { continue; }
+			// A hash of the polygon, not its position in the list: the same cells survive in every tile.
+			if (keep < 1 && (Math.imul(polygon, 2654435761) >>> 0) >= limit) { continue; }
 			const row = primary.set.rows[polygon];
 			const bucket = row >= 0 ? this.plan.bucket[row] : 0;
 			if (bucket === 0) { continue; }
 			const list = groups.get(bucket);
 			if (list) { list.push(polygon); } else { groups.set(bucket, [polygon]); }
 		}
+		return groups;
+	}
+
+	/** One square per cell at its centre, carrying the ink of the cells it stands for. */
+	private paintDots(context: CanvasRenderingContext2D, primary: Prepared, polygons: ArrayLike<number>, scale: number, width: number): void {
+		const keep = Math.min(1, MAX_DOTS_PER_TILE / Math.max(1, polygons.length));
+		const groups = this.groupByBucket(primary, polygons, keep);
 		const fills = this.plan.fill;
-		const isNucleus = primary.set === this.nuclei?.set;
-		const outline = isNucleus ? NUCLEUS_OUTLINE : this.outlineColor;
-		if (detail === 'dots') {
-			const size = (pixelsPerCell < 4 ? 2 : 3) / scale;
-			context.globalAlpha = fills ? Math.max(this.opacity, 0.8) : 0.9;
-			for (const [bucket, members] of groups) {
-				context.fillStyle = fills ? this.plan.colors[bucket - 1] : outline;
-				context.beginPath();
-				for (const polygon of members) {
-					const at = polygon * 4;
-					context.rect((primary.set.bounds[at] + primary.set.bounds[at + 2]) / 2 - size / 2, (primary.set.bounds[at + 1] + primary.set.bounds[at + 3]) / 2 - size / 2, size, size);
-				}
-				context.fill();
+		const ink = (fills ? 0.8 * this.opacity + OUTLINE_INK / 2 : OUTLINE_INK * 0.62) * width * width / keep;
+		const side = Math.max(1, Math.sqrt(ink / DOT_ALPHA));
+		const alpha = Math.min(DOT_ALPHA, ink / (side * side));
+		const size = side / scale;
+		const outline = primary.set === this.nuclei?.set ? NUCLEUS_OUTLINE : this.outlineColor;
+		context.globalAlpha = alpha;
+		for (const [bucket, members] of groups) {
+			context.fillStyle = fills ? this.plan.colors[bucket - 1] : outline;
+			context.beginPath();
+			for (const polygon of members) {
+				const at = polygon * 4, b = primary.set.bounds;
+				context.rect((b[at] + b[at + 2]) / 2 - size / 2, (b[at + 1] + b[at + 3]) / 2 - size / 2, size, size);
 			}
-		} else {
-			context.lineWidth = 1 / scale;
-			for (const [bucket, members] of groups) {
-				const path = new Path2D();
-				for (const polygon of members) { this.tracePolygon(path, primary.set, polygon, detail === 'simple' ? SIMPLE_VERTICES : Infinity); }
-				if (fills) {
-					context.globalAlpha = this.opacity;
-					context.fillStyle = this.plan.colors[bucket - 1];
-					context.fill(path);
-				}
-				if (detail === 'full' || !fills) {
-					context.globalAlpha = fills ? 0.85 : 0.9;
-					context.strokeStyle = outline;
-					context.stroke(path);
-				}
+			context.fill();
+		}
+	}
+
+	/** Cell outlines (and fills when colouring) at `lineWidth` scene pixels; nuclei on top when given. */
+	private paintOutlines(
+		context: CanvasRenderingContext2D, primary: Prepared, polygons: ArrayLike<number>, scale: number, lineWidth: number, minGap: number,
+		nuclei: Prepared | null, nucleusWindow?: [number, number, number, number],
+	): void {
+		const groups = this.groupByBucket(primary, polygons, 1);
+		const fills = this.plan.fill;
+		const outline = primary.set === this.nuclei?.set ? NUCLEUS_OUTLINE : this.outlineColor;
+		context.lineWidth = lineWidth;
+		for (const [bucket, members] of groups) {
+			const path = new Path2D();
+			for (const polygon of members) { this.tracePolygon(path, primary.set, polygon, minGap); }
+			if (fills) {
+				context.globalAlpha = this.opacity;
+				context.fillStyle = this.plan.colors[bucket - 1];
+				context.fill(path);
 			}
+			context.globalAlpha = fills ? 0.85 : 0.9;
+			context.strokeStyle = outline;
+			context.stroke(path);
 		}
 		if (nuclei) { this.paintNuclei(context, nuclei, scale, nucleusWindow ?? this.windowOf(context)); }
 	}
@@ -215,7 +243,7 @@ export class CellsLayer {
 		for (const polygon of visible) {
 			const row = nuclei.set.rows[polygon];
 			if (row >= 0 && this.plan.bucket[row] === 0) { continue; }
-			this.tracePolygon(path, nuclei.set, polygon, Infinity);
+			this.tracePolygon(path, nuclei.set, polygon);
 		}
 		context.globalAlpha = 0.9;
 		context.lineWidth = 1 / scale;
@@ -223,12 +251,18 @@ export class CellsLayer {
 		context.stroke(path);
 	}
 
-	/** Add a polygon to a path, keeping at most `maxVertices` of its corners. */
-	private tracePolygon(path: Path2D, set: PolygonSet, polygon: number, maxVertices = Infinity): void {
+	/** Add a polygon to a path, skipping vertices closer than `minGap` to the last one kept. */
+	private tracePolygon(path: Path2D, set: PolygonSet, polygon: number, minGap = 0): void {
 		const start = set.offsets[polygon], end = set.offsets[polygon + 1];
-		const stride = end - start > maxVertices ? Math.ceil((end - start) / maxVertices) : 1;
-		path.moveTo(set.xy[start * 2], set.xy[start * 2 + 1]);
-		for (let vertex = start + stride; vertex < end; vertex += stride) { path.lineTo(set.xy[vertex * 2], set.xy[vertex * 2 + 1]); }
+		let lastX = set.xy[start * 2], lastY = set.xy[start * 2 + 1];
+		path.moveTo(lastX, lastY);
+		const gapSquared = minGap * minGap;
+		for (let vertex = start + 1; vertex < end; vertex++) {
+			const x = set.xy[vertex * 2], y = set.xy[vertex * 2 + 1];
+			if ((x - lastX) * (x - lastX) + (y - lastY) * (y - lastY) < gapSquared) { continue; }
+			path.lineTo(x, y);
+			lastX = x; lastY = y;
+		}
 		path.closePath();
 	}
 

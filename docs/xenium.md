@@ -90,7 +90,7 @@ Boundaries files are listed below the cell sets and load when you click **Load**
 
 Everything is CPU-only (Canvas2D, no WebGL), so it works on a node without a GPU.
 
-- **Tile pyramid.** Zoomed out, cells are drawn into cached 256 px tiles (power-of-two levels, 640-tile LRU). Detail follows the cell size on screen: centroid dots, then simplified polygons, then full outlines. Dots are thinned when cells are denser than pixels. Tiles are painted within an 8 ms budget per frame; missing tiles fall back to a stale, parent or child tile while they fill.
+- **Tile pyramid.** Zoomed out, cells are drawn into cached 256 px tiles (two levels per doubling of zoom, 640-tile LRU). Detail follows the cell size on screen: cells narrower than 4 px are centroid dots, everything wider is a full outline (no simplified polygons). Brightness is matched across levels: outlines thin below about 14 px so they never pile up into solid colour, and each dot carries the ink of the cell it stands for. Where cells outnumber pixels, a fixed hash of the cell id picks which survive and each survivor takes the ink of the cells it replaces, so thinning changes the speckle, not the brightness. A tile with more than 1500 cells falls back to dots so one tile fits a frame. Tiles are painted within an 8 ms budget per frame; missing tiles fall back to a stale, coarser or finer tile while they fill.
 - **Live vector drawing** is used only when cells are at least 40 px across and at most 600 are visible.
 - **Fast Parquet path.** `parquet-fast.ts` decodes plain/ZSTD pages straight into typed arrays, and boundaries are grouped by `label_id` (validated against `cell_id`). Anything unexpected falls back to the general hyparquet reader.
 

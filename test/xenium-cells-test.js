@@ -221,9 +221,13 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 	{
 		const { TileCache } = await load('cells/cells-tiles');
 		assert.ok(TileCache.levelFor(1) === 0);
-		assert.strictEqual(TileCache.levelFor(0.5), -1);
-		assert.strictEqual(TileCache.levelFor(0.3), -1);
-		assert.strictEqual(TileCache.levelFor(3), 2);
+		assert.strictEqual(TileCache.levelFor(0.5), -2);
+		assert.strictEqual(TileCache.levelFor(0.6), -1);
+		assert.strictEqual(TileCache.levelFor(3), 4);
+		for (const scale of [0.013, 0.07, 0.3, 0.71, 1, 2.5]) {
+			const ratio = scale / TileCache.scaleOf(TileCache.levelFor(scale));
+			assert.ok(ratio <= 1 + 1e-9 && ratio > Math.SQRT1_2 - 1e-9, `scale ${scale} ratio ${ratio}`);
+		}
 		assert.ok(TileCache.levelFor(0.26) < TileCache.levelFor(0.6));
 	}
 	if (fs.existsSync(path.join(sample, 'cells.parquet'))) {

@@ -1,6 +1,7 @@
 /**
- * A tile pyramid for a vector layer. Each level is a power-of-two raster
- * scale; tiles are painted on demand within a time budget and cached, so a
+ * A tile pyramid for a vector layer. Levels are LEVEL_STEPS per octave of
+ * raster scale (so a tile is drawn at most 1.41x smaller than it was
+ * painted, which keeps line weight and brightness steady); tiles are painted on demand within a time budget and cached, so a
  * frame costs a handful of drawImage calls however many polygons the slide
  * has. Tiles that are not ready yet are covered by what the cache holds at
  * neighbouring levels (blurry for a moment, never blank).
@@ -9,10 +10,12 @@
  */
 
 export const TILE_SIZE = 256;
+/** Levels per doubling of scale. */
+export const LEVEL_STEPS = 2;
 
 export interface TilePainter {
-	/** Paint everything inside the tile. The context maps scene pixels to tile pixels. */
-	paint(context: CanvasRenderingContext2D, level: number, sceneRect: [number, number, number, number]): void;
+	/** Paint everything inside the tile. The context maps scene pixels to tile pixels, `scale` per scene pixel. */
+	paint(context: CanvasRenderingContext2D, scale: number, sceneRect: [number, number, number, number]): void;
 }
 
 interface Tile { canvas: HTMLCanvasElement | OffscreenCanvas; version: number }
@@ -34,8 +37,11 @@ export class TileCache {
 
 	size(): number { return this.tiles.size; }
 
-	/** Pyramid level for a screen scale: the smallest power of two that is at least as sharp as the screen. */
-	static levelFor(scale: number): number { return Math.ceil(Math.log2(Math.max(scale, 1e-9)) - 1e-9); }
+	/** Pyramid level for a screen scale: the coarsest level that is at least as sharp as the screen. */
+	static levelFor(scale: number): number { return Math.ceil(Math.log2(Math.max(scale, 1e-9)) * LEVEL_STEPS - 1e-9); }
+
+	/** Tile pixels per scene pixel at a level. */
+	static scaleOf(level: number): number { return 2 ** (level / LEVEL_STEPS); }
 
 	/**
 	 * Draw the tiles covering `visible` (scene pixels). `context` maps scene
@@ -44,7 +50,7 @@ export class TileCache {
 	 */
 	draw(context: CanvasRenderingContext2D, scale: number, visible: [number, number, number, number], budgetMs: number): TileDrawStats {
 		const level = TileCache.levelFor(scale);
-		const levelScale = 2 ** level;
+		const levelScale = TileCache.scaleOf(level);
 		const span = TILE_SIZE / levelScale;
 		const x0 = Math.max(0, Math.floor(visible[0] / span)), x1 = Math.floor(visible[2] / span);
 		const y0 = Math.max(0, Math.floor(visible[1] / span)), y1 = Math.floor(visible[3] / span);
@@ -82,17 +88,17 @@ export class TileCache {
 	private paintTile(level: number, tx: number, ty: number, span: number, id: string, previous: Tile | undefined): Tile {
 		const tile = previous ?? { canvas: this.createCanvas(), version: -1 };
 		const context = tile.canvas.getContext('2d') as CanvasRenderingContext2D;
-		const levelScale = 2 ** level;
+		const levelScale = TileCache.scaleOf(level);
 		context.setTransform(1, 0, 0, 1, 0, 0);
 		context.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
 		context.setTransform(levelScale, 0, 0, levelScale, -tx * span * levelScale, -ty * span * levelScale);
-		this.painter.paint(context, level, [tx * span, ty * span, (tx + 1) * span, (ty + 1) * span]);
+		this.painter.paint(context, levelScale, [tx * span, ty * span, (tx + 1) * span, (ty + 1) * span]);
 		tile.version = this.version;
 		this.tiles.set(id, tile);
 		return tile;
 	}
 
-	/** Cover a missing tile with a cached neighbour: finer tiles first, then coarser ones. */
+	/** Cover a missing tile with a cached neighbour that nests in it (a whole octave away): coarser tiles first, then finer ones. */
 	private drawFallback(context: CanvasRenderingContext2D, level: number, tx: number, ty: number, span: number): boolean {
 		let drew = false;
 		context.save();
@@ -101,7 +107,7 @@ export class TileCache {
 		context.clip();
 		for (let up = 1; up <= 3 && !drew; up++) {
 			const factor = 2 ** up;
-			const parent = this.tiles.get(key(level - up, Math.floor(tx / factor), Math.floor(ty / factor)));
+			const parent = this.tiles.get(key(level - up * LEVEL_STEPS, Math.floor(tx / factor), Math.floor(ty / factor)));
 			if (parent) {
 				const parentSpan = span * factor;
 				context.drawImage(parent.canvas as CanvasImageSource, Math.floor(tx / factor) * parentSpan, Math.floor(ty / factor) * parentSpan, parentSpan, parentSpan);
@@ -112,7 +118,7 @@ export class TileCache {
 			const half = span / 2;
 			for (let dy = 0; dy < 2; dy++) {
 				for (let dx = 0; dx < 2; dx++) {
-					const child = this.tiles.get(key(level + 1, tx * 2 + dx, ty * 2 + dy));
+					const child = this.tiles.get(key(level + LEVEL_STEPS, tx * 2 + dx, ty * 2 + dy));
 					if (child) { context.drawImage(child.canvas as CanvasImageSource, tx * span + dx * half, ty * span + dy * half, half, half); drew = true; }
 				}
 			}
