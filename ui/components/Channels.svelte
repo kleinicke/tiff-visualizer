@@ -7,6 +7,7 @@
   import CellsSection from './cells/CellsSection.svelte';
   import TranscriptsSection from './transcripts/TranscriptsSection.svelte';
   let { model }: { model: Writable<ChannelsModel> } = $props();
+  let open = $state(true);
   let query = $state('');
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
   let filterGroups = $state<string[]>([]);
@@ -38,12 +39,13 @@
 </script>
 <div class="channels-panel" style:display={$model.visible ? 'flex' : 'none'} use:panelGestures={'channels-header'}>
   <div class="channels-header" style:cursor="move">
+    <button class="channel-fold" aria-expanded={open} title={open ? 'Collapse the Channels section' : 'Expand the Channels section'} onclick={() => (open = !open)} onpointerdown={e => e.stopPropagation()}>{open ? '▾' : '▸'}</button>
     <div class="channels-title">Channels</div><div class="channels-spacer"></div>
     <button class="measure-chip" class:active={$model.composite} title="Show all visible channels at once, additively blended (C)" onclick={$model.toggleComposite}>Composite</button>
     <button class="measure-close" title="Close the channels panel" onclick={$model.close}>×</button>
   </div>
-  {#if $model.planes.length >= 2}
-    <details class="channels-global" open>
+  {#if open && $model.planes.length >= 2}
+    <details class="channels-global" open={!$model.compact}>
       <summary class="channels-section-title">{filtering() ? `Listed channels (${shownCount()}/${$model.planes.length})` : 'All channels'}</summary>
       <div class="channels-toolbar">
         <button class="measure-button" title={filtering() ? 'Switch the listed channels on' : 'Switch every channel on'} onclick={() => $model.selectAll(scope())}>Select all</button>
@@ -55,11 +57,12 @@
       </div>
     </details>
   {/if}
+  {#if open}
   <div class="channels-body">
     {#if $model.planes.length < 2}<div class="measure-note">{$model.status ?? 'This image has a single channel.'}</div>
     {:else}
       {#if $model.groups.length}
-        <details class="channel-groups" open>
+        <details class="channel-groups" open={!$model.compact}>
           <summary>Groups ({$model.groups.length})</summary>
           {#each $model.groups as group (group.name)}
             {@const unusable = !$model.composite || group.found === 0}
@@ -115,6 +118,7 @@
       <div class="measure-note">{$model.composite ? `Channels are added together, each scaled by its own range — the way emission combines at the detector. Compositing on ${$model.backend === 'webgpu' ? 'the GPU (WebGPU)' : 'the CPU'}.` : 'Composite is off; the image is shown as decoded. Turn it on to blend the channels.'}</div>
     {/if}
   </div>
+  {/if}
   {#if $model.cells}<CellsSection cells={$model.cells} />{/if}
   {#if $model.transcripts}<TranscriptsSection transcripts={$model.transcripts} />{/if}
 </div>

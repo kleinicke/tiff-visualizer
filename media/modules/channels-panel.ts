@@ -65,6 +65,8 @@ export interface ChannelsModel {
   current: number | null;
   groups: ChannelGroupRow[];
   cells: CellsPanelModel | null;
+  /** A scene viewer (Xenium): the All channels and Groups subsections start folded. */
+  compact: boolean;
   transcripts: TranscriptsPanelModel | null;
   close: () => void;
   toggleComposite: () => void;
@@ -107,7 +109,7 @@ export class ChannelsPanel {
       visible: this.visible,
       // Only small UI descriptors cross the bridge, never reactive pixel buffers.
       planes: this.planeDescriptors,
-      groups, cells: readHost ? this.host.getCells?.() ?? null : null, transcripts: readHost ? this.host.getTranscripts?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
+      groups, compact: !!this.host.getCells, cells: readHost ? this.host.getCells?.() ?? null : null, transcripts: readHost ? this.host.getTranscripts?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
       backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null,
       current: readHost && !this.host.isComposite() ? this.host.getCurrentChannel?.() ?? null : null, close: () => this.hide(),
       toggleComposite: () => { this.host.setComposite(!this.host.isComposite()); this.render(); },
