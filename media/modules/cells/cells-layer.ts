@@ -38,8 +38,6 @@ const DOT_PX = 4;
 const NUCLEUS_MIN_PX = 12;
 const OUTLINE_INK = 0.18;
 const MAX_DOTS_PER_TILE = 6000;
-/** A tile with more cells than this falls back to dots, whatever their width, so one tile stays within a frame's budget. */
-const MAX_OUTLINES_PER_TILE = 1500;
 const DOT_ALPHA = 0.9;
 /** A tile is drawn 0.71-1x its size on screen; this is the mean, used to keep line weight steady. */
 const TILE_DOWNSCALE = 0.85;
@@ -167,7 +165,7 @@ export class CellsLayer {
 		const polygons = primary.index.visible(window[0], window[1], window[2], window[3], []);
 		context.lineJoin = 'round';
 		const width = primary.meanSize * scale;
-		if (width < DOT_PX || polygons.length > MAX_OUTLINES_PER_TILE) { this.paintDots(context, primary, polygons, scale, width); return; }
+		if (width < DOT_PX) { this.paintDots(context, primary, polygons, scale, width); return; }
 		const lineWidth = Math.min(1 / TILE_DOWNSCALE, OUTLINE_INK * width / 4) / scale;
 		this.paintOutlines(context, primary, polygons, scale, lineWidth, Math.min(2, Math.max(MIN_VERTEX_GAP_PX, width / 10)) / scale, width >= NUCLEUS_MIN_PX && this.show === 'both' ? this.nuclei : null, window);
 	}
