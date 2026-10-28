@@ -4,6 +4,8 @@
  *
  *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }   (file contents as ArrayBuffers)
  *     -> { table, cells, nuclei }
+ *   transcripts { buffer, pixelSizeUm }   (transcripts.parquet)
+ *     -> { data }   (points grouped by gene, in scene pixels)
  *   source { buffer, kind, pixelSizeUm }   (one more file: a metrics table or a boundaries file)
  *     -> { kind: 'table', table } | { kind: 'boundaries', table, cells }
  *
@@ -19,6 +21,7 @@ import { buildPolygonSet, buildPolygonSetFromLabels, type PolygonSet } from './m
 import { readPlainColumns } from './modules/cells/parquet-fast.js';
 import type { CellTable } from './modules/cells/cell-table.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';
+import { buildTranscriptData } from './modules/transcripts/transcript-data.js';
 
 /** How many leading rows to compare against the table when trusting label_id = row + 1. */
 const CHECK_ROWS = 5000;
@@ -121,6 +124,26 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 			const { buffer, kind, pixelSizeUm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number };
 			const { result, buffers } = await readSource(buffer, kind, pixelSizeUm);
 			(self as unknown as Worker).postMessage({ id, ok: true, ...result }, buffers);
+			return;
+		}
+		if (type === 'transcripts') {
+			const { buffer, pixelSizeUm } = event.data as { buffer: ArrayBuffer; pixelSizeUm: number };
+			const wanted = ['feature_name', 'x_location', 'y_location', 'qv'];
+			const present = parquetColumnNames(buffer);
+			const missing = wanted.filter(name => !present.includes(name));
+			if (missing.length) { throw new Error(`The transcripts file has no ${missing.join(', ')} column.`); }
+			const columns = await readParquetColumns(buffer, present.includes('is_gene') ? [...wanted, 'is_gene'] : wanted);
+			let names = toStrings(columns.get('feature_name') ?? []), xs = toFloat64(columns.get('x_location') ?? []), ys = toFloat64(columns.get('y_location') ?? []), qv = toFloat64(columns.get('qv') ?? []);
+			const isGene = columns.get('is_gene');
+			if (isGene && isGene.some(value => !value)) {
+				// Controls and unassigned codewords are probes, not genes.
+				const keep: number[] = [];
+				for (let row = 0; row < names.length; row++) { if (isGene[row]) { keep.push(row); } }
+				names = keep.map(row => names[row]);
+				xs = Float64Array.from(keep, row => xs[row]); ys = Float64Array.from(keep, row => ys[row]); qv = Float64Array.from(keep, row => qv[row]);
+			}
+			const data = buildTranscriptData(names, xs, ys, qv, 1 / pixelSizeUm);
+			(self as unknown as Worker).postMessage({ id, ok: true, data }, [data.offsets.buffer as ArrayBuffer, data.x.buffer as ArrayBuffer, data.y.buffer as ArrayBuffer, data.qv.buffer as ArrayBuffer]);
 			return;
 		}
 		if (type !== 'load') { throw new Error(`unknown message ${String(type)}`); }

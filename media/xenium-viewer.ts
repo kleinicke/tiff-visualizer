@@ -20,7 +20,8 @@ import {
 } from './modules/channel-composite.js';
 import { TiffChannelSource } from './modules/scene/channel-source.js';
 import { CellsWorkspace, type CellsWorkspaceHost, type CellsWorkspaceState, type WorkspaceFile } from './modules/cells/cells-workspace.js';
-import { loadCellSource, loadXeniumCells } from './modules/scene/xenium-cells.js';
+import { loadCellSource, loadTranscripts, loadXeniumCells } from './modules/scene/xenium-cells.js';
+import { parseTranscriptGroups, TranscriptsWorkspace, type TranscriptsWorkspaceState } from './modules/transcripts/transcripts-workspace.js';
 import { SceneViewer } from './modules/scene/scene-viewer.js';
 import type { Camera } from './modules/scene/pyramid.js';
 import { omeChannelHints, purposeTint, type SceneManifest } from './modules/scene/xenium-manifest.js';
@@ -33,16 +34,18 @@ interface PersistedState {
 	channelSettings: ChannelSettings[];
 	camera?: Camera;
 	cells?: CellsWorkspaceState;
+	transcripts?: TranscriptsWorkspaceState;
 }
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('scene-root')!;
-const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { channelDefaults?: ChannelDefaults };
+const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { channelDefaults?: ChannelDefaults; transcriptGroups?: unknown };
 
 let viewer: SceneViewer | null = null;
 let pixelSizeUm = 1;
 let panel: ChannelsPanel | null = null;
 let workspace: CellsWorkspace | null = null;
+let transcripts: TranscriptsWorkspace | null = null;
 /** Progress or failure of the bundle's own cells, shown while no segmentation is loaded. */
 let cellsStatus: string | null = null;
 let settings: ChannelSettings[] = [];
@@ -99,7 +102,7 @@ function planes(): ChannelPlane[] { return viewer?.overviewPlanes ?? []; }
 
 function persist(): void {
 	if (!viewer) { return; }
-	const state: PersistedState = { names: planes().map(plane => plane.name), channelSettings: settings, camera: viewer.currentCamera, cells: workspace?.getState() };
+	const state: PersistedState = { names: planes().map(plane => plane.name), channelSettings: settings, camera: viewer.currentCamera, cells: workspace?.getState(), transcripts: transcripts?.getState() };
 	vscode.setState(state);
 }
 
@@ -212,6 +215,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 			setSolo: index => { soloChannel = index; soloGroup = null; applySolo(index === null ? null : [index]); },
 			onChange: () => { viewer?.invalidate(); persist(); },
 			getCells: () => workspace?.snapshot(cellsStatus) ?? null,
+			getTranscripts: () => transcripts?.snapshot() ?? null,
 			getGroups: () => resolveChannelGroups(parseChannelGroups(startup.channelDefaults?.groups), planes()),
 			getGroupSolo: () => soloGroup,
 			setGroupSolo: name => {
@@ -225,6 +229,21 @@ async function start(manifest: SceneManifest): Promise<void> {
 		viewer.invalidate();
 		workspace = createWorkspace(viewer, manifest.pixelSizeUm);
 		workspace.addConfigured(manifest.cellSources ?? []);
+		if (manifest.transcripts) {
+			const src = manifest.transcripts;
+			const scene = viewer;
+			transcripts = new TranscriptsWorkspace({
+				available: true,
+				load: () => loadTranscripts(src, manifest.pixelSizeUm),
+				addOverlay: layer => scene.addOverlay(layer),
+				removeOverlay: layer => scene.removeOverlay(layer),
+				requestRender: () => scene.requestRender(),
+				notify: () => { panel?.render(); persist(); },
+			}, manifest.pixelSizeUm, parseTranscriptGroups(startup.transcriptGroups));
+			transcripts.restore(restorable?.transcripts);
+			// A big file is only read when asked for, unless the last session already had genes on.
+			if (transcripts.wanted) { void transcripts.load(); }
+		}
 		panel.render();
 		void loadCells(manifest, workspace, restorable?.cells);
 	} catch (error) {

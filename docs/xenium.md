@@ -17,7 +17,8 @@ Controls: wheel to zoom, drag to pan, double-click or `0` to fit, `+`/`-` and ar
 - Each channel file is read whole before tiles are decoded. Ranged reads are the next step for whole-slide bundles.
 - Compositing runs on the CPU.
 - Xenium pyramids are stored as TIFF SubIFDs, which the Rust page classifier lists but cannot select. `media/modules/scene/tiff-subifd.ts` chains them in an in-memory copy so the existing region decoder can reach every level. The durable fix is to select SubIFD levels in the Rust parser.
-- Only `morphology_focus` bundles are supported. Transcripts are not drawn yet.
+- Only `morphology_focus` bundles are supported.
+- `transcripts.parquet` is read whole (about 9 bytes per transcript once loaded), so a file with hundreds of millions of transcripts needs a lot of memory. It is read only when you click Load transcripts, unless the last session had genes on.
 
 ## Layout
 
@@ -31,9 +32,11 @@ Controls: wheel to zoom, drag to pan, double-click or `0` to fit, `+`/`-` and ar
 | Scene viewer | `media/modules/scene/scene-viewer.ts` |
 | Cell table, outlines, drawing, controller | `media/modules/cells/` |
 | Cells section components | `ui/components/cells/` |
-| Xenium cell loader and worker | `media/modules/scene/xenium-cells.ts`, `media/xenium-cells-worker.ts` |
+| Xenium cell and transcript loader and worker | `media/modules/scene/xenium-cells.ts`, `media/xenium-cells-worker.ts` |
+| Transcripts: points by gene, colours, workspace, layer | `media/modules/transcripts/` |
+| Transcripts section components | `ui/components/transcripts/` |
 
-`SceneViewer.addOverlay` is the extension point for overlays; cells use it today and transcripts are planned.
+`SceneViewer.addOverlay` is the extension point for overlays; cells and transcripts use it.
 
 ## Range sliders
 
@@ -95,6 +98,20 @@ Everything is CPU-only (Canvas2D, no WebGL), so it works on a node without a GPU
 - **Fast Parquet path.** `parquet-fast.ts` decodes plain/ZSTD pages straight into typed arrays, and boundaries are grouped by `label_id` (validated against `cell_id`). Anything unexpected falls back to the general hyparquet reader.
 
 Synthetic benchmark in headless software Chromium, 1M cells: warm frames under 0.2 ms, tile-filling and pan frames 8-16 ms. Loading 500k cells (12M vertices) took about 2.5-8 s depending on the machine. These are not real whole-slide or HPC measurements.
+
+## Transcripts
+
+The Transcripts section sits below Cells when the bundle has a `transcripts.parquet` (columns `feature_name`, `x_location`, `y_location`, `qv`; rows with `is_gene` false, such as control probes, are dropped). Nothing is shown by default: the file can hold thousands of genes, so you add the ones you want.
+
+- **Genes.** A searchable list adds one gene at a time (matches starting with your text come first, with the transcript count beside each name). Each listed gene has a checkbox, a colour, a count and a remove button. The list scrolls, and a text box filters it. Show all, Hide all and Remove all act on the listed genes (the filtered ones while a filter is on).
+- **Groups.** A group is a named list of genes. Its tri-state checkbox adds the group's genes to the gene list and shows them; clicking it again hides them (they stay listed). It is partly ticked when only some of its genes are shown. Each group also has:
+  - a **Tint / Palette** toggle (default Tint): Tint gives the whole group one colour, for comparing groups; Palette gives each gene its own colour built around the group colour, for comparing genes within a group;
+  - a **filter** button that limits the gene list to the group (several groups combine as a union, and the text filter narrows them further);
+  - **Remove all**, which takes the group's genes out of the gene list so a long group is easy to undo, and a × that takes the group out of the viewer (its genes stay listed).
+- **Defining groups.** Add them in `tiffVisualizer.transcripts.groups` (`{"Epithelial": ["EPCAM", "KRT8"]}`, or `{"genes": [...], "color": "#4dabf7"}`), or in the panel with **New group…** (paste gene names, case-insensitive) or **From listed genes**. Groups from the settings are offered in the Add a group list; panel-made groups are saved with the session. A gene in several groups takes the colour of the first group in the viewer.
+- **Display.** Min quality (QV) hides low-quality transcripts (20 by default); Dot size scales the dots.
+
+Points are grouped by gene and sorted by x, so a view only visits the points of the listed genes inside the visible x range; at most about 250,000 points are drawn per frame (denser views are thinned evenly).
 
 ### Reusing it for other overlays
 

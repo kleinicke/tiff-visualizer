@@ -463,6 +463,24 @@
           },
           "description": "Extra cell tables for Xenium bundles, as name → {path, parent}, for example {\"xenium_segtraq\": {\"path\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\", \"parent\": \"Xenium cells\"}}. Each file needs a cell_id column. It is listed under its parent cell set only, and its columns are merged into that set by cell_id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundariesParquet. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder."
         },
+        "tiffVisualizer.transcripts.groups": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "array", "items": { "type": "string" } },
+              {
+                "type": "object",
+                "properties": {
+                  "genes": { "type": "array", "items": { "type": "string" } },
+                  "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+                },
+                "required": ["genes"]
+              }
+            ]
+          },
+          "description": "Gene groups for the Transcripts section of Xenium bundles, as name → gene list, for example {\"Epithelial\": [\"EPCAM\", \"KRT8\"]}, or name → {genes, color} to choose the group colour. Groups are offered in the Transcripts section's Add group list; none is added until you pick it. Groups can also be made in the panel, from a pasted list of gene names."
+        },
         "tiffVisualizer.cells.cellBoundariesParquet": {
           "type": "object",
           "default": {},
@@ -522,7 +540,7 @@
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
     "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
-    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures && npm run test:xenium-scene && npm run test:xenium-cells",
+    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures && npm run test:xenium-scene && npm run test:xenium-cells && npm run test:xenium-transcripts",
     "test:unit": "npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:format-defaults": "node test/format-defaults-test.js",
@@ -547,6 +565,7 @@
     "test:channels": "node test/channel-composite-test.js",
     "test:xenium-scene": "node test/xenium-scene-test.js",
     "test:xenium-cells": "node test/xenium-cells-test.js",
+    "test:xenium-transcripts": "node test/xenium-transcripts-test.js",
     "test:channel-fixtures": "node test/channel-fixtures-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",

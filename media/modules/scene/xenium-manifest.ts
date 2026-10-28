@@ -52,6 +52,8 @@ export interface SceneManifest {
 	channels: SceneChannelSource[];
 	/** Cell table and outlines, when the bundle has them. */
 	cells?: { cells: string; cellBoundaries: string; nucleusBoundaries?: string };
+	/** The bundle's transcripts.parquet, when it has one. */
+	transcripts?: string;
 	/** Extra cell files named in the settings, resolved by the host. */
 	cellSources?: CellSourceSpec[];
 }

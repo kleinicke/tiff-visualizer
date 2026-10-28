@@ -1,0 +1,81 @@
+const assert = require('node:assert');
+const esbuild = require('esbuild');
+const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+
+async function load(file) {
+	const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tx-')), 'm.cjs');
+	await esbuild.build({ entryPoints: [path.join(__dirname, '..', file)], bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'silent' });
+	return require(out);
+}
+
+(async () => {
+	const { buildTranscriptData, lowerBoundX } = await load('media/modules/transcripts/transcript-data.ts');
+	const data = buildTranscriptData(['B', 'A', 'B', 'A', 'C', 'B'], [5, 4, 1, 2, 9, 3], [50, 40, 10, 20, 90, 30], [40, 10.4, 300, -2, 20, 30], 0.5);
+	assert.deepStrictEqual(data.genes, ['A', 'B', 'C']);
+	assert.deepStrictEqual([...data.offsets], [0, 2, 5, 6]);
+	assert.deepStrictEqual([...data.x], [1, 2, 0.5, 1.5, 2.5, 4.5]);
+	assert.deepStrictEqual([...data.y], [10, 20, 5, 15, 25, 45]);
+	assert.deepStrictEqual([...data.qv], [0, 10, 255, 30, 40, 20]);
+	assert.strictEqual(lowerBoundX(data.x, 2, 5, 1), 3);
+	assert.strictEqual(lowerBoundX(data.x, 2, 5, 1.6), 4);
+	assert.strictEqual(lowerBoundX(data.x, 2, 5, 99), 5);
+
+	const { paletteColor } = await load('media/modules/transcripts/transcript-colors.ts');
+	const colours = new Set(Array.from({ length: 30 }, (_v, index) => paletteColor('#ff6b6b', index)));
+	assert.strictEqual(colours.size, 30);
+	assert.ok([...colours].every(colour => /^#[0-9a-f]{6}$/.test(colour)));
+
+	const { TranscriptsWorkspace } = await load('media/modules/transcripts/transcripts-workspace.ts');
+	const log = [];
+	const host = { addOverlay: () => undefined, removeOverlay: () => undefined, requestRender: () => undefined, notify: () => log.push('notify'), load: async () => data, available: true };
+	const workspace = new TranscriptsWorkspace(host, 1, [{ name: 'Epi', genes: ['A', 'B', 'Z'], color: '#ff0000' }, { name: 'Imm', genes: ['C'], color: '#00ff00' }]);
+	await workspace.load();
+	let model = workspace.snapshot();
+	assert.strictEqual(model.genes.length, 0, 'nothing is added by default');
+	assert.strictEqual(model.groups.length, 0);
+	assert.deepStrictEqual(model.groupChoices.map(group => group.name), ['Epi', 'Imm']);
+	model.addGroup('Epi');
+	model = workspace.snapshot();
+	assert.strictEqual(model.groups[0].state, 'none');
+	assert.strictEqual(model.groups[0].found, 2);
+	assert.deepStrictEqual(model.groups[0].missing, ['Z']);
+	model.groups[0].toggle();
+	model = workspace.snapshot();
+	assert.deepStrictEqual(model.genes.map(gene => gene.name), ['A', 'B']);
+	assert.strictEqual(model.groups[0].state, 'all');
+	assert.strictEqual(model.genes[0].color, '#ff0000');
+	assert.strictEqual(model.genes[1].color, '#ff0000');
+	model.groups[0].setPalette(true);
+	model = workspace.snapshot();
+	assert.notStrictEqual(model.genes[0].color, model.genes[1].color);
+	model.genes[0].setVisible(false);
+	model = workspace.snapshot();
+	assert.strictEqual(model.groups[0].state, 'some');
+	model.groups[0].toggle();
+	model = workspace.snapshot();
+	assert.strictEqual(model.groups[0].state, 'all');
+	model.groups[0].toggle();
+	model = workspace.snapshot();
+	assert.strictEqual(model.groups[0].state, 'none');
+	assert.strictEqual(model.genes.length, 2, 'unticking keeps the genes listed');
+	model.addGene('C');
+	model = workspace.snapshot();
+	assert.strictEqual(model.genes.length, 3);
+	model.groups[0].toggleFilter();
+	model = workspace.snapshot();
+	assert.deepStrictEqual(model.listed.map(gene => gene.name), ['A', 'B']);
+	model.groups[0].removeAll();
+	model = workspace.snapshot();
+	assert.deepStrictEqual(model.genes.map(gene => gene.name), ['C']);
+	model.createGroup("Mine", "a, C\nQ");
+	model = workspace.snapshot();
+	assert.ok(model.groups.some(group => group.name === 'Mine' && group.found === 2 && group.missing.length === 1));
+	const state = workspace.getState();
+	const again = new TranscriptsWorkspace(host, 1, []);
+	await again.load();
+	again.restore(JSON.parse(JSON.stringify(state)));
+	assert.deepStrictEqual(again.snapshot().genes.map(gene => gene.name), ['C']);
+	console.log('xenium transcripts tests passed');
+})();

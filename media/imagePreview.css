@@ -3345,3 +3345,101 @@ body img {
 .cells-table-row.unavailable .cells-source-detail {
 	opacity: 0.6;
 }
+
+/* Transcripts section: gene list, group rows, searchable pickers. */
+.transcripts-section .cells-body {
+	max-height: 60vh;
+}
+
+.transcript-group-row {
+	flex-wrap: wrap;
+}
+
+.transcript-new,
+.transcript-create {
+	display: flex;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.transcript-create {
+	flex-direction: column;
+}
+
+.transcript-create textarea {
+	resize: vertical;
+	font-family: inherit;
+}
+
+.transcript-genes {
+	max-height: 14em;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-top: 4px;
+}
+
+.transcript-gene.dimmed .channel-name {
+	opacity: 0.5;
+}
+
+.transcript-dot {
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.search-picker {
+	position: relative;
+	margin-top: 4px;
+}
+
+.search-picker > input {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.search-picker-list {
+	position: absolute;
+	z-index: 20;
+	left: 0;
+	right: 0;
+	margin: 2px 0 0;
+	padding: 2px 0;
+	list-style: none;
+	max-height: 14em;
+	overflow-y: auto;
+	background: var(--vscode-dropdown-background, #3c3c3c);
+	border: 1px solid var(--vscode-dropdown-border, #454545);
+	border-radius: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.search-picker-list li > button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 3px 8px;
+	background: transparent;
+	border: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.search-picker-list li.active > button,
+.search-picker-list li > button:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.search-picker-note {
+	padding: 3px 8px;
+	opacity: 0.7;
+	font-size: 11px;
+}

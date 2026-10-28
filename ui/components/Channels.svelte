@@ -5,6 +5,7 @@
   import { panelGestures } from '../panel-gestures';
   import RangeSlider from './RangeSlider.svelte';
   import CellsSection from './cells/CellsSection.svelte';
+  import TranscriptsSection from './transcripts/TranscriptsSection.svelte';
   let { model }: { model: Writable<ChannelsModel> } = $props();
   let query = $state('');
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
@@ -115,4 +116,5 @@
     {/if}
   </div>
   {#if $model.cells}<CellsSection cells={$model.cells} />{/if}
+  {#if $model.transcripts}<TranscriptsSection transcripts={$model.transcripts} />{/if}
 </div>

@@ -2,6 +2,7 @@
 
 import type { CellTable } from '../cells/cell-table.js';
 import type { PolygonSet } from '../cells/polygon-set.js';
+import type { TranscriptData } from '../transcripts/transcript-data.js';
 
 export interface XeniumCellFiles { cells: string; cellBoundaries: string; nucleusBoundaries?: string }
 
@@ -75,6 +76,23 @@ export async function loadCellSource(
 				resolve(data.kind === 'boundaries' ? { kind: 'boundaries', table, cells: data.cells } : { kind: 'table', table });
 			};
 			worker.postMessage({ id: 1, type: 'source', buffer, kind: input.kind, pixelSizeUm }, [buffer]);
+		});
+	} finally { worker.terminate(); }
+}
+
+/** Read a transcripts.parquet into points grouped by gene (scene pixels). */
+export async function loadTranscripts(src: string, pixelSizeUm: number): Promise<TranscriptData> {
+	const buffer = await fetchBuffer(src);
+	const worker = await createWorker();
+	try {
+		return await new Promise<TranscriptData>((resolve, reject) => {
+			worker.onerror = event => reject(new Error(event.message || 'The transcript loader failed.'));
+			worker.onmessage = (event: MessageEvent) => {
+				const data = event.data;
+				if (!data?.ok) { reject(new Error(String(data?.error ?? 'The transcripts could not be read.'))); return; }
+				resolve(data.data as TranscriptData);
+			};
+			worker.postMessage({ id: 1, type: 'transcripts', buffer, pixelSizeUm }, [buffer]);
 		});
 	} finally { worker.terminate(); }
 }

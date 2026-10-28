@@ -81,6 +81,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			const toSrc = (relativePath: string) => webview.asWebviewUri(Utils.joinPath(bundleFolder, ...relativePath.split('/'))).toString();
 			const rootEntries = await vscode.workspace.fs.readDirectory(bundleFolder);
 			manifest.cells = discoverCellFiles(rootEntries.filter(([, type]) => (type & vscode.FileType.File) !== 0).map(([name]) => name), toSrc);
+			if (rootEntries.some(([name, type]) => name === 'transcripts.parquet' && (type & vscode.FileType.File) !== 0)) { manifest.transcripts = toSrc('transcripts.parquet'); }
 			manifest.cellSources = await Promise.all(configured.map(async entry => ({ ...await this.specFor(entry.name, entry.kind, entry.path, entry.uri, webview, roots, false), parent: entry.parent })));
 			await webview.postMessage({ type: 'scene', manifest });
 		} catch (error) {
@@ -179,7 +180,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			codecWasm: asset('wasm', 'codec-wasm.wasm'),
 			nonce,
 		};
-		const settings = { channelDefaults: this.getChannelDefaults() };
+		const settings = {
+			channelDefaults: this.getChannelDefaults(),
+			transcriptGroups: vscode.workspace.getConfiguration('tiffVisualizer.transcripts').get<Record<string, unknown>>('groups', {}),
+		};
 		return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>

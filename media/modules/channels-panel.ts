@@ -2,6 +2,7 @@ import { autoRange, channelHistogram, channelStats, type ChannelPlane, type Chan
 import Channels from '../../ui/components/Channels.svelte';
 import { mountView } from '../../ui/mount.js';
 import type { CellsPanelModel } from './cells/cells-model.js';
+import type { TranscriptsPanelModel } from './transcripts/transcripts-model.js';
 
 const HISTOGRAM_BINS = 64;
 
@@ -31,6 +32,8 @@ export interface ChannelsPanelHost {
 	getGroupSolo?: () => string | null;
 	/** The Cells section, for viewers that have cell outlines; null or absent hides it. */
 	getCells?: () => CellsPanelModel | null;
+	/** The Transcripts section, for viewers that have transcripts; null or absent hides it. */
+	getTranscripts?: () => TranscriptsPanelModel | null;
 	/** Solo a whole group (or clear it with null). Exclusive with a single-channel solo. */
 	setGroupSolo?: (name: string | null) => void;
 }
@@ -62,6 +65,7 @@ export interface ChannelsModel {
   current: number | null;
   groups: ChannelGroupRow[];
   cells: CellsPanelModel | null;
+  transcripts: TranscriptsPanelModel | null;
   close: () => void;
   toggleComposite: () => void;
   setSolo: (index: number) => void;
@@ -103,7 +107,7 @@ export class ChannelsPanel {
       visible: this.visible,
       // Only small UI descriptors cross the bridge, never reactive pixel buffers.
       planes: this.planeDescriptors,
-      groups, cells: readHost ? this.host.getCells?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
+      groups, cells: readHost ? this.host.getCells?.() ?? null : null, transcripts: readHost ? this.host.getTranscripts?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
       backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null,
       current: readHost && !this.host.isComposite() ? this.host.getCurrentChannel?.() ?? null : null, close: () => this.hide(),
       toggleComposite: () => { this.host.setComposite(!this.host.isComposite()); this.render(); },
