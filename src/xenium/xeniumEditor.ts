@@ -178,6 +178,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 				'xeniumCellsWorker.bundle.js': asset('xeniumCellsWorker.bundle.js'),
 			},
 			codecWasm: asset('wasm', 'codec-wasm.wasm'),
+			transcriptsWasm: asset('wasm', 'transcripts-wasm.wasm'),
 			nonce,
 		};
 		const settings = {

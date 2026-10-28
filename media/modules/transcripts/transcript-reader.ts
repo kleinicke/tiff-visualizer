@@ -17,6 +17,7 @@
 
 import { parquetMetadataAsync, parquetRead } from 'hyparquet';
 import { decompress } from 'fzstd';
+import { NativeDecoder } from './transcript-native.js';
 import { buildGenePoints, type GenePoints, type TranscriptIndex } from './transcript-data.js';
 
 /** Anything hyparquet can read ranges from. */
@@ -31,7 +32,7 @@ export interface PackedGroup { gene: Uint16Array | Uint32Array; x: Float32Array;
 export interface GroupScan { names: string[]; counts: number[] }
 
 /** What a decoder needs to know about the file. */
-export interface DecoderSetup { metadata: unknown; hasIsGene: boolean; byteLength: number; groups: Group[] }
+export interface DecoderSetup { metadata: unknown; hasIsGene: boolean; byteLength: number; groups: Group[]; wasm?: WebAssembly.Module }
 
 /** Decodes row groups somewhere else (workers). `size` is how many it works on at once. */
 export interface GroupDecoder {
@@ -56,6 +57,8 @@ export interface TranscriptHandle {
 	bytesPerGroup: number;
 	scale: number;
 	decoder: GroupDecoder | null;
+	/** Decodes in this thread with WebAssembly when no pool does; null if unavailable. */
+	native: NativeDecoder | null;
 	/** Decoded row groups kept in compact form, by row-group number, so a later gene needs no decoding. */
 	packed: Map<number, PackedGroup>;
 	packedBytes: number;
@@ -109,7 +112,9 @@ export function groupsOf(metadata: { row_groups: { num_rows: number | bigint }[]
 }
 
 /** Which genes a row group holds, and how many transcripts of each. */
-export async function scanGroup(file: RangeFile, metadata: unknown, group: Group, hasIsGene: boolean): Promise<GroupScan> {
+export async function scanGroup(file: RangeFile, metadata: unknown, group: Group, hasIsGene: boolean, native?: { decoder: NativeDecoder; at: number } | null): Promise<GroupScan> {
+	const fast = await native?.decoder.scan(file, metadata, native.at, group, hasIsGene);
+	if (fast) { return fast; }
 	const columns = await readGroup(file, metadata, group, hasIsGene ? ['feature_name', 'is_gene'] : ['feature_name']);
 	const feature = columns.get('feature_name') ?? [];
 	const isGene = columns.get('is_gene');
@@ -124,7 +129,9 @@ export async function scanGroup(file: RangeFile, metadata: unknown, group: Group
 }
 
 /** Decode one row group and keep only the rows of known genes, in typed arrays (about 11 bytes a row). */
-export async function packGroup(file: RangeFile, metadata: unknown, group: Group, geneIndex: Map<string, number>): Promise<PackedGroup> {
+export async function packGroup(file: RangeFile, metadata: unknown, group: Group, geneIndex: Map<string, number>, native?: { decoder: NativeDecoder; at: number } | null): Promise<PackedGroup> {
+	const fast = await native?.decoder.pack(file, metadata, native.at, group);
+	if (fast) { return fast; }
 	const columns = await readGroup(file, metadata, group, REQUIRED);
 	const feature = columns.get('feature_name') ?? [], xs = columns.get('x_location') ?? [], ys = columns.get('y_location') ?? [], qv = columns.get('qv') ?? [];
 	const rows = feature.length;
@@ -167,20 +174,23 @@ const aheadOf = (decoder: GroupDecoder | null): number => decoder ? decoder.size
  * Count genes and note which row groups hold each. `scale` converts file units to scene pixels.
  * `decoders`, if given, may return a worker pool to decode with; null decodes here.
  */
-export async function openTranscripts(file: RangeFile, scale: number, onProgress?: (done: number, total: number) => void, decoders?: DecoderFactory): Promise<TranscriptHandle> {
+export async function openTranscripts(file: RangeFile, scale: number, onProgress?: (done: number, total: number) => void, decoders?: DecoderFactory, wasm?: WebAssembly.Module): Promise<TranscriptHandle> {
 	const metadata = await parquetMetadataAsync(file) as { schema: { name: string; num_children?: number }[]; row_groups: { num_rows: number | bigint }[] };
 	const names = metadata.schema.slice(1).filter(entry => !entry.num_children).map(entry => entry.name);
 	const missing = REQUIRED.filter(name => !names.includes(name));
 	if (missing.length) { throw new Error(`The transcripts file has no ${missing.join(', ')} column.`); }
 	const hasIsGene = names.includes('is_gene');
 	const groups = groupsOf(metadata);
-	const decoder = decoders?.({ metadata, hasIsGene, byteLength: file.byteLength, groups }) ?? null;
+	const decoder = decoders?.({ metadata, hasIsGene, byteLength: file.byteLength, groups, wasm }) ?? null;
+	let native: NativeDecoder | null = null;
+	try { native = wasm ? new NativeDecoder(wasm) : null; } catch { native = null; }
+	const viaNative = (at: number): { decoder: NativeDecoder; at: number } | null => native ? { decoder: native, at } : null;
 	const counts = new Map<string, number>();
 	const perGroup: string[][] = [];
 	let read = 0;
 	const scan = (at: number): Promise<GroupScan> => decoder
-		? decoder.scan(at).catch(() => scanGroup(file, metadata, groups[at], hasIsGene))
-		: scanGroup(file, metadata, groups[at], hasIsGene);
+		? decoder.scan(at).catch(() => scanGroup(file, metadata, groups[at], hasIsGene, viaNative(at)))
+		: scanGroup(file, metadata, groups[at], hasIsGene, viaNative(at));
 	await eachGroup(groups.map((_group, at) => at), scan, (result, at) => {
 		for (let position = 0; position < result.names.length; position++) { counts.set(result.names[position], (counts.get(result.names[position]) ?? 0) + result.counts[position]); }
 		perGroup[at] = result.names;
@@ -189,12 +199,13 @@ export async function openTranscripts(file: RangeFile, scale: number, onProgress
 	const genes = [...counts.keys()].sort();
 	const geneIndex = new Map(genes.map((gene, position) => [gene, position]));
 	decoder?.setGenes(genes);
+	native?.setGenes(genes);
 	const bytesPerGroup = Math.ceil(genes.length / 8);
 	const presence = new Uint8Array(bytesPerGroup * groups.length);
 	perGroup.forEach((present, group) => { for (const gene of present) { const position = geneIndex.get(gene)!; presence[group * bytesPerGroup + (position >> 3)] |= 1 << (position & 7); } });
 	let total = 0;
 	const countList = genes.map(gene => { const count = counts.get(gene)!; total += count; return count; });
-	return { file, metadata, groups, index: { genes, counts: countList, total }, geneIndex, presence, bytesPerGroup, scale, decoder, packed: new Map(), packedBytes: 0 };
+	return { file, metadata, groups, index: { genes, counts: countList, total }, geneIndex, presence, bytesPerGroup, scale, decoder, native, packed: new Map(), packedBytes: 0 };
 }
 
 /** Stop any workers decoding for this file. */
@@ -225,7 +236,7 @@ export async function readGenes(handle: TranscriptHandle, names: string[], onPro
 	const groups = handle.groups.map((_group, at) => at).filter(at => positions.some(position => handle.presence[at * handle.bytesPerGroup + (position >> 3)] & (1 << (position & 7))));
 	let done = 0;
 	const decode = (at: number): Promise<PackedGroup> => {
-		const here = (): Promise<PackedGroup> => packGroup(handle.file, handle.metadata, handle.groups[at], handle.geneIndex);
+		const here = (): Promise<PackedGroup> => packGroup(handle.file, handle.metadata, handle.groups[at], handle.geneIndex, handle.native ? { decoder: handle.native, at } : null);
 		return handle.decoder ? handle.decoder.pack(at).catch(here) : here();
 	};
 	const load = (at: number): Promise<PackedGroup> => {

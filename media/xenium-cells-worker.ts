@@ -4,8 +4,9 @@
  *
  *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }   (file contents as ArrayBuffers)
  *     -> { table, cells, nuclei }
- *   txOpen { size, pixelSizeUm, workerUrl?, poolSize? }   (transcripts.parquet, read through `range` requests the page answers;
- *                                                         with workerUrl, up to poolSize copies of this worker decode row groups in parallel)
+ *   txOpen { size, pixelSizeUm, workerUrl?, poolSize?, wasm? }   (transcripts.parquet, read through `range` requests the page answers;
+ *                                                         with workerUrl, up to poolSize copies of this worker decode row groups in parallel;
+ *                                                         wasm, a compiled transcripts decoder, makes decoding several times faster)
  *     -> { index }   (genes and counts, from one pass over the gene column)
  *   txGenes { names }
  *     -> { genes: [name, points][] }   (points in scene pixels, sorted by x)
@@ -160,14 +161,14 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 			return;
 		}
 		if (type === 'txOpen') {
-			const { size, pixelSizeUm, workerUrl, poolSize } = event.data as { size: number; pixelSizeUm: number; workerUrl?: string; poolSize?: number };
+			const { size, pixelSizeUm, workerUrl, poolSize, wasm } = event.data as { size: number; pixelSizeUm: number; workerUrl?: string; poolSize?: number; wasm?: WebAssembly.Module | null };
 			if (transcripts) { closeTranscripts(transcripts); }
 			const file = rangeFile(size);
 			// Row groups are decoded by sibling workers made from the same script; the page's blob URL stays alive for them.
 			const decoders = workerUrl && poolSize ? (setup: DecoderSetup) => setup.groups.length < 2 ? null : createPool(setup, file, () => new Worker(workerUrl, { type: 'module' }) as unknown as PoolWorker, Math.min(poolSize, setup.groups.length)) : undefined;
 			const opening = performance.now();
-			transcripts = await openTranscripts(file, 1 / pixelSizeUm, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }), decoders);
-			console.info(`[transcripts] opened ${transcripts.groups.length} row groups in ${((performance.now() - opening) / 1000).toFixed(2)} s, ${transcripts.decoder ? `${transcripts.decoder.size} decoder workers` : 'decoding in one thread'}${workerUrl ? '' : ' (no worker URL)'}, pool size asked ${poolSize ?? 0}`);
+			transcripts = await openTranscripts(file, 1 / pixelSizeUm, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }), decoders, wasm ?? undefined);
+			console.info(`[transcripts] opened ${transcripts.groups.length} row groups in ${((performance.now() - opening) / 1000).toFixed(2)} s, ${transcripts.decoder ? `${transcripts.decoder.size} decoder workers` : 'decoding in one thread'}${wasm ? ', wasm decoder' : ''}${workerUrl ? '' : ' (no worker URL)'}, pool size asked ${poolSize ?? 0}`);
 			(self as unknown as Worker).postMessage({ id, ok: true, index: transcripts.index });
 			return;
 		}

@@ -4,7 +4,7 @@
  * cores; the file is read by the coordinator, which answers each worker's byte
  * range requests, so workers never need file access of their own.
  *
- * Messages to a worker:   decInit { metadata, hasIsGene, byteLength, groups }
+ * Messages to a worker:   decInit { metadata, hasIsGene, byteLength, groups, wasm? }
  *                         decGenes { genes }          (before any decPack)
  *                         decScan { tid, at } | decPack { tid, at }
  *                         rangeData { rid, buffer | error }   (answers its `range`)
@@ -12,6 +12,7 @@
  *                         range { rid, start, end }
  */
 
+import { NativeDecoder } from './transcript-native.js';
 import { groupsOf, packGroup, scanGroup, type DecoderSetup, type Group, type GroupDecoder, type GroupScan, type PackedGroup, type RangeFile } from './transcript-reader.js';
 
 /** What the pool needs of a worker (a DOM Worker, or an adapter over worker_threads). */
@@ -67,7 +68,7 @@ export function createPool(setup: DecoderSetup, file: RangeFile, spawn: () => Po
 				next(slot);
 			};
 			slots.push(slot);
-			worker.postMessage({ type: 'decInit', metadata: setup.metadata, hasIsGene: setup.hasIsGene, byteLength: setup.byteLength, groups: setup.groups });
+			worker.postMessage({ type: 'decInit', metadata: setup.metadata, hasIsGene: setup.hasIsGene, byteLength: setup.byteLength, groups: setup.groups, wasm: setup.wasm });
 		}
 	} catch {
 		for (const slot of slots) { slot.worker.terminate(); }
@@ -96,6 +97,7 @@ export class DecoderHost {
 	private groups: Group[] = [];
 	private file: RangeFile | null = null;
 	private geneIndex = new Map<string, number>();
+	private native: NativeDecoder | null = null;
 
 	constructor(private readonly makeFile: (byteLength: number) => RangeFile) {}
 
@@ -104,19 +106,21 @@ export class DecoderHost {
 		if (data.type === 'decInit') {
 			this.metadata = data.metadata; this.hasIsGene = data.hasIsGene; this.groups = data.groups as Group[] ?? groupsOf(data.metadata);
 			this.file = this.makeFile(data.byteLength);
+			try { this.native = data.wasm ? new NativeDecoder(data.wasm as WebAssembly.Module) : null; } catch { this.native = null; }
 			return null;
 		}
 		if (data.type === 'decGenes') {
 			this.geneIndex = new Map((data.genes as string[]).map((gene, position) => [gene, position]));
+			this.native?.setGenes(data.genes as string[]);
 			return null;
 		}
 		const tid = data.tid;
 		try {
 			if (!this.file) { throw new Error('The decoder was not set up.'); }
 			if (data.type === 'decScan') {
-				return { reply: { type: 'decDone', tid, result: await scanGroup(this.file, this.metadata, this.groups[data.at], this.hasIsGene) }, transfer: [] };
+				return { reply: { type: 'decDone', tid, result: await scanGroup(this.file, this.metadata, this.groups[data.at], this.hasIsGene, this.native ? { decoder: this.native, at: data.at } : null) }, transfer: [] };
 			}
-			const packed = await packGroup(this.file, this.metadata, this.groups[data.at], this.geneIndex);
+			const packed = await packGroup(this.file, this.metadata, this.groups[data.at], this.geneIndex, this.native ? { decoder: this.native, at: data.at } : null);
 			const result = { gene: packed.gene, x: packed.x, y: packed.y, q: packed.q };
 			return { reply: { type: 'decDone', tid, result }, transfer: [packed.gene.buffer, packed.x.buffer, packed.y.buffer, packed.q.buffer] as ArrayBuffer[] };
 		} catch (error) {

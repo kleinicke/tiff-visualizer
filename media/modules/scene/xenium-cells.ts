@@ -43,6 +43,16 @@ function decoderCount(): number {
 	return count >= 2 ? count : 0;
 }
 
+/** The compiled transcripts decoder, or null if it can't be loaded (the JS reader is used then). */
+async function loadTranscriptsWasm(): Promise<WebAssembly.Module | null> {
+	const url: string | undefined = (globalThis as { __tiffVisualizerVendorAssets?: { transcriptsWasm?: string } }).__tiffVisualizerVendorAssets?.transcriptsWasm;
+	if (!url || (globalThis as { __tiffVisualizerNativeDecoder?: unknown }).__tiffVisualizerNativeDecoder === false) { return null; }
+	try {
+		const response = await fetch(url);
+		return response.ok ? await WebAssembly.compile(await response.arrayBuffer()) : null;
+	} catch { return null; }
+}
+
 async function fetchBuffer(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
 	const response = await fetch(url, { signal });
 	if (!response.ok) { throw new Error(`Could not read ${decodeURIComponent(url.split('/').pop() ?? url)} (${response.status})`); }
@@ -192,8 +202,8 @@ export class TranscriptSource {
 	/** Genes and their counts, from one pass over the gene column. */
 	async open(progress?: (done: number, total: number) => void): Promise<TranscriptIndex> {
 		await this.start(); // the worker's URL goes into the message below, so it must exist first
-		const size = await this.size();
-		return (await this.request<{ index: TranscriptIndex }>({ type: 'txOpen', size, pixelSizeUm: this.pixelSizeUm, workerUrl: this.workerUrl, poolSize: decoderCount() }, progress)).index;
+		const [size, wasm] = await Promise.all([this.size(), loadTranscriptsWasm()]);
+		return (await this.request<{ index: TranscriptIndex }>({ type: 'txOpen', size, pixelSizeUm: this.pixelSizeUm, workerUrl: this.workerUrl, poolSize: decoderCount(), wasm }, progress)).index;
 	}
 
 	/** The points of the named genes (scene pixels, sorted by x). */

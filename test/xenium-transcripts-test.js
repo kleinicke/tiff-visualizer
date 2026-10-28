@@ -162,6 +162,37 @@ async function load(file) {
 		assert.deepStrictEqual([...viaPool.get('EPCAM').qv], [...read.get('EPCAM').qv]);
 		closeTranscripts(pooled);
 
+		// The WebAssembly decoder reads the same rows, in this thread and in pool workers.
+		const wasmFile = path.join(__dirname, '..', 'media/wasm/transcripts-wasm.wasm');
+		if (fs.existsSync(wasmFile)) {
+			const wasm = new WebAssembly.Module(fs.readFileSync(wasmFile));
+			const { NativeDecoder } = await load('media/modules/transcripts/transcript-native.ts');
+			const native = new NativeDecoder(wasm);
+			const scanned = await native.scan(file, handle.metadata, 0, handle.groups[0], true);
+			assert.ok(scanned, 'the sample is in a layout the wasm decoder handles');
+			assert.strictEqual(scanned.counts.reduce((sum, count) => sum + count, 0), 227243);
+			const inThread = await openTranscripts(file, 1, undefined, undefined, wasm);
+			assert.ok(inThread.native);
+			assert.deepStrictEqual(inThread.index, handle.index);
+			const viaWasm = await readGenes(inThread, ['EPCAM', handle.index.genes[0]]);
+			for (const name of ['EPCAM', handle.index.genes[0]]) {
+				const expected = name === 'EPCAM' ? read.get(name) : again.get(name);
+				assert.deepStrictEqual([...viaWasm.get(name).x], [...expected.x]);
+				assert.deepStrictEqual([...viaWasm.get(name).y], [...expected.y]);
+				assert.deepStrictEqual([...viaWasm.get(name).qv], [...expected.qv]);
+			}
+			const pooledWasm = await openTranscripts(file, 1, undefined, setup => createPool(setup, file, spawn, 2), wasm);
+			assert.deepStrictEqual(pooledWasm.index, handle.index);
+			assert.deepStrictEqual([...(await readGenes(pooledWasm, ['EPCAM'])).get('EPCAM').x], [...read.get('EPCAM').x]);
+			closeTranscripts(pooledWasm);
+			// Garbage in a column makes it decline, so the caller falls back to the general reader.
+			const damaged = Buffer.from(bytes);
+			const feature = handle.metadata.row_groups[0].columns.find(column => column.meta_data.path_in_schema[0] === 'feature_name').meta_data;
+			damaged.fill(0xff, Number(feature.data_page_offset), Number(feature.data_page_offset) + 40);
+			const damagedFile = { byteLength: damaged.length, slice: async (start, end) => { const part = damaged.subarray(start, end ?? damaged.length); return part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength); } };
+			assert.strictEqual(await new NativeDecoder(wasm).scan(damagedFile, handle.metadata, 0, handle.groups[0], true), null);
+		}
+
 		// A decoder that fails, or cannot start, leaves the reader decoding for itself.
 		const broken = () => ({ onmessage: null, onerror: null, terminate() {}, postMessage(message) { if (message.tid) { setTimeout(() => this.onmessage({ data: { type: 'decError', tid: message.tid, error: 'boom' } }), 0); } } });
 		const failing = await openTranscripts(file, 1, undefined, setup => createPool(setup, file, broken, 2));
