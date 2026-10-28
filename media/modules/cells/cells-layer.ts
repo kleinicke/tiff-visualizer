@@ -21,8 +21,8 @@ const SELECTED_OUTLINE = '#ffd400';
 const LIVE_MIN_PX = 40;
 const LIVE_MAX_POLYGONS = 600;
 /**
- * A tile draws a cell narrower than DOT_PX (in tile pixels) as a centroid dot
- * and anything wider as its outline. Both are sized so the layer's brightness
+ * A tile draws a cell narrower than DOT_PX (in tile pixels) as a centroid dot,
+ * one up to SIMPLE_PX as a rough polygon, and anything wider as its outline. Both are sized so the layer's brightness
  * does not change from one level to the next:
  *
  *  - Outlines are one pixel wide, which covers 4 / width of the area. Below
@@ -33,11 +33,15 @@ const LIVE_MAX_POLYGONS = 600;
  *    thinned at random, and each survivor takes the ink of the cells it stands
  *    for, so thinning changes the speckle but not the brightness.
  */
-const DOT_PX = 4;
+const DOT_PX = 2;
+/** Cells narrower than this are drawn as rough, solid polygons of about six vertices (filling is far cheaper than stroking at this size). */
+const SIMPLE_PX = 4;
 /** Nucleus outlines need room: below this width they are not drawn. */
 const NUCLEUS_MIN_PX = 12;
 const OUTLINE_INK = 0.18;
 const MAX_DOTS_PER_TILE = 6000;
+/** Building a Path2D slows down quadratically with its size, so polygons go into many small paths. */
+const POLYGONS_PER_PATH = 100;
 const DOT_ALPHA = 0.9;
 /** A tile is drawn 0.71-1x its size on screen; this is the mean, used to keep line weight steady. */
 const TILE_DOWNSCALE = 0.85;
@@ -167,7 +171,7 @@ export class CellsLayer {
 		const width = primary.meanSize * scale;
 		if (width < DOT_PX) { this.paintDots(context, primary, polygons, scale, width); return; }
 		const lineWidth = Math.min(1 / TILE_DOWNSCALE, OUTLINE_INK * width / 4) / scale;
-		this.paintOutlines(context, primary, polygons, scale, lineWidth, Math.min(2, Math.max(MIN_VERTEX_GAP_PX, width / 10)) / scale, width >= NUCLEUS_MIN_PX && this.show === 'both' ? this.nuclei : null, window);
+		this.paintOutlines(context, primary, polygons, scale, lineWidth, (width < SIMPLE_PX ? width / 2 : Math.min(2, Math.max(MIN_VERTEX_GAP_PX, width / 10))) / scale, width >= NUCLEUS_MIN_PX && this.show === 'both' ? this.nuclei : null, window, width < SIMPLE_PX);
 	}
 
 	/** Polygons grouped by colour bucket; hidden ones (bucket 0) are left out. */
@@ -212,23 +216,32 @@ export class CellsLayer {
 	/** Cell outlines (and fills when colouring) at `lineWidth` scene pixels; nuclei on top when given. */
 	private paintOutlines(
 		context: CanvasRenderingContext2D, primary: Prepared, polygons: ArrayLike<number>, scale: number, lineWidth: number, minGap: number,
-		nuclei: Prepared | null, nucleusWindow?: [number, number, number, number],
+		nuclei: Prepared | null, nucleusWindow?: [number, number, number, number], solid = false,
 	): void {
 		const groups = this.groupByBucket(primary, polygons, 1);
 		const fills = this.plan.fill;
 		const outline = primary.set === this.nuclei?.set ? NUCLEUS_OUTLINE : this.outlineColor;
 		context.lineWidth = lineWidth;
 		for (const [bucket, members] of groups) {
-			const path = new Path2D();
-			for (const polygon of members) { this.tracePolygon(path, primary.set, polygon, minGap); }
-			if (fills) {
-				context.globalAlpha = this.opacity;
-				context.fillStyle = this.plan.colors[bucket - 1];
-				context.fill(path);
+			for (let from = 0; from < members.length; from += POLYGONS_PER_PATH) {
+				const path = new Path2D();
+				const to = Math.min(members.length, from + POLYGONS_PER_PATH);
+				for (let at = from; at < to; at++) { this.tracePolygon(path, primary.set, members[at], minGap); }
+				if (solid) {
+					context.globalAlpha = Math.min(0.95, (fills ? 0.8 * this.opacity + OUTLINE_INK / 2 : OUTLINE_INK * 0.62) / 0.785);
+					context.fillStyle = fills ? this.plan.colors[bucket - 1] : outline;
+					context.fill(path);
+					continue;
+				}
+				if (fills) {
+					context.globalAlpha = this.opacity;
+					context.fillStyle = this.plan.colors[bucket - 1];
+					context.fill(path);
+				}
+				context.globalAlpha = fills ? 0.85 : 0.9;
+				context.strokeStyle = outline;
+				context.stroke(path);
 			}
-			context.globalAlpha = fills ? 0.85 : 0.9;
-			context.strokeStyle = outline;
-			context.stroke(path);
 		}
 		if (nuclei) { this.paintNuclei(context, nuclei, scale, nucleusWindow ?? this.windowOf(context)); }
 	}
