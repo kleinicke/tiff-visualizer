@@ -247,5 +247,34 @@ const square = (id, x, y, size = 2) => [[x, y], [x + size, y], [x + size, y + si
 			assert.ok(Array.from(fast.get(name)).every((value, index) => value === Number(slow.get(name)[index])), name);
 		}
 	}
+	{
+		// The WebAssembly column reader gives the same values as hyparquet, or declines a column.
+		const wasmFile = path.join(__dirname, '..', 'media', 'wasm', 'transcripts-wasm.wasm');
+		const read = file => { const b = fs.readFileSync(path.join(sample, file)); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); };
+		const outfile = path.join(os.tmpdir(), `parquet-native-${process.pid}.mjs`);
+		await esbuild.build({
+			entryPoints: [path.join(__dirname, '..', 'media', 'modules', 'cells', 'parquet-native.ts')],
+			bundle: true, format: 'esm', platform: 'node', outfile, plugins: [patchHyparquetEncoding()], logLevel: 'silent',
+		});
+		const { nativeReader } = await import(pathToFileURL(outfile).href);
+		const { readParquetColumns } = await bundledReader();
+		if (fs.existsSync(wasmFile)) {
+			const wasm = new WebAssembly.Module(fs.readFileSync(wasmFile));
+			for (const name of ['cells.parquet', 'cell_boundaries.parquet', 'nucleus_boundaries.parquet']) {
+				const file = read(name);
+				const reader = nativeReader(file, wasm);
+				const native = reader.read(reader.names);
+				const slow = await readParquetColumns(file);
+				assert.ok(native.size > 0, `${name} is read natively`);
+				for (const [column, values] of native) {
+					assert.strictEqual(values.length, slow.get(column).length, column);
+					assert.ok(Array.from(values).every((value, index) => value === slow.get(column)[index] || (Number.isNaN(value) && Number.isNaN(slow.get(column)[index]))), `${name} ${column}`);
+				}
+			}
+			const boundaries = nativeReader(read('cell_boundaries.parquet'), wasm);
+			assert.ok(boundaries.read(['label_id'], true).get('label_id') instanceof Int32Array, 'label ids narrow to 32 bits');
+			assert.strictEqual(nativeReader(new ArrayBuffer(8), wasm), null, 'not a parquet file');
+		}
+	}
 	console.log('xenium cells tests passed');
 })().catch(error => { console.error(error); process.exit(1); });

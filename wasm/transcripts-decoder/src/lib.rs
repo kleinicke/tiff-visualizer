@@ -55,6 +55,10 @@ struct State {
     x: Vec<f32>,
     y: Vec<f32>,
     q: Vec<u8>,
+    col: Vec<u8>,
+    col_ids: Vec<u32>,
+    col_names: Vec<u8>,
+    col_offsets: Vec<u32>,
 }
 
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
@@ -212,6 +216,96 @@ fn with<T>(read: impl FnOnce(&State) -> T) -> T { STATE.with(|state| read(&state
 #[no_mangle] pub extern "C" fn tx_out_x_ptr() -> *const f32 { with(|s| s.x.as_ptr()) }
 #[no_mangle] pub extern "C" fn tx_out_y_ptr() -> *const f32 { with(|s| s.y.as_ptr()) }
 #[no_mangle] pub extern "C" fn tx_out_q_ptr() -> *const u8 { with(|s| s.q.as_ptr()) }
+
+/// Concatenate the chunks of one numeric column (one per row group) into `col`; with `narrow`,
+/// INT64 values are returned as INT32 (an error if one does not fit).
+///
+/// # Safety
+/// `table` must point at `chunks` descriptors whose ranges are valid.
+#[no_mangle]
+pub unsafe extern "C" fn tx_col_fixed(table: *const u32, chunks: usize, narrow: u32) -> i32 {
+    let mut out: Vec<u8> = Vec::new();
+    let mut kind = 0;
+    for index in 0..chunks {
+        let piece = chunk(table, index);
+        kind = piece.kind;
+        if let Err(error) = column::read_fixed(&piece, &mut out) { return error.code(); }
+    }
+    if narrow != 0 && kind == column::INT64 {
+        let mut narrowed = Vec::with_capacity(out.len() / 2);
+        for row in 0..out.len() / 8 {
+            let value = &out[row * 8..row * 8 + 8];
+            let low = i32::from_le_bytes([value[0], value[1], value[2], value[3]]);
+            let high = i32::from_le_bytes([value[4], value[5], value[6], value[7]]);
+            if high != low >> 31 { return Error::Unsupported.code(); }
+            narrowed.extend_from_slice(&low.to_le_bytes());
+        }
+        out = narrowed;
+    }
+    STATE.with(|state| state.borrow_mut().col = out);
+    0
+}
+
+/// Concatenate the chunks of one string column into `col_ids` (an id per row) and the distinct
+/// strings in first-seen order.
+///
+/// # Safety
+/// `table` must point at `chunks` descriptors whose ranges are valid.
+#[no_mangle]
+pub unsafe extern "C" fn tx_col_strings(table: *const u32, chunks: usize) -> i32 {
+    let mut interner: HashMap<Vec<u8>, u32> = HashMap::new();
+    let mut names: Vec<u8> = Vec::new();
+    let mut offsets: Vec<u32> = vec![0];
+    let mut ids: Vec<u32> = Vec::new();
+    for index in 0..chunks {
+        let piece = chunk(table, index);
+        let mut last: Option<(Vec<u8>, u32)> = None;
+        let result = column::read_strings(&piece, &mut |bytes| {
+            if let Some((previous, id)) = &last { if previous.as_slice() == bytes { return *id; } }
+            let id = match interner.get(bytes) {
+                Some(&id) => id,
+                None => {
+                    let id = (offsets.len() - 1) as u32;
+                    names.extend_from_slice(bytes);
+                    offsets.push(names.len() as u32);
+                    interner.insert(bytes.to_vec(), id);
+                    id
+                }
+            };
+            last = Some((bytes.to_vec(), id));
+            id
+        });
+        match result { Ok(part) => ids.extend_from_slice(&part), Err(error) => return error.code() }
+    }
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.col_ids = ids;
+        state.col_names = names;
+        state.col_offsets = offsets;
+    });
+    0
+}
+
+#[no_mangle] pub extern "C" fn tx_col_len() -> usize { with(|s| s.col.len()) }
+#[no_mangle] pub extern "C" fn tx_col_ptr() -> *const u8 { with(|s| s.col.as_ptr()) }
+#[no_mangle] pub extern "C" fn tx_col_ids_len() -> usize { with(|s| s.col_ids.len()) }
+#[no_mangle] pub extern "C" fn tx_col_ids_ptr() -> *const u32 { with(|s| s.col_ids.as_ptr()) }
+#[no_mangle] pub extern "C" fn tx_col_names_count() -> usize { with(|s| s.col_offsets.len().saturating_sub(1)) }
+#[no_mangle] pub extern "C" fn tx_col_names_len() -> usize { with(|s| s.col_names.len()) }
+#[no_mangle] pub extern "C" fn tx_col_names_ptr() -> *const u8 { with(|s| s.col_names.as_ptr()) }
+#[no_mangle] pub extern "C" fn tx_col_offsets_ptr() -> *const u32 { with(|s| s.col_offsets.as_ptr()) }
+
+/// Release the column buffers (they can be large).
+#[no_mangle]
+pub extern "C" fn tx_col_clear() {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        state.col = Vec::new();
+        state.col_ids = Vec::new();
+        state.col_names = Vec::new();
+        state.col_offsets = Vec::new();
+    });
+}
 
 #[cfg(test)]
 mod tests {

@@ -26,7 +26,21 @@ interface Exports {
 	tx_out_x_ptr(): number;
 	tx_out_y_ptr(): number;
 	tx_out_q_ptr(): number;
+	tx_col_fixed(table: number, chunks: number, narrow: number): number;
+	tx_col_strings(table: number, chunks: number): number;
+	tx_col_len(): number;
+	tx_col_ptr(): number;
+	tx_col_ids_len(): number;
+	tx_col_ids_ptr(): number;
+	tx_col_names_count(): number;
+	tx_col_names_len(): number;
+	tx_col_names_ptr(): number;
+	tx_col_offsets_ptr(): number;
+	tx_col_clear(): void;
 }
+
+/** One column chunk's bytes (all its pages) and how to read them. */
+export interface ColumnPiece { bytes: Uint8Array; codec: number; type: number; rows: number; max: number }
 
 interface ColumnMeta {
 	path_in_schema: string[];
@@ -136,6 +150,46 @@ export class NativeDecoder {
 			const y = new Float32Array(buffer, this.wasm.tx_out_y_ptr(), rows).slice();
 			const q = new Uint8Array(buffer, this.wasm.tx_out_q_ptr(), rows).slice();
 			return { gene, x, y, q, bytes: gene.byteLength + x.byteLength + y.byteLength + q.byteLength };
+		});
+	}
+
+	/** Run `call` on column pieces copied into wasm memory; null if it declines. */
+	private runPieces<T>(pieces: ColumnPiece[], call: (table: number, count: number) => number, read: () => T): T | null {
+		if (this.broken) { return null; }
+		const pointers: number[] = [];
+		try {
+			for (const piece of pieces) { pointers.push(this.put(piece.bytes)); }
+			const table = new Uint32Array(pieces.length * 6);
+			pieces.forEach((piece, index) => { table.set([pointers[index], piece.bytes.length, piece.codec, piece.type, piece.rows, piece.max], index * 6); });
+			const tablePointer = this.put(new Uint8Array(table.buffer));
+			const status = call(tablePointer, pieces.length);
+			this.wasm.tx_free(tablePointer, table.byteLength);
+			return status === 0 ? read() : null;
+		} catch (error) {
+			if (error instanceof WebAssembly.RuntimeError) { this.broken = true; }
+			return null;
+		} finally {
+			pieces.forEach((piece, index) => { if (index < pointers.length) { this.wasm.tx_free(pointers[index], piece.bytes.length); } });
+			this.wasm.tx_col_clear();
+		}
+	}
+
+	/** A numeric column's values as little-endian bytes (INT64 as INT32 when `narrow`); null if unsupported. */
+	fixed(pieces: ColumnPiece[], narrow: boolean): Uint8Array | null {
+		return this.runPieces(pieces, (table, count) => this.wasm.tx_col_fixed(table, count, narrow ? 1 : 0), () => this.bytes().slice(this.wasm.tx_col_ptr(), this.wasm.tx_col_ptr() + this.wasm.tx_col_len()));
+	}
+
+	/** A string column as one id per row plus the distinct strings; null if unsupported. */
+	strings(pieces: ColumnPiece[]): { ids: Uint32Array; names: string[] } | null {
+		return this.runPieces(pieces, (table, count) => this.wasm.tx_col_strings(table, count), () => {
+			const buffer = this.wasm.memory.buffer;
+			const ids = new Uint32Array(buffer, this.wasm.tx_col_ids_ptr(), this.wasm.tx_col_ids_len()).slice();
+			const count = this.wasm.tx_col_names_count();
+			const offsets = new Uint32Array(buffer, this.wasm.tx_col_offsets_ptr(), count + 1).slice();
+			const blob = new Uint8Array(buffer, this.wasm.tx_col_names_ptr(), this.wasm.tx_col_names_len());
+			const names: string[] = new Array<string>(count);
+			for (let index = 0; index < count; index++) { names[index] = this.decoder.decode(blob.subarray(offsets[index], offsets[index + 1])); }
+			return { ids, names };
 		});
 	}
 }

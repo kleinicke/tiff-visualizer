@@ -61,10 +61,11 @@ async function fetchBuffer(url: string, signal?: AbortSignal): Promise<ArrayBuff
 
 export async function loadXeniumCells(files: XeniumCellFiles, pixelSizeUm: number, signal?: AbortSignal): Promise<LoadedCells> {
 	// Fetched here, on the page, then handed over: see the note in the worker.
-	const [cells, cellBoundaries, nucleusBoundaries] = await Promise.all([
+	const [cells, cellBoundaries, nucleusBoundaries, wasm] = await Promise.all([
 		fetchBuffer(files.cells, signal),
 		fetchBuffer(files.cellBoundaries, signal),
 		files.nucleusBoundaries ? fetchBuffer(files.nucleusBoundaries, signal).catch((): undefined => undefined) : Promise.resolve(undefined),
+		loadTranscriptsWasm(),
 	]);
 	const worker = await createWorker();
 	try {
@@ -81,7 +82,7 @@ export async function loadXeniumCells(files: XeniumCellFiles, pixelSizeUm: numbe
 				resolve({ table: { ...data.table, rowOfId }, cells: data.cells, nuclei: data.nuclei });
 			};
 			const transfer = [cells, cellBoundaries, ...(nucleusBoundaries ? [nucleusBoundaries] : [])];
-			worker.postMessage({ id: 1, type: 'load', cells, cellBoundaries, nucleusBoundaries, pixelSizeUm }, transfer);
+			worker.postMessage({ id: 1, type: 'load', cells, cellBoundaries, nucleusBoundaries, pixelSizeUm, wasm }, transfer);
 		});
 	} finally { worker.terminate(); }
 }
@@ -95,7 +96,7 @@ export async function loadCellSource(
 	input: { src?: string; bytes?: ArrayBuffer; kind: 'table' | 'boundaries' | 'unknown' },
 	pixelSizeUm: number,
 ): Promise<LoadedSource> {
-	const buffer = input.bytes?.slice(0) ?? (input.src ? await fetchBuffer(input.src) : null);
+	const [buffer, wasm] = await Promise.all([Promise.resolve(input.bytes?.slice(0) ?? (input.src ? fetchBuffer(input.src) : null)), loadTranscriptsWasm()]);
 	if (!buffer) { throw new Error('There is nothing to read.'); }
 	const worker = await createWorker();
 	try {
@@ -109,7 +110,7 @@ export async function loadCellSource(
 				const table: CellTable = { ...data.table, rowOfId };
 				resolve(data.kind === 'boundaries' ? { kind: 'boundaries', table, cells: data.cells } : { kind: 'table', table });
 			};
-			worker.postMessage({ id: 1, type: 'source', buffer, kind: input.kind, pixelSizeUm }, [buffer]);
+			worker.postMessage({ id: 1, type: 'source', buffer, kind: input.kind, pixelSizeUm, wasm }, [buffer]);
 		});
 	} finally { worker.terminate(); }
 }

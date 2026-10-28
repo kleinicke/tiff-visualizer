@@ -23,10 +23,37 @@ import { toFloat64, toStrings } from './modules/cells/column-values.js';
 import { buildCellTable } from './modules/cells/cell-table.js';
 import { buildPolygonSet, buildPolygonSetFromLabels, type PolygonSet } from './modules/cells/polygon-set.js';
 import { readPlainColumns } from './modules/cells/parquet-fast.js';
+import { nativeReader } from './modules/cells/parquet-native.js';
 import type { CellTable } from './modules/cells/cell-table.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';
 import { closeTranscripts, openTranscripts, readGenes, type DecoderSetup, type RangeFile, type TranscriptHandle } from './modules/transcripts/transcript-reader.js';
 import { DecoderHost, createPool, type PoolWorker } from './modules/transcripts/transcript-pool.js';
+
+/** The compiled WebAssembly decoder sent with the request, if any; hyparquet reads whatever it does not. */
+let wasmModule: WebAssembly.Module | null = null;
+
+/** Like `readParquetColumns`, but columns the WebAssembly decoder can read come from it. */
+async function readColumns(buffer: ArrayBuffer, names?: string[], rowEnd?: number): Promise<Map<string, ArrayLike<unknown>>> {
+	const reader = wasmModule && rowEnd === undefined ? nativeReader(buffer, wasmModule) : null;
+	if (!reader) { return readParquetColumns(buffer, names, rowEnd); }
+	const wanted = names ?? reader.names;
+	const native = reader.read(wanted);
+	const missing = wanted.filter(name => !native.has(name));
+	const rest = missing.length ? await readParquetColumns(buffer, missing) : new Map<string, ArrayLike<unknown>>();
+	const out = new Map<string, ArrayLike<unknown>>();
+	for (const name of wanted) { const column = native.get(name) ?? rest.get(name); if (column) { out.set(name, column); } }
+	return out;
+}
+
+/** Required numeric columns as typed arrays (INT64 narrowed to INT32), from WebAssembly or the JS fast path. */
+function readTyped(buffer: ArrayBuffer, names: string[]): ReturnType<typeof readPlainColumns> {
+	const reader = wasmModule ? nativeReader(buffer, wasmModule) : null;
+	if (reader) {
+		const native = reader.read(names, true);
+		if (names.every(name => native.has(name) && !Array.isArray(native.get(name)) && !(native.get(name) instanceof BigInt64Array))) { return native as ReturnType<typeof readPlainColumns>; }
+	}
+	return readPlainColumns(buffer, names);
+}
 
 /** How many leading rows to compare against the table when trusting label_id = row + 1. */
 const CHECK_ROWS = 5000;
@@ -39,11 +66,11 @@ const CHECK_ROWS = 5000;
  */
 async function fastBoundaries(file: ArrayBuffer, table: CellTable, scale: number): Promise<PolygonSet | null> {
 	let columns;
-	try { columns = readPlainColumns(file, ['label_id', 'vertex_x', 'vertex_y']); } catch { return null; }
+	try { columns = readTyped(file, ['label_id', 'vertex_x', 'vertex_y']); } catch { return null; }
 	const labels = columns.get('label_id') as Int32Array, xs = columns.get('vertex_x')!, ys = columns.get('vertex_y')!;
 	for (let index = 1; index < labels.length; index++) { if (labels[index] < labels[index - 1]) { return null; } }
 	if (labels.length === 0 || labels[0] < 1 || labels[labels.length - 1] > table.count) { return null; }
-	const head = await readParquetColumns(file, ['cell_id'], Math.min(CHECK_ROWS, labels.length));
+	const head = await readColumns(file, ['cell_id'], Math.min(CHECK_ROWS, labels.length));
 	const headIds = toStrings(head.get('cell_id') ?? []);
 	for (let index = 0; index < headIds.length; index++) {
 		if (index > 0 && labels[index] === labels[index - 1]) { continue; }
@@ -53,7 +80,7 @@ async function fastBoundaries(file: ArrayBuffer, table: CellTable, scale: number
 }
 
 async function slowBoundaries(file: ArrayBuffer, rowOfId: (id: string) => number, scale: number): Promise<PolygonSet> {
-	const columns = await readParquetColumns(file, ['cell_id', 'vertex_x', 'vertex_y']);
+	const columns = await readColumns(file, ['cell_id', 'vertex_x', 'vertex_y']);
 	const ids = columns.get('cell_id'), xs = columns.get('vertex_x'), ys = columns.get('vertex_y');
 	if (!ids || !xs || !ys) { throw new Error('The boundary file has no cell_id, vertex_x and vertex_y columns.'); }
 	return buildPolygonSet(toStrings(ids), toFloat64(xs), toFloat64(ys), rowOfId, scale);
@@ -72,11 +99,11 @@ function transferables(set: PolygonSet | null): ArrayBuffer[] {
  * in file order, and the table holds only what the outlines can tell.
  */
 async function standaloneBoundaries(file: ArrayBuffer, scale: number): Promise<{ table: CellTable; cells: PolygonSet }> {
-	const ids = toStrings((await readParquetColumns(file, ['cell_id'])).get('cell_id') ?? []);
+	const ids = toStrings((await readColumns(file, ['cell_id'])).get('cell_id') ?? []);
 	if (ids.length === 0) { throw new Error('The boundary file has no vertices.'); }
 	let cells: PolygonSet | null = null;
 	try {
-		const columns = readPlainColumns(file, ['label_id', 'vertex_x', 'vertex_y']);
+		const columns = readTyped(file, ['label_id', 'vertex_x', 'vertex_y']);
 		const labels = columns.get('label_id') as Int32Array;
 		let consistent = labels.length === ids.length;
 		for (let index = 1; consistent && index < labels.length; index++) {
@@ -89,7 +116,7 @@ async function standaloneBoundaries(file: ArrayBuffer, scale: number): Promise<{
 		}
 	} catch { cells = null; }
 	if (!cells) {
-		const columns = await readParquetColumns(file, ['vertex_x', 'vertex_y']);
+		const columns = await readColumns(file, ['vertex_x', 'vertex_y']);
 		const rowOfId = new Map<string, number>();
 		cells = buildPolygonSet(ids, toFloat64(columns.get('vertex_x') ?? []), toFloat64(columns.get('vertex_y') ?? []), id => {
 			let row = rowOfId.get(id);
@@ -114,7 +141,7 @@ async function readSource(buffer: ArrayBuffer, declared: string, pixelSizeUm: nu
 	}
 	if (!names.includes('cell_id')) { throw new Error('The file has no cell_id column.'); }
 	if (kind === 'table') {
-		const table = buildCellTable(await readParquetColumns(buffer));
+		const table = buildCellTable(await readColumns(buffer));
 		return { result: { kind, table: { count: table.count, ids: table.ids, columns: table.columns } }, buffers: columnBuffers(table) };
 	}
 	const { table, cells } = await standaloneBoundaries(buffer, 1 / pixelSizeUm);
@@ -155,7 +182,8 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 	}
 	try {
 		if (type === 'source') {
-			const { buffer, kind, pixelSizeUm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number };
+			const { buffer, kind, pixelSizeUm, wasm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number; wasm?: WebAssembly.Module | null };
+			wasmModule = wasm ?? null;
 			const { result, buffers } = await readSource(buffer, kind, pixelSizeUm);
 			(self as unknown as Worker).postMessage({ id, ok: true, ...result }, buffers);
 			return;
@@ -183,9 +211,10 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 		}
 		if (type !== 'load') { throw new Error(`unknown message ${String(type)}`); }
 		const { cells, cellBoundaries, nucleusBoundaries, pixelSizeUm } = event.data as {
-			cells: ArrayBuffer; cellBoundaries: ArrayBuffer; nucleusBoundaries?: ArrayBuffer; pixelSizeUm: number;
+			cells: ArrayBuffer; cellBoundaries: ArrayBuffer; nucleusBoundaries?: ArrayBuffer; pixelSizeUm: number; wasm?: WebAssembly.Module | null;
 		};
-		const table = buildCellTable(await readParquetColumns(cells));
+		wasmModule = (event.data as { wasm?: WebAssembly.Module | null }).wasm ?? null;
+		const table = buildCellTable(await readColumns(cells));
 		const scale = 1 / pixelSizeUm;
 		const cellSet = await boundaries(cellBoundaries, table, scale);
 		const nucleusSet = nucleusBoundaries ? await boundaries(nucleusBoundaries, table, scale).catch((): null => null) : null;

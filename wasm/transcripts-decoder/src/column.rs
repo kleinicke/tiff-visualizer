@@ -8,6 +8,8 @@
 use crate::{hybrid, thrift, zstd, Error};
 
 pub const BOOLEAN: u32 = 0;
+pub const INT32: u32 = 1;
+pub const INT64: u32 = 2;
 pub const FLOAT: u32 = 4;
 pub const DOUBLE: u32 = 5;
 pub const BYTE_ARRAY: u32 = 6;
@@ -293,4 +295,43 @@ pub fn read_strings(chunk: &Chunk, map: &mut dyn FnMut(&[u8]) -> u32) -> Result<
         }
     })?;
     Ok(out)
+}
+
+/// A fixed-width numeric column (INT32, INT64, FLOAT or DOUBLE) appended to `out` as little-endian bytes.
+pub fn read_fixed(chunk: &Chunk, out: &mut Vec<u8>) -> Result<(), Error> {
+    let width = match chunk.kind { INT32 | FLOAT => 4, INT64 | DOUBLE => 8, _ => return Err(Error::Unsupported) };
+    out.reserve(chunk.count * width);
+    let mut dictionary: Vec<u8> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    pages(chunk, |page| {
+        let count = page.count;
+        if page.dictionary {
+            dictionary.clear();
+            dictionary.extend_from_slice(page.values.get(..count * width).ok_or(Error::Malformed)?);
+            return Ok(());
+        }
+        match page.encoding {
+            ENCODING_PLAIN => out.extend_from_slice(page.values.get(..count * width).ok_or(Error::Malformed)?),
+            ENCODING_BYTE_STREAM_SPLIT => {
+                let bytes = page.values.get(..count * width).ok_or(Error::Malformed)?;
+                let at = out.len();
+                out.resize(at + count * width, 0);
+                for lane in 0..width {
+                    let source = &bytes[lane * count..(lane + 1) * count];
+                    for (row, &byte) in source.iter().enumerate() { out[at + row * width + lane] = byte; }
+                }
+            }
+            ENCODING_PLAIN_DICTIONARY | ENCODING_RLE_DICTIONARY => {
+                let bits = u32::from(*page.values.first().ok_or(Error::Malformed)?);
+                indices.clear();
+                hybrid::decode(&page.values[1..], bits, count, &mut indices)?;
+                for &index in &indices {
+                    let at = index as usize * width;
+                    out.extend_from_slice(dictionary.get(at..at + width).ok_or(Error::Malformed)?);
+                }
+            }
+            _ => return Err(Error::Unsupported),
+        }
+        Ok(())
+    })
 }

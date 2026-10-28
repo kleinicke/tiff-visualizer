@@ -50,7 +50,7 @@ When the bundle has `cells.parquet` and `cell_boundaries.parquet` (and optionall
 - **Colour by:** any table column. Categories (text columns, and integer columns with eight or fewer values) get a checkbox and tint per category. Numbers get a low/high range slider over a histogram and a colormap. Outline area, perimeter, circularity and nucleus-to-cell area ratio are added from the outlines.
 - **Select:** click a cell to see its columns, shift- or ctrl-click to add more (a summary is shown for several), Esc or a click on empty space clears.
 
-Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-patch.js` fixes a one-byte over-read in hyparquet's bit-packed decoder that breaks `cells.parquet`; the build fails loudly if hyparquet changes under it.
+Parquet is read in a worker with `hyparquet` and `fzstd`. `esbuild-hyparquet-patch.js` fixes a one-byte over-read in hyparquet's bit-packed decoder that breaks `cells.parquet`; the build fails loudly if hyparquet changes under it. The cell table and boundary files are read first with the Rust/WebAssembly decoder described under Transcripts (`media/modules/cells/parquet-native.ts`): numeric and string columns come out as typed arrays, and any column it declines (nulls, other codecs, booleans) is read with hyparquet. On a synthetic 1M-cell file (13M boundary vertices) reading all boundary columns took 5.0 s with hyparquet and 0.8 s with the decoder, the vertex columns the loader needs 2.4 s and 0.17 s, and the cell table 1.3 s and 0.5 s.
 
 ### More than one cell set
 

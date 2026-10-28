@@ -70,7 +70,7 @@ export function discreteColumn(name: string, labelsPerRow: ArrayLike<string | nu
 }
 
 /** Build a table from decoded Parquet columns; `cell_id` names the rows. */
-export function buildCellTable(source: Map<string, unknown[]>, idColumn = 'cell_id'): CellTable {
+export function buildCellTable(source: Map<string, ArrayLike<unknown>>, idColumn = 'cell_id'): CellTable {
 	const ids = toStrings(source.get(idColumn) ?? []);
 	const rowOfId = new Map<string, number>();
 	ids.forEach((id, row) => rowOfId.set(id, row));

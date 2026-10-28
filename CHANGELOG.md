@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Speed up Xenium transcripts further with a Rust/WebAssembly row-group decoder (zstd, dictionary and float columns decoded straight into typed arrays; about ten times faster than the JavaScript reader, which remains the fallback). Row groups are decoded in parallel by worker copies, decoded rows are kept in memory so genes added later need no decoding, and a gene's points are sorted with a radix sort
+- Speed up Xenium transcripts further with a Rust/WebAssembly row-group decoder (zstd, dictionary and float columns decoded straight into typed arrays; about ten times faster than the JavaScript reader, which remains the fallback; the same decoder now reads the cell table and boundary files, several times faster). Row groups are decoded in parallel by worker copies, decoded rows are kept in memory so genes added later need no decoding, and a gene's points are sorted with a radix sort
 - Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
 - Improve NumPy npy and npz dataset loading and navigation
 - rearrange right click menu
