@@ -3351,6 +3351,12 @@ body img {
 	max-height: 60vh;
 }
 
+/* The cells body already pads the sides; line the bulk bar up with Groups. */
+.transcripts-section .channels-global {
+	margin: 0 0 6px;
+	padding: 0 0 6px;
+}
+
 .transcript-group-options {
 	display: flex;
 	gap: 6px;
@@ -3374,6 +3380,7 @@ body img {
 }
 
 .transcript-genes {
+	flex-shrink: 0;
 	max-height: 14em;
 	overflow-y: auto;
 	display: flex;

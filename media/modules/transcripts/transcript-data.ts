@@ -17,12 +17,44 @@ export interface TranscriptIndex {
 	total: number;
 }
 
+/**
+ * The order that sorts `xs` ascending, as float32 values; equal values keep their order.
+ * A radix sort on the float bits: millions of points sort in tens of milliseconds, where a
+ * comparison sort takes seconds.
+ */
+export function orderByX(xs: ArrayLike<number>): Uint32Array {
+	const count = xs.length;
+	let keys = new Uint32Array(count), keysNext = new Uint32Array(count);
+	let order = new Uint32Array(count), orderNext = new Uint32Array(count);
+	const float = new Float32Array(1), bits = new Uint32Array(float.buffer);
+	for (let index = 0; index < count; index++) {
+		float[0] = xs[index];
+		const value = bits[0];
+		// Flip so unsigned order matches float order: negatives invert, positives set the top bit.
+		keys[index] = (value & 0x80000000 ? ~value : value | 0x80000000) >>> 0;
+		order[index] = index;
+	}
+	const starts = new Uint32Array(2048);
+	for (let shift = 0; shift < 33; shift += 11) {
+		starts.fill(0);
+		for (let index = 0; index < count; index++) { starts[(keys[index] >>> shift) & 2047]++; }
+		let total = 0;
+		for (let digit = 0; digit < 2048; digit++) { const here = starts[digit]; starts[digit] = total; total += here; }
+		for (let index = 0; index < count; index++) {
+			const key = keys[index];
+			const at = starts[(key >>> shift) & 2047]++;
+			keysNext[at] = key; orderNext[at] = order[index];
+		}
+		[keys, keysNext] = [keysNext, keys];
+		[order, orderNext] = [orderNext, order];
+	}
+	return order;
+}
+
 /** Sort a gene's points by x and convert units: `scale` turns the input units into scene pixels. */
 export function buildGenePoints(xs: ArrayLike<number>, ys: ArrayLike<number>, qvs: ArrayLike<number>, scale: number): GenePoints {
 	const count = xs.length;
-	const order = new Uint32Array(count);
-	for (let index = 0; index < count; index++) { order[index] = index; }
-	order.sort((a, b) => xs[a] - xs[b]);
+	const order = orderByX(xs);
 	const x = new Float32Array(count), y = new Float32Array(count), qv = new Uint8Array(count);
 	for (let at = 0; at < count; at++) {
 		const from = order[at];

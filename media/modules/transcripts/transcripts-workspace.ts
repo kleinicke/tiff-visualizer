@@ -257,10 +257,10 @@ export class TranscriptsWorkspace {
 			addGene: name => { this.ensure(name, true); this.sync(); },
 			addGroup: name => { const group = this.group(name); if (group) { group.added = true; void this.load(); this.sync(); } },
 			createGroup: (name, text) => this.createFrom(name, text),
-			groupFromListed: name => this.createFrom(name, this.genes.map(gene => gene.name).join(' ')),
-			clearGenes: () => { this.genes = []; this.sync(); },
-			showAllListed: visible => {
-				const names = new Set(listed.map(gene => gene.name));
+			groupFromListed: (name, names) => this.createFrom(name, (names ?? this.genes.map(gene => gene.name)).join(' ')),
+			removeListed: names => { const drop = names && new Set(names); this.genes = drop ? this.genes.filter(gene => !drop.has(gene.name)) : []; this.sync(); },
+			showAllListed: (visible, only) => {
+				const names = new Set(only ?? listed.map(gene => gene.name));
 				for (const gene of this.genes) { if (names.has(gene.name)) { gene.visible = visible; } }
 				this.sync();
 			},

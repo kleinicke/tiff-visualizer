@@ -12,7 +12,7 @@ async function load(file) {
 }
 
 (async () => {
-	const { buildGenePoints, lowerBoundX } = await load('media/modules/transcripts/transcript-data.ts');
+	const { buildGenePoints, lowerBoundX, orderByX } = await load('media/modules/transcripts/transcript-data.ts');
 	const points = buildGenePoints([5, 4, 1, 2], [50, 40, 10, 20], [40, 10.4, 300, -2], 0.5);
 	assert.deepStrictEqual([...points.x], [0.5, 1, 2, 2.5]);
 	assert.deepStrictEqual([...points.y], [5, 10, 20, 25]);
@@ -20,6 +20,11 @@ async function load(file) {
 	assert.strictEqual(lowerBoundX(points.x, 0, 4, 1), 1);
 	assert.strictEqual(lowerBoundX(points.x, 0, 4, 1.5), 2);
 	assert.strictEqual(lowerBoundX(points.x, 0, 4, 99), 4);
+	for (const draw of [() => Math.random() * 1000, () => Math.round(Math.random() * 20), () => (Math.random() - 0.5) * 1e6]) {
+		const xs = Float64Array.from({ length: 5000 }, draw);
+		const expected = Array.from(xs.keys()).sort((a, b) => Math.fround(xs[a]) - Math.fround(xs[b]));
+		assert.deepStrictEqual([...orderByX(xs)], expected, 'the radix sort orders like a stable comparison sort');
+	}
 
 	const { paletteColor } = await load('media/modules/transcripts/transcript-colors.ts');
 	const colours = new Set(Array.from({ length: 30 }, (_v, index) => paletteColor('#ff6b6b', index)));
@@ -112,6 +117,60 @@ async function load(file) {
 		assert.strictEqual(read.get('EPCAM').x.length, 8289);
 		assert.ok(read.get('EPCAM').x.every((value, at, all) => at === 0 || all[at - 1] <= value), 'sorted by x');
 		assert.ok(reads > opened, 'positions are read on demand');
+		const afterFirst = reads;
+		const again = await readGenes(handle, ['EPCAM', handle.index.genes[0]]);
+		assert.strictEqual(reads, afterFirst, 'genes in row groups already read come from memory');
+		assert.strictEqual(again.get('EPCAM').x.length, 8289);
+		assert.strictEqual(again.get(handle.index.genes[0]).x.length, handle.index.counts[0]);
+
+		// Decoding in other threads gives the same points. The sample has one row group, so this
+		// exercises the protocol (open scan, gene codes, packed rows, range requests relayed back).
+		const { createPool } = await load('media/modules/transcripts/transcript-pool.ts');
+		const { Worker } = require('node:worker_threads');
+		const workerFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tx-worker-')), 'w.cjs');
+		await esbuild.build({
+			stdin: {
+				contents: `
+					import { parentPort } from 'node:worker_threads';
+					import { DecoderHost } from './media/modules/transcripts/transcript-pool.ts';
+					const waiters = new Map();
+					let counter = 0;
+					const host = new DecoderHost(byteLength => ({ byteLength, slice: (start, end) => new Promise((resolve, reject) => { const rid = ++counter; waiters.set(rid, { resolve, reject }); parentPort.postMessage({ type: 'range', rid, start, end: end ?? byteLength }); }) }));
+					parentPort.on('message', async data => {
+						if (data.type === 'rangeData') { const waiter = waiters.get(data.rid); waiters.delete(data.rid); if (data.error) { waiter.reject(new Error(data.error)); } else { waiter.resolve(data.buffer); } return; }
+						const out = await host.handle(data);
+						if (out) { parentPort.postMessage(out.reply, out.transfer); }
+					});`,
+				resolveDir: path.join(__dirname, '..'), loader: 'ts',
+			},
+			bundle: true, platform: 'node', format: 'cjs', outfile: workerFile, plugins: [patchHyparquetEncoding()], logLevel: 'silent',
+		});
+		const spawn = () => {
+			const worker = new Worker(workerFile);
+			const adapter = { onmessage: null, onerror: null, postMessage: (message, transfer) => worker.postMessage(message, transfer), terminate: () => { void worker.terminate(); } };
+			worker.on('message', data => adapter.onmessage?.({ data }));
+			worker.on('error', error => adapter.onerror?.({ message: String(error) }));
+			return adapter;
+		};
+		const { closeTranscripts } = await load('media/modules/transcripts/transcript-reader.ts');
+		const pooled = await openTranscripts(file, 1, undefined, setup => createPool(setup, file, spawn, 2));
+		assert.ok(pooled.decoder, 'the pool is in use');
+		assert.deepStrictEqual(pooled.index, handle.index, 'the same genes and counts');
+		const viaPool = await readGenes(pooled, ['EPCAM', 'NOT_A_GENE']);
+		assert.deepStrictEqual([...viaPool.get('EPCAM').x], [...read.get('EPCAM').x]);
+		assert.deepStrictEqual([...viaPool.get('EPCAM').y], [...read.get('EPCAM').y]);
+		assert.deepStrictEqual([...viaPool.get('EPCAM').qv], [...read.get('EPCAM').qv]);
+		closeTranscripts(pooled);
+
+		// A decoder that fails, or cannot start, leaves the reader decoding for itself.
+		const broken = () => ({ onmessage: null, onerror: null, terminate() {}, postMessage(message) { if (message.tid) { setTimeout(() => this.onmessage({ data: { type: 'decError', tid: message.tid, error: 'boom' } }), 0); } } });
+		const failing = await openTranscripts(file, 1, undefined, setup => createPool(setup, file, broken, 2));
+		assert.strictEqual(failing.index.total, 227243);
+		assert.strictEqual((await readGenes(failing, ['EPCAM'])).get('EPCAM').x.length, 8289);
+		closeTranscripts(failing);
+		const none = await openTranscripts(file, 1, undefined, setup => createPool(setup, file, () => { throw new Error('no workers here'); }, 2));
+		assert.strictEqual(none.decoder, null);
+		assert.strictEqual(none.index.total, 227243);
 	}
 	console.log('xenium transcripts tests passed');
 })();

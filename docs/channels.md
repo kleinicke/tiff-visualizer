@@ -102,7 +102,7 @@ and Deselect all also clear any Solo, so the result is what the button says.
 
 The section folds away by clicking its title. Each channel folds too: the
 arrow before its name collapses it to its first row (checkbox, colour, name, Solo)
-or expands it to show the sliders. Fold all and Unfold all do this for every channel (or just the listed ones, see below). Channels start folded.
+or expands it to show the sliders. Fold all and Unfold all do this for every channel (or just the filtered ones, see below). Channels start folded.
 
 ### Groups
 
@@ -127,7 +127,7 @@ The **Filter channels** box above the list shows only channels whose name contai
 the text (case-insensitive), updating as you type. It only hides rows: hidden
 channels stay in the composite and groups still apply to every channel. The
 section of whole-panel actions follows the filter: while one is active it is titled
-**Listed channels** and Select all, Deselect all, Auto range all, Full range all,
+**Filtered channels** and Select all, Deselect all, Auto range all, Full range all,
 Fold all and Unfold all act only on the channels in the list.
 
 Each group row also has a funnel button that limits the list to that group's

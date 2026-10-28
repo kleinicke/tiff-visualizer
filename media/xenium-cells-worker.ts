@@ -4,7 +4,8 @@
  *
  *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }   (file contents as ArrayBuffers)
  *     -> { table, cells, nuclei }
- *   txOpen { size, pixelSizeUm }   (transcripts.parquet, read through `range` requests the page answers)
+ *   txOpen { size, pixelSizeUm, workerUrl?, poolSize? }   (transcripts.parquet, read through `range` requests the page answers;
+ *                                                         with workerUrl, up to poolSize copies of this worker decode row groups in parallel)
  *     -> { index }   (genes and counts, from one pass over the gene column)
  *   txGenes { names }
  *     -> { genes: [name, points][] }   (points in scene pixels, sorted by x)
@@ -23,7 +24,8 @@ import { buildPolygonSet, buildPolygonSetFromLabels, type PolygonSet } from './m
 import { readPlainColumns } from './modules/cells/parquet-fast.js';
 import type { CellTable } from './modules/cells/cell-table.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';
-import { openTranscripts, readGenes, type RangeFile, type TranscriptHandle } from './modules/transcripts/transcript-reader.js';
+import { closeTranscripts, openTranscripts, readGenes, type DecoderSetup, type RangeFile, type TranscriptHandle } from './modules/transcripts/transcript-reader.js';
+import { DecoderHost, createPool, type PoolWorker } from './modules/transcripts/transcript-pool.js';
 
 /** How many leading rows to compare against the table when trusting label_id = row + 1. */
 const CHECK_ROWS = 5000;
@@ -123,6 +125,8 @@ let transcripts: TranscriptHandle | null = null;
 const rangeWaiters = new Map<number, { resolve: (buffer: ArrayBuffer) => void; reject: (error: Error) => void }>();
 let rangeCounter = 0;
 
+const decoderHost = new DecoderHost(byteLength => rangeFile(byteLength));
+
 /** A file the page reads for us: webview resources cannot be fetched from a blob worker. */
 function rangeFile(byteLength: number): RangeFile {
 	return {
@@ -143,6 +147,11 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 		if (event.data.error) { waiter?.reject(new Error(String(event.data.error))); } else { waiter?.resolve(event.data.buffer as ArrayBuffer); }
 		return;
 	}
+	if (typeof type === 'string' && type.startsWith('dec')) {
+		const out = await decoderHost.handle(event.data);
+		if (out) { (self as unknown as Worker).postMessage(out.reply, out.transfer); }
+		return;
+	}
 	try {
 		if (type === 'source') {
 			const { buffer, kind, pixelSizeUm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number };
@@ -151,15 +160,23 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 			return;
 		}
 		if (type === 'txOpen') {
-			const { size, pixelSizeUm } = event.data as { size: number; pixelSizeUm: number };
-			transcripts = await openTranscripts(rangeFile(size), 1 / pixelSizeUm, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }));
+			const { size, pixelSizeUm, workerUrl, poolSize } = event.data as { size: number; pixelSizeUm: number; workerUrl?: string; poolSize?: number };
+			if (transcripts) { closeTranscripts(transcripts); }
+			const file = rangeFile(size);
+			// Row groups are decoded by sibling workers made from the same script; the page's blob URL stays alive for them.
+			const decoders = workerUrl && poolSize ? (setup: DecoderSetup) => setup.groups.length < 2 ? null : createPool(setup, file, () => new Worker(workerUrl, { type: 'module' }) as unknown as PoolWorker, Math.min(poolSize, setup.groups.length)) : undefined;
+			const opening = performance.now();
+			transcripts = await openTranscripts(file, 1 / pixelSizeUm, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }), decoders);
+			console.info(`[transcripts] opened ${transcripts.groups.length} row groups in ${((performance.now() - opening) / 1000).toFixed(2)} s, ${transcripts.decoder ? `${transcripts.decoder.size} decoder workers` : 'decoding in one thread'}${workerUrl ? '' : ' (no worker URL)'}, pool size asked ${poolSize ?? 0}`);
 			(self as unknown as Worker).postMessage({ id, ok: true, index: transcripts.index });
 			return;
 		}
 		if (type === 'txGenes') {
 			if (!transcripts) { throw new Error('The transcripts file is not open.'); }
 			const { names } = event.data as { names: string[] };
+			const reading = performance.now();
 			const genes = [...(await readGenes(transcripts, names, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }))).entries()];
+			console.info(`[transcripts] read ${genes.length} genes (${genes.reduce((sum, [, points]) => sum + points.x.length, 0).toLocaleString()} points) in ${((performance.now() - reading) / 1000).toFixed(2)} s, ${transcripts.packed.size} row groups in memory`);
 			(self as unknown as Worker).postMessage({ id, ok: true, genes }, genes.flatMap(([, points]) => [points.x.buffer as ArrayBuffer, points.y.buffer as ArrayBuffer, points.qv.buffer as ArrayBuffer]));
 			return;
 		}

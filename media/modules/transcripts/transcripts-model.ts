@@ -59,9 +59,10 @@ export interface TranscriptsPanelModel {
 	addGene: (name: string) => void;
 	addGroup: (name: string) => void;
 	createGroup: (name: string, genes: string) => string | null;
-	groupFromListed: (name: string) => string | null;
-	clearGenes: () => void;
-	showAllListed: (visible: boolean) => void;
+	/** `names` limits these to the genes the panel's filters leave showing; omitted means every gene in the list. */
+	groupFromListed: (name: string, names?: string[]) => string | null;
+	removeListed: (names?: string[]) => void;
+	showAllListed: (visible: boolean, names?: string[]) => void;
 	clearFilter: () => void;
 	setMinQv: (value: number) => void;
 	setSize: (value: number) => void;

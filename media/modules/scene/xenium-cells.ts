@@ -20,6 +20,29 @@ async function createWorker(): Promise<Worker> {
 	return worker;
 }
 
+/** A worker whose blob URL stays valid, so the worker can start copies of itself. */
+async function createTranscriptWorker(): Promise<{ worker: Worker; url: string }> {
+	const source: string | undefined = (globalThis as { __tiffVisualizerVendorAssets?: { workers?: Record<string, string> } }).__tiffVisualizerVendorAssets?.workers?.['xeniumCellsWorker.bundle.js'];
+	if (!source) { throw new Error('The cell loader is not available in this build.'); }
+	const response = await fetch(source);
+	if (!response.ok) { throw new Error(`Could not load the cell loader (${response.status}).`); }
+	const url = URL.createObjectURL(new Blob([await response.text()], { type: 'text/javascript' }));
+	return { worker: new Worker(url, { type: 'module' }), url };
+}
+
+/**
+ * Decoder workers to add beside the loader: leave cores for the page and the loader itself.
+ * For experiments, set `__tiffVisualizerDecoderWorkers` (0 = decode in one thread) in the
+ * webview's developer console before the transcripts are loaded.
+ */
+function decoderCount(): number {
+	const forced = (globalThis as { __tiffVisualizerDecoderWorkers?: unknown }).__tiffVisualizerDecoderWorkers;
+	if (typeof forced === 'number' && Number.isFinite(forced)) { return Math.max(0, Math.min(32, Math.floor(forced))); }
+	const cores = typeof navigator === 'undefined' ? 0 : navigator.hardwareConcurrency || 0;
+	const count = Math.min(8, cores - 2);
+	return count >= 2 ? count : 0;
+}
+
 async function fetchBuffer(url: string, signal?: AbortSignal): Promise<ArrayBuffer> {
 	const response = await fetch(url, { signal });
 	if (!response.ok) { throw new Error(`Could not read ${decodeURIComponent(url.split('/').pop() ?? url)} (${response.status})`); }
@@ -89,6 +112,7 @@ export async function loadCellSource(
  */
 export class TranscriptSource {
 	private worker: Worker | null = null;
+	private workerUrl: string | null = null;
 	private queue: Promise<unknown> = Promise.resolve();
 	private whole: Promise<ArrayBuffer> | null = null;
 	private ranged = true;
@@ -123,7 +147,8 @@ export class TranscriptSource {
 
 	private async start(): Promise<Worker> {
 		if (this.worker) { return this.worker; }
-		const worker = await createWorker();
+		const { worker, url } = await createTranscriptWorker();
+		this.workerUrl = url;
 		worker.onerror = event => this.fail(new Error(event.message || 'The transcript loader failed.'));
 		worker.onmessage = (event: MessageEvent) => {
 			const data = event.data;
@@ -166,8 +191,9 @@ export class TranscriptSource {
 
 	/** Genes and their counts, from one pass over the gene column. */
 	async open(progress?: (done: number, total: number) => void): Promise<TranscriptIndex> {
+		await this.start(); // the worker's URL goes into the message below, so it must exist first
 		const size = await this.size();
-		return (await this.request<{ index: TranscriptIndex }>({ type: 'txOpen', size, pixelSizeUm: this.pixelSizeUm }, progress)).index;
+		return (await this.request<{ index: TranscriptIndex }>({ type: 'txOpen', size, pixelSizeUm: this.pixelSizeUm, workerUrl: this.workerUrl, poolSize: decoderCount() }, progress)).index;
 	}
 
 	/** The points of the named genes (scene pixels, sorted by x). */
@@ -175,5 +201,9 @@ export class TranscriptSource {
 		return new Map((await this.request<{ genes: [string, GenePoints][] }>({ type: 'txGenes', names }, progress)).genes);
 	}
 
-	dispose(): void { this.worker?.terminate(); this.worker = null; this.fail(new Error('Closed')); }
+	dispose(): void {
+		this.worker?.terminate(); this.worker = null;
+		if (this.workerUrl) { URL.revokeObjectURL(this.workerUrl); this.workerUrl = null; }
+		this.fail(new Error('Closed'));
+	}
 }
