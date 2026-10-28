@@ -20,7 +20,7 @@ import {
 } from './modules/channel-composite.js';
 import { TiffChannelSource } from './modules/scene/channel-source.js';
 import { CellsWorkspace, type CellsWorkspaceHost, type CellsWorkspaceState, type WorkspaceFile } from './modules/cells/cells-workspace.js';
-import { loadCellSource, loadTranscripts, loadXeniumCells } from './modules/scene/xenium-cells.js';
+import { loadCellSource, loadXeniumCells, TranscriptSource } from './modules/scene/xenium-cells.js';
 import { parseTranscriptGroups, TranscriptsWorkspace, type TranscriptsWorkspaceState } from './modules/transcripts/transcripts-workspace.js';
 import { SceneViewer } from './modules/scene/scene-viewer.js';
 import type { Camera } from './modules/scene/pyramid.js';
@@ -232,9 +232,11 @@ async function start(manifest: SceneManifest): Promise<void> {
 		if (manifest.transcripts) {
 			const src = manifest.transcripts;
 			const scene = viewer;
+			const source = new TranscriptSource(src, manifest.pixelSizeUm);
 			transcripts = new TranscriptsWorkspace({
 				available: true,
-				load: () => loadTranscripts(src, manifest.pixelSizeUm),
+				open: progress => source.open(progress),
+				genes: (names, progress) => source.genes(names, progress),
 				addOverlay: layer => scene.addOverlay(layer),
 				removeOverlay: layer => scene.removeOverlay(layer),
 				requestRender: () => scene.requestRender(),

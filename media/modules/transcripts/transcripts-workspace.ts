@@ -8,7 +8,7 @@
 
 import { GENE_COLORS, GROUP_COLORS, paletteColor } from './transcript-colors.js';
 import { TranscriptsLayer } from './transcripts-layer.js';
-import type { TranscriptData } from './transcript-data.js';
+import type { GenePoints, TranscriptIndex } from './transcript-data.js';
 import type { TranscriptGeneRow, TranscriptGroupRow, TranscriptsPanelModel } from './transcripts-model.js';
 
 export interface TranscriptGroupDefinition { name: string; genes: string[]; color: string }
@@ -19,7 +19,10 @@ interface Gene { name: string; visible: boolean; color: string }
 export interface TranscriptsWorkspaceHost {
 	/** Whether the bundle has a transcripts file. */
 	available: boolean;
-	load(): Promise<TranscriptData>;
+	/** Read the gene list and counts; `progress` reports row groups done. */
+	open(progress: (done: number, total: number) => void): Promise<TranscriptIndex>;
+	/** Read the positions of these genes. */
+	genes(names: string[], progress: (done: number, total: number) => void): Promise<Map<string, GenePoints>>;
 	addOverlay(layer: TranscriptsLayer): void;
 	removeOverlay(layer: TranscriptsLayer): void;
 	requestRender(): void;
@@ -52,8 +55,13 @@ export function parseTranscriptGroups(raw: unknown): TranscriptGroupDefinition[]
 
 export class TranscriptsWorkspace {
 	private readonly layer: TranscriptsLayer;
-	private data: TranscriptData | null = null;
+	private index: TranscriptIndex | null = null;
 	private geneIndex = new Map<string, number>();
+	/** Positions of the genes read so far; dropped when a gene leaves the list. */
+	private points = new Map<string, GenePoints>();
+	private fetching = new Set<string>();
+	private reading: Promise<void> | null = null;
+	private readProgress: string | null = null;
 	private lowerIndex = new Map<string, string>();
 	private status: TranscriptsPanelModel['status'];
 	private message: string | null = null;
@@ -71,22 +79,25 @@ export class TranscriptsWorkspace {
 		this.groups = definitions.map(definition => ({ ...definition, palette: false, added: false, user: false }));
 	}
 
-	get loaded(): boolean { return this.data !== null; }
+	get loaded(): boolean { return this.index !== null; }
 
 	/** Whether there is anything worth loading the file for on start-up. */
 	get wanted(): boolean { return this.genes.length > 0 || this.groups.some(group => group.added); }
 
+	/** Resolves when no gene positions are being read (for tests). */
+	async settled(): Promise<void> { while (this.reading) { await this.reading; } }
+
 	load(): Promise<void> {
-		if (this.data || !this.host.available) { return Promise.resolve(); }
+		if (this.index || !this.host.available) { return Promise.resolve(); }
 		if (this.loading) { return this.loading; }
 		this.status = 'loading';
-		this.message = null;
+		this.message = 'Reading gene names…';
 		this.host.notify();
-		this.loading = this.host.load().then(data => {
-			this.data = data;
-			data.genes.forEach((gene, index) => { this.geneIndex.set(gene, index); this.lowerIndex.set(gene.toLowerCase(), gene); });
+		this.loading = this.host.open((done, total) => { this.message = `Reading gene names… ${done} of ${total}`; this.host.notify(); }).then(index => {
+			this.index = index;
+			index.genes.forEach((gene, position) => { this.geneIndex.set(gene, position); this.lowerIndex.set(gene.toLowerCase(), gene); });
 			this.status = 'ready';
-			this.layer.setData(data);
+			this.message = null;
 			this.layer.setMinQv(this.minQv);
 			this.layer.setSize(this.size);
 			this.sync();
@@ -111,15 +122,40 @@ export class TranscriptsWorkspace {
 		return { color: gene.color, grouped: false };
 	}
 
-	private found(group: Group): string[] { return group.genes.filter(gene => this.data ? this.geneIndex.has(gene) : true); }
+	private found(group: Group): string[] { return group.genes.filter(gene => this.index ? this.geneIndex.has(gene) : true); }
 
 	private sync(): void {
-		if (this.data) {
+		if (this.index) {
+			const listed = new Set(this.genes.map(gene => gene.name));
+			for (const name of this.points.keys()) { if (!listed.has(name)) { this.points.delete(name); } }
 			this.layer.setGenes(this.genes.flatMap(gene => {
-				const index = this.geneIndex.get(gene.name);
-				return gene.visible && index !== undefined ? [{ gene: index, color: this.colorOf(gene).color }] : [];
+				const points = this.points.get(gene.name);
+				return gene.visible && points ? [{ points, color: this.colorOf(gene).color }] : [];
 			}));
+			this.readMissing();
 		}
+		this.host.notify();
+	}
+
+	/** Read the positions of shown genes that have none yet, in one request. */
+	private readMissing(): void {
+		if (this.reading) { return; }
+		const names = this.genes.filter(gene => gene.visible && this.geneIndex.has(gene.name) && !this.points.has(gene.name)).map(gene => gene.name);
+		if (names.length === 0) { return; }
+		for (const name of names) { this.fetching.add(name); }
+		this.readProgress = null;
+		this.reading = this.host.genes(names, (done, total) => { this.readProgress = `${done} of ${total} row groups`; this.host.notify(); }).then(found => {
+			for (const [name, points] of found) { this.points.set(name, points); }
+		}).catch((error: unknown) => {
+			this.message = `Transcripts could not be read: ${error instanceof Error ? error.message : String(error)}`;
+			// Give these genes up rather than ask again for ever; hiding and showing a gene tries again.
+			for (const gene of this.genes) { if (names.includes(gene.name)) { gene.visible = false; } }
+		}).finally(() => {
+			for (const name of names) { this.fetching.delete(name); }
+			this.reading = null;
+			this.readProgress = null;
+			this.sync();
+		});
 		this.host.notify();
 	}
 
@@ -159,7 +195,8 @@ export class TranscriptsWorkspace {
 		const index = this.geneIndex.get(gene.name);
 		return {
 			name: gene.name, color, grouped, visible: gene.visible,
-			count: index !== undefined && this.data ? this.data.offsets[index + 1] - this.data.offsets[index] : 0,
+			count: index !== undefined && this.index ? this.index.counts[index] : 0,
+			loading: gene.visible && this.fetching.has(gene.name),
 			setVisible: visible => { gene.visible = visible; this.sync(); },
 			setColor: next => { gene.color = next; this.sync(); },
 			remove: () => { this.genes = this.genes.filter(entry => entry !== gene); this.sync(); },
@@ -172,7 +209,7 @@ export class TranscriptsWorkspace {
 		const on = found.filter(gene => visible.has(gene)).length;
 		return {
 			name: group.name, color: group.color, total: group.genes.length, found: found.length, on,
-			missing: this.data ? group.genes.filter(gene => !this.geneIndex.has(gene)) : [],
+			missing: this.index ? group.genes.filter(gene => !this.geneIndex.has(gene)) : [],
 			state: on === 0 ? 'none' : on === found.length ? 'all' : 'some',
 			palette: group.palette, filtering: this.filter.includes(group.name),
 			toggle: () => {
@@ -203,17 +240,17 @@ export class TranscriptsWorkspace {
 		const listedNames = active.length ? new Set(active.flatMap(group => group.genes)) : null;
 		const listed = listedNames ? genes.filter(gene => listedNames.has(gene.name)) : genes;
 		return {
-			status: this.status, message: this.message,
-			points: this.data ? this.data.x.length : 0,
+			status: this.status, message: this.message, readProgress: this.readProgress,
+			points: this.index ? this.index.total : 0, fetching: this.fetching.size,
 			genes, listed,
 			groups: this.groups.filter(group => group.added).map(group => this.rowOfGroup(group)),
 			groupChoices: this.groups.filter(group => !group.added).map(group => ({ name: group.name, size: group.genes.length })),
 			geneChoices: () => {
-				if (!this.data) { return []; }
+				if (!this.index) { return []; }
 				const listedAlready = new Set(this.genes.map(gene => gene.name));
-				return this.data.genes.filter(gene => !listedAlready.has(gene));
+				return this.index.genes.filter(gene => !listedAlready.has(gene));
 			},
-			geneCount: name => { const index = this.geneIndex.get(name); return index !== undefined && this.data ? this.data.offsets[index + 1] - this.data.offsets[index] : 0; },
+			geneCount: name => { const index = this.geneIndex.get(name); return index !== undefined && this.index ? this.index.counts[index] : 0; },
 			filtering: active.length > 0,
 			minQv: this.minQv, size: this.size,
 			load: () => { void this.load(); },

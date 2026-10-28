@@ -34,10 +34,12 @@
       {#if transcripts.status === 'idle'}
         <div class="measure-note">Transcripts are read when you ask: the file can be large.</div>
         <button class="measure-button" onclick={transcripts.load}>Load transcripts</button>
-      {:else if transcripts.status === 'loading'}<div class="measure-note">Loading transcripts…</div>
+      {:else if transcripts.status === 'loading'}<div class="measure-note">{transcripts.message ?? 'Loading transcripts…'}</div>
       {:else if transcripts.status === 'error'}
         <div class="measure-note cells-source-error">{transcripts.message}</div>
         <button class="measure-button" onclick={transcripts.load}>Retry</button>
+      {:else if transcripts.fetching > 0}<div class="measure-note">Reading {transcripts.fetching} {transcripts.fetching === 1 ? 'gene' : 'genes'}…{transcripts.readProgress ? ` ${transcripts.readProgress}` : ''}</div>
+      {:else if transcripts.message}<div class="measure-note cells-source-error">{transcripts.message}</div>
       {/if}
 
       <details class="channel-groups" open>
@@ -100,7 +102,7 @@
                 {#if gene.grouped}<span class="transcript-dot" style:background={gene.color} title="Coloured by its group"></span>
                 {:else}<input type="color" class="channel-swatch" value={gene.color} title="Gene colour" oninput={e => gene.setColor(e.currentTarget.value)}>{/if}
                 <span class="channel-name" title={gene.name}>{gene.name}</span>
-                <span class="channel-group-count">{gene.count.toLocaleString()}</span>
+                <span class="channel-group-count" title={gene.loading ? 'Reading its positions…' : 'Transcripts in the file'}>{gene.loading ? '…' : gene.count.toLocaleString()}</span>
                 <button class="cells-source-remove" title="Take this gene out of the list" aria-label="Remove {gene.name}" onclick={gene.remove}>×</button>
               </div>
             {/each}

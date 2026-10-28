@@ -7,6 +7,8 @@ export interface TranscriptGeneRow {
 	/** Coloured by a group, so the swatch is not editable. */
 	grouped: boolean;
 	count: number;
+	/** Shown, but its positions are still being read. */
+	loading: boolean;
 	setVisible: (visible: boolean) => void;
 	setColor: (color: string) => void;
 	remove: () => void;
@@ -35,7 +37,11 @@ export interface TranscriptGroupRow {
 
 export interface TranscriptsPanelModel {
 	status: 'unavailable' | 'idle' | 'loading' | 'ready' | 'error';
+	/** Progress or failure text. */
 	message: string | null;
+	/** Genes whose positions are being read, and how far along (e.g. "3 of 24 row groups"). */
+	fetching: number;
+	readProgress: string | null;
 	points: number;
 	/** Every gene in the list, and the ones the group filters leave showing. */
 	genes: TranscriptGeneRow[];

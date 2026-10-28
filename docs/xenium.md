@@ -18,7 +18,7 @@ Controls: wheel to zoom, drag to pan, double-click or `0` to fit, `+`/`-` and ar
 - Compositing runs on the CPU.
 - Xenium pyramids are stored as TIFF SubIFDs, which the Rust page classifier lists but cannot select. `media/modules/scene/tiff-subifd.ts` chains them in an in-memory copy so the existing region decoder can reach every level. The durable fix is to select SubIFD levels in the Rust parser.
 - Only `morphology_focus` bundles are supported.
-- `transcripts.parquet` is read whole (about 9 bytes per transcript once loaded), so a file with hundreds of millions of transcripts needs a lot of memory. It is read only when you click Load transcripts, unless the last session had genes on.
+- Transcript positions are read per gene, one row group at a time, so memory use follows the genes you show, not the file size. Adding genes still has to decode the position columns of every row group that holds them (about 0.35 s per 500k-row group in software Chromium), so the first genes on a very large file take a while; the panel shows progress.
 
 ## Layout
 
@@ -111,7 +111,11 @@ The Transcripts section sits below Cells when the bundle has a `transcripts.parq
 - **Defining groups.** Add them in `tiffVisualizer.transcripts.groups` (`{"Epithelial": ["EPCAM", "KRT8"]}`, or `{"genes": [...], "color": "#4dabf7"}`), or in the panel with **New group…** (paste gene names, case-insensitive) or **From listed genes**. Groups from the settings are offered in the Add a group list; panel-made groups are saved with the session. A gene in several groups takes the colour of the first group in the viewer.
 - **Display.** Min quality (QV) hides low-quality transcripts (20 by default); Dot size scales the dots.
 
-Points are grouped by gene and sorted by x, so a view only visits the points of the listed genes inside the visible x range; at most about 250,000 points are drawn per frame (denser views are thinned evenly).
+How it is read (`media/modules/transcripts/transcript-reader.ts`, run in the cells worker): opening makes one pass over the `feature_name` (and `is_gene`) column, one row group at a time, keeping only the transcript count per gene and which row groups hold each gene; this fills the Add a gene list. Showing a gene reads `x_location`, `y_location` and `qv` of just the row groups that hold it and keeps that gene's rows, sorted by x. Several genes added together (a group) share one pass. The page serves the worker's byte-range requests, so the file is never read whole; a host that answers no Range requests falls back to reading the file whole, which only suits small files. A gene's points are dropped when it leaves the gene list.
+
+A view visits only the points of the listed genes inside the visible x range; at most about 250,000 points are drawn per frame (denser views are thinned evenly).
+
+Tested on a synthetic 12M-transcript, 24-row-group file (203 MB): opening read 13 MB in about 2.5 s, and adding the six most common genes (3.6M points) read 129 MB in about 12 s, in headless software Chromium. Not measured on a real whole slide.
 
 ### Reusing it for other overlays
 

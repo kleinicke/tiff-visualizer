@@ -4,8 +4,10 @@
  *
  *   load { cells, cellBoundaries, nucleusBoundaries?, pixelSizeUm }   (file contents as ArrayBuffers)
  *     -> { table, cells, nuclei }
- *   transcripts { buffer, pixelSizeUm }   (transcripts.parquet)
- *     -> { data }   (points grouped by gene, in scene pixels)
+ *   txOpen { size, pixelSizeUm }   (transcripts.parquet, read through `range` requests the page answers)
+ *     -> { index }   (genes and counts, from one pass over the gene column)
+ *   txGenes { names }
+ *     -> { genes: [name, points][] }   (points in scene pixels, sorted by x)
  *   source { buffer, kind, pixelSizeUm }   (one more file: a metrics table or a boundaries file)
  *     -> { kind: 'table', table } | { kind: 'boundaries', table, cells }
  *
@@ -21,7 +23,7 @@ import { buildPolygonSet, buildPolygonSetFromLabels, type PolygonSet } from './m
 import { readPlainColumns } from './modules/cells/parquet-fast.js';
 import type { CellTable } from './modules/cells/cell-table.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';
-import { buildTranscriptData } from './modules/transcripts/transcript-data.js';
+import { openTranscripts, readGenes, type RangeFile, type TranscriptHandle } from './modules/transcripts/transcript-reader.js';
 
 /** How many leading rows to compare against the table when trusting label_id = row + 1. */
 const CHECK_ROWS = 5000;
@@ -117,8 +119,30 @@ async function readSource(buffer: ArrayBuffer, declared: string, pixelSizeUm: nu
 	return { result: { kind, table: { count: table.count, ids: table.ids, columns: table.columns }, cells }, buffers: [...transferables(cells), ...columnBuffers(table)] };
 }
 
+let transcripts: TranscriptHandle | null = null;
+const rangeWaiters = new Map<number, { resolve: (buffer: ArrayBuffer) => void; reject: (error: Error) => void }>();
+let rangeCounter = 0;
+
+/** A file the page reads for us: webview resources cannot be fetched from a blob worker. */
+function rangeFile(byteLength: number): RangeFile {
+	return {
+		byteLength,
+		slice: (start, end) => new Promise<ArrayBuffer>((resolve, reject) => {
+			const rid = ++rangeCounter;
+			rangeWaiters.set(rid, { resolve, reject });
+			(self as unknown as Worker).postMessage({ type: 'range', rid, start, end: end ?? byteLength });
+		}),
+	};
+}
+
 self.onmessage = async (event: MessageEvent): Promise<void> => {
 	const { id, type } = event.data ?? {};
+	if (type === 'rangeData') {
+		const waiter = rangeWaiters.get(event.data.rid);
+		rangeWaiters.delete(event.data.rid);
+		if (event.data.error) { waiter?.reject(new Error(String(event.data.error))); } else { waiter?.resolve(event.data.buffer as ArrayBuffer); }
+		return;
+	}
 	try {
 		if (type === 'source') {
 			const { buffer, kind, pixelSizeUm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number };
@@ -126,24 +150,17 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 			(self as unknown as Worker).postMessage({ id, ok: true, ...result }, buffers);
 			return;
 		}
-		if (type === 'transcripts') {
-			const { buffer, pixelSizeUm } = event.data as { buffer: ArrayBuffer; pixelSizeUm: number };
-			const wanted = ['feature_name', 'x_location', 'y_location', 'qv'];
-			const present = parquetColumnNames(buffer);
-			const missing = wanted.filter(name => !present.includes(name));
-			if (missing.length) { throw new Error(`The transcripts file has no ${missing.join(', ')} column.`); }
-			const columns = await readParquetColumns(buffer, present.includes('is_gene') ? [...wanted, 'is_gene'] : wanted);
-			let names = toStrings(columns.get('feature_name') ?? []), xs = toFloat64(columns.get('x_location') ?? []), ys = toFloat64(columns.get('y_location') ?? []), qv = toFloat64(columns.get('qv') ?? []);
-			const isGene = columns.get('is_gene');
-			if (isGene && isGene.some(value => !value)) {
-				// Controls and unassigned codewords are probes, not genes.
-				const keep: number[] = [];
-				for (let row = 0; row < names.length; row++) { if (isGene[row]) { keep.push(row); } }
-				names = keep.map(row => names[row]);
-				xs = Float64Array.from(keep, row => xs[row]); ys = Float64Array.from(keep, row => ys[row]); qv = Float64Array.from(keep, row => qv[row]);
-			}
-			const data = buildTranscriptData(names, xs, ys, qv, 1 / pixelSizeUm);
-			(self as unknown as Worker).postMessage({ id, ok: true, data }, [data.offsets.buffer as ArrayBuffer, data.x.buffer as ArrayBuffer, data.y.buffer as ArrayBuffer, data.qv.buffer as ArrayBuffer]);
+		if (type === 'txOpen') {
+			const { size, pixelSizeUm } = event.data as { size: number; pixelSizeUm: number };
+			transcripts = await openTranscripts(rangeFile(size), 1 / pixelSizeUm, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }));
+			(self as unknown as Worker).postMessage({ id, ok: true, index: transcripts.index });
+			return;
+		}
+		if (type === 'txGenes') {
+			if (!transcripts) { throw new Error('The transcripts file is not open.'); }
+			const { names } = event.data as { names: string[] };
+			const genes = [...(await readGenes(transcripts, names, (done, total) => (self as unknown as Worker).postMessage({ type: 'progress', id, done, total }))).entries()];
+			(self as unknown as Worker).postMessage({ id, ok: true, genes }, genes.flatMap(([, points]) => [points.x.buffer as ArrayBuffer, points.y.buffer as ArrayBuffer, points.qv.buffer as ArrayBuffer]));
 			return;
 		}
 		if (type !== 'load') { throw new Error(`unknown message ${String(type)}`); }

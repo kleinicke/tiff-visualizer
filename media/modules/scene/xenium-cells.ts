@@ -2,7 +2,8 @@
 
 import type { CellTable } from '../cells/cell-table.js';
 import type { PolygonSet } from '../cells/polygon-set.js';
-import type { TranscriptData } from '../transcripts/transcript-data.js';
+import type { GenePoints, TranscriptIndex } from '../transcripts/transcript-data.js';
+import { RangeUnavailable, readRange } from '../ranged-source.js';
 
 export interface XeniumCellFiles { cells: string; cellBoundaries: string; nucleusBoundaries?: string }
 
@@ -80,19 +81,99 @@ export async function loadCellSource(
 	} finally { worker.terminate(); }
 }
 
-/** Read a transcripts.parquet into points grouped by gene (scene pixels). */
-export async function loadTranscripts(src: string, pixelSizeUm: number): Promise<TranscriptData> {
-	const buffer = await fetchBuffer(src);
-	const worker = await createWorker();
-	try {
-		return await new Promise<TranscriptData>((resolve, reject) => {
-			worker.onerror = event => reject(new Error(event.message || 'The transcript loader failed.'));
-			worker.onmessage = (event: MessageEvent) => {
-				const data = event.data;
-				if (!data?.ok) { reject(new Error(String(data?.error ?? 'The transcripts could not be read.'))); return; }
-				resolve(data.data as TranscriptData);
-			};
-			worker.postMessage({ id: 1, type: 'transcripts', buffer, pixelSizeUm }, [buffer]);
-		});
-	} finally { worker.terminate(); }
+/**
+ * A transcripts.parquet read in pieces by a worker that asks this page for byte
+ * ranges (the worker cannot fetch webview resources itself). Hosts that do not
+ * answer Range requests fall back to one whole-file read, which only suits
+ * small files.
+ */
+export class TranscriptSource {
+	private worker: Worker | null = null;
+	private queue: Promise<unknown> = Promise.resolve();
+	private whole: Promise<ArrayBuffer> | null = null;
+	private ranged = true;
+	private waiting = new Map<number, { resolve: (data: any) => void; reject: (error: Error) => void; progress?: (done: number, total: number) => void }>();
+	private counter = 0;
+
+	constructor(private readonly src: string, private readonly pixelSizeUm: number) {}
+
+	private async slice(start: number, end: number): Promise<ArrayBuffer> {
+		if (this.ranged) {
+			try {
+				const { bytes } = await readRange(this.src, start, end - start);
+				return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+			} catch (error) {
+				if (!(error instanceof RangeUnavailable)) { throw error; }
+				this.ranged = false;
+			}
+		}
+		this.whole ??= fetchBuffer(this.src);
+		return (await this.whole).slice(start, end);
+	}
+
+	private async size(): Promise<number> {
+		try { return (await readRange(this.src, 0, 1)).total; }
+		catch (error) {
+			if (!(error instanceof RangeUnavailable)) { throw error; }
+			this.ranged = false;
+			this.whole ??= fetchBuffer(this.src);
+			return (await this.whole).byteLength;
+		}
+	}
+
+	private async start(): Promise<Worker> {
+		if (this.worker) { return this.worker; }
+		const worker = await createWorker();
+		worker.onerror = event => this.fail(new Error(event.message || 'The transcript loader failed.'));
+		worker.onmessage = (event: MessageEvent) => {
+			const data = event.data;
+			if (data?.type === 'range') {
+				this.slice(data.start, data.end).then(
+					buffer => worker.postMessage({ type: 'rangeData', rid: data.rid, buffer }, [buffer]),
+					(error: unknown) => worker.postMessage({ type: 'rangeData', rid: data.rid, error: error instanceof Error ? error.message : String(error) }),
+				);
+				return;
+			}
+			const waiter = this.waiting.get(data?.id);
+			if (!waiter) { return; }
+			if (data.type === 'progress') { waiter.progress?.(data.done, data.total); return; }
+			this.waiting.delete(data.id);
+			if (data.ok) { waiter.resolve(data); } else { waiter.reject(new Error(String(data.error ?? 'The transcripts could not be read.'))); }
+		};
+		this.worker = worker;
+		return worker;
+	}
+
+	private fail(error: Error): void {
+		for (const waiter of this.waiting.values()) { waiter.reject(error); }
+		this.waiting.clear();
+	}
+
+	/** One request at a time: the worker keeps the open file's state. */
+	private request<T>(message: Record<string, unknown>, progress?: (done: number, total: number) => void): Promise<T> {
+		const run = async (): Promise<T> => {
+			const worker = await this.start();
+			return new Promise<T>((resolve, reject) => {
+				const id = ++this.counter;
+				this.waiting.set(id, { resolve, reject, progress });
+				worker.postMessage({ ...message, id });
+			});
+		};
+		const result = this.queue.then(run, run);
+		this.queue = result.catch((): void => undefined);
+		return result;
+	}
+
+	/** Genes and their counts, from one pass over the gene column. */
+	async open(progress?: (done: number, total: number) => void): Promise<TranscriptIndex> {
+		const size = await this.size();
+		return (await this.request<{ index: TranscriptIndex }>({ type: 'txOpen', size, pixelSizeUm: this.pixelSizeUm }, progress)).index;
+	}
+
+	/** The points of the named genes (scene pixels, sorted by x). */
+	async genes(names: string[], progress?: (done: number, total: number) => void): Promise<Map<string, GenePoints>> {
+		return new Map((await this.request<{ genes: [string, GenePoints][] }>({ type: 'txGenes', names }, progress)).genes);
+	}
+
+	dispose(): void { this.worker?.terminate(); this.worker = null; this.fail(new Error('Closed')); }
 }
