@@ -3351,8 +3351,10 @@ body img {
 	max-height: 60vh;
 }
 
-.transcript-group-row {
-	flex-wrap: wrap;
+.transcript-group-options {
+	display: flex;
+	gap: 6px;
+	padding: 2px 0 6px 28px;
 }
 
 .transcript-new,

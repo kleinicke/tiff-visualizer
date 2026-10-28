@@ -4,6 +4,8 @@
   let { transcripts }: { transcripts: TranscriptsPanelModel } = $props();
   let open = $state(true);
   let query = $state('');
+  let unfolded = $state<string[]>([]);
+  const toggleFold = (name: string) => { unfolded = unfolded.includes(name) ? unfolded.filter(entry => entry !== name) : [...unfolded, name]; };
   let creating = $state(false);
   let newName = $state('');
   let newGenes = $state('');
@@ -32,7 +34,6 @@
   {#if open}
     <div class="cells-body">
       {#if transcripts.status === 'idle'}
-        <div class="measure-note">Transcripts are read when you ask: the file can be large.</div>
         <button class="measure-button" onclick={transcripts.load}>Load transcripts</button>
       {:else if transcripts.status === 'loading'}<div class="measure-note">{transcripts.message ?? 'Loading transcripts…'}</div>
       {:else if transcripts.status === 'error'}
@@ -45,28 +46,33 @@
       <details class="channel-groups" open>
         <summary>Groups ({transcripts.groups.length})</summary>
         {#each transcripts.groups as group (group.name)}
-          <div class="channel-group-row transcript-group-row">
-            <input type="checkbox" disabled={!ready || group.found === 0} checked={group.state === 'all'} indeterminate={group.state === 'some'}
-              title={group.state === 'all' ? 'Hide this group\'s genes' : 'Add this group\'s genes to the list and show them'} onchange={group.toggle}>
-            <input type="color" class="channel-swatch" value={group.color} title="Group colour" oninput={e => group.setColor(e.currentTarget.value)}>
-            <span class="channel-name" title={group.name}>{group.name}</span>
-            <span class="channel-group-count" title={ready ? `${group.on} of ${group.found} genes shown${group.missing.length ? `. Not in the file: ${group.missing.join(', ')}` : ''}` : `${group.total} genes`}>{ready ? `${group.on}/${group.found}` : group.total}</span>
-            <button class="measure-chip" class:active={group.palette} aria-pressed={group.palette}
-              title={group.palette ? 'Each gene has its own colour, built around the group colour (compare genes within the group). Click for one tint.' : 'The whole group has one tint (compare groups). Click to give each gene its own colour.'}
-              onclick={() => group.setPalette(!group.palette)}>{group.palette ? 'Palette' : 'Tint'}</button>
-            <button class="group-filter" class:active={group.filtering} disabled={!ready} aria-pressed={group.filtering}
-              title={group.filtering ? 'Stop filtering the gene list to this group' : 'Show only this group in the gene list. Several groups combine (union).'} onclick={group.toggleFilter}>
-              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2h13L9.5 8.5V14l-3-1.5V8.5z" fill="currentColor"/></svg>
-            </button>
-            <button class="measure-chip" disabled={!ready} title="Take this group's genes out of the gene list" onclick={group.removeAll}>Remove all</button>
-            <button class="cells-source-remove" title="Take this group out of the viewer. Its genes stay listed." aria-label="Remove group {group.name}" onclick={group.remove}>×</button>
+          {@const isFolded = !unfolded.includes(group.name)}
+          <div class="transcript-group">
+            <div class="channel-group-row transcript-group-row">
+              <button class="channel-fold" aria-expanded={!isFolded} title={isFolded ? 'Show this group\'s options' : 'Hide this group\'s options'} onclick={() => toggleFold(group.name)}>{isFolded ? '▸' : '▾'}</button>
+              <input type="checkbox" disabled={!ready || group.found === 0} checked={group.state === 'all'} indeterminate={group.state === 'some'}
+                title={group.state === 'all' ? 'Hide this group\'s genes' : 'Add this group\'s genes to the list and show them'} onchange={group.toggle}>
+              <input type="color" class="channel-swatch" value={group.color} title="Group colour" oninput={e => group.setColor(e.currentTarget.value)}>
+              <span class="channel-name" title={group.name}>{group.name}</span>
+              <span class="channel-group-count" title={ready ? `${group.on} of ${group.found} genes shown${group.missing.length ? `. Not in the file: ${group.missing.join(', ')}` : ''}` : `${group.total} genes`}>{ready ? `${group.on}/${group.found}` : group.total}</span>
+              <button class="group-filter" class:active={group.filtering} disabled={!ready} aria-pressed={group.filtering}
+                title={group.filtering ? 'Stop filtering the gene list to this group' : 'Show only this group in the gene list. Several groups combine (union).'} onclick={group.toggleFilter}>
+                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2h13L9.5 8.5V14l-3-1.5V8.5z" fill="currentColor"/></svg>
+              </button>
+              <button class="cells-source-remove" title="Take this group out of the viewer. Its genes stay listed." aria-label="Remove group {group.name}" onclick={group.remove}>×</button>
+            </div>
+            {#if !isFolded}
+              <div class="transcript-group-options">
+                <button class="measure-chip" class:active={group.palette} aria-pressed={group.palette}
+                  title={group.palette ? 'Each gene has its own colour, built around the group colour (compare genes within the group). Click for one tint.' : 'The whole group has one tint (compare groups). Click to give each gene its own colour.'}
+                  onclick={() => group.setPalette(!group.palette)}>{group.palette ? 'Palette' : 'Tint'}</button>
+                <button class="measure-chip" disabled={!ready} title="Take this group's genes out of the gene list" onclick={group.removeAll}>Remove all</button>
+              </div>
+            {/if}
           </div>
         {/each}
         <SearchPicker items={() => transcripts.groupChoices.map(group => group.name)} placeholder="Add a group…" label="Add a gene group"
           detail={name => `${transcripts.groupChoices.find(group => group.name === name)?.size ?? 0} genes`} onpick={transcripts.addGroup} />
-        {#if transcripts.groupChoices.length === 0 && transcripts.groups.length === 0}
-          <div class="measure-note">No groups yet. Make one below, or define them in the tiffVisualizer.transcripts.groups setting.</div>
-        {/if}
         <div class="transcript-new">
           <button class="measure-button" aria-expanded={creating} onclick={() => (creating = !creating)}>{creating ? 'Cancel' : 'New group…'}</button>
           <button class="measure-button" disabled={!ready || transcripts.genes.length === 0} title="Make a group of the genes in the list" onclick={fromListed}>From listed genes</button>
@@ -90,11 +96,14 @@
             <input type="search" class="measure-input" placeholder="Filter the list…" aria-label="Filter the gene list" bind:value={query}>
             {#if filtered}<span class="channel-group-count">{shown.length}/{transcripts.genes.length}</span><button class="measure-chip" title="Clear the text and group filters" onclick={() => { query = ''; transcripts.clearFilter(); }}>Clear</button>{/if}
           </div>
-          <div class="channels-toolbar">
-            <button class="measure-button" onclick={() => transcripts.showAllListed(true)}>{filtered ? 'Show listed' : 'Show all'}</button>
-            <button class="measure-button" onclick={() => transcripts.showAllListed(false)}>{filtered ? 'Hide listed' : 'Hide all'}</button>
-            <button class="measure-button" title="Take every gene out of the list" onclick={transcripts.clearGenes}>Remove all</button>
-          </div>
+          <details class="channels-global">
+            <summary class="channels-section-title">{filtered ? `Listed genes (${shown.length}/${transcripts.genes.length})` : 'All genes'}</summary>
+            <div class="channels-toolbar">
+              <button class="measure-button" title={filtered ? 'Switch the listed genes on' : 'Switch every gene on'} onclick={() => transcripts.showAllListed(true)}>Show all</button>
+              <button class="measure-button" title={filtered ? 'Switch the listed genes off' : 'Switch every gene off'} onclick={() => transcripts.showAllListed(false)}>Hide all</button>
+              <button class="measure-button" title="Take every gene out of the list" onclick={transcripts.clearGenes}>Remove all</button>
+            </div>
+          </details>
           <div class="transcript-genes">
             {#each shown as gene (gene.name)}
               <div class="channel-row-top transcript-gene" class:dimmed={!gene.visible}>
@@ -108,7 +117,7 @@
             {/each}
             {#if filtered && shown.length === 0}<div class="measure-note">No listed gene matches the filters.</div>{/if}
           </div>
-        {:else}<div class="measure-note">No genes are shown. Add genes above, or tick a group.</div>{/if}
+        {/if}
       </details>
 
       <label class="cells-field">
